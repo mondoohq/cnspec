@@ -102,6 +102,7 @@ policies:
           - uid: mondoo-oci-security-container-instances-approved-registry
     scoring_system: highest impact
 queries:
+  # No Terraform variants: MFA activation is operational telemetry exposed by the IAM API at runtime; the `oci_identity_user` Terraform resource has no field that toggles or evidences MFA enrollment.
   - uid: mondoo-oci-security-iam-mfa-enabled-for-active-users
     title: Ensure MFA is enabled for all active IAM users
     impact: 90
@@ -158,6 +159,7 @@ queries:
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Identity/Tasks/usingmfa.htm
         title: CIS OCI Foundations Benchmark 1.7
+  # No Terraform variants: email verification is end-user-driven runtime state on the IAM identity; the `oci_identity_user` Terraform resource sets the email but cannot express whether it has been verified.
   - uid: mondoo-oci-security-iam-user-emails-verified
     title: Ensure IAM user email addresses are verified
     impact: 60
@@ -333,6 +335,7 @@ queries:
       terraform.state.resources.where(type == "oci_identity_policy").none(
         values.statements.any(_ == /allow.*manage\s+all-resources\s+in\s+tenancy/i)
       )
+  # No Terraform variants: requires correlating user lifecycle-state with API-key state, both of which are runtime-only — `oci_identity_api_key` has no `state` argument and `oci_identity_user` has no field that exposes ACTIVE/INACTIVE lifecycle.
   - uid: mondoo-oci-security-iam-inactive-users-no-active-api-keys
     title: Ensure inactive users have no active API keys
     impact: 80
@@ -387,6 +390,7 @@ queries:
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Identity/Tasks/managingcredentials.htm
         title: OCI API key management
+  # No Terraform variants: requires correlating user lifecycle-state with auth-token state, both of which are runtime-only — `oci_identity_auth_token` has no `state` argument and `oci_identity_user` has no field that exposes ACTIVE/INACTIVE lifecycle.
   - uid: mondoo-oci-security-iam-inactive-users-no-active-auth-tokens
     title: Ensure inactive users have no active auth tokens
     impact: 80
@@ -1222,6 +1226,7 @@ queries:
       terraform.state.resources.where(type == "oci_core_security_list").all(
         values.egress_security_rules.none(_['destination'] == "0.0.0.0/0" && _['protocol'] == "all")
       )
+  # No Terraform variants: last-login recency is runtime telemetry; the `oci_identity_user` Terraform resource has no `last-successful-login-time` field.
   - uid: mondoo-oci-security-iam-stale-active-users
     title: Ensure active IAM users have logged in within the last 90 days
     impact: 70
@@ -2214,7 +2219,6 @@ queries:
   - uid: mondoo-oci-security-compute-instance-tagging
     title: Ensure compute instances have freeform tags applied
     impact: 50
-    filters: asset.platform == 'oci'
     tags:
       compliance/iso-27001-2022: iso-27001-2022-a-5-9
       compliance/nis-2: nis-2-21-2-a
@@ -2223,10 +2227,23 @@ queries:
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-8
       compliance/nist-sp-800-171: nist-sp-800-171--3-4-1
       compliance/soc2-2017: soc2-control-cc6-1-1
-    mql: |
-      oci.compute.instances.where(state == "RUNNING").all(
-        freeformTags != empty
-      )
+    variants:
+      - uid: mondoo-oci-security-compute-instance-tagging-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-compute-instance-tagging-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-compute-instance-tagging-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-compute-instance-tagging-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that all running OCI compute instances have at least one freeform tag applied. Tags are essential for resource identification, cost allocation, access control, and operational management.
@@ -2286,6 +2303,34 @@ queries:
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Tagging/Concepts/taggingoverview.htm
         title: OCI tagging documentation
+  - uid: mondoo-oci-security-compute-instance-tagging-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.compute.instances.where(state == "RUNNING").all(
+        freeformTags != empty
+      )
+  - uid: mondoo-oci-security-compute-instance-tagging-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_core_instance')
+    mql: |
+      terraform.resources('oci_core_instance').all(
+        arguments['freeform_tags'] != empty
+      )
+  - uid: mondoo-oci-security-compute-instance-tagging-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_core_instance')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_core_instance').all(
+        change.after['freeform_tags'] != empty
+      )
+  - uid: mondoo-oci-security-compute-instance-tagging-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_core_instance')
+    mql: |
+      terraform.state.resources.where(type == 'oci_core_instance').all(
+        values['freeform_tags'] != empty
+      )
+  # No Terraform variants: auth-token expiry/created timestamps are runtime-only — `oci_identity_auth_token` exposes neither `expires` nor `time_created` as configurable arguments.
   - uid: mondoo-oci-security-iam-auth-tokens-short-lived
     title: Ensure IAM auth tokens have an expiry no more than 90 days after creation
     impact: 75
@@ -2347,6 +2392,7 @@ queries:
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Identity/Tasks/managingcredentials.htm
         title: OCI - Managing User Credentials
+  # No Terraform variants: counting members of an admin-named group requires aggregating across all `oci_identity_user_group_membership` resources that reference each group, which has no clean equivalent in HCL/plan/state without cross-resource graph traversal.
   - uid: mondoo-oci-security-iam-admin-group-membership-limited
     title: Ensure IAM groups with admin-style names have a limited number of members
     impact: 75
@@ -2405,7 +2451,6 @@ queries:
   - uid: mondoo-oci-security-nsg-no-unrestricted-admin-ports
     title: Ensure NSGs do not permit SSH or RDP ingress from 0.0.0.0/0
     impact: 90
-    filters: asset.platform == 'oci'
     tags:
       compliance/iso-27001-2022: iso-27001-2022-a-8-22
       compliance/nis-2: false
@@ -2414,24 +2459,23 @@ queries:
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
       compliance/soc2-2017: soc2-control-cc6-6-4
-    mql: |
-      oci.network.networkSecurityGroups.all(
-        ingressSecurityRules.where(
-          _['source'] == "0.0.0.0/0" || _['source'] == "::/0"
-        ).where(_['protocol'] == "6").none(_['tcpOptions'] == empty)
-        &&
-        ingressSecurityRules.where(
-          _['source'] == "0.0.0.0/0" || _['source'] == "::/0"
-        ).where(_['protocol'] == "6" && _['tcpOptions'] != empty).none(
-          _['tcpOptions']['destinationPortRange']['min'] <= 22 && _['tcpOptions']['destinationPortRange']['max'] >= 22
-        )
-        &&
-        ingressSecurityRules.where(
-          _['source'] == "0.0.0.0/0" || _['source'] == "::/0"
-        ).where(_['protocol'] == "6" && _['tcpOptions'] != empty).none(
-          _['tcpOptions']['destinationPortRange']['min'] <= 3389 && _['tcpOptions']['destinationPortRange']['max'] >= 3389
-        )
-      )
+    variants:
+      - uid: mondoo-oci-security-nsg-no-unrestricted-admin-ports-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-nsg-no-unrestricted-admin-ports-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-nsg-no-unrestricted-admin-ports-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-nsg-no-unrestricted-admin-ports-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check extends the existing VCN security-list SSH/RDP ingress checks to Network Security Groups (NSGs), and covers both IPv4 (`0.0.0.0/0`) and IPv6 (`::/0`) unrestricted sources. NSGs apply to individual VNICs and are the modern replacement for subnet-level security lists — misconfigured NSGs can expose instances to SSH (TCP 22) or RDP (TCP 3389) from the internet even when the subnet's security lists are locked down.
@@ -2473,10 +2517,89 @@ queries:
         title: OCI - Network Security Groups
       - url: https://docs.oracle.com/en-us/iaas/Content/Bastion/Concepts/bastionoverview.htm
         title: OCI Bastion Service
+  - uid: mondoo-oci-security-nsg-no-unrestricted-admin-ports-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.network.networkSecurityGroups.all(
+        ingressSecurityRules.where(
+          _['source'] == "0.0.0.0/0" || _['source'] == "::/0"
+        ).where(_['protocol'] == "6").none(_['tcpOptions'] == empty)
+        &&
+        ingressSecurityRules.where(
+          _['source'] == "0.0.0.0/0" || _['source'] == "::/0"
+        ).where(_['protocol'] == "6" && _['tcpOptions'] != empty).none(
+          _['tcpOptions']['destinationPortRange']['min'] <= 22 && _['tcpOptions']['destinationPortRange']['max'] >= 22
+        )
+        &&
+        ingressSecurityRules.where(
+          _['source'] == "0.0.0.0/0" || _['source'] == "::/0"
+        ).where(_['protocol'] == "6" && _['tcpOptions'] != empty).none(
+          _['tcpOptions']['destinationPortRange']['min'] <= 3389 && _['tcpOptions']['destinationPortRange']['max'] >= 3389
+        )
+      )
+  - uid: mondoo-oci-security-nsg-no-unrestricted-admin-ports-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_core_network_security_group_security_rule')
+    mql: |
+      # An ingress rule from 0.0.0.0/0 or ::/0 over TCP must declare a tcp_options block with a destination_port_range that excludes both 22 and 3389 (range entirely below 22, between 22 and 3389 exclusive, or above 3389).
+      terraform.resources('oci_core_network_security_group_security_rule')
+        .where(arguments['direction'] == 'INGRESS')
+        .where(arguments['protocol'] == '6')
+        .where(arguments['source'] == '0.0.0.0/0' || arguments['source'] == '::/0')
+        .all(
+          blocks.where(type == 'tcp_options') != empty &&
+          blocks.where(type == 'tcp_options').all(
+            blocks.where(type == 'destination_port_range') != empty &&
+            blocks.where(type == 'destination_port_range').all(
+              arguments['max'] < 22 ||
+              arguments['min'] > 22 && arguments['max'] < 3389 ||
+              arguments['min'] > 3389
+            )
+          )
+        )
+  - uid: mondoo-oci-security-nsg-no-unrestricted-admin-ports-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_core_network_security_group_security_rule')
+    mql: |
+      terraform.plan.resourceChanges
+        .where(type == 'oci_core_network_security_group_security_rule')
+        .where(change.after['direction'] == 'INGRESS')
+        .where(change.after['protocol'] == '6')
+        .where(change.after['source'] == '0.0.0.0/0' || change.after['source'] == '::/0')
+        .all(
+          change.after['tcp_options'] != null && change.after['tcp_options'].length > 0 &&
+          change.after['tcp_options'].all(
+            _['destination_port_range'] != null && _['destination_port_range'].length > 0 &&
+            _['destination_port_range'].all(
+              _['max'] < 22 ||
+              _['min'] > 22 && _['max'] < 3389 ||
+              _['min'] > 3389
+            )
+          )
+        )
+  - uid: mondoo-oci-security-nsg-no-unrestricted-admin-ports-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_core_network_security_group_security_rule')
+    mql: |
+      terraform.state.resources
+        .where(type == 'oci_core_network_security_group_security_rule')
+        .where(values['direction'] == 'INGRESS')
+        .where(values['protocol'] == '6')
+        .where(values['source'] == '0.0.0.0/0' || values['source'] == '::/0')
+        .all(
+          values['tcp_options'] != null && values['tcp_options'].length > 0 &&
+          values['tcp_options'].all(
+            _['destination_port_range'] != null && _['destination_port_range'].length > 0 &&
+            _['destination_port_range'].all(
+              _['max'] < 22 ||
+              _['min'] > 22 && _['max'] < 3389 ||
+              _['min'] > 3389
+            )
+          )
+        )
   - uid: mondoo-oci-security-public-vnic-has-nsg
     title: Ensure compute VNICs with a public IP have at least one NSG attached
     impact: 80
-    filters: asset.platform == 'oci'
     tags:
       compliance/iso-27001-2022: iso-27001-2022-a-8-22
       compliance/nis-2: false
@@ -2485,12 +2608,23 @@ queries:
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
       compliance/soc2-2017: soc2-control-cc6-6-4
-    mql: |
-      oci.compute.instances.all(
-        vnics.where(publicIp != "" && publicIp != null).all(
-          nsgIds.length > 0
-        )
-      )
+    variants:
+      - uid: mondoo-oci-security-public-vnic-has-nsg-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-public-vnic-has-nsg-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-public-vnic-has-nsg-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-public-vnic-has-nsg-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that every compute VNIC with a public IP has at least one Network Security Group attached. A VNIC that is reachable from the internet with no NSG relies entirely on the subnet's security lists for ingress filtering — which, on OCI, default to very permissive rules and are often inherited from shared subnets.
@@ -2528,10 +2662,50 @@ queries:
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Network/Concepts/networksecuritygroups.htm
         title: OCI - Network Security Groups
+  - uid: mondoo-oci-security-public-vnic-has-nsg-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.compute.instances.all(
+        vnics.where(publicIp != "" && publicIp != null).all(
+          nsgIds.length > 0
+        )
+      )
+  - uid: mondoo-oci-security-public-vnic-has-nsg-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_core_instance')
+    mql: |
+      # When create_vnic_details has assign_public_ip = true (or omits it — default is true on a public subnet), nsg_ids must be a non-empty list.
+      terraform.resources('oci_core_instance').all(
+        blocks.where(type == 'create_vnic_details').all(
+          arguments['assign_public_ip'] == false ||
+          arguments['nsg_ids'] != null && arguments['nsg_ids'].length > 0
+        )
+      )
+  - uid: mondoo-oci-security-public-vnic-has-nsg-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_core_instance')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_core_instance').all(
+        change.after['create_vnic_details'] == null ||
+        change.after['create_vnic_details'].all(
+          _['assign_public_ip'] == false ||
+          _['nsg_ids'] != null && _['nsg_ids'].length > 0
+        )
+      )
+  - uid: mondoo-oci-security-public-vnic-has-nsg-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_core_instance')
+    mql: |
+      terraform.state.resources.where(type == 'oci_core_instance').all(
+        values['create_vnic_details'] == null ||
+        values['create_vnic_details'].all(
+          _['assign_public_ip'] == false ||
+          _['nsg_ids'] != null && _['nsg_ids'].length > 0
+        )
+      )
   - uid: mondoo-oci-security-compute-imds-v2-only
     title: Ensure compute instances have the legacy IMDSv1 endpoints disabled
     impact: 85
-    filters: asset.platform == 'oci'
     tags:
       compliance/iso-27001-2022: iso-27001-2022-a-8-2
       compliance/nis-2: nis-2-21-2-i
@@ -2540,10 +2714,23 @@ queries:
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
       compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
       compliance/soc2-2017: soc2-control-cc6-3-3
-    mql: |
-      oci.compute.instances.all(
-        instanceOptions['areLegacyImdsEndpointsDisabled'] == true
-      )
+    variants:
+      - uid: mondoo-oci-security-compute-imds-v2-only-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-compute-imds-v2-only-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-compute-imds-v2-only-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-compute-imds-v2-only-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that every OCI compute instance has the legacy Instance Metadata Service v1 (IMDSv1) endpoints disabled in its `instanceOptions`. IMDSv1 does not require the caller to prove it can receive a response, so any server-side-request-forgery (SSRF) bug in an application running on the instance can be used to read the instance principal token and any other metadata directly.
@@ -2585,10 +2772,46 @@ queries:
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Compute/Tasks/gettingmetadata.htm
         title: OCI - Getting Instance Metadata (IMDS v1 and v2)
+  - uid: mondoo-oci-security-compute-imds-v2-only-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.compute.instances.all(
+        instanceOptions['areLegacyImdsEndpointsDisabled'] == true
+      )
+  - uid: mondoo-oci-security-compute-imds-v2-only-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_core_instance')
+    mql: |
+      # Require an instance_options block declaring are_legacy_imds_endpoints_disabled = true. Without the existence guard, instances that omit instance_options would silently pass.
+      terraform.resources('oci_core_instance').all(
+        blocks.where(type == 'instance_options') != empty &&
+        blocks.where(type == 'instance_options').all(
+          arguments['are_legacy_imds_endpoints_disabled'] == true
+        )
+      )
+  - uid: mondoo-oci-security-compute-imds-v2-only-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_core_instance')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_core_instance').all(
+        change.after['instance_options'] != null && change.after['instance_options'].length > 0 &&
+        change.after['instance_options'].all(
+          _['are_legacy_imds_endpoints_disabled'] == true
+        )
+      )
+  - uid: mondoo-oci-security-compute-imds-v2-only-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_core_instance')
+    mql: |
+      terraform.state.resources.where(type == 'oci_core_instance').all(
+        values['instance_options'] != null && values['instance_options'].length > 0 &&
+        values['instance_options'].all(
+          _['are_legacy_imds_endpoints_disabled'] == true
+        )
+      )
   - uid: mondoo-oci-security-compute-metadata-no-secrets
     title: Ensure compute instance metadata does not contain credentials
     impact: 90
-    filters: asset.platform == 'oci'
     tags:
       compliance/iso-27001-2022: iso-27001-2022-a-5-17
       compliance/nis-2: false
@@ -2597,17 +2820,23 @@ queries:
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
       compliance/nist-sp-800-171: false
       compliance/soc2-2017: soc2-control-cc6-1-9
-    mql: |
-      oci.compute.instances.all(
-        metadata.keys.none(
-          _.downcase == /^aws_access_key_id$|^aws_secret_access_key$|^aws_session_token$|^oci_api_key$|^oci_secret$|^api_token$|^bearer_token$|^db_password$|^private_key$|^password$|^passwd$|^secret$|^access_key$|^client_secret$|^connection_string$/
-        ) &&
-        metadata.values.none(
-          _.find(/(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}/) != empty ||
-          _.contains("-----BEGIN") && _.contains("PRIVATE KEY-----") ||
-          _.find(/\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b/) != empty
-        )
-      )
+    variants:
+      - uid: mondoo-oci-security-compute-metadata-no-secrets-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-compute-metadata-no-secrets-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-compute-metadata-no-secrets-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-compute-metadata-no-secrets-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check flags OCI compute instances whose `metadata` key-value pairs look like they carry credentials. Four patterns are detected:
@@ -2656,10 +2885,71 @@ queries:
         title: OCI - Instance Metadata
       - url: https://docs.oracle.com/en-us/iaas/Content/KeyManagement/Concepts/keyoverview.htm
         title: OCI Vault
+  - uid: mondoo-oci-security-compute-metadata-no-secrets-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.compute.instances.all(
+        metadata.keys.none(
+          _.downcase == /^aws_access_key_id$|^aws_secret_access_key$|^aws_session_token$|^oci_api_key$|^oci_secret$|^api_token$|^bearer_token$|^db_password$|^private_key$|^password$|^passwd$|^secret$|^access_key$|^client_secret$|^connection_string$/
+        ) &&
+        metadata.values.none(
+          _.find(/(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}/) != empty ||
+          _.contains("-----BEGIN") && _.contains("PRIVATE KEY-----") ||
+          _.find(/\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b/) != empty
+        )
+      )
+  - uid: mondoo-oci-security-compute-metadata-no-secrets-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_core_instance')
+    mql: |
+      # Two datapoints: instances with a metadata map must not have credential-named keys, and must not have credential-shaped values. Instances without a metadata map are filtered out by .where().
+      terraform.resources('oci_core_instance').where(arguments['metadata'] != null).all(
+        arguments['metadata'].keys.none(
+          _.downcase == /^aws_access_key_id$|^aws_secret_access_key$|^aws_session_token$|^oci_api_key$|^oci_secret$|^api_token$|^bearer_token$|^db_password$|^private_key$|^password$|^passwd$|^secret$|^access_key$|^client_secret$|^connection_string$/
+        )
+      )
+      terraform.resources('oci_core_instance').where(arguments['metadata'] != null).all(
+        arguments['metadata'].values.none(
+          _.find(/(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}/) != empty ||
+          _.contains("-----BEGIN") && _.contains("PRIVATE KEY-----") ||
+          _.find(/\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b/) != empty
+        )
+      )
+  - uid: mondoo-oci-security-compute-metadata-no-secrets-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_core_instance')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_core_instance' && change.after['metadata'] != null).all(
+        change.after['metadata'].keys.none(
+          _.downcase == /^aws_access_key_id$|^aws_secret_access_key$|^aws_session_token$|^oci_api_key$|^oci_secret$|^api_token$|^bearer_token$|^db_password$|^private_key$|^password$|^passwd$|^secret$|^access_key$|^client_secret$|^connection_string$/
+        )
+      )
+      terraform.plan.resourceChanges.where(type == 'oci_core_instance' && change.after['metadata'] != null).all(
+        change.after['metadata'].values.none(
+          _.find(/(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}/) != empty ||
+          _.contains("-----BEGIN") && _.contains("PRIVATE KEY-----") ||
+          _.find(/\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b/) != empty
+        )
+      )
+  - uid: mondoo-oci-security-compute-metadata-no-secrets-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_core_instance')
+    mql: |
+      terraform.state.resources.where(type == 'oci_core_instance' && values['metadata'] != null).all(
+        values['metadata'].keys.none(
+          _.downcase == /^aws_access_key_id$|^aws_secret_access_key$|^aws_session_token$|^oci_api_key$|^oci_secret$|^api_token$|^bearer_token$|^db_password$|^private_key$|^password$|^passwd$|^secret$|^access_key$|^client_secret$|^connection_string$/
+        )
+      )
+      terraform.state.resources.where(type == 'oci_core_instance' && values['metadata'] != null).all(
+        values['metadata'].values.none(
+          _.find(/(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}/) != empty ||
+          _.contains("-----BEGIN") && _.contains("PRIVATE KEY-----") ||
+          _.find(/\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b/) != empty
+        )
+      )
   - uid: mondoo-oci-security-loadbalancer-tls-minimum-1-2
     title: Ensure load balancer HTTPS listeners only allow TLS 1.2 or newer
     impact: 85
-    filters: asset.platform == 'oci'
     tags:
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
@@ -2668,12 +2958,23 @@ queries:
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
       compliance/soc2-2017: soc2-control-cc6-7-2
-    mql: |
-      oci.loadBalancer.loadBalancers.all(
-        listeners.where(protocol == "HTTPS" || protocol == "HTTP2").all(
-          sslProtocols.none(_ == "TLSv1" || _ == "TLSv1.1" || _ == "SSLv3")
-        )
-      )
+    variants:
+      - uid: mondoo-oci-security-loadbalancer-tls-minimum-1-2-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-loadbalancer-tls-minimum-1-2-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-loadbalancer-tls-minimum-1-2-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-loadbalancer-tls-minimum-1-2-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that HTTPS and HTTP/2 listeners on every OCI load balancer only accept TLS 1.2 or TLS 1.3 connections. TLS 1.0, TLS 1.1, and anything older (SSLv3, SSLv2) have been deprecated by every major browser and are vulnerable to well-known downgrade and padding-oracle attacks.
@@ -2719,10 +3020,59 @@ queries:
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Balance/Tasks/managingsslconfigs.htm
         title: OCI - Managing SSL Configurations
+  - uid: mondoo-oci-security-loadbalancer-tls-minimum-1-2-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.loadBalancer.loadBalancers.all(
+        listeners.where(protocol == "HTTPS" || protocol == "HTTP2").all(
+          sslProtocols.none(_ == "TLSv1" || _ == "TLSv1.1" || _ == "SSLv3")
+        )
+      )
+  - uid: mondoo-oci-security-loadbalancer-tls-minimum-1-2-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_load_balancer_listener')
+    mql: |
+      # HTTPS / HTTP2 listeners must declare an ssl_configuration block whose protocols list excludes legacy TLS / SSL versions.
+      terraform.resources('oci_load_balancer_listener')
+        .where(arguments['protocol'] == 'HTTPS' || arguments['protocol'] == 'HTTP2')
+        .all(
+          blocks.where(type == 'ssl_configuration') != empty &&
+          blocks.where(type == 'ssl_configuration').all(
+            arguments['protocols'] != null &&
+            arguments['protocols'].none(_ == 'TLSv1' || _ == 'TLSv1.1' || _ == 'SSLv3')
+          )
+        )
+  - uid: mondoo-oci-security-loadbalancer-tls-minimum-1-2-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_load_balancer_listener')
+    mql: |
+      terraform.plan.resourceChanges
+        .where(type == 'oci_load_balancer_listener')
+        .where(change.after['protocol'] == 'HTTPS' || change.after['protocol'] == 'HTTP2')
+        .all(
+          change.after['ssl_configuration'] != null && change.after['ssl_configuration'].length > 0 &&
+          change.after['ssl_configuration'].all(
+            _['protocols'] != null &&
+            _['protocols'].none(_ == 'TLSv1' || _ == 'TLSv1.1' || _ == 'SSLv3')
+          )
+        )
+  - uid: mondoo-oci-security-loadbalancer-tls-minimum-1-2-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_load_balancer_listener')
+    mql: |
+      terraform.state.resources
+        .where(type == 'oci_load_balancer_listener')
+        .where(values['protocol'] == 'HTTPS' || values['protocol'] == 'HTTP2')
+        .all(
+          values['ssl_configuration'] != null && values['ssl_configuration'].length > 0 &&
+          values['ssl_configuration'].all(
+            _['protocols'] != null &&
+            _['protocols'].none(_ == 'TLSv1' || _ == 'TLSv1.1' || _ == 'SSLv3')
+          )
+        )
   - uid: mondoo-oci-security-loadbalancer-no-weak-cipher-suites
     title: Ensure load balancer listeners use a modern cipher suite
     impact: 70
-    filters: asset.platform == 'oci'
     tags:
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
@@ -2731,12 +3081,23 @@ queries:
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
       compliance/soc2-2017: soc2-control-cc6-7-2
-    mql: |
-      oci.loadBalancer.loadBalancers.all(
-        listeners.where(protocol == "HTTPS" || protocol == "HTTP2").all(
-          sslCipherSuiteName.downcase == /^oci-modern-ssl-cipher-suite-v1$|^oci-tls-1-2-[a-z0-9-]+$|^oci-tls-1-3-[a-z0-9-]+$|^oci-default-ssl-cipher-suite-v1$/
-        )
-      )
+    variants:
+      - uid: mondoo-oci-security-loadbalancer-no-weak-cipher-suites-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-loadbalancer-no-weak-cipher-suites-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-loadbalancer-no-weak-cipher-suites-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-loadbalancer-no-weak-cipher-suites-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that HTTPS and HTTP/2 listeners on every OCI load balancer use an Oracle-managed modern cipher suite (`oci-modern-ssl-cipher-suite-v1`, `oci-tls-1-2-*`, `oci-tls-1-3-*`, or `oci-default-ssl-cipher-suite-v1`) rather than the `oci-compatible-ssl-cipher-suite-v1` suite or a custom suite that admits weak algorithms.
@@ -2781,6 +3142,56 @@ queries:
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Balance/References/predefinedsslciphersuites.htm
         title: OCI - Predefined SSL Cipher Suites
+  - uid: mondoo-oci-security-loadbalancer-no-weak-cipher-suites-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.loadBalancer.loadBalancers.all(
+        listeners.where(protocol == "HTTPS" || protocol == "HTTP2").all(
+          sslCipherSuiteName.downcase == /^oci-modern-ssl-cipher-suite-v1$|^oci-tls-1-2-[a-z0-9-]+$|^oci-tls-1-3-[a-z0-9-]+$|^oci-default-ssl-cipher-suite-v1$/
+        )
+      )
+  - uid: mondoo-oci-security-loadbalancer-no-weak-cipher-suites-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_load_balancer_listener')
+    mql: |
+      terraform.resources('oci_load_balancer_listener')
+        .where(arguments['protocol'] == 'HTTPS' || arguments['protocol'] == 'HTTP2')
+        .all(
+          blocks.where(type == 'ssl_configuration') != empty &&
+          blocks.where(type == 'ssl_configuration').all(
+            arguments['cipher_suite_name'] != null &&
+            arguments['cipher_suite_name'].downcase == /^oci-modern-ssl-cipher-suite-v1$|^oci-tls-1-2-[a-z0-9-]+$|^oci-tls-1-3-[a-z0-9-]+$|^oci-default-ssl-cipher-suite-v1$/
+          )
+        )
+  - uid: mondoo-oci-security-loadbalancer-no-weak-cipher-suites-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_load_balancer_listener')
+    mql: |
+      terraform.plan.resourceChanges
+        .where(type == 'oci_load_balancer_listener')
+        .where(change.after['protocol'] == 'HTTPS' || change.after['protocol'] == 'HTTP2')
+        .all(
+          change.after['ssl_configuration'] != null && change.after['ssl_configuration'].length > 0 &&
+          change.after['ssl_configuration'].all(
+            _['cipher_suite_name'] != null &&
+            _['cipher_suite_name'].downcase == /^oci-modern-ssl-cipher-suite-v1$|^oci-tls-1-2-[a-z0-9-]+$|^oci-tls-1-3-[a-z0-9-]+$|^oci-default-ssl-cipher-suite-v1$/
+          )
+        )
+  - uid: mondoo-oci-security-loadbalancer-no-weak-cipher-suites-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_load_balancer_listener')
+    mql: |
+      terraform.state.resources
+        .where(type == 'oci_load_balancer_listener')
+        .where(values['protocol'] == 'HTTPS' || values['protocol'] == 'HTTP2')
+        .all(
+          values['ssl_configuration'] != null && values['ssl_configuration'].length > 0 &&
+          values['ssl_configuration'].all(
+            _['cipher_suite_name'] != null &&
+            _['cipher_suite_name'].downcase == /^oci-modern-ssl-cipher-suite-v1$|^oci-tls-1-2-[a-z0-9-]+$|^oci-tls-1-3-[a-z0-9-]+$|^oci-default-ssl-cipher-suite-v1$/
+          )
+        )
+  # No Terraform variants: this is a per-load-balancer existence check (each LB with an HTTP listener must also have an HTTPS / HTTP2 listener) that requires aggregating `oci_load_balancer_listener` resources by their `load_balancer_id` reference. Cross-resource grouping is fragile in HCL/plan/state and unsupported by the patterns used elsewhere in this file.
   - uid: mondoo-oci-security-loadbalancer-http-listener-has-https
     title: Ensure load balancers that run HTTP listeners also expose HTTPS
     impact: 75
@@ -2850,7 +3261,6 @@ queries:
   - uid: mondoo-oci-security-oke-public-endpoint-disabled
     title: Ensure OKE cluster Kubernetes API endpoints are not exposed to the internet
     impact: 90
-    filters: asset.platform == 'oci'
     tags:
       compliance/iso-27001-2022: iso-27001-2022-a-8-22
       compliance/nis-2: false
@@ -2859,8 +3269,23 @@ queries:
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
       compliance/soc2-2017: soc2-control-cc6-6-4
-    mql: |
-      oci.oke.clusters.all(isPublicEndpointEnabled == false)
+    variants:
+      - uid: mondoo-oci-security-oke-public-endpoint-disabled-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-oke-public-endpoint-disabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-oke-public-endpoint-disabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-oke-public-endpoint-disabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that every OKE (Oracle Kubernetes Engine) cluster has its Kubernetes API endpoint configured as private only. A publicly-exposed API endpoint means the cluster's control plane is reachable from the internet, making the cluster a direct target for Kubernetes CVEs, credential brute force, and scanning.
@@ -2904,6 +3329,42 @@ queries:
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/ContEng/Concepts/contengnetworkconfig.htm
         title: OCI - OKE Network Configuration
+  - uid: mondoo-oci-security-oke-public-endpoint-disabled-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.oke.clusters.all(isPublicEndpointEnabled == false)
+  - uid: mondoo-oci-security-oke-public-endpoint-disabled-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_containerengine_cluster')
+    mql: |
+      # Cluster must declare an endpoint_config block with is_public_ip_enabled = false. Without the existence guard, clusters that omit endpoint_config (Oracle defaults to a public endpoint) would silently pass.
+      terraform.resources('oci_containerengine_cluster').all(
+        blocks.where(type == 'endpoint_config') != empty &&
+        blocks.where(type == 'endpoint_config').all(
+          arguments['is_public_ip_enabled'] == false
+        )
+      )
+  - uid: mondoo-oci-security-oke-public-endpoint-disabled-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_containerengine_cluster')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_containerengine_cluster').all(
+        change.after['endpoint_config'] != null && change.after['endpoint_config'].length > 0 &&
+        change.after['endpoint_config'].all(
+          _['is_public_ip_enabled'] == false
+        )
+      )
+  - uid: mondoo-oci-security-oke-public-endpoint-disabled-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_containerengine_cluster')
+    mql: |
+      terraform.state.resources.where(type == 'oci_containerengine_cluster').all(
+        values['endpoint_config'] != null && values['endpoint_config'].length > 0 &&
+        values['endpoint_config'].all(
+          _['is_public_ip_enabled'] == false
+        )
+      )
+  # No Terraform variants: `availableKubernetesUpgrades` is runtime telemetry derived from Oracle's supported-version list at scan time; no `oci_containerengine_cluster` argument exposes the count of pending upgrades.
   - uid: mondoo-oci-security-oke-supported-kubernetes-version
     title: Ensure OKE clusters run a supported Kubernetes version
     impact: 75
@@ -2960,7 +3421,6 @@ queries:
   - uid: mondoo-oci-security-oke-image-policy-enabled
     title: Ensure OKE clusters enable container image signature verification
     impact: 70
-    filters: asset.platform == 'oci'
     tags:
       compliance/iso-27001-2022: iso-27001-2022-a-5-21
       compliance/nis-2: nis-2-21-2-d
@@ -2969,8 +3429,23 @@ queries:
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sr-3
       compliance/nist-sp-800-171: false
       compliance/soc2-2017: soc2-control-cc9-2-2
-    mql: |
-      oci.oke.clusters.all(isImagePolicyEnabled == true)
+    variants:
+      - uid: mondoo-oci-security-oke-image-policy-enabled-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-oke-image-policy-enabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-oke-image-policy-enabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-oke-image-policy-enabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that every OKE cluster has image signature verification enabled. With the image policy enabled, OKE refuses to run container images that are not signed by a trusted key, blocking the most common supply-chain attack path — a malicious or tampered image being pulled by a cluster.
@@ -3010,10 +3485,44 @@ queries:
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/ContEng/Tasks/contengsigningimages_topic-Signing_Container_Images_Using_OCI_Registry.htm
         title: OCI - Signing Container Images
+  - uid: mondoo-oci-security-oke-image-policy-enabled-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.oke.clusters.all(isImagePolicyEnabled == true)
+  - uid: mondoo-oci-security-oke-image-policy-enabled-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_containerengine_cluster')
+    mql: |
+      # Cluster must declare an image_policy_config block with is_policy_enabled = true. Without the existence guard, clusters that omit image_policy_config would silently pass.
+      terraform.resources('oci_containerengine_cluster').all(
+        blocks.where(type == 'image_policy_config') != empty &&
+        blocks.where(type == 'image_policy_config').all(
+          arguments['is_policy_enabled'] == true
+        )
+      )
+  - uid: mondoo-oci-security-oke-image-policy-enabled-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_containerengine_cluster')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_containerengine_cluster').all(
+        change.after['image_policy_config'] != null && change.after['image_policy_config'].length > 0 &&
+        change.after['image_policy_config'].all(
+          _['is_policy_enabled'] == true
+        )
+      )
+  - uid: mondoo-oci-security-oke-image-policy-enabled-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_containerengine_cluster')
+    mql: |
+      terraform.state.resources.where(type == 'oci_containerengine_cluster').all(
+        values['image_policy_config'] != null && values['image_policy_config'].length > 0 &&
+        values['image_policy_config'].all(
+          _['is_policy_enabled'] == true
+        )
+      )
   - uid: mondoo-oci-security-adb-mtls-or-restricted
     title: Ensure Autonomous Databases require mTLS or restrict access via ACL / NSG
     impact: 90
-    filters: asset.platform == 'oci'
     tags:
       compliance/iso-27001-2022: iso-27001-2022-a-8-22
       compliance/nis-2: false
@@ -3022,13 +3531,23 @@ queries:
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
       compliance/soc2-2017: soc2-control-cc6-6-4
-    mql: |
-      oci.database.autonomousDatabases.all(
-        isMtlsConnectionRequired == true ||
-        privateEndpointIp != null ||
-        whitelistedIps.length > 0 ||
-        nsgIds.length > 0
-      )
+    variants:
+      - uid: mondoo-oci-security-adb-mtls-or-restricted-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-adb-mtls-or-restricted-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-adb-mtls-or-restricted-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-adb-mtls-or-restricted-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that every Autonomous Database either requires mutual TLS (`isMtlsConnectionRequired == true`) or restricts access via a private endpoint, IP allowlist, or attached NSGs. An ADB reachable over the public internet with mTLS disabled and no network ACL is effectively accepting any wallet-authenticated connection from any source — a far weaker posture than Oracle's documented secure baseline.
@@ -3070,6 +3589,46 @@ queries:
     refs:
       - url: https://docs.oracle.com/en-us/iaas/autonomous-database-serverless/doc/network-access-types.html
         title: OCI - Autonomous Database Network Access
+  - uid: mondoo-oci-security-adb-mtls-or-restricted-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.database.autonomousDatabases.all(
+        isMtlsConnectionRequired == true ||
+        privateEndpointIp != null ||
+        whitelistedIps.length > 0 ||
+        nsgIds.length > 0
+      )
+  - uid: mondoo-oci-security-adb-mtls-or-restricted-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_database_autonomous_database')
+    mql: |
+      terraform.resources('oci_database_autonomous_database').all(
+        arguments['is_mtls_connection_required'] == true ||
+        arguments['private_endpoint_ip'] != null ||
+        arguments['whitelisted_ips'] != null && arguments['whitelisted_ips'].length > 0 ||
+        arguments['nsg_ids'] != null && arguments['nsg_ids'].length > 0
+      )
+  - uid: mondoo-oci-security-adb-mtls-or-restricted-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_database_autonomous_database')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_database_autonomous_database').all(
+        change.after['is_mtls_connection_required'] == true ||
+        change.after['private_endpoint_ip'] != null ||
+        change.after['whitelisted_ips'] != null && change.after['whitelisted_ips'].length > 0 ||
+        change.after['nsg_ids'] != null && change.after['nsg_ids'].length > 0
+      )
+  - uid: mondoo-oci-security-adb-mtls-or-restricted-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_database_autonomous_database')
+    mql: |
+      terraform.state.resources.where(type == 'oci_database_autonomous_database').all(
+        values['is_mtls_connection_required'] == true ||
+        values['private_endpoint_ip'] != null ||
+        values['whitelisted_ips'] != null && values['whitelisted_ips'].length > 0 ||
+        values['nsg_ids'] != null && values['nsg_ids'].length > 0
+      )
+  # No Terraform variants: requires cross-resource lookup from `oci_database_db_system` to its referenced `oci_core_subnet` to read `prohibit_public_ip_on_vnic`. Cross-resource graph traversal is fragile in HCL/plan/state and unsupported by the patterns used elsewhere in this file.
   - uid: mondoo-oci-security-dbsystem-private-subnet
     title: Ensure DB systems are deployed in subnets that prohibit public IPs on VNICs
     impact: 90
@@ -3128,6 +3687,7 @@ queries:
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Database/Concepts/databaseoverview.htm
         title: OCI - Database Service Overview
+  # No Terraform variants: requires walking from `oci_database_db_system` to its subnet to that subnet's `oci_core_route_table` and inspecting route rules for an internet-gateway target. Three-hop cross-resource traversal is fragile in HCL/plan/state and unsupported by the patterns used elsewhere in this file.
   - uid: mondoo-oci-security-dbsystem-subnet-no-internet-gateway
     title: Ensure DB system subnets have no route to an internet gateway
     impact: 85
@@ -3188,7 +3748,6 @@ queries:
   - uid: mondoo-oci-security-vault-secrets-rotation-enabled
     title: Ensure OCI Vault secrets older than a year have scheduled rotation enabled
     impact: 70
-    filters: asset.platform == 'oci'
     tags:
       compliance/iso-27001-2022: iso-27001-2022-a-5-17
       compliance/nis-2: false
@@ -3197,11 +3756,23 @@ queries:
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
       compliance/nist-sp-800-171: false
       compliance/soc2-2017: soc2-control-cc6-1-9
-    mql: |
-      oci.vault.secrets.where(
-        state == "ACTIVE" &&
-        time.now - created > 365 * time.day
-      ).all(isScheduledRotationEnabled == true)
+    variants:
+      - uid: mondoo-oci-security-vault-secrets-rotation-enabled-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-vault-secrets-rotation-enabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-vault-secrets-rotation-enabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-vault-secrets-rotation-enabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that every active OCI Vault secret older than 365 days has scheduled rotation enabled. Long-lived secrets without rotation are a classic persistent-credential risk: any leak — historical, current, or future — is effective until an operator manually rotates the secret.
@@ -3241,6 +3812,45 @@ queries:
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/KeyManagement/Tasks/managingsecrets.htm
         title: OCI - Managing Secrets
+  - uid: mondoo-oci-security-vault-secrets-rotation-enabled-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.vault.secrets.where(
+        state == "ACTIVE" &&
+        time.now - created > 365 * time.day
+      ).all(isScheduledRotationEnabled == true)
+  - uid: mondoo-oci-security-vault-secrets-rotation-enabled-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_vault_secret')
+    mql: |
+      # Terraform cannot tell whether a secret is older than 365 days, so this stricter variant requires every managed `oci_vault_secret` to declare a rotation_config block with is_scheduled_rotation_enabled = true.
+      terraform.resources('oci_vault_secret').all(
+        blocks.where(type == 'rotation_config') != empty &&
+        blocks.where(type == 'rotation_config').all(
+          arguments['is_scheduled_rotation_enabled'] == true
+        )
+      )
+  - uid: mondoo-oci-security-vault-secrets-rotation-enabled-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_vault_secret')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_vault_secret').all(
+        change.after['rotation_config'] != null && change.after['rotation_config'].length > 0 &&
+        change.after['rotation_config'].all(
+          _['is_scheduled_rotation_enabled'] == true
+        )
+      )
+  - uid: mondoo-oci-security-vault-secrets-rotation-enabled-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_vault_secret')
+    mql: |
+      terraform.state.resources.where(type == 'oci_vault_secret').all(
+        values['rotation_config'] != null && values['rotation_config'].length > 0 &&
+        values['rotation_config'].all(
+          _['is_scheduled_rotation_enabled'] == true
+        )
+      )
+  # No Terraform variants: `timeOfCurrentVersionExpiry` is runtime telemetry on the current secret version; the `oci_vault_secret` Terraform resource has no field that exposes whether the active version is past its expiry time.
   - uid: mondoo-oci-security-vault-secrets-not-expired
     title: Ensure OCI Vault active secret versions are not past their expiry time
     impact: 65
@@ -3298,7 +3908,6 @@ queries:
   - uid: mondoo-oci-security-functions-config-no-credentials
     title: Ensure OCI Functions applications do not store credentials in config
     impact: 90
-    filters: asset.platform == 'oci'
     tags:
       compliance/iso-27001-2022: iso-27001-2022-a-5-17
       compliance/nis-2: false
@@ -3307,17 +3916,23 @@ queries:
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
       compliance/nist-sp-800-171: false
       compliance/soc2-2017: soc2-control-cc6-1-9
-    mql: |
-      oci.functions.applications.all(
-        config.keys.none(
-          _.downcase == /^aws_access_key_id$|^aws_secret_access_key$|^aws_session_token$|^oci_api_key$|^oci_secret$|^api_token$|^bearer_token$|^db_password$|^private_key$|^password$|^passwd$|^secret$|^access_key$|^client_secret$|^connection_string$/
-        ) &&
-        config.values.none(
-          _.find(/(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}/) != empty ||
-          _.contains("-----BEGIN") && _.contains("PRIVATE KEY-----") ||
-          _.find(/\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b/) != empty
-        )
-      )
+    variants:
+      - uid: mondoo-oci-security-functions-config-no-credentials-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-functions-config-no-credentials-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-functions-config-no-credentials-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-functions-config-no-credentials-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check flags OCI Functions applications whose `config` environment variables look like they carry credentials. Four patterns are detected:
@@ -3371,10 +3986,71 @@ queries:
         title: OCI - Passing Custom Configuration Parameters to Functions
       - url: https://docs.oracle.com/en-us/iaas/Content/Functions/Tasks/functionsaccessingociresources.htm
         title: OCI - Accessing OCI Resources from Running Functions
+  - uid: mondoo-oci-security-functions-config-no-credentials-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.functions.applications.all(
+        config.keys.none(
+          _.downcase == /^aws_access_key_id$|^aws_secret_access_key$|^aws_session_token$|^oci_api_key$|^oci_secret$|^api_token$|^bearer_token$|^db_password$|^private_key$|^password$|^passwd$|^secret$|^access_key$|^client_secret$|^connection_string$/
+        ) &&
+        config.values.none(
+          _.find(/(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}/) != empty ||
+          _.contains("-----BEGIN") && _.contains("PRIVATE KEY-----") ||
+          _.find(/\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b/) != empty
+        )
+      )
+  - uid: mondoo-oci-security-functions-config-no-credentials-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_functions_application')
+    mql: |
+      # Two datapoints: applications with a config map must not have credential-named keys, and must not have credential-shaped values. Applications without a config map are filtered out by .where().
+      terraform.resources('oci_functions_application').where(arguments['config'] != null).all(
+        arguments['config'].keys.none(
+          _.downcase == /^aws_access_key_id$|^aws_secret_access_key$|^aws_session_token$|^oci_api_key$|^oci_secret$|^api_token$|^bearer_token$|^db_password$|^private_key$|^password$|^passwd$|^secret$|^access_key$|^client_secret$|^connection_string$/
+        )
+      )
+      terraform.resources('oci_functions_application').where(arguments['config'] != null).all(
+        arguments['config'].values.none(
+          _.find(/(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}/) != empty ||
+          _.contains("-----BEGIN") && _.contains("PRIVATE KEY-----") ||
+          _.find(/\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b/) != empty
+        )
+      )
+  - uid: mondoo-oci-security-functions-config-no-credentials-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_functions_application')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_functions_application' && change.after['config'] != null).all(
+        change.after['config'].keys.none(
+          _.downcase == /^aws_access_key_id$|^aws_secret_access_key$|^aws_session_token$|^oci_api_key$|^oci_secret$|^api_token$|^bearer_token$|^db_password$|^private_key$|^password$|^passwd$|^secret$|^access_key$|^client_secret$|^connection_string$/
+        )
+      )
+      terraform.plan.resourceChanges.where(type == 'oci_functions_application' && change.after['config'] != null).all(
+        change.after['config'].values.none(
+          _.find(/(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}/) != empty ||
+          _.contains("-----BEGIN") && _.contains("PRIVATE KEY-----") ||
+          _.find(/\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b/) != empty
+        )
+      )
+  - uid: mondoo-oci-security-functions-config-no-credentials-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_functions_application')
+    mql: |
+      terraform.state.resources.where(type == 'oci_functions_application' && values['config'] != null).all(
+        values['config'].keys.none(
+          _.downcase == /^aws_access_key_id$|^aws_secret_access_key$|^aws_session_token$|^oci_api_key$|^oci_secret$|^api_token$|^bearer_token$|^db_password$|^private_key$|^password$|^passwd$|^secret$|^access_key$|^client_secret$|^connection_string$/
+        )
+      )
+      terraform.state.resources.where(type == 'oci_functions_application' && values['config'] != null).all(
+        values['config'].values.none(
+          _.find(/(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}/) != empty ||
+          _.contains("-----BEGIN") && _.contains("PRIVATE KEY-----") ||
+          _.find(/\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b/) != empty
+        )
+      )
   - uid: mondoo-oci-security-container-instances-approved-registry
     title: Ensure container instances pull images from the tenancy's OCIR registry
     impact: 70
-    filters: asset.platform == 'oci'
     tags:
       compliance/iso-27001-2022: iso-27001-2022-a-5-21
       compliance/nis-2: nis-2-21-2-d
@@ -3383,10 +4059,23 @@ queries:
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sr-3
       compliance/nist-sp-800-171: false
       compliance/soc2-2017: soc2-control-cc9-2-2
-    mql: |
-      oci.containerInstances.instances.all(
-        containers.all(imageUrl == /^[a-z0-9-]+\.ocir\.io\//)
-      )
+    variants:
+      - uid: mondoo-oci-security-container-instances-approved-registry-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-container-instances-approved-registry-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-container-instances-approved-registry-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-container-instances-approved-registry-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that every container in every OCI Container Instance pulls its image from an OCIR (Oracle Cloud Infrastructure Registry) host. An `imageUrl` not pointing at `*.ocir.io` means the container is pulling from Docker Hub, GitHub Container Registry, or another external registry that the tenancy does not control — creating a direct supply-chain path into production.
@@ -3432,10 +4121,46 @@ queries:
         title: OCI Container Instances Overview
       - url: https://docs.oracle.com/en-us/iaas/Content/Registry/Concepts/registryoverview.htm
         title: OCI Registry (OCIR)
+  - uid: mondoo-oci-security-container-instances-approved-registry-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.containerInstances.instances.all(
+        containers.all(imageUrl == /^[a-z0-9-]+\.ocir\.io\//)
+      )
+  - uid: mondoo-oci-security-container-instances-approved-registry-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_container_instances_container_instance')
+    mql: |
+      # Every nested `containers` block must have an image_url pointing at an OCIR registry. Without the existence guard, an instance with no containers block would silently pass.
+      terraform.resources('oci_container_instances_container_instance').all(
+        blocks.where(type == 'containers') != empty &&
+        blocks.where(type == 'containers').all(
+          arguments['image_url'] == /^[a-z0-9-]+\.ocir\.io\//
+        )
+      )
+  - uid: mondoo-oci-security-container-instances-approved-registry-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_container_instances_container_instance')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_container_instances_container_instance').all(
+        change.after['containers'] != null && change.after['containers'].length > 0 &&
+        change.after['containers'].all(
+          _['image_url'] == /^[a-z0-9-]+\.ocir\.io\//
+        )
+      )
+  - uid: mondoo-oci-security-container-instances-approved-registry-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_container_instances_container_instance')
+    mql: |
+      terraform.state.resources.where(type == 'oci_container_instances_container_instance').all(
+        values['containers'] != null && values['containers'].length > 0 &&
+        values['containers'].all(
+          _['image_url'] == /^[a-z0-9-]+\.ocir\.io\//
+        )
+      )
   - uid: mondoo-oci-security-object-storage-retention-rules-locked
     title: Ensure object storage bucket retention rules are locked
     impact: 80
-    filters: asset.platform == "oci-objectstorage-bucket"
     tags:
       compliance/iso-27001-2022: iso-27001-2022-a-8-13
       compliance/nis-2: nis-2-21-2-c
@@ -3444,10 +4169,23 @@ queries:
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cp-9
       compliance/nist-sp-800-171: nist-sp-800-171--3-8-9
       compliance/soc2-2017: false
-    mql: |
-      oci.objectStorage.bucket.retentionRules.all(
-        timeRuleLocked != null && timeRuleLocked <= time.now
-      )
+    variants:
+      - uid: mondoo-oci-security-object-storage-retention-rules-locked-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-object-storage-retention-rules-locked-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-object-storage-retention-rules-locked-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-object-storage-retention-rules-locked-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that every retention rule on every Object Storage bucket has passed its lock time (`timeRuleLocked != null && <= now`). An unlocked retention rule can be modified or deleted by anyone with bucket-admin permissions, which means the "immutable" retention the bucket advertises is actually soft — useless against a ransomware operator or malicious insider who already has admin on the bucket.
@@ -3491,10 +4229,45 @@ queries:
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Object/Tasks/usingretentionrules.htm
         title: OCI - Using Retention Rules
+  - uid: mondoo-oci-security-object-storage-retention-rules-locked-oci
+    filters: asset.platform == "oci-objectstorage-bucket"
+    mql: |
+      oci.objectStorage.bucket.retentionRules.all(
+        timeRuleLocked != null && timeRuleLocked <= time.now
+      )
+  - uid: mondoo-oci-security-object-storage-retention-rules-locked-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_objectstorage_bucket')
+    mql: |
+      # Every retention_rules block on the bucket must declare a non-null time_rule_locked. Terraform cannot evaluate "lock time has passed" at plan time, so this stricter variant requires the lock time to be set at all.
+      terraform.resources('oci_objectstorage_bucket').all(
+        blocks.where(type == 'retention_rules').all(
+          arguments['time_rule_locked'] != null
+        )
+      )
+  - uid: mondoo-oci-security-object-storage-retention-rules-locked-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_objectstorage_bucket')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_objectstorage_bucket').all(
+        change.after['retention_rules'] == null ||
+        change.after['retention_rules'].all(
+          _['time_rule_locked'] != null
+        )
+      )
+  - uid: mondoo-oci-security-object-storage-retention-rules-locked-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_objectstorage_bucket')
+    mql: |
+      terraform.state.resources.where(type == 'oci_objectstorage_bucket').all(
+        values['retention_rules'] == null ||
+        values['retention_rules'].all(
+          _['time_rule_locked'] != null
+        )
+      )
   - uid: mondoo-oci-security-object-storage-retention-duration-meets-minimum
     title: Ensure object storage retention rules are at least 30 days
     impact: 65
-    filters: asset.platform == "oci-objectstorage-bucket"
     tags:
       compliance/iso-27001-2022: iso-27001-2022-a-8-13
       compliance/nis-2: nis-2-21-2-c
@@ -3503,11 +4276,23 @@ queries:
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cp-9
       compliance/nist-sp-800-171: nist-sp-800-171--3-8-9
       compliance/soc2-2017: false
-    mql: |
-      oci.objectStorage.bucket.retentionRules.all(
-        durationTimeUnit == "DAYS" && durationAmount >= 30 ||
-        durationTimeUnit == "YEARS" && durationAmount >= 1
-      )
+    variants:
+      - uid: mondoo-oci-security-object-storage-retention-duration-meets-minimum-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-object-storage-retention-duration-meets-minimum-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-object-storage-retention-duration-meets-minimum-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-object-storage-retention-duration-meets-minimum-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that every retention rule on every Object Storage bucket has a duration of at least 30 days (or 1 year for year-denominated rules). A retention rule with a sub-30-day duration cannot meaningfully serve as a ransomware-recovery control: most ransomware dwell times exceed 14 days, and many attackers specifically wait for short retention windows to expire before executing destructive actions.
@@ -3551,10 +4336,58 @@ queries:
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Object/Tasks/usingretentionrules.htm
         title: OCI - Using Retention Rules
+  - uid: mondoo-oci-security-object-storage-retention-duration-meets-minimum-oci
+    filters: asset.platform == "oci-objectstorage-bucket"
+    mql: |
+      oci.objectStorage.bucket.retentionRules.all(
+        durationTimeUnit == "DAYS" && durationAmount >= 30 ||
+        durationTimeUnit == "YEARS" && durationAmount >= 1
+      )
+  - uid: mondoo-oci-security-object-storage-retention-duration-meets-minimum-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_objectstorage_bucket')
+    mql: |
+      # Each retention_rules block must declare a duration block whose time_unit/time_amount meet the minimum (>=30 DAYS or >=1 YEARS).
+      terraform.resources('oci_objectstorage_bucket').all(
+        blocks.where(type == 'retention_rules').all(
+          blocks.where(type == 'duration') != empty &&
+          blocks.where(type == 'duration').all(
+            arguments['time_unit'] == 'DAYS' && arguments['time_amount'] >= 30 ||
+            arguments['time_unit'] == 'YEARS' && arguments['time_amount'] >= 1
+          )
+        )
+      )
+  - uid: mondoo-oci-security-object-storage-retention-duration-meets-minimum-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_objectstorage_bucket')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_objectstorage_bucket').all(
+        change.after['retention_rules'] == null ||
+        change.after['retention_rules'].all(
+          _['duration'] != null && _['duration'].length > 0 &&
+          _['duration'].all(
+            _['time_unit'] == 'DAYS' && _['time_amount'] >= 30 ||
+            _['time_unit'] == 'YEARS' && _['time_amount'] >= 1
+          )
+        )
+      )
+  - uid: mondoo-oci-security-object-storage-retention-duration-meets-minimum-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_objectstorage_bucket')
+    mql: |
+      terraform.state.resources.where(type == 'oci_objectstorage_bucket').all(
+        values['retention_rules'] == null ||
+        values['retention_rules'].all(
+          _['duration'] != null && _['duration'].length > 0 &&
+          _['duration'].all(
+            _['time_unit'] == 'DAYS' && _['time_amount'] >= 30 ||
+            _['time_unit'] == 'YEARS' && _['time_amount'] >= 1
+          )
+        )
+      )
   - uid: mondoo-oci-security-iam-no-any-user-policies
     title: Ensure no IAM policies grant access to any-user
     impact: 95
-    filters: asset.platform == "oci-identity-policy"
     tags:
       compliance/iso-27001-2022: iso-27001-2022-a-8-2
       compliance/nis-2: nis-2-21-2-i
@@ -3563,8 +4396,23 @@ queries:
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
       compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
       compliance/soc2-2017: soc2-control-cc6-3-1
-    mql: |
-      oci.identity.policy.statements.none(_ == /\ballow\s+(dynamic-group\s+|service\s+)?any-user\b/i)
+    variants:
+      - uid: mondoo-oci-security-iam-no-any-user-policies-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-iam-no-any-user-policies-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-iam-no-any-user-policies-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-iam-no-any-user-policies-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check flags OCI IAM policies whose statements grant permissions to `any-user` — OCI's wildcard principal that includes every identity in the tenancy plus unauthenticated callers when combined with certain service grants. An `Allow any-user …` statement bypasses group-based access control entirely: anyone who reaches the API endpoint (including unauthenticated instance principals that Oracle rotates through `any-user`) is covered by the grant.
@@ -3609,10 +4457,31 @@ queries:
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Identity/Concepts/policysyntax.htm
         title: OCI - Policy Syntax
+  - uid: mondoo-oci-security-iam-no-any-user-policies-oci
+    filters: asset.platform == "oci-identity-policy"
+    mql: |
+      oci.identity.policy.statements.none(_ == /\ballow\s+(dynamic-group\s+|service\s+)?any-user\b/i)
+  - uid: mondoo-oci-security-iam-no-any-user-policies-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "oci_identity_policy")
+    mql: |
+      terraform.resources.where(nameLabel == "oci_identity_policy").none(
+        arguments.statements.any(_ == /\ballow\s+(dynamic-group\s+|service\s+)?any-user\b/i)
+      )
+  - uid: mondoo-oci-security-iam-no-any-user-policies-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "oci_identity_policy")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "oci_identity_policy").none(
+        change.after.statements.any(_ == /\ballow\s+(dynamic-group\s+|service\s+)?any-user\b/i)
+      )
+  - uid: mondoo-oci-security-iam-no-any-user-policies-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "oci_identity_policy")
+    mql: |
+      terraform.state.resources.where(type == "oci_identity_policy").none(
+        values.statements.any(_ == /\ballow\s+(dynamic-group\s+|service\s+)?any-user\b/i)
+      )
   - uid: mondoo-oci-security-iam-no-cross-tenant-policies
     title: Ensure no IAM policies grant cross-tenancy access via Endorse or Admit
     impact: 90
-    filters: asset.platform == "oci-identity-policy"
     tags:
       compliance/iso-27001-2022: iso-27001-2022-a-5-19
       compliance/nis-2: nis-2-21-2-i
@@ -3621,8 +4490,23 @@ queries:
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
       compliance/nist-sp-800-171: nist-sp-800-171--3-1-3
       compliance/soc2-2017: soc2-control-cc9-2-1
-    mql: |
-      oci.identity.policy.statements.none(_ == /^\s*(endorse|admit)\s+/i)
+    variants:
+      - uid: mondoo-oci-security-iam-no-cross-tenant-policies-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-iam-no-cross-tenant-policies-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-iam-no-cross-tenant-policies-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-iam-no-cross-tenant-policies-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check flags OCI IAM policies that use `Endorse` or `Admit` statements, which establish cross-tenancy trust relationships. `Endorse` statements grant a group in this tenancy permissions to act on resources in a *remote* tenancy; `Admit` statements accept a remote tenancy's groups into this tenancy. Both are legitimate but high-risk constructs — they extend the tenancy's trust boundary to an external party and are a common source of silent data-sharing with vendor or partner tenancies.
@@ -3670,10 +4554,31 @@ queries:
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Identity/Concepts/policiesaccessingtenancies.htm
         title: OCI - Accessing Resources Across Tenancies
+  - uid: mondoo-oci-security-iam-no-cross-tenant-policies-oci
+    filters: asset.platform == "oci-identity-policy"
+    mql: |
+      oci.identity.policy.statements.none(_ == /^\s*(endorse|admit)\s+/i)
+  - uid: mondoo-oci-security-iam-no-cross-tenant-policies-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "oci_identity_policy")
+    mql: |
+      terraform.resources.where(nameLabel == "oci_identity_policy").none(
+        arguments.statements.any(_ == /^\s*(endorse|admit)\s+/i)
+      )
+  - uid: mondoo-oci-security-iam-no-cross-tenant-policies-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "oci_identity_policy")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "oci_identity_policy").none(
+        change.after.statements.any(_ == /^\s*(endorse|admit)\s+/i)
+      )
+  - uid: mondoo-oci-security-iam-no-cross-tenant-policies-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "oci_identity_policy")
+    mql: |
+      terraform.state.resources.where(type == "oci_identity_policy").none(
+        values.statements.any(_ == /^\s*(endorse|admit)\s+/i)
+      )
   - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-db-ports
     title: Ensure VCN security lists block database port ingress from 0.0.0.0/0
     impact: 90
-    filters: asset.platform == "oci-network-securitylist"
     tags:
       compliance/iso-27001-2022: iso-27001-2022-a-8-20
       compliance/nis-2: nis-2-21-2-e
@@ -3682,19 +4587,23 @@ queries:
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
       compliance/soc2-2017: soc2-control-cc6-6-4
-    mql: |
-      oci.network.securityList.ingressSecurityRules.where(
-        _['source'] == "0.0.0.0/0" && _['protocol'] == "6" && _['tcpOptions'] != empty
-      ).none(
-        _['tcpOptions']['destinationPortRange']['min'] <= 1521 && _['tcpOptions']['destinationPortRange']['max'] >= 1521 ||
-        _['tcpOptions']['destinationPortRange']['min'] <= 1522 && _['tcpOptions']['destinationPortRange']['max'] >= 1522 ||
-        _['tcpOptions']['destinationPortRange']['min'] <= 1433 && _['tcpOptions']['destinationPortRange']['max'] >= 1433 ||
-        _['tcpOptions']['destinationPortRange']['min'] <= 3306 && _['tcpOptions']['destinationPortRange']['max'] >= 3306 ||
-        _['tcpOptions']['destinationPortRange']['min'] <= 5432 && _['tcpOptions']['destinationPortRange']['max'] >= 5432 ||
-        _['tcpOptions']['destinationPortRange']['min'] <= 6379 && _['tcpOptions']['destinationPortRange']['max'] >= 6379 ||
-        _['tcpOptions']['destinationPortRange']['min'] <= 9200 && _['tcpOptions']['destinationPortRange']['max'] >= 9200 ||
-        _['tcpOptions']['destinationPortRange']['min'] <= 27017 && _['tcpOptions']['destinationPortRange']['max'] >= 27017
-      )
+    variants:
+      - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-db-ports-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-db-ports-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-db-ports-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-db-ports-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check flags VCN security-list ingress rules that permit TCP traffic from the public internet (`0.0.0.0/0`) to common database listener ports: Oracle (1521, 1522), SQL Server (1433), MySQL (3306), PostgreSQL (5432), Redis (6379), Elasticsearch (9200), or MongoDB (27017). Databases exposed to the internet are routinely scanned, brute-forced, and in many cases ransom-encrypted within hours of exposure.
@@ -3733,10 +4642,79 @@ queries:
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Network/Concepts/securitylists.htm
         title: OCI - Security Lists
+  - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-db-ports-oci
+    filters: asset.platform == "oci-network-securitylist"
+    mql: |
+      oci.network.securityList.ingressSecurityRules.where(
+        _['source'] == "0.0.0.0/0" && _['protocol'] == "6" && _['tcpOptions'] != empty
+      ).none(
+        _['tcpOptions']['destinationPortRange']['min'] <= 1521 && _['tcpOptions']['destinationPortRange']['max'] >= 1521 ||
+        _['tcpOptions']['destinationPortRange']['min'] <= 1522 && _['tcpOptions']['destinationPortRange']['max'] >= 1522 ||
+        _['tcpOptions']['destinationPortRange']['min'] <= 1433 && _['tcpOptions']['destinationPortRange']['max'] >= 1433 ||
+        _['tcpOptions']['destinationPortRange']['min'] <= 3306 && _['tcpOptions']['destinationPortRange']['max'] >= 3306 ||
+        _['tcpOptions']['destinationPortRange']['min'] <= 5432 && _['tcpOptions']['destinationPortRange']['max'] >= 5432 ||
+        _['tcpOptions']['destinationPortRange']['min'] <= 6379 && _['tcpOptions']['destinationPortRange']['max'] >= 6379 ||
+        _['tcpOptions']['destinationPortRange']['min'] <= 9200 && _['tcpOptions']['destinationPortRange']['max'] >= 9200 ||
+        _['tcpOptions']['destinationPortRange']['min'] <= 27017 && _['tcpOptions']['destinationPortRange']['max'] >= 27017
+      )
+  - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-db-ports-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "oci_core_security_list")
+    mql: |
+      # A 0.0.0.0/0 TCP ingress rule with no tcp_options block opens every TCP port (including the DB ports below), so require the block to exist before scoping the port range.
+      terraform.resources.where(nameLabel == "oci_core_security_list").all(
+        blocks.where(type == "ingress_security_rules" && arguments.source == "0.0.0.0/0" && arguments.protocol == "6").all(
+          blocks.where(type == "tcp_options") != empty &&
+          blocks.where(type == "tcp_options").all(
+            blocks.where(type == "destination_port_range").none(
+              arguments['min'] <= 1521 && arguments['max'] >= 1521 ||
+              arguments['min'] <= 1522 && arguments['max'] >= 1522 ||
+              arguments['min'] <= 1433 && arguments['max'] >= 1433 ||
+              arguments['min'] <= 3306 && arguments['max'] >= 3306 ||
+              arguments['min'] <= 5432 && arguments['max'] >= 5432 ||
+              arguments['min'] <= 6379 && arguments['max'] >= 6379 ||
+              arguments['min'] <= 9200 && arguments['max'] >= 9200 ||
+              arguments['min'] <= 27017 && arguments['max'] >= 27017
+            )
+          )
+        )
+      )
+  - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-db-ports-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "oci_core_security_list")
+    mql: |
+      # An ingress rule with source 0.0.0.0/0 + protocol "6" (TCP) and no tcp_options opens every TCP port, so flag missing tcp_options as a failure in addition to overlapping DB port ranges.
+      terraform.plan.resourceChanges.where(type == "oci_core_security_list").all(
+        change.after.ingress_security_rules.where(_['source'] == "0.0.0.0/0" && _['protocol'] == "6").none(
+          _['tcp_options'] == empty ||
+          _['tcp_options']['destination_port_range']['min'] <= 1521 && _['tcp_options']['destination_port_range']['max'] >= 1521 ||
+          _['tcp_options']['destination_port_range']['min'] <= 1522 && _['tcp_options']['destination_port_range']['max'] >= 1522 ||
+          _['tcp_options']['destination_port_range']['min'] <= 1433 && _['tcp_options']['destination_port_range']['max'] >= 1433 ||
+          _['tcp_options']['destination_port_range']['min'] <= 3306 && _['tcp_options']['destination_port_range']['max'] >= 3306 ||
+          _['tcp_options']['destination_port_range']['min'] <= 5432 && _['tcp_options']['destination_port_range']['max'] >= 5432 ||
+          _['tcp_options']['destination_port_range']['min'] <= 6379 && _['tcp_options']['destination_port_range']['max'] >= 6379 ||
+          _['tcp_options']['destination_port_range']['min'] <= 9200 && _['tcp_options']['destination_port_range']['max'] >= 9200 ||
+          _['tcp_options']['destination_port_range']['min'] <= 27017 && _['tcp_options']['destination_port_range']['max'] >= 27017
+        )
+      )
+  - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-db-ports-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "oci_core_security_list")
+    mql: |
+      # An ingress rule with source 0.0.0.0/0 + protocol "6" (TCP) and no tcp_options opens every TCP port, so flag missing tcp_options as a failure in addition to overlapping DB port ranges.
+      terraform.state.resources.where(type == "oci_core_security_list").all(
+        values.ingress_security_rules.where(_['source'] == "0.0.0.0/0" && _['protocol'] == "6").none(
+          _['tcp_options'] == empty ||
+          _['tcp_options']['destination_port_range']['min'] <= 1521 && _['tcp_options']['destination_port_range']['max'] >= 1521 ||
+          _['tcp_options']['destination_port_range']['min'] <= 1522 && _['tcp_options']['destination_port_range']['max'] >= 1522 ||
+          _['tcp_options']['destination_port_range']['min'] <= 1433 && _['tcp_options']['destination_port_range']['max'] >= 1433 ||
+          _['tcp_options']['destination_port_range']['min'] <= 3306 && _['tcp_options']['destination_port_range']['max'] >= 3306 ||
+          _['tcp_options']['destination_port_range']['min'] <= 5432 && _['tcp_options']['destination_port_range']['max'] >= 5432 ||
+          _['tcp_options']['destination_port_range']['min'] <= 6379 && _['tcp_options']['destination_port_range']['max'] >= 6379 ||
+          _['tcp_options']['destination_port_range']['min'] <= 9200 && _['tcp_options']['destination_port_range']['max'] >= 9200 ||
+          _['tcp_options']['destination_port_range']['min'] <= 27017 && _['tcp_options']['destination_port_range']['max'] >= 27017
+        )
+      )
   - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-legacy-admin-ports
     title: Ensure VCN security lists block legacy admin port ingress from 0.0.0.0/0
     impact: 85
-    filters: asset.platform == "oci-network-securitylist"
     tags:
       compliance/iso-27001-2022: iso-27001-2022-a-8-20
       compliance/nis-2: nis-2-21-2-e
@@ -3745,18 +4723,23 @@ queries:
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
       compliance/soc2-2017: soc2-control-cc6-6-4
-    mql: |
-      oci.network.securityList.ingressSecurityRules.where(
-        _['source'] == "0.0.0.0/0" && _['protocol'] == "6" && _['tcpOptions'] != empty
-      ).none(
-        _['tcpOptions']['destinationPortRange']['min'] <= 21 && _['tcpOptions']['destinationPortRange']['max'] >= 21 ||
-        _['tcpOptions']['destinationPortRange']['min'] <= 23 && _['tcpOptions']['destinationPortRange']['max'] >= 23 ||
-        _['tcpOptions']['destinationPortRange']['min'] <= 135 && _['tcpOptions']['destinationPortRange']['max'] >= 135 ||
-        _['tcpOptions']['destinationPortRange']['min'] <= 137 && _['tcpOptions']['destinationPortRange']['max'] >= 137 ||
-        _['tcpOptions']['destinationPortRange']['min'] <= 138 && _['tcpOptions']['destinationPortRange']['max'] >= 138 ||
-        _['tcpOptions']['destinationPortRange']['min'] <= 139 && _['tcpOptions']['destinationPortRange']['max'] >= 139 ||
-        _['tcpOptions']['destinationPortRange']['min'] <= 445 && _['tcpOptions']['destinationPortRange']['max'] >= 445
-      )
+    variants:
+      - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-legacy-admin-ports-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-legacy-admin-ports-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-legacy-admin-ports-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-legacy-admin-ports-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check flags VCN security-list ingress rules that permit TCP traffic from the public internet (`0.0.0.0/0`) to legacy admin / file-sharing ports: FTP (21), Telnet (23), NetBIOS (135, 137-139), and SMB (445). These protocols predate modern authentication and encryption expectations and are not safe to expose to untrusted networks under any circumstance.
@@ -3797,10 +4780,75 @@ queries:
         title: OCI - Security Lists
       - url: https://msrc.microsoft.com/update-guide/vulnerability/CVE-2017-0144
         title: Microsoft - MS17-010 (EternalBlue / WannaCry)
+  - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-legacy-admin-ports-oci
+    filters: asset.platform == "oci-network-securitylist"
+    mql: |
+      oci.network.securityList.ingressSecurityRules.where(
+        _['source'] == "0.0.0.0/0" && _['protocol'] == "6" && _['tcpOptions'] != empty
+      ).none(
+        _['tcpOptions']['destinationPortRange']['min'] <= 21 && _['tcpOptions']['destinationPortRange']['max'] >= 21 ||
+        _['tcpOptions']['destinationPortRange']['min'] <= 23 && _['tcpOptions']['destinationPortRange']['max'] >= 23 ||
+        _['tcpOptions']['destinationPortRange']['min'] <= 135 && _['tcpOptions']['destinationPortRange']['max'] >= 135 ||
+        _['tcpOptions']['destinationPortRange']['min'] <= 137 && _['tcpOptions']['destinationPortRange']['max'] >= 137 ||
+        _['tcpOptions']['destinationPortRange']['min'] <= 138 && _['tcpOptions']['destinationPortRange']['max'] >= 138 ||
+        _['tcpOptions']['destinationPortRange']['min'] <= 139 && _['tcpOptions']['destinationPortRange']['max'] >= 139 ||
+        _['tcpOptions']['destinationPortRange']['min'] <= 445 && _['tcpOptions']['destinationPortRange']['max'] >= 445
+      )
+  - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-legacy-admin-ports-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "oci_core_security_list")
+    mql: |
+      # A 0.0.0.0/0 TCP ingress rule with no tcp_options block opens every TCP port (including the legacy admin ports below), so require the block to exist before scoping the port range.
+      terraform.resources.where(nameLabel == "oci_core_security_list").all(
+        blocks.where(type == "ingress_security_rules" && arguments.source == "0.0.0.0/0" && arguments.protocol == "6").all(
+          blocks.where(type == "tcp_options") != empty &&
+          blocks.where(type == "tcp_options").all(
+            blocks.where(type == "destination_port_range").none(
+              arguments['min'] <= 21 && arguments['max'] >= 21 ||
+              arguments['min'] <= 23 && arguments['max'] >= 23 ||
+              arguments['min'] <= 135 && arguments['max'] >= 135 ||
+              arguments['min'] <= 137 && arguments['max'] >= 137 ||
+              arguments['min'] <= 138 && arguments['max'] >= 138 ||
+              arguments['min'] <= 139 && arguments['max'] >= 139 ||
+              arguments['min'] <= 445 && arguments['max'] >= 445
+            )
+          )
+        )
+      )
+  - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-legacy-admin-ports-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "oci_core_security_list")
+    mql: |
+      # An ingress rule with source 0.0.0.0/0 + protocol "6" (TCP) and no tcp_options opens every TCP port, so flag missing tcp_options as a failure in addition to overlapping legacy admin port ranges.
+      terraform.plan.resourceChanges.where(type == "oci_core_security_list").all(
+        change.after.ingress_security_rules.where(_['source'] == "0.0.0.0/0" && _['protocol'] == "6").none(
+          _['tcp_options'] == empty ||
+          _['tcp_options']['destination_port_range']['min'] <= 21 && _['tcp_options']['destination_port_range']['max'] >= 21 ||
+          _['tcp_options']['destination_port_range']['min'] <= 23 && _['tcp_options']['destination_port_range']['max'] >= 23 ||
+          _['tcp_options']['destination_port_range']['min'] <= 135 && _['tcp_options']['destination_port_range']['max'] >= 135 ||
+          _['tcp_options']['destination_port_range']['min'] <= 137 && _['tcp_options']['destination_port_range']['max'] >= 137 ||
+          _['tcp_options']['destination_port_range']['min'] <= 138 && _['tcp_options']['destination_port_range']['max'] >= 138 ||
+          _['tcp_options']['destination_port_range']['min'] <= 139 && _['tcp_options']['destination_port_range']['max'] >= 139 ||
+          _['tcp_options']['destination_port_range']['min'] <= 445 && _['tcp_options']['destination_port_range']['max'] >= 445
+        )
+      )
+  - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-legacy-admin-ports-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "oci_core_security_list")
+    mql: |
+      # An ingress rule with source 0.0.0.0/0 + protocol "6" (TCP) and no tcp_options opens every TCP port, so flag missing tcp_options as a failure in addition to overlapping legacy admin port ranges.
+      terraform.state.resources.where(type == "oci_core_security_list").all(
+        values.ingress_security_rules.where(_['source'] == "0.0.0.0/0" && _['protocol'] == "6").none(
+          _['tcp_options'] == empty ||
+          _['tcp_options']['destination_port_range']['min'] <= 21 && _['tcp_options']['destination_port_range']['max'] >= 21 ||
+          _['tcp_options']['destination_port_range']['min'] <= 23 && _['tcp_options']['destination_port_range']['max'] >= 23 ||
+          _['tcp_options']['destination_port_range']['min'] <= 135 && _['tcp_options']['destination_port_range']['max'] >= 135 ||
+          _['tcp_options']['destination_port_range']['min'] <= 137 && _['tcp_options']['destination_port_range']['max'] >= 137 ||
+          _['tcp_options']['destination_port_range']['min'] <= 138 && _['tcp_options']['destination_port_range']['max'] >= 138 ||
+          _['tcp_options']['destination_port_range']['min'] <= 139 && _['tcp_options']['destination_port_range']['max'] >= 139 ||
+          _['tcp_options']['destination_port_range']['min'] <= 445 && _['tcp_options']['destination_port_range']['max'] >= 445
+        )
+      )
   - uid: mondoo-oci-security-vcn-no-unrestricted-icmp-ingress
     title: Ensure VCN security lists block unrestricted ICMP ingress from 0.0.0.0/0
     impact: 60
-    filters: asset.platform == "oci-network-securitylist"
     tags:
       compliance/iso-27001-2022: iso-27001-2022-a-8-20
       compliance/nis-2: nis-2-21-2-e
@@ -3809,12 +4857,23 @@ queries:
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
       compliance/soc2-2017: soc2-control-cc6-6-4
-    mql: |
-      oci.network.securityList.ingressSecurityRules.where(
-        _['source'] == "0.0.0.0/0" && _['icmpOptions'] == empty
-      ).none(
-        _['protocol'] == "1" || _['protocol'] == "58" || _['protocol'] == "all"
-      )
+    variants:
+      - uid: mondoo-oci-security-vcn-no-unrestricted-icmp-ingress-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-vcn-no-unrestricted-icmp-ingress-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-vcn-no-unrestricted-icmp-ingress-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-vcn-no-unrestricted-icmp-ingress-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check flags VCN security-list ingress rules that permit unrestricted ICMP (IPv4 protocol 1 or IPv6 protocol 58) from the public internet without an `icmpOptions` type/code filter. Permitting all ICMP types from anywhere enables host discovery and OS fingerprinting, which accelerates attacker reconnaissance even when no services are yet exposed.
@@ -3854,10 +4913,43 @@ queries:
         title: OCI - Security Lists
       - url: https://datatracker.ietf.org/doc/html/rfc792
         title: RFC 792 - Internet Control Message Protocol
+  - uid: mondoo-oci-security-vcn-no-unrestricted-icmp-ingress-oci
+    filters: asset.platform == "oci-network-securitylist"
+    mql: |
+      oci.network.securityList.ingressSecurityRules.where(
+        _['source'] == "0.0.0.0/0" && _['icmpOptions'] == empty
+      ).none(
+        _['protocol'] == "1" || _['protocol'] == "58" || _['protocol'] == "all"
+      )
+  - uid: mondoo-oci-security-vcn-no-unrestricted-icmp-ingress-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "oci_core_security_list")
+    mql: |
+      # An ingress rule from 0.0.0.0/0 that uses ICMP (protocol 1 or 58) or all-protocols must declare an icmp_options block scoping the type/code.
+      terraform.resources.where(nameLabel == "oci_core_security_list").all(
+        blocks.where(type == "ingress_security_rules" && arguments.source == "0.0.0.0/0").all(
+          arguments.protocol != "1" && arguments.protocol != "58" && arguments.protocol != "all" ||
+          blocks.where(type == "icmp_options") != empty
+        )
+      )
+  - uid: mondoo-oci-security-vcn-no-unrestricted-icmp-ingress-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "oci_core_security_list")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "oci_core_security_list").all(
+        change.after.ingress_security_rules.where(_['source'] == "0.0.0.0/0" && _['icmp_options'] == empty).none(
+          _['protocol'] == "1" || _['protocol'] == "58" || _['protocol'] == "all"
+        )
+      )
+  - uid: mondoo-oci-security-vcn-no-unrestricted-icmp-ingress-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "oci_core_security_list")
+    mql: |
+      terraform.state.resources.where(type == "oci_core_security_list").all(
+        values.ingress_security_rules.where(_['source'] == "0.0.0.0/0" && _['icmp_options'] == empty).none(
+          _['protocol'] == "1" || _['protocol'] == "58" || _['protocol'] == "all"
+        )
+      )
   - uid: mondoo-oci-security-vcn-no-unrestricted-ipv6-ingress
     title: Ensure VCN security lists block unrestricted IPv6 ingress from ::/0
     impact: 90
-    filters: asset.platform == "oci-network-securitylist"
     tags:
       compliance/iso-27001-2022: iso-27001-2022-a-8-20
       compliance/nis-2: nis-2-21-2-e
@@ -3866,14 +4958,23 @@ queries:
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
       compliance/soc2-2017: soc2-control-cc6-6-4
-    mql: |
-      oci.network.securityList.ingressSecurityRules.where(_['source'] == "::/0").none(
-        _['protocol'] == "all" ||
-        _['protocol'] == "6" && _['tcpOptions'] == empty ||
-        _['protocol'] == "6" && _['tcpOptions']['destinationPortRange']['min'] <= 22 && _['tcpOptions']['destinationPortRange']['max'] >= 22 ||
-        _['protocol'] == "6" && _['tcpOptions']['destinationPortRange']['min'] <= 3389 && _['tcpOptions']['destinationPortRange']['max'] >= 3389 ||
-        _['protocol'] == "17" && _['udpOptions'] == empty
-      )
+    variants:
+      - uid: mondoo-oci-security-vcn-no-unrestricted-ipv6-ingress-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-vcn-no-unrestricted-ipv6-ingress-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-vcn-no-unrestricted-ipv6-ingress-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-vcn-no-unrestricted-ipv6-ingress-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check mirrors the existing IPv4 `0.0.0.0/0` ingress checks for the IPv6 default route `::/0`. It flags unrestricted all-protocol ingress, unrestricted TCP ingress (including SSH port 22 and RDP port 3389), and unrestricted UDP ingress from IPv6 anywhere. Cloud workloads are frequently configured with IPv4 hardening but forget IPv6, leaving a parallel attack surface that bypasses the IPv4 controls entirely.
@@ -3914,3 +5015,60 @@ queries:
         title: OCI - Security Lists
       - url: https://docs.oracle.com/en-us/iaas/Content/Network/Concepts/ipv6.htm
         title: OCI - IPv6 Addressing
+  - uid: mondoo-oci-security-vcn-no-unrestricted-ipv6-ingress-oci
+    filters: asset.platform == "oci-network-securitylist"
+    mql: |
+      oci.network.securityList.ingressSecurityRules.where(_['source'] == "::/0").none(
+        _['protocol'] == "all" ||
+        _['protocol'] == "6" && _['tcpOptions'] == empty ||
+        _['protocol'] == "6" && _['tcpOptions']['destinationPortRange']['min'] <= 22 && _['tcpOptions']['destinationPortRange']['max'] >= 22 ||
+        _['protocol'] == "6" && _['tcpOptions']['destinationPortRange']['min'] <= 3389 && _['tcpOptions']['destinationPortRange']['max'] >= 3389 ||
+        _['protocol'] == "17" && _['udpOptions'] == empty
+      )
+  - uid: mondoo-oci-security-vcn-no-unrestricted-ipv6-ingress-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "oci_core_security_list")
+    mql: |
+      # Three separate datapoints, one per failure mode: no all-protocol IPv6 rule, all-UDP IPv6 rules must scope udp_options, and TCP IPv6 rules must scope tcp_options away from ports 22/3389.
+      terraform.resources.where(nameLabel == "oci_core_security_list").all(
+        blocks.where(type == "ingress_security_rules" && arguments.source == "::/0").none(arguments.protocol == "all")
+      )
+      terraform.resources.where(nameLabel == "oci_core_security_list").all(
+        blocks.where(type == "ingress_security_rules" && arguments.source == "::/0" && arguments.protocol == "17").all(
+          blocks.where(type == "udp_options") != empty
+        )
+      )
+      terraform.resources.where(nameLabel == "oci_core_security_list").all(
+        blocks.where(type == "ingress_security_rules" && arguments.source == "::/0" && arguments.protocol == "6").all(
+          blocks.where(type == "tcp_options") != empty &&
+          blocks.where(type == "tcp_options").all(
+            blocks.where(type == "destination_port_range").none(
+              arguments['min'] <= 22 && arguments['max'] >= 22 ||
+              arguments['min'] <= 3389 && arguments['max'] >= 3389
+            )
+          )
+        )
+      )
+  - uid: mondoo-oci-security-vcn-no-unrestricted-ipv6-ingress-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "oci_core_security_list")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "oci_core_security_list").all(
+        change.after.ingress_security_rules.where(_['source'] == "::/0").none(
+          _['protocol'] == "all" ||
+          _['protocol'] == "6" && _['tcp_options'] == empty ||
+          _['protocol'] == "6" && _['tcp_options']['destination_port_range']['min'] <= 22 && _['tcp_options']['destination_port_range']['max'] >= 22 ||
+          _['protocol'] == "6" && _['tcp_options']['destination_port_range']['min'] <= 3389 && _['tcp_options']['destination_port_range']['max'] >= 3389 ||
+          _['protocol'] == "17" && _['udp_options'] == empty
+        )
+      )
+  - uid: mondoo-oci-security-vcn-no-unrestricted-ipv6-ingress-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "oci_core_security_list")
+    mql: |
+      terraform.state.resources.where(type == "oci_core_security_list").all(
+        values.ingress_security_rules.where(_['source'] == "::/0").none(
+          _['protocol'] == "all" ||
+          _['protocol'] == "6" && _['tcp_options'] == empty ||
+          _['protocol'] == "6" && _['tcp_options']['destination_port_range']['min'] <= 22 && _['tcp_options']['destination_port_range']['max'] >= 22 ||
+          _['protocol'] == "6" && _['tcp_options']['destination_port_range']['min'] <= 3389 && _['tcp_options']['destination_port_range']['max'] >= 3389 ||
+          _['protocol'] == "17" && _['udp_options'] == empty
+        )
+      )
