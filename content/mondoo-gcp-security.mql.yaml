@@ -22755,28 +22755,30 @@ queries:
             5. Remove the `roles/editor` grant from the default SA, or disable the default SA entirely if no other workload depends on it.
         - id: cli
           desc: |
-            Recreate the connection bound to a dedicated service account:
+            `bq mk --connection --connection_type=CLOUD_RESOURCE` auto-provisions a Google-managed delegated service account; you grant narrow roles to that SA rather than supplying your own.
 
-            ```bash
-            gcloud iam service-accounts create bq-cloud-resource-SA \
-              --display-name="BigQuery Cloud Resource SA"
-            ```
-
-            Grant the connection only the narrow roles it needs (example for Cloud Storage):
-
-            ```bash
-            gcloud storage buckets add-iam-policy-binding gs://BUCKET_NAME \
-              --member=serviceAccount:bq-cloud-resource-SA@PROJECT_ID.iam.gserviceaccount.com \
-              --role=roles/storage.objectViewer
-            ```
-
-            Recreate the BigQuery connection bound to the dedicated SA:
+            Create (or recreate) the connection and read back the auto-provisioned SA:
 
             ```bash
             bq mk --connection \
               --connection_type=CLOUD_RESOURCE \
               --location=LOCATION \
               CONNECTION_ID
+
+            bq show --connection --location=LOCATION --format=prettyjson \
+              PROJECT_ID.LOCATION.CONNECTION_ID
+            ```
+
+            The `cloudResource.serviceAccountId` field in the output is the delegated SA. Grant it only the narrow roles the connection needs (example for Cloud Storage):
+
+            ```bash
+            DELEGATE_SA=$(bq show --connection --location=LOCATION --format=json \
+              PROJECT_ID.LOCATION.CONNECTION_ID \
+              | jq -r '.cloudResource.serviceAccountId')
+
+            gcloud storage buckets add-iam-policy-binding gs://BUCKET_NAME \
+              --member="serviceAccount:${DELEGATE_SA}" \
+              --role=roles/storage.objectViewer
             ```
     refs:
       - url: https://cloud.google.com/bigquery/docs/connect-to-resource
@@ -24277,6 +24279,7 @@ queries:
     mql: |
       terraform.state.resources.where(type == 'google_memcache_instance').all(
         values['authorized_network'] != empty &&
+        values['authorized_network'] != "" &&
         values['authorized_network'].find(/networks\/default$/) == []
       )
   - uid: mondoo-gcp-security-memcache-discovery-endpoint-rfc1918
