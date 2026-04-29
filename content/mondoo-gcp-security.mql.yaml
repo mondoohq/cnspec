@@ -1869,6 +1869,9 @@ queries:
     filters: |
       asset.platform == 'terraform-hcl' &&
         terraform.resources.contains(nameLabel == 'google_bigquery_dataset')
+    # Terraform has no per-model encryption resource; models inherit CMEK from
+    # the dataset's `default_encryption_configuration`, so this MQL is the same
+    # as the dataset-level CMEK check by design.
     mql: |
       terraform.resources('google_bigquery_dataset').all(
         blocks.where(type == 'default_encryption_configuration') != empty &&
@@ -1878,6 +1881,7 @@ queries:
     filters: |
       asset.platform == 'terraform-plan'
       terraform.plan.resourceChanges.contains(type == 'google_bigquery_dataset')
+    # Terraform has no per-model encryption resource; see the HCL variant above.
     mql: |
       terraform.plan.resourceChanges.where(type == 'google_bigquery_dataset').all(
         change.after['default_encryption_configuration'] != empty &&
@@ -1887,6 +1891,7 @@ queries:
     filters: |
       asset.platform == 'terraform-state'
       terraform.state.resources.contains(type == 'google_bigquery_dataset')
+    # Terraform has no per-model encryption resource; see the HCL variant above.
     mql: |
       terraform.state.resources.where(type == 'google_bigquery_dataset').all(
         values['default_encryption_configuration'] != empty &&
@@ -2527,7 +2532,7 @@ queries:
             }
             ```
     refs:
-      - url: https://docs.cloud.google.com/sql/docs/mysql/flags
+      - url: https://cloud.google.com/sql/docs/mysql/flags
         title: Configure database flags
   - uid: mondoo-gcp-security-cloud-sql-mysql-skip-show-database-enabled-gcp
     filters: asset.platform == 'gcp-sql-mysql'
@@ -2537,11 +2542,12 @@ queries:
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_sql_database_instance' && arguments['database_version'].contains('MYSQL'))
     mql: |
-      # Check if a 'skip_show_database' flag exists and 'skip_show_database' flag is set to 'on' on all setting blocks of all MySQL instances
+      # Require a 'skip_show_database' flag to exist and be set to 'on' on every settings block of all MySQL instances.
+      # Without the existence guard, .all() over a .where() that filters down to zero matches is vacuously true and the check would silently pass when the flag is omitted.
       terraform.resources('google_sql_database_instance').where(arguments['database_version'].contains('MYSQL')).all(
         blocks.where(type == 'settings') != empty &&
-        blocks.where(type == 'settings').all(blocks.where(type == 'database_flags') != empty) &&
         blocks.where(type == 'settings').all(
+          blocks.where(type == 'database_flags').where(arguments['name'] == 'skip_show_database') != empty &&
           blocks.where(type == 'database_flags').where(arguments['name'] == 'skip_show_database').all(
             arguments['value'] == 'on'
           )
@@ -2685,11 +2691,12 @@ queries:
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_sql_database_instance' && arguments['database_version'].contains('MYSQL'))
     mql: |
-      # Check if a 'local_infile' flag exists and is set to 'on' on all setting blocks of all MySQL instances
+      # Require a 'local_infile' flag to exist and be set to 'off' on every settings block of all MySQL instances.
+      # Without the existence guard, .all() over a .where() that filters down to zero matches is vacuously true and the check would silently pass when the flag is omitted.
       terraform.resources('google_sql_database_instance').where(arguments['database_version'].contains('MYSQL')).all(
         blocks.where(type == 'settings') != empty &&
-        blocks.where(type == 'settings').all(blocks.where(type == 'database_flags') != empty) &&
         blocks.where(type == 'settings').all(
+          blocks.where(type == 'database_flags').where(arguments['name'] == 'local_infile') != empty &&
           blocks.where(type == 'database_flags').where(arguments['name'] == 'local_infile').all(
             arguments['value'] == 'off'
           )
@@ -2785,7 +2792,7 @@ queries:
            ```
         2. Run the query:
            ```mql
-           cnquery run gcp project <project-id> -c "gcp.project.sql.instances.where(databaseInstalledVersion == /^POSTGRES_/).all(settings { databaseFlags['log_error_verbosity'] == 'verbose' })"
+           cnquery run gcp project <project-id> -c "gcp.project.sql.instances.where(databaseInstalledVersion == /^POSTGRES_/).all(settings { databaseFlags['log_error_verbosity'] == 'verbose' || databaseFlags['log_error_verbosity'] == 'default' })"
            ```
            Verify the flag value is `default` or `verbose` for all relevant instances.
       remediation:
@@ -2831,8 +2838,8 @@ queries:
             }
             ```
     refs:
-      - url: https://cloud.google.com/sql/docs/mysql/best-practices
-        title: Cloud SQL Best Practices
+      - url: https://cloud.google.com/sql/docs/postgres/flags
+        title: Configure database flags for Cloud SQL for PostgreSQL
   - uid: mondoo-gcp-security-cloud-sql-postgres-log-error-verbosity-default-verbose-gcp
     filters: |
       asset.platform == 'gcp-sql-postgresql'
@@ -2842,14 +2849,15 @@ queries:
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_sql_database_instance' && arguments['database_version'].contains('POSTGRES'))
     mql: |
-      # Check if a 'log_error_verbosity' flag exists and is set to 'verbose' or 'default' on all setting blocks of all PostgreSQL instances
+      # Require a 'log_error_verbosity' flag to exist and be set to 'verbose' or 'default' on every settings block of all PostgreSQL instances.
+      # Without the existence guard, .all() over a .where() that filters down to zero matches is vacuously true and the check would silently pass when the flag is omitted.
       terraform.resources('google_sql_database_instance').where(arguments['database_version'].contains('POSTGRES')).all(
         blocks.where(type == 'settings') != empty &&
-        blocks.where(type == 'settings').all(blocks.where(type == 'database_flags') != empty) &&
         blocks.where(type == 'settings').all(
+          blocks.where(type == 'database_flags').where(arguments['name'] == 'log_error_verbosity') != empty &&
           blocks.where(type == 'database_flags').where(arguments['name'] == 'log_error_verbosity').all(
-              arguments['value'] == 'verbose' || arguments['value'] == 'default'
-            )
+            arguments['value'] == 'verbose' || arguments['value'] == 'default'
+          )
         )
       )
   - uid: mondoo-gcp-security-cloud-sql-postgres-log-error-verbosity-default-verbose-terraform-plan
@@ -2986,8 +2994,8 @@ queries:
             }
             ```
     refs:
-      - url: https://cloud.google.com/sql/docs/mysql/best-practices
-        title: Cloud SQL Best Practices
+      - url: https://cloud.google.com/sql/docs/postgres/flags
+        title: Configure database flags for Cloud SQL for PostgreSQL
   - uid: mondoo-gcp-security-cloud-sql-postgres-log-connections-enabled-gcp
     filters: |
       asset.platform == 'gcp-sql-postgresql'
@@ -2997,11 +3005,12 @@ queries:
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_sql_database_instance' && arguments['database_version'].contains('POSTGRES'))
     mql: |
-      # Check if a 'log_connections' flag exists and is set to 'on' on all setting blocks of all PostgreSQL instances
+      # Require a 'log_connections' flag to exist and be set to 'on' on every settings block of all PostgreSQL instances.
+      # Without the existence guard, .all() over a .where() that filters down to zero matches is vacuously true and the check would silently pass when the flag is omitted.
       terraform.resources('google_sql_database_instance').where(arguments['database_version'].contains('POSTGRES')).all(
         blocks.where(type == 'settings') != empty &&
-        blocks.where(type == 'settings').all(blocks.where(type == 'database_flags') != empty) &&
         blocks.where(type == 'settings').all(
+          blocks.where(type == 'database_flags').where(arguments['name'] == 'log_connections') != empty &&
           blocks.where(type == 'database_flags').where(arguments['name'] == 'log_connections').all(
             arguments['value'] == 'on'
           )
@@ -3141,8 +3150,8 @@ queries:
             }
             ```
     refs:
-      - url: https://cloud.google.com/sql/docs/mysql/best-practices
-        title: Cloud SQL Best Practices
+      - url: https://cloud.google.com/sql/docs/postgres/flags
+        title: Configure database flags for Cloud SQL for PostgreSQL
   - uid: mondoo-gcp-security-cloud-sql-postgres-log-disconnections-enabled-gcp
     filters: |
       asset.platform == 'gcp-sql-postgresql'
@@ -3153,11 +3162,12 @@ queries:
       asset.platform == 'terraform-hcl' &&
         terraform.resources('google_sql_database_instance').where(arguments['database_version'].contains('POSTGRES')) != empty
     mql: |
-      # Check if a 'log_disconnections' flag exists and is set to 'on' on all setting blocks of all PostgreSQL instances
+      # Require a 'log_disconnections' flag to exist and be set to 'on' on every settings block of all PostgreSQL instances.
+      # Without the existence guard, .all() over a .where() that filters down to zero matches is vacuously true and the check would silently pass when the flag is omitted.
       terraform.resources('google_sql_database_instance').where(arguments['database_version'].contains('POSTGRES')).all(
         blocks.where(type == 'settings') != empty &&
-        blocks.where(type == 'settings').all(blocks.where(type == 'database_flags') != empty) &&
         blocks.where(type == 'settings').all(
+          blocks.where(type == 'database_flags').where(arguments['name'] == 'log_disconnections') != empty &&
           blocks.where(type == 'database_flags').where(arguments['name'] == 'log_disconnections').all(
             arguments['value'] == 'on'
           )
@@ -3508,7 +3518,7 @@ queries:
       asset.platform == 'gcp-compute-instance'
       gcp.compute.instance.name != /^gke-/
     mql: |
-      compute_engine_default_service_account_email = gcp.project.id + '-compute@developer.gserviceaccount.com'
+      compute_engine_default_service_account_email = gcp.project.number + '-compute@developer.gserviceaccount.com'
       gcp.compute.instance {
         serviceAccounts.none(
           email == compute_engine_default_service_account_email
@@ -19259,10 +19269,12 @@ queries:
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_sql_database_instance' && arguments['database_version'].contains('SQLSERVER'))
     mql: |
+      # Require a 'cross db ownership chaining' flag to exist and be set to 'off' on every settings block of all SQL Server instances.
+      # Without the existence guard, .all() over a .where() that filters down to zero matches is vacuously true and the check would silently pass when the flag is omitted.
       terraform.resources('google_sql_database_instance').where(arguments['database_version'].contains('SQLSERVER')).all(
         blocks.where(type == 'settings') != empty &&
-        blocks.where(type == 'settings').all(blocks.where(type == 'database_flags') != empty) &&
         blocks.where(type == 'settings').all(
+          blocks.where(type == 'database_flags').where(arguments['name'] == 'cross db ownership chaining') != empty &&
           blocks.where(type == 'database_flags').where(arguments['name'] == 'cross db ownership chaining').all(
             arguments['value'] == 'off'
           )
@@ -19382,10 +19394,12 @@ queries:
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_sql_database_instance' && arguments['database_version'].contains('SQLSERVER'))
     mql: |
+      # Require a 'contained database authentication' flag to exist and be set to 'off' on every settings block of all SQL Server instances.
+      # Without the existence guard, .all() over a .where() that filters down to zero matches is vacuously true and the check would silently pass when the flag is omitted.
       terraform.resources('google_sql_database_instance').where(arguments['database_version'].contains('SQLSERVER')).all(
         blocks.where(type == 'settings') != empty &&
-        blocks.where(type == 'settings').all(blocks.where(type == 'database_flags') != empty) &&
         blocks.where(type == 'settings').all(
+          blocks.where(type == 'database_flags').where(arguments['name'] == 'contained database authentication') != empty &&
           blocks.where(type == 'database_flags').where(arguments['name'] == 'contained database authentication').all(
             arguments['value'] == 'off'
           )
@@ -19503,10 +19517,12 @@ queries:
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_sql_database_instance' && arguments['database_version'].contains('POSTGRES'))
     mql: |
+      # Require a 'log_lock_waits' flag to exist and be set to 'on' on every settings block of all PostgreSQL instances.
+      # Without the existence guard, .all() over a .where() that filters down to zero matches is vacuously true and the check would silently pass when the flag is omitted.
       terraform.resources('google_sql_database_instance').where(arguments['database_version'].contains('POSTGRES')).all(
         blocks.where(type == 'settings') != empty &&
-        blocks.where(type == 'settings').all(blocks.where(type == 'database_flags') != empty) &&
         blocks.where(type == 'settings').all(
+          blocks.where(type == 'database_flags').where(arguments['name'] == 'log_lock_waits') != empty &&
           blocks.where(type == 'database_flags').where(arguments['name'] == 'log_lock_waits').all(
             arguments['value'] == 'on'
           )
