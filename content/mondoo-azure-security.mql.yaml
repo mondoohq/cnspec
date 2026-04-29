@@ -15999,6 +15999,9 @@ queries:
         values.encryption != null &&
         values.encryption.any(_['key_vault_key_id'] != null && _['key_vault_key_id'] != "")
       )
+  # No Terraform variants: azurerm_monitor_diagnostic_setting targets resources by string-encoded
+  # target_resource_id, so MQL cannot reliably filter diagnostic settings to those scoped at Batch
+  # accounts without parsing reference strings. Revisit if a target-resource-type filter is added.
   - uid: mondoo-azure-security-batch-diagnostic-settings-enabled
     title: Ensure Azure Batch accounts have diagnostic settings enabled
     impact: 60
@@ -16010,11 +16013,6 @@ queries:
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-6
       compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
       compliance/soc2-2017: soc2-control-cc7-2-1
-    # NOTE (2026-03-29): Terraform variants not included because azurerm_monitor_diagnostic_setting
-    # cannot be scoped to Batch accounts specifically in MQL — the check would over-match any
-    # diagnostic setting for any Azure resource. The Terraform provider does not expose a direct
-    # relationship between the diagnostic setting and its target resource type in a way that
-    # allows filtering by resource kind.
     variants:
       - uid: mondoo-azure-security-batch-diagnostic-settings-enabled-azure
         tags:
@@ -20410,6 +20408,10 @@ queries:
         values['node_resource_group_profile'] != empty &&
         values['node_resource_group_profile'].all(_['restrictions'] == "ReadOnly")
       )
+  # No Terraform variants: WireGuard transit encryption for AKS is controlled by the
+  # advancedNetworking.transitEncryptionType property, which the azurerm_kubernetes_cluster
+  # resource does not currently expose. The feature can only be enabled through the Azure CLI or
+  # ARM API after provisioning.
   - uid: mondoo-azure-security-aks-wireguard-transit-encryption
     title: Ensure AKS uses WireGuard for transit encryption
     impact: 70
@@ -20614,6 +20616,10 @@ queries:
       terraform.state.resources.where(type == "azurerm_kubernetes_cluster").all(
         values['azure_key_vault_kms'] != empty
       )
+  # No Terraform variants: SSH availability on Linux App Service is determined by the
+  # container image (whether the image bundles an SSH daemon) rather than by a property on
+  # azurerm_linux_web_app or azurerm_windows_web_app. There is no Terraform argument that
+  # toggles SSH at the app level.
   - uid: mondoo-azure-security-app-service-ssh-disabled
     title: Ensure App Service has SSH access disabled
     impact: 70
@@ -25791,6 +25797,18 @@ queries:
         tags:
           mondoo.com/filter-title: Azure Subscription
           mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-acr-admin-user-disabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-acr-admin-user-disabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-acr-admin-user-disabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that the admin user account is disabled on Azure Container Registry instances. The admin account provides unrestricted push and pull access using a shared username and password, which cannot be individually tracked or audited.
@@ -25875,6 +25893,24 @@ queries:
       azure.subscription.containerRegistry.registries.all(
         adminUserEnabled == false
       )
+  - uid: mondoo-azure-security-acr-admin-user-disabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_container_registry")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_container_registry").all(
+        arguments['admin_enabled'] == false || arguments['admin_enabled'] == null
+      )
+  - uid: mondoo-azure-security-acr-admin-user-disabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_container_registry")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_container_registry").all(
+        change.after['admin_enabled'] == false || change.after['admin_enabled'] == null
+      )
+  - uid: mondoo-azure-security-acr-admin-user-disabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_container_registry")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_container_registry").all(
+        values['admin_enabled'] == false || values['admin_enabled'] == null
+      )
   - uid: mondoo-azure-security-acr-public-access-disabled
     title: Ensure ACR public network access is disabled
     impact: 80
@@ -25891,6 +25927,18 @@ queries:
         tags:
           mondoo.com/filter-title: Azure Subscription
           mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-acr-public-access-disabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-acr-public-access-disabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-acr-public-access-disabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that public network access is disabled on Azure Container Registry instances. Disabling public access forces all registry traffic through private endpoints, preventing unauthorized access from the internet.
@@ -25975,6 +26023,24 @@ queries:
       azure.subscription.containerRegistry.registries.all(
         publicNetworkAccess == "Disabled"
       )
+  - uid: mondoo-azure-security-acr-public-access-disabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_container_registry")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_container_registry").all(
+        arguments['public_network_access_enabled'] == false
+      )
+  - uid: mondoo-azure-security-acr-public-access-disabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_container_registry")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_container_registry").all(
+        change.after['public_network_access_enabled'] == false
+      )
+  - uid: mondoo-azure-security-acr-public-access-disabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_container_registry")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_container_registry").all(
+        values['public_network_access_enabled'] == false
+      )
   - uid: mondoo-azure-security-acr-content-trust-enabled
     title: Ensure ACR content trust is enabled
     impact: 70
@@ -25991,6 +26057,18 @@ queries:
         tags:
           mondoo.com/filter-title: Azure Subscription
           mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-acr-content-trust-enabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-acr-content-trust-enabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-acr-content-trust-enabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that content trust (image signing via Docker Notary) is enabled on Azure Container Registry instances. Content trust allows image publishers to sign images and image consumers to verify that pulled images have not been tampered with.
@@ -26063,6 +26141,24 @@ queries:
       azure.subscription.containerRegistry.registries.all(
         policies.trustPolicyEnabled == true
       )
+  - uid: mondoo-azure-security-acr-content-trust-enabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_container_registry")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_container_registry").all(
+        arguments['trust_policy_enabled'] == true
+      )
+  - uid: mondoo-azure-security-acr-content-trust-enabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_container_registry")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_container_registry").all(
+        change.after['trust_policy_enabled'] == true
+      )
+  - uid: mondoo-azure-security-acr-content-trust-enabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_container_registry")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_container_registry").all(
+        values['trust_policy_enabled'] == true
+      )
   - uid: mondoo-azure-security-acr-cmk-encryption
     title: Ensure ACR uses customer-managed key encryption
     impact: 70
@@ -26079,6 +26175,18 @@ queries:
         tags:
           mondoo.com/filter-title: Azure Subscription
           mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-acr-cmk-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-acr-cmk-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-acr-cmk-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that Azure Container Registry instances use customer-managed keys (CMK) for encryption at rest. By default, ACR uses Microsoft-managed keys, but CMK provides additional control over key lifecycle and access policies.
@@ -26177,6 +26285,24 @@ queries:
       azure.subscription.containerRegistry.registries.all(
         encryption.status == "enabled"
       )
+  - uid: mondoo-azure-security-acr-cmk-encryption-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_container_registry")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_container_registry").all(
+        blocks.where(type == "encryption") != empty
+      )
+  - uid: mondoo-azure-security-acr-cmk-encryption-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_container_registry")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_container_registry").all(
+        change.after['encryption'] != empty
+      )
+  - uid: mondoo-azure-security-acr-cmk-encryption-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_container_registry")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_container_registry").all(
+        values['encryption'] != empty
+      )
   - uid: mondoo-azure-security-acr-network-default-deny
     title: Ensure ACR network rule default action is Deny
     impact: 80
@@ -26193,6 +26319,18 @@ queries:
         tags:
           mondoo.com/filter-title: Azure Subscription
           mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-acr-network-default-deny-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-acr-network-default-deny-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-acr-network-default-deny-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that the network rule set default action is set to Deny for Azure Container Registry instances. A default Deny action blocks all network access except explicitly allowed IP ranges and virtual networks.
@@ -26267,6 +26405,29 @@ queries:
       azure.subscription.containerRegistry.registries.all(
         networkRuleSet.defaultAction == "Deny"
       )
+  - uid: mondoo-azure-security-acr-network-default-deny-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_container_registry")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_container_registry").all(
+        blocks.where(type == "network_rule_set") != empty &&
+        blocks.where(type == "network_rule_set").all(
+          arguments['default_action'] == "Deny"
+        )
+      )
+  - uid: mondoo-azure-security-acr-network-default-deny-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_container_registry")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_container_registry").all(
+        change.after['network_rule_set'] != empty &&
+        change.after['network_rule_set'].all(_['default_action'] == "Deny")
+      )
+  - uid: mondoo-azure-security-acr-network-default-deny-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_container_registry")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_container_registry").all(
+        values['network_rule_set'] != empty &&
+        values['network_rule_set'].all(_['default_action'] == "Deny")
+      )
   - uid: mondoo-azure-security-acr-private-endpoints
     title: Ensure ACR has private endpoint connections configured
     impact: 70
@@ -26283,6 +26444,18 @@ queries:
         tags:
           mondoo.com/filter-title: Azure Subscription
           mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-acr-private-endpoints-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-acr-private-endpoints-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-acr-private-endpoints-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that Azure Container Registry instances have at least one private endpoint connection configured. Private endpoints enable secure access through private network connectivity using Azure Private Link.
@@ -26372,6 +26545,30 @@ queries:
       azure.subscription.containerRegistry.registries.all(
         privateEndpointConnections.length > 0
       )
+  - uid: mondoo-azure-security-acr-private-endpoints-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_private_endpoint")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_private_endpoint").any(
+        blocks.where(type == "private_service_connection").any(
+          arguments['subresource_names'].any(_ == "registry")
+        )
+      )
+  - uid: mondoo-azure-security-acr-private-endpoints-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_private_endpoint")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_private_endpoint").any(
+        change.after['private_service_connection'].any(
+          _['subresource_names'].any(_ == "registry")
+        )
+      )
+  - uid: mondoo-azure-security-acr-private-endpoints-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_private_endpoint")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_private_endpoint").any(
+        values['private_service_connection'].any(
+          _['subresource_names'].any(_ == "registry")
+        )
+      )
   - uid: mondoo-azure-security-acr-quarantine-policy-enabled
     title: Ensure ACR quarantine policy is enabled
     impact: 60
@@ -26388,6 +26585,18 @@ queries:
         tags:
           mondoo.com/filter-title: Azure Subscription
           mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-acr-quarantine-policy-enabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-acr-quarantine-policy-enabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-acr-quarantine-policy-enabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that the quarantine policy is enabled on Azure Container Registry instances. When enabled, newly pushed images are quarantined by default and are not available for pull until they have been validated and approved.
@@ -26442,6 +26651,24 @@ queries:
       azure.subscription.containerRegistry.registries.all(
         policies.quarantinePolicyEnabled == true
       )
+  - uid: mondoo-azure-security-acr-quarantine-policy-enabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_container_registry")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_container_registry").all(
+        arguments['quarantine_policy_enabled'] == true
+      )
+  - uid: mondoo-azure-security-acr-quarantine-policy-enabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_container_registry")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_container_registry").all(
+        change.after['quarantine_policy_enabled'] == true
+      )
+  - uid: mondoo-azure-security-acr-quarantine-policy-enabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_container_registry")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_container_registry").all(
+        values['quarantine_policy_enabled'] == true
+      )
   - uid: mondoo-azure-security-acr-export-policy-disabled
     title: Ensure ACR export policy is disabled
     impact: 70
@@ -26458,6 +26685,18 @@ queries:
         tags:
           mondoo.com/filter-title: Azure Subscription
           mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-acr-export-policy-disabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-acr-export-policy-disabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-acr-export-policy-disabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that the export policy is disabled on Azure Container Registry instances. Disabling the export policy prevents images from being exported out of the registry, reducing the risk of data exfiltration.
@@ -26512,6 +26751,24 @@ queries:
       azure.subscription.containerRegistry.registries.all(
         policies.exportPolicyEnabled == false
       )
+  - uid: mondoo-azure-security-acr-export-policy-disabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_container_registry")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_container_registry").all(
+        arguments['export_policy_enabled'] == false
+      )
+  - uid: mondoo-azure-security-acr-export-policy-disabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_container_registry")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_container_registry").all(
+        change.after['export_policy_enabled'] == false
+      )
+  - uid: mondoo-azure-security-acr-export-policy-disabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_container_registry")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_container_registry").all(
+        values['export_policy_enabled'] == false
+      )
   - uid: mondoo-azure-security-acr-retention-policy-enabled
     title: Ensure ACR retention policy is enabled
     impact: 50
@@ -26528,6 +26785,18 @@ queries:
         tags:
           mondoo.com/filter-title: Azure Subscription
           mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-acr-retention-policy-enabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-acr-retention-policy-enabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-acr-retention-policy-enabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that the retention policy is enabled on Azure Container Registry instances. A retention policy automatically removes untagged manifests after a configured number of days, reducing the attack surface from accumulated vulnerable images.
@@ -26584,6 +26853,27 @@ queries:
       azure.subscription.containerRegistry.registries.all(
         policies.retentionPolicyEnabled == true
       )
+  - uid: mondoo-azure-security-acr-retention-policy-enabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_container_registry")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_container_registry").all(
+        arguments['retention_policy_in_days'] != null && arguments['retention_policy_in_days'] > 0
+      )
+  - uid: mondoo-azure-security-acr-retention-policy-enabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_container_registry")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_container_registry").all(
+        change.after['retention_policy_in_days'] != null && change.after['retention_policy_in_days'] > 0
+      )
+  - uid: mondoo-azure-security-acr-retention-policy-enabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_container_registry")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_container_registry").all(
+        values['retention_policy_in_days'] != null && values['retention_policy_in_days'] > 0
+      )
+  # No Terraform variants: azurerm_container_registry does not expose a dedicated
+  # keyRotationEnabled flag. Auto-rotation is implied by referencing a Key Vault key URI without a
+  # version, which cannot be reliably detected from the resource configuration alone.
   - uid: mondoo-azure-security-acr-encryption-key-rotation
     title: Ensure ACR encryption key auto-rotation is enabled
     impact: 60
@@ -27538,6 +27828,18 @@ queries:
         tags:
           mondoo.com/filter-title: Azure Subscription
           mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-managed-hsm-private-endpoints-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-managed-hsm-private-endpoints-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-managed-hsm-private-endpoints-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that Azure Managed HSM instances have at least one private endpoint connection configured. Private endpoints enable secure, private network connectivity to the HSM using Azure Private Link.
@@ -27608,6 +27910,30 @@ queries:
       azure.subscription.keyVault.managedHsms.all(
         privateEndpointConnections.length > 0
       )
+  - uid: mondoo-azure-security-managed-hsm-private-endpoints-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_private_endpoint")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_private_endpoint").any(
+        blocks.where(type == "private_service_connection").any(
+          arguments['subresource_names'].any(_ == "managedhsm")
+        )
+      )
+  - uid: mondoo-azure-security-managed-hsm-private-endpoints-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_private_endpoint")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_private_endpoint").any(
+        change.after['private_service_connection'].any(
+          _['subresource_names'].any(_ == "managedhsm")
+        )
+      )
+  - uid: mondoo-azure-security-managed-hsm-private-endpoints-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_private_endpoint")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_private_endpoint").any(
+        values['private_service_connection'].any(
+          _['subresource_names'].any(_ == "managedhsm")
+        )
+      )
   - uid: mondoo-azure-security-compute-disk-access-private-endpoints
     title: Ensure disk access resources have private endpoints
     impact: 70
@@ -27624,6 +27950,18 @@ queries:
         tags:
           mondoo.com/filter-title: Azure Subscription
           mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-compute-disk-access-private-endpoints-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-compute-disk-access-private-endpoints-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-compute-disk-access-private-endpoints-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that Azure disk access resources have at least one private endpoint connection configured. Disk access resources enable private endpoint connectivity for managed disk import/export operations, ensuring that disk data transfers do not traverse the public internet.
@@ -27727,6 +28065,30 @@ queries:
     mql: |
       azure.subscription.compute.diskAccesses.all(
         privateEndpointConnections.length > 0
+      )
+  - uid: mondoo-azure-security-compute-disk-access-private-endpoints-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_private_endpoint")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_private_endpoint").any(
+        blocks.where(type == "private_service_connection").any(
+          arguments['subresource_names'].any(_ == "disks")
+        )
+      )
+  - uid: mondoo-azure-security-compute-disk-access-private-endpoints-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_private_endpoint")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_private_endpoint").any(
+        change.after['private_service_connection'].any(
+          _['subresource_names'].any(_ == "disks")
+        )
+      )
+  - uid: mondoo-azure-security-compute-disk-access-private-endpoints-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_private_endpoint")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_private_endpoint").any(
+        values['private_service_connection'].any(
+          _['subresource_names'].any(_ == "disks")
+        )
       )
   - uid: mondoo-azure-security-log-analytics-local-auth-disabled
     title: Ensure Log Analytics workspaces disable local authentication
@@ -28133,6 +28495,18 @@ queries:
         tags:
           mondoo.com/filter-title: Azure Subscription
           mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-log-analytics-cmk-for-query-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-log-analytics-cmk-for-query-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-log-analytics-cmk-for-query-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that Azure Log Analytics workspaces are configured to enforce customer-managed keys (CMK) for saved queries and query-based log alerts. When enabled, all saved searches and alerts are encrypted with a customer-managed key.
@@ -28190,6 +28564,24 @@ queries:
     mql: |
       azure.subscription.monitor.workspaces.all(
         forceCmkForQuery == true
+      )
+  - uid: mondoo-azure-security-log-analytics-cmk-for-query-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_log_analytics_workspace")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_log_analytics_workspace").all(
+        arguments['cmk_for_query_forced'] == true
+      )
+  - uid: mondoo-azure-security-log-analytics-cmk-for-query-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_log_analytics_workspace")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_log_analytics_workspace").all(
+        change.after['cmk_for_query_forced'] == true
+      )
+  - uid: mondoo-azure-security-log-analytics-cmk-for-query-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_log_analytics_workspace")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_log_analytics_workspace").all(
+        values['cmk_for_query_forced'] == true
       )
   - uid: mondoo-azure-security-recovery-vault-soft-delete
     title: Ensure Recovery Services Vaults have soft delete enabled
@@ -28414,6 +28806,9 @@ queries:
       terraform.state.resources.where(type == "azurerm_recovery_services_vault").all(
         values['immutability'] == "Unlocked" || values['immutability'] == "Locked"
       )
+  # No Terraform variants: azurerm_recovery_services_vault does not expose the
+  # securitySettings.enhancedSecurityState property. Enhanced security is controlled via the
+  # ARM API or Azure Portal and has no equivalent argument on the Terraform resource.
   - uid: mondoo-azure-security-recovery-vault-enhanced-security
     title: Ensure Recovery Services Vaults have enhanced security
     impact: 70
@@ -28629,6 +29024,18 @@ queries:
         tags:
           mondoo.com/filter-title: Azure Subscription
           mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-recovery-vault-private-endpoints-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-recovery-vault-private-endpoints-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-recovery-vault-private-endpoints-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that Azure Recovery Services Vaults have at least one private endpoint connection configured. Private endpoints enable secure, private connectivity for backup and restore operations.
@@ -28716,6 +29123,30 @@ queries:
     mql: |
       azure.subscription.recoveryServices.vaults.all(
         privateEndpointConnections.length > 0
+      )
+  - uid: mondoo-azure-security-recovery-vault-private-endpoints-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_private_endpoint")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_private_endpoint").any(
+        blocks.where(type == "private_service_connection").any(
+          arguments['subresource_names'].any(_ == "AzureBackup")
+        )
+      )
+  - uid: mondoo-azure-security-recovery-vault-private-endpoints-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_private_endpoint")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_private_endpoint").any(
+        change.after['private_service_connection'].any(
+          _['subresource_names'].any(_ == "AzureBackup")
+        )
+      )
+  - uid: mondoo-azure-security-recovery-vault-private-endpoints-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_private_endpoint")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_private_endpoint").any(
+        values['private_service_connection'].any(
+          _['subresource_names'].any(_ == "AzureBackup")
+        )
       )
   - uid: mondoo-azure-security-recovery-vault-cmk-encryption
     title: Ensure Recovery Services Vaults use CMK encryption
@@ -28875,6 +29306,18 @@ queries:
         tags:
           mondoo.com/filter-title: Azure Subscription
           mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-recovery-vault-job-failure-alerts-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-recovery-vault-job-failure-alerts-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-recovery-vault-job-failure-alerts-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that Azure Recovery Services Vaults have monitoring alerts enabled for all backup job failures. Without alerts, failed backup jobs go unnoticed while attackers prepare destructive operations.
@@ -28939,6 +29382,32 @@ queries:
       azure.subscription.recoveryServices.vaults.all(
         monitoringSettings.alertsForAllJobFailures == "Enabled"
       )
+  - uid: mondoo-azure-security-recovery-vault-job-failure-alerts-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_recovery_services_vault")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_recovery_services_vault").all(
+        blocks.where(type == "monitoring").all(
+          arguments['alerts_for_all_job_failures_enabled'] != false
+        )
+      )
+  - uid: mondoo-azure-security-recovery-vault-job-failure-alerts-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_recovery_services_vault")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_recovery_services_vault").all(
+        change.after['monitoring'] == empty ||
+        change.after['monitoring'].all(_['alerts_for_all_job_failures_enabled'] != false)
+      )
+  - uid: mondoo-azure-security-recovery-vault-job-failure-alerts-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_recovery_services_vault")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_recovery_services_vault").all(
+        values['monitoring'] == empty ||
+        values['monitoring'].all(_['alerts_for_all_job_failures_enabled'] != false)
+      )
+  # No Terraform variants: backup policies are separate Terraform resources (e.g.
+  # azurerm_backup_policy_vm) that reference the vault via recovery_vault_name. Verifying that
+  # every vault has at least one policy requires cross-resource correlation by string-encoded
+  # references that MQL cannot resolve reliably from Terraform configuration alone.
   - uid: mondoo-azure-security-recovery-vault-backup-policies
     title: Ensure Recovery Services Vaults have backup policies
     impact: 60
@@ -29046,6 +29515,18 @@ queries:
         tags:
           mondoo.com/filter-title: Azure Subscription
           mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-recovery-vault-critical-op-alerts-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-recovery-vault-critical-op-alerts-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-recovery-vault-critical-op-alerts-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that Azure Recovery Services Vaults have monitoring alerts enabled for critical operations such as stopping protection, deleting backup data, and modifying security settings.
@@ -29110,6 +29591,28 @@ queries:
       azure.subscription.recoveryServices.vaults.all(
         monitoringSettings.alertsForCriticalOperations == "Enabled"
       )
+  - uid: mondoo-azure-security-recovery-vault-critical-op-alerts-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_recovery_services_vault")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_recovery_services_vault").all(
+        blocks.where(type == "monitoring").all(
+          arguments['alerts_for_critical_operation_failures_enabled'] != false
+        )
+      )
+  - uid: mondoo-azure-security-recovery-vault-critical-op-alerts-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_recovery_services_vault")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_recovery_services_vault").all(
+        change.after['monitoring'] == empty ||
+        change.after['monitoring'].all(_['alerts_for_critical_operation_failures_enabled'] != false)
+      )
+  - uid: mondoo-azure-security-recovery-vault-critical-op-alerts-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_recovery_services_vault")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_recovery_services_vault").all(
+        values['monitoring'] == empty ||
+        values['monitoring'].all(_['alerts_for_critical_operation_failures_enabled'] != false)
+      )
   - uid: mondoo-azure-security-servicebus-local-auth-disabled
     title: Ensure Service Bus namespaces disable local authentication
     impact: 80
@@ -29126,6 +29629,18 @@ queries:
         tags:
           mondoo.com/filter-title: Azure Subscription
           mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-servicebus-local-auth-disabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-servicebus-local-auth-disabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-servicebus-local-auth-disabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that local authentication (shared access signatures / SAS keys) is disabled on Azure Service Bus namespaces, requiring Microsoft Entra ID (Azure AD) authentication instead.
@@ -29202,6 +29717,24 @@ queries:
       azure.subscription.serviceBus.namespaces.all(
         disableLocalAuth == true
       )
+  - uid: mondoo-azure-security-servicebus-local-auth-disabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_servicebus_namespace")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_servicebus_namespace").all(
+        arguments['local_auth_enabled'] == false
+      )
+  - uid: mondoo-azure-security-servicebus-local-auth-disabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_servicebus_namespace")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_servicebus_namespace").all(
+        change.after['local_auth_enabled'] == false
+      )
+  - uid: mondoo-azure-security-servicebus-local-auth-disabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_servicebus_namespace")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_servicebus_namespace").all(
+        values['local_auth_enabled'] == false
+      )
   - uid: mondoo-azure-security-eventhubs-local-auth-disabled
     title: Ensure Event Hubs namespaces disable local authentication
     impact: 80
@@ -29218,6 +29751,18 @@ queries:
         tags:
           mondoo.com/filter-title: Azure Subscription
           mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-eventhubs-local-auth-disabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-eventhubs-local-auth-disabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-eventhubs-local-auth-disabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that local authentication (shared access signatures / SAS keys) is disabled on Azure Event Hubs namespaces, requiring Microsoft Entra ID (Azure AD) authentication instead.
@@ -29294,6 +29839,24 @@ queries:
       azure.subscription.eventHub.namespaces.all(
         disableLocalAuth == true
       )
+  - uid: mondoo-azure-security-eventhubs-local-auth-disabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_eventhub_namespace")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_eventhub_namespace").all(
+        arguments['local_auth_enabled'] == false
+      )
+  - uid: mondoo-azure-security-eventhubs-local-auth-disabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_eventhub_namespace")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_eventhub_namespace").all(
+        change.after['local_auth_enabled'] == false
+      )
+  - uid: mondoo-azure-security-eventhubs-local-auth-disabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_eventhub_namespace")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_eventhub_namespace").all(
+        values['local_auth_enabled'] == false
+      )
   - uid: mondoo-azure-security-eventhubs-minimum-tls-1-2
     title: Ensure Event Hubs namespaces enforce TLS 1.2 or higher
     impact: 80
@@ -29310,6 +29873,18 @@ queries:
         tags:
           mondoo.com/filter-title: Azure Subscription
           mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-eventhubs-minimum-tls-1-2-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-eventhubs-minimum-tls-1-2-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-eventhubs-minimum-tls-1-2-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that Azure Event Hubs namespaces enforce a minimum TLS version of 1.2 for all client connections. TLS 1.0 and 1.1 have known vulnerabilities and are considered deprecated.
@@ -29384,6 +29959,24 @@ queries:
       azure.subscription.eventHub.namespaces.all(
         minimumTlsVersion == "1.2"
       )
+  - uid: mondoo-azure-security-eventhubs-minimum-tls-1-2-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_eventhub_namespace")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_eventhub_namespace").all(
+        arguments['minimum_tls_version'] == "1.2"
+      )
+  - uid: mondoo-azure-security-eventhubs-minimum-tls-1-2-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_eventhub_namespace")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_eventhub_namespace").all(
+        change.after['minimum_tls_version'] == "1.2"
+      )
+  - uid: mondoo-azure-security-eventhubs-minimum-tls-1-2-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_eventhub_namespace")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_eventhub_namespace").all(
+        values['minimum_tls_version'] == "1.2"
+      )
   - uid: mondoo-azure-security-function-app-https-only
     title: Ensure Function Apps enforce HTTPS-only traffic
     impact: 80
@@ -29400,6 +29993,18 @@ queries:
         tags:
           mondoo.com/filter-title: Azure Subscription
           mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-function-app-https-only-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-function-app-https-only-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-function-app-https-only-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that Azure Function Apps are configured to accept only HTTPS traffic, rejecting any unencrypted HTTP requests.
@@ -29477,6 +30082,38 @@ queries:
       azure.subscription.functions.functionApps.all(
         httpsOnly == true
       )
+  - uid: mondoo-azure-security-function-app-https-only-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == /azurerm_(linux|windows)_function_app/)
+    mql: |
+      terraform.resources.where(nameLabel == /azurerm_(linux|windows)_function_app/).all(
+        arguments['https_only'] == true
+      )
+  - uid: mondoo-azure-security-function-app-https-only-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == /azurerm_(linux|windows)_function_app/)
+    mql: |
+      if (terraform.plan.resourceChanges.where(type == "azurerm_linux_function_app").length > 0) {
+        terraform.plan.resourceChanges.where(type == "azurerm_linux_function_app").all(
+          change.after['https_only'] == true
+        )
+      }
+      if (terraform.plan.resourceChanges.where(type == "azurerm_windows_function_app").length > 0) {
+        terraform.plan.resourceChanges.where(type == "azurerm_windows_function_app").all(
+          change.after['https_only'] == true
+        )
+      }
+  - uid: mondoo-azure-security-function-app-https-only-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == /azurerm_(linux|windows)_function_app/)
+    mql: |
+      if (terraform.state.resources.where(type == "azurerm_linux_function_app").length > 0) {
+        terraform.state.resources.where(type == "azurerm_linux_function_app").all(
+          values['https_only'] == true
+        )
+      }
+      if (terraform.state.resources.where(type == "azurerm_windows_function_app").length > 0) {
+        terraform.state.resources.where(type == "azurerm_windows_function_app").all(
+          values['https_only'] == true
+        )
+      }
   - uid: mondoo-azure-security-function-app-client-cert-required
     title: Ensure Function Apps require client certificates
     impact: 70
@@ -29493,6 +30130,18 @@ queries:
         tags:
           mondoo.com/filter-title: Azure Subscription
           mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-function-app-client-cert-required-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-function-app-client-cert-required-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-function-app-client-cert-required-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that Azure Function Apps are configured to require client certificates (mutual TLS), adding an additional layer of authentication at the transport level.
@@ -29572,6 +30221,38 @@ queries:
       azure.subscription.functions.functionApps.all(
         clientCertEnabled == true && clientCertMode == "Required"
       )
+  - uid: mondoo-azure-security-function-app-client-cert-required-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == /azurerm_(linux|windows)_function_app/)
+    mql: |
+      terraform.resources.where(nameLabel == /azurerm_(linux|windows)_function_app/).all(
+        arguments['client_certificate_enabled'] == true && arguments['client_certificate_mode'] == "Required"
+      )
+  - uid: mondoo-azure-security-function-app-client-cert-required-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == /azurerm_(linux|windows)_function_app/)
+    mql: |
+      if (terraform.plan.resourceChanges.where(type == "azurerm_linux_function_app").length > 0) {
+        terraform.plan.resourceChanges.where(type == "azurerm_linux_function_app").all(
+          change.after['client_certificate_enabled'] == true && change.after['client_certificate_mode'] == "Required"
+        )
+      }
+      if (terraform.plan.resourceChanges.where(type == "azurerm_windows_function_app").length > 0) {
+        terraform.plan.resourceChanges.where(type == "azurerm_windows_function_app").all(
+          change.after['client_certificate_enabled'] == true && change.after['client_certificate_mode'] == "Required"
+        )
+      }
+  - uid: mondoo-azure-security-function-app-client-cert-required-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == /azurerm_(linux|windows)_function_app/)
+    mql: |
+      if (terraform.state.resources.where(type == "azurerm_linux_function_app").length > 0) {
+        terraform.state.resources.where(type == "azurerm_linux_function_app").all(
+          values['client_certificate_enabled'] == true && values['client_certificate_mode'] == "Required"
+        )
+      }
+      if (terraform.state.resources.where(type == "azurerm_windows_function_app").length > 0) {
+        terraform.state.resources.where(type == "azurerm_windows_function_app").all(
+          values['client_certificate_enabled'] == true && values['client_certificate_mode'] == "Required"
+        )
+      }
   - uid: mondoo-azure-security-function-app-managed-identity
     title: Ensure Function Apps use managed identity
     impact: 70
@@ -29588,6 +30269,18 @@ queries:
         tags:
           mondoo.com/filter-title: Azure Subscription
           mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-function-app-managed-identity-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-function-app-managed-identity-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-function-app-managed-identity-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that Azure Function Apps have a managed identity assigned, enabling secure, credential-free authentication to other Azure services.
@@ -29669,6 +30362,38 @@ queries:
       azure.subscription.functions.functionApps.all(
         managedServiceIdentityId != ""
       )
+  - uid: mondoo-azure-security-function-app-managed-identity-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == /azurerm_(linux|windows)_function_app/)
+    mql: |
+      terraform.resources.where(nameLabel == /azurerm_(linux|windows)_function_app/).all(
+        blocks.where(type == "identity") != empty
+      )
+  - uid: mondoo-azure-security-function-app-managed-identity-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == /azurerm_(linux|windows)_function_app/)
+    mql: |
+      if (terraform.plan.resourceChanges.where(type == "azurerm_linux_function_app").length > 0) {
+        terraform.plan.resourceChanges.where(type == "azurerm_linux_function_app").all(
+          change.after['identity'] != empty
+        )
+      }
+      if (terraform.plan.resourceChanges.where(type == "azurerm_windows_function_app").length > 0) {
+        terraform.plan.resourceChanges.where(type == "azurerm_windows_function_app").all(
+          change.after['identity'] != empty
+        )
+      }
+  - uid: mondoo-azure-security-function-app-managed-identity-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == /azurerm_(linux|windows)_function_app/)
+    mql: |
+      if (terraform.state.resources.where(type == "azurerm_linux_function_app").length > 0) {
+        terraform.state.resources.where(type == "azurerm_linux_function_app").all(
+          values['identity'] != empty
+        )
+      }
+      if (terraform.state.resources.where(type == "azurerm_windows_function_app").length > 0) {
+        terraform.state.resources.where(type == "azurerm_windows_function_app").all(
+          values['identity'] != empty
+        )
+      }
   - uid: mondoo-azure-security-private-dns-no-auto-registration
     title: Ensure private DNS zones restrict auto-registration
     impact: 50
@@ -29685,6 +30410,18 @@ queries:
         tags:
           mondoo.com/filter-title: Azure Subscription
           mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-private-dns-no-auto-registration-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-private-dns-no-auto-registration-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-private-dns-no-auto-registration-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that virtual network links to Azure private DNS zones have auto-registration disabled, preventing virtual machines from automatically registering DNS records.
@@ -29762,6 +30499,24 @@ queries:
       azure.subscription.dns.privateZones.all(
         virtualNetworkLinks.all(registrationEnabled == false)
       )
+  - uid: mondoo-azure-security-private-dns-no-auto-registration-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_private_dns_zone_virtual_network_link")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_private_dns_zone_virtual_network_link").all(
+        arguments['registration_enabled'] == false || arguments['registration_enabled'] == null
+      )
+  - uid: mondoo-azure-security-private-dns-no-auto-registration-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_private_dns_zone_virtual_network_link")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_private_dns_zone_virtual_network_link").all(
+        change.after['registration_enabled'] == false || change.after['registration_enabled'] == null
+      )
+  - uid: mondoo-azure-security-private-dns-no-auto-registration-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_private_dns_zone_virtual_network_link")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_private_dns_zone_virtual_network_link").all(
+        values['registration_enabled'] == false || values['registration_enabled'] == null
+      )
   - uid: mondoo-azure-security-frontdoor-origin-https
     title: Ensure Front Door origins use HTTPS only
     impact: 70
@@ -29778,6 +30533,18 @@ queries:
         tags:
           mondoo.com/filter-title: Azure Subscription
           mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-frontdoor-origin-https-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-frontdoor-origin-https-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-frontdoor-origin-https-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that Azure Front Door origin servers are configured to serve traffic only over HTTPS, preventing unencrypted HTTP connections between Front Door and the origin.
@@ -29855,4 +30622,22 @@ queries:
     mql: |
       azure.subscription.frontDoor.profiles.all(
         originGroups.all(origins.all(httpPort == 0))
+      )
+  - uid: mondoo-azure-security-frontdoor-origin-https-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_cdn_frontdoor_origin")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_cdn_frontdoor_origin").all(
+        arguments['http_port'] == 0
+      )
+  - uid: mondoo-azure-security-frontdoor-origin-https-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_cdn_frontdoor_origin")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_cdn_frontdoor_origin").all(
+        change.after['http_port'] == 0
+      )
+  - uid: mondoo-azure-security-frontdoor-origin-https-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_cdn_frontdoor_origin")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_cdn_frontdoor_origin").all(
+        values['http_port'] == 0
       )
