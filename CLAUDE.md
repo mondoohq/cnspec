@@ -327,7 +327,7 @@ cnspec scan local -f ./content/your-policy.mql.yaml
 
 #### Terraform variants and remediation for cloud policies
 
-When you add or modify a check in a cloud policy (`mondoo-aws-security`, `mondoo-azure-security`, `mondoo-gcp-security`, `mondoo-oci-security`, `mondoo-kubernetes-security`, etc.), **two things** must ship together:
+When you add or modify a check in a cloud policy (`mondoo-aws-security`, `mondoo-azure-security`, `mondoo-gcp-security`, `mondoo-oci-security`, `mondoo-hetzner-security`, `mondoo-digitalocean-security`, etc.), **two things** must ship together:
 
 1. A **variants:** block so the check runs against the live cloud runtime *and* Terraform HCL/plan/state assets.
 2. A **`- id: terraform`** entry in the `remediation:` list with HCL example code that fixes the underlying issue.
