@@ -1597,7 +1597,18 @@ def _load_cloudflare_openapi() -> dict:
                 file=sys.stderr,
             )
             sys.exit(1)
-    return json.loads(cache.read_text())
+    try:
+        return json.loads(cache.read_text())
+    except json.JSONDecodeError as e:
+        print(
+            f"Error: cached Cloudflare OpenAPI spec is corrupted\n"
+            f"  ({cache}: {e})\n"
+            "\n"
+            "Delete the cache file and re-run to re-download:\n"
+            f"  rm {cache}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
 
 def _index_cloudflare_paths(spec: dict) -> dict[str, set[str]]:
@@ -1632,8 +1643,11 @@ def _match_cloudflare_path(curl_path: str, openapi_paths: dict[str, set[str]]) -
       - the OpenAPI segment is a `{param}` template and the curl segment
         is either a placeholder like `<zone-id>` or a concrete literal.
 
-    Prefers a fully-literal match when one exists; otherwise falls back to
-    the templated match. Returns the matched path template, or None.
+    When multiple templates match, prefers the one with the most literal
+    (non-`{param}`) segments — so e.g. `/zones/{id}/dns_records/import`
+    wins over `/zones/{id}/dns_records/{record_id}` for a curl call to
+    `/zones/<zone-id>/dns_records/import`. Returns the matched path
+    template, or None.
     """
     curl_parts = curl_path.split("/")
 
@@ -1642,16 +1656,19 @@ def _match_cloudflare_path(curl_path: str, openapi_paths: dict[str, set[str]]) -
         return curl_path
 
     best: str | None = None
-    for tmpl, _methods in openapi_paths.items():
+    best_specificity = -1
+    for tmpl in openapi_paths:
         tmpl_parts = tmpl.split("/")
         if len(tmpl_parts) != len(curl_parts):
             continue
-        if all(_segment_matches(t, c) for t, c in zip(tmpl_parts, curl_parts)):
+        if not all(_segment_matches(t, c) for t, c in zip(tmpl_parts, curl_parts)):
+            continue
+        specificity = sum(
+            1 for p in tmpl_parts if p and not (p.startswith("{") and p.endswith("}"))
+        )
+        if specificity > best_specificity:
             best = tmpl
-            # Don't break; later templates with more literal segments would
-            # be more specific, but the spec is generally well-formed and
-            # the first match is good enough.
-            break
+            best_specificity = specificity
     return best
 
 
