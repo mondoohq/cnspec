@@ -425,16 +425,18 @@ The `content/validation/` directory contains tooling to verify that CLI commands
 **Validate commands:**
 
 ```bash
-# Validate all policies (currently AWS, Azure, and OCI)
+# Validate all policies (currently AWS, Azure, OCI, GCP, and DigitalOcean)
 python3 content/validation/validate_remediation_commands.py
 
 # Validate a specific cloud
 python3 content/validation/validate_remediation_commands.py aws
 python3 content/validation/validate_remediation_commands.py azure
 python3 content/validation/validate_remediation_commands.py oci
+python3 content/validation/validate_remediation_commands.py gcp
+python3 content/validation/validate_remediation_commands.py digitalocean
 ```
 
-The validator checks each `aws`/`az`/`oci` command in ```` ```bash ```` code blocks within `id: cli` remediation sections against a known-good database of commands and flags. Output shows `[PASS]` or `[FAIL]` with the check UID and the offending command.
+The validator checks each `aws`/`az`/`oci`/`gcloud`/`doctl` command in ```` ```bash ```` code blocks within `id: cli` remediation sections against a known-good database of commands and flags. Output shows `[PASS]` or `[FAIL]` with the check UID and the offending command.
 
 **How the validator sources command data:**
 
@@ -443,6 +445,7 @@ The validator builds its commands database for `aws`, `oci`, and `gcp` **in-memo
 - **aws**: introspects botocore service models bundled with the AWS CLI v2
 - **oci**: walks the Click command tree from the `oci_cli` Python package
 - **gcp**: reads the Google Cloud SDK's static completion tree
+- **digitalocean**: walks the `doctl --help` Cobra tree breadth-first (parallelized; ~1s for the full ~475-command tree)
 
 If a required CLI is missing, the validator prints actionable install hints and exits non-zero.
 
