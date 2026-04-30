@@ -5305,9 +5305,9 @@ queries:
       compliance/nist-sp-800-171: nist-sp-800-171--3-3-8
       compliance/soc2-2017: soc2-control-cc7-2-1
     mql: |
-      file("/etc/audit/auditd.conf").exists
-      auditd.config.params.contains("max_log_file")
-      auditd.config.params.max_log_file != 0
+      file("/etc/audit/auditd.conf").exists &&
+        auditd.config.params.contains("max_log_file") &&
+        auditd.config.params.max_log_file != 0
     docs:
       desc: |
         This check verifies that the auditd configuration specifies a maximum storage size for audit logs by ensuring the `max_log_file` parameter in `/etc/audit/auditd.conf` is set to a value greater than zero.
@@ -5428,8 +5428,8 @@ queries:
       compliance/nist-sp-800-171: nist-sp-800-171--3-3-8
       compliance/soc2-2017: soc2-control-cc7-2-1
     mql: |
-      file("/etc/audit/auditd.conf").exists
-      auditd.config.params.max_log_file_action == "keep_logs"
+      file("/etc/audit/auditd.conf").exists &&
+        auditd.config.params.max_log_file_action == "keep_logs"
     docs:
       desc: |
         This check verifies that the system is configured to retain audit logs by ensuring the `max_log_file_action` parameter in `/etc/audit/auditd.conf`` is set to `keep_logs`.
@@ -5549,10 +5549,10 @@ queries:
     filters: |
       asset.kind != "container-image"
     mql: |
-      file("/etc/audit/auditd.conf").exists
-      auditd.config.params.space_left_action == /email|exec|single|halt/
-      auditd.config.params.action_mail_acct == "root"
-      auditd.config.params.admin_space_left_action == /halt|single/
+      file("/etc/audit/auditd.conf").exists &&
+        auditd.config.params.space_left_action == /email|exec|single|halt/ &&
+        auditd.config.params.action_mail_acct == "root" &&
+        auditd.config.params.admin_space_left_action == /halt|single/
     docs:
       desc: |
         This check verifies that the system is configured to disable itself when audit logs are full by ensuring the `space_left_action` and `admin_space_left_action` parameters in `/etc/audit/auditd.conf` are set to appropriate values.
@@ -7991,12 +7991,15 @@ queries:
       - uid: mondooLinuxSecuritySudoersFiles
         title: Return the files from /etc/sudoers.d
         mql: |
-          sudoersFiles = files.find(from: "/etc/sudoers.d/", type: 'file').list.map(path) + ["/etc/sudoers"]
+          # Missing sudoers paths return an empty list so the outer check fails without file read errors.
+          sudoersD = ["/etc/sudoers.d/"].where(file(_).exists).map(files.find(from: _, type: 'file').list.map(path)).flat
+          sudoersFiles = sudoersD + ["/etc/sudoers"].where(file(_).exists)
           return sudoersFiles.map(file(_).content.lines.where(_ == /^[^#]/)).flat
     mql: |
-      props.mondooLinuxSecuritySudoersFiles
-        .where(_ == /Defaults/)
-        .any(_ == /logfile=\"\/var\/log\/sudo\.log\"/)
+      ["/etc/sudoers", "/etc/sudoers.d/"].any(file(_).exists) &&
+        props.mondooLinuxSecuritySudoersFiles
+          .where(_ == /Defaults/)
+          .any(_ == /logfile=\"\/var\/log\/sudo\.log\"/)
     docs:
       desc: |
         This check ensures that sudo logs all events to a dedicated log file instead of the default `/var/log/auth.log` file, which contains all authentication events system-wide. Configuring a dedicated log file for sudo events improves the ability to audit and monitor sudo usage effectively.
@@ -8418,7 +8421,8 @@ queries:
       compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
       compliance/soc2-2017: soc2-control-cc7-2-1
     mql: |
-      journald.config.sections.where(name == "Journal").first.params.where(name == "ForwardToSyslog").first.value == "yes"
+      file("/etc/systemd/journald.conf").exists &&
+        journald.config.sections.where(name == "Journal").any(params.where(name == "ForwardToSyslog").any(value == "yes"))
     docs:
       desc: |
         This check ensures that journald is configured to forward logs to rsyslog, providing a consistent and reliable means of log collection and export.
@@ -8509,7 +8513,8 @@ queries:
       compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
       compliance/soc2-2017: soc2-control-cc7-2-1
     mql: |
-      journald.config.sections.where(name == "Journal").first.params.where(name == "Compress").first.value == "yes"
+      file("/etc/systemd/journald.conf").exists &&
+        journald.config.sections.where(name == "Journal").any(params.where(name == "Compress").any(value == "yes"))
     docs:
       desc: |
         This check ensures that journald is configured to compress large log files, helping to manage disk space and maintain system performance.
@@ -8600,7 +8605,8 @@ queries:
       compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
       compliance/soc2-2017: soc2-control-cc7-2-1
     mql: |
-      journald.config.sections.where(name == "Journal").first.params.where(name == "Storage").first.value == "persistent"
+      file("/etc/systemd/journald.conf").exists &&
+        journald.config.sections.where(name == "Journal").any(params.where(name == "Storage").any(value == "persistent"))
     docs:
       desc: |
         This check ensures that journald is configured to write log files to a persistent disk, preventing log loss during system reboots and ensuring reliable log retention.
