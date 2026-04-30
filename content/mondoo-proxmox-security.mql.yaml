@@ -628,25 +628,17 @@ queries:
               become: true
 
               tasks:
-                - name: Read /etc/passwd
-                  ansible.builtin.slurp:
-                    src: /etc/passwd
-                  register: passwd_file
-
-                - name: Identify non-root UID 0 accounts
-                  ansible.builtin.set_fact:
-                    uid_zero_accounts: >-
-                      {{ (passwd_file.content | b64decode).splitlines()
-                         | map('split', ':')
-                         | selectattr('2', 'equalto', '0')
-                         | rejectattr('0', 'equalto', 'root')
-                         | map(attribute=0)
-                         | list }}
+                - name: Find non-root UID 0 accounts
+                  ansible.builtin.shell: |
+                    set -o pipefail
+                    awk -F: '$3 == 0 && $1 != "root" {print $1}' /etc/passwd
+                  register: uid_zero_accounts
+                  changed_when: false
 
                 - name: Fail if non-root UID 0 accounts exist
                   ansible.builtin.fail:
-                    msg: "Non-root UID 0 accounts found: {{ uid_zero_accounts }} - reassign or remove them"
-                  when: uid_zero_accounts | length > 0
+                    msg: "Non-root UID 0 accounts found: {{ uid_zero_accounts.stdout_lines }} - reassign or remove them"
+                  when: uid_zero_accounts.stdout_lines | length > 0
             ```
 
   - uid: mondoo-proxmox-security-no-empty-passwords
@@ -1373,11 +1365,25 @@ queries:
                     contains: 'nesting=1'
                   register: nested_confs
 
-                - name: Strip nesting=1 from features line
+                - name: Strip ",nesting=1" when it follows another feature
                   ansible.builtin.replace:
                     path: "{{ item.path }}"
-                    regexp: '(^features:.*?),?nesting=1(,?)'
-                    replace: '\1\2'
+                    regexp: '(^features:.*),nesting=1\b'
+                    replace: '\1'
+                  loop: "{{ nested_confs.files }}"
+
+                - name: Strip "nesting=1," when it leads the features list
+                  ansible.builtin.replace:
+                    path: "{{ item.path }}"
+                    regexp: '^(features:\s*)nesting=1,'
+                    replace: '\1'
+                  loop: "{{ nested_confs.files }}"
+
+                - name: Remove an empty features line if nesting=1 was the only feature
+                  ansible.builtin.lineinfile:
+                    path: "{{ item.path }}"
+                    regexp: '^features:\s*nesting=1\s*$'
+                    state: absent
                   loop: "{{ nested_confs.files }}"
             ```
 
@@ -1618,11 +1624,25 @@ queries:
                     contains: 'mknod=1'
                   register: mknod_confs
 
-                - name: Strip mknod=1 from features line
+                - name: Strip ",mknod=1" when it follows another feature
                   ansible.builtin.replace:
                     path: "{{ item.path }}"
-                    regexp: '(^features:.*?),?mknod=1(,?)'
-                    replace: '\1\2'
+                    regexp: '(^features:.*),mknod=1\b'
+                    replace: '\1'
+                  loop: "{{ mknod_confs.files }}"
+
+                - name: Strip "mknod=1," when it leads the features list
+                  ansible.builtin.replace:
+                    path: "{{ item.path }}"
+                    regexp: '^(features:\s*)mknod=1,'
+                    replace: '\1'
+                  loop: "{{ mknod_confs.files }}"
+
+                - name: Remove an empty features line if mknod=1 was the only feature
+                  ansible.builtin.lineinfile:
+                    path: "{{ item.path }}"
+                    regexp: '^features:\s*mknod=1\s*$'
+                    state: absent
                   loop: "{{ mknod_confs.files }}"
             ```
 
@@ -1696,11 +1716,25 @@ queries:
                     contains: 'fuse=1'
                   register: fuse_confs
 
-                - name: Strip fuse=1 from features line
+                - name: Strip ",fuse=1" when it follows another feature
                   ansible.builtin.replace:
                     path: "{{ item.path }}"
-                    regexp: '(^features:.*?),?fuse=1(,?)'
-                    replace: '\1\2'
+                    regexp: '(^features:.*),fuse=1\b'
+                    replace: '\1'
+                  loop: "{{ fuse_confs.files }}"
+
+                - name: Strip "fuse=1," when it leads the features list
+                  ansible.builtin.replace:
+                    path: "{{ item.path }}"
+                    regexp: '^(features:\s*)fuse=1,'
+                    replace: '\1'
+                  loop: "{{ fuse_confs.files }}"
+
+                - name: Remove an empty features line if fuse=1 was the only feature
+                  ansible.builtin.lineinfile:
+                    path: "{{ item.path }}"
+                    regexp: '^features:\s*fuse=1\s*$'
+                    state: absent
                   loop: "{{ fuse_confs.files }}"
             ```
 
@@ -1999,7 +2033,8 @@ queries:
             **Using a Bash Script**
 
             Print every VM that uses raw QEMU arguments and remove the
-            directive after operator confirmation:
+            `args:` directive from each. Run on a host where you have already
+            audited the existing `args:` lines:
 
             ```bash
             #!/bin/bash
@@ -2570,15 +2605,7 @@ queries:
               become: true
 
               tasks:
-                - name: Set /sys/kernel/mm/ksm/run to 0
-                  ansible.posix.sysctl:
-                    name: kernel.mm.ksm.run
-                    value: '0'
-                    state: present
-                    sysctl_set: true
-                  ignore_errors: true
-
-                - name: Write 0 to /sys/kernel/mm/ksm/run directly
+                - name: Write 0 to /sys/kernel/mm/ksm/run (sysfs pseudo-file)
                   ansible.builtin.copy:
                     dest: /sys/kernel/mm/ksm/run
                     content: "0\n"
@@ -2622,7 +2649,7 @@ queries:
             sed -i -E 's/[[:space:]]*pcie_acs_override=[^[:space:]"]+//g' /etc/kernel/cmdline 2>/dev/null || true
             update-grub
             command -v proxmox-boot-tool >/dev/null && proxmox-boot-tool refresh
-            reboot
+            echo 'Reboot required for the change to take effect.'
             ```
         - id: bash
           desc: |
@@ -2717,7 +2744,7 @@ queries:
             sed -i -E 's|^(GRUB_CMDLINE_LINUX_DEFAULT=")(.*)"$|\1\2 intel_iommu=on iommu=pt"|' /etc/default/grub
             update-grub
             command -v proxmox-boot-tool >/dev/null && proxmox-boot-tool refresh
-            reboot
+            echo 'Reboot required for the change to take effect.'
             ```
 
             For AMD, replace `intel_iommu=on` with `amd_iommu=on`.
