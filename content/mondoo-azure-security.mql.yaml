@@ -16114,12 +16114,19 @@ queries:
       asset.platform == "azure-batch-account"
     mql: |
       azure.subscription.batchService.account.diagnosticSettings.length > 0
+  # HCL: substring heuristic on target_resource_id. cnquery's HCL parser flattens references like
+  # azurerm_batch_account.example.id to the dotted string "azurerm_batch_account.example.id", so this
+  # matches that. It can false-positive on a literal target_resource_id string that happens to contain
+  # the substring; it would not match an attacker-controlled comment because comments are stripped.
   - uid: mondoo-azure-security-batch-diagnostic-settings-enabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_batch_account")
     mql: |
       terraform.resources.where(nameLabel == "azurerm_monitor_diagnostic_setting").any(
         arguments['target_resource_id'].contains("azurerm_batch_account")
       )
+  # Plan: weaker than the state variant. target_resource_id resolves to "(known after apply)" — null
+  # in the plan JSON — when it references another resource being created in the same plan, so we can
+  # only assert the field is set. State sees the resolved ARM ID and can match /batchAccounts/.
   - uid: mondoo-azure-security-batch-diagnostic-settings-enabled-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_batch_account")
     mql: |
@@ -30160,6 +30167,10 @@ queries:
       azure.subscription.recoveryServices.vaults.all(
         backupPolicies.length > 0
       )
+  # Presence-only: verifies that at least one backup policy resource is declared when a vault is.
+  # Does not correlate each policy back to a specific vault via recovery_vault_name, so a config
+  # with two vaults and only one policy would still pass. Per-vault correlation requires a
+  # cross-resource reference walk that this MQL does not perform.
   - uid: mondoo-azure-security-recovery-vault-backup-policies-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_recovery_services_vault")
     mql: |
