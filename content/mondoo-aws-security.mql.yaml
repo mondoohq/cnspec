@@ -44865,6 +44865,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-sfn-logging-enabled-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that AWS Step Functions state machines have logging enabled. Without logging, execution history and state transition events are not captured, making it difficult to detect failures, debug workflows, or investigate security incidents.
@@ -44918,6 +44922,31 @@ queries:
               }
             }
             ```
+        - id: cloudformation
+          desc: |
+            Set `LoggingConfiguration.Level` on every `AWS::StepFunctions::StateMachine` to `ALL`, `ERROR`, or `FATAL` and pin a CloudWatch Logs destination so execution events are auditable:
+
+            ```yaml
+            Resources:
+              StateMachineLogGroup:
+                Type: AWS::Logs::LogGroup
+                Properties:
+                  LogGroupName: /aws/stepfunctions/example
+                  RetentionInDays: 365
+              StateMachine:
+                Type: AWS::StepFunctions::StateMachine
+                Properties:
+                  StateMachineName: example
+                  RoleArn: !GetAtt StateMachineRole.Arn
+                  DefinitionString: !Sub |
+                    {"StartAt": "Done", "States": {"Done": {"Type": "Succeed"}}}
+                  LoggingConfiguration:
+                    Level: ALL
+                    IncludeExecutionData: false
+                    Destinations:
+                      - CloudWatchLogsLogGroup:
+                          LogGroupArn: !GetAtt StateMachineLogGroup.Arn
+            ```
     refs:
       - url: https://docs.aws.amazon.com/step-functions/latest/dg/cw-logs.html
         title: AWS Documentation - Logging Step Functions using CloudWatch Logs
@@ -44948,6 +44977,14 @@ queries:
         values["logging_configuration"] != null && values["logging_configuration"].any(
           _["level"] != "OFF" && _["level"] != null
         )
+      )
+  - uid: mondoo-aws-security-sfn-logging-enabled-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::StepFunctions::StateMachine")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::StepFunctions::StateMachine").all(
+        properties['LoggingConfiguration'] != null &&
+        properties['LoggingConfiguration']['Level'] != null &&
+        properties['LoggingConfiguration']['Level'] != "OFF"
       )
   - uid: mondoo-aws-security-sfn-encryption-configured
     title: Ensure Step Functions state machines use CMK encryption
@@ -44983,6 +45020,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-sfn-encryption-configured-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that AWS Step Functions state machines are encrypted using a customer-managed KMS key rather than the default AWS-owned key. Customer-managed keys provide greater control over key lifecycle, access policies, and audit capabilities.
@@ -45036,6 +45077,29 @@ queries:
               }
             }
             ```
+        - id: cloudformation
+          desc: |
+            Set `EncryptionConfiguration.Type: CUSTOMER_MANAGED_KMS_KEY` on every `AWS::StepFunctions::StateMachine` so execution history and definitions are encrypted with a customer-managed CMK rather than the default AWS-owned key:
+
+            ```yaml
+            Resources:
+              StateMachineKey:
+                Type: AWS::KMS::Key
+                Properties:
+                  Description: CMK for Step Functions
+                  EnableKeyRotation: true
+              StateMachine:
+                Type: AWS::StepFunctions::StateMachine
+                Properties:
+                  StateMachineName: example
+                  RoleArn: !GetAtt StateMachineRole.Arn
+                  DefinitionString: !Sub |
+                    {"StartAt": "Done", "States": {"Done": {"Type": "Succeed"}}}
+                  EncryptionConfiguration:
+                    Type: CUSTOMER_MANAGED_KMS_KEY
+                    KmsKeyId: !GetAtt StateMachineKey.Arn
+                    KmsDataKeyReusePeriodSeconds: 300
+            ```
     refs:
       - url: https://docs.aws.amazon.com/step-functions/latest/dg/encryption-at-rest.html
         title: AWS Documentation - Encryption at rest for Step Functions
@@ -45066,6 +45130,14 @@ queries:
         values["encryption_configuration"] != null && values["encryption_configuration"].any(
           _["type"] != "AWS_OWNED_KEY" && _["type"] != null
         )
+      )
+  - uid: mondoo-aws-security-sfn-encryption-configured-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::StepFunctions::StateMachine")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::StepFunctions::StateMachine").all(
+        properties['EncryptionConfiguration'] != null &&
+        properties['EncryptionConfiguration']['Type'] != null &&
+        properties['EncryptionConfiguration']['Type'] != "AWS_OWNED_KEY"
       )
   - uid: mondoo-aws-security-ram-no-external-principals
     title: Ensure RAM shares do not allow external principals
@@ -45101,6 +45173,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-ram-no-external-principals-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that AWS Resource Access Manager (RAM) resource shares do not allow external principals. When external principals are allowed, resources can be shared with AWS accounts outside your organization, increasing the risk of unauthorized access.
@@ -45146,6 +45222,22 @@ queries:
               allow_external_principals = false
             }
             ```
+        - id: cloudformation
+          desc: |
+            Set `AllowExternalPrincipals: false` on every `AWS::RAM::ResourceShare` so resources can only be shared with principals inside the AWS Organization:
+
+            ```yaml
+            Resources:
+              ResourceShare:
+                Type: AWS::RAM::ResourceShare
+                Properties:
+                  Name: example
+                  AllowExternalPrincipals: false
+                  ResourceArns:
+                    - !GetAtt SharedSubnet.Arn
+                  Principals:
+                    - arn:aws:organizations::111122223333:ou/o-aaaa/ou-bbbb
+            ```
     refs:
       - url: https://docs.aws.amazon.com/ram/latest/userguide/working-with-sharing.html
         title: AWS Documentation - Sharing your AWS resources
@@ -45170,6 +45262,12 @@ queries:
     mql: |
       terraform.state.resources.where(type == "aws_ram_resource_share").all(
         values["allow_external_principals"] == false
+      )
+  - uid: mondoo-aws-security-ram-no-external-principals-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::RAM::ResourceShare")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::RAM::ResourceShare").all(
+        properties['AllowExternalPrincipals'] == false
       )
   - uid: mondoo-aws-security-ram-no-wildcard-principals
     title: Ensure RAM shares do not use wildcard principals
@@ -45205,6 +45303,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-ram-no-wildcard-principals-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that AWS Resource Access Manager (RAM) resource shares do not use wildcard (*) principals. Wildcard principals grant access to all AWS accounts, effectively making shared resources publicly accessible.
@@ -45258,6 +45360,21 @@ queries:
               resource_share_arn = aws_ram_resource_share.example.arn
             }
             ```
+        - id: cloudformation
+          desc: |
+            Never list `"*"` in `Principals` on `AWS::RAM::ResourceShare`. Always scope shares to specific account, OU, or organization ARNs:
+
+            ```yaml
+            Resources:
+              ResourceShare:
+                Type: AWS::RAM::ResourceShare
+                Properties:
+                  Name: example
+                  ResourceArns:
+                    - !GetAtt SharedSubnet.Arn
+                  Principals:
+                    - "111122223333"
+            ```
     refs:
       - url: https://docs.aws.amazon.com/ram/latest/userguide/working-with-sharing.html
         title: AWS Documentation - Sharing your AWS resources
@@ -45282,6 +45399,12 @@ queries:
     mql: |
       terraform.state.resources.where(type == "aws_ram_principal_association").all(
         values["principal"] != "*"
+      )
+  - uid: mondoo-aws-security-ram-no-wildcard-principals-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::RAM::ResourceShare")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::RAM::ResourceShare").all(
+        properties['Principals'] == null || properties['Principals'].none(_ == "*")
       )
   - uid: mondoo-aws-security-transfer-no-ftp
     title: Ensure Transfer Family servers do not use plain FTP
@@ -45317,6 +45440,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-transfer-no-ftp-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that AWS Transfer Family servers do not use the plain FTP protocol. FTP transmits data and credentials in cleartext, making it vulnerable to interception and man-in-the-middle attacks.
@@ -45367,6 +45494,19 @@ queries:
               }
             }
             ```
+        - id: cloudformation
+          desc: |
+            Drop `FTP` from `Protocols` on every `AWS::Transfer::Server`. SFTP and FTPS encrypt control and data channels; plain FTP does not:
+
+            ```yaml
+            Resources:
+              TransferServer:
+                Type: AWS::Transfer::Server
+                Properties:
+                  Protocols:
+                    - SFTP
+                    - FTPS
+            ```
     refs:
       - url: https://docs.aws.amazon.com/transfer/latest/userguide/create-server.html
         title: AWS Documentation - Creating a Transfer Family server
@@ -45391,6 +45531,12 @@ queries:
     mql: |
       terraform.state.resources.where(type == "aws_transfer_server").all(
         values["protocols"] == null || values["protocols"].none(_ == "FTP")
+      )
+  - uid: mondoo-aws-security-transfer-no-ftp-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Transfer::Server")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::Transfer::Server").all(
+        properties['Protocols'] == null || properties['Protocols'].none(_ == "FTP")
       )
   - uid: mondoo-aws-security-transfer-vpc-endpoint
     title: Ensure Transfer Family servers use VPC endpoints
@@ -45426,6 +45572,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-transfer-vpc-endpoint-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that AWS Transfer Family servers use VPC or VPC_ENDPOINT endpoint types instead of PUBLIC endpoints. VPC endpoints keep file transfer traffic within the AWS network, reducing exposure to internet-based threats.
@@ -45479,6 +45629,24 @@ queries:
               }
             }
             ```
+        - id: cloudformation
+          desc: |
+            Set `EndpointType: VPC` on every `AWS::Transfer::Server` so the server is reachable only through your VPC, not over the public internet:
+
+            ```yaml
+            Resources:
+              TransferServer:
+                Type: AWS::Transfer::Server
+                Properties:
+                  EndpointType: VPC
+                  EndpointDetails:
+                    VpcId: !Ref VpcId
+                    SubnetIds:
+                      - !Ref PrivateSubnetA
+                      - !Ref PrivateSubnetB
+                    SecurityGroupIds:
+                      - !Ref TransferSecurityGroup
+            ```
     refs:
       - url: https://docs.aws.amazon.com/transfer/latest/userguide/create-server-in-vpc.html
         title: AWS Documentation - Creating a server in a VPC
@@ -45503,6 +45671,12 @@ queries:
     mql: |
       terraform.state.resources.where(type == "aws_transfer_server").all(
         values["endpoint_type"] == "VPC" || values["endpoint_type"] == "VPC_ENDPOINT"
+      )
+  - uid: mondoo-aws-security-transfer-vpc-endpoint-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Transfer::Server")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::Transfer::Server").all(
+        properties['EndpointType'] == "VPC" || properties['EndpointType'] == "VPC_ENDPOINT"
       )
   - uid: mondoo-aws-security-transfer-logging-enabled
     title: Ensure Transfer Family servers have logging enabled
@@ -45538,6 +45712,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-transfer-logging-enabled-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that AWS Transfer Family servers have a logging role configured. Without a logging role, file transfer activity is not logged to CloudWatch, making it impossible to audit file access or detect unauthorized transfers.
@@ -45582,6 +45760,29 @@ queries:
               logging_role = aws_iam_role.transfer_logging.arn
             }
             ```
+        - id: cloudformation
+          desc: |
+            Set `LoggingRole` on every `AWS::Transfer::Server` to an IAM role that grants `logs:CreateLogStream` and `logs:PutLogEvents` so user activity lands in CloudWatch Logs:
+
+            ```yaml
+            Resources:
+              TransferLoggingRole:
+                Type: AWS::IAM::Role
+                Properties:
+                  AssumeRolePolicyDocument:
+                    Version: "2012-10-17"
+                    Statement:
+                      - Effect: Allow
+                        Principal:
+                          Service: transfer.amazonaws.com
+                        Action: sts:AssumeRole
+                  ManagedPolicyArns:
+                    - arn:aws:iam::aws:policy/service-role/AWSTransferLoggingAccess
+              TransferServer:
+                Type: AWS::Transfer::Server
+                Properties:
+                  LoggingRole: !GetAtt TransferLoggingRole.Arn
+            ```
     refs:
       - url: https://docs.aws.amazon.com/transfer/latest/userguide/structured-logging.html
         title: AWS Documentation - Transfer Family logging
@@ -45606,6 +45807,12 @@ queries:
     mql: |
       terraform.state.resources.where(type == "aws_transfer_server").all(
         values["logging_role"] != null && values["logging_role"] != ""
+      )
+  - uid: mondoo-aws-security-transfer-logging-enabled-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Transfer::Server")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::Transfer::Server").all(
+        properties['LoggingRole'] != null && properties['LoggingRole'] != ""
       )
   - uid: mondoo-aws-security-transfer-security-policy
     title: Ensure Transfer Family servers use current security policies
@@ -45641,6 +45848,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-transfer-security-policy-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that AWS Transfer Family servers are not using the deprecated TransferSecurityPolicy-2018-11 security policy. This policy supports older, weaker cryptographic algorithms that are no longer considered secure.
@@ -45685,6 +45896,17 @@ queries:
               security_policy_name = "TransferSecurityPolicy-2024-01"
             }
             ```
+        - id: cloudformation
+          desc: |
+            Pin `SecurityPolicyName` on every `AWS::Transfer::Server` to a current policy. The legacy `TransferSecurityPolicy-2018-11` permits TLS 1.0/1.1 and weak ciphers; pick the most recent year-prefixed policy supported in your region:
+
+            ```yaml
+            Resources:
+              TransferServer:
+                Type: AWS::Transfer::Server
+                Properties:
+                  SecurityPolicyName: TransferSecurityPolicy-2024-01
+            ```
     refs:
       - url: https://docs.aws.amazon.com/transfer/latest/userguide/security-policies.html
         title: AWS Documentation - Transfer Family security policies
@@ -45709,6 +45931,12 @@ queries:
     mql: |
       terraform.state.resources.where(type == "aws_transfer_server").all(
         values["security_policy_name"] == null || values["security_policy_name"] != "TransferSecurityPolicy-2018-11"
+      )
+  - uid: mondoo-aws-security-transfer-security-policy-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Transfer::Server")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::Transfer::Server").all(
+        properties['SecurityPolicyName'] != "TransferSecurityPolicy-2018-11"
       )
   - uid: mondoo-aws-security-transfer-identity-provider
     title: Ensure Transfer Family servers use external identity providers
@@ -45744,6 +45972,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-transfer-identity-provider-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that AWS Transfer Family servers use an external identity provider rather than the service-managed identity provider. Service-managed users authenticate with static passwords that are prime targets for credential stuffing attacks, cannot be protected with MFA, and cannot be centrally revoked when compromised.
@@ -45794,6 +46026,19 @@ queries:
               invocation_role = aws_iam_role.transfer.arn
             }
             ```
+        - id: cloudformation
+          desc: |
+            Set `IdentityProviderType` on every `AWS::Transfer::Server` to `AWS_DIRECTORY_SERVICE`, `API_GATEWAY`, or `AWS_LAMBDA` rather than the default `SERVICE_MANAGED` so account, password, and rotation policies live with your existing identity provider:
+
+            ```yaml
+            Resources:
+              TransferServer:
+                Type: AWS::Transfer::Server
+                Properties:
+                  IdentityProviderType: AWS_DIRECTORY_SERVICE
+                  IdentityProviderDetails:
+                    DirectoryId: !Ref DirectoryId
+            ```
     refs:
       - url: https://docs.aws.amazon.com/transfer/latest/userguide/custom-identity-provider-users.html
         title: AWS Documentation - Using custom identity providers
@@ -45818,6 +46063,13 @@ queries:
     mql: |
       terraform.state.resources.where(type == "aws_transfer_server").all(
         values["identity_provider_type"] != null && values["identity_provider_type"] != "SERVICE_MANAGED"
+      )
+  - uid: mondoo-aws-security-transfer-identity-provider-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Transfer::Server")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::Transfer::Server").all(
+        properties['IdentityProviderType'] != null &&
+        properties['IdentityProviderType'] != "SERVICE_MANAGED"
       )
   - uid: mondoo-aws-security-appmesh-egress-filter
     title: Ensure App Mesh meshes use DROP_ALL egress filter
@@ -45853,6 +46105,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-appmesh-egress-filter-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that AWS App Mesh meshes use the DROP_ALL egress filter type. The DROP_ALL filter blocks all outbound traffic from virtual services unless explicitly allowed through virtual services definitions, implementing a deny-by-default network posture.
@@ -45904,6 +46160,20 @@ queries:
               }
             }
             ```
+        - id: cloudformation
+          desc: |
+            Set `Spec.EgressFilter.Type: DROP_ALL` on every `AWS::AppMesh::Mesh` so virtual nodes can only reach destinations defined inside the mesh — no implicit egress to the public internet:
+
+            ```yaml
+            Resources:
+              Mesh:
+                Type: AWS::AppMesh::Mesh
+                Properties:
+                  MeshName: example
+                  Spec:
+                    EgressFilter:
+                      Type: DROP_ALL
+            ```
     refs:
       - url: https://docs.aws.amazon.com/app-mesh/latest/userguide/meshes.html
         title: AWS Documentation - App Mesh meshes
@@ -45934,6 +46204,14 @@ queries:
         values["spec"] != null && values["spec"].any(
           _["egress_filter"] != null && _["egress_filter"].any(_["type"] == "DROP_ALL")
         )
+      )
+  - uid: mondoo-aws-security-appmesh-egress-filter-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::AppMesh::Mesh")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::AppMesh::Mesh").all(
+        properties['Spec'] != null &&
+        properties['Spec']['EgressFilter'] != null &&
+        properties['Spec']['EgressFilter']['Type'] == "DROP_ALL"
       )
   - uid: mondoo-aws-security-identitycenter-session-duration
     title: Ensure Identity Center permission sets have short sessions
@@ -46314,6 +46592,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-secretsmanager-no-public-policy-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that AWS Secrets Manager secrets do not have resource policies that grant public access. A resource policy with a wildcard principal ("*") in an Allow statement without conditions effectively makes the secret accessible to any AWS account.
@@ -46387,6 +46669,25 @@ queries:
               block_public_policy = true
             }
             ```
+        - id: cloudformation
+          desc: |
+            Scope every `Allow` statement in an `AWS::SecretsManager::ResourcePolicy` to a specific account, role, or service principal — never `"*"` or `{"AWS": "*"}`:
+
+            ```yaml
+            Resources:
+              SecretAccessPolicy:
+                Type: AWS::SecretsManager::ResourcePolicy
+                Properties:
+                  SecretId: !Ref MySecret
+                  ResourcePolicy:
+                    Version: "2012-10-17"
+                    Statement:
+                      - Effect: Allow
+                        Principal:
+                          AWS: arn:aws:iam::111122223333:role/AppRole
+                        Action: secretsmanager:GetSecretValue
+                        Resource: "*"
+            ```
     refs:
       - url: https://docs.aws.amazon.com/secretsmanager/latest/userguide/auth-and-access_resource-based-policies.html
         title: AWS Documentation - Resource-based policies for Secrets Manager
@@ -46419,6 +46720,18 @@ queries:
       terraform.state.resources.where(type == "aws_secretsmanager_secret_policy").all(
         values["policy"]["Statement"].where(_["Effect"] == "Allow").none(
           _["Principal"] == "*" || _["Principal"]["AWS"] == "*"
+        )
+      )
+  - uid: mondoo-aws-security-secretsmanager-no-public-policy-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::SecretsManager::ResourcePolicy")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::SecretsManager::ResourcePolicy").all(
+        properties['ResourcePolicy'] == null ||
+        properties['ResourcePolicy']['Statement'] == null ||
+        properties['ResourcePolicy']['Statement'].where(_['Effect'] == "Allow").none(
+          _['Principal'] == "*" ||
+          _['Principal']['AWS'] == "*" ||
+          _['Principal']['AWS'] != null && _['Principal']['AWS'].contains("*")
         )
       )
   - uid: mondoo-aws-security-ec2-serial-console-disabled
@@ -46633,6 +46946,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-ec2-launch-template-imdsv2-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that EC2 launch templates are configured to require Instance Metadata Service Version 2 (IMDSv2). IMDSv2 uses session-oriented authentication that requires a PUT request to obtain a token before metadata can be accessed, preventing SSRF attacks from extracting instance credentials.
@@ -46679,6 +46996,24 @@ queries:
               }
             }
             ```
+        - id: cloudformation
+          desc: |
+            Set `LaunchTemplateData.MetadataOptions.HttpTokens: required` on every `AWS::EC2::LaunchTemplate` so launched instances enforce IMDSv2 from boot:
+
+            ```yaml
+            Resources:
+              LaunchTemplate:
+                Type: AWS::EC2::LaunchTemplate
+                Properties:
+                  LaunchTemplateName: hardened
+                  LaunchTemplateData:
+                    ImageId: !Ref AmiId
+                    InstanceType: t3.small
+                    MetadataOptions:
+                      HttpTokens: required
+                      HttpPutResponseHopLimit: 2
+                      HttpEndpoint: enabled
+            ```
     refs:
       - url: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-instance-metadata-service.html
         title: Configure the instance metadata service
@@ -46712,6 +47047,14 @@ queries:
           _["http_tokens"] == "required"
         )
       )
+  - uid: mondoo-aws-security-ec2-launch-template-imdsv2-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::LaunchTemplate")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::EC2::LaunchTemplate").all(
+        properties['LaunchTemplateData'] != null &&
+        properties['LaunchTemplateData']['MetadataOptions'] != null &&
+        properties['LaunchTemplateData']['MetadataOptions']['HttpTokens'] == "required"
+      )
   - uid: mondoo-aws-security-s3-ownership-controls-enforced
     title: Ensure S3 buckets enforce bucket owner ownership
     impact: 70
@@ -46740,6 +47083,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-s3-ownership-controls-enforced-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that S3 buckets have ownership controls set to BucketOwnerEnforced. This setting disables ACLs on the bucket, meaning all objects are owned by the bucket owner regardless of who uploaded them. This simplifies access management by ensuring that only IAM policies and bucket policies control access.
@@ -46782,6 +47129,20 @@ queries:
               }
             }
             ```
+        - id: cloudformation
+          desc: |
+            Set `OwnershipControls.Rules[].ObjectOwnership: BucketOwnerEnforced` on every `AWS::S3::Bucket` to disable ACLs and force bucket-owner ownership of all uploaded objects:
+
+            ```yaml
+            Resources:
+              Bucket:
+                Type: AWS::S3::Bucket
+                Properties:
+                  BucketName: example-secure
+                  OwnershipControls:
+                    Rules:
+                      - ObjectOwnership: BucketOwnerEnforced
+            ```
     refs:
       - url: https://docs.aws.amazon.com/AmazonS3/latest/userguide/about-object-ownership.html
         title: Controlling ownership of objects and disabling ACLs
@@ -46805,6 +47166,13 @@ queries:
     mql: |
       terraform.state.resources.where(type == "aws_s3_bucket_ownership_controls").all(
         values["rule"].any(_["object_ownership"] == "BucketOwnerEnforced")
+      )
+  - uid: mondoo-aws-security-s3-ownership-controls-enforced-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::S3::Bucket")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::S3::Bucket").all(
+        properties['OwnershipControls'] != null &&
+        properties['OwnershipControls']['Rules'].any(_['ObjectOwnership'] == "BucketOwnerEnforced")
       )
   - uid: mondoo-aws-security-cloudtrail-insights-enabled
     title: Ensure CloudTrail Insights is enabled
@@ -46834,6 +47202,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-cloudtrail-insights-enabled-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that CloudTrail trails have Insights enabled. CloudTrail Insights automatically analyzes management events to detect unusual API activity patterns, such as spikes in resource provisioning, bursts of IAM actions, or gaps in periodic maintenance activity.
@@ -46881,6 +47253,25 @@ queries:
               }
             }
             ```
+        - id: cloudformation
+          desc: |
+            Enable both `ApiCallRateInsight` and `ApiErrorRateInsight` Insight selectors on every `AWS::CloudTrail::Trail` so anomalous activity is detected automatically:
+
+            ```yaml
+            Resources:
+              Trail:
+                Type: AWS::CloudTrail::Trail
+                Properties:
+                  TrailName: org-trail
+                  S3BucketName: !Ref TrailBucket
+                  IsLogging: true
+                  IsMultiRegionTrail: true
+                  IncludeGlobalServiceEvents: true
+                  EnableLogFileValidation: true
+                  InsightSelectors:
+                    - InsightType: ApiCallRateInsight
+                    - InsightType: ApiErrorRateInsight
+            ```
     refs:
       - url: https://docs.aws.amazon.com/awscloudtrail/latest/userguide/logging-insights-events-with-cloudtrail.html
         title: Logging Insights events
@@ -46912,6 +47303,14 @@ queries:
         values["insight_selector"].any(_["insight_type"] == "ApiCallRateInsight") &&
         values["insight_selector"].any(_["insight_type"] == "ApiErrorRateInsight")
       )
+  - uid: mondoo-aws-security-cloudtrail-insights-enabled-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::CloudTrail::Trail")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::CloudTrail::Trail").all(
+        properties['InsightSelectors'] != null &&
+        properties['InsightSelectors'].any(_['InsightType'] == "ApiCallRateInsight") &&
+        properties['InsightSelectors'].any(_['InsightType'] == "ApiErrorRateInsight")
+      )
   - uid: mondoo-aws-security-securityhub-standards-enabled
     title: Ensure Security Hub has standards enabled
     impact: 70
@@ -46940,6 +47339,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-securityhub-standards-enabled-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that AWS Security Hub has at least one security standard enabled. Security standards (such as AWS Foundational Security Best Practices, CIS AWS Foundations Benchmark, or PCI DSS) provide automated security checks against AWS resources.
@@ -46979,6 +47382,21 @@ queries:
               depends_on    = [aws_securityhub_account.this]
             }
             ```
+        - id: cloudformation
+          desc: |
+            Pair `AWS::SecurityHub::Hub` with at least one `AWS::SecurityHub::Standard` subscription. The `DependsOn` ensures Security Hub is enabled before standards are subscribed:
+
+            ```yaml
+            Resources:
+              SecurityHub:
+                Type: AWS::SecurityHub::Hub
+                Properties: {}
+              FsbpStandard:
+                Type: AWS::SecurityHub::Standard
+                DependsOn: SecurityHub
+                Properties:
+                  StandardsArn: arn:aws:securityhub:::ruleset/aws-foundational-security-best-practices/v/1.0.0
+            ```
     refs:
       - url: https://docs.aws.amazon.com/securityhub/latest/userguide/securityhub-standards.html
         title: Security standards in AWS Security Hub
@@ -47004,6 +47422,11 @@ queries:
     mql: |
       terraform.state.resources.where(type == "aws_securityhub_account") != empty &&
       terraform.state.resources.where(type == "aws_securityhub_standards_subscription") != empty
+  - uid: mondoo-aws-security-securityhub-standards-enabled-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::SecurityHub::Standard")
+    mql: |
+      cloudformation.template.resources.contains(type == "AWS::SecurityHub::Hub") &&
+      cloudformation.template.resources.contains(type == "AWS::SecurityHub::Standard")
   - uid: mondoo-aws-security-sns-no-public-access
     title: Ensure SNS topics do not allow public access
     impact: 80
@@ -47032,6 +47455,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-sns-no-public-access-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that SNS topic access policies do not grant public access. An SNS topic with a policy that allows Principal "*" without conditions enables any AWS account or unauthenticated user to publish or subscribe to the topic.
@@ -47093,6 +47520,26 @@ queries:
               policy = data.aws_iam_policy_document.topic.json
             }
             ```
+        - id: cloudformation
+          desc: |
+            Build the topic policy with specific principals — `aws:SourceArn`/`aws:SourceAccount` conditions narrow cross-service publishing where you can't name a fixed account:
+
+            ```yaml
+            Resources:
+              TopicPolicy:
+                Type: AWS::SNS::TopicPolicy
+                Properties:
+                  Topics:
+                    - !Ref AlertTopic
+                  PolicyDocument:
+                    Version: "2012-10-17"
+                    Statement:
+                      - Effect: Allow
+                        Principal:
+                          AWS: arn:aws:iam::111122223333:root
+                        Action: sns:Publish
+                        Resource: !Ref AlertTopic
+            ```
     refs:
       - url: https://docs.aws.amazon.com/sns/latest/dg/sns-access-policy-use-cases.html
         title: Amazon SNS access policy use cases
@@ -47126,6 +47573,18 @@ queries:
       terraform.state.resources.where(type == "aws_sns_topic_policy").all(
         values["policy"]["Statement"].where(_["Effect"] == "Allow").none(
           _["Principal"] == "*" || _["Principal"]["AWS"] == "*"
+        )
+      )
+  - uid: mondoo-aws-security-sns-no-public-access-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::SNS::TopicPolicy")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::SNS::TopicPolicy").all(
+        properties['PolicyDocument'] == null ||
+        properties['PolicyDocument']['Statement'] == null ||
+        properties['PolicyDocument']['Statement'].where(_['Effect'] == "Allow").none(
+          _['Principal'] == "*" ||
+          _['Principal']['AWS'] == "*" ||
+          _['Principal']['AWS'] != null && _['Principal']['AWS'].contains("*")
         )
       )
   - uid: mondoo-aws-security-drs-private-replication
@@ -49255,6 +49714,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-s3-bucket-policy-no-public-principal-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that S3 bucket policies do not contain `Allow` statements with a wildcard `Principal` (`"*"` or `{"AWS": "*"}`). A bucket policy that allows access from any principal makes objects readable or writable by anyone on the internet, regardless of whether Block Public Access is enabled at the account level.
@@ -49301,6 +49764,26 @@ queries:
               policy = data.aws_iam_policy_document.bucket.json
             }
             ```
+        - id: cloudformation
+          desc: |
+            Scope every `Allow` statement in an `AWS::S3::BucketPolicy` to a specific account, role, or service principal — never `"*"` or `{"AWS": "*"}`. For CDN or static-asset distribution, prefer CloudFront with OAC over a public bucket policy:
+
+            ```yaml
+            Resources:
+              BucketPolicy:
+                Type: AWS::S3::BucketPolicy
+                Properties:
+                  Bucket: !Ref Bucket
+                  PolicyDocument:
+                    Version: "2012-10-17"
+                    Statement:
+                      - Sid: AllowAppRole
+                        Effect: Allow
+                        Principal:
+                          AWS: arn:aws:iam::111122223333:role/AppRole
+                        Action: s3:GetObject
+                        Resource: !Sub "${Bucket.Arn}/*"
+            ```
     refs:
       - url: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-policy-language-overview.html
         title: AWS Documentation - Bucket policy language overview
@@ -49337,6 +49820,18 @@ queries:
           _["Principal"] == "*" || _["Principal"]["AWS"] == "*"
         )
       )
+  - uid: mondoo-aws-security-s3-bucket-policy-no-public-principal-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::S3::BucketPolicy")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::S3::BucketPolicy").all(
+        properties['PolicyDocument'] == null ||
+        properties['PolicyDocument']['Statement'] == null ||
+        properties['PolicyDocument']['Statement'].where(_['Effect'] == "Allow").none(
+          _['Principal'] == "*" ||
+          _['Principal']['AWS'] == "*" ||
+          _['Principal']['AWS'] != null && _['Principal']['AWS'].contains("*")
+        )
+      )
   - uid: mondoo-aws-security-s3-bucket-policy-secure-transport
     title: Ensure S3 bucket policies enforce secure transport
     impact: 80
@@ -49362,6 +49857,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-s3-bucket-policy-secure-transport-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that an S3 bucket policy explicitly denies any request that does not use secure transport (`aws:SecureTransport: "false"`). Without an explicit deny, S3 happily accepts plain-HTTP requests, exposing object data and authorization headers in transit.
@@ -49429,6 +49928,30 @@ queries:
               policy = data.aws_iam_policy_document.secure_transport.json
             }
             ```
+        - id: cloudformation
+          desc: |
+            Add a `Deny` statement keyed on `aws:SecureTransport: "false"` to every `AWS::S3::BucketPolicy` so plaintext requests are rejected at the bucket layer:
+
+            ```yaml
+            Resources:
+              BucketPolicy:
+                Type: AWS::S3::BucketPolicy
+                Properties:
+                  Bucket: !Ref Bucket
+                  PolicyDocument:
+                    Version: "2012-10-17"
+                    Statement:
+                      - Sid: DenyInsecureTransport
+                        Effect: Deny
+                        Principal: "*"
+                        Action: s3:*
+                        Resource:
+                          - !GetAtt Bucket.Arn
+                          - !Sub "${Bucket.Arn}/*"
+                        Condition:
+                          Bool:
+                            aws:SecureTransport: "false"
+            ```
     refs:
       - url: https://docs.aws.amazon.com/config/latest/developerguide/s3-bucket-ssl-requests-only.html
         title: AWS Config Rule - s3-bucket-ssl-requests-only
@@ -49479,6 +50002,21 @@ queries:
           _["Condition"]["Bool"]["aws:SecureTransport"] == false
         )
       )
+  - uid: mondoo-aws-security-s3-bucket-policy-secure-transport-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::S3::BucketPolicy")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::S3::BucketPolicy").all(
+        properties['PolicyDocument'] != null &&
+        properties['PolicyDocument']['Statement'] != null &&
+        properties['PolicyDocument']['Statement'].where(
+          _['Effect'] == "Deny" &&
+          _['Condition'] != null &&
+          _['Condition']['Bool'] != null
+        ).any(
+          _['Condition']['Bool']['aws:SecureTransport'] == "false" ||
+          _['Condition']['Bool']['aws:SecureTransport'] == false
+        )
+      )
   - uid: mondoo-aws-security-s3-bucket-ownership-bucket-owner-enforced
     title: Ensure S3 buckets disable ACLs by enforcing bucket-owner ownership
     impact: 70
@@ -49502,6 +50040,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-s3-bucket-ownership-bucket-owner-enforced-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that the S3 bucket has Object Ownership set to `BucketOwnerEnforced`. With this setting, ACLs are disabled and access is governed exclusively by IAM and bucket policies, removing an entire class of historical mistakes (objects uploaded with public-read ACLs).
@@ -49534,6 +50076,20 @@ queries:
               }
             }
             ```
+        - id: cloudformation
+          desc: |
+            Set `OwnershipControls.Rules[].ObjectOwnership: BucketOwnerEnforced` on every `AWS::S3::Bucket`. This is the strongest of the three modes — ACLs are disabled and the bucket owner owns all objects regardless of uploader:
+
+            ```yaml
+            Resources:
+              Bucket:
+                Type: AWS::S3::Bucket
+                Properties:
+                  BucketName: example-secure
+                  OwnershipControls:
+                    Rules:
+                      - ObjectOwnership: BucketOwnerEnforced
+            ```
     refs:
       - url: https://docs.aws.amazon.com/AmazonS3/latest/userguide/about-object-ownership.html
         title: AWS Documentation - Controlling ownership of uploaded objects
@@ -49558,6 +50114,13 @@ queries:
     mql: |
       terraform.state.resources.where(type == "aws_s3_bucket_ownership_controls").all(
         values["rule"].any(_["object_ownership"] == "BucketOwnerEnforced")
+      )
+  - uid: mondoo-aws-security-s3-bucket-ownership-bucket-owner-enforced-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::S3::Bucket")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::S3::Bucket").all(
+        properties['OwnershipControls'] != null &&
+        properties['OwnershipControls']['Rules'].any(_['ObjectOwnership'] == "BucketOwnerEnforced")
       )
   - uid: mondoo-aws-security-sns-topic-cmk-encryption
     title: Ensure SNS topics are encrypted with a customer-managed KMS key
