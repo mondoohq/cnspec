@@ -49,10 +49,19 @@ policies:
           - uid: mondoo-cloudflare-security-email-obfuscation
           - uid: mondoo-cloudflare-security-hotlink-protection
           - uid: mondoo-cloudflare-security-opportunistic-encryption
+          - uid: mondoo-cloudflare-security-dnssec-active
+          - uid: mondoo-cloudflare-security-hsts-enabled
+          - uid: mondoo-cloudflare-security-hsts-max-age-one-year
+          - uid: mondoo-cloudflare-security-hsts-include-subdomains
+          - uid: mondoo-cloudflare-security-hsts-preload
       - title: Account Security
         filters: asset.platform == "cloudflare-account"
         checks:
           - uid: mondoo-cloudflare-security-enforce-two-factor
+          - uid: mondoo-cloudflare-security-r2-buckets-not-public
+          - uid: mondoo-cloudflare-security-api-tokens-have-expiration
+          - uid: mondoo-cloudflare-security-api-tokens-have-ip-allowlist
+          - uid: mondoo-cloudflare-security-api-tokens-not-older-than-365-days
     scoring_system: highest impact
 queries:
   - uid: mondoo-cloudflare-security-ssl-not-off
@@ -687,3 +696,457 @@ queries:
     refs:
       - url: https://developers.cloudflare.com/fundamentals/setup/account/account-security/2fa/
         title: Cloudflare two-factor authentication
+  - uid: mondoo-cloudflare-security-dnssec-active
+    title: Ensure DNSSEC is active on every zone
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-20
+      compliance/nist-sp-800-171: false
+      compliance/soc2-2017: soc2-control-cc6-7-2
+    mql: |
+      cloudflare.zone.dnssec.status == "active"
+    docs:
+      desc: |
+        This check ensures that DNSSEC is active on every Cloudflare zone. DNSSEC adds cryptographic signatures to DNS responses so resolvers can verify that the records they receive came from the authoritative source and were not tampered with in transit.
+
+        **Why this matters**
+
+        Without DNSSEC, DNS responses for the zone can be forged by any attacker who can poison a recursive resolver, intercept on-path traffic, or compromise an upstream resolver:
+
+          - Forged `A` / `AAAA` responses redirect users to attacker-controlled infrastructure for the entire connection lifecycle, before TLS even starts.
+          - The forgery happens *before* HSTS applies on a first visit, giving the attacker a clean SSL-strip window.
+          - Email infrastructure (`MX`, SPF, DKIM, DMARC TXT records) is equally forgeable, undermining anti-spoofing controls that depend on DNS as the source of truth.
+          - Compromise of a single recursive resolver can poison thousands of clients simultaneously; DNSSEC turns that into a detected forgery instead of a successful one.
+
+        Activating DNSSEC requires publishing the DS record at the registrar so the parent zone can chain trust to Cloudflare's signed responses.
+      remediation:
+        - id: console
+          desc: |
+            To enable DNSSEC in the Cloudflare dashboard:
+
+            1. Log in and select the affected zone.
+            2. Open **DNS** > **Settings**.
+            3. Under **DNSSEC**, click **Enable DNSSEC**.
+            4. Copy the displayed DS record and add it at your domain registrar so the parent zone can chain trust.
+            5. Wait for the registrar to publish the DS record; Cloudflare will then mark DNSSEC as **Active**.
+        - id: cli
+          desc: |
+            To enable DNSSEC for a zone via the Cloudflare API, set the status to `active`. After enabling, copy the returned DS record and publish it at your registrar.
+
+            ```bash
+            curl -X PATCH "https://api.cloudflare.com/client/v4/zones/<zone-id>/dnssec" \
+              -H "Authorization: Bearer <api-token>" \
+              -H "Content-Type: application/json" \
+              --data '{"status":"active"}'
+            ```
+    refs:
+      - url: https://developers.cloudflare.com/dns/dnssec/
+        title: Cloudflare DNSSEC
+  - uid: mondoo-cloudflare-security-hsts-enabled
+    title: Ensure HSTS is enabled on every zone
+    impact: 80
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/soc2-2017: soc2-control-cc6-7-2
+    mql: |
+      cloudflare.zone.settings.hstsEnabled == true
+    docs:
+      desc: |
+        This check ensures that HTTP Strict Transport Security (HSTS) is enabled on every Cloudflare zone. HSTS instructs browsers to refuse plaintext HTTP connections to the zone for a configured duration, eliminating the SSL-strip window that exists on every first visit when only `https://` redirects are configured.
+
+        **Why this matters**
+
+        Without HSTS, the first request a browser makes to the zone is typically `http://` — and that single plaintext request is enough for an on-path attacker to:
+
+          - Intercept the request before the redirect to HTTPS happens, downgrade the entire session, and harvest credentials, session cookies, and form data.
+          - Inject malicious responses that the browser treats as legitimate from the zone, including JavaScript that compromises every authenticated session.
+          - Manipulate the `Set-Cookie` headers so future cookies are sent over HTTP and leak via the same channel.
+
+        Browsers that have already received an HSTS response refuse to make plaintext requests for the configured `max-age`, eliminating the downgrade path entirely.
+      remediation:
+        - id: console
+          desc: |
+            To enable HSTS in the Cloudflare dashboard:
+
+            1. Log in and select the affected zone.
+            2. Navigate to **SSL/TLS** > **Edge Certificates**.
+            3. Scroll to **HTTP Strict Transport Security (HSTS)** and click **Enable HSTS**.
+            4. Acknowledge the warning that all subdomains served over HTTP will become unreachable for the duration of `max-age`.
+            5. Set **Max Age Header** to at least 6 months (12 months recommended), enable **Apply HSTS to subdomains**, and **No-Sniff Header**.
+        - id: cli
+          desc: |
+            To enable HSTS via the Cloudflare API:
+
+            ```bash
+            curl -X PATCH "https://api.cloudflare.com/client/v4/zones/<zone-id>/settings/security_header" \
+              -H "Authorization: Bearer <api-token>" \
+              -H "Content-Type: application/json" \
+              --data '{"value":{"strict_transport_security":{"enabled":true,"max_age":31536000,"include_subdomains":true,"preload":true,"nosniff":true}}}'
+            ```
+    refs:
+      - url: https://developers.cloudflare.com/ssl/edge-certificates/additional-options/http-strict-transport-security/
+        title: Cloudflare HSTS
+  - uid: mondoo-cloudflare-security-hsts-max-age-one-year
+    title: Ensure HSTS max-age is at least one year
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/soc2-2017: soc2-control-cc6-7-2
+    mql: |
+      cloudflare.zone.settings.hstsEnabled != true || cloudflare.zone.settings.hstsMaxAge >= 31536000
+    docs:
+      desc: |
+        This check ensures that the HSTS `max-age` directive is set to at least 31,536,000 seconds (one year) on zones where HSTS is enabled. The `max-age` value is the duration browsers commit to refusing plaintext HTTP connections after seeing the header.
+
+        **Why this matters**
+
+        Short `max-age` values undermine HSTS in three ways:
+
+          - The protection window is exactly the configured duration; a 60-second `max-age` provides 60 seconds of HSTS coverage and then the zone is downgrade-able again.
+          - The HSTS preload list explicitly requires `max-age` of at least one year. Zones that want preload eligibility cannot use shorter values.
+          - Attackers with intermittent on-path access can wait out a short `max-age` window and then deliver an SSL-strip downgrade once the directive expires from the browser cache.
+
+        One year is the conventional baseline; values longer than that are common and reasonable.
+      remediation:
+        - id: console
+          desc: |
+            To raise the HSTS `max-age` in the Cloudflare dashboard:
+
+            1. Log in and select the affected zone.
+            2. Navigate to **SSL/TLS** > **Edge Certificates** > **HTTP Strict Transport Security (HSTS)**.
+            3. Set **Max Age Header** to at least **12 months** (the dashboard exposes 6 / 12 / 24 month options).
+            4. Save.
+        - id: cli
+          desc: |
+            To raise HSTS `max-age` via the Cloudflare API:
+
+            ```bash
+            curl -X PATCH "https://api.cloudflare.com/client/v4/zones/<zone-id>/settings/security_header" \
+              -H "Authorization: Bearer <api-token>" \
+              -H "Content-Type: application/json" \
+              --data '{"value":{"strict_transport_security":{"enabled":true,"max_age":31536000,"include_subdomains":true,"preload":true,"nosniff":true}}}'
+            ```
+    refs:
+      - url: https://developers.cloudflare.com/ssl/edge-certificates/additional-options/http-strict-transport-security/
+        title: Cloudflare HSTS
+      - url: https://hstspreload.org/
+        title: HSTS Preload List requirements
+  - uid: mondoo-cloudflare-security-hsts-include-subdomains
+    title: Ensure HSTS includes subdomains
+    impact: 60
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/soc2-2017: soc2-control-cc6-7-2
+    mql: |
+      cloudflare.zone.settings.hstsEnabled != true || cloudflare.zone.settings.hstsIncludeSubdomains == true
+    docs:
+      desc: |
+        This check ensures that HSTS applies to subdomains on zones where HSTS is enabled. Without `includeSubDomains`, HSTS only protects the apex hostname; every subdomain remains independently downgrade-able on first visit.
+
+        **Why this matters**
+
+        Most production traffic for a zone is served from subdomains: `www.example.com`, `api.example.com`, `auth.example.com`, `cdn.example.com`. Without `includeSubDomains`:
+
+          - An attacker on the user's network can SSL-strip the first visit to any subdomain and harvest the same credentials and session cookies they would have at the apex.
+          - A subdomain that does not enforce HTTPS becomes a credential-theft staging ground: cookies scoped to `.example.com` leak whenever any subdomain is visited over plaintext.
+          - The HSTS preload list rejects entries that do not include subdomains, so opting out also blocks preload eligibility.
+
+        Enabling `includeSubDomains` is safe only when every subdomain (including any short-lived staging or development ones) supports HTTPS — verify before enabling.
+      remediation:
+        - id: console
+          desc: |
+            To extend HSTS to subdomains in the Cloudflare dashboard:
+
+            1. Log in and select the affected zone.
+            2. Navigate to **SSL/TLS** > **Edge Certificates** > **HTTP Strict Transport Security (HSTS)**.
+            3. Confirm every subdomain currently supports HTTPS.
+            4. Enable **Apply HSTS policy to subdomains**.
+            5. Save.
+        - id: cli
+          desc: |
+            To enable `includeSubDomains` via the Cloudflare API:
+
+            ```bash
+            curl -X PATCH "https://api.cloudflare.com/client/v4/zones/<zone-id>/settings/security_header" \
+              -H "Authorization: Bearer <api-token>" \
+              -H "Content-Type: application/json" \
+              --data '{"value":{"strict_transport_security":{"enabled":true,"max_age":31536000,"include_subdomains":true,"preload":true,"nosniff":true}}}'
+            ```
+    refs:
+      - url: https://developers.cloudflare.com/ssl/edge-certificates/additional-options/http-strict-transport-security/
+        title: Cloudflare HSTS
+  - uid: mondoo-cloudflare-security-hsts-preload
+    title: Ensure HSTS preload is enabled
+    impact: 50
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/soc2-2017: soc2-control-cc6-7-2
+    mql: |
+      cloudflare.zone.settings.hstsEnabled != true || cloudflare.zone.settings.hstsPreload == true
+    docs:
+      desc: |
+        This check ensures that the `preload` directive is set on the HSTS header for zones where HSTS is enabled. The `preload` directive is the application's signal that the zone wants to be added to the public HSTS preload list shipped in browsers.
+
+        **Why this matters**
+
+        HSTS as configured at the server only protects users *after* they have made one successful HTTPS connection that returned the HSTS header. The preload list closes that gap:
+
+          - Browsers that ship the preload list refuse plaintext HTTP to the zone before the user has ever visited it — eliminating the first-visit SSL-strip window entirely.
+          - Mobile browsers, embedded WebViews, and headless browsers used by automated systems all benefit from the preload list with no per-user state required.
+          - Attackers who control the user's first DNS lookup can no longer downgrade the connection because the browser has hard-coded refusal of plaintext for the zone.
+
+        Adding `preload` to the header is necessary but not sufficient — the zone must additionally be submitted to [hstspreload.org](https://hstspreload.org/) and accepted by the maintainers before browsers actually enforce the policy. Treat the header directive as the policy commitment and the submission as the deployment step.
+      remediation:
+        - id: console
+          desc: |
+            To enable HSTS preload in the Cloudflare dashboard, then submit to the preload list:
+
+            1. Log in and select the affected zone.
+            2. Navigate to **SSL/TLS** > **Edge Certificates** > **HTTP Strict Transport Security (HSTS)**.
+            3. Confirm `max-age` is at least 12 months and `includeSubDomains` is enabled (both are preload prerequisites).
+            4. Enable **Preload**.
+            5. Save, then submit the zone at [https://hstspreload.org/](https://hstspreload.org/) to be added to the public preload list.
+        - id: cli
+          desc: |
+            To enable the `preload` directive via the Cloudflare API. After enabling, submit the zone at [https://hstspreload.org/](https://hstspreload.org/) to be added to the public preload list.
+
+            ```bash
+            curl -X PATCH "https://api.cloudflare.com/client/v4/zones/<zone-id>/settings/security_header" \
+              -H "Authorization: Bearer <api-token>" \
+              -H "Content-Type: application/json" \
+              --data '{"value":{"strict_transport_security":{"enabled":true,"max_age":31536000,"include_subdomains":true,"preload":true,"nosniff":true}}}'
+            ```
+    refs:
+      - url: https://hstspreload.org/
+        title: HSTS Preload List
+      - url: https://developers.cloudflare.com/ssl/edge-certificates/additional-options/http-strict-transport-security/
+        title: Cloudflare HSTS
+  - uid: mondoo-cloudflare-security-r2-buckets-not-public
+    title: Ensure R2 buckets are not publicly accessible
+    impact: 90
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+    mql: |
+      cloudflare.r2.buckets.all(publicAccessEnabled == false)
+    docs:
+      desc: |
+        This check ensures that no Cloudflare R2 bucket is exposed via the managed `r2.dev` public subdomain. When public access is enabled, every object in the bucket is reachable over the internet at `https://<hash>.r2.dev/<key>` with no authentication.
+
+        **Why this matters**
+
+        Public R2 buckets are the Cloudflare equivalent of public S3 buckets and carry the same data-exposure risk profile:
+
+          - Every object becomes world-readable. Buckets often accumulate logs, backups, customer files, and temporary data that the original use case did not anticipate becoming public.
+          - The `r2.dev` URL pattern is enumerable; once one object is leaked, others are typically findable through filename guessing, search-engine indexing, or referer leakage from internal documents.
+          - Public access is frequently enabled during development for a single asset and forgotten when the bucket is repurposed for production data.
+          - For internet-served content, the recommended pattern is a custom domain with a Cloudflare Worker or signed URL — that path lets you apply access control, rate limiting, and audit logging that the managed `r2.dev` domain does not support.
+
+        Disable the managed public access path; if internet-facing distribution is required, front the bucket with a Worker or custom domain that enforces access control.
+      remediation:
+        - id: console
+          desc: |
+            To disable the managed `r2.dev` public access path in the Cloudflare dashboard:
+
+            1. Log in and select the affected account.
+            2. Navigate to **R2** > select the bucket.
+            3. Open **Settings** > **Public access**.
+            4. Under **r2.dev subdomain**, click **Disallow Access**.
+            5. If the bucket needs to remain internet-accessible, configure a custom domain with a Cloudflare Worker or signed URL pattern instead.
+        - id: cli
+          desc: |
+            To disable the managed `r2.dev` public domain via the Cloudflare API:
+
+            ```bash
+            curl -X PUT "https://api.cloudflare.com/client/v4/accounts/<account-id>/r2/buckets/<bucket-name>/domains/managed" \
+              -H "Authorization: Bearer <api-token>" \
+              -H "Content-Type: application/json" \
+              --data '{"enabled":false}'
+            ```
+    refs:
+      - url: https://developers.cloudflare.com/r2/buckets/public-buckets/
+        title: Cloudflare R2 public buckets
+  - uid: mondoo-cloudflare-security-api-tokens-have-expiration
+    title: Ensure API tokens have an expiration set
+    impact: 75
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: false
+      compliance/soc2-2017: soc2-control-cc6-1-9
+    mql: |
+      cloudflare.apiTokens.where(status == "active").all(expiresOn != null)
+    docs:
+      desc: |
+        This check ensures that every active Cloudflare API token has an `expiresOn` value set. Tokens without an expiration remain valid until manually revoked, which in practice means they outlive the original issuer, the original use case, and often the secrets-management hygiene that protected them.
+
+        **Why this matters**
+
+        Non-expiring API tokens are the most common cloud-credential persistence vehicle for attackers post-leak:
+
+          - A token leaked once — in a config file committed to a public repo, a CI log, a screenshot in a ticket, a former employee's laptop — remains valid forever unless someone notices and revokes it.
+          - Token rotation discipline tends to slip when there is no forcing function; tokens accumulate access entitlements over time as their holders take on new responsibilities.
+          - An expiration even a year out caps the useful lifetime of any leaked token, turning "credential leak" from "permanent access" into "access until rotation."
+          - Audit and incident response are dramatically simpler when every active token has a known retirement date.
+
+        Setting `expiresOn` does not change the token's permissions — it only commits to a future date by which the token will stop working unless explicitly renewed.
+      remediation:
+        - id: console
+          desc: |
+            Cloudflare API tokens cannot have an expiration added after creation; tokens without `expiresOn` must be re-issued.
+
+            1. Log in and open **My Profile** > **API Tokens**.
+            2. Identify tokens without an expiration.
+            3. For each, choose **Roll** to issue a replacement, then in the create form set **TTL** to a finite end date (typically 1 year).
+            4. Update consumers with the new token value before the original is revoked.
+            5. Once consumers have rotated, revoke the original non-expiring token.
+        - id: cli
+          desc: |
+            Roll an existing token to a fresh value, then update its `expires_on`. The roll operation invalidates the old secret and returns a new one.
+
+            ```bash
+            curl -X PUT "https://api.cloudflare.com/client/v4/user/tokens/<token-id>/value" \
+              -H "Authorization: Bearer <api-token>" \
+              -H "Content-Type: application/json"
+            ```
+
+            Then set an expiration on the rolled token:
+
+            ```bash
+            curl -X PUT "https://api.cloudflare.com/client/v4/user/tokens/<token-id>" \
+              -H "Authorization: Bearer <api-token>" \
+              -H "Content-Type: application/json" \
+              --data '{"expires_on":"2027-01-01T00:00:00Z"}'
+            ```
+    refs:
+      - url: https://developers.cloudflare.com/fundamentals/api/get-started/create-token/
+        title: Cloudflare API Tokens
+  - uid: mondoo-cloudflare-security-api-tokens-have-ip-allowlist
+    title: Ensure API tokens have an IP allowlist configured
+    impact: 60
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-3
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-17
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-12
+      compliance/soc2-2017: soc2-control-cc6-1-3
+    mql: |
+      cloudflare.apiTokens.where(status == "active").all(ipIn.length > 0)
+    docs:
+      desc: |
+        This check ensures that every active Cloudflare API token defines an `ipIn` allowlist. The allowlist constrains which source IPs or CIDRs can present the token to the Cloudflare API; requests from any other source are rejected before the token's permissions are evaluated.
+
+        **Why this matters**
+
+        IP allowlisting turns a leaked token into a "leaked token from one of these networks" problem, which is dramatically harder to operationalize for an attacker:
+
+          - A token stolen from a CI runner is useless to an attacker on a residential IP.
+          - A token committed to a public repo cannot be replayed from anywhere on the internet — only from the explicitly listed networks.
+          - The allowlist is a compensating control while detection-and-response catches up; tokens with neither expiration nor IP scoping have no compensating boundary at all.
+          - For automation tokens, the calling-system IP range is typically known and stable (Kubernetes egress NAT, fixed VPN IPs, dedicated CI runners); production tokens rarely need to work from arbitrary sources.
+
+        Pair the allowlist with a short `expiresOn` window for defense in depth.
+      remediation:
+        - id: console
+          desc: |
+            To add an IP allowlist to an existing token in the Cloudflare dashboard:
+
+            1. Log in and open **My Profile** > **API Tokens**.
+            2. Select the token to edit.
+            3. Under **Client IP Address Filtering**, choose **Is in** and add the CIDRs from which the token should be usable (typically the calling system's egress NAT / VPN ranges).
+            4. Save.
+        - id: cli
+          desc: |
+            To add an IP allowlist via the Cloudflare API. The `condition.request_ip.in` array accepts CIDRs.
+
+            ```bash
+            curl -X PUT "https://api.cloudflare.com/client/v4/user/tokens/<token-id>" \
+              -H "Authorization: Bearer <api-token>" \
+              -H "Content-Type: application/json" \
+              --data '{"condition":{"request_ip":{"in":["198.51.100.0/24","203.0.113.10/32"]}}}'
+            ```
+    refs:
+      - url: https://developers.cloudflare.com/fundamentals/api/how-to/secure-api-tokens-with-restrictive-permissions/
+        title: Cloudflare API token IP filtering
+  - uid: mondoo-cloudflare-security-api-tokens-not-older-than-365-days
+    title: Ensure active API tokens are not older than 365 days
+    impact: 60
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: false
+      compliance/soc2-2017: soc2-control-cc6-1-9
+    mql: |
+      cloudflare.apiTokens.where(status == "active").all(time.now - issuedOn < 365 * time.day)
+    docs:
+      desc: |
+        This check ensures that no active Cloudflare API token has been in continuous use for more than 365 days. Long-lived tokens accumulate exposure: every CI run that read the token, every laptop the token sat on, every screenshot of a config file, and every tool that ever cached the value compounds the leak surface over time.
+
+        **Why this matters**
+
+        Even tokens with expiration set can drift past acceptable rotation windows if the expiration was a multi-year value:
+
+          - The longer a token is in service, the more places its plaintext has been read or cached. A token issued two years ago has typically passed through more pipelines, secret stores, and operator terminals than anyone is tracking.
+          - Token holders change roles. A token issued for a project is often inherited by a successor without a fresh authorization review of its scope.
+          - Detection-and-response is harder for old credentials: log retention windows usually do not span the original issuance, so any anomalous use today cannot be compared against the historical baseline.
+          - A 365-day rotation cadence is the conventional baseline; some industries (PCI DSS, FedRAMP) require shorter intervals.
+
+        Enforcing rotation by failing this check forces issuance of fresh tokens with current scope and current operator ownership.
+      remediation:
+        - id: console
+          desc: |
+            To rotate a long-lived token in the Cloudflare dashboard:
+
+            1. Log in and open **My Profile** > **API Tokens**.
+            2. Find tokens issued more than 365 days ago.
+            3. For each, choose **Roll** to issue a fresh secret while preserving the token's policies.
+            4. Update consumers with the new value, then revoke the prior version once they have rotated.
+        - id: cli
+          desc: |
+            Roll the token's secret to a fresh value via the Cloudflare API. The roll operation invalidates the old secret and returns a new one with the same policies.
+
+            ```bash
+            curl -X PUT "https://api.cloudflare.com/client/v4/user/tokens/<token-id>/value" \
+              -H "Authorization: Bearer <api-token>" \
+              -H "Content-Type: application/json"
+            ```
+    refs:
+      - url: https://developers.cloudflare.com/fundamentals/api/how-to/manage-api-tokens/
+        title: Cloudflare API token management
