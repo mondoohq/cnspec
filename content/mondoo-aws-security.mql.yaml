@@ -31323,6 +31323,20 @@ queries:
               --code-repository-name <repo> \
               --git-config SecretArn=arn:aws:secretsmanager:<region>:<account>:secret:<name>
             ```
+        - id: terraform
+          desc: |
+            Set `secret_arn` on the `git_config` block of every `aws_sagemaker_code_repository` resource:
+
+            ```hcl
+            resource "aws_sagemaker_code_repository" "example" {
+              code_repository_name = "example-repo"
+
+              git_config {
+                repository_url = "https://github.com/example/repo.git"
+                secret_arn     = aws_secretsmanager_secret.git_credentials.arn
+              }
+            }
+            ```
     refs:
       - url: https://docs.aws.amazon.com/sagemaker/latest/dg/nbi-git-repo.html
         title: Amazon SageMaker - Associate Git Repositories with Notebook Instances
@@ -31420,6 +31434,29 @@ queries:
               --job-resources ClusterConfig={InstanceCount=1,InstanceType=ml.m5.large,VolumeSizeInGB=30} \
               --role-arn arn:aws:iam::<account>:role/<role> \
               --network-config EnableNetworkIsolation=true,EnableInterContainerTrafficEncryption=true,VpcConfig={Subnets=[<subnet>],SecurityGroupIds=[<sg>]}
+            ```
+        - id: terraform
+          desc: |
+            Define a `network_config` block on every SageMaker monitoring job definition with both isolation and inter-container encryption enabled. The same shape applies to `aws_sagemaker_data_quality_job_definition`, `aws_sagemaker_model_quality_job_definition`, `aws_sagemaker_model_bias_job_definition`, and `aws_sagemaker_model_explainability_job_definition`:
+
+            ```hcl
+            resource "aws_sagemaker_data_quality_job_definition" "example" {
+              name     = "hardened-data-quality"
+              role_arn = aws_iam_role.monitor.arn
+
+              network_config {
+                enable_network_isolation                 = true
+                enable_inter_container_traffic_encryption = true
+
+                vpc_config {
+                  subnets            = [aws_subnet.private.id]
+                  security_group_ids = [aws_security_group.monitor.id]
+                }
+              }
+
+              # data_quality_app_specification, data_quality_job_input,
+              # data_quality_job_output_config, job_resources omitted for brevity
+            }
             ```
     refs:
       - url: https://docs.aws.amazon.com/sagemaker/latest/dg/model-monitor.html
@@ -46442,6 +46479,15 @@ queries:
             ```
 
             Run this command for each active region.
+        - id: terraform
+          desc: |
+            Manage the regional setting with `aws_ec2_serial_console_access` and pin `enabled = false`. Repeat the resource per region using aliased providers:
+
+            ```hcl
+            resource "aws_ec2_serial_console_access" "this" {
+              enabled = false
+            }
+            ```
     refs:
       - url: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configure-access-to-serial-console.html
         title: Configure access to the EC2 Serial Console
@@ -46526,6 +46572,15 @@ queries:
             ```
 
             Run this command for each active region.
+        - id: terraform
+          desc: |
+            Manage the regional setting with `aws_ec2_image_block_public_access`. Pin `state = "block-new-sharing"` and repeat the resource per region using aliased providers:
+
+            ```hcl
+            resource "aws_ec2_image_block_public_access" "this" {
+              state = "block-new-sharing"
+            }
+            ```
     refs:
       - url: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/sharingamis-intro.html
         title: Block public access for AMIs
@@ -46912,6 +46967,18 @@ queries:
             aws securityhub batch-enable-standards \
               --standards-subscription-requests '[{"StandardsArn":"arn:aws:securityhub:::ruleset/aws-foundational-security-best-practices/v/1.0.0"}]'
             ```
+        - id: terraform
+          desc: |
+            Pair `aws_securityhub_account` with at least one `aws_securityhub_standards_subscription`. The depends_on relationship guarantees Security Hub is enabled before standards are subscribed:
+
+            ```hcl
+            resource "aws_securityhub_account" "this" {}
+
+            resource "aws_securityhub_standards_subscription" "fsbp" {
+              standards_arn = "arn:aws:securityhub:::ruleset/aws-foundational-security-best-practices/v/1.0.0"
+              depends_on    = [aws_securityhub_account.this]
+            }
+            ```
     refs:
       - url: https://docs.aws.amazon.com/securityhub/latest/userguide/securityhub-standards.html
         title: Security standards in AWS Security Hub
@@ -47001,6 +47068,30 @@ queries:
               --topic-arn TOPIC_ARN \
               --attribute-name Policy \
               --attribute-value file://restricted-policy.json
+            ```
+        - id: terraform
+          desc: |
+            Build the topic policy with `aws_iam_policy_document` so wildcard principals are scoped to specific accounts, services, or VPC endpoints, then attach it via `aws_sns_topic_policy`:
+
+            ```hcl
+            data "aws_iam_policy_document" "topic" {
+              statement {
+                sid       = "AllowProductionPublish"
+                effect    = "Allow"
+                actions   = ["sns:Publish"]
+                resources = [aws_sns_topic.alerts.arn]
+
+                principals {
+                  type        = "AWS"
+                  identifiers = ["arn:aws:iam::111122223333:root"]
+                }
+              }
+            }
+
+            resource "aws_sns_topic_policy" "alerts" {
+              arn    = aws_sns_topic.alerts.arn
+              policy = data.aws_iam_policy_document.topic.json
+            }
             ```
     refs:
       - url: https://docs.aws.amazon.com/sns/latest/dg/sns-access-policy-use-cases.html
@@ -47095,6 +47186,24 @@ queries:
               --source-server-id SOURCE_SERVER_ID \
               --data-plane-routing PRIVATE_IP
             ```
+        - id: terraform
+          desc: |
+            Set `data_plane_routing = "PRIVATE_IP"` on every `aws_drs_replication_configuration_template`:
+
+            ```hcl
+            resource "aws_drs_replication_configuration_template" "example" {
+              staging_area_subnet_id   = aws_subnet.staging.id
+              replication_servers_security_groups_ids = [aws_security_group.drs.id]
+              ebs_encryption           = "DEFAULT"
+              replication_server_instance_type = "t3.small"
+              use_dedicated_replication_server = false
+              associate_default_security_group = false
+              bandwidth_throttling     = 0
+              create_public_ip         = false
+              data_plane_routing       = "PRIVATE_IP"
+              default_large_staging_disk_type = "GP3"
+            }
+            ```
     refs:
       - url: https://docs.aws.amazon.com/drs/latest/userguide/replication-settings.html
         title: AWS DRS Replication Settings
@@ -47178,6 +47287,24 @@ queries:
             aws drs update-replication-configuration \
               --source-server-id SOURCE_SERVER_ID \
               --no-create-public-ip
+            ```
+        - id: terraform
+          desc: |
+            Set `create_public_ip = false` on every `aws_drs_replication_configuration_template`:
+
+            ```hcl
+            resource "aws_drs_replication_configuration_template" "example" {
+              staging_area_subnet_id   = aws_subnet.staging.id
+              replication_servers_security_groups_ids = [aws_security_group.drs.id]
+              ebs_encryption           = "DEFAULT"
+              replication_server_instance_type = "t3.small"
+              use_dedicated_replication_server = false
+              associate_default_security_group = false
+              bandwidth_throttling     = 0
+              create_public_ip         = false
+              data_plane_routing       = "PRIVATE_IP"
+              default_large_staging_disk_type = "GP3"
+            }
             ```
     refs:
       - url: https://docs.aws.amazon.com/drs/latest/userguide/replication-settings.html
@@ -47470,6 +47597,19 @@ queries:
               --group-id <sg-id> \
               --ip-permissions IpProtocol=tcp,FromPort=5432,ToPort=5432,IpRanges='[{CidrIp=0.0.0.0/0}]'
             ```
+        - id: terraform
+          desc: |
+            Replace any `0.0.0.0/0` or `::/0` source on port 5432 with the application-tier security group, VPN CIDR, or specific bastion address. The example shows the modern `aws_vpc_security_group_ingress_rule` form; the same rule applies to inline `ingress` blocks on `aws_security_group`:
+
+            ```hcl
+            resource "aws_vpc_security_group_ingress_rule" "postgres_from_app" {
+              security_group_id            = aws_security_group.db.id
+              referenced_security_group_id = aws_security_group.app.id
+              ip_protocol                  = "tcp"
+              from_port                    = 5432
+              to_port                      = 5432
+            }
+            ```
     refs:
       - url: https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Overview.RDSSecurityGroups.html
         title: AWS Documentation - Controlling access with security groups
@@ -47556,6 +47696,19 @@ queries:
             aws ec2 revoke-security-group-ingress \
               --group-id <sg-id> \
               --ip-permissions IpProtocol=tcp,FromPort=3306,ToPort=3306,IpRanges='[{CidrIp=0.0.0.0/0}]'
+            ```
+        - id: terraform
+          desc: |
+            Replace any `0.0.0.0/0` or `::/0` source on port 3306 with the application-tier security group, VPN CIDR, or specific bastion address. The example shows the modern `aws_vpc_security_group_ingress_rule` form; the same rule applies to inline `ingress` blocks on `aws_security_group`:
+
+            ```hcl
+            resource "aws_vpc_security_group_ingress_rule" "from_app" {
+              security_group_id            = aws_security_group.workload.id
+              referenced_security_group_id = aws_security_group.app.id
+              ip_protocol                  = "tcp"
+              from_port                    = 3306
+              to_port                      = 3306
+            }
             ```
     refs:
       - url: https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Overview.RDSSecurityGroups.html
@@ -47644,6 +47797,19 @@ queries:
               --group-id <sg-id> \
               --ip-permissions IpProtocol=tcp,FromPort=1433,ToPort=1433,IpRanges='[{CidrIp=0.0.0.0/0}]'
             ```
+        - id: terraform
+          desc: |
+            Replace any `0.0.0.0/0` or `::/0` source on port 1433 with the application-tier security group, VPN CIDR, or specific bastion address. The example shows the modern `aws_vpc_security_group_ingress_rule` form; the same rule applies to inline `ingress` blocks on `aws_security_group`:
+
+            ```hcl
+            resource "aws_vpc_security_group_ingress_rule" "from_app" {
+              security_group_id            = aws_security_group.workload.id
+              referenced_security_group_id = aws_security_group.app.id
+              ip_protocol                  = "tcp"
+              from_port                    = 1433
+              to_port                      = 1433
+            }
+            ```
     refs:
       - url: https://learn.microsoft.com/en-us/sql/sql-server/install/security-considerations-for-a-sql-server-installation
         title: Microsoft Documentation - Security considerations for a SQL Server installation
@@ -47726,6 +47892,19 @@ queries:
             aws ec2 revoke-security-group-ingress \
               --group-id <sg-id> \
               --ip-permissions IpProtocol=tcp,FromPort=1521,ToPort=1521,IpRanges='[{CidrIp=0.0.0.0/0}]'
+            ```
+        - id: terraform
+          desc: |
+            Replace any `0.0.0.0/0` or `::/0` source on port 1521 with the application-tier security group, VPN CIDR, or specific bastion address. The example shows the modern `aws_vpc_security_group_ingress_rule` form; the same rule applies to inline `ingress` blocks on `aws_security_group`:
+
+            ```hcl
+            resource "aws_vpc_security_group_ingress_rule" "from_app" {
+              security_group_id            = aws_security_group.workload.id
+              referenced_security_group_id = aws_security_group.app.id
+              ip_protocol                  = "tcp"
+              from_port                    = 1521
+              to_port                      = 1521
+            }
             ```
     refs:
       - url: https://docs.oracle.com/en/database/oracle/oracle-database/19/dbseg/index.html
@@ -47811,6 +47990,19 @@ queries:
               --group-id <sg-id> \
               --ip-permissions IpProtocol=tcp,FromPort=27017,ToPort=27017,IpRanges='[{CidrIp=0.0.0.0/0}]'
             ```
+        - id: terraform
+          desc: |
+            Replace any `0.0.0.0/0` or `::/0` source on port 27017 with the application-tier security group, VPN CIDR, or specific bastion address. The example shows the modern `aws_vpc_security_group_ingress_rule` form; the same rule applies to inline `ingress` blocks on `aws_security_group`:
+
+            ```hcl
+            resource "aws_vpc_security_group_ingress_rule" "from_app" {
+              security_group_id            = aws_security_group.workload.id
+              referenced_security_group_id = aws_security_group.app.id
+              ip_protocol                  = "tcp"
+              from_port                    = 27017
+              to_port                      = 27017
+            }
+            ```
     refs:
       - url: https://www.mongodb.com/docs/manual/administration/security-checklist/
         title: MongoDB Security Checklist
@@ -47894,6 +48086,19 @@ queries:
               --group-id <sg-id> \
               --ip-permissions IpProtocol=tcp,FromPort=6379,ToPort=6379,IpRanges='[{CidrIp=0.0.0.0/0}]'
             ```
+        - id: terraform
+          desc: |
+            Replace any `0.0.0.0/0` or `::/0` source on port 6379 with the application-tier security group, VPN CIDR, or specific bastion address. The example shows the modern `aws_vpc_security_group_ingress_rule` form; the same rule applies to inline `ingress` blocks on `aws_security_group`:
+
+            ```hcl
+            resource "aws_vpc_security_group_ingress_rule" "from_app" {
+              security_group_id            = aws_security_group.workload.id
+              referenced_security_group_id = aws_security_group.app.id
+              ip_protocol                  = "tcp"
+              from_port                    = 6379
+              to_port                      = 6379
+            }
+            ```
     refs:
       - url: https://redis.io/docs/management/security/
         title: Redis Security Documentation
@@ -47975,6 +48180,19 @@ queries:
             aws ec2 revoke-security-group-ingress \
               --group-id <sg-id> \
               --ip-permissions IpProtocol=tcp,FromPort=11211,ToPort=11211,IpRanges='[{CidrIp=0.0.0.0/0}]'
+            ```
+        - id: terraform
+          desc: |
+            Replace any `0.0.0.0/0` or `::/0` source on port 11211 with the application-tier security group, VPN CIDR, or specific bastion address. The example shows the modern `aws_vpc_security_group_ingress_rule` form; the same rule applies to inline `ingress` blocks on `aws_security_group`:
+
+            ```hcl
+            resource "aws_vpc_security_group_ingress_rule" "from_app" {
+              security_group_id            = aws_security_group.workload.id
+              referenced_security_group_id = aws_security_group.app.id
+              ip_protocol                  = "tcp"
+              from_port                    = 11211
+              to_port                      = 11211
+            }
             ```
     refs:
       - url: https://www.cisa.gov/news-events/alerts/2018/02/27/memcached-distributed-denial-service-attacks
@@ -48060,6 +48278,19 @@ queries:
               --group-id <sg-id> \
               --ip-permissions IpProtocol=tcp,FromPort=9200,ToPort=9300,IpRanges='[{CidrIp=0.0.0.0/0}]'
             ```
+        - id: terraform
+          desc: |
+            Replace any `0.0.0.0/0` or `::/0` source on ports 9200-9300 with the application-tier security group, VPN CIDR, or specific bastion address. The example shows the modern `aws_vpc_security_group_ingress_rule` form; the same rule applies to inline `ingress` blocks on `aws_security_group`:
+
+            ```hcl
+            resource "aws_vpc_security_group_ingress_rule" "from_app" {
+              security_group_id            = aws_security_group.workload.id
+              referenced_security_group_id = aws_security_group.app.id
+              ip_protocol                  = "tcp"
+              from_port                    = 9200
+              to_port                      = 9300
+            }
+            ```
     refs:
       - url: https://www.elastic.co/guide/en/elasticsearch/reference/current/secure-cluster.html
         title: Elasticsearch Security Documentation
@@ -48142,6 +48373,19 @@ queries:
             aws ec2 revoke-security-group-ingress \
               --group-id <sg-id> \
               --ip-permissions IpProtocol=tcp,FromPort=5985,ToPort=5986,IpRanges='[{CidrIp=0.0.0.0/0}]'
+            ```
+        - id: terraform
+          desc: |
+            Replace any `0.0.0.0/0` or `::/0` source on ports 5985-5986 with the application-tier security group, VPN CIDR, or specific bastion address. The example shows the modern `aws_vpc_security_group_ingress_rule` form; the same rule applies to inline `ingress` blocks on `aws_security_group`:
+
+            ```hcl
+            resource "aws_vpc_security_group_ingress_rule" "from_app" {
+              security_group_id            = aws_security_group.workload.id
+              referenced_security_group_id = aws_security_group.app.id
+              ip_protocol                  = "tcp"
+              from_port                    = 5985
+              to_port                      = 5986
+            }
             ```
     refs:
       - url: https://learn.microsoft.com/en-us/windows/win32/winrm/portal
@@ -48229,6 +48473,19 @@ queries:
             ```
 
             Prefer disabling the daemon's TCP socket entirely and using SSH-based contexts instead.
+        - id: terraform
+          desc: |
+            Replace any `0.0.0.0/0` or `::/0` source on ports 2375-2376 with the application-tier security group, VPN CIDR, or specific bastion address. The example shows the modern `aws_vpc_security_group_ingress_rule` form; the same rule applies to inline `ingress` blocks on `aws_security_group`:
+
+            ```hcl
+            resource "aws_vpc_security_group_ingress_rule" "from_app" {
+              security_group_id            = aws_security_group.workload.id
+              referenced_security_group_id = aws_security_group.app.id
+              ip_protocol                  = "tcp"
+              from_port                    = 2375
+              to_port                      = 2376
+            }
+            ```
     refs:
       - url: https://docs.docker.com/engine/security/protect-access/
         title: Docker - Protect the Docker daemon socket
@@ -48315,6 +48572,19 @@ queries:
             ```
 
             For EKS, prefer setting cluster endpoint access to **Private** or restrict the public endpoint to an explicit allowlist via `aws eks update-cluster-config --resources-vpc-config endpointPublicAccess=true,publicAccessCidrs=...`.
+        - id: terraform
+          desc: |
+            Replace any `0.0.0.0/0` or `::/0` source on port 6443 with the application-tier security group, VPN CIDR, or specific bastion address. The example shows the modern `aws_vpc_security_group_ingress_rule` form; the same rule applies to inline `ingress` blocks on `aws_security_group`:
+
+            ```hcl
+            resource "aws_vpc_security_group_ingress_rule" "from_app" {
+              security_group_id            = aws_security_group.workload.id
+              referenced_security_group_id = aws_security_group.app.id
+              ip_protocol                  = "tcp"
+              from_port                    = 6443
+              to_port                      = 6443
+            }
+            ```
     refs:
       - url: https://docs.aws.amazon.com/eks/latest/userguide/cluster-endpoint.html
         title: AWS Documentation - Amazon EKS cluster endpoint access control
@@ -48396,6 +48666,19 @@ queries:
             aws ec2 revoke-security-group-ingress \
               --group-id <sg-id> \
               --ip-permissions IpProtocol=tcp,FromPort=10250,ToPort=10255,IpRanges='[{CidrIp=0.0.0.0/0}]'
+            ```
+        - id: terraform
+          desc: |
+            Replace any `0.0.0.0/0` or `::/0` source on ports 10250-10255 with the application-tier security group, VPN CIDR, or specific bastion address. The example shows the modern `aws_vpc_security_group_ingress_rule` form; the same rule applies to inline `ingress` blocks on `aws_security_group`:
+
+            ```hcl
+            resource "aws_vpc_security_group_ingress_rule" "from_app" {
+              security_group_id            = aws_security_group.workload.id
+              referenced_security_group_id = aws_security_group.app.id
+              ip_protocol                  = "tcp"
+              from_port                    = 10250
+              to_port                      = 10255
+            }
             ```
     refs:
       - url: https://kubernetes.io/docs/reference/access-authn-authz/kubelet-authn-authz/
@@ -48480,6 +48763,19 @@ queries:
             aws ec2 revoke-security-group-ingress \
               --group-id <sg-id> \
               --ip-permissions IpProtocol=tcp,FromPort=2379,ToPort=2380,IpRanges='[{CidrIp=0.0.0.0/0}]'
+            ```
+        - id: terraform
+          desc: |
+            Replace any `0.0.0.0/0` or `::/0` source on ports 2379-2380 with the application-tier security group, VPN CIDR, or specific bastion address. The example shows the modern `aws_vpc_security_group_ingress_rule` form; the same rule applies to inline `ingress` blocks on `aws_security_group`:
+
+            ```hcl
+            resource "aws_vpc_security_group_ingress_rule" "from_app" {
+              security_group_id            = aws_security_group.workload.id
+              referenced_security_group_id = aws_security_group.app.id
+              ip_protocol                  = "tcp"
+              from_port                    = 2379
+              to_port                      = 2380
+            }
             ```
     refs:
       - url: https://etcd.io/docs/v3.5/op-guide/security/
@@ -48570,6 +48866,30 @@ queries:
             ```bash
             aws s3api get-bucket-policy --bucket <bucket-name>
             aws s3api put-bucket-policy --bucket <bucket-name> --policy file://restricted-policy.json
+            ```
+        - id: terraform
+          desc: |
+            Build the bucket policy with `aws_iam_policy_document` so wildcard principals are scoped, then attach it via `aws_s3_bucket_policy`. Avoid embedding raw JSON with `Principal = "*"` and no condition:
+
+            ```hcl
+            data "aws_iam_policy_document" "bucket" {
+              statement {
+                sid     = "AllowAccountRead"
+                effect  = "Allow"
+                actions = ["s3:GetObject"]
+                resources = ["${aws_s3_bucket.example.arn}/*"]
+
+                principals {
+                  type        = "AWS"
+                  identifiers = ["arn:aws:iam::111122223333:root"]
+                }
+              }
+            }
+
+            resource "aws_s3_bucket_policy" "example" {
+              bucket = aws_s3_bucket.example.id
+              policy = data.aws_iam_policy_document.bucket.json
+            }
             ```
     refs:
       - url: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-policy-language-overview.html
@@ -48666,6 +48986,39 @@ queries:
             ```bash
             aws s3api put-bucket-policy --bucket <bucket> --policy file://secure-transport.json
             ```
+        - id: terraform
+          desc: |
+            Build the deny-on-insecure-transport statement with `aws_iam_policy_document` and attach it via `aws_s3_bucket_policy`:
+
+            ```hcl
+            data "aws_iam_policy_document" "secure_transport" {
+              statement {
+                sid     = "DenyInsecureTransport"
+                effect  = "Deny"
+                actions = ["s3:*"]
+                resources = [
+                  aws_s3_bucket.example.arn,
+                  "${aws_s3_bucket.example.arn}/*",
+                ]
+
+                principals {
+                  type        = "*"
+                  identifiers = ["*"]
+                }
+
+                condition {
+                  test     = "Bool"
+                  variable = "aws:SecureTransport"
+                  values   = ["false"]
+                }
+              }
+            }
+
+            resource "aws_s3_bucket_policy" "secure_transport" {
+              bucket = aws_s3_bucket.example.id
+              policy = data.aws_iam_policy_document.secure_transport.json
+            }
+            ```
     refs:
       - url: https://docs.aws.amazon.com/config/latest/developerguide/s3-bucket-ssl-requests-only.html
         title: AWS Config Rule - s3-bucket-ssl-requests-only
@@ -48758,6 +49111,19 @@ queries:
             aws s3api put-bucket-ownership-controls --bucket <bucket> \
               --ownership-controls 'Rules=[{ObjectOwnership=BucketOwnerEnforced}]'
             ```
+        - id: terraform
+          desc: |
+            Manage Object Ownership with `aws_s3_bucket_ownership_controls` and pin the rule to `BucketOwnerEnforced`:
+
+            ```hcl
+            resource "aws_s3_bucket_ownership_controls" "example" {
+              bucket = aws_s3_bucket.example.id
+
+              rule {
+                object_ownership = "BucketOwnerEnforced"
+              }
+            }
+            ```
     refs:
       - url: https://docs.aws.amazon.com/AmazonS3/latest/userguide/about-object-ownership.html
         title: AWS Documentation - Controlling ownership of uploaded objects
@@ -48820,6 +49186,21 @@ queries:
             ```bash
             aws sns set-topic-attributes --topic-arn <arn> \
               --attribute-name KmsMasterKeyId --attribute-value <cmk-arn>
+            ```
+        - id: terraform
+          desc: |
+            Set `kms_master_key_id` on every `aws_sns_topic` to a customer-managed CMK ARN or alias other than `alias/aws/sns`:
+
+            ```hcl
+            resource "aws_kms_key" "sns" {
+              description         = "CMK for SNS topic encryption"
+              enable_key_rotation = true
+            }
+
+            resource "aws_sns_topic" "example" {
+              name              = "example-topic"
+              kms_master_key_id = aws_kms_key.sns.arn
+            }
             ```
     refs:
       - url: https://docs.aws.amazon.com/sns/latest/dg/sns-server-side-encryption.html
@@ -48892,6 +49273,22 @@ queries:
             ```bash
             aws sqs set-queue-attributes --queue-url <url> \
               --attributes KmsMasterKeyId=<cmk-arn>,KmsDataKeyReusePeriodSeconds=300
+            ```
+        - id: terraform
+          desc: |
+            Set `kms_master_key_id` on every `aws_sqs_queue` to a customer-managed CMK ARN or alias other than `alias/aws/sqs`:
+
+            ```hcl
+            resource "aws_kms_key" "sqs" {
+              description         = "CMK for SQS queue encryption"
+              enable_key_rotation = true
+            }
+
+            resource "aws_sqs_queue" "example" {
+              name                              = "example-queue"
+              kms_master_key_id                 = aws_kms_key.sqs.arn
+              kms_data_key_reuse_period_seconds = 300
+            }
             ```
     refs:
       - url: https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-server-side-encryption.html
