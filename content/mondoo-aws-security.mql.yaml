@@ -554,6 +554,7 @@ policies:
           - uid: mondoo-aws-security-msk-encryption-at-rest
           - uid: mondoo-aws-security-msk-encryption-in-transit
           - uid: mondoo-aws-security-msk-logging-enabled
+          - uid: mondoo-aws-security-msk-replicator-external-kafka-tls
       - title: Amazon Keyspaces
         checks:
           - uid: mondoo-aws-security-keyspaces-cmk-encryption
@@ -32594,6 +32595,100 @@ queries:
     mql: |
       cloudformation.template.resources.where(type == "AWS::MSK::Cluster").all(
       properties['LoggingInfo'] != empty && properties['LoggingInfo']['BrokerLogs'] != empty
+      )
+  # No Terraform variants: The `aws_msk_replicator` Terraform resource only models MSK-to-MSK replication; the external (non-MSK) Apache Kafka cluster shape that exposes `encryption_in_transit.type` is API-only.
+  # No CloudFormation variants: `AWS::MSK::Replicator` likewise lacks the external Apache Kafka cluster shape, so `EncryptionInTransit.Type` cannot be expressed in a template.
+  # No Terraform / CloudFormation remediation: same reason — there is no IaC representation of an external Apache Kafka cluster target to fix.
+  - uid: mondoo-aws-security-msk-replicator-external-kafka-tls
+    title: Ensure MSK replicators encrypt data in transit to external Kafka
+    impact: 80
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/soc2-2017: soc2-control-cc6-7-2
+    variants:
+      - uid: mondoo-aws-security-msk-replicator-external-kafka-tls-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that Amazon MSK replicators targeting external (non-MSK) Apache Kafka clusters use TLS for traffic to those external brokers. When a replicator's source or target is an external Apache Kafka cluster, the `EncryptionInTransit.Type` setting controls whether replicated topic data travels over TLS or in plaintext. Only `TLS` ensures that messages crossing the boundary between MSK and the external broker are encrypted.
+
+        **Why this matters**
+
+        - MSK replicators move full topic streams between clusters, so plaintext links carry every replicated message, including sensitive payloads, in the clear.
+        - Traffic to an external Apache Kafka cluster typically traverses VPC peering, Transit Gateway, Direct Connect, or the public internet. Plaintext on any of these paths is exposed to network-level interception.
+        - Compliance frameworks such as PCI DSS, HIPAA, NIST SP 800-53 SC-8, and SOC 2 require encryption of regulated data in transit; Kafka replication is in scope when topics carry such data.
+
+        **Risk mitigation**
+
+        - **Confidentiality:** TLS prevents on-path attackers from reading replicated messages.
+        - **Integrity:** TLS protects against tampering with the replication stream between clusters.
+        - **Compliance:** Satisfies in-transit encryption requirements for regulated topic data.
+      remediation:
+        - id: console
+          desc: |
+            Encryption-in-transit settings on an MSK replicator's external Apache Kafka cluster cannot be changed after creation. Recreate the replicator with TLS:
+
+            1. Navigate to the **Amazon MSK Console** and choose **Replicators**.
+            2. Note the source and target Kafka cluster configuration of the existing replicator.
+            3. Delete the replicator. Replication stops at this point.
+            4. Choose **Create replicator** and configure source and target. For any external Apache Kafka cluster, set **Encryption in transit** to **TLS** and confirm the broker presents a certificate trusted by the configured root CA.
+            5. Verify the new replicator reaches the **RUNNING** state and resume your replication topology.
+        - id: cli
+          desc: |
+            Encryption-in-transit on the external Apache Kafka cluster is set at create time and cannot be updated. Recreate the replicator with `EncryptionInTransit.Type=TLS` for any `ApacheKafkaCluster` source or target.
+
+            Inspect the current configuration:
+
+            ```bash
+            aws kafka describe-replicator --replicator-arn <replicator-arn> \
+              --query "KafkaClusters[].{Alias:KafkaClusterAlias,External:ApacheKafkaCluster.BootstrapServers,EncInTransit:ApacheKafkaCluster.EncryptionInTransit.Type}"
+            ```
+
+            Delete the misconfigured replicator:
+
+            ```bash
+            aws kafka delete-replicator --replicator-arn <replicator-arn>
+            ```
+
+            Recreate the replicator with TLS to the external Apache Kafka cluster. Substitute the appropriate VPC, subnet, security group, and credential settings for your environment:
+
+            ```bash
+            aws kafka create-replicator \
+              --replicator-name <name> \
+              --service-execution-role-arn <role-arn> \
+              --kafka-clusters '[
+                {
+                  "AmazonMskCluster": {"MskClusterArn": "<msk-source-arn>"},
+                  "VpcConfig": {"SubnetIds": ["subnet-aaa"], "SecurityGroupIds": ["sg-aaa"]}
+                },
+                {
+                  "ApacheKafkaCluster": {
+                    "BootstrapServers": "broker1:9092,broker2:9092",
+                    "VpcConfig": {"SubnetIds": ["subnet-bbb"], "SecurityGroupIds": ["sg-bbb"]},
+                    "EncryptionInTransit": {"Type": "TLS"},
+                    "Authentication": {"Type": "SASL_SCRAM", "SaslScram": {"SecretArn": "<secret-arn>"}}
+                  }
+                }
+              ]' \
+              --replication-info-list file://replication-info.json
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/msk/latest/developerguide/msk-replicator-encryption.html
+        title: Amazon MSK Replicator - Encryption in Transit
+      - url: https://docs.aws.amazon.com/cli/latest/reference/kafka/create-replicator.html
+        title: AWS CLI - kafka create-replicator
+  - uid: mondoo-aws-security-msk-replicator-external-kafka-tls-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.msk.replicators.all(
+        kafkaClusters.where(apacheKafkaBootstrapBrokers != "").all(encryptionInTransitType == "TLS")
       )
   # No Terraform variants: This check follows a CloudTrail trail's `S3BucketName` to the referenced bucket and inspects its public ACL — a cross-resource correlation. The general `s3-bucket-level-public-access-prohibited-bucket` check covers the bucket directly in Terraform.
   - uid: mondoo-aws-security-cloudtrail-s3-bucket-not-public
