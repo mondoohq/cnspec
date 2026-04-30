@@ -425,7 +425,7 @@ The `content/validation/` directory contains tooling to verify that CLI commands
 **Validate commands:**
 
 ```bash
-# Validate all policies (currently AWS, Azure, OCI, GCP, and DigitalOcean)
+# Validate all policies (currently AWS, Azure, OCI, GCP, DigitalOcean, and Cloudflare)
 python3 content/validation/validate_remediation_commands.py
 
 # Validate a specific cloud
@@ -434,9 +434,10 @@ python3 content/validation/validate_remediation_commands.py azure
 python3 content/validation/validate_remediation_commands.py oci
 python3 content/validation/validate_remediation_commands.py gcp
 python3 content/validation/validate_remediation_commands.py digitalocean
+python3 content/validation/validate_remediation_commands.py cloudflare
 ```
 
-The validator checks each `aws`/`az`/`oci`/`gcloud`/`doctl` command in ```` ```bash ```` code blocks within `id: cli` remediation sections against a known-good database of commands and flags. Output shows `[PASS]` or `[FAIL]` with the check UID and the offending command.
+The validator checks each `aws`/`az`/`oci`/`gcloud`/`doctl` CLI command — and `curl` calls against `api.cloudflare.com` — in ```` ```bash ```` code blocks within `id: cli` remediation sections against a known-good database of commands and flags (or, for Cloudflare, the published OpenAPI spec). Output shows `[PASS]` or `[FAIL]` with the check UID and the offending command.
 
 **How the validator sources command data:**
 
@@ -446,6 +447,7 @@ The validator builds its commands database for `aws`, `oci`, and `gcp` **in-memo
 - **oci**: walks the Click command tree from the `oci_cli` Python package
 - **gcp**: reads the Google Cloud SDK's static completion tree
 - **digitalocean**: walks the `doctl --help` Cobra tree breadth-first (parallelized; ~1s for the full ~475-command tree)
+- **cloudflare**: downloads Cloudflare's published OpenAPI spec from [`cloudflare/api-schemas`](https://github.com/cloudflare/api-schemas) at a pinned commit (no Cloudflare CLI required — the validator scans `curl` calls against `api.cloudflare.com/client/v4` and verifies each path + HTTP method against the spec). Bump `CLOUDFLARE_OPENAPI_SHA` in `validate_remediation_commands.py` when refreshing the spec.
 
 If a required CLI is missing, the validator prints actionable install hints and exits non-zero.
 
