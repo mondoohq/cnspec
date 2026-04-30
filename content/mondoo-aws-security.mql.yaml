@@ -47353,6 +47353,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-neptune-cluster-auto-minor-version-upgrade-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     tags:
       compliance/iso-27001-2022: iso-27001-2022-a-8-8
       compliance/nis-2: nis-2-21-2-e
@@ -47409,6 +47413,18 @@ queries:
               auto_minor_version_upgrade = true
             }
             ```
+        - id: cloudformation
+          desc: |
+            Set `AutoMinorVersionUpgrade: true` on every `AWS::Neptune::DBCluster` so engine patches land automatically during the maintenance window:
+
+            ```yaml
+            Resources:
+              NeptuneCluster:
+                Type: AWS::Neptune::DBCluster
+                Properties:
+                  DBClusterIdentifier: example
+                  AutoMinorVersionUpgrade: true
+            ```
     refs:
       - url: https://docs.aws.amazon.com/neptune/latest/userguide/manage-console-maintaining.html
         title: AWS Documentation - Maintaining an Amazon Neptune DB cluster
@@ -47436,6 +47452,12 @@ queries:
       terraform.state.resources.where(type == "aws_neptune_cluster_instance").all(
         values["auto_minor_version_upgrade"] == true
       )
+  - uid: mondoo-aws-security-neptune-cluster-auto-minor-version-upgrade-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Neptune::DBCluster")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::Neptune::DBCluster").all(
+        properties['AutoMinorVersionUpgrade'] == true
+      )
   - uid: mondoo-aws-security-documentdb-cluster-auto-minor-version-upgrade
     title: Ensure DocumentDB cluster instances have automatic minor version upgrades enabled
     impact: 60
@@ -47456,6 +47478,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-documentdb-cluster-auto-minor-version-upgrade-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     tags:
       compliance/iso-27001-2022: iso-27001-2022-a-8-8
       compliance/nis-2: nis-2-21-2-e
@@ -47514,6 +47540,20 @@ queries:
               auto_minor_version_upgrade = true
             }
             ```
+        - id: cloudformation
+          desc: |
+            Set `AutoMinorVersionUpgrade: true` on every `AWS::DocDB::DBInstance` (the cluster resource itself does not expose this field; DocDB instances inherit cluster-level engine version but receive minor patches independently):
+
+            ```yaml
+            Resources:
+              DocDBInstance:
+                Type: AWS::DocDB::DBInstance
+                Properties:
+                  DBInstanceIdentifier: example-1
+                  DBClusterIdentifier: !Ref DocDBCluster
+                  DBInstanceClass: db.r6g.large
+                  AutoMinorVersionUpgrade: true
+            ```
     refs:
       - url: https://docs.aws.amazon.com/documentdb/latest/developerguide/db-instance-maintain.html
         title: AWS Documentation - Maintaining Amazon DocumentDB
@@ -47541,6 +47581,12 @@ queries:
       terraform.state.resources.where(type == "aws_docdb_cluster_instance").all(
         values["auto_minor_version_upgrade"] == true
       )
+  - uid: mondoo-aws-security-documentdb-cluster-auto-minor-version-upgrade-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::DocDB::DBInstance")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::DocDB::DBInstance").all(
+        properties['AutoMinorVersionUpgrade'] == true
+      )
   - uid: mondoo-aws-security-secgroup-restricted-postgresql
     title: Ensure security groups restrict incoming PostgreSQL traffic
     impact: 95
@@ -47566,6 +47612,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-secgroup-restricted-postgresql-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that AWS security groups do not allow inbound traffic on the PostgreSQL port (5432) from the internet (`0.0.0.0/0` or `::/0`). Database engines should never be exposed to the public internet; access should be limited to specific application or bastion subnets.
@@ -47610,6 +47660,23 @@ queries:
               to_port                      = 5432
             }
             ```
+        - id: cloudformation
+          desc: |
+            To restrict PostgreSQL access in CloudFormation, scope every `SecurityGroupIngress` rule covering port 5432 to a specific source security group, IP range, or VPC peer rather than `0.0.0.0/0` or `::/0`:
+
+            ```yaml
+            Resources:
+              DBSecurityGroup:
+                Type: AWS::EC2::SecurityGroup
+                Properties:
+                  GroupDescription: PostgreSQL access from app tier only
+                  VpcId: !Ref VpcId
+                  SecurityGroupIngress:
+                    - IpProtocol: tcp
+                      FromPort: 5432
+                      ToPort: 5432
+                      SourceSecurityGroupId: !Ref AppSecurityGroup
+            ```
     refs:
       - url: https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Overview.RDSSecurityGroups.html
         title: AWS Documentation - Controlling access with security groups
@@ -47653,6 +47720,13 @@ queries:
       terraform.state.resources.where(type == "aws_vpc_security_group_ingress_rule").where(values["from_port"] <= 5432 && values["to_port"] >= 5432).all(
         values["cidr_ipv4"] != "0.0.0.0/0" && values["cidr_ipv6"] != "::/0"
       )
+  - uid: mondoo-aws-security-secgroup-restricted-postgresql-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::SecurityGroup")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::EC2::SecurityGroup").all(
+        properties['SecurityGroupIngress'] == empty ||
+        properties['SecurityGroupIngress'].where(_['FromPort'] <= 5432 && _['ToPort'] >= 5432).none(_['CidrIp'] == "0.0.0.0/0" || _['CidrIpv6'] == "::/0")
+      )
   - uid: mondoo-aws-security-secgroup-restricted-mysql
     title: Ensure security groups restrict incoming MySQL/MariaDB/Aurora traffic
     impact: 95
@@ -47678,6 +47752,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-secgroup-restricted-mysql-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that AWS security groups do not allow inbound traffic on the MySQL/MariaDB/Aurora port (3306) from `0.0.0.0/0` or `::/0`. Public exposure of relational database engines is one of the most frequently exploited cloud misconfigurations.
@@ -47709,6 +47787,23 @@ queries:
               from_port                    = 3306
               to_port                      = 3306
             }
+            ```
+        - id: cloudformation
+          desc: |
+            To restrict MySQL access in CloudFormation, scope every `SecurityGroupIngress` rule covering port 3306 to a specific source security group, IP range, or VPC peer rather than `0.0.0.0/0` or `::/0`:
+
+            ```yaml
+            Resources:
+              DBSecurityGroup:
+                Type: AWS::EC2::SecurityGroup
+                Properties:
+                  GroupDescription: MySQL access from app tier only
+                  VpcId: !Ref VpcId
+                  SecurityGroupIngress:
+                    - IpProtocol: tcp
+                      FromPort: 3306
+                      ToPort: 3306
+                      SourceSecurityGroupId: !Ref AppSecurityGroup
             ```
     refs:
       - url: https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Overview.RDSSecurityGroups.html
@@ -47753,6 +47848,13 @@ queries:
       terraform.state.resources.where(type == "aws_vpc_security_group_ingress_rule").where(values["from_port"] <= 3306 && values["to_port"] >= 3306).all(
         values["cidr_ipv4"] != "0.0.0.0/0" && values["cidr_ipv6"] != "::/0"
       )
+  - uid: mondoo-aws-security-secgroup-restricted-mysql-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::SecurityGroup")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::EC2::SecurityGroup").all(
+        properties['SecurityGroupIngress'] == empty ||
+        properties['SecurityGroupIngress'].where(_['FromPort'] <= 3306 && _['ToPort'] >= 3306).none(_['CidrIp'] == "0.0.0.0/0" || _['CidrIpv6'] == "::/0")
+      )
   - uid: mondoo-aws-security-secgroup-restricted-mssql
     title: Ensure security groups restrict incoming Microsoft SQL Server traffic
     impact: 95
@@ -47778,6 +47880,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-secgroup-restricted-mssql-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that AWS security groups do not allow inbound traffic on Microsoft SQL Server's TDS port (1433) from `0.0.0.0/0` or `::/0`. Internet-exposed SQL Server is a recurring vector for ransomware that abuses `xp_cmdshell` and weak `sa` passwords.
@@ -47809,6 +47915,23 @@ queries:
               from_port                    = 1433
               to_port                      = 1433
             }
+            ```
+        - id: cloudformation
+          desc: |
+            To restrict Microsoft SQL Server access in CloudFormation, scope every `SecurityGroupIngress` rule covering port 1433 to a specific source security group, IP range, or VPC peer rather than `0.0.0.0/0` or `::/0`:
+
+            ```yaml
+            Resources:
+              DBSecurityGroup:
+                Type: AWS::EC2::SecurityGroup
+                Properties:
+                  GroupDescription: MSSQL access from app tier only
+                  VpcId: !Ref VpcId
+                  SecurityGroupIngress:
+                    - IpProtocol: tcp
+                      FromPort: 1433
+                      ToPort: 1433
+                      SourceSecurityGroupId: !Ref AppSecurityGroup
             ```
     refs:
       - url: https://learn.microsoft.com/en-us/sql/sql-server/install/security-considerations-for-a-sql-server-installation
@@ -47853,6 +47976,13 @@ queries:
       terraform.state.resources.where(type == "aws_vpc_security_group_ingress_rule").where(values["from_port"] <= 1433 && values["to_port"] >= 1433).all(
         values["cidr_ipv4"] != "0.0.0.0/0" && values["cidr_ipv6"] != "::/0"
       )
+  - uid: mondoo-aws-security-secgroup-restricted-mssql-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::SecurityGroup")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::EC2::SecurityGroup").all(
+        properties['SecurityGroupIngress'] == empty ||
+        properties['SecurityGroupIngress'].where(_['FromPort'] <= 1433 && _['ToPort'] >= 1433).none(_['CidrIp'] == "0.0.0.0/0" || _['CidrIpv6'] == "::/0")
+      )
   - uid: mondoo-aws-security-secgroup-restricted-oracle
     title: Ensure security groups restrict incoming Oracle Database traffic
     impact: 90
@@ -47878,6 +48008,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-secgroup-restricted-oracle-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that AWS security groups do not allow inbound traffic on the Oracle Database listener port (1521) from `0.0.0.0/0` or `::/0`.
@@ -47905,6 +48039,23 @@ queries:
               from_port                    = 1521
               to_port                      = 1521
             }
+            ```
+        - id: cloudformation
+          desc: |
+            To restrict Oracle access in CloudFormation, scope every `SecurityGroupIngress` rule covering port 1521 to a specific source security group, IP range, or VPC peer rather than `0.0.0.0/0` or `::/0`:
+
+            ```yaml
+            Resources:
+              DBSecurityGroup:
+                Type: AWS::EC2::SecurityGroup
+                Properties:
+                  GroupDescription: Oracle access from app tier only
+                  VpcId: !Ref VpcId
+                  SecurityGroupIngress:
+                    - IpProtocol: tcp
+                      FromPort: 1521
+                      ToPort: 1521
+                      SourceSecurityGroupId: !Ref AppSecurityGroup
             ```
     refs:
       - url: https://docs.oracle.com/en/database/oracle/oracle-database/19/dbseg/index.html
@@ -47949,6 +48100,13 @@ queries:
       terraform.state.resources.where(type == "aws_vpc_security_group_ingress_rule").where(values["from_port"] <= 1521 && values["to_port"] >= 1521).all(
         values["cidr_ipv4"] != "0.0.0.0/0" && values["cidr_ipv6"] != "::/0"
       )
+  - uid: mondoo-aws-security-secgroup-restricted-oracle-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::SecurityGroup")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::EC2::SecurityGroup").all(
+        properties['SecurityGroupIngress'] == empty ||
+        properties['SecurityGroupIngress'].where(_['FromPort'] <= 1521 && _['ToPort'] >= 1521).none(_['CidrIp'] == "0.0.0.0/0" || _['CidrIpv6'] == "::/0")
+      )
   - uid: mondoo-aws-security-secgroup-restricted-mongodb
     title: Ensure security groups restrict incoming MongoDB traffic
     impact: 95
@@ -47974,6 +48132,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-secgroup-restricted-mongodb-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that AWS security groups do not allow inbound traffic on the MongoDB port (27017) from `0.0.0.0/0` or `::/0`. Internet-exposed MongoDB instances have been at the center of multiple mass ransom campaigns where attackers wipe collections and demand payment.
@@ -48002,6 +48164,23 @@ queries:
               from_port                    = 27017
               to_port                      = 27017
             }
+            ```
+        - id: cloudformation
+          desc: |
+            To restrict MongoDB access in CloudFormation, scope every `SecurityGroupIngress` rule covering port 27017 to a specific source security group, IP range, or VPC peer rather than `0.0.0.0/0` or `::/0`:
+
+            ```yaml
+            Resources:
+              DBSecurityGroup:
+                Type: AWS::EC2::SecurityGroup
+                Properties:
+                  GroupDescription: MongoDB access from app tier only
+                  VpcId: !Ref VpcId
+                  SecurityGroupIngress:
+                    - IpProtocol: tcp
+                      FromPort: 27017
+                      ToPort: 27017
+                      SourceSecurityGroupId: !Ref AppSecurityGroup
             ```
     refs:
       - url: https://www.mongodb.com/docs/manual/administration/security-checklist/
@@ -48046,6 +48225,13 @@ queries:
       terraform.state.resources.where(type == "aws_vpc_security_group_ingress_rule").where(values["from_port"] <= 27017 && values["to_port"] >= 27017).all(
         values["cidr_ipv4"] != "0.0.0.0/0" && values["cidr_ipv6"] != "::/0"
       )
+  - uid: mondoo-aws-security-secgroup-restricted-mongodb-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::SecurityGroup")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::EC2::SecurityGroup").all(
+        properties['SecurityGroupIngress'] == empty ||
+        properties['SecurityGroupIngress'].where(_['FromPort'] <= 27017 && _['ToPort'] >= 27017).none(_['CidrIp'] == "0.0.0.0/0" || _['CidrIpv6'] == "::/0")
+      )
   - uid: mondoo-aws-security-secgroup-restricted-redis
     title: Ensure security groups restrict incoming Redis traffic
     impact: 90
@@ -48071,6 +48257,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-secgroup-restricted-redis-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that AWS security groups do not allow inbound traffic on the Redis port (6379) from `0.0.0.0/0` or `::/0`. Open Redis servers have repeatedly been used to mine cryptocurrency, plant SSH keys via `CONFIG SET dir`, and pivot into application infrastructure.
@@ -48098,6 +48288,23 @@ queries:
               from_port                    = 6379
               to_port                      = 6379
             }
+            ```
+        - id: cloudformation
+          desc: |
+            To restrict Redis access in CloudFormation, scope every `SecurityGroupIngress` rule covering port 6379 to a specific source security group, IP range, or VPC peer rather than `0.0.0.0/0` or `::/0`:
+
+            ```yaml
+            Resources:
+              CacheSecurityGroup:
+                Type: AWS::EC2::SecurityGroup
+                Properties:
+                  GroupDescription: Redis access from app tier only
+                  VpcId: !Ref VpcId
+                  SecurityGroupIngress:
+                    - IpProtocol: tcp
+                      FromPort: 6379
+                      ToPort: 6379
+                      SourceSecurityGroupId: !Ref AppSecurityGroup
             ```
     refs:
       - url: https://redis.io/docs/management/security/
@@ -48142,6 +48349,13 @@ queries:
       terraform.state.resources.where(type == "aws_vpc_security_group_ingress_rule").where(values["from_port"] <= 6379 && values["to_port"] >= 6379).all(
         values["cidr_ipv4"] != "0.0.0.0/0" && values["cidr_ipv6"] != "::/0"
       )
+  - uid: mondoo-aws-security-secgroup-restricted-redis-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::SecurityGroup")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::EC2::SecurityGroup").all(
+        properties['SecurityGroupIngress'] == empty ||
+        properties['SecurityGroupIngress'].where(_['FromPort'] <= 6379 && _['ToPort'] >= 6379).none(_['CidrIp'] == "0.0.0.0/0" || _['CidrIpv6'] == "::/0")
+      )
   - uid: mondoo-aws-security-secgroup-restricted-memcached
     title: Ensure security groups restrict incoming Memcached traffic
     impact: 80
@@ -48166,6 +48380,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-secgroup-restricted-memcached-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that AWS security groups do not allow inbound traffic on the Memcached port (11211) from `0.0.0.0/0` or `::/0`. Public Memcached servers have been weaponized for record-breaking UDP reflection/amplification DDoS attacks (>1 Tbps).
@@ -48193,6 +48411,23 @@ queries:
               from_port                    = 11211
               to_port                      = 11211
             }
+            ```
+        - id: cloudformation
+          desc: |
+            To restrict Memcached access in CloudFormation, scope every `SecurityGroupIngress` rule covering port 11211 to a specific source security group, IP range, or VPC peer rather than `0.0.0.0/0` or `::/0`:
+
+            ```yaml
+            Resources:
+              CacheSecurityGroup:
+                Type: AWS::EC2::SecurityGroup
+                Properties:
+                  GroupDescription: Memcached access from app tier only
+                  VpcId: !Ref VpcId
+                  SecurityGroupIngress:
+                    - IpProtocol: tcp
+                      FromPort: 11211
+                      ToPort: 11211
+                      SourceSecurityGroupId: !Ref AppSecurityGroup
             ```
     refs:
       - url: https://www.cisa.gov/news-events/alerts/2018/02/27/memcached-distributed-denial-service-attacks
@@ -48237,6 +48472,13 @@ queries:
       terraform.state.resources.where(type == "aws_vpc_security_group_ingress_rule").where(values["from_port"] <= 11211 && values["to_port"] >= 11211).all(
         values["cidr_ipv4"] != "0.0.0.0/0" && values["cidr_ipv6"] != "::/0"
       )
+  - uid: mondoo-aws-security-secgroup-restricted-memcached-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::SecurityGroup")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::EC2::SecurityGroup").all(
+        properties['SecurityGroupIngress'] == empty ||
+        properties['SecurityGroupIngress'].where(_['FromPort'] <= 11211 && _['ToPort'] >= 11211).none(_['CidrIp'] == "0.0.0.0/0" || _['CidrIpv6'] == "::/0")
+      )
   - uid: mondoo-aws-security-secgroup-restricted-elasticsearch
     title: Ensure security groups restrict incoming Elasticsearch/OpenSearch traffic
     impact: 90
@@ -48262,6 +48504,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-secgroup-restricted-elasticsearch-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that AWS security groups do not allow inbound traffic on the Elasticsearch/OpenSearch ports (9200/9300) from `0.0.0.0/0` or `::/0`. Public clusters have been the source of repeated mass-data leaks where indices containing PII were freely accessible without authentication.
@@ -48290,6 +48536,23 @@ queries:
               from_port                    = 9200
               to_port                      = 9300
             }
+            ```
+        - id: cloudformation
+          desc: |
+            To restrict Elasticsearch / OpenSearch access in CloudFormation, scope every `SecurityGroupIngress` rule covering port 9200–9300 to a specific source security group, IP range, or VPC peer rather than `0.0.0.0/0` or `::/0`:
+
+            ```yaml
+            Resources:
+              SearchSecurityGroup:
+                Type: AWS::EC2::SecurityGroup
+                Properties:
+                  GroupDescription: Elasticsearch access from app tier only
+                  VpcId: !Ref VpcId
+                  SecurityGroupIngress:
+                    - IpProtocol: tcp
+                      FromPort: 9200
+                      ToPort: 9300
+                      SourceSecurityGroupId: !Ref AppSecurityGroup
             ```
     refs:
       - url: https://www.elastic.co/guide/en/elasticsearch/reference/current/secure-cluster.html
@@ -48334,6 +48597,13 @@ queries:
       terraform.state.resources.where(type == "aws_vpc_security_group_ingress_rule").where(values["from_port"] <= 9300 && values["to_port"] >= 9200).all(
         values["cidr_ipv4"] != "0.0.0.0/0" && values["cidr_ipv6"] != "::/0"
       )
+  - uid: mondoo-aws-security-secgroup-restricted-elasticsearch-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::SecurityGroup")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::EC2::SecurityGroup").all(
+        properties['SecurityGroupIngress'] == empty ||
+        properties['SecurityGroupIngress'].where(_['FromPort'] <= 9300 && _['ToPort'] >= 9200).none(_['CidrIp'] == "0.0.0.0/0" || _['CidrIpv6'] == "::/0")
+      )
   - uid: mondoo-aws-security-secgroup-restricted-winrm
     title: Ensure security groups restrict incoming WinRM traffic
     impact: 90
@@ -48359,6 +48629,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-secgroup-restricted-winrm-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that AWS security groups do not allow inbound traffic on the Windows Remote Management ports (5985 HTTP, 5986 HTTPS) from `0.0.0.0/0` or `::/0`.
@@ -48386,6 +48660,23 @@ queries:
               from_port                    = 5985
               to_port                      = 5986
             }
+            ```
+        - id: cloudformation
+          desc: |
+            To restrict WinRM access in CloudFormation, scope every `SecurityGroupIngress` rule covering port 5985–5986 to a specific source security group, IP range, or VPC peer rather than `0.0.0.0/0` or `::/0`:
+
+            ```yaml
+            Resources:
+              AdminSecurityGroup:
+                Type: AWS::EC2::SecurityGroup
+                Properties:
+                  GroupDescription: WinRM access from admin network only
+                  VpcId: !Ref VpcId
+                  SecurityGroupIngress:
+                    - IpProtocol: tcp
+                      FromPort: 5985
+                      ToPort: 5986
+                      SourceSecurityGroupId: !Ref AppSecurityGroup
             ```
     refs:
       - url: https://learn.microsoft.com/en-us/windows/win32/winrm/portal
@@ -48430,6 +48721,13 @@ queries:
       terraform.state.resources.where(type == "aws_vpc_security_group_ingress_rule").where(values["from_port"] <= 5986 && values["to_port"] >= 5985).all(
         values["cidr_ipv4"] != "0.0.0.0/0" && values["cidr_ipv6"] != "::/0"
       )
+  - uid: mondoo-aws-security-secgroup-restricted-winrm-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::SecurityGroup")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::EC2::SecurityGroup").all(
+        properties['SecurityGroupIngress'] == empty ||
+        properties['SecurityGroupIngress'].where(_['FromPort'] <= 5986 && _['ToPort'] >= 5985).none(_['CidrIp'] == "0.0.0.0/0" || _['CidrIpv6'] == "::/0")
+      )
   - uid: mondoo-aws-security-secgroup-restricted-docker-daemon
     title: Ensure security groups restrict incoming Docker daemon traffic
     impact: 100
@@ -48455,6 +48753,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-secgroup-restricted-docker-daemon-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that AWS security groups do not allow inbound traffic on Docker daemon API ports (2375 plaintext, 2376 TLS) from `0.0.0.0/0` or `::/0`. The Docker daemon API is the equivalent of root on the host; any reachable client can spawn privileged containers and escape to the host filesystem.
@@ -48485,6 +48787,23 @@ queries:
               from_port                    = 2375
               to_port                      = 2376
             }
+            ```
+        - id: cloudformation
+          desc: |
+            To restrict Docker daemon access in CloudFormation, scope every `SecurityGroupIngress` rule covering port 2375–2376 to a specific source security group, IP range, or VPC peer rather than `0.0.0.0/0` or `::/0`:
+
+            ```yaml
+            Resources:
+              DockerHostSecurityGroup:
+                Type: AWS::EC2::SecurityGroup
+                Properties:
+                  GroupDescription: Docker daemon access from CI runners only
+                  VpcId: !Ref VpcId
+                  SecurityGroupIngress:
+                    - IpProtocol: tcp
+                      FromPort: 2375
+                      ToPort: 2376
+                      SourceSecurityGroupId: !Ref AppSecurityGroup
             ```
     refs:
       - url: https://docs.docker.com/engine/security/protect-access/
@@ -48529,6 +48848,13 @@ queries:
       terraform.state.resources.where(type == "aws_vpc_security_group_ingress_rule").where(values["from_port"] <= 2376 && values["to_port"] >= 2375).all(
         values["cidr_ipv4"] != "0.0.0.0/0" && values["cidr_ipv6"] != "::/0"
       )
+  - uid: mondoo-aws-security-secgroup-restricted-docker-daemon-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::SecurityGroup")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::EC2::SecurityGroup").all(
+        properties['SecurityGroupIngress'] == empty ||
+        properties['SecurityGroupIngress'].where(_['FromPort'] <= 2376 && _['ToPort'] >= 2375).none(_['CidrIp'] == "0.0.0.0/0" || _['CidrIpv6'] == "::/0")
+      )
   - uid: mondoo-aws-security-secgroup-restricted-kubernetes-api
     title: Ensure security groups restrict incoming Kubernetes API server traffic
     impact: 95
@@ -48554,6 +48880,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-secgroup-restricted-kubernetes-api-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that AWS security groups do not allow inbound traffic on the Kubernetes API server port (6443) from `0.0.0.0/0` or `::/0`. The API server is the control plane for the entire cluster and must not be reachable from the public internet.
@@ -48584,6 +48914,23 @@ queries:
               from_port                    = 6443
               to_port                      = 6443
             }
+            ```
+        - id: cloudformation
+          desc: |
+            To restrict Kubernetes API access in CloudFormation, scope every `SecurityGroupIngress` rule covering port 6443 to a specific source security group, IP range, or VPC peer rather than `0.0.0.0/0` or `::/0`:
+
+            ```yaml
+            Resources:
+              K8sControlPlaneSecurityGroup:
+                Type: AWS::EC2::SecurityGroup
+                Properties:
+                  GroupDescription: Kubernetes API access from operator subnet only
+                  VpcId: !Ref VpcId
+                  SecurityGroupIngress:
+                    - IpProtocol: tcp
+                      FromPort: 6443
+                      ToPort: 6443
+                      SourceSecurityGroupId: !Ref AppSecurityGroup
             ```
     refs:
       - url: https://docs.aws.amazon.com/eks/latest/userguide/cluster-endpoint.html
@@ -48628,6 +48975,13 @@ queries:
       terraform.state.resources.where(type == "aws_vpc_security_group_ingress_rule").where(values["from_port"] <= 6443 && values["to_port"] >= 6443).all(
         values["cidr_ipv4"] != "0.0.0.0/0" && values["cidr_ipv6"] != "::/0"
       )
+  - uid: mondoo-aws-security-secgroup-restricted-kubernetes-api-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::SecurityGroup")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::EC2::SecurityGroup").all(
+        properties['SecurityGroupIngress'] == empty ||
+        properties['SecurityGroupIngress'].where(_['FromPort'] <= 6443 && _['ToPort'] >= 6443).none(_['CidrIp'] == "0.0.0.0/0" || _['CidrIpv6'] == "::/0")
+      )
   - uid: mondoo-aws-security-secgroup-restricted-kubelet
     title: Ensure security groups restrict incoming Kubernetes kubelet traffic
     impact: 95
@@ -48652,6 +49006,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-secgroup-restricted-kubelet-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that AWS security groups do not allow inbound traffic on the kubelet API ports (10250 secure, 10255 read-only) from `0.0.0.0/0` or `::/0`.
@@ -48679,6 +49037,23 @@ queries:
               from_port                    = 10250
               to_port                      = 10255
             }
+            ```
+        - id: cloudformation
+          desc: |
+            To restrict Kubelet access in CloudFormation, scope every `SecurityGroupIngress` rule covering port 10250–10255 to a specific source security group, IP range, or VPC peer rather than `0.0.0.0/0` or `::/0`:
+
+            ```yaml
+            Resources:
+              K8sNodeSecurityGroup:
+                Type: AWS::EC2::SecurityGroup
+                Properties:
+                  GroupDescription: Kubelet access from control plane only
+                  VpcId: !Ref VpcId
+                  SecurityGroupIngress:
+                    - IpProtocol: tcp
+                      FromPort: 10250
+                      ToPort: 10255
+                      SourceSecurityGroupId: !Ref AppSecurityGroup
             ```
     refs:
       - url: https://kubernetes.io/docs/reference/access-authn-authz/kubelet-authn-authz/
@@ -48723,6 +49098,13 @@ queries:
       terraform.state.resources.where(type == "aws_vpc_security_group_ingress_rule").where(values["from_port"] <= 10255 && values["to_port"] >= 10250).all(
         values["cidr_ipv4"] != "0.0.0.0/0" && values["cidr_ipv6"] != "::/0"
       )
+  - uid: mondoo-aws-security-secgroup-restricted-kubelet-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::SecurityGroup")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::EC2::SecurityGroup").all(
+        properties['SecurityGroupIngress'] == empty ||
+        properties['SecurityGroupIngress'].where(_['FromPort'] <= 10255 && _['ToPort'] >= 10250).none(_['CidrIp'] == "0.0.0.0/0" || _['CidrIpv6'] == "::/0")
+      )
   - uid: mondoo-aws-security-secgroup-restricted-etcd
     title: Ensure security groups restrict incoming etcd traffic
     impact: 100
@@ -48748,6 +49130,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-secgroup-restricted-etcd-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that AWS security groups do not allow inbound traffic on etcd ports (2379 client, 2380 peer) from `0.0.0.0/0` or `::/0`. etcd holds the entire Kubernetes cluster state, including all Secrets in the cluster — public exposure is a complete cluster compromise.
@@ -48776,6 +49162,23 @@ queries:
               from_port                    = 2379
               to_port                      = 2380
             }
+            ```
+        - id: cloudformation
+          desc: |
+            To restrict etcd access in CloudFormation, scope every `SecurityGroupIngress` rule covering port 2379–2380 to a specific source security group, IP range, or VPC peer rather than `0.0.0.0/0` or `::/0`:
+
+            ```yaml
+            Resources:
+              EtcdSecurityGroup:
+                Type: AWS::EC2::SecurityGroup
+                Properties:
+                  GroupDescription: etcd access from control plane only
+                  VpcId: !Ref VpcId
+                  SecurityGroupIngress:
+                    - IpProtocol: tcp
+                      FromPort: 2379
+                      ToPort: 2380
+                      SourceSecurityGroupId: !Ref AppSecurityGroup
             ```
     refs:
       - url: https://etcd.io/docs/v3.5/op-guide/security/
@@ -48819,6 +49222,13 @@ queries:
       ) &&
       terraform.state.resources.where(type == "aws_vpc_security_group_ingress_rule").where(values["from_port"] <= 2380 && values["to_port"] >= 2379).all(
         values["cidr_ipv4"] != "0.0.0.0/0" && values["cidr_ipv6"] != "::/0"
+      )
+  - uid: mondoo-aws-security-secgroup-restricted-etcd-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::SecurityGroup")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::EC2::SecurityGroup").all(
+        properties['SecurityGroupIngress'] == empty ||
+        properties['SecurityGroupIngress'].where(_['FromPort'] <= 2380 && _['ToPort'] >= 2379).none(_['CidrIp'] == "0.0.0.0/0" || _['CidrIpv6'] == "::/0")
       )
   - uid: mondoo-aws-security-s3-bucket-policy-no-public-principal
     title: Ensure S3 bucket policies do not grant access to anonymous principals
@@ -49173,6 +49583,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-sns-topic-cmk-encryption-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that all SNS topics are encrypted with a customer-managed KMS key (CMK), not the default `aws/sns` AWS-managed key. CMKs allow rotation, fine-grained key policies, and the ability to revoke access by disabling or deleting the key.
@@ -49201,6 +49615,33 @@ queries:
               name              = "example-topic"
               kms_master_key_id = aws_kms_key.sns.arn
             }
+            ```
+        - id: cloudformation
+          desc: |
+            Set `KmsMasterKeyId` on every `AWS::SNS::Topic` to a customer-managed CMK ARN or alias other than `alias/aws/sns`:
+
+            ```yaml
+            Resources:
+              SnsKey:
+                Type: AWS::KMS::Key
+                Properties:
+                  Description: CMK for SNS topic encryption
+                  EnableKeyRotation: true
+                  KeyPolicy:
+                    Version: "2012-10-17"
+                    Statement:
+                      - Effect: Allow
+                        Principal:
+                          Service: sns.amazonaws.com
+                        Action:
+                          - kms:Decrypt
+                          - kms:GenerateDataKey
+                        Resource: "*"
+              ExampleTopic:
+                Type: AWS::SNS::Topic
+                Properties:
+                  TopicName: example-topic
+                  KmsMasterKeyId: !GetAtt SnsKey.Arn
             ```
     refs:
       - url: https://docs.aws.amazon.com/sns/latest/dg/sns-server-side-encryption.html
@@ -49236,6 +49677,13 @@ queries:
         values["kms_master_key_id"] != "" &&
         values["kms_master_key_id"] != "alias/aws/sns"
       )
+  - uid: mondoo-aws-security-sns-topic-cmk-encryption-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::SNS::Topic")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::SNS::Topic").all(
+        properties['KmsMasterKeyId'] != empty &&
+        properties['KmsMasterKeyId'] != "alias/aws/sns"
+      )
   - uid: mondoo-aws-security-sqs-queue-cmk-encryption
     title: Ensure SQS queues are encrypted with a customer-managed KMS key
     impact: 70
@@ -49260,6 +49708,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-sqs-queue-cmk-encryption-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that all SQS queues are encrypted with a customer-managed KMS key (CMK) rather than SQS-managed encryption (SSE-SQS) or the AWS-managed `aws/sqs` key.
@@ -49289,6 +49741,23 @@ queries:
               kms_master_key_id                 = aws_kms_key.sqs.arn
               kms_data_key_reuse_period_seconds = 300
             }
+            ```
+        - id: cloudformation
+          desc: |
+            Set `KmsMasterKeyId` on every `AWS::SQS::Queue` to a customer-managed CMK ARN or alias other than `alias/aws/sqs`:
+
+            ```yaml
+            Resources:
+              SqsKey:
+                Type: AWS::KMS::Key
+                Properties:
+                  Description: CMK for SQS queue encryption
+                  EnableKeyRotation: true
+              ExampleQueue:
+                Type: AWS::SQS::Queue
+                Properties:
+                  QueueName: example-queue
+                  KmsMasterKeyId: !GetAtt SqsKey.Arn
             ```
     refs:
       - url: https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-server-side-encryption.html
@@ -49322,4 +49791,11 @@ queries:
         values["kms_master_key_id"] != null &&
         values["kms_master_key_id"] != "" &&
         values["kms_master_key_id"] != "alias/aws/sqs"
+      )
+  - uid: mondoo-aws-security-sqs-queue-cmk-encryption-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::SQS::Queue")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::SQS::Queue").all(
+        properties['KmsMasterKeyId'] != empty &&
+        properties['KmsMasterKeyId'] != "alias/aws/sqs"
       )
