@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-digitalocean-security
     name: Mondoo DigitalOcean Security
-    version: 1.1.0
+    version: 1.2.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -47,6 +47,7 @@ policies:
         filters: asset.platform == "digitalocean"
         checks:
           - uid: mondoo-digitalocean-security-droplet-in-vpc
+          - uid: mondoo-digitalocean-security-droplet-firewall-coverage
       - title: Cloud Firewalls
         filters: asset.platform == "digitalocean"
         checks:
@@ -64,11 +65,14 @@ policies:
         filters: asset.platform == "digitalocean"
         checks:
           - uid: mondoo-digitalocean-security-lb-http-redirected-to-https
+          - uid: mondoo-digitalocean-security-lb-in-vpc
       - title: Kubernetes (DOKS)
         filters: asset.platform == "digitalocean"
         checks:
           - uid: mondoo-digitalocean-security-doks-auto-upgrade-enabled
           - uid: mondoo-digitalocean-security-doks-supported-version
+          - uid: mondoo-digitalocean-security-doks-sso-enabled
+          - uid: mondoo-digitalocean-security-doks-sso-required
       - title: TLS Certificates
         filters: asset.platform == "digitalocean"
         checks:
@@ -168,6 +172,58 @@ queries:
     refs:
       - url: https://docs.digitalocean.com/products/networking/vpc/
         title: DigitalOcean VPC overview
+
+  # No Terraform variants: this check requires cross-resource correlation between
+  # digitalocean_droplet and digitalocean_firewall (matched by id or by overlapping
+  # tag), which is awkward to express reliably in MQL on Terraform sources. The
+  # runtime check uses the digitalocean.droplet.missingFirewall helper, which does
+  # the correlation server-side.
+  # No Terraform remediation: see above.
+  - uid: mondoo-digitalocean-security-droplet-firewall-coverage
+    title: Ensure every Droplet is covered by a Cloud Firewall
+    impact: 90
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+    mql: |
+      digitalocean.droplets.all(missingFirewall == false)
+    docs:
+      desc: |
+        This check ensures that every Droplet is referenced by at least one Cloud Firewall, either directly by Droplet ID or through a matching tag.
+
+        **Why this matters**
+
+        A Droplet with no firewall attached exposes every listening service directly to the network reachable from its IPs. Defaults like SSH on port 22 are continuously scanned, and any application port left bound to `0.0.0.0` is reachable from anywhere. Cloud Firewalls are DigitalOcean's primary network-layer control. Without one attached, security relies entirely on the host's own iptables/nftables rules, which are easy to misconfigure and trivial to disable.
+      remediation:
+        - id: console
+          desc: |
+            To fix this in the DigitalOcean Cloud Control Panel:
+
+            1. Navigate to **Networking** > **Firewalls** and open (or create) a firewall that should protect the Droplet.
+            2. Under **Apply to Droplets**, add the Droplet by name or attach a tag the Droplet already carries.
+            3. Save the firewall and verify the Droplet now lists the firewall under its **Networking** tab.
+        - id: cli
+          desc: |
+            To fix this on the command line using the `doctl` CLI, attach the Droplet to an existing firewall:
+
+            ```bash
+            doctl compute firewall add-droplets <firewall-id> \
+              --droplet-ids <droplet-id>
+            ```
+
+            Or, if you scope firewalls by tag, ensure the Droplet carries the tag the firewall targets:
+
+            ```bash
+            doctl compute droplet tag <droplet-id> --tag-name <firewall-tag>
+            ```
+    refs:
+      - url: https://docs.digitalocean.com/products/networking/firewalls/
+        title: DigitalOcean Cloud Firewalls overview
 
   - uid: mondoo-digitalocean-security-firewall-no-unrestricted-ssh
     title: Ensure no firewall allows unrestricted inbound SSH (port 22)
@@ -581,6 +637,104 @@ queries:
       - url: https://docs.digitalocean.com/products/networking/load-balancers/how-to/ssl-termination/
         title: Load balancer SSL termination and redirect
 
+  - uid: mondoo-digitalocean-security-lb-in-vpc
+    title: Ensure load balancers are deployed inside a VPC
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+    variants:
+      - uid: mondoo-digitalocean-security-lb-in-vpc-digitalocean
+        tags:
+          mondoo.com/filter-title: DigitalOcean
+          mondoo.com/filter-icon: digitalocean
+      - uid: mondoo-digitalocean-security-lb-in-vpc-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-digitalocean-security-lb-in-vpc-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-digitalocean-security-lb-in-vpc-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that every load balancer is attached to a Virtual Private Cloud (VPC).
+
+        **Why this matters**
+
+        A load balancer not attached to a VPC must reach its backends over the public internet, which routes traffic outside DigitalOcean's private network and removes a layer of network isolation between the LB and the backend Droplets. VPC-attached load balancers can reach backends on private IPs, keeping intra-application traffic off the public internet.
+      remediation:
+        - id: console
+          desc: |
+            DigitalOcean does not support moving a load balancer between VPCs after creation. To fix this in the Cloud Control Panel, create a replacement load balancer in the target VPC and cut traffic over:
+
+            1. Navigate to **Networking** > **Load Balancers** and create a new load balancer.
+            2. In the creation flow, select the target VPC under **Network**.
+            3. Configure forwarding rules and attach the same Droplets (or the same tag).
+            4. Update DNS to point at the new load balancer's IP, then delete the old one.
+        - id: cli
+          desc: |
+            To fix this on the command line using the `doctl` CLI, create a replacement load balancer inside the target VPC:
+
+            ```bash
+            doctl compute load-balancer create \
+              --name <new-name> \
+              --region <region> \
+              --vpc-uuid <vpc-uuid> \
+              --droplet-ids <droplet-ids> \
+              --forwarding-rules "entry_protocol:https,entry_port:443,target_protocol:http,target_port:80,certificate_id:<cert-id>"
+            ```
+        - id: terraform
+          desc: |
+            To deploy load balancers inside a VPC in Terraform, set `vpc_uuid` on the `digitalocean_loadbalancer` resource:
+
+            ```hcl
+            resource "digitalocean_loadbalancer" "example" {
+              name     = "example-lb"
+              region   = "nyc3"
+              vpc_uuid = digitalocean_vpc.example.id
+
+              forwarding_rule {
+                entry_port       = 443
+                entry_protocol   = "https"
+                target_port      = 80
+                target_protocol  = "http"
+                certificate_name = digitalocean_certificate.example.name
+              }
+
+              droplet_ids = [digitalocean_droplet.example.id]
+            }
+            ```
+    refs:
+      - url: https://docs.digitalocean.com/products/networking/vpc/
+        title: DigitalOcean VPC overview
+
+  - uid: mondoo-digitalocean-security-lb-in-vpc-digitalocean
+    filters: asset.platform == "digitalocean"
+    mql: |
+      digitalocean.loadBalancers.all(vpcUuid != "")
+  - uid: mondoo-digitalocean-security-lb-in-vpc-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "digitalocean_loadbalancer")
+    mql: |
+      terraform.resources.where(nameLabel == "digitalocean_loadbalancer").all(arguments.vpc_uuid != empty)
+  - uid: mondoo-digitalocean-security-lb-in-vpc-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "digitalocean_loadbalancer")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "digitalocean_loadbalancer").all(change.after.vpc_uuid != empty)
+  - uid: mondoo-digitalocean-security-lb-in-vpc-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "digitalocean_loadbalancer")
+    mql: |
+      terraform.state.resources.where(type == "digitalocean_loadbalancer").all(values.vpc_uuid != empty)
+
   - uid: mondoo-digitalocean-security-doks-auto-upgrade-enabled
     title: Ensure DOKS clusters have auto-upgrade enabled
     impact: 70
@@ -661,6 +815,104 @@ queries:
     refs:
       - url: https://docs.digitalocean.com/products/kubernetes/details/supported-releases/
         title: DOKS supported Kubernetes releases
+
+  # No Terraform variants: SSO configuration was added to the DigitalOcean godo
+  # SDK in v1.187.0 and the digitalocean Terraform provider does not yet expose
+  # an `sso` block on digitalocean_kubernetes_cluster. Revisit once the provider
+  # adds the field.
+  # No Terraform remediation: see above.
+  - uid: mondoo-digitalocean-security-doks-sso-enabled
+    title: Ensure DOKS clusters have SSO configured
+    impact: 50
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-2
+      compliance/soc2-2017: soc2-control-cc6-1-4
+    mql: |
+      digitalocean.kubernetesClusters.all(ssoEnabled == true)
+    docs:
+      desc: |
+        This check ensures that every DOKS cluster has Single Sign-On (SSO) configured against an OIDC identity provider, even if SSO is not strictly required yet.
+
+        **Why this matters**
+
+        Configuring SSO is a prerequisite for requiring it. A cluster without SSO configured has no identity-provider integration at all. Every user is on a static token issued at cluster creation, with no central IdP visibility into who has access. This check is the staging control before the stricter requirement that SSO be enforced for cluster authentication; both should pass for fully managed cluster identity.
+      remediation:
+        - id: console
+          desc: |
+            To fix this in the DigitalOcean Cloud Control Panel:
+
+            1. Navigate to **Kubernetes** and open the affected cluster.
+            2. Go to **Settings** > **Single Sign-On**.
+            3. Configure the OIDC identity provider (issuer URL, client ID, client secret).
+            4. Save. Plan a follow-up to enable **Require SSO for cluster access** once users are migrated.
+        - id: cli
+          desc: |
+            DOKS SSO configuration is managed through the DigitalOcean API and Cloud Control Panel; `doctl` does not expose `sso` flags on `kubernetes cluster update`. Configure SSO in the Cloud Control Panel as described above, or call the DigitalOcean API directly:
+
+            ```bash
+            curl -X PUT \
+              -H "Authorization: Bearer $DIGITALOCEAN_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d '{"enabled":true,"required":false,"issuer_url":"<oidc-issuer-url>","client_id":"<client-id>","client_secret":"<client-secret>"}' \
+              https://api.digitalocean.com/v2/kubernetes/clusters/<cluster-id>/sso
+            ```
+    refs:
+      - url: https://docs.digitalocean.com/products/kubernetes/how-to/manage-cluster-access/
+        title: Manage DOKS cluster access
+
+  # No Terraform variants: SSO configuration was added to the DigitalOcean godo
+  # SDK in v1.187.0 and the digitalocean Terraform provider does not yet expose
+  # an `sso` block on digitalocean_kubernetes_cluster. Revisit once the provider
+  # adds the field.
+  # No Terraform remediation: see above.
+  - uid: mondoo-digitalocean-security-doks-sso-required
+    title: Ensure DOKS clusters require SSO for cluster authentication
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-2
+      compliance/soc2-2017: soc2-control-cc6-1-4
+    mql: |
+      digitalocean.kubernetesClusters.all(ssoRequired == true)
+    docs:
+      desc: |
+        This check ensures that every DOKS cluster has Single Sign-On (SSO) configured **and** required, so that all kubectl access is authenticated through the configured OIDC identity provider.
+
+        **Why this matters**
+
+        Without SSO required, anyone holding a static `kubeconfig` token issued at cluster creation can reach the API server regardless of what happens in the IdP. That defeats centralized identity controls such as joiner/mover/leaver lifecycle, MFA enforcement, conditional access, and session revocation. With SSO required, kubectl users must authenticate through the IdP for every session, so revoking a user in the IdP immediately revokes their cluster access.
+      remediation:
+        - id: console
+          desc: |
+            To fix this in the DigitalOcean Cloud Control Panel:
+
+            1. Navigate to **Kubernetes** and open the affected cluster.
+            2. Go to **Settings** > **Single Sign-On**.
+            3. Configure the OIDC identity provider (issuer URL, client ID, client secret) if not already done.
+            4. Enable **Require SSO for cluster access** so that token-based access is no longer permitted.
+        - id: cli
+          desc: |
+            DOKS SSO configuration is managed through the DigitalOcean API and Cloud Control Panel; `doctl` does not expose `sso` flags on `kubernetes cluster update`. Configure SSO in the Cloud Control Panel as described above, or call the DigitalOcean API directly:
+
+            ```bash
+            curl -X PUT \
+              -H "Authorization: Bearer $DIGITALOCEAN_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d '{"enabled":true,"required":true,"issuer_url":"<oidc-issuer-url>","client_id":"<client-id>","client_secret":"<client-secret>"}' \
+              https://api.digitalocean.com/v2/kubernetes/clusters/<cluster-id>/sso
+            ```
+    refs:
+      - url: https://docs.digitalocean.com/products/kubernetes/how-to/manage-cluster-access/
+        title: Manage DOKS cluster access
 
   - uid: mondoo-digitalocean-security-cert-not-expired
     title: Ensure TLS certificates are not expired
