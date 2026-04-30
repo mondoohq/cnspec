@@ -12,6 +12,7 @@
 #   python3 validate_remediation_commands.py oci           # validate OCI commands only
 #   python3 validate_remediation_commands.py gcp           # validate gcloud commands only
 #   python3 validate_remediation_commands.py digitalocean  # validate doctl commands only
+#   python3 validate_remediation_commands.py cloudflare    # validate Cloudflare API curl commands only
 
 import concurrent.futures
 import json
@@ -19,12 +20,13 @@ import re
 import shlex
 import subprocess
 import sys
+import urllib.request
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).parent
 CMD_DATA_DIR = SCRIPT_DIR / "cmd_data"
 
-VALIDATORS = ["aws", "azure", "oci", "gcp", "digitalocean"]
+VALIDATORS = ["aws", "azure", "oci", "gcp", "digitalocean", "cloudflare"]
 
 # Collected failures for annotation output.  Each entry is a dict with keys:
 # file, line, uid, command, errors, cloud
@@ -1539,6 +1541,251 @@ def validate_digitalocean() -> tuple[int, int]:
 
 
 # ---------------------------------------------------------------------------
+# Cloudflare API validation
+# ---------------------------------------------------------------------------
+#
+# Cloudflare's `flarectl` is read-only for zone settings and `wrangler` does
+# not cover the surface area this policy targets (SSL/TLS, WAF, security
+# level, 2FA enforcement, etc.). The realistic CLI path is `curl` against
+# the Cloudflare REST API, so the validator scans for those calls and
+# verifies each path + HTTP method against the official OpenAPI spec
+# published at https://github.com/cloudflare/api-schemas.
+#
+# The spec is large (~9 MB) and the upstream repo doesn't ship releases —
+# `main` is the only branch and it's auto-updated. We pin a known-good
+# commit SHA so validation is deterministic; bumping CLOUDFLARE_OPENAPI_SHA
+# is a deliberate maintainer action, like bumping doctl or the AWS CLI
+# version. The fetched spec is cached on disk under ~/.cache so we don't
+# re-download on every run.
+
+CLOUDFLARE_POLICY_FILE = SCRIPT_DIR / ".." / "mondoo-cloudflare-security.mql.yaml"
+
+CLOUDFLARE_OPENAPI_SHA = "a0e7cfa11b0d08b05a0b373f47ea722bd48ca7c4"
+CLOUDFLARE_OPENAPI_URL = (
+    f"https://raw.githubusercontent.com/cloudflare/api-schemas/"
+    f"{CLOUDFLARE_OPENAPI_SHA}/openapi.json"
+)
+CLOUDFLARE_API_PREFIX = "https://api.cloudflare.com/client/v4"
+
+
+def _cloudflare_cache_path() -> Path:
+    cache_dir = Path.home() / ".cache" / "cnspec-validation"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir / f"cloudflare-openapi-{CLOUDFLARE_OPENAPI_SHA[:12]}.json"
+
+
+def _load_cloudflare_openapi() -> dict:
+    """Return the parsed Cloudflare OpenAPI spec, downloading and caching
+    on first use."""
+    cache = _cloudflare_cache_path()
+    if not cache.exists():
+        print(
+            f"Fetching Cloudflare OpenAPI spec (sha {CLOUDFLARE_OPENAPI_SHA[:12]})...",
+            file=sys.stderr,
+        )
+        try:
+            with urllib.request.urlopen(CLOUDFLARE_OPENAPI_URL, timeout=60) as r:
+                cache.write_bytes(r.read())
+        except (urllib.error.URLError, TimeoutError) as e:
+            print(
+                f"Error: failed to download Cloudflare OpenAPI spec from\n"
+                f"  {CLOUDFLARE_OPENAPI_URL}\n"
+                f"  ({e})\n"
+                "\n"
+                "If you are behind a proxy or air-gapped, manually download the\n"
+                f"spec and save it to:\n  {cache}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+    return json.loads(cache.read_text())
+
+
+def _index_cloudflare_paths(spec: dict) -> dict[str, set[str]]:
+    """Index OpenAPI paths so we can match a concrete URL path to a path
+    template and verify the HTTP method.
+
+    Returns {path_template: {http_method, ...}} where http_method is the
+    upper-cased verb. Path templates are stored verbatim from the spec
+    (e.g. "/zones/{zone_id}/settings/{setting_id}").
+    """
+    out: dict[str, set[str]] = {}
+    for path, ops in spec.get("paths", {}).items():
+        methods = {m.upper() for m in ops if m in (
+            "get", "post", "put", "patch", "delete", "head", "options",
+        )}
+        if methods:
+            out[path] = methods
+    return out
+
+
+# Placeholder tokens used in remediation examples (e.g. <zone-id>,
+# <account-id>). The validator treats these as wildcards that match any
+# OpenAPI path parameter ({zone_id}, {account_id}, ...).
+_CF_PLACEHOLDER_RE = re.compile(r"^<[a-z][a-z0-9-]*>$")
+
+
+def _match_cloudflare_path(curl_path: str, openapi_paths: dict[str, set[str]]) -> str | None:
+    """Find an OpenAPI path template matching a concrete curl URL path.
+
+    A segment matches if:
+      - both segments are literally equal, or
+      - the OpenAPI segment is a `{param}` template and the curl segment
+        is either a placeholder like `<zone-id>` or a concrete literal.
+
+    Prefers a fully-literal match when one exists; otherwise falls back to
+    the templated match. Returns the matched path template, or None.
+    """
+    curl_parts = curl_path.split("/")
+
+    # Exact-literal match first.
+    if curl_path in openapi_paths:
+        return curl_path
+
+    best: str | None = None
+    for tmpl, _methods in openapi_paths.items():
+        tmpl_parts = tmpl.split("/")
+        if len(tmpl_parts) != len(curl_parts):
+            continue
+        if all(_segment_matches(t, c) for t, c in zip(tmpl_parts, curl_parts)):
+            best = tmpl
+            # Don't break; later templates with more literal segments would
+            # be more specific, but the spec is generally well-formed and
+            # the first match is good enough.
+            break
+    return best
+
+
+def _segment_matches(tmpl_seg: str, curl_seg: str) -> bool:
+    if tmpl_seg == curl_seg:
+        return True
+    if tmpl_seg.startswith("{") and tmpl_seg.endswith("}"):
+        # Templated segment matches any concrete value or angle-bracket
+        # placeholder in the curl URL.
+        return curl_seg != "" and "/" not in curl_seg
+    return False
+
+
+# Match a curl invocation. The URL may be quoted or unquoted; -X / --request
+# may appear before or after it.
+_CF_CURL_URL_RE = re.compile(
+    r'https?://api\.cloudflare\.com/client/v4(/[^\s\'"]+)'
+)
+_CF_CURL_METHOD_RE = re.compile(
+    r'(?:^|\s)(?:-X|--request)(?:\s+|=)([A-Z]+)'
+)
+
+
+def parse_cloudflare_curl(cmd: str) -> tuple[str, str] | None:
+    """Extract (HTTP_METHOD, URL_PATH) from a curl Cloudflare API call.
+
+    Returns None if the command is not a Cloudflare API curl. The method
+    defaults to GET when -X / --request is absent (matches curl's default
+    when no body is supplied; for POST/PATCH/PUT we always require an
+    explicit -X in remediation snippets).
+    """
+    if "api.cloudflare.com/client/v4" not in cmd:
+        return None
+    if not cmd.lstrip().startswith("curl"):
+        return None
+
+    url_match = _CF_CURL_URL_RE.search(cmd)
+    if not url_match:
+        return None
+    path = url_match.group(1)
+    # Drop a fragment or query string if present.
+    path = path.split("?", 1)[0].split("#", 1)[0]
+
+    method_match = _CF_CURL_METHOD_RE.search(cmd)
+    method = method_match.group(1).upper() if method_match else "GET"
+
+    return method, path
+
+
+def validate_cloudflare_curl(
+    method: str,
+    path: str,
+    openapi_paths: dict[str, set[str]],
+) -> tuple[bool, list[str]]:
+    """Validate a parsed Cloudflare curl call against the OpenAPI spec."""
+    errors: list[str] = []
+
+    matched = _match_cloudflare_path(path, openapi_paths)
+    if not matched:
+        errors.append(f"unknown Cloudflare API path '{path}'")
+        return False, errors
+
+    if method not in openapi_paths[matched]:
+        allowed = sorted(openapi_paths[matched])
+        errors.append(
+            f"method '{method}' not supported on '{matched}' "
+            f"(supported: {', '.join(allowed)})"
+        )
+        return False, errors
+
+    return True, errors
+
+
+def validate_cloudflare() -> tuple[int, int]:
+    """Validate Cloudflare API curl commands. Returns (pass_count, fail_count)."""
+    if not CLOUDFLARE_POLICY_FILE.exists():
+        print(
+            f"Error: Policy file not found: {CLOUDFLARE_POLICY_FILE}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    content = CLOUDFLARE_POLICY_FILE.read_text()
+    blocks = extract_bash_blocks(content)
+
+    # Skip the OpenAPI download entirely if there are no Cloudflare API
+    # curl calls in the policy.
+    has_cf_curl = any(
+        "api.cloudflare.com/client/v4" in b for b, _, _ in blocks
+    )
+    if not has_cf_curl:
+        return 0, 0
+
+    spec = _load_cloudflare_openapi()
+    openapi_paths = _index_cloudflare_paths(spec)
+
+    pass_count = 0
+    fail_count = 0
+
+    policy_relpath = str(CLOUDFLARE_POLICY_FILE.resolve().relative_to(Path.cwd()))
+
+    for block_text, block_line, uid in blocks:
+        commands = split_commands(block_text, "curl", block_line)
+        for cmd, line_num in commands:
+            parsed = parse_cloudflare_curl(cmd)
+            if parsed is None:
+                continue
+            method, path = parsed
+
+            is_valid, errors = validate_cloudflare_curl(method, path, openapi_paths)
+
+            if is_valid:
+                print(f"[PASS] {uid}")
+                print(f"       {method} {path}")
+                pass_count += 1
+            else:
+                print(f"[FAIL] {uid}")
+                print(f"       {method} {path}")
+                for error in errors:
+                    print(f"       {error}")
+                fail_count += 1
+                FAILURES.append({
+                    "file": policy_relpath,
+                    "line": line_num,
+                    "uid": uid,
+                    "command": f"{method} {path}",
+                    "errors": errors,
+                    "cloud": "cloudflare",
+                })
+
+    return pass_count, fail_count
+
+
+# ---------------------------------------------------------------------------
 # GitHub Actions annotations
 # ---------------------------------------------------------------------------
 
@@ -1611,6 +1858,11 @@ def main():
 
     if target in ("all", "digitalocean"):
         p, f = validate_digitalocean()
+        total_pass += p
+        total_fail += f
+
+    if target in ("all", "cloudflare"):
+        p, f = validate_cloudflare()
         total_pass += p
         total_fail += f
 
