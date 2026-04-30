@@ -131,6 +131,12 @@ policies:
         checks:
           - uid: mondoo-gcp-security-compute-disk-cmek-encryption
           - uid: mondoo-gcp-security-compute-disk-csek-encryption
+      - title: Compute Snapshots and Images
+        checks:
+          - uid: mondoo-gcp-security-compute-snapshot-iam-no-public-principals
+          - uid: mondoo-gcp-security-compute-snapshot-iam-no-primitive-roles
+          - uid: mondoo-gcp-security-compute-image-iam-no-public-principals
+          - uid: mondoo-gcp-security-compute-image-iam-no-primitive-roles
       - title: Compute Forwarding Rules
         checks:
           - uid: mondoo-gcp-security-forwarding-rule-not-all-ports
@@ -25657,4 +25663,524 @@ queries:
     mql: |
       terraform.state.resources.where(type == 'google_memcache_instance').all(
         values['memcache_version'] != "MEMCACHE_1_5"
+      )
+  - uid: mondoo-gcp-security-compute-snapshot-iam-no-public-principals
+    title: Ensure Compute Engine snapshot IAM has no public principals
+    impact: 100
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-5-15
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+    variants:
+      - uid: mondoo-gcp-security-compute-snapshot-iam-no-public-principals-gcp
+        tags:
+          mondoo.com/filter-title: GCP
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-compute-snapshot-iam-no-public-principals-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-compute-snapshot-iam-no-public-principals-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-compute-snapshot-iam-no-public-principals-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that no IAM binding on a Compute Engine snapshot grants access to the public principals `allUsers` (any caller on the internet) or `allAuthenticatedUsers` (any caller signed in with any Google account). A snapshot grants the holder the ability to create a new disk from its contents — and that disk carries every byte of the source filesystem, including credentials, keys, configuration, and application data.
+
+        **Why this matters**
+
+        Compute Engine snapshots are full point-in-time disk images. A single IAM binding to `allUsers` or `allAuthenticatedUsers` lets anyone in the world (or anyone with any Google account) create a disk from the snapshot, attach it to a VM they control, and read every file. That includes:
+
+        - SSH host keys, service-account credentials, and other secrets baked into `/etc/`.
+        - Hardcoded API keys, database credentials, and tokens in application config.
+        - Customer data, source code, and any other content the original disk held.
+
+        This is one of the most consistently-cited GCP misconfigurations in real breach reports: a snapshot shared "temporarily" with `allUsers` for a one-off restore that was never revoked. Because snapshot IAM is set on the resource itself, project-level IAM hardening does not catch it.
+
+        Restrict snapshot access to specific users, groups, or service accounts. Never bind to `allUsers` or `allAuthenticatedUsers`.
+      remediation:
+        - id: terraform
+          desc: |
+            Manage snapshot IAM only via `google_compute_snapshot_iam_member` (or `_binding`) with explicit principals — never with `allUsers` or `allAuthenticatedUsers`:
+
+            ```hcl
+            resource "google_compute_snapshot_iam_member" "restorer" {
+              project  = var.project_id
+              snapshot = google_compute_snapshot.app_disk.name
+              role     = "roles/compute.storageAdmin"
+              member   = "group:platform-restore@example.com" # never allUsers / allAuthenticatedUsers
+            }
+            ```
+
+            Audit existing bindings: import the snapshot's IAM policy with `terraform import google_compute_snapshot_iam_policy.snapshot projects/PROJECT/global/snapshots/SNAPSHOT`, then remove any public-principal members in the source HCL and re-apply.
+        - id: console
+          desc: |
+            Remove any public principal from the snapshot IAM policy:
+
+            1. Open **Compute Engine** → **Snapshots**.
+            2. Select the flagged snapshot.
+            3. Open the **Permissions** panel (or the info pane → **Permissions**).
+            4. Locate any binding whose principal is `allUsers` or `allAuthenticatedUsers` and remove it.
+            5. Add specific principals (users, groups, service accounts) that need restore access, using the narrowest appropriate role.
+            6. Save and verify the policy no longer lists the public principals.
+        - id: cli
+          desc: |
+            Remove public bindings from the snapshot:
+
+            ```bash
+            gcloud compute snapshots remove-iam-policy-binding SNAPSHOT_NAME \
+              --member=allUsers \
+              --role=ROLE_NAME
+
+            gcloud compute snapshots remove-iam-policy-binding SNAPSHOT_NAME \
+              --member=allAuthenticatedUsers \
+              --role=ROLE_NAME
+            ```
+    refs:
+      - url: https://cloud.google.com/compute/docs/access/iam
+        title: Compute Engine - IAM roles and permissions
+      - url: https://cloud.google.com/iam/docs/overview#allusers
+        title: IAM - Public principals (allUsers, allAuthenticatedUsers)
+  - uid: mondoo-gcp-security-compute-snapshot-iam-no-public-principals-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.project.computeService.snapshots.all(
+        iamPolicy.all(
+          members.none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+        )
+      )
+  - uid: mondoo-gcp-security-compute-snapshot-iam-no-public-principals-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_snapshot_iam_member') ||
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_snapshot_iam_binding')
+    mql: |
+      terraform.resources('google_compute_snapshot_iam_member').all(
+        arguments['member'] != "allUsers" &&
+        arguments['member'] != "allAuthenticatedUsers"
+      )
+      terraform.resources('google_compute_snapshot_iam_binding').all(
+        arguments['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-compute-snapshot-iam-no-public-principals-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_compute_snapshot_iam_member') ||
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_compute_snapshot_iam_binding')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_compute_snapshot_iam_member').all(
+        change.after['member'] != "allUsers" &&
+        change.after['member'] != "allAuthenticatedUsers"
+      )
+      terraform.plan.resourceChanges.where(type == 'google_compute_snapshot_iam_binding').all(
+        change.after['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-compute-snapshot-iam-no-public-principals-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_compute_snapshot_iam_member') ||
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_compute_snapshot_iam_binding')
+    mql: |
+      terraform.state.resources.where(type == 'google_compute_snapshot_iam_member').all(
+        values['member'] != "allUsers" &&
+        values['member'] != "allAuthenticatedUsers"
+      )
+      terraform.state.resources.where(type == 'google_compute_snapshot_iam_binding').all(
+        values['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-compute-snapshot-iam-no-primitive-roles
+    title: Ensure Compute Engine snapshot IAM grants no primitive roles
+    impact: 80
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/soc2-2017: soc2-control-cc6-3-3
+    variants:
+      - uid: mondoo-gcp-security-compute-snapshot-iam-no-primitive-roles-gcp
+        tags:
+          mondoo.com/filter-title: GCP
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-compute-snapshot-iam-no-primitive-roles-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-compute-snapshot-iam-no-primitive-roles-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-compute-snapshot-iam-no-primitive-roles-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that the IAM policy on every Compute Engine snapshot contains no bindings to the primitive roles `roles/owner`, `roles/editor`, or `roles/viewer`. Compute Engine publishes fine-grained predefined roles (for example `roles/compute.storageAdmin`) that scope access to the snapshot surface; the primitives carry sweeping permissions that go far beyond restore.
+
+        **Why this matters**
+
+        Primitive roles predate most of GCP's fine-grained roles and grant poorly-scoped permissions:
+
+        - `roles/owner` carries IAM-modification rights on the snapshot, so anyone with Owner can grant themselves anything else on the resource — including additional public bindings.
+        - `roles/editor` carries write access to essentially every resource type the holder can see.
+        - `roles/viewer` grants read access across resource types and lets the holder enumerate disk metadata and snapshot contents project-wide.
+
+        Because snapshot IAM is set on the resource itself, a primitive-role binding on a single snapshot bypasses any project-level IAM hardening: a principal who has `roles/viewer` granted only on a sensitive snapshot can list and clone it without any project-wide footprint. Replace primitive bindings with the specific Compute role that matches the workload.
+      remediation:
+        - id: terraform
+          desc: |
+            Manage snapshot IAM via `google_compute_snapshot_iam_member` (or `_binding`), granting only narrow Compute roles — not `roles/owner`, `roles/editor`, or `roles/viewer`:
+
+            ```hcl
+            resource "google_compute_snapshot_iam_member" "restorer" {
+              project  = var.project_id
+              snapshot = google_compute_snapshot.app_disk.name
+              role     = "roles/compute.storageAdmin"
+              member   = "group:platform-restore@example.com"
+            }
+            ```
+        - id: console
+          desc: |
+            Replace each primitive-role binding with a fine-grained Compute role:
+
+            1. Open **Compute Engine** → **Snapshots**.
+            2. Select the flagged snapshot and open **Permissions**.
+            3. For each principal bound to Owner / Editor / Viewer, remove the primitive grant and add the narrow role that matches the principal's actual use (for example `Compute Storage Admin`).
+            4. Save. Confirm with the principal that their workflow still works.
+        - id: cli
+          desc: |
+            Remove a primitive role binding from a snapshot and grant the fine-grained equivalent:
+
+            ```bash
+            gcloud compute snapshots remove-iam-policy-binding SNAPSHOT_NAME \
+              --member=user:alice@example.com \
+              --role=roles/editor
+
+            gcloud compute snapshots add-iam-policy-binding SNAPSHOT_NAME \
+              --member=user:alice@example.com \
+              --role=roles/compute.storageAdmin
+            ```
+    refs:
+      - url: https://cloud.google.com/compute/docs/access/iam
+        title: Compute Engine - IAM roles and permissions
+      - url: https://cloud.google.com/iam/docs/understanding-roles#basic
+        title: IAM - Basic (primitive) roles
+  - uid: mondoo-gcp-security-compute-snapshot-iam-no-primitive-roles-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.project.computeService.snapshots.all(
+        iamPolicy.all(
+          role != "roles/owner" && role != "roles/editor" && role != "roles/viewer"
+        )
+      )
+  - uid: mondoo-gcp-security-compute-snapshot-iam-no-primitive-roles-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_snapshot_iam_member') ||
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_snapshot_iam_binding')
+    mql: |
+      terraform.resources('google_compute_snapshot_iam_member').all(
+        arguments['role'] != "roles/owner" &&
+        arguments['role'] != "roles/editor" &&
+        arguments['role'] != "roles/viewer"
+      )
+      terraform.resources('google_compute_snapshot_iam_binding').all(
+        arguments['role'] != "roles/owner" &&
+        arguments['role'] != "roles/editor" &&
+        arguments['role'] != "roles/viewer"
+      )
+  - uid: mondoo-gcp-security-compute-snapshot-iam-no-primitive-roles-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_compute_snapshot_iam_member') ||
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_compute_snapshot_iam_binding')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_compute_snapshot_iam_member').all(
+        change.after['role'] != "roles/owner" &&
+        change.after['role'] != "roles/editor" &&
+        change.after['role'] != "roles/viewer"
+      )
+      terraform.plan.resourceChanges.where(type == 'google_compute_snapshot_iam_binding').all(
+        change.after['role'] != "roles/owner" &&
+        change.after['role'] != "roles/editor" &&
+        change.after['role'] != "roles/viewer"
+      )
+  - uid: mondoo-gcp-security-compute-snapshot-iam-no-primitive-roles-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_compute_snapshot_iam_member') ||
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_compute_snapshot_iam_binding')
+    mql: |
+      terraform.state.resources.where(type == 'google_compute_snapshot_iam_member').all(
+        values['role'] != "roles/owner" &&
+        values['role'] != "roles/editor" &&
+        values['role'] != "roles/viewer"
+      )
+      terraform.state.resources.where(type == 'google_compute_snapshot_iam_binding').all(
+        values['role'] != "roles/owner" &&
+        values['role'] != "roles/editor" &&
+        values['role'] != "roles/viewer"
+      )
+  - uid: mondoo-gcp-security-compute-image-iam-no-public-principals
+    title: Ensure Compute Engine custom image IAM has no public principals
+    impact: 100
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-5-15
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+    variants:
+      - uid: mondoo-gcp-security-compute-image-iam-no-public-principals-gcp
+        tags:
+          mondoo.com/filter-title: GCP
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-compute-image-iam-no-public-principals-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-compute-image-iam-no-public-principals-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-compute-image-iam-no-public-principals-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that no IAM binding on a Compute Engine custom image grants access to the public principals `allUsers` (any caller on the internet) or `allAuthenticatedUsers` (any caller signed in with any Google account). A custom image is a bootable VM template that anyone with access can launch — and the image carries every artifact baked into it during creation.
+
+        **Why this matters**
+
+        Custom images are typically built from hardened base images that include organization-specific configuration: SSH keys, agent installations, license keys, internal CA certificates, application binaries, and frequently credentials embedded in cloud-init or `/etc/`. A binding to `allUsers` or `allAuthenticatedUsers` lets anyone in the world (or anyone with any Google account) create a VM from the image, boot it, and read everything inside.
+
+        This is one of the highest-impact data-exfiltration paths in GCP because it does not require an interactive session with the source environment — the attacker just clones the image into a project they control. Restrict image access to specific users, groups, or service accounts that need to launch VMs from it.
+      remediation:
+        - id: terraform
+          desc: |
+            Manage custom image IAM only via `google_compute_image_iam_member` (or `_binding`) with explicit principals — never with `allUsers` or `allAuthenticatedUsers`:
+
+            ```hcl
+            resource "google_compute_image_iam_member" "platform_users" {
+              project = var.project_id
+              image   = google_compute_image.app_baseline.name
+              role    = "roles/compute.imageUser"
+              member  = "group:platform-eng@example.com" # never allUsers / allAuthenticatedUsers
+            }
+            ```
+
+            Audit existing bindings: import the image's IAM policy with `terraform import google_compute_image_iam_policy.image projects/PROJECT/global/images/IMAGE`, then remove any public-principal members in the source HCL and re-apply.
+        - id: console
+          desc: |
+            Remove any public principal from the image IAM policy:
+
+            1. Open **Compute Engine** → **Images**.
+            2. Select the flagged image (filter to **Custom images** if needed).
+            3. Open the **Permissions** panel.
+            4. Locate any binding whose principal is `allUsers` or `allAuthenticatedUsers` and remove it.
+            5. Add specific principals that need to launch VMs from the image, using `roles/compute.imageUser` (the narrowest appropriate role).
+            6. Save and verify the policy no longer lists the public principals.
+        - id: cli
+          desc: |
+            Remove public bindings from the image:
+
+            ```bash
+            gcloud compute images remove-iam-policy-binding IMAGE_NAME \
+              --member=allUsers \
+              --role=ROLE_NAME
+
+            gcloud compute images remove-iam-policy-binding IMAGE_NAME \
+              --member=allAuthenticatedUsers \
+              --role=ROLE_NAME
+            ```
+    refs:
+      - url: https://cloud.google.com/compute/docs/access/iam
+        title: Compute Engine - IAM roles and permissions
+      - url: https://cloud.google.com/iam/docs/overview#allusers
+        title: IAM - Public principals (allUsers, allAuthenticatedUsers)
+  - uid: mondoo-gcp-security-compute-image-iam-no-public-principals-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.project.computeService.images.all(
+        iamPolicy.all(
+          members.none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+        )
+      )
+  - uid: mondoo-gcp-security-compute-image-iam-no-public-principals-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_image_iam_member') ||
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_image_iam_binding')
+    mql: |
+      terraform.resources('google_compute_image_iam_member').all(
+        arguments['member'] != "allUsers" &&
+        arguments['member'] != "allAuthenticatedUsers"
+      )
+      terraform.resources('google_compute_image_iam_binding').all(
+        arguments['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-compute-image-iam-no-public-principals-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_compute_image_iam_member') ||
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_compute_image_iam_binding')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_compute_image_iam_member').all(
+        change.after['member'] != "allUsers" &&
+        change.after['member'] != "allAuthenticatedUsers"
+      )
+      terraform.plan.resourceChanges.where(type == 'google_compute_image_iam_binding').all(
+        change.after['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-compute-image-iam-no-public-principals-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_compute_image_iam_member') ||
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_compute_image_iam_binding')
+    mql: |
+      terraform.state.resources.where(type == 'google_compute_image_iam_member').all(
+        values['member'] != "allUsers" &&
+        values['member'] != "allAuthenticatedUsers"
+      )
+      terraform.state.resources.where(type == 'google_compute_image_iam_binding').all(
+        values['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-compute-image-iam-no-primitive-roles
+    title: Ensure Compute Engine custom image IAM grants no primitive roles
+    impact: 80
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/soc2-2017: soc2-control-cc6-3-3
+    variants:
+      - uid: mondoo-gcp-security-compute-image-iam-no-primitive-roles-gcp
+        tags:
+          mondoo.com/filter-title: GCP
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-compute-image-iam-no-primitive-roles-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-compute-image-iam-no-primitive-roles-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-compute-image-iam-no-primitive-roles-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that the IAM policy on every Compute Engine custom image contains no bindings to the primitive roles `roles/owner`, `roles/editor`, or `roles/viewer`. Compute Engine publishes `roles/compute.imageUser` for VM-launch and `roles/compute.storageAdmin` for image management — both far narrower than the primitives.
+
+        **Why this matters**
+
+        Primitive roles on an image grant sweeping access that goes well beyond what a launch-from-image workflow needs:
+
+        - `roles/owner` carries IAM-modification rights on the image, so anyone with Owner can add public bindings or remove existing principals.
+        - `roles/editor` lets the holder modify, delete, or replace the image — supply-chain risk if the image is used by automation.
+        - `roles/viewer` grants read access across resource types and lets the holder enumerate every custom image in the project.
+
+        Because image IAM is set on the resource itself, a primitive-role binding on a single image bypasses project-level IAM hardening. Replace primitive bindings with the narrow Compute role that matches the workload (`roles/compute.imageUser` to launch, `roles/compute.storageAdmin` to manage).
+      remediation:
+        - id: terraform
+          desc: |
+            Manage image IAM via `google_compute_image_iam_member` (or `_binding`), granting only narrow Compute roles — not `roles/owner`, `roles/editor`, or `roles/viewer`:
+
+            ```hcl
+            resource "google_compute_image_iam_member" "launchers" {
+              project = var.project_id
+              image   = google_compute_image.app_baseline.name
+              role    = "roles/compute.imageUser"
+              member  = "group:platform-eng@example.com"
+            }
+            ```
+        - id: console
+          desc: |
+            Replace each primitive-role binding with a fine-grained Compute role:
+
+            1. Open **Compute Engine** → **Images** (filter to **Custom images**).
+            2. Select the flagged image and open **Permissions**.
+            3. For each principal bound to Owner / Editor / Viewer, remove the primitive grant and add the narrow role that matches the principal's actual use (typically `Compute Image User` for launchers).
+            4. Save. Confirm with the principal that their workflow still works.
+        - id: cli
+          desc: |
+            Remove a primitive role binding from an image and grant the fine-grained equivalent:
+
+            ```bash
+            gcloud compute images remove-iam-policy-binding IMAGE_NAME \
+              --member=user:alice@example.com \
+              --role=roles/editor
+
+            gcloud compute images add-iam-policy-binding IMAGE_NAME \
+              --member=user:alice@example.com \
+              --role=roles/compute.imageUser
+            ```
+    refs:
+      - url: https://cloud.google.com/compute/docs/access/iam
+        title: Compute Engine - IAM roles and permissions
+      - url: https://cloud.google.com/iam/docs/understanding-roles#basic
+        title: IAM - Basic (primitive) roles
+  - uid: mondoo-gcp-security-compute-image-iam-no-primitive-roles-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.project.computeService.images.all(
+        iamPolicy.all(
+          role != "roles/owner" && role != "roles/editor" && role != "roles/viewer"
+        )
+      )
+  - uid: mondoo-gcp-security-compute-image-iam-no-primitive-roles-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_image_iam_member') ||
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_image_iam_binding')
+    mql: |
+      terraform.resources('google_compute_image_iam_member').all(
+        arguments['role'] != "roles/owner" &&
+        arguments['role'] != "roles/editor" &&
+        arguments['role'] != "roles/viewer"
+      )
+      terraform.resources('google_compute_image_iam_binding').all(
+        arguments['role'] != "roles/owner" &&
+        arguments['role'] != "roles/editor" &&
+        arguments['role'] != "roles/viewer"
+      )
+  - uid: mondoo-gcp-security-compute-image-iam-no-primitive-roles-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_compute_image_iam_member') ||
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_compute_image_iam_binding')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_compute_image_iam_member').all(
+        change.after['role'] != "roles/owner" &&
+        change.after['role'] != "roles/editor" &&
+        change.after['role'] != "roles/viewer"
+      )
+      terraform.plan.resourceChanges.where(type == 'google_compute_image_iam_binding').all(
+        change.after['role'] != "roles/owner" &&
+        change.after['role'] != "roles/editor" &&
+        change.after['role'] != "roles/viewer"
+      )
+  - uid: mondoo-gcp-security-compute-image-iam-no-primitive-roles-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_compute_image_iam_member') ||
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_compute_image_iam_binding')
+    mql: |
+      terraform.state.resources.where(type == 'google_compute_image_iam_member').all(
+        values['role'] != "roles/owner" &&
+        values['role'] != "roles/editor" &&
+        values['role'] != "roles/viewer"
+      )
+      terraform.state.resources.where(type == 'google_compute_image_iam_binding').all(
+        values['role'] != "roles/owner" &&
+        values['role'] != "roles/editor" &&
+        values['role'] != "roles/viewer"
       )
