@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-tls-security
     name: Mondoo TLS/SSL Security
-    version: 1.6.0
+    version: 1.7.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -100,28 +100,113 @@ queries:
           - **Configuration errors undetected**: A mismatch often indicates a deployment mistake that should be identified and corrected.
 
         Ensure certificates include all required domain names in the SAN field, as modern browsers prefer SAN over Common Name for validation.
-      remediation: |
-        To resolve this issue:
+      remediation:
+        - id: apache
+          desc: |
+            **Using Apache**
 
-        1. Verify the domain name your server is using by checking your DNS configuration and web server virtual host settings.
+            1. Confirm what the certificate currently covers:
 
-        2. Check your current certificate's domain coverage using OpenSSL:
-           ```bash
-           openssl s_client -connect yourdomain.com:443 </dev/null 2>/dev/null | openssl x509 -noout -text | grep -A1 "Subject:"
-           openssl s_client -connect yourdomain.com:443 </dev/null 2>/dev/null | openssl x509 -noout -text | grep -A1 "Subject Alternative Name"
-           ```
+                ```bash
+                openssl s_client -connect yourdomain.com:443 </dev/null 2>/dev/null \
+                  | openssl x509 -noout -text \
+                  | grep -EA1 "Subject:|Subject Alternative Name"
+                ```
 
-        3. If the certificate does not cover your domain, request a new certificate that includes either:
-           - The exact domain name in the Common Name (CN) field
-           - The domain name in the Subject Alternative Name (SAN) extension (recommended for modern certificates)
-           - A wildcard certificate (e.g., *.example.com) if you need to cover multiple subdomains
+            2. Issue a certificate that lists every domain you serve in the Subject Alternative Name (SAN) extension. Certbot can request and install the cert directly into Apache:
 
-        4. For free certificates, use Let's Encrypt with Certbot:
-           ```bash
-           certbot certonly --webroot -w /var/www/html -d yourdomain.com -d www.yourdomain.com
-           ```
+                ```bash
+                apt install certbot python3-certbot-apache       # Debian/Ubuntu
+                yum install certbot python3-certbot-apache       # RHEL/CentOS
+                certbot --apache -d yourdomain.com -d www.yourdomain.com
+                ```
 
-        5. Install the new certificate on your web server and restart the service to apply changes.
+            3. Or, if you manage cert files manually, point Apache at the new chain and reload:
+
+                ```apache
+                SSLCertificateFile      /etc/letsencrypt/live/yourdomain.com/fullchain.pem
+                SSLCertificateKeyFile   /etc/letsencrypt/live/yourdomain.com/privkey.pem
+                ```
+
+                ```bash
+                apachectl configtest
+                systemctl reload apache2   # Debian/Ubuntu
+                systemctl reload httpd     # RHEL/CentOS
+                ```
+
+            4. Verify the SAN list now includes your domain by re-running the OpenSSL command from step 1.
+        - id: nginx
+          desc: |
+            **Using Nginx**
+
+            1. Confirm what the certificate currently covers:
+
+                ```bash
+                openssl s_client -connect yourdomain.com:443 </dev/null 2>/dev/null \
+                  | openssl x509 -noout -text \
+                  | grep -EA1 "Subject:|Subject Alternative Name"
+                ```
+
+            2. Issue a certificate that lists every domain you serve in the Subject Alternative Name (SAN) extension. Certbot can request and install the cert directly into Nginx:
+
+                ```bash
+                apt install certbot python3-certbot-nginx        # Debian/Ubuntu
+                yum install certbot python3-certbot-nginx        # RHEL/CentOS
+                certbot --nginx -d yourdomain.com -d www.yourdomain.com
+                ```
+
+            3. Or, if you manage cert files manually, point Nginx at the new chain and reload:
+
+                ```nginx
+                ssl_certificate     /etc/letsencrypt/live/yourdomain.com/fullchain.pem;
+                ssl_certificate_key /etc/letsencrypt/live/yourdomain.com/privkey.pem;
+                ```
+
+                ```bash
+                nginx -t && systemctl reload nginx
+                ```
+
+            4. Verify the SAN list now includes your domain by re-running the OpenSSL command from step 1.
+        - id: haproxy
+          desc: |
+            **Using HAProxy**
+
+            1. Confirm what the certificate currently covers:
+
+                ```bash
+                openssl s_client -connect yourdomain.com:443 </dev/null 2>/dev/null \
+                  | openssl x509 -noout -text \
+                  | grep -EA1 "Subject:|Subject Alternative Name"
+                ```
+
+            2. Issue a certificate that lists every domain you serve in the SAN extension. Certbot can issue a standalone cert for HAProxy:
+
+                ```bash
+                apt install certbot                              # Debian/Ubuntu
+                yum install certbot                              # RHEL/CentOS
+                certbot certonly --standalone -d yourdomain.com -d www.yourdomain.com
+                ```
+
+            3. HAProxy expects a single PEM file with the certificate chain followed by the private key. Build it and point `bind` at it:
+
+                ```bash
+                cat /etc/letsencrypt/live/yourdomain.com/fullchain.pem \
+                    /etc/letsencrypt/live/yourdomain.com/privkey.pem \
+                    > /etc/haproxy/certs/yourdomain.com.pem
+                chmod 0600 /etc/haproxy/certs/yourdomain.com.pem
+                ```
+
+                ```haproxy
+                frontend https-in
+                    bind *:443 ssl crt /etc/haproxy/certs/yourdomain.com.pem
+                ```
+
+                ```bash
+                haproxy -c -f /etc/haproxy/haproxy.cfg
+                systemctl reload haproxy
+                ```
+
+            4. Verify the SAN list now includes your domain by re-running the OpenSSL command from step 1.
     refs:
       - url: https://www.ssllabs.com/projects/best-practices/
         title: SSL/TLS Deployment Best Practices
@@ -159,28 +244,104 @@ queries:
           - **Incident response delays**: Invalid certificates may indicate compromise or misconfiguration requiring immediate investigation.
 
         Use automated certificate management to ensure certificates are renewed before expiration and comply with current validity period requirements.
-      remediation: |
-        To resolve this issue:
+      remediation:
+        - id: apache
+          desc: |
+            **Using Apache**
 
-        1. Check the certificate's validity period and ensure it has not expired:
-           ```bash
-           openssl s_client -connect yourdomain.com:443 </dev/null 2>/dev/null | openssl x509 -noout -dates
-           ```
+            1. Check the certificate's validity window and chain trust:
 
-        2. Verify the certificate chain is complete and trusted:
-           ```bash
-           openssl s_client -connect yourdomain.com:443 -showcerts </dev/null 2>&1 | grep -E "verify|depth"
-           ```
+                ```bash
+                openssl s_client -connect yourdomain.com:443 -showcerts </dev/null 2>&1 \
+                  | grep -E "verify|depth|notBefore|notAfter"
+                ```
 
-        3. Ensure the certificate validity period does not exceed 398 days (13 months), as required by browser certificate policies since September 2020. Certificates with longer validity periods may be rejected by browsers.
+            2. Browser policies cap leaf cert validity at 398 days (13 months). Issue a new cert from a publicly trusted CA — for example, Let's Encrypt via Certbot's Apache plugin:
 
-        4. If the certificate is invalid, obtain a new certificate from a trusted Certificate Authority (CA) such as:
-           - Let's Encrypt (free, automated): `certbot certonly -d yourdomain.com`
-           - Commercial CAs: DigiCert, Sectigo, GlobalSign, or your organization's preferred CA
+                ```bash
+                certbot --apache -d yourdomain.com -d www.yourdomain.com
+                ```
 
-        5. Install the complete certificate chain on your server, including any required intermediate certificates. Most CAs provide a "full chain" or "certificate bundle" file for this purpose.
+            3. If you manage cert files manually, point Apache at the full chain (server cert + intermediates):
 
-        6. After installation, verify the certificate is properly configured using an online tool like SSL Labs (ssllabs.com/ssltest) or by running the OpenSSL commands above.
+                ```apache
+                SSLCertificateFile      /etc/letsencrypt/live/yourdomain.com/fullchain.pem
+                SSLCertificateKeyFile   /etc/letsencrypt/live/yourdomain.com/privkey.pem
+                ```
+
+                ```bash
+                apachectl configtest
+                systemctl reload apache2   # Debian/Ubuntu
+                systemctl reload httpd     # RHEL/CentOS
+                ```
+
+            4. Re-run the verification command in step 1 — `Verify return code: 0 (ok)` confirms the new chain is trusted.
+        - id: nginx
+          desc: |
+            **Using Nginx**
+
+            1. Check the certificate's validity window and chain trust:
+
+                ```bash
+                openssl s_client -connect yourdomain.com:443 -showcerts </dev/null 2>&1 \
+                  | grep -E "verify|depth|notBefore|notAfter"
+                ```
+
+            2. Browser policies cap leaf cert validity at 398 days (13 months). Issue a new cert from a publicly trusted CA — for example, Let's Encrypt via Certbot's Nginx plugin:
+
+                ```bash
+                certbot --nginx -d yourdomain.com -d www.yourdomain.com
+                ```
+
+            3. If you manage cert files manually, point Nginx at the full chain:
+
+                ```nginx
+                ssl_certificate     /etc/letsencrypt/live/yourdomain.com/fullchain.pem;
+                ssl_certificate_key /etc/letsencrypt/live/yourdomain.com/privkey.pem;
+                ```
+
+                ```bash
+                nginx -t && systemctl reload nginx
+                ```
+
+            4. Re-run the verification command in step 1 — `Verify return code: 0 (ok)` confirms the new chain is trusted.
+        - id: haproxy
+          desc: |
+            **Using HAProxy**
+
+            1. Check the certificate's validity window and chain trust:
+
+                ```bash
+                openssl s_client -connect yourdomain.com:443 -showcerts </dev/null 2>&1 \
+                  | grep -E "verify|depth|notBefore|notAfter"
+                ```
+
+            2. Browser policies cap leaf cert validity at 398 days (13 months). Issue a new cert from a publicly trusted CA — for example, Let's Encrypt:
+
+                ```bash
+                certbot certonly --standalone -d yourdomain.com -d www.yourdomain.com
+                ```
+
+            3. HAProxy needs the chain followed by the private key in a single PEM:
+
+                ```bash
+                cat /etc/letsencrypt/live/yourdomain.com/fullchain.pem \
+                    /etc/letsencrypt/live/yourdomain.com/privkey.pem \
+                    > /etc/haproxy/certs/yourdomain.com.pem
+                chmod 0600 /etc/haproxy/certs/yourdomain.com.pem
+                ```
+
+                ```haproxy
+                frontend https-in
+                    bind *:443 ssl crt /etc/haproxy/certs/yourdomain.com.pem
+                ```
+
+                ```bash
+                haproxy -c -f /etc/haproxy/haproxy.cfg
+                systemctl reload haproxy
+                ```
+
+            4. Re-run the verification command in step 1 — `Verify return code: 0 (ok)` confirms the new chain is trusted.
     refs:
       - url: https://www.ssllabs.com/projects/best-practices/
         title: SSL/TLS Deployment Best Practices
@@ -219,31 +380,107 @@ queries:
           - **Attack window**: During the confusion of an expired certificate, users may be more susceptible to phishing or bypass security warnings.
 
         Implement certificate monitoring with alerts at 30, 14, and 7 days before expiration, and use automated renewal tools like cert-manager or Certbot.
-      remediation: |
-        To resolve this issue:
+      remediation:
+        - id: apache
+          desc: |
+            **Using Apache**
 
-        1. Check your certificate's current expiration date:
-           ```bash
-           openssl s_client -connect yourdomain.com:443 </dev/null 2>/dev/null | openssl x509 -noout -enddate
-           ```
+            1. Check the certificate's expiration date:
 
-        2. Renew the certificate before expiration:
-           - For Let's Encrypt certificates, run: `certbot renew`
-           - For commercial certificates, contact your CA or use their renewal portal
+                ```bash
+                openssl s_client -connect yourdomain.com:443 </dev/null 2>/dev/null \
+                  | openssl x509 -noout -enddate
+                ```
 
-        3. Set up automated certificate renewal to prevent future expirations:
-           - Let's Encrypt: Add a cron job or systemd timer for `certbot renew`
-           - Commercial CAs: Enable auto-renewal in your CA's management portal if available
+            2. Renew now, then load the new cert. With Certbot's Apache plugin:
 
-        4. Implement certificate monitoring to receive alerts before expiration:
-           - Use monitoring tools like Nagios, Zabbix, or cloud provider certificate managers
-           - Set alerts for 30, 14, and 7 days before expiration
-           - Consider using certificate management platforms that provide automated renewal and alerting
+                ```bash
+                certbot renew --deploy-hook "systemctl reload apache2"
+                ```
 
-        5. After renewal, restart your web server to load the new certificate:
-           - Apache: `systemctl restart apache2` or `systemctl restart httpd`
-           - Nginx: `systemctl restart nginx`
-           - Other services: Consult your application's documentation
+                Or, after renewing manually, reload Apache so it picks up the new files:
+
+                ```bash
+                apachectl configtest
+                systemctl reload apache2   # Debian/Ubuntu
+                systemctl reload httpd     # RHEL/CentOS
+                ```
+
+            3. Make renewal automatic. Certbot ships a `certbot.timer` systemd unit that runs `certbot renew` twice daily; ensure it is enabled:
+
+                ```bash
+                systemctl enable --now certbot.timer
+                systemctl list-timers certbot.timer
+                ```
+
+            4. Watch for expiry. Set up monitoring (Nagios/Zabbix/Prometheus blackbox exporter, or a cloud certificate manager) and alert at 30/14/7 days remaining.
+        - id: nginx
+          desc: |
+            **Using Nginx**
+
+            1. Check the certificate's expiration date:
+
+                ```bash
+                openssl s_client -connect yourdomain.com:443 </dev/null 2>/dev/null \
+                  | openssl x509 -noout -enddate
+                ```
+
+            2. Renew now, then load the new cert. With Certbot's Nginx plugin:
+
+                ```bash
+                certbot renew --deploy-hook "systemctl reload nginx"
+                ```
+
+                Or, after renewing manually, reload Nginx so it picks up the new files:
+
+                ```bash
+                nginx -t && systemctl reload nginx
+                ```
+
+            3. Make renewal automatic. Certbot ships a `certbot.timer` systemd unit that runs `certbot renew` twice daily; ensure it is enabled:
+
+                ```bash
+                systemctl enable --now certbot.timer
+                systemctl list-timers certbot.timer
+                ```
+
+            4. Watch for expiry. Set up monitoring (Nagios/Zabbix/Prometheus blackbox exporter, or a cloud certificate manager) and alert at 30/14/7 days remaining.
+        - id: haproxy
+          desc: |
+            **Using HAProxy**
+
+            1. Check the certificate's expiration date:
+
+                ```bash
+                openssl s_client -connect yourdomain.com:443 </dev/null 2>/dev/null \
+                  | openssl x509 -noout -enddate
+                ```
+
+            2. Renew the leaf cert and rebuild HAProxy's combined PEM (chain + key). With Certbot in `--standalone` mode, use a deploy hook to recombine and reload:
+
+                ```bash
+                certbot renew --deploy-hook '/usr/local/sbin/haproxy-reload.sh'
+                ```
+
+                Where `/usr/local/sbin/haproxy-reload.sh` (chmod 0755) does:
+
+                ```bash
+                #!/bin/bash
+                set -e
+                cat /etc/letsencrypt/live/yourdomain.com/fullchain.pem \
+                    /etc/letsencrypt/live/yourdomain.com/privkey.pem \
+                    > /etc/haproxy/certs/yourdomain.com.pem
+                chmod 0600 /etc/haproxy/certs/yourdomain.com.pem
+                systemctl reload haproxy
+                ```
+
+            3. Make renewal automatic. Ensure Certbot's systemd timer is enabled so the deploy hook fires before expiry:
+
+                ```bash
+                systemctl enable --now certbot.timer
+                ```
+
+            4. Watch for expiry. Set up monitoring (Nagios/Zabbix/Prometheus blackbox exporter, or a cloud certificate manager) and alert at 30/14/7 days remaining.
     refs:
       - url: https://www.ssllabs.com/projects/best-practices/
         title: SSL/TLS Deployment Best Practices
@@ -278,36 +515,123 @@ queries:
           - **Delayed diagnosis**: Trust chain issues are often harder to diagnose than simple leaf certificate problems.
 
         Regularly audit the complete certificate chain and monitor all certificates for expiration, not just the leaf certificate.
-      remediation: |
-        To resolve this issue:
+      remediation:
+        - id: apache
+          desc: |
+            **Using Apache**
 
-        1. Identify which certificates in the chain have expired:
-           ```bash
-           openssl s_client -connect yourdomain.com:443 -showcerts </dev/null 2>/dev/null | openssl x509 -noout -subject -enddate
-           ```
+            1. List every certificate the server presents and find the expired ones:
 
-        2. For expired intermediate certificates:
-           - Download the current intermediate certificate bundle from your CA's website
-           - Most CAs maintain a repository of their current intermediate certificates
-           - Update your server's certificate chain file to include the new intermediates
+                ```bash
+                openssl s_client -connect yourdomain.com:443 -showcerts </dev/null 2>/dev/null \
+                  | awk '/BEGIN CERT/,/END CERT/' \
+                  | csplit --quiet --prefix=/tmp/cert- -z - '/BEGIN CERT/' '{*}'
+                for f in /tmp/cert-*; do
+                  openssl x509 -in "$f" -noout -subject -enddate
+                done
+                ```
 
-        3. For expired root certificates:
-           - Root certificate updates are typically handled by operating system or browser updates
-           - Ensure your server's CA certificate bundle is up to date:
-             - On Debian/Ubuntu: `apt update && apt install ca-certificates`
-             - On RHEL/CentOS: `yum update ca-certificates`
+            2. Pull current intermediates from your CA. For Let's Encrypt, run `certbot renew --force-renewal` to refresh `/etc/letsencrypt/live/yourdomain.com/fullchain.pem`.
 
-        4. Rebuild your certificate chain file in the correct order:
-           - Your server certificate first
-           - Intermediate certificate(s) next
-           - Root certificate last (optional, as clients typically have these)
+            3. Refresh the OS trust store so Apache validates updated roots correctly:
 
-        5. Update your web server configuration to use the new chain file and restart the service.
+                ```bash
+                apt update && apt install --only-upgrade ca-certificates   # Debian/Ubuntu
+                yum update ca-certificates                                  # RHEL/CentOS
+                update-ca-certificates                                       # Debian/Ubuntu
+                update-ca-trust                                              # RHEL/CentOS
+                ```
 
-        6. Verify the complete chain is valid:
-           ```bash
-           openssl verify -CAfile /path/to/ca-bundle.crt /path/to/your-certificate.crt
-           ```
+            4. Point Apache at the refreshed chain (leaf first, then intermediates) and reload:
+
+                ```apache
+                SSLCertificateFile      /etc/letsencrypt/live/yourdomain.com/fullchain.pem
+                SSLCertificateKeyFile   /etc/letsencrypt/live/yourdomain.com/privkey.pem
+                ```
+
+                ```bash
+                apachectl configtest
+                systemctl reload apache2   # Debian/Ubuntu
+                systemctl reload httpd     # RHEL/CentOS
+                ```
+
+            5. Re-run the iteration in step 1 — every `notAfter` should now be in the future.
+        - id: nginx
+          desc: |
+            **Using Nginx**
+
+            1. List every certificate the server presents and find the expired ones:
+
+                ```bash
+                openssl s_client -connect yourdomain.com:443 -showcerts </dev/null 2>/dev/null \
+                  | awk '/BEGIN CERT/,/END CERT/' \
+                  | csplit --quiet --prefix=/tmp/cert- -z - '/BEGIN CERT/' '{*}'
+                for f in /tmp/cert-*; do
+                  openssl x509 -in "$f" -noout -subject -enddate
+                done
+                ```
+
+            2. Pull current intermediates from your CA. For Let's Encrypt, run `certbot renew --force-renewal` to refresh `/etc/letsencrypt/live/yourdomain.com/fullchain.pem`.
+
+            3. Refresh the OS trust store so Nginx validates updated roots correctly:
+
+                ```bash
+                apt update && apt install --only-upgrade ca-certificates   # Debian/Ubuntu
+                yum update ca-certificates                                  # RHEL/CentOS
+                update-ca-certificates                                       # Debian/Ubuntu
+                update-ca-trust                                              # RHEL/CentOS
+                ```
+
+            4. Point Nginx at the refreshed chain (`ssl_certificate` MUST be the full chain — leaf + intermediates) and reload:
+
+                ```nginx
+                ssl_certificate     /etc/letsencrypt/live/yourdomain.com/fullchain.pem;
+                ssl_certificate_key /etc/letsencrypt/live/yourdomain.com/privkey.pem;
+                ```
+
+                ```bash
+                nginx -t && systemctl reload nginx
+                ```
+
+            5. Re-run the iteration in step 1 — every `notAfter` should now be in the future.
+        - id: haproxy
+          desc: |
+            **Using HAProxy**
+
+            1. List every certificate the server presents and find the expired ones:
+
+                ```bash
+                openssl s_client -connect yourdomain.com:443 -showcerts </dev/null 2>/dev/null \
+                  | awk '/BEGIN CERT/,/END CERT/' \
+                  | csplit --quiet --prefix=/tmp/cert- -z - '/BEGIN CERT/' '{*}'
+                for f in /tmp/cert-*; do
+                  openssl x509 -in "$f" -noout -subject -enddate
+                done
+                ```
+
+            2. Pull current intermediates from your CA. For Let's Encrypt, run `certbot renew --force-renewal` to refresh `/etc/letsencrypt/live/yourdomain.com/fullchain.pem`.
+
+            3. Refresh the OS trust store so HAProxy validates updated roots correctly:
+
+                ```bash
+                apt update && apt install --only-upgrade ca-certificates   # Debian/Ubuntu
+                yum update ca-certificates                                  # RHEL/CentOS
+                update-ca-certificates                                       # Debian/Ubuntu
+                update-ca-trust                                              # RHEL/CentOS
+                ```
+
+            4. Rebuild HAProxy's combined PEM (chain + key) and reload:
+
+                ```bash
+                cat /etc/letsencrypt/live/yourdomain.com/fullchain.pem \
+                    /etc/letsencrypt/live/yourdomain.com/privkey.pem \
+                    > /etc/haproxy/certs/yourdomain.com.pem
+                chmod 0600 /etc/haproxy/certs/yourdomain.com.pem
+                haproxy -c -f /etc/haproxy/haproxy.cfg
+                systemctl reload haproxy
+                ```
+
+            5. Re-run the iteration in step 1 — every `notAfter` should now be in the future.
     refs:
       - url: https://www.ssllabs.com/projects/best-practices/
         title: SSL/TLS Deployment Best Practices
@@ -339,36 +663,134 @@ queries:
           - **Compliance failures**: Security standards and audits require certificates from trusted CAs for production systems.
 
         Use certificates from recognized Certificate Authorities. Free options like Let's Encrypt provide trusted certificates with automated renewal.
-      remediation: |
-        To resolve this issue:
+      remediation:
+        - id: apache
+          desc: |
+            **Using Apache**
 
-        1. Obtain a certificate from a trusted Certificate Authority (CA). Options include:
-           - Let's Encrypt (free, automated):
-             ```bash
-             apt install certbot  # or yum install certbot
-             certbot certonly --standalone -d yourdomain.com
-             ```
-           - Commercial CAs (DigiCert, Sectigo, GlobalSign) for extended validation or specific compliance requirements
-           - Your organization's internal CA if one exists and is trusted by your clients
+            1. Replace the self-signed cert with one from a publicly trusted CA. The simplest path is Let's Encrypt via Certbot's Apache plugin:
 
-        2. Generate a Certificate Signing Request (CSR) if required by your CA:
-           ```bash
-           openssl req -new -newkey rsa:2048 -nodes -keyout server.key -out server.csr
-           ```
+                ```bash
+                apt install certbot python3-certbot-apache       # Debian/Ubuntu
+                yum install certbot python3-certbot-apache       # RHEL/CentOS
+                certbot --apache -d yourdomain.com -d www.yourdomain.com
+                ```
 
-        3. Submit the CSR to your chosen CA and complete their domain validation process.
+            2. For a commercial CA (DigiCert, Sectigo, GlobalSign, …), generate a CSR and submit it through their portal:
 
-        4. Install the issued certificate and any intermediate certificates on your server:
-           - Apache: Update `SSLCertificateFile`, `SSLCertificateKeyFile`, and `SSLCertificateChainFile` directives
-           - Nginx: Update `ssl_certificate` (full chain) and `ssl_certificate_key` directives
+                ```bash
+                openssl req -new -newkey rsa:2048 -nodes \
+                  -keyout /etc/ssl/private/yourdomain.com.key \
+                  -out    /etc/ssl/yourdomain.com.csr \
+                  -subj   "/CN=yourdomain.com"
+                ```
 
-        5. Restart your web server to apply the changes.
+            3. Once issued, point Apache at the new chain (leaf + intermediates):
 
-        6. Verify the certificate is properly trusted:
-           ```bash
-           openssl s_client -connect yourdomain.com:443 </dev/null 2>&1 | grep "Verify return code"
-           ```
-           A return code of 0 indicates the certificate is trusted.
+                ```apache
+                SSLCertificateFile      /etc/ssl/certs/yourdomain.com.fullchain.pem
+                SSLCertificateKeyFile   /etc/ssl/private/yourdomain.com.key
+                ```
+
+                ```bash
+                apachectl configtest
+                systemctl reload apache2   # Debian/Ubuntu
+                systemctl reload httpd     # RHEL/CentOS
+                ```
+
+            4. Confirm the new cert is publicly trusted:
+
+                ```bash
+                openssl s_client -connect yourdomain.com:443 </dev/null 2>&1 | grep "Verify return code"
+                ```
+
+                A return code of `0 (ok)` confirms the cert chains to a trusted root.
+        - id: nginx
+          desc: |
+            **Using Nginx**
+
+            1. Replace the self-signed cert with one from a publicly trusted CA. The simplest path is Let's Encrypt via Certbot's Nginx plugin:
+
+                ```bash
+                apt install certbot python3-certbot-nginx        # Debian/Ubuntu
+                yum install certbot python3-certbot-nginx        # RHEL/CentOS
+                certbot --nginx -d yourdomain.com -d www.yourdomain.com
+                ```
+
+            2. For a commercial CA, generate a CSR and submit it through their portal:
+
+                ```bash
+                openssl req -new -newkey rsa:2048 -nodes \
+                  -keyout /etc/ssl/private/yourdomain.com.key \
+                  -out    /etc/ssl/yourdomain.com.csr \
+                  -subj   "/CN=yourdomain.com"
+                ```
+
+            3. Once issued, point Nginx at the new full chain:
+
+                ```nginx
+                ssl_certificate     /etc/ssl/certs/yourdomain.com.fullchain.pem;
+                ssl_certificate_key /etc/ssl/private/yourdomain.com.key;
+                ```
+
+                ```bash
+                nginx -t && systemctl reload nginx
+                ```
+
+            4. Confirm the new cert is publicly trusted:
+
+                ```bash
+                openssl s_client -connect yourdomain.com:443 </dev/null 2>&1 | grep "Verify return code"
+                ```
+
+                A return code of `0 (ok)` confirms the cert chains to a trusted root.
+        - id: haproxy
+          desc: |
+            **Using HAProxy**
+
+            1. Replace the self-signed cert with one from a publicly trusted CA. The simplest path is Let's Encrypt in standalone mode:
+
+                ```bash
+                apt install certbot                              # Debian/Ubuntu
+                yum install certbot                              # RHEL/CentOS
+                certbot certonly --standalone -d yourdomain.com -d www.yourdomain.com
+                ```
+
+            2. For a commercial CA, generate a CSR and submit it through their portal:
+
+                ```bash
+                openssl req -new -newkey rsa:2048 -nodes \
+                  -keyout /etc/ssl/private/yourdomain.com.key \
+                  -out    /etc/ssl/yourdomain.com.csr \
+                  -subj   "/CN=yourdomain.com"
+                ```
+
+            3. HAProxy expects a single PEM file with the full chain followed by the private key:
+
+                ```bash
+                cat /etc/letsencrypt/live/yourdomain.com/fullchain.pem \
+                    /etc/letsencrypt/live/yourdomain.com/privkey.pem \
+                    > /etc/haproxy/certs/yourdomain.com.pem
+                chmod 0600 /etc/haproxy/certs/yourdomain.com.pem
+                ```
+
+                ```haproxy
+                frontend https-in
+                    bind *:443 ssl crt /etc/haproxy/certs/yourdomain.com.pem
+                ```
+
+                ```bash
+                haproxy -c -f /etc/haproxy/haproxy.cfg
+                systemctl reload haproxy
+                ```
+
+            4. Confirm the new cert is publicly trusted:
+
+                ```bash
+                openssl s_client -connect yourdomain.com:443 </dev/null 2>&1 | grep "Verify return code"
+                ```
+
+                A return code of `0 (ok)` confirms the cert chains to a trusted root.
     refs:
       - url: https://www.ssllabs.com/projects/best-practices/
         title: SSL/TLS Deployment Best Practices
@@ -403,35 +825,147 @@ queries:
           - **Reputation damage**: Security-conscious users and partners will lose trust when encountering revoked certificates.
 
         Replace revoked certificates immediately with newly-generated key pairs, and investigate the cause of revocation to prevent recurrence.
-      remediation: |
-        To resolve this issue:
+      remediation:
+        - id: apache
+          desc: |
+            **Using Apache**
 
-        1. Check if your certificate has been revoked using OCSP (Online Certificate Status Protocol):
-           ```bash
-           openssl s_client -connect yourdomain.com:443 </dev/null 2>/dev/null | openssl x509 -noout -ocsp_uri
-           # Then query the OCSP responder with the URI returned
-           ```
+            1. Confirm revocation status by extracting the OCSP responder URL and querying it:
 
-        2. Alternatively, check revocation status using the CA's Certificate Revocation List (CRL):
-           - Locate the CRL distribution point in your certificate
-           - Download and check your certificate against the CRL
+                ```bash
+                cert=/etc/ssl/certs/yourdomain.com.crt
+                ocsp=$(openssl x509 -in "$cert" -noout -ocsp_uri)
+                openssl ocsp -no_nonce -issuer /etc/ssl/certs/yourdomain.com.issuer.crt \
+                  -cert "$cert" -url "$ocsp" -resp_text 2>&1 | grep -E "Cert Status|good|revoked"
+                ```
 
-        3. If your certificate is revoked, you must obtain a new certificate:
-           - Contact your CA to understand why the certificate was revoked
-           - Generate a new private key (do not reuse the old key if it was compromised)
-           - Create a new CSR and request a replacement certificate
-           - Install the new certificate on your server
+            2. If the cert is revoked, generate a fresh **new** private key (never reuse a compromised one) and request a replacement from the CA:
 
-        4. Investigate the cause of revocation:
-           - Private key compromise: Audit your systems for unauthorized access
-           - Domain ownership issues: Verify your domain registration and DNS settings
-           - CA policy violation: Review the CA's terms of service
+                ```bash
+                openssl req -new -newkey rsa:2048 -nodes \
+                  -keyout /etc/ssl/private/yourdomain.com.key \
+                  -out    /etc/ssl/yourdomain.com.csr \
+                  -subj   "/CN=yourdomain.com"
+                ```
 
-        5. Enable OCSP stapling on your server to improve revocation checking performance:
-           - Apache: `SSLUseStapling on` and `SSLStaplingCache shmcb:/tmp/stapling_cache(128000)`
-           - Nginx: `ssl_stapling on;` and `ssl_stapling_verify on;`
+                Or for Let's Encrypt:
 
-        6. After installing the new certificate, verify it is not revoked using online tools like SSL Labs.
+                ```bash
+                certbot --apache --force-renewal -d yourdomain.com
+                ```
+
+            3. Install the new chain and reload Apache:
+
+                ```apache
+                SSLCertificateFile      /etc/ssl/certs/yourdomain.com.fullchain.pem
+                SSLCertificateKeyFile   /etc/ssl/private/yourdomain.com.key
+                ```
+
+                ```bash
+                apachectl configtest
+                systemctl reload apache2   # Debian/Ubuntu
+                systemctl reload httpd     # RHEL/CentOS
+                ```
+
+            4. Turn on OCSP stapling so clients can confirm revocation status without a third-party round-trip:
+
+                ```apache
+                SSLUseStapling          on
+                SSLStaplingCache        shmcb:/run/ocsp(128000)
+                SSLStaplingResponderTimeout 5
+                ```
+
+            5. Investigate why the cert was revoked. If a private key compromise is suspected, audit access to the host and rotate any related secrets before bringing the new cert online.
+        - id: nginx
+          desc: |
+            **Using Nginx**
+
+            1. Confirm revocation status by extracting the OCSP responder URL and querying it:
+
+                ```bash
+                cert=/etc/ssl/certs/yourdomain.com.crt
+                ocsp=$(openssl x509 -in "$cert" -noout -ocsp_uri)
+                openssl ocsp -no_nonce -issuer /etc/ssl/certs/yourdomain.com.issuer.crt \
+                  -cert "$cert" -url "$ocsp" -resp_text 2>&1 | grep -E "Cert Status|good|revoked"
+                ```
+
+            2. If the cert is revoked, generate a fresh **new** private key (never reuse a compromised one) and request a replacement from the CA:
+
+                ```bash
+                openssl req -new -newkey rsa:2048 -nodes \
+                  -keyout /etc/ssl/private/yourdomain.com.key \
+                  -out    /etc/ssl/yourdomain.com.csr \
+                  -subj   "/CN=yourdomain.com"
+                ```
+
+                Or for Let's Encrypt:
+
+                ```bash
+                certbot --nginx --force-renewal -d yourdomain.com
+                ```
+
+            3. Install the new full chain and reload Nginx:
+
+                ```nginx
+                ssl_certificate     /etc/ssl/certs/yourdomain.com.fullchain.pem;
+                ssl_certificate_key /etc/ssl/private/yourdomain.com.key;
+                ```
+
+                ```bash
+                nginx -t && systemctl reload nginx
+                ```
+
+            4. Turn on OCSP stapling so clients can confirm revocation status without a third-party round-trip:
+
+                ```nginx
+                ssl_stapling          on;
+                ssl_stapling_verify   on;
+                resolver              1.1.1.1 8.8.8.8 valid=300s;
+                resolver_timeout      5s;
+                ```
+
+            5. Investigate why the cert was revoked. If a private key compromise is suspected, audit access to the host and rotate any related secrets before bringing the new cert online.
+        - id: haproxy
+          desc: |
+            **Using HAProxy**
+
+            1. Confirm revocation status by extracting the OCSP responder URL and querying it:
+
+                ```bash
+                cert=/etc/haproxy/certs/yourdomain.com.pem
+                ocsp=$(openssl x509 -in "$cert" -noout -ocsp_uri)
+                openssl ocsp -no_nonce -issuer /etc/haproxy/certs/yourdomain.com.issuer.pem \
+                  -cert "$cert" -url "$ocsp" -resp_text 2>&1 | grep -E "Cert Status|good|revoked"
+                ```
+
+            2. If the cert is revoked, generate a fresh **new** private key (never reuse a compromised one) and request a replacement from the CA. For Let's Encrypt:
+
+                ```bash
+                certbot certonly --standalone --force-renewal -d yourdomain.com
+                ```
+
+            3. Rebuild HAProxy's combined PEM (chain + key) and reload:
+
+                ```bash
+                cat /etc/letsencrypt/live/yourdomain.com/fullchain.pem \
+                    /etc/letsencrypt/live/yourdomain.com/privkey.pem \
+                    > /etc/haproxy/certs/yourdomain.com.pem
+                chmod 0600 /etc/haproxy/certs/yourdomain.com.pem
+                haproxy -c -f /etc/haproxy/haproxy.cfg
+                systemctl reload haproxy
+                ```
+
+            4. Enable OCSP stapling. HAProxy reads stapled OCSP responses from a sibling `.ocsp` file. Refresh it with `openssl ocsp` from a renew hook so HAProxy serves a fresh response on reload:
+
+                ```bash
+                openssl ocsp -no_nonce -respout /etc/haproxy/certs/yourdomain.com.pem.ocsp \
+                  -issuer /etc/haproxy/certs/yourdomain.com.issuer.pem \
+                  -cert /etc/haproxy/certs/yourdomain.com.pem \
+                  -url "$(openssl x509 -in /etc/haproxy/certs/yourdomain.com.pem -noout -ocsp_uri)"
+                systemctl reload haproxy
+                ```
+
+            5. Investigate why the cert was revoked. If a private key compromise is suspected, audit access to the host and rotate any related secrets before bringing the new cert online.
     refs:
       - url: https://datatracker.ietf.org/doc/html/rfc6960
         title: OCSP RFC 6960
@@ -468,34 +1002,131 @@ queries:
           - **Future vulnerability**: As computing power increases, even SHA-1 becomes more vulnerable to practical attacks.
 
         Ensure all certificates use SHA-256 or stronger (SHA-384, SHA-512) signature algorithms, and verify the complete chain uses strong signatures.
-      remediation: |
-        To resolve this issue:
+      remediation:
+        - id: apache
+          desc: |
+            **Using Apache**
 
-        1. Check your current certificate's signature algorithm:
-           ```bash
-           openssl s_client -connect yourdomain.com:443 </dev/null 2>/dev/null | openssl x509 -noout -text | grep "Signature Algorithm"
-           ```
+            1. Check the signature algorithm on every cert in the served chain:
 
-        2. If the certificate uses MD2, MD5, or SHA-1, you must replace it with a certificate using SHA-256 or stronger (SHA-384, SHA-512).
+                ```bash
+                openssl s_client -connect yourdomain.com:443 -showcerts </dev/null 2>/dev/null \
+                  | openssl crl2pkcs7 -nocrl -certfile /dev/stdin \
+                  | openssl pkcs7 -print_certs -text -noout \
+                  | grep "Signature Algorithm"
+                ```
 
-        3. Generate a new private key and CSR specifying a strong signature algorithm:
-           ```bash
-           openssl req -new -newkey rsa:2048 -sha256 -nodes -keyout server.key -out server.csr
-           ```
+                Anything containing `md2`, `md5`, or `sha1` must be replaced with SHA-256 (or SHA-384/SHA-512).
 
-        4. When requesting the certificate from your CA:
-           - Explicitly request SHA-256 or SHA-384 signing
-           - Most modern CAs use SHA-256 by default, but verify this during the order process
-           - Let's Encrypt certificates use SHA-256 by default
+            2. Generate a new private key and CSR with a strong signature algorithm:
 
-        5. Also verify that intermediate certificates in your chain use strong signature algorithms. If your CA provides intermediates with weak signatures, contact them for updated certificates.
+                ```bash
+                openssl req -new -newkey rsa:2048 -sha256 -nodes \
+                  -keyout /etc/ssl/private/yourdomain.com.key \
+                  -out    /etc/ssl/yourdomain.com.csr \
+                  -subj   "/CN=yourdomain.com"
+                ```
 
-        6. Install the new certificate and restart your web server.
+                Or, simpler with Let's Encrypt (always SHA-256):
 
-        7. Verify the new signature algorithm is in use:
-           ```bash
-           openssl s_client -connect yourdomain.com:443 </dev/null 2>/dev/null | openssl x509 -noout -text | grep "Signature Algorithm"
-           ```
+                ```bash
+                certbot --apache -d yourdomain.com -d www.yourdomain.com
+                ```
+
+            3. If a chain intermediate uses a weak signature, ask the CA for updated intermediates and refresh the bundle. Then point Apache at the new chain and reload:
+
+                ```apache
+                SSLCertificateFile      /etc/ssl/certs/yourdomain.com.fullchain.pem
+                SSLCertificateKeyFile   /etc/ssl/private/yourdomain.com.key
+                ```
+
+                ```bash
+                apachectl configtest
+                systemctl reload apache2   # Debian/Ubuntu
+                systemctl reload httpd     # RHEL/CentOS
+                ```
+
+            4. Re-run the iteration in step 1 — every entry should be SHA-256 or stronger.
+        - id: nginx
+          desc: |
+            **Using Nginx**
+
+            1. Check the signature algorithm on every cert in the served chain:
+
+                ```bash
+                openssl s_client -connect yourdomain.com:443 -showcerts </dev/null 2>/dev/null \
+                  | openssl crl2pkcs7 -nocrl -certfile /dev/stdin \
+                  | openssl pkcs7 -print_certs -text -noout \
+                  | grep "Signature Algorithm"
+                ```
+
+                Anything containing `md2`, `md5`, or `sha1` must be replaced with SHA-256 (or SHA-384/SHA-512).
+
+            2. Generate a new private key and CSR with a strong signature algorithm:
+
+                ```bash
+                openssl req -new -newkey rsa:2048 -sha256 -nodes \
+                  -keyout /etc/ssl/private/yourdomain.com.key \
+                  -out    /etc/ssl/yourdomain.com.csr \
+                  -subj   "/CN=yourdomain.com"
+                ```
+
+                Or, simpler with Let's Encrypt (always SHA-256):
+
+                ```bash
+                certbot --nginx -d yourdomain.com -d www.yourdomain.com
+                ```
+
+            3. If a chain intermediate uses a weak signature, ask the CA for updated intermediates and refresh the bundle. Then point Nginx at the new chain and reload:
+
+                ```nginx
+                ssl_certificate     /etc/ssl/certs/yourdomain.com.fullchain.pem;
+                ssl_certificate_key /etc/ssl/private/yourdomain.com.key;
+                ```
+
+                ```bash
+                nginx -t && systemctl reload nginx
+                ```
+
+            4. Re-run the iteration in step 1 — every entry should be SHA-256 or stronger.
+        - id: haproxy
+          desc: |
+            **Using HAProxy**
+
+            1. Check the signature algorithm on every cert in the served chain:
+
+                ```bash
+                openssl s_client -connect yourdomain.com:443 -showcerts </dev/null 2>/dev/null \
+                  | openssl crl2pkcs7 -nocrl -certfile /dev/stdin \
+                  | openssl pkcs7 -print_certs -text -noout \
+                  | grep "Signature Algorithm"
+                ```
+
+                Anything containing `md2`, `md5`, or `sha1` must be replaced with SHA-256 (or SHA-384/SHA-512).
+
+            2. Generate a new private key and CSR with a strong signature algorithm, or use Let's Encrypt in standalone mode:
+
+                ```bash
+                openssl req -new -newkey rsa:2048 -sha256 -nodes \
+                  -keyout /etc/ssl/private/yourdomain.com.key \
+                  -out    /etc/ssl/yourdomain.com.csr \
+                  -subj   "/CN=yourdomain.com"
+                # or:
+                certbot certonly --standalone -d yourdomain.com -d www.yourdomain.com
+                ```
+
+            3. If a chain intermediate uses a weak signature, ask the CA for updated intermediates and refresh the bundle. Rebuild HAProxy's combined PEM (chain + key) and reload:
+
+                ```bash
+                cat /etc/letsencrypt/live/yourdomain.com/fullchain.pem \
+                    /etc/letsencrypt/live/yourdomain.com/privkey.pem \
+                    > /etc/haproxy/certs/yourdomain.com.pem
+                chmod 0600 /etc/haproxy/certs/yourdomain.com.pem
+                haproxy -c -f /etc/haproxy/haproxy.cfg
+                systemctl reload haproxy
+                ```
+
+            4. Re-run the iteration in step 1 — every entry should be SHA-256 or stronger.
     refs:
       - url: https://www.ssllabs.com/projects/best-practices/
         title: SSL/TLS Deployment Best Practices
@@ -1911,35 +2542,142 @@ queries:
           •  Some clients silently fall back to insecure connections when chain verification fails.
 
         Ensure your server presents the complete and correct certificate chain, including all required intermediate certificates in the proper order.
-      remediation: |
-        To resolve this issue:
+      remediation:
+        - id: apache
+          desc: |
+            **Using Apache**
 
-        1. Check the certificate chain verification status:
-           ```bash
-           openssl s_client -connect yourdomain.com:443 </dev/null 2>&1 | grep "Verify return code"
-           ```
+            1. Check chain verification status from outside the server:
 
-           A return code of 0 indicates the chain is trusted. Any other value indicates a problem.
+                ```bash
+                openssl s_client -connect yourdomain.com:443 </dev/null 2>&1 | grep "Verify return code"
+                ```
 
-        2. Common causes of chain verification failure:
-           - **Missing intermediate certificates**: Your server must present the full chain. Download intermediates from your CA and concatenate them with your certificate.
-           - **Incorrect chain order**: Certificates must be ordered from leaf to root (leaf first, intermediates next, root optional).
-           - **Expired intermediate or root**: Check all certificates in the chain for expiration.
-           - **Untrusted root CA**: The root CA must be in the client's trust store.
+                Common causes of failure: missing intermediates, wrong chain order (leaf must come first), expired intermediate or root, root CA not in the client trust store.
 
-        3. Build the correct chain file:
-           ```bash
-           cat your-certificate.crt intermediate.crt > fullchain.crt
-           ```
+            2. Build the correct chain file (leaf first, then intermediates — root is optional):
 
-        4. Configure your web server to use the full chain:
-           - Apache: `SSLCertificateChainFile /path/to/fullchain.crt`
-           - Nginx: `ssl_certificate /path/to/fullchain.crt;`
+                ```bash
+                cat /etc/ssl/certs/yourdomain.com.crt \
+                    /etc/ssl/certs/yourdomain.com.intermediate.crt \
+                    > /etc/ssl/certs/yourdomain.com.fullchain.pem
+                ```
 
-        5. Verify the complete chain:
-           ```bash
-           openssl verify -CAfile /path/to/ca-bundle.crt /path/to/fullchain.crt
-           ```
+                Let's Encrypt callers can skip this — `fullchain.pem` is already the right format.
+
+            3. Point Apache at the full chain. On Apache 2.4.8+ `SSLCertificateFile` accepts a chain file; older releases use `SSLCertificateChainFile` for the intermediates only:
+
+                ```apache
+                SSLCertificateFile      /etc/ssl/certs/yourdomain.com.fullchain.pem
+                SSLCertificateKeyFile   /etc/ssl/private/yourdomain.com.key
+                ```
+
+                ```bash
+                apachectl configtest
+                systemctl reload apache2   # Debian/Ubuntu
+                systemctl reload httpd     # RHEL/CentOS
+                ```
+
+            4. Verify the chain locally:
+
+                ```bash
+                openssl verify -CAfile /etc/ssl/certs/ca-certificates.crt \
+                  /etc/ssl/certs/yourdomain.com.fullchain.pem
+                ```
+
+                Re-run the verification from step 1 — `Verify return code: 0 (ok)` confirms success.
+        - id: nginx
+          desc: |
+            **Using Nginx**
+
+            1. Check chain verification status from outside the server:
+
+                ```bash
+                openssl s_client -connect yourdomain.com:443 </dev/null 2>&1 | grep "Verify return code"
+                ```
+
+                Common causes of failure: missing intermediates, wrong chain order (leaf must come first), expired intermediate or root, root CA not in the client trust store.
+
+            2. Build the correct chain file (leaf first, then intermediates):
+
+                ```bash
+                cat /etc/ssl/certs/yourdomain.com.crt \
+                    /etc/ssl/certs/yourdomain.com.intermediate.crt \
+                    > /etc/ssl/certs/yourdomain.com.fullchain.pem
+                ```
+
+                Let's Encrypt callers can skip this — `fullchain.pem` is already the right format.
+
+            3. **Nginx requires the full chain in `ssl_certificate`** (it doesn't have a separate "chain file" directive). Point it at the file:
+
+                ```nginx
+                ssl_certificate     /etc/ssl/certs/yourdomain.com.fullchain.pem;
+                ssl_certificate_key /etc/ssl/private/yourdomain.com.key;
+                ```
+
+                ```bash
+                nginx -t && systemctl reload nginx
+                ```
+
+            4. Verify the chain locally:
+
+                ```bash
+                openssl verify -CAfile /etc/ssl/certs/ca-certificates.crt \
+                  /etc/ssl/certs/yourdomain.com.fullchain.pem
+                ```
+
+                Re-run the verification from step 1 — `Verify return code: 0 (ok)` confirms success.
+        - id: haproxy
+          desc: |
+            **Using HAProxy**
+
+            1. Check chain verification status from outside the server:
+
+                ```bash
+                openssl s_client -connect yourdomain.com:443 </dev/null 2>&1 | grep "Verify return code"
+                ```
+
+                Common causes of failure: missing intermediates, wrong chain order, expired intermediate or root, root CA not in the client trust store.
+
+            2. HAProxy's `bind … ssl crt <file>` expects a single PEM with leaf + intermediates + private key, in that order:
+
+                ```bash
+                cat /etc/letsencrypt/live/yourdomain.com/fullchain.pem \
+                    /etc/letsencrypt/live/yourdomain.com/privkey.pem \
+                    > /etc/haproxy/certs/yourdomain.com.pem
+                chmod 0600 /etc/haproxy/certs/yourdomain.com.pem
+                ```
+
+                Or, for a non-Certbot deployment:
+
+                ```bash
+                cat /etc/ssl/certs/yourdomain.com.crt \
+                    /etc/ssl/certs/yourdomain.com.intermediate.crt \
+                    /etc/ssl/private/yourdomain.com.key \
+                    > /etc/haproxy/certs/yourdomain.com.pem
+                chmod 0600 /etc/haproxy/certs/yourdomain.com.pem
+                ```
+
+            3. Reload HAProxy:
+
+                ```haproxy
+                frontend https-in
+                    bind *:443 ssl crt /etc/haproxy/certs/yourdomain.com.pem
+                ```
+
+                ```bash
+                haproxy -c -f /etc/haproxy/haproxy.cfg
+                systemctl reload haproxy
+                ```
+
+            4. Verify the chain locally:
+
+                ```bash
+                openssl verify -CAfile /etc/ssl/certs/ca-certificates.crt \
+                  /etc/haproxy/certs/yourdomain.com.pem
+                ```
+
+                Re-run the verification from step 1 — `Verify return code: 0 (ok)` confirms success.
     refs:
       - url: https://www.openssl.org/docs/man1.1.1/man1/verify.html
         title: OpenSSL certificate chain verification
@@ -2072,25 +2810,119 @@ queries:
           •  Compliance frameworks increasingly require functional revocation checking mechanisms.
 
         Ensure your Certificate Authority includes OCSP responder URLs in issued certificates. Most reputable CAs include this by default.
-      remediation: |
-        To resolve this issue:
+      remediation:
+        - id: apache
+          desc: |
+            **Using Apache**
 
-        1. Check if your certificate has an OCSP responder URL:
-           ```bash
-           openssl s_client -connect yourdomain.com:443 </dev/null 2>/dev/null | openssl x509 -noout -ocsp_uri
-           ```
+            1. Confirm the cert advertises an OCSP responder:
 
-        2. If no OCSP URL is present, you need a new certificate from a CA that includes OCSP in their certificates. Most major CAs (Let's Encrypt, DigiCert, Sectigo, GlobalSign) include OCSP responder URLs by default.
+                ```bash
+                openssl s_client -connect yourdomain.com:443 </dev/null 2>/dev/null \
+                  | openssl x509 -noout -ocsp_uri
+                ```
 
-        3. Enable OCSP stapling on your server for better performance:
-           - **Apache**: Add `SSLUseStapling on` and `SSLStaplingCache shmcb:/tmp/stapling_cache(128000)`
-           - **Nginx**: Add `ssl_stapling on;` and `ssl_stapling_verify on;`
-           - **HAProxy**: Add `ssl-default-bind-options ... no-tls-tickets` with OCSP stapling support
+                If the command returns nothing, the cert was issued without OCSP information — request a new cert from a CA that includes it (Let's Encrypt, DigiCert, Sectigo, GlobalSign all do).
 
-        4. Verify OCSP stapling is working:
-           ```bash
-           openssl s_client -connect yourdomain.com:443 -status </dev/null 2>&1 | grep -A5 "OCSP Response"
-           ```
+            2. Enable OCSP stapling. Add the following to your global SSL config (e.g., `/etc/apache2/mods-enabled/ssl.conf`) — `SSLUseStapling` and `SSLStaplingCache` MUST live in the global scope, not per-vhost:
+
+                ```apache
+                SSLUseStapling          on
+                SSLStaplingCache        shmcb:/run/ocsp(128000)
+                SSLStaplingResponderTimeout 5
+                SSLStaplingReturnResponderErrors off
+                ```
+
+            3. Reload Apache:
+
+                ```bash
+                apachectl configtest
+                systemctl reload apache2   # Debian/Ubuntu
+                systemctl reload httpd     # RHEL/CentOS
+                ```
+
+            4. Verify the response is being stapled:
+
+                ```bash
+                openssl s_client -connect yourdomain.com:443 -status </dev/null 2>&1 \
+                  | grep -A5 "OCSP Response"
+                ```
+
+                A `Cert Status: good` line confirms stapling is working.
+        - id: nginx
+          desc: |
+            **Using Nginx**
+
+            1. Confirm the cert advertises an OCSP responder:
+
+                ```bash
+                openssl s_client -connect yourdomain.com:443 </dev/null 2>/dev/null \
+                  | openssl x509 -noout -ocsp_uri
+                ```
+
+                If the command returns nothing, the cert was issued without OCSP information — request a new cert from a CA that includes it (Let's Encrypt, DigiCert, Sectigo, GlobalSign all do).
+
+            2. Enable OCSP stapling in the `server` block (or globally in `http`). `ssl_trusted_certificate` must point at a file containing the issuing CA so Nginx can validate the OCSP response:
+
+                ```nginx
+                ssl_stapling          on;
+                ssl_stapling_verify   on;
+                ssl_trusted_certificate /etc/letsencrypt/live/yourdomain.com/chain.pem;
+                resolver              1.1.1.1 8.8.8.8 valid=300s;
+                resolver_timeout      5s;
+                ```
+
+            3. Reload Nginx:
+
+                ```bash
+                nginx -t && systemctl reload nginx
+                ```
+
+            4. Verify the response is being stapled:
+
+                ```bash
+                openssl s_client -connect yourdomain.com:443 -status </dev/null 2>&1 \
+                  | grep -A5 "OCSP Response"
+                ```
+
+                A `Cert Status: good` line confirms stapling is working. (Nginx caches the response for ~1 hour, so the first request after reload may not include one.)
+        - id: haproxy
+          desc: |
+            **Using HAProxy**
+
+            1. Confirm the cert advertises an OCSP responder:
+
+                ```bash
+                openssl s_client -connect yourdomain.com:443 </dev/null 2>/dev/null \
+                  | openssl x509 -noout -ocsp_uri
+                ```
+
+                If the command returns nothing, the cert was issued without OCSP information — request a new cert from a CA that includes it (Let's Encrypt, DigiCert, Sectigo, GlobalSign all do).
+
+            2. HAProxy reads stapled OCSP responses from a `<cert>.ocsp` sibling file. Generate it from the OCSP responder and drop it next to your PEM:
+
+                ```bash
+                openssl ocsp -no_nonce \
+                  -issuer /etc/haproxy/certs/yourdomain.com.issuer.pem \
+                  -cert   /etc/haproxy/certs/yourdomain.com.pem \
+                  -url    "$(openssl x509 -in /etc/haproxy/certs/yourdomain.com.pem -noout -ocsp_uri)" \
+                  -respout /etc/haproxy/certs/yourdomain.com.pem.ocsp
+                ```
+
+            3. Refresh the response on a schedule and reload HAProxy. A daily cron entry works well — OCSP responses typically have a 7-day lifetime:
+
+                ```cron
+                15 3 * * * /usr/local/sbin/refresh-ocsp.sh && systemctl reload haproxy
+                ```
+
+            4. Verify the response is being stapled:
+
+                ```bash
+                openssl s_client -connect yourdomain.com:443 -status </dev/null 2>&1 \
+                  | grep -A5 "OCSP Response"
+                ```
+
+                A `Cert Status: good` line confirms stapling is working.
     refs:
       - url: https://datatracker.ietf.org/doc/html/rfc6960
         title: OCSP RFC 6960
@@ -2123,32 +2955,110 @@ queries:
           •  Legacy or outdated certificates served as defaults may have weaker security properties.
 
         Configure your server to either require SNI or serve the same certificate regardless of whether SNI is present.
-      remediation: |
-        To resolve this issue:
+      remediation:
+        - id: apache
+          desc: |
+            **Using Apache**
 
-        1. Check what certificate is served without SNI:
-           ```bash
-           openssl s_client -connect yourdomain.com:443 </dev/null 2>/dev/null | openssl x509 -noout -subject
-           ```
+            1. Compare what is served with and without SNI:
 
-        2. Compare with the SNI certificate:
-           ```bash
-           openssl s_client -connect yourdomain.com:443 -servername yourdomain.com </dev/null 2>/dev/null | openssl x509 -noout -subject
-           ```
+                ```bash
+                openssl s_client -connect yourdomain.com:443                              </dev/null 2>/dev/null | openssl x509 -noout -subject
+                openssl s_client -connect yourdomain.com:443 -servername yourdomain.com   </dev/null 2>/dev/null | openssl x509 -noout -subject
+                ```
 
-        3. To fix, configure the default certificate to match your primary domain:
-           - **Apache**: Ensure the first `<VirtualHost>` block for port 443 uses the correct certificate, as Apache serves the first configured certificate when SNI is not present.
-           - **Nginx**: Set the `default_server` directive on the `server` block with the correct certificate.
-           - **HAProxy**: Configure the primary certificate first in your `bind` line.
+                If the two subjects differ, an internal-only cert is leaking via the non-SNI path.
 
-        4. Alternatively, reject connections without SNI:
-           - **Nginx**: Create a default server that rejects connections:
-             ```nginx
-             server {
-               listen 443 ssl default_server;
-               ssl_reject_handshake on;
-             }
-             ```
+            2. Apache serves the **first** `<VirtualHost *:443>` it parses when no SNI is supplied. Make sure that vhost references the public cert your primary domain expects. For example, in `/etc/apache2/sites-enabled/`:
+
+                ```apache
+                # 000-yourdomain.com.conf — must sort before any internal vhost
+                <VirtualHost *:443>
+                    ServerName              yourdomain.com
+                    SSLEngine               on
+                    SSLCertificateFile      /etc/letsencrypt/live/yourdomain.com/fullchain.pem
+                    SSLCertificateKeyFile   /etc/letsencrypt/live/yourdomain.com/privkey.pem
+                </VirtualHost>
+                ```
+
+            3. Reload Apache and re-run the comparison in step 1 — both subjects should now match.
+
+                ```bash
+                apachectl configtest
+                systemctl reload apache2   # Debian/Ubuntu
+                systemctl reload httpd     # RHEL/CentOS
+                ```
+        - id: nginx
+          desc: |
+            **Using Nginx**
+
+            1. Compare what is served with and without SNI:
+
+                ```bash
+                openssl s_client -connect yourdomain.com:443                              </dev/null 2>/dev/null | openssl x509 -noout -subject
+                openssl s_client -connect yourdomain.com:443 -servername yourdomain.com   </dev/null 2>/dev/null | openssl x509 -noout -subject
+                ```
+
+                If the two subjects differ, an internal-only cert is leaking via the non-SNI path.
+
+            2. Mark a single, public-facing `server` block as the `default_server` for port 443. That cert is served whenever SNI is absent:
+
+                ```nginx
+                server {
+                    listen      443 ssl default_server;
+                    server_name yourdomain.com;
+
+                    ssl_certificate     /etc/letsencrypt/live/yourdomain.com/fullchain.pem;
+                    ssl_certificate_key /etc/letsencrypt/live/yourdomain.com/privkey.pem;
+                }
+                ```
+
+            3. **Or** reject non-SNI connections outright (Nginx 1.19.4+):
+
+                ```nginx
+                server {
+                    listen              443 ssl default_server;
+                    ssl_reject_handshake on;
+                }
+                ```
+
+            4. Reload Nginx and re-run the comparison in step 1:
+
+                ```bash
+                nginx -t && systemctl reload nginx
+                ```
+        - id: haproxy
+          desc: |
+            **Using HAProxy**
+
+            1. Compare what is served with and without SNI:
+
+                ```bash
+                openssl s_client -connect yourdomain.com:443                              </dev/null 2>/dev/null | openssl x509 -noout -subject
+                openssl s_client -connect yourdomain.com:443 -servername yourdomain.com   </dev/null 2>/dev/null | openssl x509 -noout -subject
+                ```
+
+                If the two subjects differ, an internal-only cert is leaking via the non-SNI path.
+
+            2. HAProxy uses the **first** cert listed on the `bind` line as the default when SNI is absent. Either put the public-facing cert first, or use `crt-list` so the default is explicit:
+
+                ```haproxy
+                # /etc/haproxy/crt-list.txt
+                /etc/haproxy/certs/yourdomain.com.pem !*.internal.example.com
+                /etc/haproxy/certs/internal.pem        *.internal.example.com
+                ```
+
+                ```haproxy
+                frontend https-in
+                    bind *:443 ssl crt-list /etc/haproxy/crt-list.txt
+                ```
+
+            3. Reload HAProxy and re-run the comparison in step 1:
+
+                ```bash
+                haproxy -c -f /etc/haproxy/haproxy.cfg
+                systemctl reload haproxy
+                ```
     refs:
       - url: https://datatracker.ietf.org/doc/html/rfc6066
         title: TLS Server Name Indication (SNI) RFC 6066
