@@ -6,11 +6,12 @@
 # against known-good sets of subcommands and flags.
 #
 # Usage:
-#   python3 validate_remediation_commands.py            # validate all
-#   python3 validate_remediation_commands.py aws         # validate AWS commands only
-#   python3 validate_remediation_commands.py azure       # validate Azure commands only
-#   python3 validate_remediation_commands.py oci         # validate OCI commands only
-#   python3 validate_remediation_commands.py gcp         # validate gcloud commands only
+#   python3 validate_remediation_commands.py               # validate all
+#   python3 validate_remediation_commands.py aws           # validate AWS commands only
+#   python3 validate_remediation_commands.py azure         # validate Azure commands only
+#   python3 validate_remediation_commands.py oci           # validate OCI commands only
+#   python3 validate_remediation_commands.py gcp           # validate gcloud commands only
+#   python3 validate_remediation_commands.py digitalocean  # validate doctl commands only
 
 import concurrent.futures
 import json
@@ -1373,12 +1374,14 @@ def build_doctl_commands_db() -> dict[str, list[str]]:
         sys.exit(1)
 
     # Breadth-first walk, parallelizing the subprocess calls in each round.
+    # The executor is created once and reused across rounds so we don't pay
+    # thread-pool startup cost on every level of the tree.
     visited: set[str] = set()
     results: dict[str, dict] = {}
-    queue: list[str] = [s for s in services]
+    queue = list(services)
 
-    while queue:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
+        while queue:
             future_to_path = {}
             for path in queue:
                 if path in visited:
