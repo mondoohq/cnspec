@@ -90,6 +90,7 @@ policies:
           - uid: mondoo-oci-security-adb-mtls-or-restricted
           - uid: mondoo-oci-security-dbsystem-private-subnet
           - uid: mondoo-oci-security-dbsystem-subnet-no-internet-gateway
+          - uid: mondoo-oci-security-database-backups-customer-managed-encryption
       - title: Vault
         checks:
           - uid: mondoo-oci-security-vault-secrets-rotation-enabled
@@ -100,6 +101,19 @@ policies:
       - title: Container Instances
         checks:
           - uid: mondoo-oci-security-container-instances-approved-registry
+      - title: API Gateway
+        checks:
+          - uid: mondoo-oci-security-apigateway-deployment-no-anonymous-access
+          - uid: mondoo-oci-security-apigateway-deployment-authentication-configured
+          - uid: mondoo-oci-security-apigateway-deployment-mtls-verified
+          - uid: mondoo-oci-security-apigateway-deployment-no-wildcard-cors
+      - title: Certificates
+        checks:
+          - uid: mondoo-oci-security-certificates-not-expired
+          - uid: mondoo-oci-security-certificates-strong-key-algorithms
+          - uid: mondoo-oci-security-certificates-strong-signature-algorithms
+          - uid: mondoo-oci-security-certificates-auto-renewal-enabled
+          - uid: mondoo-oci-security-certificate-authorities-customer-managed-keys
     scoring_system: highest impact
 queries:
   # No Terraform variants: MFA activation is operational telemetry exposed by the IAM API at runtime; the `oci_identity_user` Terraform resource has no field that toggles or evidences MFA enrollment.
@@ -5537,4 +5551,1394 @@ queries:
           _['protocol'] == "6" && _['tcp_options']['destination_port_range']['min'] <= 3389 && _['tcp_options']['destination_port_range']['max'] >= 3389 ||
           _['protocol'] == "17" && _['udp_options'] == empty
         )
+      )
+  - uid: mondoo-oci-security-database-backups-customer-managed-encryption
+    title: Ensure database backups are encrypted with customer-managed keys
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/soc2-2017: soc2-control-cc6-1-10
+    variants:
+      - uid: mondoo-oci-security-database-backups-customer-managed-encryption-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-database-backups-customer-managed-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-database-backups-customer-managed-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-database-backups-customer-managed-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that every OCI database backup — both `oci.database.backup` (VM/BM DB systems) and `oci.database.autonomousDatabaseBackup` — is encrypted with a customer-managed KMS key rather than Oracle-managed default keys. Backups inherit the parent database's KMS configuration, so this check effectively validates that every database has a customer-managed master key associated.
+
+        **Why this matters**
+
+        Backups carry the same data sensitivity as the live database, but live longer and travel further:
+
+        - A backup encrypted only with Oracle-managed keys is decryptable by any Oracle-side compromise path.
+        - Long-term backups outlive the original database; a CMK-encrypted backup retains the option to permanently revoke access by deleting or disabling the key.
+        - Customer-managed keys are required by HIPAA, PCI DSS, and FedRAMP-aligned controls when sensitive data is at rest.
+        - Backup destinations (Object Storage, DBRS, AWS S3) extend the blast radius — without CMK, the encryption boundary follows the Oracle tenancy by default.
+
+        **Risk mitigation**
+
+        - Restricts who can decrypt historical backup material to holders of the CMK.
+        - Provides a key-revocation path that invalidates every backup encrypted with that key.
+        - Aligns backup encryption with the same posture customers expect for the live database.
+      remediation:
+        - id: console
+          desc: |
+            Assign a customer-managed KMS key to the parent database so future backups inherit it:
+
+            1. Open **Oracle Database** → **Autonomous Database** (or **DB Systems** → the database) → select the database.
+            2. Under **Encryption**, select **Edit** and choose **Encrypt using a customer-managed key**.
+            3. Select the vault and master encryption key, then save.
+            4. Subsequent automatic and on-demand backups inherit the new key. Existing backups remain encrypted with the previous key — re-create critical long-term backups after the rotation.
+        - id: cli
+          desc: |
+            Rotate an Autonomous Database to a new version of its customer-managed KMS key. The vault association must already exist; if the database was created with Oracle-managed keys, recreate it from a backup with `--kms-key-id` and `--vault-id` set at create time.
+
+            ```bash
+            oci db autonomous-database rotate-key \
+              --autonomous-database-id <adb-ocid> \
+              --key-version-id <key-version-ocid>
+            ```
+
+            Rotate the encryption key for a database within a DB system:
+
+            ```bash
+            oci db database rotate-vault-key \
+              --database-id <database-ocid>
+            ```
+        - id: terraform
+          desc: |
+            Set `kms_key_id` (and `vault_id` for autonomous databases) on every database resource so its backups inherit customer-managed encryption:
+
+            ```hcl
+            resource "oci_kms_vault" "app" {
+              compartment_id = var.compartment_ocid
+              display_name   = "app-vault"
+              vault_type     = "DEFAULT"
+            }
+
+            resource "oci_kms_key" "app" {
+              compartment_id      = var.compartment_ocid
+              display_name        = "app-db-key"
+              management_endpoint = oci_kms_vault.app.management_endpoint
+
+              key_shape {
+                algorithm = "AES"
+                length    = 32
+              }
+            }
+
+            resource "oci_database_autonomous_database" "app" {
+              compartment_id           = var.compartment_ocid
+              db_name                  = "appdb"
+              admin_password           = var.adb_admin_password
+              cpu_core_count           = 1
+              data_storage_size_in_tbs = 1
+
+              kms_key_id = oci_kms_key.app.id
+              vault_id   = oci_kms_vault.app.id
+            }
+
+            resource "oci_database_database" "app" {
+              db_home_id = oci_database_db_home.app.id
+              source     = "NONE"
+
+              database {
+                admin_password = var.db_admin_password
+                db_name        = "APPDB"
+                kms_key_id     = oci_kms_key.app.id
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Database/Concepts/adbsecurity.htm
+        title: OCI - Autonomous Database Encryption
+      - url: https://docs.oracle.com/en-us/iaas/Content/Database/Tasks/managingbackups.htm
+        title: OCI - Managing Database Backups
+  - uid: mondoo-oci-security-database-backups-customer-managed-encryption-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.database.backups.all(kmsKey != null)
+      oci.database.autonomousDatabaseBackups.all(kmsKey != null)
+  - uid: mondoo-oci-security-database-backups-customer-managed-encryption-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_database_autonomous_database') ||
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_database_database')
+    mql: |
+      terraform.resources('oci_database_autonomous_database').all(
+        arguments['kms_key_id'] != null && arguments['kms_key_id'] != ""
+      )
+      terraform.resources('oci_database_database').all(
+        blocks.where(type == 'database').all(
+          arguments['kms_key_id'] != null && arguments['kms_key_id'] != ""
+        )
+      )
+  - uid: mondoo-oci-security-database-backups-customer-managed-encryption-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_database_autonomous_database') ||
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_database_database')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_database_autonomous_database').all(
+        change.after['kms_key_id'] != null && change.after['kms_key_id'] != ""
+      )
+      terraform.plan.resourceChanges.where(type == 'oci_database_database').all(
+        change.after['database'].all(
+          _['kms_key_id'] != null && _['kms_key_id'] != ""
+        )
+      )
+  - uid: mondoo-oci-security-database-backups-customer-managed-encryption-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_database_autonomous_database') ||
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_database_database')
+    mql: |
+      terraform.state.resources.where(type == 'oci_database_autonomous_database').all(
+        values['kms_key_id'] != null && values['kms_key_id'] != ""
+      )
+      terraform.state.resources.where(type == 'oci_database_database').all(
+        values['database'].all(
+          _['kms_key_id'] != null && _['kms_key_id'] != ""
+        )
+      )
+  - uid: mondoo-oci-security-apigateway-deployment-no-anonymous-access
+    title: Ensure API Gateway deployments do not allow anonymous access
+    impact: 90
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-5-15
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/soc2-2017: soc2-control-cc6-1-4
+    variants:
+      - uid: mondoo-oci-security-apigateway-deployment-no-anonymous-access-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-apigateway-deployment-no-anonymous-access-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-apigateway-deployment-no-anonymous-access-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-apigateway-deployment-no-anonymous-access-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that no API Gateway deployment is configured with `is_anonymous_access_allowed = true`. When an authentication policy is attached to a deployment but anonymous access is also allowed, the policy becomes optional — clients without credentials still reach upstream backends, defeating the point of attaching an auth policy.
+
+        **Why this matters**
+
+        Anonymous access on an authenticated deployment is one of the most common API Gateway misconfigurations:
+
+        - It is typically introduced for a single "public" route during development and forgotten when other routes ship.
+        - WAF, rate-limiting, and authorization downstream all assume an authenticated principal — anonymous traffic bypasses every assumption these layers were built around.
+        - Audit logs lose attribution: every anonymous request is indistinguishable from every other.
+        - Attackers explicitly probe for this combination because the deployment looks "secured" from a metadata perspective.
+
+        **Risk mitigation**
+
+        - Forces every request through the configured authentication policy.
+        - Restores attribution in audit logs and downstream rate-limiting keys.
+        - Eliminates the "secured but optional" anti-pattern.
+      remediation:
+        - id: console
+          desc: |
+            Disable anonymous access on the deployment's authentication policy:
+
+            1. Open **Developer Services** → **API Gateway** → **Deployments** → select the deployment.
+            2. Open **API Request Policies** → **Authentication**.
+            3. Clear **Enable anonymous access** (or set it to off).
+            4. Save and deploy.
+        - id: cli
+          desc: |
+            Update a deployment's specification with `is_anonymous_access_allowed: false` in the authentication block:
+
+            ```bash
+            oci api-gateway deployment update \
+              --deployment-id <deployment-ocid> \
+              --specification file://specification.json
+            ```
+
+            Where `specification.json` sets the authentication block to `"isAnonymousAccessAllowed": false`.
+        - id: terraform
+          desc: |
+            Set `is_anonymous_access_allowed = false` on every `authentication` block in every deployment specification:
+
+            ```hcl
+            resource "oci_apigateway_deployment" "app" {
+              compartment_id = var.compartment_ocid
+              gateway_id     = oci_apigateway_gateway.app.id
+              path_prefix    = "/v1"
+
+              specification {
+                request_policies {
+                  authentication {
+                    type                        = "JWT_AUTHENTICATION"
+                    is_anonymous_access_allowed = false
+                    issuers                     = ["https://idp.example.com/"]
+                    audiences                   = ["api.example.com"]
+
+                    public_keys {
+                      type                       = "REMOTE_JWKS"
+                      uri                        = "https://idp.example.com/.well-known/jwks.json"
+                      max_cache_duration_in_hours = 1
+                    }
+                  }
+                }
+                routes {
+                  path    = "/orders"
+                  methods = ["GET", "POST"]
+                  backend {
+                    type = "HTTP_BACKEND"
+                    url  = "https://backend.internal/orders"
+                  }
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/APIGateway/Tasks/apigatewayusingauthenticationpolicies.htm
+        title: OCI - API Gateway Authentication Policies
+  - uid: mondoo-oci-security-apigateway-deployment-no-anonymous-access-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.apigateway.deployments.all(isAnonymousAccessAllowed == false)
+  - uid: mondoo-oci-security-apigateway-deployment-no-anonymous-access-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_apigateway_deployment')
+    mql: |
+      terraform.resources('oci_apigateway_deployment').all(
+        blocks.where(type == 'specification').all(
+          blocks.where(type == 'request_policies').all(
+            blocks.where(type == 'authentication').all(
+              arguments['is_anonymous_access_allowed'] != true
+            )
+          )
+        )
+      )
+  - uid: mondoo-oci-security-apigateway-deployment-no-anonymous-access-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_apigateway_deployment')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_apigateway_deployment').all(
+        change.after['specification'].all(
+          _['request_policies'].all(
+            _['authentication'].all(
+              _['is_anonymous_access_allowed'] != true
+            )
+          )
+        )
+      )
+  - uid: mondoo-oci-security-apigateway-deployment-no-anonymous-access-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_apigateway_deployment')
+    mql: |
+      terraform.state.resources.where(type == 'oci_apigateway_deployment').all(
+        values['specification'].all(
+          _['request_policies'].all(
+            _['authentication'].all(
+              _['is_anonymous_access_allowed'] != true
+            )
+          )
+        )
+      )
+  - uid: mondoo-oci-security-apigateway-deployment-authentication-configured
+    title: Ensure API Gateway deployments require authentication
+    impact: 90
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-5-15
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/soc2-2017: soc2-control-cc6-1-4
+    variants:
+      - uid: mondoo-oci-security-apigateway-deployment-authentication-configured-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-apigateway-deployment-authentication-configured-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-apigateway-deployment-authentication-configured-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-apigateway-deployment-authentication-configured-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that every API Gateway deployment declares an authentication policy at the deployment level — `authenticationType` is one of `JWT_AUTHENTICATION`, `TOKEN_AUTHENTICATION`, or `CUSTOM_AUTHENTICATION`, never `NONE`. A deployment without any authentication policy accepts every request as unauthenticated, regardless of which routes are configured.
+
+        **Why this matters**
+
+        Deployments without an authentication policy are publicly callable APIs:
+
+        - Routes inherit the deployment's auth posture; with no deployment-level policy, every route runs unauthenticated unless the route itself explicitly defines one.
+        - This configuration commonly results from a "we'll add auth later" workflow that never gets revisited.
+        - Public APIs without auth eliminate every meaningful access control, rate-limiting attribution, and audit-trail signal that downstream services depend on.
+        - The combination of "deployment exists" and "no auth" is a stronger failure than `is_anonymous_access_allowed = true`, because there is no policy at all to allow anonymity *under*.
+
+        **Risk mitigation**
+
+        - Forces an explicit decision about which auth model each API uses.
+        - Closes the silent-default path where a deployment ships with no auth.
+        - Provides a hook for downstream rate-limiting, audit, and authorization decisions.
+      remediation:
+        - id: console
+          desc: |
+            Attach an authentication policy to the deployment:
+
+            1. Open **Developer Services** → **API Gateway** → **Deployments** → select the deployment → **API Request Policies**.
+            2. Open **Authentication** → **Add**. Pick **JWT**, **OAuth 2.0**, or **Custom** based on the application's identity model.
+            3. Configure issuers / audiences / public keys (for JWT) or the auth function OCID (for Custom).
+            4. Set **Enable anonymous access** to off.
+            5. Save and deploy.
+        - id: cli
+          desc: |
+            Update the deployment with a specification whose `requestPolicies.authentication.type` is set:
+
+            ```bash
+            oci api-gateway deployment update \
+              --deployment-id <deployment-ocid> \
+              --specification file://specification.json
+            ```
+
+            Where `specification.json` declares an `authentication` block with `"type": "JWT_AUTHENTICATION"` (or `TOKEN_AUTHENTICATION` / `CUSTOM_AUTHENTICATION`).
+        - id: terraform
+          desc: |
+            Declare an `authentication` block with a non-empty `type` on every deployment specification:
+
+            ```hcl
+            resource "oci_apigateway_deployment" "app" {
+              compartment_id = var.compartment_ocid
+              gateway_id     = oci_apigateway_gateway.app.id
+              path_prefix    = "/v1"
+
+              specification {
+                request_policies {
+                  authentication {
+                    type                        = "JWT_AUTHENTICATION"
+                    is_anonymous_access_allowed = false
+                    issuers                     = ["https://idp.example.com/"]
+                    audiences                   = ["api.example.com"]
+
+                    public_keys {
+                      type                       = "REMOTE_JWKS"
+                      uri                        = "https://idp.example.com/.well-known/jwks.json"
+                      max_cache_duration_in_hours = 1
+                    }
+                  }
+                }
+                routes {
+                  path    = "/orders"
+                  methods = ["GET"]
+                  backend {
+                    type = "HTTP_BACKEND"
+                    url  = "https://backend.internal/orders"
+                  }
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/APIGateway/Tasks/apigatewayusingauthenticationpolicies.htm
+        title: OCI - API Gateway Authentication Policies
+  - uid: mondoo-oci-security-apigateway-deployment-authentication-configured-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.apigateway.deployments.all(authenticationType != "NONE")
+  - uid: mondoo-oci-security-apigateway-deployment-authentication-configured-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_apigateway_deployment')
+    mql: |
+      terraform.resources('oci_apigateway_deployment').all(
+        blocks.where(type == 'specification') != empty &&
+        blocks.where(type == 'specification').all(
+          blocks.where(type == 'request_policies') != empty &&
+          blocks.where(type == 'request_policies').all(
+            blocks.where(type == 'authentication') != empty &&
+            blocks.where(type == 'authentication').all(
+              arguments['type'] != null && arguments['type'] != ""
+            )
+          )
+        )
+      )
+  - uid: mondoo-oci-security-apigateway-deployment-authentication-configured-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_apigateway_deployment')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_apigateway_deployment').all(
+        change.after['specification'] != null && change.after['specification'].length > 0 &&
+        change.after['specification'].all(
+          _['request_policies'] != null && _['request_policies'].length > 0 &&
+          _['request_policies'].all(
+            _['authentication'] != null && _['authentication'].length > 0 &&
+            _['authentication'].all(
+              _['type'] != null && _['type'] != ""
+            )
+          )
+        )
+      )
+  - uid: mondoo-oci-security-apigateway-deployment-authentication-configured-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_apigateway_deployment')
+    mql: |
+      terraform.state.resources.where(type == 'oci_apigateway_deployment').all(
+        values['specification'] != null && values['specification'].length > 0 &&
+        values['specification'].all(
+          _['request_policies'] != null && _['request_policies'].length > 0 &&
+          _['request_policies'].all(
+            _['authentication'] != null && _['authentication'].length > 0 &&
+            _['authentication'].all(
+              _['type'] != null && _['type'] != ""
+            )
+          )
+        )
+      )
+  - uid: mondoo-oci-security-apigateway-deployment-mtls-verified
+    title: Ensure API Gateway mTLS deployments verify client certificates
+    impact: 80
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
+      compliance/nist-sp-800-171: false
+      compliance/soc2-2017: soc2-control-cc6-1-4
+    variants:
+      - uid: mondoo-oci-security-apigateway-deployment-mtls-verified-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-apigateway-deployment-mtls-verified-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-apigateway-deployment-mtls-verified-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-apigateway-deployment-mtls-verified-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that any API Gateway deployment configured with a `mutual_tls` block enforces client-certificate verification (`is_verified_certificate_required = true`). A `mutual_tls` block whose verification flag is left at the default `false` advertises mTLS without rejecting unauthenticated clients — clients can still connect over plain TLS, defeating the point of configuring mTLS at all.
+
+        **Why this matters**
+
+        Half-configured mTLS is worse than no mTLS:
+
+        - Operators read the deployment as "mTLS-protected" because the `mutual_tls` block is present.
+        - Clients without certificates still connect because verification is not enforced — the gateway accepts whatever the TLS handshake produces.
+        - Compliance reviews see "mTLS configured" in the deployment and assume the strongest authentication tier; in reality the deployment is no stronger than the rest of its auth stack.
+        - The `allowed_sans` list is meaningless if verification is off — it filters certificates that aren't being checked.
+
+        **Risk mitigation**
+
+        - Forces clients to present a certificate that chains to the configured CA bundle.
+        - Brings the deployment in line with the documented expectation when mTLS is configured.
+        - Makes the `allowed_sans` list a real authorization boundary instead of advisory metadata.
+      remediation:
+        - id: console
+          desc: |
+            Enable certificate verification on the deployment's mutual TLS policy:
+
+            1. Open **Developer Services** → **API Gateway** → **Deployments** → select the deployment → **API Request Policies**.
+            2. Open **Mutual TLS**.
+            3. Set **Require verified client certificate** to on.
+            4. Confirm the CA bundle and allowed SANs are appropriate, then save and deploy.
+        - id: cli
+          desc: |
+            Update the deployment specification with `is_verified_certificate_required: true` in the mutual TLS block:
+
+            ```bash
+            oci api-gateway deployment update \
+              --deployment-id <deployment-ocid> \
+              --specification file://specification.json
+            ```
+        - id: terraform
+          desc: |
+            Set `is_verified_certificate_required = true` on every `mutual_tls` block in deployment specifications:
+
+            ```hcl
+            resource "oci_apigateway_deployment" "app" {
+              compartment_id = var.compartment_ocid
+              gateway_id     = oci_apigateway_gateway.app.id
+              path_prefix    = "/v1"
+
+              specification {
+                request_policies {
+                  mutual_tls {
+                    is_verified_certificate_required = true
+                    allowed_sans                     = ["client.app.example.com"]
+                  }
+                  authentication {
+                    type                        = "JWT_AUTHENTICATION"
+                    is_anonymous_access_allowed = false
+                    issuers                     = ["https://idp.example.com/"]
+                    audiences                   = ["api.example.com"]
+
+                    public_keys {
+                      type                       = "REMOTE_JWKS"
+                      uri                        = "https://idp.example.com/.well-known/jwks.json"
+                      max_cache_duration_in_hours = 1
+                    }
+                  }
+                }
+                routes {
+                  path    = "/orders"
+                  methods = ["GET"]
+                  backend {
+                    type = "HTTP_BACKEND"
+                    url  = "https://backend.internal/orders"
+                  }
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/APIGateway/Tasks/apigatewayaddingmTLS.htm
+        title: OCI - API Gateway Mutual TLS
+  - uid: mondoo-oci-security-apigateway-deployment-mtls-verified-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.apigateway.deployments.where(mtlsAllowedSans.length > 0).all(
+        mtlsIsVerifiedCertificateRequired == true
+      )
+  - uid: mondoo-oci-security-apigateway-deployment-mtls-verified-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_apigateway_deployment')
+    mql: |
+      terraform.resources('oci_apigateway_deployment').all(
+        blocks.where(type == 'specification').all(
+          blocks.where(type == 'request_policies').all(
+            blocks.where(type == 'mutual_tls').all(
+              arguments['is_verified_certificate_required'] == true
+            )
+          )
+        )
+      )
+  - uid: mondoo-oci-security-apigateway-deployment-mtls-verified-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_apigateway_deployment')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_apigateway_deployment').all(
+        change.after['specification'].all(
+          _['request_policies'].all(
+            _['mutual_tls'].all(
+              _['is_verified_certificate_required'] == true
+            )
+          )
+        )
+      )
+  - uid: mondoo-oci-security-apigateway-deployment-mtls-verified-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_apigateway_deployment')
+    mql: |
+      terraform.state.resources.where(type == 'oci_apigateway_deployment').all(
+        values['specification'].all(
+          _['request_policies'].all(
+            _['mutual_tls'].all(
+              _['is_verified_certificate_required'] == true
+            )
+          )
+        )
+      )
+  - uid: mondoo-oci-security-apigateway-deployment-no-wildcard-cors
+    title: Ensure API Gateway deployments do not use wildcard CORS origins
+    impact: 75
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-3
+      compliance/soc2-2017: soc2-control-cc6-1-12
+    variants:
+      - uid: mondoo-oci-security-apigateway-deployment-no-wildcard-cors-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-apigateway-deployment-no-wildcard-cors-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-apigateway-deployment-no-wildcard-cors-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-apigateway-deployment-no-wildcard-cors-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that no API Gateway deployment includes `"*"` in its CORS `allowed_origins` list. A wildcard origin instructs browsers that any web origin may invoke the API and read its responses, removing the same-origin protection browsers rely on to keep authenticated session data inside the application that owns it.
+
+        **Why this matters**
+
+        Wildcard CORS origins on an authenticated API surface are a one-line cross-site data exfiltration channel:
+
+        - Any malicious page in the user's browser can issue authenticated requests to the API and read the response body, because the gateway tells the browser the response is safe to share.
+        - The combination of wildcard origins with `Access-Control-Allow-Credentials: true` is explicitly disallowed by the CORS spec, but some servers honor it anyway and many clients silently accept it.
+        - Wildcard origins are typically introduced for local development and shipped to production unchanged.
+        - Tightening CORS later is an availability risk because legitimate front-ends may already depend on the permissive policy.
+
+        **Risk mitigation**
+
+        - Restores the same-origin policy as a defense for authenticated APIs.
+        - Forces an explicit allowlist of front-end origins, which is also a useful audit artifact.
+        - Eliminates the spec-violating combination of wildcard origins with credentials.
+      remediation:
+        - id: console
+          desc: |
+            Replace the wildcard CORS origin with an explicit allowlist:
+
+            1. Open **Developer Services** → **API Gateway** → **Deployments** → select the deployment → **API Request Policies**.
+            2. Open **CORS** and remove the `*` entry from **Allowed Origins**.
+            3. Add each legitimate front-end origin (e.g. `https://app.example.com`) explicitly.
+            4. Save and deploy. Verify that production front-ends still load the API.
+        - id: cli
+          desc: |
+            Update the deployment with a CORS specification whose `allowedOrigins` is an explicit list:
+
+            ```bash
+            oci api-gateway deployment update \
+              --deployment-id <deployment-ocid> \
+              --specification file://specification.json
+            ```
+        - id: terraform
+          desc: |
+            Replace `"*"` in `allowed_origins` with an explicit list of trusted origins:
+
+            ```hcl
+            resource "oci_apigateway_deployment" "app" {
+              compartment_id = var.compartment_ocid
+              gateway_id     = oci_apigateway_gateway.app.id
+              path_prefix    = "/v1"
+
+              specification {
+                request_policies {
+                  cors {
+                    allowed_origins             = ["https://app.example.com"]
+                    allowed_methods             = ["GET", "POST"]
+                    allowed_headers             = ["Content-Type", "Authorization"]
+                    is_allow_credentials_enabled = true
+                    max_age_in_seconds          = 600
+                  }
+                }
+                routes {
+                  path    = "/orders"
+                  methods = ["GET"]
+                  backend {
+                    type = "HTTP_BACKEND"
+                    url  = "https://backend.internal/orders"
+                  }
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/APIGateway/Tasks/apigatewayusingcorspolicies.htm
+        title: OCI - API Gateway CORS Policies
+  - uid: mondoo-oci-security-apigateway-deployment-no-wildcard-cors-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.apigateway.deployments.all(corsAllowedOrigins.none(_ == "*"))
+  - uid: mondoo-oci-security-apigateway-deployment-no-wildcard-cors-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_apigateway_deployment')
+    mql: |
+      terraform.resources('oci_apigateway_deployment').all(
+        blocks.where(type == 'specification').all(
+          blocks.where(type == 'request_policies').all(
+            blocks.where(type == 'cors').all(
+              arguments['allowed_origins'] == null ||
+              arguments['allowed_origins'].none(_ == "*")
+            )
+          )
+        )
+      )
+  - uid: mondoo-oci-security-apigateway-deployment-no-wildcard-cors-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_apigateway_deployment')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_apigateway_deployment').all(
+        change.after['specification'].all(
+          _['request_policies'].all(
+            _['cors'].all(
+              _['allowed_origins'] == null ||
+              _['allowed_origins'].none(_ == "*")
+            )
+          )
+        )
+      )
+  - uid: mondoo-oci-security-apigateway-deployment-no-wildcard-cors-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_apigateway_deployment')
+    mql: |
+      terraform.state.resources.where(type == 'oci_apigateway_deployment').all(
+        values['specification'].all(
+          _['request_policies'].all(
+            _['cors'].all(
+              _['allowed_origins'] == null ||
+              _['allowed_origins'].none(_ == "*")
+            )
+          )
+        )
+      )
+  # No Terraform variants: certificate validity is dynamic operational telemetry derived from the issuance time and validity duration of the current cert version. The Terraform resource declares the validity duration but cannot predict scan-time expiry, so a static check would either be vacuous or require time-of-scan logic that lives outside HCL/plan/state.
+  # No Terraform remediation: same reason — there is no HCL change that "fixes" an expired cert; the fix is to issue a new version through the OCI Certificates Management service.
+  - uid: mondoo-oci-security-certificates-not-expired
+    title: Ensure managed certificates are not expired or near expiry
+    impact: 80
+    filters: asset.platform == 'oci'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-17
+      compliance/nist-sp-800-171: false
+      compliance/soc2-2017: soc2-control-cc6-7-2
+    mql: |
+      oci.certificates.certificates.where(state == "ACTIVE").all(
+        validityNotAfter - time.now > 30 * time.day
+      )
+    docs:
+      desc: |
+        This check verifies that every active certificate in OCI Certificates Management has at least 30 days of validity remaining. An expired certificate triggers TLS handshake failures for every consumer that pins the chain; a certificate within 30 days of expiry is the operational warning that a renewal must be scheduled before the outage window.
+
+        **Why this matters**
+
+        Expired certificates are both an availability problem and a security one:
+
+        - Clients fall back to insecure handshakes, retry without verification, or fail open when handshake errors are misclassified as transient — each of these defeats the cert's authentication purpose.
+        - Operators under outage pressure routinely disable certificate verification "just to get the service back," leaving deployments running with verification off long after the renewal completes.
+        - Short-window expiry creates pressure to issue rushed replacements that may skip the usual approval / pinning / monitoring steps.
+        - Public CAs, internal PKI, and automated systems all assume that an in-policy certificate has meaningful expiry — an expired cert silently breaks every assumption built on top.
+
+        **Risk mitigation**
+
+        - Detects renewal failures early, before downstream consumers start to fail.
+        - Forces certificate-renewal pipelines to run on schedule rather than reactively.
+        - Provides audit evidence that the certificate inventory is being maintained.
+      remediation:
+        - id: console
+          desc: |
+            Issue a new version for each near-expiry or expired certificate:
+
+            1. Open **Identity & Security** → **Certificates** → **Certificates** → select the certificate.
+            2. Choose **Issue New Version**.
+            3. For internally issued certificates, enable a `CERTIFICATE_RENEWAL_RULE` so future versions auto-renew.
+            4. Trigger the new version, verify the consumers pick it up, and remove the old version once dependents have rotated.
+        - id: cli
+          desc: |
+            Add or update a renewal rule on an internally-issued certificate so the next version is issued automatically before the current one expires:
+
+            ```bash
+            oci certs-mgmt certificate update-certificate-managed-internally \
+              --certificate-id <certificate-ocid> \
+              --certificate-rules '[{"ruleType":"CERTIFICATE_RENEWAL_RULE","advanceRenewalPeriod":"P30D","renewalInterval":"P365D"}]'
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/certificates/managing-certificates.htm
+        title: OCI - Managing Certificates
+  - uid: mondoo-oci-security-certificates-strong-key-algorithms
+    title: Ensure managed certificates use strong key algorithms
+    impact: 75
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-13
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-11
+      compliance/soc2-2017: soc2-control-cc6-1-10
+    variants:
+      - uid: mondoo-oci-security-certificates-strong-key-algorithms-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-certificates-strong-key-algorithms-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-certificates-strong-key-algorithms-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-certificates-strong-key-algorithms-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that every active certificate in OCI Certificates Management uses a key algorithm that is currently considered safe — `RSA2048`, `RSA4096`, `ECDSA_P256`, or `ECDSA_P384`. Certificates with smaller RSA keys (1024-bit) or weak elliptic curves are vulnerable to feasible cryptanalysis and should not protect production traffic.
+
+        **Why this matters**
+
+        The certificate's key algorithm bounds the cryptographic strength of every TLS session that uses it:
+
+        - 1024-bit RSA keys are factorable today by well-resourced attackers and are explicitly prohibited by NIST SP 800-131A.
+        - Non-NIST curves and short EC keys carry similar concerns and break interoperability with strict clients.
+        - Imported certificates can carry legacy keys that pre-date current standards; they enter the OCI Certificates inventory looking identical to freshly issued ones.
+        - Future-proofing matters: certificates issued today are typically pinned for years, so a weak key today is a multi-year liability.
+
+        **Risk mitigation**
+
+        - Forces every certificate to meet a documented modern-crypto baseline.
+        - Surfaces imported legacy certs that need re-issuance before they protect new traffic.
+        - Aligns with NIST SP 800-131A and current TLS guidance.
+      remediation:
+        - id: console
+          desc: |
+            Re-issue certificates with weak key algorithms using a strong key:
+
+            1. Open **Identity & Security** → **Certificates** → **Certificates** → identify certificates with weak key algorithms.
+            2. For internally-issued certificates, choose **Issue New Version** and select **RSA2048**, **RSA4096**, **ECDSA_P256**, or **ECDSA_P384** as the key algorithm.
+            3. For imported certificates, regenerate the certificate externally with a strong key algorithm and re-import.
+            4. Update consumers to pick up the new version, then deprecate the old version.
+        - id: cli
+          desc: |
+            Key algorithms cannot be changed on an existing certificate. Issue a replacement internally-issued certificate with a strong key algorithm and migrate consumers:
+
+            ```bash
+            oci certs-mgmt certificate create-certificate-issued-by-internal-ca \
+              --compartment-id <compartment-ocid> \
+              --name app-tls-cert-v2 \
+              --issuer-certificate-authority-id <ca-ocid> \
+              --key-algorithm RSA2048 \
+              --signature-algorithm SHA256_WITH_RSA \
+              --subject '{"commonName":"app.example.com"}' \
+              --validity '{"timeOfValidityNotAfter":"2027-01-01T00:00:00Z"}'
+            ```
+        - id: terraform
+          desc: |
+            Set `certificate_config.key_algorithm` to a strong value on every internally-issued certificate:
+
+            ```hcl
+            resource "oci_certificates_management_certificate" "app" {
+              compartment_id = var.compartment_ocid
+              name           = "app-tls-cert"
+
+              certificate_config {
+                config_type                  = "ISSUED_BY_INTERNAL_CA"
+                issuer_certificate_authority_id = oci_certificates_management_certificate_authority.internal.id
+                key_algorithm                = "RSA2048"
+                signature_algorithm          = "SHA256_WITH_RSA"
+
+                subject {
+                  common_name = "app.example.com"
+                }
+
+                validity {
+                  time_of_validity_not_after = "2027-01-01T00:00:00Z"
+                }
+              }
+
+              certificate_rules {
+                rule_type              = "CERTIFICATE_RENEWAL_RULE"
+                advance_renewal_period = "P30D"
+                renewal_interval       = "P365D"
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/certificates/managing-certificates.htm
+        title: OCI - Managing Certificates
+  - uid: mondoo-oci-security-certificates-strong-key-algorithms-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.certificates.certificates.where(state == "ACTIVE").all(
+        keyAlgorithm.in(["RSA2048", "RSA4096", "ECDSA_P256", "ECDSA_P384"])
+      )
+  - uid: mondoo-oci-security-certificates-strong-key-algorithms-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_certificates_management_certificate')
+    mql: |
+      terraform.resources('oci_certificates_management_certificate').all(
+        blocks.where(type == 'certificate_config').where(arguments['config_type'] != "IMPORTED").all(
+          arguments['key_algorithm'] != null &&
+          arguments['key_algorithm'].in(["RSA2048", "RSA4096", "ECDSA_P256", "ECDSA_P384"])
+        )
+      )
+  - uid: mondoo-oci-security-certificates-strong-key-algorithms-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_certificates_management_certificate')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_certificates_management_certificate').all(
+        change.after['certificate_config'].where(_['config_type'] != "IMPORTED").all(
+          _['key_algorithm'] != null &&
+          _['key_algorithm'].in(["RSA2048", "RSA4096", "ECDSA_P256", "ECDSA_P384"])
+        )
+      )
+  - uid: mondoo-oci-security-certificates-strong-key-algorithms-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_certificates_management_certificate')
+    mql: |
+      terraform.state.resources.where(type == 'oci_certificates_management_certificate').all(
+        values['certificate_config'].where(_['config_type'] != "IMPORTED").all(
+          _['key_algorithm'] != null &&
+          _['key_algorithm'].in(["RSA2048", "RSA4096", "ECDSA_P256", "ECDSA_P384"])
+        )
+      )
+  - uid: mondoo-oci-security-certificates-strong-signature-algorithms
+    title: Ensure managed certificates use strong signature algorithms
+    impact: 75
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-13
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-11
+      compliance/soc2-2017: soc2-control-cc6-1-10
+    variants:
+      - uid: mondoo-oci-security-certificates-strong-signature-algorithms-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-certificates-strong-signature-algorithms-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-certificates-strong-signature-algorithms-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-certificates-strong-signature-algorithms-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that every active certificate in OCI Certificates Management is signed with a SHA-2 family algorithm — `SHA256_WITH_RSA`, `SHA384_WITH_RSA`, `SHA512_WITH_RSA`, `SHA256_WITH_ECDSA`, `SHA384_WITH_ECDSA`, or `SHA512_WITH_ECDSA`. Certificates signed with SHA-1 or MD5 derivatives are vulnerable to known collision attacks and are rejected by every modern client.
+
+        **Why this matters**
+
+        A weak signature breaks the trust chain regardless of how strong the key is:
+
+        - SHA-1 collisions have been demonstrated since 2017 (`SHAttered`); attackers can forge certificates that appear to chain to a legitimate CA.
+        - Browsers and operating systems have rejected SHA-1 certificates for years; surviving SHA-1 certs in the inventory are typically internal-only certs that are still trusted by automation but exploitable by anyone who can run a chosen-prefix attack.
+        - MD5 was retired even earlier and any cert still signed with it is essentially a forgery primitive.
+        - Imported certificates can carry weak signatures that the OCI Certificates service does not block at import.
+
+        **Risk mitigation**
+
+        - Forces every certificate to use a signature algorithm without known forgery techniques.
+        - Aligns with NIST SP 800-131A guidance on retired hash functions.
+        - Removes silent trust paths through certs that modern clients have already stopped honoring.
+      remediation:
+        - id: console
+          desc: |
+            Re-issue certificates with weak signatures using a SHA-2 algorithm:
+
+            1. Open **Identity & Security** → **Certificates** → **Certificates** → identify certificates with weak signature algorithms.
+            2. For internally-issued certificates, choose **Issue New Version** and pick a `SHA256_WITH_*`, `SHA384_WITH_*`, or `SHA512_WITH_*` signature algorithm.
+            3. For imported certificates, re-issue them externally using a SHA-2 signature and re-import.
+        - id: cli
+          desc: |
+            Signature algorithms cannot be changed on an existing certificate. Issue a replacement internally-issued certificate with a SHA-2 signature algorithm and migrate consumers:
+
+            ```bash
+            oci certs-mgmt certificate create-certificate-issued-by-internal-ca \
+              --compartment-id <compartment-ocid> \
+              --name app-tls-cert-v2 \
+              --issuer-certificate-authority-id <ca-ocid> \
+              --key-algorithm RSA2048 \
+              --signature-algorithm SHA256_WITH_RSA \
+              --subject '{"commonName":"app.example.com"}' \
+              --validity '{"timeOfValidityNotAfter":"2027-01-01T00:00:00Z"}'
+            ```
+        - id: terraform
+          desc: |
+            Set `certificate_config.signature_algorithm` to a SHA-2 value on every internally-issued certificate:
+
+            ```hcl
+            resource "oci_certificates_management_certificate" "app" {
+              compartment_id = var.compartment_ocid
+              name           = "app-tls-cert"
+
+              certificate_config {
+                config_type                  = "ISSUED_BY_INTERNAL_CA"
+                issuer_certificate_authority_id = oci_certificates_management_certificate_authority.internal.id
+                key_algorithm                = "RSA2048"
+                signature_algorithm          = "SHA256_WITH_RSA"
+
+                subject {
+                  common_name = "app.example.com"
+                }
+
+                validity {
+                  time_of_validity_not_after = "2027-01-01T00:00:00Z"
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/certificates/managing-certificates.htm
+        title: OCI - Managing Certificates
+  - uid: mondoo-oci-security-certificates-strong-signature-algorithms-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.certificates.certificates.where(state == "ACTIVE").all(
+        signatureAlgorithm.in([
+          "SHA256_WITH_RSA",
+          "SHA384_WITH_RSA",
+          "SHA512_WITH_RSA",
+          "SHA256_WITH_ECDSA",
+          "SHA384_WITH_ECDSA",
+          "SHA512_WITH_ECDSA"
+        ])
+      )
+  - uid: mondoo-oci-security-certificates-strong-signature-algorithms-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_certificates_management_certificate')
+    mql: |
+      terraform.resources('oci_certificates_management_certificate').all(
+        blocks.where(type == 'certificate_config').where(arguments['config_type'] != "IMPORTED").all(
+          arguments['signature_algorithm'] != null &&
+          arguments['signature_algorithm'].in([
+            "SHA256_WITH_RSA",
+            "SHA384_WITH_RSA",
+            "SHA512_WITH_RSA",
+            "SHA256_WITH_ECDSA",
+            "SHA384_WITH_ECDSA",
+            "SHA512_WITH_ECDSA"
+          ])
+        )
+      )
+  - uid: mondoo-oci-security-certificates-strong-signature-algorithms-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_certificates_management_certificate')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_certificates_management_certificate').all(
+        change.after['certificate_config'].where(_['config_type'] != "IMPORTED").all(
+          _['signature_algorithm'] != null &&
+          _['signature_algorithm'].in([
+            "SHA256_WITH_RSA",
+            "SHA384_WITH_RSA",
+            "SHA512_WITH_RSA",
+            "SHA256_WITH_ECDSA",
+            "SHA384_WITH_ECDSA",
+            "SHA512_WITH_ECDSA"
+          ])
+        )
+      )
+  - uid: mondoo-oci-security-certificates-strong-signature-algorithms-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_certificates_management_certificate')
+    mql: |
+      terraform.state.resources.where(type == 'oci_certificates_management_certificate').all(
+        values['certificate_config'].where(_['config_type'] != "IMPORTED").all(
+          _['signature_algorithm'] != null &&
+          _['signature_algorithm'].in([
+            "SHA256_WITH_RSA",
+            "SHA384_WITH_RSA",
+            "SHA512_WITH_RSA",
+            "SHA256_WITH_ECDSA",
+            "SHA384_WITH_ECDSA",
+            "SHA512_WITH_ECDSA"
+          ])
+        )
+      )
+  - uid: mondoo-oci-security-certificates-auto-renewal-enabled
+    title: Ensure managed certificates have auto-renewal enabled
+    impact: 60
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-17
+      compliance/nist-sp-800-171: false
+      compliance/soc2-2017: soc2-control-cc6-7-2
+    variants:
+      - uid: mondoo-oci-security-certificates-auto-renewal-enabled-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-certificates-auto-renewal-enabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-certificates-auto-renewal-enabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-certificates-auto-renewal-enabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that every internally-issued certificate (`configType` containing `ISSUED_BY_INTERNAL_CA`) has auto-renewal configured via a `CERTIFICATE_RENEWAL_RULE`. Imported certificates cannot auto-renew through the service and are excluded from this check.
+
+        **Why this matters**
+
+        Manually-renewed certificates fail at the worst possible moment:
+
+        - Renewal cadence is determined by a calendar reminder, an oncall handoff, or a ticketing-system due date — all of which break under personnel changes or holiday schedules.
+        - When renewal lapses, every dependent service simultaneously loses TLS — operators under that pressure routinely disable verification or push out a hand-issued cert that bypasses normal review.
+        - An attacker with control of the renewal process (e.g., a compromised ACME endpoint, a hijacked CA account) can substitute a malicious certificate during a manual cutover that no one will notice.
+        - Auto-renewal flips this: the service rolls a new version automatically inside a window where the old version is still valid, leaving operators time to detect anomalies before any outage.
+
+        **Risk mitigation**
+
+        - Eliminates the manual-renewal failure mode that drives almost every certificate-related outage.
+        - Closes the window where an expired cert could be replaced by an attacker-presented one without anyone noticing.
+        - Makes renewal cadence consistent with the issuance cadence the organization actually wants to enforce.
+      remediation:
+        - id: console
+          desc: |
+            Add a renewal rule to internally-issued certificates that lack one:
+
+            1. Open **Identity & Security** → **Certificates** → **Certificates** → select the certificate.
+            2. Open **Rules** → **Add Rule**.
+            3. Pick **Certificate Renewal Rule**, set **Renewal interval** (e.g. `P365D`), and set **Advance renewal period** (e.g. `P30D`).
+            4. Save. Future renewals trigger automatically inside the advance-renewal window.
+        - id: cli
+          desc: |
+            Add a renewal rule to an existing internally-issued certificate:
+
+            ```bash
+            oci certs-mgmt certificate update \
+              --certificate-id <certificate-ocid> \
+              --certificate-rules '[{"ruleType":"CERTIFICATE_RENEWAL_RULE","advanceRenewalPeriod":"P30D","renewalInterval":"P365D"}]'
+            ```
+        - id: terraform
+          desc: |
+            Declare a `certificate_rules` block with `rule_type = "CERTIFICATE_RENEWAL_RULE"` on every internally-issued certificate:
+
+            ```hcl
+            resource "oci_certificates_management_certificate" "app" {
+              compartment_id = var.compartment_ocid
+              name           = "app-tls-cert"
+
+              certificate_config {
+                config_type                     = "ISSUED_BY_INTERNAL_CA"
+                issuer_certificate_authority_id = oci_certificates_management_certificate_authority.internal.id
+                key_algorithm                   = "RSA2048"
+                signature_algorithm             = "SHA256_WITH_RSA"
+
+                subject {
+                  common_name = "app.example.com"
+                }
+              }
+
+              certificate_rules {
+                rule_type              = "CERTIFICATE_RENEWAL_RULE"
+                advance_renewal_period = "P30D"
+                renewal_interval       = "P365D"
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/certificates/managing-certificates.htm
+        title: OCI - Managing Certificates
+  - uid: mondoo-oci-security-certificates-auto-renewal-enabled-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.certificates.certificates.where(
+        state == "ACTIVE" && configType.contains("ISSUED_BY_INTERNAL_CA")
+      ).all(autoRenewalEnabled == true)
+  - uid: mondoo-oci-security-certificates-auto-renewal-enabled-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_certificates_management_certificate')
+    mql: |
+      terraform.resources('oci_certificates_management_certificate').where(
+        blocks.where(type == 'certificate_config').where(arguments['config_type'] != "IMPORTED") != empty
+      ).all(
+        blocks.where(type == 'certificate_rules').where(arguments['rule_type'] == "CERTIFICATE_RENEWAL_RULE") != empty
+      )
+  - uid: mondoo-oci-security-certificates-auto-renewal-enabled-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_certificates_management_certificate')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_certificates_management_certificate').where(
+        change.after['certificate_config'].where(_['config_type'] != "IMPORTED") != empty
+      ).all(
+        change.after['certificate_rules'] != null &&
+        change.after['certificate_rules'].where(_['rule_type'] == "CERTIFICATE_RENEWAL_RULE") != empty
+      )
+  - uid: mondoo-oci-security-certificates-auto-renewal-enabled-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_certificates_management_certificate')
+    mql: |
+      terraform.state.resources.where(type == 'oci_certificates_management_certificate').where(
+        values['certificate_config'].where(_['config_type'] != "IMPORTED") != empty
+      ).all(
+        values['certificate_rules'] != null &&
+        values['certificate_rules'].where(_['rule_type'] == "CERTIFICATE_RENEWAL_RULE") != empty
+      )
+  - uid: mondoo-oci-security-certificate-authorities-customer-managed-keys
+    title: Ensure certificate authorities use customer-managed KMS keys
+    impact: 70
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-12
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/soc2-2017: soc2-control-cc6-1-10
+    variants:
+      - uid: mondoo-oci-security-certificate-authorities-customer-managed-keys-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-certificate-authorities-customer-managed-keys-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-certificate-authorities-customer-managed-keys-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-certificate-authorities-customer-managed-keys-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that every certificate authority in OCI Certificates Management has its private key material protected by a customer-managed KMS key — the `kmsKey` typed reference is non-null. CA private keys are the highest-value secrets in any PKI; without a customer-controlled KMS key, the encryption boundary follows the Oracle tenancy by default rather than the organization's vault and access policies.
+
+        **Why this matters**
+
+        A CA's private key is the master credential of every certificate it has ever issued or will issue:
+
+        - Whoever can use the CA private key can mint a certificate for any name — including names belonging to internal services, partner domains, and SaaS endpoints.
+        - Customer-managed keys allow the organization to revoke access via Vault policies, rotate the encryption key, and enforce HSM-backed key-shape requirements.
+        - Without a CMK reference, the CA private material is encrypted only by Oracle-managed defaults, which means key-management policies cannot be enforced or audited at the customer's level.
+        - Subordinate CAs inherit this risk: a subordinate CA without a CMK provides a path to mint certificates whose key material the customer cannot control.
+
+        **Risk mitigation**
+
+        - Restricts who can decrypt CA private material to holders of the CMK.
+        - Provides an audit trail through Vault for every operation involving the CA's key.
+        - Enables key-revocation as a containment action if a CA compromise is suspected.
+      remediation:
+        - id: console
+          desc: |
+            Re-create CAs without customer-managed encryption using a vault-backed key. (CA encryption keys are set at create time and cannot be changed in place.)
+
+            1. Open **Identity & Security** → **Certificates** → **Certificate Authorities** → identify CAs without a Vault key.
+            2. Decide whether the CA can be retired (preferred) or must be replaced.
+            3. To replace: create a new CA in **Create Certificate Authority** with **KMS Vault** and **KMS Key** set to a customer-managed key, re-issue subordinate CAs and certificates from the new root, then schedule deletion of the old CA.
+        - id: cli
+          desc: |
+            Create a replacement root CA backed by a customer-managed KMS key. (CA encryption keys are set at create time; existing CAs without a CMK must be replaced.)
+
+            ```bash
+            oci certs-mgmt certificate-authority create-root-ca-by-generating-config-details \
+              --compartment-id <compartment-ocid> \
+              --name internal-root-ca-v2 \
+              --kms-key-id <kms-key-ocid> \
+              --signing-algorithm SHA256_WITH_RSA \
+              --subject '{"commonName":"Internal Root CA"}' \
+              --validity '{"timeOfValidityNotAfter":"2031-01-01T00:00:00Z"}'
+            ```
+        - id: terraform
+          desc: |
+            Set `kms_key_id` on every `oci_certificates_management_certificate_authority` to reference a customer-managed key:
+
+            ```hcl
+            resource "oci_kms_vault" "pki" {
+              compartment_id = var.compartment_ocid
+              display_name   = "pki-vault"
+              vault_type     = "DEFAULT"
+            }
+
+            resource "oci_kms_key" "pki" {
+              compartment_id      = var.compartment_ocid
+              display_name        = "pki-ca-key"
+              management_endpoint = oci_kms_vault.pki.management_endpoint
+              protection_mode     = "HSM"
+
+              key_shape {
+                algorithm = "RSA"
+                length    = 256
+              }
+            }
+
+            resource "oci_certificates_management_certificate_authority" "root" {
+              compartment_id = var.compartment_ocid
+              name           = "internal-root-ca"
+              kms_key_id     = oci_kms_key.pki.id
+
+              certificate_authority_config {
+                config_type         = "ROOT_CA_GENERATED_INTERNALLY"
+                signing_algorithm   = "SHA256_WITH_RSA"
+
+                subject {
+                  common_name = "Internal Root CA"
+                }
+
+                validity {
+                  time_of_validity_not_after = "2031-01-01T00:00:00Z"
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/certificates/managing-certificate-authorities.htm
+        title: OCI - Managing Certificate Authorities
+  - uid: mondoo-oci-security-certificate-authorities-customer-managed-keys-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.certificates.certificateAuthorities.where(state == "ACTIVE").all(
+        kmsKey != null
+      )
+  - uid: mondoo-oci-security-certificate-authorities-customer-managed-keys-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_certificates_management_certificate_authority')
+    mql: |
+      terraform.resources('oci_certificates_management_certificate_authority').all(
+        arguments['kms_key_id'] != null && arguments['kms_key_id'] != ""
+      )
+  - uid: mondoo-oci-security-certificate-authorities-customer-managed-keys-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_certificates_management_certificate_authority')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_certificates_management_certificate_authority').all(
+        change.after['kms_key_id'] != null && change.after['kms_key_id'] != ""
+      )
+  - uid: mondoo-oci-security-certificate-authorities-customer-managed-keys-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_certificates_management_certificate_authority')
+    mql: |
+      terraform.state.resources.where(type == 'oci_certificates_management_certificate_authority').all(
+        values['kms_key_id'] != null && values['kms_key_id'] != ""
       )
