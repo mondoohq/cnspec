@@ -85,9 +85,12 @@ policies:
           - uid: mondoo-oci-security-oke-public-endpoint-disabled
           - uid: mondoo-oci-security-oke-supported-kubernetes-version
           - uid: mondoo-oci-security-oke-image-policy-enabled
+          - uid: mondoo-oci-security-oke-node-pool-private-subnets
+          - uid: mondoo-oci-security-oke-node-pool-nsgs-attached
       - title: Database
         checks:
           - uid: mondoo-oci-security-adb-mtls-or-restricted
+          - uid: mondoo-oci-security-adb-no-public-management-urls
           - uid: mondoo-oci-security-dbsystem-private-subnet
           - uid: mondoo-oci-security-dbsystem-subnet-no-internet-gateway
           - uid: mondoo-oci-security-database-backups-customer-managed-encryption
@@ -3710,6 +3713,207 @@ queries:
           _['is_policy_enabled'] == true
         )
       )
+  # No Terraform variants: requires cross-resource lookup from `oci_containerengine_node_pool` to its referenced `oci_core_subnet` to read `prohibit_public_ip_on_vnic`. Cross-resource graph traversal is fragile in HCL/plan/state and unsupported by the patterns used elsewhere in this file.
+  - uid: mondoo-oci-security-oke-node-pool-private-subnets
+    title: Ensure OKE node pool worker nodes are placed in private subnets
+    impact: 80
+    filters: asset.platform == 'oci'
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    mql: |
+      oci.oke.clusters.all(
+        nodePools.all(
+          subnets.all(prohibitPublicIpOnVnic == true)
+        )
+      )
+    docs:
+      desc: |
+        This check verifies that every OKE node pool places its worker nodes in subnets that prohibit public IPs on VNICs. A node pool subnet without `prohibitPublicIpOnVnic == true` allows worker nodes to be assigned a public IP and become directly reachable from the internet — exposing the kubelet, the container runtime, and every workload pod's host networking to internet scanning.
+
+        The OKE control-plane endpoint check (`mondoo-oci-security-oke-public-endpoint-disabled`) only covers the Kubernetes API server. Worker placement is a separate hardening dimension: a cluster with a private API endpoint can still have all of its worker nodes in a public subnet.
+
+        **Why this matters**
+
+        Worker nodes run the workloads, store ephemeral secrets in memory, and have privileged access to the cluster's networking:
+
+        - A worker with a public IP exposes kubelet (port 10250), the container runtime, and any `hostPort` or `hostNetwork` pod to the internet.
+        - Compromise of a single worker node typically yields service-account tokens, in-memory secrets, and lateral movement into the cluster.
+        - `prohibitPublicIpOnVnic: true` on the subnet provides a structural guarantee that worker nodes cannot accidentally be given a public IP.
+        - Public-IP workers also bypass the egress controls (NAT gateway, service gateway) that route private-subnet traffic through inspectable choke points.
+
+        **Risk mitigation**
+
+        - Removes internet reachability of worker nodes and their kubelets.
+        - Forces all node-to-internet traffic through a NAT or service gateway, where it can be logged and filtered.
+        - Prevents accidental exposure if a node pool is reconfigured.
+      remediation:
+        - id: console
+          desc: |
+            Move the node pool to private subnets:
+
+            1. Identify or create subnets with **Prohibit public IP on VNIC** set to **Yes** in the cluster's VCN.
+            2. Open **Developer Services** → **Kubernetes Clusters (OKE)** → select the cluster → **Node Pools** → select the node pool.
+            3. Node pool subnets cannot be changed in place — create a replacement node pool that targets the private subnets.
+            4. Cordon and drain the existing node pool, then delete it once workloads have rescheduled.
+        - id: cli
+          desc: |
+            Provision a replacement node pool in a private subnet, then drain and delete the public one:
+
+            ```bash
+            # Create a replacement node pool in a private subnet
+            oci ce node-pool create \
+              --cluster-id <cluster-ocid> \
+              --compartment-id <compartment-ocid> \
+              --name <node-pool-name>-private \
+              --kubernetes-version <version> \
+              --node-shape <shape> \
+              --placement-configs '[{"availabilityDomain":"<AD>","subnetId":"<private-subnet-ocid>"}]' \
+              --size <count>
+
+            # Drain and delete the original (public-subnet) node pool
+            oci ce node-pool delete --node-pool-id <old-node-pool-ocid> --force
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/ContEng/Concepts/contengnetworkconfig.htm
+        title: OCI - Network resource configuration for Kubernetes clusters
+  - uid: mondoo-oci-security-oke-node-pool-nsgs-attached
+    title: Ensure OKE node pool worker nodes have NSGs attached
+    impact: 60
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    variants:
+      - uid: mondoo-oci-security-oke-node-pool-nsgs-attached-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-oke-node-pool-nsgs-attached-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-oke-node-pool-nsgs-attached-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-oke-node-pool-nsgs-attached-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that every OKE node pool has at least one Network Security Group attached to its worker node VNICs. Without NSGs, node traffic is governed only by the subnet's security lists — a coarser, harder-to-reason-about model that applies to every resource in the subnet rather than just the node pool.
+
+        **Why this matters**
+
+        NSGs provide explicit, resource-level network access control that scopes naturally to the workload:
+
+        - Security lists apply uniformly to every VNIC in the subnet, including non-OKE resources, making least-privilege rules hard to express.
+        - NSGs allow the node pool's traffic policy to be tightened independently of unrelated workloads in the same subnet.
+        - NSG rules can reference other NSGs (e.g., "allow from the load balancer NSG"), keeping rules stable as IP ranges change.
+        - With no NSG attached, a misconfigured subnet security list silently widens the node pool's exposure.
+
+        **Risk mitigation**
+
+        - Provides a per-node-pool firewall layer independent of subnet-level rules.
+        - Enables NSG-to-NSG references so node pool rules don't depend on IP ranges that drift over time.
+        - Closes the "subnet security list is the only gate" failure mode where a single overly-permissive rule exposes every workload in the subnet.
+      remediation:
+        - id: console
+          desc: |
+            Attach an NSG to the node pool:
+
+            1. Open **Developer Services** → **Kubernetes Clusters (OKE)** → select the cluster → **Node Pools** → select the node pool.
+            2. Click **Edit** → expand **Advanced options** → **Network security groups**.
+            3. Select an existing NSG (or create one) that defines the desired ingress and egress rules for worker nodes.
+            4. Save. New nodes provisioned by the pool inherit the NSG; existing nodes pick up the NSG on the next cycle.
+        - id: cli
+          desc: |
+            Attach an NSG to the node pool. New nodes provisioned by the pool inherit the NSG; existing nodes pick up the NSG on the next cycle.
+
+            ```bash
+            oci ce node-pool update \
+              --node-pool-id <node-pool-ocid> \
+              --nsg-ids '["<nsg-ocid>"]'
+            ```
+        - id: terraform
+          desc: |
+            Configure each `oci_containerengine_node_pool` with `nsg_ids` inside `node_config_details`:
+
+            ```hcl
+            resource "oci_core_network_security_group" "oke_workers" {
+              compartment_id = var.compartment_ocid
+              vcn_id         = oci_core_vcn.cluster.id
+              display_name   = "oke-workers"
+            }
+
+            resource "oci_containerengine_node_pool" "app" {
+              cluster_id         = oci_containerengine_cluster.app.id
+              compartment_id     = var.compartment_ocid
+              kubernetes_version = var.k8s_version
+              name               = "app-pool"
+              node_shape         = "VM.Standard.E4.Flex"
+
+              node_config_details {
+                placement_configs {
+                  availability_domain = var.availability_domain
+                  subnet_id           = oci_core_subnet.workers_private.id
+                }
+                nsg_ids = [oci_core_network_security_group.oke_workers.id]
+                size    = 3
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/ContEng/Concepts/contengnetworkconfig.htm
+        title: OCI - Network resource configuration for Kubernetes clusters
+  - uid: mondoo-oci-security-oke-node-pool-nsgs-attached-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.oke.clusters.all(
+        nodePools.all(networkSecurityGroups.length > 0)
+      )
+  - uid: mondoo-oci-security-oke-node-pool-nsgs-attached-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_containerengine_node_pool')
+    mql: |
+      # Node pool must declare a node_config_details block whose nsg_ids is a non-empty list. Without the existence guard, node pools that omit node_config_details would silently pass.
+      terraform.resources('oci_containerengine_node_pool').all(
+        blocks.where(type == 'node_config_details') != empty &&
+        blocks.where(type == 'node_config_details').all(
+          arguments['nsg_ids'] != null && arguments['nsg_ids'].length > 0
+        )
+      )
+  - uid: mondoo-oci-security-oke-node-pool-nsgs-attached-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_containerengine_node_pool')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_containerengine_node_pool').all(
+        change.after['node_config_details'] != null && change.after['node_config_details'].length > 0 &&
+        change.after['node_config_details'].all(
+          _['nsg_ids'] != null && _['nsg_ids'].length > 0
+        )
+      )
+  - uid: mondoo-oci-security-oke-node-pool-nsgs-attached-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_containerengine_node_pool')
+    mql: |
+      terraform.state.resources.where(type == 'oci_containerengine_node_pool').all(
+        values['node_config_details'] != null && values['node_config_details'].length > 0 &&
+        values['node_config_details'].all(
+          _['nsg_ids'] != null && _['nsg_ids'].length > 0
+        )
+      )
   - uid: mondoo-oci-security-adb-mtls-or-restricted
     title: Ensure Autonomous Databases require mTLS or restrict access via ACL / NSG
     impact: 90
@@ -3840,6 +4044,127 @@ queries:
         values['private_endpoint_ip'] != null ||
         values['whitelisted_ips'] != null && values['whitelisted_ips'].length > 0 ||
         values['nsg_ids'] != null && values['nsg_ids'].length > 0
+      )
+  - uid: mondoo-oci-security-adb-no-public-management-urls
+    title: Ensure Autonomous Databases do not expose public management URLs
+    impact: 85
+    tags:
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+    variants:
+      - uid: mondoo-oci-security-adb-no-public-management-urls-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-adb-no-public-management-urls-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-adb-no-public-management-urls-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-adb-no-public-management-urls-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that every Autonomous Database is provisioned with a private endpoint, with no publicly reachable management URLs surfaced. An ADB outside private-endpoint mode publishes a set of management web URLs — APEX, SQL Developer Web, ORDS, GraphStudio, MongoDB API, Machine Learning Notebooks, Database Transforms — that are reachable over the public internet, even when an IP allowlist or NSG is applied.
+
+        This is a stricter posture than `mondoo-oci-security-adb-mtls-or-restricted`, which permits a public ADB as long as mTLS, an ACL, or an NSG is configured. Those controls protect the *database listener*; they do not remove the *management web surface*. Pre-authentication CVEs in ORDS or APEX, credential-stuffing against the management UIs, and accidental enrollment of a developer's IP into the allowlist all become non-issues only when the ADB has no public URLs at all.
+
+        **Why this matters**
+
+        The Autonomous Database management web surface is broad and historically attacked:
+
+        - APEX and ORDS have shipped pre-authentication CVEs that let an unauthenticated attacker on the internet enumerate or exploit the database without any credentials.
+        - SQL Developer Web and the ML Notebook UI accept username/password authentication and are credential-stuffing targets.
+        - IP allowlists rot — networks change, VPN exit IPs are reassigned to other tenants, and `0.0.0.0/0` slips in as a "temporary" debugging step.
+        - A private-endpoint ADB has no public URLs at all; the management surface only exists inside the VCN.
+
+        **Risk mitigation**
+
+        - Removes the entire public management web surface, not just the SQL listener.
+        - Eliminates exposure to pre-authentication CVEs in the ADB management stack.
+        - Closes the "allowlist drift" failure mode where an over-broad CIDR silently exposes the management UIs.
+      remediation:
+        - id: console
+          desc: |
+            Re-provision the ADB with private endpoint access:
+
+            1. Open **Oracle Database** → **Autonomous Database** → select the database.
+            2. Network access mode cannot be changed in place from public to private endpoint — provision a replacement ADB and migrate.
+            3. When provisioning the replacement, choose **Private endpoint access only** and select a subnet with **Prohibit public IP on VNIC** enabled.
+            4. Migrate using Data Pump or a refreshable clone, then terminate the original.
+        - id: cli
+          desc: |
+            Provision a replacement ADB in private-endpoint mode:
+
+            ```bash
+            oci db autonomous-database create \
+              --compartment-id <compartment-ocid> \
+              --db-name appdb \
+              --display-name "appdb" \
+              --admin-password "$ADB_ADMIN_PASSWORD" \
+              --cpu-core-count 1 \
+              --data-storage-size-in-tbs 1 \
+              --subnet-id <private-subnet-ocid> \
+              --nsg-ids '["<nsg-ocid>"]'
+            ```
+
+            Migrate data with Data Pump or a refreshable clone, then delete the original public-mode ADB.
+        - id: terraform
+          desc: |
+            Provision Autonomous Databases with `subnet_id` set so the ADB is created in private-endpoint mode and surfaces no public management URLs:
+
+            ```hcl
+            resource "oci_database_autonomous_database" "app" {
+              compartment_id           = var.compartment_ocid
+              db_name                  = "appdb"
+              admin_password           = var.adb_admin_password
+              cpu_core_count           = 1
+              data_storage_size_in_tbs = 1
+
+              # Private endpoint mode — no public connection URLs are surfaced
+              subnet_id = oci_core_subnet.adb_private.id
+              nsg_ids   = [oci_core_network_security_group.adb.id]
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/autonomous-database-serverless/doc/network-access-types.html
+        title: OCI - Autonomous Database Network Access
+      - url: https://docs.oracle.com/en-us/iaas/autonomous-database-serverless/doc/private-endpoint-overview.html
+        title: OCI - Configure Private Endpoint Access
+  - uid: mondoo-oci-security-adb-no-public-management-urls-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.database.autonomousDatabases.all(connectionUrls == null)
+  - uid: mondoo-oci-security-adb-no-public-management-urls-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_database_autonomous_database')
+    mql: |
+      terraform.resources('oci_database_autonomous_database').all(
+        arguments['subnet_id'] != null
+      )
+  - uid: mondoo-oci-security-adb-no-public-management-urls-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_database_autonomous_database')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_database_autonomous_database').all(
+        change.after['subnet_id'] != null
+      )
+  - uid: mondoo-oci-security-adb-no-public-management-urls-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_database_autonomous_database')
+    mql: |
+      terraform.state.resources.where(type == 'oci_database_autonomous_database').all(
+        values['subnet_id'] != null
       )
   # No Terraform variants: requires cross-resource lookup from `oci_database_db_system` to its referenced `oci_core_subnet` to read `prohibit_public_ip_on_vnic`. Cross-resource graph traversal is fragile in HCL/plan/state and unsupported by the patterns used elsewhere in this file.
   - uid: mondoo-oci-security-dbsystem-private-subnet
