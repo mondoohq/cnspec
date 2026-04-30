@@ -16114,19 +16114,21 @@ queries:
       asset.platform == "azure-batch-account"
     mql: |
       azure.subscription.batchService.account.diagnosticSettings.length > 0
-  # HCL: substring heuristic on target_resource_id. cnquery's HCL parser flattens references like
-  # azurerm_batch_account.example.id to the dotted string "azurerm_batch_account.example.id", so this
-  # matches that. It can false-positive on a literal target_resource_id string that happens to contain
-  # the substring; it would not match an attacker-controlled comment because comments are stripped.
+  # HCL: anchored regex on the flattened reference string. cnquery's HCL parser turns a reference
+  # like azurerm_batch_account.example.id into the dotted string "azurerm_batch_account.example.id"
+  # (or "data.azurerm_batch_account.example.id" for data-source references). The regex requires the
+  # exact resource type followed by a dot, so a hypothetical azurerm_batch_account_pool wouldn't pass.
   - uid: mondoo-azure-security-batch-diagnostic-settings-enabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_batch_account")
     mql: |
       terraform.resources.where(nameLabel == "azurerm_monitor_diagnostic_setting").any(
-        arguments['target_resource_id'].contains("azurerm_batch_account")
+        arguments['target_resource_id'] == /^(data\.)?azurerm_batch_account\./
       )
-  # Plan: weaker than the state variant. target_resource_id resolves to "(known after apply)" — null
-  # in the plan JSON — when it references another resource being created in the same plan, so we can
-  # only assert the field is set. State sees the resolved ARM ID and can match /batchAccounts/.
+  # Plan: presence-only. target_resource_id resolves to "(known after apply)" — null in the plan
+  # JSON — when it references another resource being created in the same plan, so we cannot assert
+  # the target type at plan time. The check passes for any non-empty target_resource_id, including
+  # one targeting an unrelated resource type. The Azure runtime variant (-azure) and the state
+  # variant inspect the resolved ARM ID and are authoritative.
   - uid: mondoo-azure-security-batch-diagnostic-settings-enabled-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_batch_account")
     mql: |
