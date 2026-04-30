@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-snowflake-security
     name: Mondoo Snowflake Security
-    version: 1.0.0
+    version: 1.1.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -75,10 +75,21 @@ queries:
       compliance/nist-sp-800-171: nist-sp-800-171--3-5-3
       compliance/soc2-2017: soc2-control-cc6-1-4
     mql: |
-      snowflake.account.users.where(disabled == false).all(extAuthnDuo == true)
+      snowflake.account.users.where(disabled == false && hasPassword == true).all(extAuthnDuo == true)
     docs:
       desc: |
-        This check ensures that multi-factor authentication (MFA) via Duo is enabled for all active Snowflake users. MFA adds a critical layer of security beyond passwords, significantly reducing the risk of account compromise.
+        This check ensures that every active user who can sign in with a password has Duo multi-factor authentication enrolled. MFA adds a critical layer of security beyond passwords, significantly reducing the risk of account compromise.
+
+        **Scope of this check**
+
+        The check evaluates `disabled == false && hasPassword == true`. It deliberately excludes users that have no password set — service users using key-pair authentication or OAuth cannot enroll in Duo and would otherwise produce false positives.
+
+        The check looks at the `extAuthnDuo` flag (Duo enrollment). It does *not* yet detect TOTP or SAML-based MFA enforced via an authentication policy. If your account uses authentication policies for MFA enforcement instead of (or in addition to) Duo, also confirm an MFA-required policy is attached account-wide:
+
+        ```sql
+        SHOW PARAMETERS LIKE 'AUTHENTICATION_POLICY' IN ACCOUNT;
+        DESC AUTHENTICATION POLICY <policy_name>;
+        ```
 
         **Why this matters**
 
@@ -90,28 +101,58 @@ queries:
         Snowflake has been the target of high-profile attacks where stolen credentials were used to access customer data. MFA would have prevented many of these breaches.
 
         Risk mitigation
-          •  Enable Duo MFA for all active users.
+          •  Enroll Duo MFA for every user who can authenticate with a password — or attach an authentication policy that requires MFA at the account level.
           •  Prioritize MFA for users with ACCOUNTADMIN, SECURITYADMIN, and SYSADMIN roles.
-          •  Consider using key-pair authentication for service accounts.
+          •  Use key-pair authentication or OAuth for service users instead of passwords.
           •  Regularly audit MFA enrollment status.
-      remediation: |
-        **Enable MFA for a user**
+      remediation:
+        - id: console
+          desc: |
+            **Enroll MFA in Snowsight (per user)**
 
-        Each Snowflake user must enroll in MFA through the Snowflake UI:
+            Each Snowflake user must enroll in MFA from their own profile.
+            Have affected users:
 
-        1. Log in to the Snowflake web interface.
-        2. Select your username in the top-left corner.
-        3. Select **Profile**.
-        4. In the **Multi-factor authentication** section, select **Enroll**.
-        5. Follow the Duo enrollment instructions.
+            1. Log in to the Snowflake web interface (Snowsight).
+            2. Select their username in the top-left corner and choose **Profile**.
+            3. In the **Multi-factor authentication** section, select **Enroll**.
+            4. Follow the Duo enrollment prompts.
 
-        **Enforce MFA with a Snowflake account parameter**
+            Administrators can monitor enrollment from **Admin** → **Users & Roles** → **Users**, where the **MFA** column shows enrolled vs not enrolled.
+        - id: sql
+          desc: |
+            Run as `ACCOUNTADMIN` in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
 
-        Administrators can require MFA enrollment for all users:
+            **Recommended: enforce MFA via an authentication policy**
 
-        ```sql
-        ALTER ACCOUNT SET REQUIRE_MFA = TRUE;
-        ```
+            Authentication policies are the modern way to require MFA. A Snowflake account attaches at most one authentication policy, so inspect existing policies first:
+
+            ```sql
+            SHOW AUTHENTICATION POLICIES;
+            SHOW PARAMETERS LIKE 'AUTHENTICATION_POLICY' IN ACCOUNT;
+            ```
+
+            Create (or update) a policy that requires MFA, then attach it at the account level:
+
+            ```sql
+            CREATE AUTHENTICATION POLICY IF NOT EXISTS require_mfa_policy
+              AUTHENTICATION_METHODS     = ('PASSWORD', 'SAML')
+              MFA_AUTHENTICATION_METHODS = ('PASSWORD', 'SAML')
+              MFA_ENROLLMENT             = 'REQUIRED'
+              COMMENT                    = 'Require MFA enrollment on every login';
+
+            ALTER ACCOUNT SET AUTHENTICATION POLICY require_mfa_policy;
+            ```
+
+            **Legacy account parameter (still supported)**
+
+            On accounts not yet using authentication policies, the older parameter forces MFA enrollment on the next login:
+
+            ```sql
+            ALTER ACCOUNT SET REQUIRE_MFA = TRUE;
+            ```
+
+            Note: `REQUIRE_MFA` only enforces enrollment for *new* logins — it does not retroactively log out sessions that authenticated before the change.
     refs:
       - url: https://docs.snowflake.com/en/user-guide/security-mfa
         title: Snowflake MFA documentation
@@ -146,20 +187,34 @@ queries:
           •  Use SECURITYADMIN and SYSADMIN for day-to-day administration.
           •  Ensure all ACCOUNTADMIN users have MFA enabled.
           •  Regularly review and prune ACCOUNTADMIN role assignments.
-      remediation: |
-        **Review ACCOUNTADMIN assignments**
+      remediation:
+        - id: console
+          desc: |
+            **Using Snowsight**
 
-        ```sql
-        SHOW GRANTS OF ROLE ACCOUNTADMIN;
-        ```
+            1. In Snowsight, go to **Admin** → **Users & Roles** → **Roles**.
+            2. Open the `ACCOUNTADMIN` role and review the **Granted to** list.
+            3. For every user that does not need full account control, remove the grant and assign a least-privilege role (for example `SYSADMIN` or `SECURITYADMIN`) instead.
+            4. Keep at least two named users with `ACCOUNTADMIN` so the account cannot be locked out if one break-glass account becomes unavailable.
+        - id: sql
+          desc: |
+            Run as `ACCOUNTADMIN` (or `SECURITYADMIN`) in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
 
-        **Revoke ACCOUNTADMIN from users who don't need it**
+            1. List both directions of `ACCOUNTADMIN` — who has been granted the role, and what privileges the role itself holds:
 
-        ```sql
-        REVOKE ROLE ACCOUNTADMIN FROM USER username;
-        ```
+                ```sql
+                SHOW GRANTS OF ROLE ACCOUNTADMIN;
+                SHOW GRANTS TO ROLE ACCOUNTADMIN;
+                ```
 
-        Assign more appropriate roles like SYSADMIN or SECURITYADMIN for day-to-day administration tasks.
+            2. For each user that does not need full account control, revoke `ACCOUNTADMIN` and grant a least-privilege role instead. Common day-to-day roles are `SYSADMIN` (object/warehouse management) and `SECURITYADMIN` (user and role management):
+
+                ```sql
+                REVOKE ROLE ACCOUNTADMIN FROM USER <user_name>;
+                GRANT ROLE SYSADMIN TO USER <user_name>;        -- example
+                ```
+
+            3. Keep at least two named users with `ACCOUNTADMIN` so the account cannot be locked out if one break-glass account becomes unavailable.
     refs:
       - url: https://docs.snowflake.com/en/user-guide/security-access-control-overview
         title: Snowflake access control overview
@@ -193,22 +248,37 @@ queries:
           •  Follow up with users who have not changed their initial passwords.
           •  Set expiration policies for temporary passwords.
           •  Disable accounts that have not completed initial setup within a reasonable time frame.
-      remediation: |
-        **Identify users with pending password changes**
+      remediation:
+        - id: console
+          desc: |
+            **Using Snowsight**
 
-        ```sql
-        SELECT NAME, MUST_CHANGE_PASSWORD, CREATED_ON, LAST_SUCCESS_LOGIN
-        FROM SNOWFLAKE.ACCOUNT_USAGE.USERS
-        WHERE MUST_CHANGE_PASSWORD = 'true' AND DISABLED = 'false';
-        ```
+            1. In Snowsight, go to **Admin** → **Users & Roles** → **Users**.
+            2. Identify users still flagged "must change password" (also visible in the user detail page).
+            3. Notify each affected user to log in and complete their password change.
+            4. For accounts that have not logged in for an extended period, open the user and select **Disable user** instead of leaving the password change pending indefinitely.
+        - id: sql
+          desc: |
+            Run as `ACCOUNTADMIN` or `SECURITYADMIN` in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
 
-        **Notify users or disable unused accounts**
+            1. Identify the affected users — those still flagged "must change password" and not disabled:
 
-        For users who have not logged in:
+                ```sql
+                SELECT NAME, CREATED_ON, LAST_SUCCESS_LOGIN, MUST_CHANGE_PASSWORD
+                FROM SNOWFLAKE.ACCOUNT_USAGE.USERS
+                WHERE MUST_CHANGE_PASSWORD = 'true'
+                  AND DISABLED = 'false';
+                ```
 
-        ```sql
-        ALTER USER username SET DISABLED = TRUE;
-        ```
+                `ACCOUNT_USAGE` views can lag the live state by up to ~3 hours. For an authoritative snapshot, run `SHOW USERS;` and inspect the `must_change_password` column.
+
+            2. Ask each affected user to log in and complete their password change. For accounts that have not logged in for an extended period, disable them instead:
+
+                ```sql
+                ALTER USER <user_name> SET DISABLED = TRUE;
+                ```
+
+            3. After a rotation cycle, re-run the query in step 1 — the result should be empty.
     refs:
       - url: https://docs.snowflake.com/en/sql-reference/sql/create-user
         title: Snowflake user management documentation
@@ -242,19 +312,41 @@ queries:
           •  Set minimum password length to 14 or more characters in all password policies.
           •  Encourage use of passphrases for easier memorization of long passwords.
           •  Combine password length requirements with MFA for defense-in-depth.
-      remediation: |
-        **Create or update a password policy**
+      remediation:
+        - id: console
+          desc: |
+            **Using Snowsight**
 
-        ```sql
-        CREATE OR REPLACE PASSWORD POLICY my_password_policy
-          PASSWORD_MIN_LENGTH = 14;
-        ```
+            1. In Snowsight, go to **Admin** → **Security** → **Password Policies**.
+            2. If a policy is already attached to the account, open it; otherwise click **+ Password Policy** and create one.
+            3. Set **Minimum length** to at least `14`.
+            4. Save the policy and confirm it is attached at the account level.
+        - id: sql
+          desc: |
+            Run as `ACCOUNTADMIN` in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
 
-        **Apply the password policy to the account**
+            > **Important:** A Snowflake account attaches **at most one** password policy. Prefer `ALTER PASSWORD POLICY` on the existing policy. Do not blindly `CREATE OR REPLACE` — that will overwrite settings other policy checks may have already configured.
 
-        ```sql
-        ALTER ACCOUNT SET PASSWORD POLICY my_password_policy;
-        ```
+            1. Find the policy currently attached to the account:
+
+                ```sql
+                SHOW PASSWORD POLICIES;
+                SHOW PARAMETERS LIKE 'PASSWORD_POLICY' IN ACCOUNT;
+                ```
+
+            2. Update the existing policy:
+
+                ```sql
+                ALTER PASSWORD POLICY <policy_name> SET PASSWORD_MIN_LENGTH = 14;
+                ```
+
+            3. If no policy is attached yet, create one and attach it. Subsequent password-policy checks should `ALTER` this same policy:
+
+                ```sql
+                CREATE PASSWORD POLICY IF NOT EXISTS <policy_name>
+                  PASSWORD_MIN_LENGTH = 14;
+                ALTER ACCOUNT SET PASSWORD POLICY <policy_name>;
+                ```
     refs:
       - url: https://docs.snowflake.com/en/sql-reference/sql/create-password-policy
         title: Snowflake password policy documentation
@@ -293,20 +385,44 @@ queries:
           •  Set reasonable lockout duration (e.g., 15-30 minutes).
           •  Monitor lockout events for signs of attack.
           •  Combine lockout with MFA for defense-in-depth.
-      remediation: |
-        **Create or update a password policy**
+      remediation:
+        - id: console
+          desc: |
+            **Using Snowsight**
 
-        ```sql
-        CREATE OR REPLACE PASSWORD POLICY my_password_policy
-          PASSWORD_MAX_RETRIES = 5
-          PASSWORD_LOCKOUT_TIME_MINS = 15;
-        ```
+            1. In Snowsight, go to **Admin** → **Security** → **Password Policies**.
+            2. If a policy is already attached to the account, open it; otherwise click **+ Password Policy** and create one.
+            3. Set **Maximum retries** (e.g. `5`) and **Lockout time** (e.g. `15` minutes).
+            4. Save the policy and confirm it is attached at the account level.
+        - id: sql
+          desc: |
+            Run as `ACCOUNTADMIN` in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
 
-        **Apply the password policy to the account**
+            > **Important:** A Snowflake account attaches **at most one** password policy. Prefer `ALTER PASSWORD POLICY` on the existing policy. Do not blindly `CREATE OR REPLACE` — that will overwrite settings other policy checks may have already configured.
 
-        ```sql
-        ALTER ACCOUNT SET PASSWORD POLICY my_password_policy;
-        ```
+            1. Find the policy currently attached to the account:
+
+                ```sql
+                SHOW PASSWORD POLICIES;
+                SHOW PARAMETERS LIKE 'PASSWORD_POLICY' IN ACCOUNT;
+                ```
+
+            2. Update the existing policy:
+
+                ```sql
+                ALTER PASSWORD POLICY <policy_name> SET
+                  PASSWORD_MAX_RETRIES       = 5,
+                  PASSWORD_LOCKOUT_TIME_MINS = 15;
+                ```
+
+            3. If no policy is attached yet, create one and attach it. Subsequent password-policy checks should `ALTER` this same policy:
+
+                ```sql
+                CREATE PASSWORD POLICY IF NOT EXISTS <policy_name>
+                  PASSWORD_MAX_RETRIES       = 5
+                  PASSWORD_LOCKOUT_TIME_MINS = 15;
+                ALTER ACCOUNT SET PASSWORD POLICY <policy_name>;
+                ```
     refs:
       - url: https://docs.snowflake.com/en/sql-reference/sql/create-password-policy
         title: Snowflake password policy documentation
@@ -323,10 +439,12 @@ queries:
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
       compliance/soc2-2017: soc2-control-cc6-6-1
     mql: |
-      snowflake.account.networkPolicies.length > 0
+      snowflake.account.parameters.where(key == "NETWORK_POLICY").any(value != "")
     docs:
       desc: |
-        This check ensures that at least one network policy is configured in the Snowflake account. Network policies restrict which IP addresses or network ranges can connect to Snowflake, providing network-level access control.
+        This check ensures that a network policy is *attached* to the Snowflake account. Network policies restrict which IP addresses or network ranges can connect to Snowflake, providing network-level access control.
+
+        Snowflake's `SHOW PARAMETERS LIKE 'NETWORK_POLICY' IN ACCOUNT` returns the name of the policy currently bound at the account level. The check looks at this parameter rather than just whether any policy is defined — an account can have several `CREATE NETWORK POLICY` definitions sitting unattached, in which case no IP gating is enforced at all.
 
         **Why this matters**
 
@@ -345,25 +463,52 @@ queries:
           •  Apply network policies at the account level for broad protection.
           •  Use network rules for more granular control.
           •  Regularly review and update IP allowlists as network infrastructure changes.
-      remediation: |
-        **Create a network policy**
+      remediation:
+        - id: console
+          desc: |
+            **Using Snowsight**
 
-        ```sql
-        CREATE NETWORK POLICY my_network_policy
-          ALLOWED_IP_LIST = ('192.168.1.0/24', '10.0.0.0/8')
-          BLOCKED_IP_LIST = ();
-        ```
+            1. In Snowsight, go to **Admin** → **Security** → **Network Policies**.
+            2. Click **+ Network Policy**, give it a name, and add **Allowed IP addresses** (CIDR ranges representing your office, VPN, or data center egress).
+            3. Save the policy.
+            4. Open **Account Details** (top-right user menu) → **Network policy** and select the policy you just created so it is enforced account-wide.
+        - id: sql
+          desc: |
+            Run as `ACCOUNTADMIN` (or `SECURITYADMIN`) in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
 
-        **Apply the network policy to the account**
+            > **Important:** A Snowflake account attaches **at most one** network policy at a time. If one is already attached, prefer `ALTER NETWORK POLICY` on it (see the unrestricted-access check) instead of creating a new one.
 
-        ```sql
-        ALTER ACCOUNT SET NETWORK_POLICY = my_network_policy;
-        ```
+            1. Inspect existing network policies and what is attached:
+
+                ```sql
+                SHOW NETWORK POLICIES;
+                SHOW PARAMETERS LIKE 'NETWORK_POLICY' IN ACCOUNT;
+                ```
+
+            2. Create the policy with the CIDR ranges your organization actually uses (replace the example ranges):
+
+                ```sql
+                CREATE NETWORK POLICY <policy_name>
+                  ALLOWED_IP_LIST = ('203.0.113.0/24', '198.51.100.0/24')
+                  BLOCKED_IP_LIST = ();
+                ```
+
+            3. Attach it to the account:
+
+                ```sql
+                ALTER ACCOUNT SET NETWORK_POLICY = <policy_name>;
+                ```
+
+            4. Verify the policy is attached and contains the expected ranges:
+
+                ```sql
+                DESC NETWORK POLICY <policy_name>;
+                ```
     refs:
       - url: https://docs.snowflake.com/en/user-guide/network-policies
         title: Snowflake network policy documentation
   - uid: mondoo-snowflake-security-network-policies-no-unrestricted-access
-    title: Ensure network policies do not allow unrestricted access from 0.0.0.0/0
+    title: Ensure no network policy allows 0.0.0.0/0 or ::/0
     impact: 90
     filters: asset.platform == 'snowflake'
     tags:
@@ -375,31 +520,54 @@ queries:
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
       compliance/soc2-2017: soc2-control-cc6-6-1
     mql: |
-      snowflake.account.networkPolicies.none(allowedIpList.contains("0.0.0.0/0"))
+      snowflake.account.networkPolicies.none(allowedIpList.contains("0.0.0.0/0") || allowedIpList.contains("::/0"))
     docs:
       desc: |
-        This check ensures that no network policies contain 0.0.0.0/0 in their allowed IP list, which would permit access from any IP address and effectively nullify the network policy.
+        This check ensures that no network policy contains a wildcard CIDR — `0.0.0.0/0` for IPv4 or `::/0` for IPv6 — in its `ALLOWED_IP_LIST`. Either entry permits access from any address and effectively nullifies the network policy.
 
         **Why this matters**
 
-        A network policy that allows 0.0.0.0/0 provides no network-level access control:
+        A network policy that allows `0.0.0.0/0` or `::/0` provides no network-level access control:
           •  The policy exists but offers no protection, creating a false sense of security.
           •  All the risks of having no network policy apply equally.
           •  Audit and compliance checks may incorrectly pass because a network policy exists.
 
         Risk mitigation
-          •  Replace 0.0.0.0/0 entries with specific trusted IP ranges.
+          •  Replace `0.0.0.0/0` and `::/0` entries with specific trusted IP ranges.
           •  Audit network policies regularly for overly permissive entries.
           •  Use the smallest CIDR blocks that cover your organization's legitimate access points.
-      remediation: |
-        **Update the network policy to restrict access**
+      remediation:
+        - id: console
+          desc: |
+            **Using Snowsight**
 
-        ```sql
-        ALTER NETWORK POLICY my_network_policy
-          SET ALLOWED_IP_LIST = ('192.168.1.0/24', '10.0.0.0/8');
-        ```
+            1. In Snowsight, go to **Admin** → **Security** → **Network Policies**.
+            2. Open the policy whose **Allowed IPs** include `0.0.0.0/0` (or the IPv6 wildcard `::/0`).
+            3. Replace `0.0.0.0/0` with the specific CIDR ranges your organization actually uses (office, VPN, data-center egress).
+            4. Save the policy.
+        - id: sql
+          desc: |
+            Run as `ACCOUNTADMIN` (or `SECURITYADMIN`) in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
 
-        Replace the IP ranges above with the specific CIDR blocks used by your organization.
+            1. Find the offending policy and read its current IP list:
+
+                ```sql
+                SHOW NETWORK POLICIES;
+                DESC NETWORK POLICY <policy_name>;
+                ```
+
+            2. Replace the open `0.0.0.0/0` (and/or IPv6 `::/0`) entry with the specific CIDR ranges your organization actually uses:
+
+                ```sql
+                ALTER NETWORK POLICY <policy_name>
+                  SET ALLOWED_IP_LIST = ('203.0.113.0/24', '198.51.100.0/24');
+                ```
+
+            3. Verify the change:
+
+                ```sql
+                DESC NETWORK POLICY <policy_name>;
+                ```
     refs:
       - url: https://docs.snowflake.com/en/user-guide/network-policies
         title: Snowflake network policy documentation
@@ -434,20 +602,35 @@ queries:
           •  Use ACCOUNTADMIN only when explicitly required by switching roles.
           •  Assign SYSADMIN, SECURITYADMIN, or custom roles as defaults.
           •  Regularly audit user default role assignments.
-      remediation: |
-        **Change a user's default role**
+      remediation:
+        - id: console
+          desc: |
+            **Using Snowsight**
 
-        ```sql
-        ALTER USER username SET DEFAULT_ROLE = SYSADMIN;
-        ```
+            1. In Snowsight, go to **Admin** → **Users & Roles** → **Users**.
+            2. Filter or sort the user list by **Default role** and find users whose default role is `ACCOUNTADMIN`.
+            3. Open each user, change **Default role** to a least-privilege role (for example `SYSADMIN` or a project-specific role), and save.
+            4. Users can still `USE ROLE ACCOUNTADMIN` when explicit elevation is needed; this only changes which role is active at login.
+        - id: sql
+          desc: |
+            Run as `ACCOUNTADMIN` or `SECURITYADMIN` in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
 
-        **Identify users with ACCOUNTADMIN as default role**
+            1. Identify users whose default role is `ACCOUNTADMIN`:
 
-        ```sql
-        SELECT NAME, DEFAULT_ROLE
-        FROM SNOWFLAKE.ACCOUNT_USAGE.USERS
-        WHERE DEFAULT_ROLE = 'ACCOUNTADMIN' AND DISABLED = 'false';
-        ```
+                ```sql
+                SELECT NAME, DEFAULT_ROLE
+                FROM SNOWFLAKE.ACCOUNT_USAGE.USERS
+                WHERE DEFAULT_ROLE = 'ACCOUNTADMIN'
+                  AND DISABLED = 'false';
+                ```
+
+            2. For each affected user, change their default role to the least-privilege role they need day-to-day (`SYSADMIN`, `SECURITYADMIN`, or a custom role):
+
+                ```sql
+                ALTER USER <user_name> SET DEFAULT_ROLE = SYSADMIN;
+                ```
+
+            3. The user can still `USE ROLE ACCOUNTADMIN` when explicit elevation is needed; this only changes which role is active at login.
     refs:
       - url: https://docs.snowflake.com/en/user-guide/security-access-control-overview
         title: Snowflake access control best practices
@@ -480,22 +663,48 @@ queries:
           •  Require at least one character from each category (uppercase, lowercase, numeric, special).
           •  Combine complexity requirements with minimum length requirements for maximum protection.
           •  Use MFA as an additional layer of protection.
-      remediation: |
-        **Create or update a password policy**
+      remediation:
+        - id: console
+          desc: |
+            **Using Snowsight**
 
-        ```sql
-        CREATE OR REPLACE PASSWORD POLICY my_password_policy
-          PASSWORD_MIN_UPPER_CASE_CHARS = 1
-          PASSWORD_MIN_LOWER_CASE_CHARS = 1
-          PASSWORD_MIN_NUMERIC_CHARS = 1
-          PASSWORD_MIN_SPECIAL_CHARS = 1;
-        ```
+            1. In Snowsight, go to **Admin** → **Security** → **Password Policies**.
+            2. If a policy is already attached to the account, open it; otherwise click **+ Password Policy** and create one.
+            3. Set each character-class minimum to at least `1`: **Min upper case**, **Min lower case**, **Min numeric**, **Min special**.
+            4. Save the policy and confirm it is attached at the account level.
+        - id: sql
+          desc: |
+            Run as `ACCOUNTADMIN` in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
 
-        **Apply the password policy to the account**
+            > **Important:** A Snowflake account attaches **at most one** password policy. Prefer `ALTER PASSWORD POLICY` on the existing policy. Do not blindly `CREATE OR REPLACE` — that will overwrite settings other policy checks may have already configured.
 
-        ```sql
-        ALTER ACCOUNT SET PASSWORD POLICY my_password_policy;
-        ```
+            1. Find the policy currently attached to the account:
+
+                ```sql
+                SHOW PASSWORD POLICIES;
+                SHOW PARAMETERS LIKE 'PASSWORD_POLICY' IN ACCOUNT;
+                ```
+
+            2. Update the existing policy:
+
+                ```sql
+                ALTER PASSWORD POLICY <policy_name> SET
+                  PASSWORD_MIN_UPPER_CASE_CHARS = 1,
+                  PASSWORD_MIN_LOWER_CASE_CHARS = 1,
+                  PASSWORD_MIN_NUMERIC_CHARS    = 1,
+                  PASSWORD_MIN_SPECIAL_CHARS    = 1;
+                ```
+
+            3. If no policy is attached yet, create one and attach it. Subsequent password-policy checks should `ALTER` this same policy:
+
+                ```sql
+                CREATE PASSWORD POLICY IF NOT EXISTS <policy_name>
+                  PASSWORD_MIN_UPPER_CASE_CHARS = 1
+                  PASSWORD_MIN_LOWER_CASE_CHARS = 1
+                  PASSWORD_MIN_NUMERIC_CHARS    = 1
+                  PASSWORD_MIN_SPECIAL_CHARS    = 1;
+                ALTER ACCOUNT SET PASSWORD POLICY <policy_name>;
+                ```
     refs:
       - url: https://docs.snowflake.com/en/sql-reference/sql/create-password-policy
         title: Snowflake password policy documentation
@@ -529,19 +738,41 @@ queries:
           •  Combine password rotation with MFA for defense-in-depth.
           •  Notify users in advance of upcoming password expiration.
           •  Monitor for users who have not rotated passwords on schedule.
-      remediation: |
-        **Create or update a password policy**
+      remediation:
+        - id: console
+          desc: |
+            **Using Snowsight**
 
-        ```sql
-        CREATE OR REPLACE PASSWORD POLICY my_password_policy
-          PASSWORD_MAX_AGE_DAYS = 90;
-        ```
+            1. In Snowsight, go to **Admin** → **Security** → **Password Policies**.
+            2. If a policy is already attached to the account, open it; otherwise click **+ Password Policy** and create one.
+            3. Set **Max age (days)** to a value appropriate for your environment (commonly `90`).
+            4. Save the policy and confirm it is attached at the account level.
+        - id: sql
+          desc: |
+            Run as `ACCOUNTADMIN` in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
 
-        **Apply the password policy to the account**
+            > **Important:** A Snowflake account attaches **at most one** password policy. Prefer `ALTER PASSWORD POLICY` on the existing policy. Do not blindly `CREATE OR REPLACE` — that will overwrite settings other policy checks may have already configured.
 
-        ```sql
-        ALTER ACCOUNT SET PASSWORD POLICY my_password_policy;
-        ```
+            1. Find the policy currently attached to the account:
+
+                ```sql
+                SHOW PASSWORD POLICIES;
+                SHOW PARAMETERS LIKE 'PASSWORD_POLICY' IN ACCOUNT;
+                ```
+
+            2. Update the existing policy:
+
+                ```sql
+                ALTER PASSWORD POLICY <policy_name> SET PASSWORD_MAX_AGE_DAYS = 90;
+                ```
+
+            3. If no policy is attached yet, create one and attach it. Subsequent password-policy checks should `ALTER` this same policy:
+
+                ```sql
+                CREATE PASSWORD POLICY IF NOT EXISTS <policy_name>
+                  PASSWORD_MAX_AGE_DAYS = 90;
+                ALTER ACCOUNT SET PASSWORD POLICY <policy_name>;
+                ```
     refs:
       - url: https://docs.snowflake.com/en/sql-reference/sql/create-password-policy
         title: Snowflake password policy documentation
@@ -574,19 +805,41 @@ queries:
           •  Set password history to at least 5 previous passwords.
           •  Combine password history with maximum age and complexity requirements.
           •  Educate users about the importance of using unique passwords.
-      remediation: |
-        **Create or update a password policy**
+      remediation:
+        - id: console
+          desc: |
+            **Using Snowsight**
 
-        ```sql
-        CREATE OR REPLACE PASSWORD POLICY my_password_policy
-          PASSWORD_HISTORY = 5;
-        ```
+            1. In Snowsight, go to **Admin** → **Security** → **Password Policies**.
+            2. If a policy is already attached to the account, open it; otherwise click **+ Password Policy** and create one.
+            3. Set **Password history** to at least `5`.
+            4. Save the policy and confirm it is attached at the account level.
+        - id: sql
+          desc: |
+            Run as `ACCOUNTADMIN` in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
 
-        **Apply the password policy to the account**
+            > **Important:** A Snowflake account attaches **at most one** password policy. Prefer `ALTER PASSWORD POLICY` on the existing policy. Do not blindly `CREATE OR REPLACE` — that will overwrite settings other policy checks may have already configured.
 
-        ```sql
-        ALTER ACCOUNT SET PASSWORD POLICY my_password_policy;
-        ```
+            1. Find the policy currently attached to the account:
+
+                ```sql
+                SHOW PASSWORD POLICIES;
+                SHOW PARAMETERS LIKE 'PASSWORD_POLICY' IN ACCOUNT;
+                ```
+
+            2. Update the existing policy:
+
+                ```sql
+                ALTER PASSWORD POLICY <policy_name> SET PASSWORD_HISTORY = 5;
+                ```
+
+            3. If no policy is attached yet, create one and attach it. Subsequent password-policy checks should `ALTER` this same policy:
+
+                ```sql
+                CREATE PASSWORD POLICY IF NOT EXISTS <policy_name>
+                  PASSWORD_HISTORY = 5;
+                ALTER ACCOUNT SET PASSWORD POLICY <policy_name>;
+                ```
     refs:
       - url: https://docs.snowflake.com/en/sql-reference/sql/create-password-policy
         title: Snowflake password policy documentation
@@ -625,18 +878,42 @@ queries:
           •  Set retention time to at least 1 day for all databases.
           •  Use longer retention periods (up to 90 days with Enterprise edition) for critical data.
           •  Monitor databases with zero retention time and remediate promptly.
-      remediation: |
-        **Set retention time for a database**
+      remediation:
+        - id: console
+          desc: |
+            **Using Snowsight**
 
-        ```sql
-        ALTER DATABASE my_database SET DATA_RETENTION_TIME_IN_DAYS = 1;
-        ```
+            1. In Snowsight, go to **Data** → **Databases** and open the affected database.
+            2. Click the gear icon and select **Edit**.
+            3. Set **Time Travel retention (days)** to a value appropriate for your restore objectives. `1` is the minimum on Standard accounts; Enterprise and above support up to `90`. Most production workloads use `7` or higher.
+            4. Save.
+        - id: sql
+          desc: |
+            Run as `ACCOUNTADMIN` (or the database owner) in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
 
-        **Set default retention for new databases at the account level**
+            `1` is the minimum on Standard accounts; Enterprise and above support up to `90`. Production workloads typically want `7` or higher to give incident response a useful restore window.
 
-        ```sql
-        ALTER ACCOUNT SET DATA_RETENTION_TIME_IN_DAYS = 1;
-        ```
+            1. Find databases below the desired retention threshold:
+
+                ```sql
+                SHOW DATABASES;
+                SELECT DATABASE_NAME, RETENTION_TIME
+                FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASES
+                WHERE DELETED IS NULL
+                  AND RETENTION_TIME < 1;
+                ```
+
+            2. Raise retention on each affected database:
+
+                ```sql
+                ALTER DATABASE <database_name> SET DATA_RETENTION_TIME_IN_DAYS = 7;
+                ```
+
+            3. Raise the account-level default so newly created databases inherit the safer value:
+
+                ```sql
+                ALTER ACCOUNT SET DATA_RETENTION_TIME_IN_DAYS = 7;
+                ```
     refs:
       - url: https://docs.snowflake.com/en/user-guide/data-time-travel
         title: Snowflake Time Travel documentation
