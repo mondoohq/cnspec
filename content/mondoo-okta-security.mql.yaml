@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-okta-security
     name: Mondoo Okta Organization Security
-    version: 2.2.1
+    version: 2.3.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -140,6 +140,12 @@ policies:
           - uid: mondoo-okta-security-password-settings-password-question-recovery
     scoring_system: highest impact
 queries:
+  # No Terraform variants: counts SUPER_ADMIN role assignments across the org.
+  # Per-user `okta_user_admin_roles` HCL would only see TF-managed grants and
+  # miss assignments made via the API or Admin Console — the runtime check
+  # against the live tenant is the source of truth.
+  # No Terraform remediation: same reason — guidance limited to TF-managed
+  # users would be misleading.
   - uid: mondoo-okta-security-limit-super-admins
     title: Limit the number of super admins
     impact: 100
@@ -511,6 +517,10 @@ queries:
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains( type == /okta_policy_mfa_default/ )
     mql: |
       terraform.state.resources.where( type == 'okta_policy_mfa_default' ).any( values['okta_otp']['enroll'] == /REQUIRED/ )
+  # No Terraform variants: not yet implemented. `okta_policy_mfa_default` /
+  # `okta_policy_factor_enrollment` are candidate resources. Add HCL / plan /
+  # state variants and an `id: terraform` remediation in a follow-up.
+  # No Terraform remediation: rides with variants — see above.
   - uid: mondoo-okta-security-okta-mfa-access
     title: Require at least one factor in every MFA enrollment policy
     impact: 100
@@ -593,6 +603,11 @@ queries:
     mql: |
       everyoneGroupId = okta.groups.where( profile['name'] == "Everyone" ).map(id)[0]
       okta.policies.mfaEnroll.one( status == "ACTIVE" && conditions['people']['groups']['include'].contains(everyoneGroupId) )
+  # No Terraform variants: not yet implemented. `okta_policy_signon` +
+  # `okta_policy_rule_signon` (with `session_lifetime`) are the candidate
+  # resources. Add HCL / plan / state variants and an `id: terraform`
+  # remediation in a follow-up.
+  # No Terraform remediation: rides with variants — see above.
   - uid: mondoo-okta-security-okta-enforce-session-lifetime
     title: Enforce a limited session lifetime for all policies
     impact: 80
@@ -1312,6 +1327,22 @@ queries:
         If an admin doesn't enable any self-service or auto-unlock options, users must ask their admin to unlock their account.
 
         When admins configure lockout policies, they should consider typical user sign-in patterns and security to determine how many attempts are allowed. A lockout policy that allows only a low number of attempts may cause more lockouts. For example, users may mistype passwords when signing in from a mobile device or when they've recently changed their passwords. Some applications may auto-retry cached passwords when they're changed, resulting in user lockouts. However, a lockout policy with too many attempts allowed increases the risk of credential attacks.
+      remediation:
+        - id: console
+          desc: |
+            **Using the Okta Admin Console**
+
+            1. In the Admin Console, go to **Security** → **Authentication**.
+            2. On the **Password** tab, locate the policy and select **Edit**.
+            3. Under **Password settings**, set **Lockout** → **Maximum number of attempts before lockout** to `5` (or your organization's threshold).
+            4. Select **Update Policy** to save.
+        - id: terraform
+          desc: |
+            ```hcl
+            resource "okta_policy_password_default" "default" {
+              password_max_lockout_attempts = 5
+            }
+            ```
     refs:
       - url: https://help.okta.com/en-us/content/topics/security/policies/configure-password-policies.htm
         title: Okta Password Policies
@@ -1365,6 +1396,22 @@ queries:
     docs:
       desc: |
         Specify the minimum number of lowercase characters in a password. Complex passwords increase the security of your users' accounts.
+      remediation:
+        - id: console
+          desc: |
+            **Using the Okta Admin Console**
+
+            1. In the Admin Console, go to **Security** → **Authentication**.
+            2. On the **Password** tab, locate the policy and select **Edit**.
+            3. Under **Password settings**, in **Complexity**, enable **Lowercase letter** so the policy requires at least one lowercase character.
+            4. Select **Update Policy** to save.
+        - id: terraform
+          desc: |
+            ```hcl
+            resource "okta_policy_password_default" "default" {
+              password_min_lowercase = 1
+            }
+            ```
     refs:
       - url: https://help.okta.com/en-us/content/topics/security/policies/configure-password-policies.htm
         title: Okta Password Policies
@@ -1418,6 +1465,22 @@ queries:
     docs:
       desc: |
         Specify the minimum number of numeric characters in a password. Complex passwords increase the security of your users' accounts.
+      remediation:
+        - id: console
+          desc: |
+            **Using the Okta Admin Console**
+
+            1. In the Admin Console, go to **Security** → **Authentication**.
+            2. On the **Password** tab, locate the policy and select **Edit**.
+            3. Under **Password settings**, in **Complexity**, enable **Number** so the policy requires at least one digit.
+            4. Select **Update Policy** to save.
+        - id: terraform
+          desc: |
+            ```hcl
+            resource "okta_policy_password_default" "default" {
+              password_min_number = 1
+            }
+            ```
     refs:
       - url: https://help.okta.com/en-us/content/topics/security/policies/configure-password-policies.htm
         title: Okta Password Policies
@@ -1471,6 +1534,22 @@ queries:
     docs:
       desc: |
         Specify the minimum number of symbol characters in a password. Complex passwords increase the security of your users' accounts.
+      remediation:
+        - id: console
+          desc: |
+            **Using the Okta Admin Console**
+
+            1. In the Admin Console, go to **Security** → **Authentication**.
+            2. On the **Password** tab, locate the policy and select **Edit**.
+            3. Under **Password settings**, in **Complexity**, enable **Symbol** so the policy requires at least one special character.
+            4. Select **Update Policy** to save.
+        - id: terraform
+          desc: |
+            ```hcl
+            resource "okta_policy_password_default" "default" {
+              password_min_symbol = 1
+            }
+            ```
     refs:
       - url: https://help.okta.com/en-us/content/topics/security/policies/configure-password-policies.htm
         title: Okta Password Policies
@@ -1525,6 +1604,22 @@ queries:
     docs:
       desc: |
         Specify the minimum time interval in minutes between password changes. Setting the minimum password interval protects against brute force attacks.
+      remediation:
+        - id: console
+          desc: |
+            **Using the Okta Admin Console**
+
+            1. In the Admin Console, go to **Security** → **Authentication**.
+            2. On the **Password** tab, locate the policy and select **Edit**.
+            3. Under **Password settings**, set **Age** → **Minimum password age** to at least `60` minutes so users cannot cycle through their password history immediately.
+            4. Select **Update Policy** to save.
+        - id: terraform
+          desc: |
+            ```hcl
+            resource "okta_policy_password_default" "default" {
+              password_min_age_minutes = 60
+            }
+            ```
     refs:
       - url: https://help.okta.com/en-us/content/topics/security/policies/configure-password-policies.htm
         title: Okta Password Policies
@@ -1579,6 +1674,22 @@ queries:
     docs:
       desc: |
         This check enforces whether the username must be excluded from the password. Complex passwords increase the security of your users' accounts.
+      remediation:
+        - id: console
+          desc: |
+            **Using the Okta Admin Console**
+
+            1. In the Admin Console, go to **Security** → **Authentication**.
+            2. On the **Password** tab, locate the policy and select **Edit**.
+            3. Under **Password settings**, in **Common password check**, enable **Restrict use of first name, last name, and parts of email address** so the user's own username cannot be embedded in the password.
+            4. Select **Update Policy** to save.
+        - id: terraform
+          desc: |
+            ```hcl
+            resource "okta_policy_password_default" "default" {
+              password_exclude_username = true
+            }
+            ```
     refs:
       - url: https://help.okta.com/en-us/content/topics/security/policies/configure-password-policies.htm
         title: Okta Password Policies
@@ -1633,6 +1744,22 @@ queries:
     docs:
       desc: |
         This check enforces whether the user's first name must be excluded from the password. Complex passwords increase the security of your users' accounts.
+      remediation:
+        - id: console
+          desc: |
+            **Using the Okta Admin Console**
+
+            1. In the Admin Console, go to **Security** → **Authentication**.
+            2. On the **Password** tab, locate the policy and select **Edit**.
+            3. Under **Password settings**, in **Common password check**, enable **Restrict use of first name, last name, and parts of email address** so the user's first name cannot be embedded in the password.
+            4. Select **Update Policy** to save.
+        - id: terraform
+          desc: |
+            ```hcl
+            resource "okta_policy_password_default" "default" {
+              password_exclude_first_name = true
+            }
+            ```
     refs:
       - url: https://help.okta.com/en-us/content/topics/security/policies/configure-password-policies.htm
         title: Okta Password Policies
@@ -1687,6 +1814,22 @@ queries:
     docs:
       desc: |
         This check enforces whether the user's last name must be excluded from the password. Complex passwords increase the security of your users' accounts.
+      remediation:
+        - id: console
+          desc: |
+            **Using the Okta Admin Console**
+
+            1. In the Admin Console, go to **Security** → **Authentication**.
+            2. On the **Password** tab, locate the policy and select **Edit**.
+            3. Under **Password settings**, in **Common password check**, enable **Restrict use of first name, last name, and parts of email address** so the user's last name cannot be embedded in the password.
+            4. Select **Update Policy** to save.
+        - id: terraform
+          desc: |
+            ```hcl
+            resource "okta_policy_password_default" "default" {
+              password_exclude_last_name = true
+            }
+            ```
     refs:
       - url: https://help.okta.com/en-us/content/topics/security/policies/configure-password-policies.htm
         title: Okta Password Policies
@@ -1741,6 +1884,22 @@ queries:
     docs:
       desc: |
         This checks passwords against a common password dictionary. Complex passwords increase the security of your users' accounts.
+      remediation:
+        - id: console
+          desc: |
+            **Using the Okta Admin Console**
+
+            1. In the Admin Console, go to **Security** → **Authentication**.
+            2. On the **Password** tab, locate the policy and select **Edit**.
+            3. Under **Password settings**, enable **Common password check** so passwords are screened against a list of commonly used and breached passwords.
+            4. Select **Update Policy** to save.
+        - id: terraform
+          desc: |
+            ```hcl
+            resource "okta_policy_password_default" "default" {
+              password_dictionary_lookup = true
+            }
+            ```
     refs:
       - url: https://help.okta.com/en-us/content/topics/security/policies/configure-password-policies.htm
         title: Okta Password Policies
@@ -1795,6 +1954,22 @@ queries:
     docs:
       desc: |
         This checks the length in days a password is valid before expiry. Rotating passwords increases the security of your users' accounts.
+      remediation:
+        - id: console
+          desc: |
+            **Using the Okta Admin Console**
+
+            1. In the Admin Console, go to **Security** → **Authentication**.
+            2. On the **Password** tab, locate the policy and select **Edit**.
+            3. Under **Password settings**, set **Age** → **Enforce password history** → **Maximum password age** to `90` days (or your organization's policy). Set to `0` to disable expiry, but keep in mind that disables the check.
+            4. Select **Update Policy** to save.
+        - id: terraform
+          desc: |
+            ```hcl
+            resource "okta_policy_password_default" "default" {
+              password_max_age_days = 90
+            }
+            ```
     refs:
       - url: https://help.okta.com/en-us/content/topics/security/policies/configure-password-policies.htm
         title: Okta Password Policies
@@ -1849,6 +2024,22 @@ queries:
     docs:
       desc: |
         This checks the length in days a user will be warned before password expiry. Rotating passwords increases the security of your users' accounts.
+      remediation:
+        - id: console
+          desc: |
+            **Using the Okta Admin Console**
+
+            1. In the Admin Console, go to **Security** → **Authentication**.
+            2. On the **Password** tab, locate the policy and select **Edit**.
+            3. Under **Password settings**, set **Age** → **Prompt user to change password before password expires** to `15` days.
+            4. Select **Update Policy** to save.
+        - id: terraform
+          desc: |
+            ```hcl
+            resource "okta_policy_password_default" "default" {
+              password_expire_warn_days = 15
+            }
+            ```
     refs:
       - url: https://help.okta.com/en-us/content/topics/security/policies/configure-password-policies.htm
         title: Okta Password Policies
@@ -1903,6 +2094,22 @@ queries:
     docs:
       desc: |
         This checks the number of distinct passwords that must be created before they can be reused. Rotating passwords increases the security of your users' accounts.
+      remediation:
+        - id: console
+          desc: |
+            **Using the Okta Admin Console**
+
+            1. In the Admin Console, go to **Security** → **Authentication**.
+            2. On the **Password** tab, locate the policy and select **Edit**.
+            3. Under **Password settings**, set **History** → **Enforce password history for last** to `24` passwords.
+            4. Select **Update Policy** to save.
+        - id: terraform
+          desc: |
+            ```hcl
+            resource "okta_policy_password_default" "default" {
+              password_history_count = 24
+            }
+            ```
     refs:
       - url: https://help.okta.com/en-us/content/topics/security/policies/configure-password-policies.htm
         title: Okta Password Policies
@@ -1957,6 +2164,22 @@ queries:
     docs:
       desc: |
         This checks the number of minutes before a locked account is unlocked.
+      remediation:
+        - id: console
+          desc: |
+            **Using the Okta Admin Console**
+
+            1. In the Admin Console, go to **Security** → **Authentication**.
+            2. On the **Password** tab, locate the policy and select **Edit**.
+            3. Under **Password settings**, in **Lockout**, enable **Account auto-unlock after** and set it to at least `30` minutes.
+            4. Select **Update Policy** to save.
+        - id: terraform
+          desc: |
+            ```hcl
+            resource "okta_policy_password_default" "default" {
+              password_auto_unlock_minutes = 30
+            }
+            ```
     refs:
       - url: https://help.okta.com/en-us/content/topics/security/policies/configure-password-policies.htm
         title: Okta Password Policies
@@ -2011,6 +2234,22 @@ queries:
     docs:
       desc: |
         This checks whether a user should be informed when their account is locked.
+      remediation:
+        - id: console
+          desc: |
+            **Using the Okta Admin Console**
+
+            1. In the Admin Console, go to **Security** → **Authentication**.
+            2. On the **Password** tab, locate the policy and select **Edit**.
+            3. Under **Password settings**, in **Lockout**, enable **Show lockout failures**.
+            4. Select **Update Policy** to save.
+        - id: terraform
+          desc: |
+            ```hcl
+            resource "okta_policy_password_default" "default" {
+              password_show_lockout_failures = true
+            }
+            ```
     refs:
       - url: https://help.okta.com/en-us/content/topics/security/policies/configure-password-policies.htm
         title: Okta Password Policies
@@ -2065,6 +2304,22 @@ queries:
     docs:
       desc: |
         This checks whether email password recovery is enabled or disabled.
+      remediation:
+        - id: console
+          desc: |
+            **Using the Okta Admin Console**
+
+            1. In the Admin Console, go to **Security** → **Authentication**.
+            2. On the **Password** tab, locate the policy and select **Edit**.
+            3. Under **Password settings**, in **User account recovery**, enable **Email** as a recovery factor.
+            4. Select **Update Policy** to save.
+        - id: terraform
+          desc: |
+            ```hcl
+            resource "okta_policy_password_default" "default" {
+              email_recovery = "ACTIVE"
+            }
+            ```
     refs:
       - url: https://help.okta.com/en-us/content/topics/security/policies/configure-password-policies.htm
         title: Okta Password Policies
@@ -2119,6 +2374,22 @@ queries:
     docs:
       desc: |
         This checks whether sms password recovery is enabled or disabled.
+      remediation:
+        - id: console
+          desc: |
+            **Using the Okta Admin Console**
+
+            1. In the Admin Console, go to **Security** → **Authentication**.
+            2. On the **Password** tab, locate the policy and select **Edit**.
+            3. Under **Password settings**, in **User account recovery**, enable **SMS** as a recovery factor.
+            4. Select **Update Policy** to save.
+        - id: terraform
+          desc: |
+            ```hcl
+            resource "okta_policy_password_default" "default" {
+              sms_recovery = "ACTIVE"
+            }
+            ```
     refs:
       - url: https://help.okta.com/en-us/content/topics/security/policies/configure-password-policies.htm
         title: Okta Password Policies
@@ -2173,6 +2444,22 @@ queries:
     docs:
       desc: |
         This checks whether question password recovery is enabled or disabled.
+      remediation:
+        - id: console
+          desc: |
+            **Using the Okta Admin Console**
+
+            1. In the Admin Console, go to **Security** → **Authentication**.
+            2. On the **Password** tab, locate the policy and select **Edit**.
+            3. Under **Password settings**, in **User account recovery**, enable **Security question** as a recovery factor.
+            4. Select **Update Policy** to save.
+        - id: terraform
+          desc: |
+            ```hcl
+            resource "okta_policy_password_default" "default" {
+              question_recovery = "ACTIVE"
+            }
+            ```
     refs:
       - url: https://help.okta.com/en-us/content/topics/security/policies/configure-password-policies.htm
         title: Okta Password Policies
@@ -2192,6 +2479,10 @@ queries:
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains( type == /okta_policy_password/ )
     mql: |
       terraform.state.resources.where( type == /okta_policy_password/ ).all( values['question_recovery'] == "ACTIVE" )
+  # No Terraform variants: not yet implemented. `okta_threat_insight_settings`
+  # (with `action = "block"`) is the candidate resource. Add HCL / plan /
+  # state variants and an `id: terraform` remediation in a follow-up.
+  # No Terraform remediation: rides with variants — see above.
   - uid: mondoo-okta-security-threatinsight-action-block
     title: Ensure ThreatInsight is configured to block suspicious login attempts
     impact: 100
@@ -2252,6 +2543,11 @@ queries:
   - uid: mondoo-okta-security-threatinsight-action-block-api
     filters: asset.platform == "okta-org"
     mql: okta.organization.threatInsightSettings.action == "block"
+  # No Terraform variants: not yet implemented. `okta_trusted_origin` (with an
+  # `origin` argument matching `^https://`) is the candidate resource. Add
+  # HCL / plan / state variants and an `id: terraform` remediation in a
+  # follow-up.
+  # No Terraform remediation: rides with variants — see above.
   - uid: mondoo-okta-security-trusted-origins-https
     title: Ensure all active trusted origins use HTTPS
     impact: 90
@@ -2308,6 +2604,10 @@ queries:
   - uid: mondoo-okta-security-trusted-origins-https-api
     filters: asset.platform == "okta-org"
     mql: okta.trustedOrigins.where(status == "ACTIVE").all(origin == /^https:\/\//)
+  # No Terraform variants: not yet implemented. `okta_policy_rule_signon`
+  # (with `mfa_required = true`) is the candidate resource. Add HCL / plan /
+  # state variants and an `id: terraform` remediation in a follow-up.
+  # No Terraform remediation: rides with variants — see above.
   - uid: mondoo-okta-security-signon-requires-mfa
     title: Ensure sign-on policy rules require MFA
     impact: 90
@@ -2372,6 +2672,12 @@ queries:
       okta.policies.signOn.where(status == "ACTIVE").all(
         rules.where(status == "ACTIVE" && name != "Catch-all Rule").all(actions["signon"]["requireFactor"] == true)
       )
+  # No Terraform variants: counts ORG_ADMIN role assignments across the org.
+  # Per-user `okta_user_admin_roles` HCL would only see TF-managed grants and
+  # miss assignments made via the API or Admin Console — the runtime check
+  # against the live tenant is the source of truth.
+  # No Terraform remediation: same reason — guidance limited to TF-managed
+  # users would be misleading.
   - uid: mondoo-okta-security-limit-org-admins
     title: Limit the number of organization admins
     impact: 80
