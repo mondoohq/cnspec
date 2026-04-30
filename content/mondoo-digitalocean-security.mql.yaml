@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-digitalocean-security
     name: Mondoo DigitalOcean Security
-    version: 1.0.0
+    version: 1.1.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -87,6 +87,10 @@ policies:
           - uid: mondoo-digitalocean-security-app-platform-https
     scoring_system: highest impact
 queries:
+  # No CLI remediation: email verification is a one-time interactive flow — the
+  # legitimate user must click a confirmation link delivered to their inbox.
+  # `doctl account` exposes only `get` and `ratelimit`; there is no API for
+  # triggering or completing email verification.
   - uid: mondoo-digitalocean-security-account-email-verified
     title: Ensure the DigitalOcean account email is verified
     impact: 60
@@ -492,6 +496,45 @@ queries:
             1. Navigate to **Databases** and open the affected cluster.
             2. Go to **Settings** > **Upgrade Major Version** (availability depends on engine).
             3. Follow the prompts; otherwise, create a new cluster on a supported version and migrate data using `pg_dump`/`mysqldump`/native replication.
+        - id: cli
+          desc: |
+            `doctl` does not perform an in-place major-version upgrade — `doctl databases migrate` only changes regions. Spin up a replacement cluster on a supported version and cut over with engine-native tools.
+
+            1. Identify affected clusters and list supported versions for each engine:
+
+                ```bash
+                doctl databases list --format ID,Name,Engine,EngineVersion,Region,Size
+                doctl databases options versions --engine pg
+                doctl databases options versions --engine mysql
+                doctl databases options versions --engine redis
+                doctl databases options versions --engine mongodb
+                doctl databases options versions --engine kafka
+                doctl databases options versions --engine opensearch
+                ```
+
+            2. Provision a replacement cluster on a supported version. Match the existing region, size, and node count:
+
+                ```bash
+                doctl databases create <new-name> \
+                  --engine pg \
+                  --version 16 \
+                  --region <region> \
+                  --size <size-slug> \
+                  --num-nodes <count> \
+                  --private-network-uuid <vpc-uuid>
+                ```
+
+            3. Pull connection info for the new cluster and migrate data with engine-native tools (`pg_dump | pg_restore`, `mysqldump`, `MIGRATE` for Redis, etc.):
+
+                ```bash
+                doctl databases connection <new-cluster-id> --format Host,Port,User,Password,Database
+                ```
+
+            4. Repoint applications, then delete the old cluster once migration is verified:
+
+                ```bash
+                doctl databases delete <old-cluster-id>
+                ```
     refs:
       - url: https://docs.digitalocean.com/products/databases/postgresql/how-to/upgrade-major-version/
         title: Upgrade a managed database major version
@@ -770,6 +813,38 @@ queries:
             2. Go to **Settings** > **Domains**.
             3. Remove or correct any custom domain without a managed certificate, and verify that the generated app URL on `ondigitalocean.app` is reachable over HTTPS.
             4. Trigger a new deployment if needed.
+        - id: cli
+          desc: |
+            App Platform serves managed TLS certificates automatically, so an HTTP `liveUrl` almost always means a custom domain is misconfigured. Pull the spec, fix the broken domain, and reapply.
+
+            1. Locate the affected app and pull its spec:
+
+                ```bash
+                doctl apps list --format ID,DefaultIngress,LiveURL,Spec.Name
+                doctl apps spec get <app-id> > app.yaml
+                ```
+
+            2. Edit `app.yaml` to remove or correct the misconfigured custom domain. Each entry under `domains:` must point at a domain whose CNAME or A record resolves to the app's `ondigitalocean.app` ingress so App Platform can issue a managed cert. If the custom domain is no longer needed, drop the entry — the default `*.ondigitalocean.app` URL is always served over HTTPS.
+
+                ```yaml
+                domains:
+                  - domain: app.example.com
+                    type: PRIMARY
+                ```
+
+            3. Validate the spec, push it, and trigger a fresh deployment so the cert is reissued:
+
+                ```bash
+                doctl apps spec validate app.yaml
+                doctl apps update <app-id> --spec app.yaml
+                doctl apps create-deployment <app-id>
+                ```
+
+            4. Confirm the live URL is now HTTPS:
+
+                ```bash
+                doctl apps get <app-id> --format ID,LiveURL
+                ```
     refs:
       - url: https://docs.digitalocean.com/products/app-platform/how-to/manage-domains/
         title: Manage App Platform domains and certificates
