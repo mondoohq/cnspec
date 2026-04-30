@@ -3779,6 +3779,35 @@ queries:
             # Drain and delete the original (public-subnet) node pool
             oci ce node-pool delete --node-pool-id <old-node-pool-ocid> --force
             ```
+        - id: terraform
+          desc: |
+            Place node pool workers in subnets that prohibit public IPs on VNICs:
+
+            ```hcl
+            resource "oci_core_subnet" "workers_private" {
+              compartment_id             = var.compartment_ocid
+              vcn_id                     = oci_core_vcn.cluster.id
+              cidr_block                 = "10.0.10.0/24"
+              prohibit_public_ip_on_vnic = true
+              prohibit_internet_ingress  = true
+            }
+
+            resource "oci_containerengine_node_pool" "app" {
+              cluster_id         = oci_containerengine_cluster.app.id
+              compartment_id     = var.compartment_ocid
+              kubernetes_version = var.k8s_version
+              name               = "app-pool"
+              node_shape         = "VM.Standard.E4.Flex"
+
+              node_config_details {
+                placement_configs {
+                  availability_domain = var.availability_domain
+                  subnet_id           = oci_core_subnet.workers_private.id
+                }
+                size = 3
+              }
+            }
+            ```
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/ContEng/Concepts/contengnetworkconfig.htm
         title: OCI - Network resource configuration for Kubernetes clusters
@@ -4144,6 +4173,7 @@ queries:
   - uid: mondoo-oci-security-adb-no-public-management-urls-oci
     filters: asset.platform == 'oci'
     mql: |
+      # The OCI provider populates `connectionUrls` only when the underlying ADB has a non-nil ConnectionUrls struct, which Oracle returns when public or NSG-allowed access is enabled. Private-endpoint ADBs return a nil ConnectionUrls and therefore a null `connectionUrls` in MQL — see https://github.com/mondoohq/mql/pull/7337.
       oci.database.autonomousDatabases.all(connectionUrls == null)
   - uid: mondoo-oci-security-adb-no-public-management-urls-terraform-hcl
     filters: |
