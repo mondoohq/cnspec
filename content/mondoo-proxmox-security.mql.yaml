@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-proxmox-security
     name: Mondoo Proxmox VE Security
-    version: 1.0.2
+    version: 1.1.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -193,9 +193,63 @@ queries:
       remediation:
         - id: cli
           desc: |
-            Enforce TFA realm-wide:
+            **Using the CLI**
 
-                pveum realm modify pam --tfa type=totp
+            Enforce TFA for the realm so users must enrol a second factor on next login:
+
+            ```bash
+            pveum realm modify pam --tfa type=totp
+            pveum realm modify pve --tfa type=totp
+            ```
+
+            Enrol a TOTP secret for an existing user:
+
+            ```bash
+            pveum user tfa set <user>@<realm> --type totp --issuer "Proxmox VE"
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Enforce TFA on every authentication realm and verify the resulting `tfa.cfg`:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            for realm in $(pveum realm list --output-format json | jq -r '.[].realm'); do
+              echo "Enforcing TOTP TFA on realm $realm"
+              pveum realm modify "$realm" --tfa type=totp
+            done
+
+            if [ ! -s /etc/pve/priv/tfa.cfg ]; then
+              echo "WARNING: /etc/pve/priv/tfa.cfg is empty - users must still enrol TFA tokens" >&2
+            fi
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to enforce TOTP on every realm:
+
+            ```yaml
+            ---
+            - name: Enforce two-factor authentication on Proxmox realms
+              hosts: proxmox
+              become: true
+
+              tasks:
+                - name: List Proxmox realms
+                  ansible.builtin.command: pveum realm list --output-format json
+                  register: pve_realms
+                  changed_when: false
+
+                - name: Enforce TOTP TFA on each realm
+                  ansible.builtin.command: "pveum realm modify {{ item.realm }} --tfa type=totp"
+                  loop: "{{ pve_realms.stdout | from_json }}"
+                  loop_control:
+                    label: "{{ item.realm }}"
+            ```
 
   - uid: mondoo-proxmox-security-admin-role-is-not-overused
     title: Ensure the Administrator role is assigned sparingly
@@ -213,6 +267,74 @@ queries:
         roles such as `PVEAdmin`, `PVEVMAdmin`, `PVEAuditor`.
 
         Expected: <= 3 Administrator role assignments in /etc/pve/user.cfg
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            List existing ACL entries and the principals that hold the `Administrator` role:
+
+            ```bash
+            pveum acl list
+            grep ',Administrator' /etc/pve/user.cfg
+            ```
+
+            Replace `Administrator` with a least-privilege role for a given subject (delete the over-broad ACL, then re-add a scoped role):
+
+            ```bash
+            pveum acl delete / --user <user>@<realm> --role Administrator
+            pveum acl modify /vms --user <user>@<realm> --role PVEVMAdmin
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Print every ACL entry that grants `Administrator` so an operator can review and downgrade them:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            echo "Subjects holding the Administrator role:"
+            grep ',Administrator' /etc/pve/user.cfg || echo "  (none)"
+
+            cat <<'EOF'
+
+            Review each entry above. For every subject that does not need full
+            cluster-wide control, delete the Administrator ACL and replace it
+            with a scoped role (PVEVMAdmin, PVEDatastoreAdmin, PVEAuditor, ...):
+
+              pveum acl delete <path> --user <user>@<realm> --role Administrator
+              pveum acl modify <scoped-path> --user <user>@<realm> --role <scoped-role>
+            EOF
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to revoke the `Administrator` role from a
+            specific user and grant a scoped replacement:
+
+            ```yaml
+            ---
+            - name: Reduce Proxmox Administrator role usage
+              hosts: proxmox
+              become: true
+              vars:
+                pve_user: "alice@pve"
+                pve_scope: "/vms"
+                pve_scoped_role: "PVEVMAdmin"
+
+              tasks:
+                - name: Revoke Administrator on the cluster root
+                  ansible.builtin.command: "pveum acl delete / --user {{ pve_user }} --role Administrator"
+                  register: revoke
+                  changed_when: revoke.rc == 0
+                  failed_when: revoke.rc not in [0, 2]
+
+                - name: Grant a scoped role instead
+                  ansible.builtin.command: "pveum acl modify {{ pve_scope }} --user {{ pve_user }} --role {{ pve_scoped_role }}"
+            ```
 
   - uid: mondoo-proxmox-security-user-cfg-permissions
     title: Ensure /etc/pve/user.cfg is not world-readable
@@ -224,6 +346,56 @@ queries:
       file("/etc/pve/user.cfg") {
         permissions.other_readable == false
       }
+    docs:
+      desc: |
+        `/etc/pve/user.cfg` enumerates every user, group, and ACL on the cluster.
+        It must not be readable by unprivileged accounts.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Tighten ownership and permissions on the user database:
+
+            ```bash
+            chown root:www-data /etc/pve/user.cfg
+            chmod 0640 /etc/pve/user.cfg
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Apply correct ownership and mode if the current value is permissive:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            target=/etc/pve/user.cfg
+            chown root:www-data "$target"
+            chmod 0640 "$target"
+            stat -c '%U:%G %a %n' "$target"
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to enforce mode 0640 root:www-data on `user.cfg`:
+
+            ```yaml
+            ---
+            - name: Restrict permissions on /etc/pve/user.cfg
+              hosts: proxmox
+              become: true
+
+              tasks:
+                - name: Set owner, group, and mode on user.cfg
+                  ansible.builtin.file:
+                    path: /etc/pve/user.cfg
+                    owner: root
+                    group: www-data
+                    mode: '0640'
+            ```
 
   - uid: mondoo-proxmox-security-ssh-root-login-is-key-only
     title: Ensure SSH root login is key-only (Proxmox-adapted)
@@ -246,6 +418,70 @@ queries:
         This PVE-adapted check accepts `prohibit-password` as the correct value.
 
         Expected value: `prohibit-password`
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Set `PermitRootLogin prohibit-password` and reload sshd. Make sure
+            you have a working SSH key for root before reloading or you will
+            lock yourself out:
+
+            ```bash
+            sed -i -E 's|^[#[:space:]]*PermitRootLogin[[:space:]].*|PermitRootLogin prohibit-password|' /etc/ssh/sshd_config
+            grep -q '^PermitRootLogin' /etc/ssh/sshd_config || echo 'PermitRootLogin prohibit-password' >> /etc/ssh/sshd_config
+            sshd -t
+            systemctl reload ssh
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Enforce `PermitRootLogin prohibit-password`, validate the resulting
+            config, and reload sshd:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            config=/etc/ssh/sshd_config
+            if grep -qE '^[#[:space:]]*PermitRootLogin' "$config"; then
+              sed -i -E 's|^[#[:space:]]*PermitRootLogin[[:space:]].*|PermitRootLogin prohibit-password|' "$config"
+            else
+              echo 'PermitRootLogin prohibit-password' >> "$config"
+            fi
+
+            sshd -t
+            systemctl reload ssh
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to set `PermitRootLogin prohibit-password`
+            and reload sshd:
+
+            ```yaml
+            ---
+            - name: Set Proxmox-compatible SSH root login policy
+              hosts: proxmox
+              become: true
+
+              tasks:
+                - name: Set PermitRootLogin to prohibit-password
+                  ansible.builtin.lineinfile:
+                    path: /etc/ssh/sshd_config
+                    regexp: '^[#\s]*PermitRootLogin\s+'
+                    line: 'PermitRootLogin prohibit-password'
+                    validate: '/usr/sbin/sshd -t -f %s'
+                  notify: Reload sshd
+
+              handlers:
+                - name: Reload sshd
+                  ansible.builtin.service:
+                    name: ssh
+                    state: reloaded
+            ```
 
   - uid: mondoo-proxmox-security-ssh-password-auth-is-disabled
     title: Ensure SSH password authentication is disabled
@@ -255,6 +491,72 @@ queries:
         url: https://cwe.mitre.org/data/definitions/521.html
     mql: |
       sshd.config.params["PasswordAuthentication"] == "no"
+    docs:
+      desc: |
+        Disabling SSH password authentication eliminates brute-force credential
+        attacks against the hypervisor. Public-key authentication must already
+        be in place for every administrator before disabling passwords.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Disable password authentication and reload sshd. Verify SSH key
+            login works for every administrator before reloading:
+
+            ```bash
+            sed -i -E 's|^[#[:space:]]*PasswordAuthentication[[:space:]].*|PasswordAuthentication no|' /etc/ssh/sshd_config
+            grep -q '^PasswordAuthentication' /etc/ssh/sshd_config || echo 'PasswordAuthentication no' >> /etc/ssh/sshd_config
+            sshd -t
+            systemctl reload ssh
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Set `PasswordAuthentication no` and reload sshd after validating the config:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            config=/etc/ssh/sshd_config
+            if grep -qE '^[#[:space:]]*PasswordAuthentication' "$config"; then
+              sed -i -E 's|^[#[:space:]]*PasswordAuthentication[[:space:]].*|PasswordAuthentication no|' "$config"
+            else
+              echo 'PasswordAuthentication no' >> "$config"
+            fi
+
+            sshd -t
+            systemctl reload ssh
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to disable SSH password authentication:
+
+            ```yaml
+            ---
+            - name: Disable SSH password authentication
+              hosts: proxmox
+              become: true
+
+              tasks:
+                - name: Set PasswordAuthentication to no
+                  ansible.builtin.lineinfile:
+                    path: /etc/ssh/sshd_config
+                    regexp: '^[#\s]*PasswordAuthentication\s+'
+                    line: 'PasswordAuthentication no'
+                    validate: '/usr/sbin/sshd -t -f %s'
+                  notify: Reload sshd
+
+              handlers:
+                - name: Reload sshd
+                  ansible.builtin.service:
+                    name: ssh
+                    state: reloaded
+            ```
 
   # =================================================================
   # Account Security
@@ -268,6 +570,76 @@ queries:
         url: https://cwe.mitre.org/data/definitions/250.html
     mql: |
       users.where(uid == 0).list.all(name == "root")
+    docs:
+      desc: |
+        Any account other than `root` with UID 0 effectively bypasses every
+        access control on the system. Reassign each non-root UID 0 account to
+        a unique, unused UID or remove it.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Identify offending accounts and reassign or delete them:
+
+            ```bash
+            awk -F: '($3 == 0 && $1 != "root") {print $1}' /etc/passwd
+
+            # Reassign to an unused UID:
+            usermod -u <new-uid> <username>
+            chown -R <new-uid> /home/<username>
+
+            # Or remove the account entirely if it is unused:
+            userdel <username>
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Locate every non-root UID 0 account and prompt an operator to
+            reassign or delete each one:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            mapfile -t offenders < <(awk -F: '($3 == 0 && $1 != "root") {print $1}' /etc/passwd)
+            if [ ${#offenders[@]} -eq 0 ]; then
+              echo "No non-root UID 0 accounts found."
+              exit 0
+            fi
+
+            echo "Non-root UID 0 accounts detected:"
+            printf '  - %s\n' "${offenders[@]}"
+            echo
+            echo "Run 'usermod -u <new-uid> <name>' to reassign or 'userdel <name>' to remove."
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to fail when any non-root UID 0 account
+            exists, so the runbook stops before any user is removed by mistake:
+
+            ```yaml
+            ---
+            - name: Detect non-root UID 0 accounts
+              hosts: proxmox
+              become: true
+
+              tasks:
+                - name: Find non-root UID 0 accounts
+                  ansible.builtin.shell: |
+                    set -o pipefail
+                    awk -F: '$3 == 0 && $1 != "root" {print $1}' /etc/passwd
+                  register: uid_zero_accounts
+                  changed_when: false
+
+                - name: Fail if non-root UID 0 accounts exist
+                  ansible.builtin.fail:
+                    msg: "Non-root UID 0 accounts found: {{ uid_zero_accounts.stdout_lines }} - reassign or remove them"
+                  when: uid_zero_accounts.stdout_lines | length > 0
+            ```
 
   - uid: mondoo-proxmox-security-no-empty-passwords
     title: Ensure no password field is empty in /etc/shadow
@@ -277,6 +649,73 @@ queries:
         url: https://cwe.mitre.org/data/definitions/258.html
     mql: |
       file("/etc/shadow").content.lines.where(_ == /^[^:]+::/).length == 0
+    docs:
+      desc: |
+        Accounts with an empty password hash can authenticate without any
+        credentials. Lock or set a strong password for every affected account.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Identify accounts with an empty password field and lock them:
+
+            ```bash
+            awk -F: '($2 == "") {print $1}' /etc/shadow
+
+            for user in $(awk -F: '($2 == "") {print $1}' /etc/shadow); do
+              passwd -l "$user"
+            done
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Lock every account whose `/etc/shadow` password field is empty:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            mapfile -t empty < <(awk -F: '($2 == "") {print $1}' /etc/shadow)
+            if [ ${#empty[@]} -eq 0 ]; then
+              echo "No accounts with empty passwords."
+              exit 0
+            fi
+
+            for user in "${empty[@]}"; do
+              echo "Locking account: $user"
+              passwd -l "$user"
+            done
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to lock every account that has an empty
+            `/etc/shadow` password field:
+
+            ```yaml
+            ---
+            - name: Lock accounts with empty passwords
+              hosts: proxmox
+              become: true
+
+              tasks:
+                - name: Find accounts with empty password fields
+                  ansible.builtin.shell: |
+                    set -o pipefail
+                    awk -F: '($2 == "") {print $1}' /etc/shadow
+                  register: empty_password_accounts
+                  changed_when: false
+
+                - name: Lock each empty-password account
+                  ansible.builtin.user:
+                    name: "{{ item }}"
+                    password_lock: true
+                  loop: "{{ empty_password_accounts.stdout_lines }}"
+                  when: empty_password_accounts.stdout_lines | length > 0
+            ```
 
   # =================================================================
   # Proxmox Firewall
@@ -296,9 +735,51 @@ queries:
         content.lines.where(_ == /^enable:\s*1/).length > 0
       }
     docs:
+      desc: |
+        The cluster-wide firewall must be enabled before per-node, per-VM, or
+        per-container rules take effect. The setting is stored in
+        `/etc/pve/firewall/cluster.fw` under the `[OPTIONS]` section.
       remediation:
         - id: cli
-          desc: pvesh set /cluster/firewall/options --enable 1
+          desc: |
+            **Using the CLI**
+
+            Enable the cluster firewall via the API:
+
+            ```bash
+            pvesh set /cluster/firewall/options --enable 1
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Enable the cluster firewall and verify it is active:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            pvesh set /cluster/firewall/options --enable 1
+            pvesh get /cluster/firewall/options --output-format json | jq '.enable'
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to enable the cluster firewall:
+
+            ```yaml
+            ---
+            - name: Enable Proxmox cluster firewall
+              hosts: proxmox
+              become: true
+              run_once: true
+
+              tasks:
+                - name: Enable cluster firewall via pvesh
+                  ansible.builtin.command: pvesh set /cluster/firewall/options --enable 1
+                  changed_when: true
+            ```
 
   - uid: mondoo-proxmox-security-firewall-default-policy-is-drop
     title: Ensure firewall default input policy is DROP
@@ -311,6 +792,85 @@ queries:
         exists
         content.lines.where(_ == /^policy_in:\s*DROP/).length > 0
       }
+    docs:
+      desc: |
+        The cluster firewall must deny inbound traffic by default. Explicit
+        allow rules can be added afterwards. Make sure SSH and the PVE web UI
+        (TCP 22 and 8006) are allowed from your management network before
+        flipping the default policy or you will lock yourself out.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Set the cluster default input policy to `DROP`:
+
+            ```bash
+            pvesh set /cluster/firewall/options --policy_in DROP
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Add explicit allow rules for management traffic, then flip the
+            default policy to `DROP`:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            mgmt_net="${1:-10.0.0.0/24}"
+
+            pvesh create /cluster/firewall/rules \
+              --type in --action ACCEPT --proto tcp --dport 22 \
+              --source "$mgmt_net" --comment "Allow SSH from management"
+            pvesh create /cluster/firewall/rules \
+              --type in --action ACCEPT --proto tcp --dport 8006 \
+              --source "$mgmt_net" --comment "Allow PVE Web UI from management"
+
+            pvesh set /cluster/firewall/options --policy_in DROP
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to set the default input policy to `DROP`
+            after asserting that management allow rules already exist:
+
+            ```yaml
+            ---
+            - name: Set Proxmox cluster firewall default-deny inbound
+              hosts: proxmox
+              become: true
+              run_once: true
+              vars:
+                management_cidr: "10.0.0.0/24"
+
+              tasks:
+                - name: Allow SSH from management network
+                  ansible.builtin.command: >-
+                    pvesh create /cluster/firewall/rules
+                    --type in --action ACCEPT --proto tcp --dport 22
+                    --source {{ management_cidr }}
+                    --comment "Allow SSH from management"
+                  register: ssh_rule
+                  changed_when: ssh_rule.rc == 0
+                  failed_when: ssh_rule.rc not in [0, 2]
+
+                - name: Allow PVE Web UI from management network
+                  ansible.builtin.command: >-
+                    pvesh create /cluster/firewall/rules
+                    --type in --action ACCEPT --proto tcp --dport 8006
+                    --source {{ management_cidr }}
+                    --comment "Allow PVE Web UI from management"
+                  register: gui_rule
+                  changed_when: gui_rule.rc == 0
+                  failed_when: gui_rule.rc not in [0, 2]
+
+                - name: Set default input policy to DROP
+                  ansible.builtin.command: pvesh set /cluster/firewall/options --policy_in DROP
+                  changed_when: true
+            ```
 
   - uid: mondoo-proxmox-security-node-firewall-is-enabled
     title: Ensure host firewall is enabled on each node
@@ -319,6 +879,56 @@ queries:
       files.find(from: "/etc/pve/nodes", regex: "host.fw$", type: "file").list.all(
         file(_.path).content.lines.where(_ == /^enable:\s*1/).length > 0
       )
+    docs:
+      desc: |
+        Every node in the cluster must have its host firewall enabled. The
+        per-node setting is stored in `/etc/pve/nodes/<node>/host.fw`.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Enable the host firewall on every node in the cluster:
+
+            ```bash
+            for node in $(pvesh get /nodes --output-format json | jq -r '.[].node'); do
+              pvesh set /nodes/$node/firewall/options --enable 1
+            done
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Enable the host firewall on each cluster node and verify the
+            resulting state:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            for node in $(pvesh get /nodes --output-format json | jq -r '.[].node'); do
+              echo "Enabling host firewall on $node"
+              pvesh set "/nodes/$node/firewall/options" --enable 1
+              pvesh get "/nodes/$node/firewall/options" --output-format json | jq '{node: "'"$node"'", enable: .enable}'
+            done
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to enable the host firewall on every node:
+
+            ```yaml
+            ---
+            - name: Enable Proxmox per-node host firewall
+              hosts: proxmox
+              become: true
+
+              tasks:
+                - name: Enable host firewall on this node
+                  ansible.builtin.command: "pvesh set /nodes/{{ ansible_hostname }}/firewall/options --enable 1"
+                  changed_when: true
+            ```
 
   - uid: mondoo-proxmox-security-firewall-has-rules
     title: Ensure at least one firewall rule is configured
@@ -328,6 +938,90 @@ queries:
         exists
         content.lines.where(_ == /^(IN|OUT|GROUP)/).length > 0
       }
+    docs:
+      desc: |
+        A cluster firewall with no `IN`, `OUT`, or `GROUP` rules either has no
+        meaningful policy in place or is relying entirely on defaults. Define
+        explicit allow rules for the inbound services you operate (management,
+        cluster traffic, application traffic).
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Create at least one explicit rule. Adjust to match your environment:
+
+            ```bash
+            pvesh create /cluster/firewall/rules \
+              --type in --action ACCEPT --proto tcp --dport 22 \
+              --source 10.0.0.0/24 --comment "Allow SSH from management"
+
+            pvesh create /cluster/firewall/rules \
+              --type in --action ACCEPT --proto tcp --dport 8006 \
+              --source 10.0.0.0/24 --comment "Allow PVE Web UI from management"
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Seed a baseline rule set if none exists:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            mgmt_net="${1:-10.0.0.0/24}"
+
+            existing=$(pvesh get /cluster/firewall/rules --output-format json | jq 'length')
+            if [ "$existing" -gt 0 ]; then
+              echo "Cluster firewall already has $existing rule(s); leaving alone."
+              exit 0
+            fi
+
+            pvesh create /cluster/firewall/rules \
+              --type in --action ACCEPT --proto tcp --dport 22 \
+              --source "$mgmt_net" --comment "Allow SSH from management"
+
+            pvesh create /cluster/firewall/rules \
+              --type in --action ACCEPT --proto tcp --dport 8006 \
+              --source "$mgmt_net" --comment "Allow PVE Web UI from management"
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to create baseline cluster firewall rules:
+
+            ```yaml
+            ---
+            - name: Seed Proxmox cluster firewall rules
+              hosts: proxmox
+              become: true
+              run_once: true
+              vars:
+                management_cidr: "10.0.0.0/24"
+
+              tasks:
+                - name: Allow SSH from management network
+                  ansible.builtin.command: >-
+                    pvesh create /cluster/firewall/rules
+                    --type in --action ACCEPT --proto tcp --dport 22
+                    --source {{ management_cidr }}
+                    --comment "Allow SSH from management"
+                  register: ssh_rule
+                  changed_when: ssh_rule.rc == 0
+                  failed_when: ssh_rule.rc not in [0, 2]
+
+                - name: Allow PVE Web UI from management network
+                  ansible.builtin.command: >-
+                    pvesh create /cluster/firewall/rules
+                    --type in --action ACCEPT --proto tcp --dport 8006
+                    --source {{ management_cidr }}
+                    --comment "Allow PVE Web UI from management"
+                  register: gui_rule
+                  changed_when: gui_rule.rc == 0
+                  failed_when: gui_rule.rc not in [0, 2]
+            ```
 
   # =================================================================
   # Proxmox TLS Certificates
@@ -358,10 +1052,69 @@ queries:
       remediation:
         - id: cli
           desc: |
-            Configure ACME/Let's Encrypt:
+            **Using the CLI**
 
-                pvenode acme account register default <email>
-                pvenode acme cert order
+            Register an ACME account and order a Let's Encrypt certificate for
+            this node:
+
+            ```bash
+            pvenode acme account register default <email>
+            pvenode config set --acme domains=<fqdn>
+            pvenode acme cert order
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Drive the ACME workflow end to end:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            email="${1:?usage: $0 <email> <fqdn>}"
+            fqdn="${2:?usage: $0 <email> <fqdn>}"
+
+            if ! pvenode acme account info default >/dev/null 2>&1; then
+              pvenode acme account register default "$email"
+            fi
+
+            pvenode config set --acme "domains=$fqdn"
+            pvenode acme cert order
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to register an ACME account and order a
+            certificate per node:
+
+            ```yaml
+            ---
+            - name: Issue ACME TLS certificate for Proxmox nodes
+              hosts: proxmox
+              become: true
+              vars:
+                acme_email: "ops@example.com"
+                acme_fqdn: "{{ ansible_fqdn }}"
+
+              tasks:
+                - name: Register the default ACME account (idempotent)
+                  ansible.builtin.shell: |
+                    set -e
+                    if ! pvenode acme account info default >/dev/null 2>&1; then
+                      pvenode acme account register default "{{ acme_email }}"
+                    fi
+                  register: register_acct
+                  changed_when: "'registered' in register_acct.stdout"
+
+                - name: Configure ACME domains for this node
+                  ansible.builtin.command: "pvenode config set --acme domains={{ acme_fqdn }}"
+
+                - name: Order the TLS certificate
+                  ansible.builtin.command: pvenode acme cert order
+                  changed_when: true
+            ```
 
   - uid: mondoo-proxmox-security-cert-is-not-expiring
     title: Ensure TLS certificate does not expire within 30 days
@@ -371,6 +1124,73 @@ queries:
         url: https://cwe.mitre.org/data/definitions/298.html
     mql: |
       command("openssl x509 -in /etc/pve/local/pve-ssl.pem -checkend 2592000 -noout >/dev/null 2>&1 && echo valid || echo expiring").stdout.trim == "valid"
+    docs:
+      desc: |
+        Renew the PVE TLS certificate well before it expires. ACME-issued
+        certificates can be renewed automatically.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Renew the ACME certificate on demand:
+
+            ```bash
+            pvenode acme cert renew --force
+            ```
+
+            Or, for a non-ACME certificate, replace it with a freshly issued
+            one (PEM-formatted certificate and key):
+
+            ```bash
+            pvenode cert set /path/to/fullchain.pem /path/to/privkey.pem --force
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Trigger an ACME renewal whenever the active certificate is within
+            30 days of expiry:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            cert=/etc/pve/local/pve-ssl.pem
+
+            if openssl x509 -in "$cert" -checkend 2592000 -noout >/dev/null 2>&1; then
+              echo "Certificate not yet within renewal window."
+              exit 0
+            fi
+
+            echo "Certificate expires within 30 days; renewing via ACME"
+            pvenode acme cert renew --force
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to renew the ACME certificate when the
+            current one is within 30 days of expiry:
+
+            ```yaml
+            ---
+            - name: Renew expiring Proxmox TLS certificate
+              hosts: proxmox
+              become: true
+
+              tasks:
+                - name: Check whether pve-ssl.pem is within 30 days of expiry
+                  ansible.builtin.command: openssl x509 -in /etc/pve/local/pve-ssl.pem -checkend 2592000 -noout
+                  register: cert_check
+                  failed_when: false
+                  changed_when: false
+
+                - name: Renew certificate via ACME if needed
+                  ansible.builtin.command: pvenode acme cert renew --force
+                  when: cert_check.rc != 0
+                  changed_when: true
+            ```
 
   # =================================================================
   # LXC Container Security
@@ -402,10 +1222,74 @@ queries:
       remediation:
         - id: cli
           desc: |
-            Recreate privileged containers as unprivileged:
+            **Using the CLI**
 
-                vzdump <ctid> --storage local --compress zstd
-                pct restore <new-ctid> <backup> --unprivileged 1
+            Recreate any privileged container as unprivileged. There is no
+            in-place conversion - back up, then restore with `--unprivileged 1`:
+
+            ```bash
+            vzdump <ctid> --storage local --compress zstd
+            pct restore <new-ctid> /var/lib/vz/dump/vzdump-lxc-<ctid>-*.tar.zst \
+              --unprivileged 1 --storage local-lvm
+            pct start <new-ctid>
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Print the IDs of every privileged container so an operator can
+            schedule recreation. The script is intentionally non-destructive:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            shopt -s nullglob
+            for conf in /etc/pve/lxc/[0-9]*.conf; do
+              ctid=$(basename "$conf" .conf)
+              if ! grep -q '^unprivileged: 1' "$conf"; then
+                echo "Container $ctid is privileged. Recreate it with:"
+                echo "  vzdump $ctid --storage local --compress zstd"
+                echo "  pct restore <new-ctid> <backup> --unprivileged 1 --storage <storage>"
+              fi
+            done
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to fail the run when any privileged
+            container is detected, so the conversion can be scheduled
+            explicitly per container:
+
+            ```yaml
+            ---
+            - name: Detect privileged Proxmox LXC containers
+              hosts: proxmox
+              become: true
+
+              tasks:
+                - name: Find LXC config files
+                  ansible.builtin.find:
+                    paths: /etc/pve/lxc
+                    patterns: "*.conf"
+                  register: lxc_confs
+
+                - name: Identify privileged containers
+                  ansible.builtin.shell: |
+                    if ! grep -q '^unprivileged: 1' "{{ item.path }}"; then
+                      basename "{{ item.path }}" .conf
+                    fi
+                  loop: "{{ lxc_confs.files }}"
+                  register: privileged_check
+                  changed_when: false
+
+                - name: Fail when any container is privileged
+                  ansible.builtin.fail:
+                    msg: "Privileged container detected: {{ item.stdout }} - back up and re-restore with --unprivileged 1"
+                  loop: "{{ privileged_check.results }}"
+                  when: item.stdout | length > 0
+            ```
 
   - uid: mondoo-proxmox-security-ct-nesting-is-disabled
     title: Ensure container nesting is disabled
@@ -417,6 +1301,91 @@ queries:
       files.find(from: "/etc/pve/lxc", regex: "[0-9]+.conf$", type: "file").list.all(
         file(_.path).content.contains("nesting=1") == false
       )
+    docs:
+      desc: |
+        Container nesting allows running additional containers (or Docker)
+        inside an LXC container. It exposes additional kernel surfaces to the
+        guest and should remain disabled unless explicitly required.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Remove the `nesting=1` feature from every container that has it:
+
+            ```bash
+            pct set <ctid> -features keyctl=1
+            ```
+
+            (Set `features` to the desired feature list without `nesting=1`.
+            Use `pct config <ctid>` to inspect the current feature list.)
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Locate every container config that enables nesting and reset the
+            features line so nesting is removed:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            shopt -s nullglob
+            for conf in /etc/pve/lxc/[0-9]*.conf; do
+              ctid=$(basename "$conf" .conf)
+              if grep -q 'nesting=1' "$conf"; then
+                features=$(grep '^features:' "$conf" | sed -E 's/(^|,)nesting=1//; s/^features:\s*,?/features: /; s/,\s*$//')
+                if [ -z "${features#features: }" ]; then
+                  sed -i '/^features:/d' "$conf"
+                else
+                  sed -i "s|^features:.*|$features|" "$conf"
+                fi
+                echo "Removed nesting=1 from container $ctid"
+              fi
+            done
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to find every LXC config that enables
+            nesting and rewrite the `features:` line without it:
+
+            ```yaml
+            ---
+            - name: Disable nesting on Proxmox LXC containers
+              hosts: proxmox
+              become: true
+
+              tasks:
+                - name: Find LXC config files
+                  ansible.builtin.find:
+                    paths: /etc/pve/lxc
+                    patterns: "*.conf"
+                    contains: 'nesting=1'
+                  register: nested_confs
+
+                - name: Strip ",nesting=1" when it follows another feature
+                  ansible.builtin.replace:
+                    path: "{{ item.path }}"
+                    regexp: '(^features:.*),nesting=1\b'
+                    replace: '\1'
+                  loop: "{{ nested_confs.files }}"
+
+                - name: Strip "nesting=1," when it leads the features list
+                  ansible.builtin.replace:
+                    path: "{{ item.path }}"
+                    regexp: '^(features:\s*)nesting=1,'
+                    replace: '\1'
+                  loop: "{{ nested_confs.files }}"
+
+                - name: Remove an empty features line if nesting=1 was the only feature
+                  ansible.builtin.lineinfile:
+                    path: "{{ item.path }}"
+                    regexp: '^features:\s*nesting=1\s*$'
+                    state: absent
+                  loop: "{{ nested_confs.files }}"
+            ```
 
   - uid: mondoo-proxmox-security-ct-apparmor-is-enforced
     title: Ensure containers do not disable AppArmor
@@ -428,6 +1397,73 @@ queries:
       files.find(from: "/etc/pve/lxc", regex: "[0-9]+.conf$", type: "file").list.all(
         file(_.path).content.contains("apparmor.profile: unconfined") == false
       )
+    docs:
+      desc: |
+        `lxc.apparmor.profile: unconfined` removes the LXC AppArmor profile and
+        therefore the in-kernel sandbox the container relies on. Remove the
+        directive from every container config.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Edit each `/etc/pve/lxc/<ctid>.conf` and delete any line that sets
+            `lxc.apparmor.profile: unconfined`, then restart the container:
+
+            ```bash
+            sed -i '/^lxc\.apparmor\.profile:[[:space:]]*unconfined$/d' /etc/pve/lxc/<ctid>.conf
+            pct restart <ctid>
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Strip the unconfined profile directive from every container config
+            and restart the affected containers:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            shopt -s nullglob
+            for conf in /etc/pve/lxc/[0-9]*.conf; do
+              ctid=$(basename "$conf" .conf)
+              if grep -q '^lxc\.apparmor\.profile:[[:space:]]*unconfined' "$conf"; then
+                sed -i '/^lxc\.apparmor\.profile:[[:space:]]*unconfined$/d' "$conf"
+                echo "Restored AppArmor profile on container $ctid"
+                pct restart "$ctid" || true
+              fi
+            done
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to remove `lxc.apparmor.profile:
+            unconfined` from any container config:
+
+            ```yaml
+            ---
+            - name: Re-enable AppArmor on Proxmox LXC containers
+              hosts: proxmox
+              become: true
+
+              tasks:
+                - name: Find LXC config files that disable AppArmor
+                  ansible.builtin.find:
+                    paths: /etc/pve/lxc
+                    patterns: "*.conf"
+                    contains: '^lxc\.apparmor\.profile:\s*unconfined'
+                    use_regex: true
+                  register: apparmor_confs
+
+                - name: Remove unconfined AppArmor directive
+                  ansible.builtin.lineinfile:
+                    path: "{{ item.path }}"
+                    regexp: '^lxc\.apparmor\.profile:\s*unconfined$'
+                    state: absent
+                  loop: "{{ apparmor_confs.files }}"
+            ```
 
   - uid: mondoo-proxmox-security-ct-firewall-is-enabled
     title: Ensure container network interfaces have firewall enabled
@@ -436,6 +1472,87 @@ queries:
       files.find(from: "/etc/pve/lxc", regex: "[0-9]+.conf$", type: "file").list.all(
         file(_.path).content.lines.where(_ == /^net[0-9]+:/).all(_.contains("firewall=1"))
       )
+    docs:
+      desc: |
+        Each `netN` interface on an LXC container must include `firewall=1` so
+        the per-interface Proxmox firewall is enforced. Without it, traffic to
+        and from that interface bypasses cluster and per-VM rules.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Re-set every interface with `firewall=1`. Replace `<ctid>` and
+            `<netN>` with real values, and keep all of the other parameters
+            (bridge, hwaddr, name, ip, vlan tag) intact:
+
+            ```bash
+            pct config <ctid> | grep '^net'
+            pct set <ctid> -<netN> name=eth0,bridge=vmbr0,hwaddr=...,firewall=1
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Iterate over every container interface and re-issue `pct set` with
+            `firewall=1` appended:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            shopt -s nullglob
+            for conf in /etc/pve/lxc/[0-9]*.conf; do
+              ctid=$(basename "$conf" .conf)
+              while IFS= read -r line; do
+                netname=${line%%:*}
+                spec=${line#*: }
+                if [[ "$spec" != *firewall=1* ]]; then
+                  if [[ "$spec" == *firewall=0* ]]; then
+                    new=${spec//firewall=0/firewall=1}
+                  else
+                    new="$spec,firewall=1"
+                  fi
+                  echo "Enabling firewall on container $ctid $netname"
+                  pct set "$ctid" "-$netname" "$new"
+                fi
+              done < <(grep '^net[0-9]\+:' "$conf")
+            done
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to add `firewall=1` to every LXC `netN`
+            line that is missing it:
+
+            ```yaml
+            ---
+            - name: Enable per-interface firewall on Proxmox LXC containers
+              hosts: proxmox
+              become: true
+
+              tasks:
+                - name: Find LXC config files
+                  ansible.builtin.find:
+                    paths: /etc/pve/lxc
+                    patterns: "*.conf"
+                  register: lxc_confs
+
+                - name: Replace firewall=0 with firewall=1
+                  ansible.builtin.replace:
+                    path: "{{ item.path }}"
+                    regexp: '(^net\d+:.*?)firewall=0'
+                    replace: '\1firewall=1'
+                  loop: "{{ lxc_confs.files }}"
+
+                - name: Append firewall=1 to interfaces missing the directive
+                  ansible.builtin.replace:
+                    path: "{{ item.path }}"
+                    regexp: '^(net\d+:(?!.*firewall=).*)$'
+                    replace: '\1,firewall=1'
+                  loop: "{{ lxc_confs.files }}"
+            ```
 
   - uid: mondoo-proxmox-security-ct-no-mknod
     title: Ensure containers do not allow mknod
@@ -444,6 +1561,90 @@ queries:
       files.find(from: "/etc/pve/lxc", regex: "[0-9]+.conf$", type: "file").list.all(
         file(_.path).content.contains("mknod=1") == false
       )
+    docs:
+      desc: |
+        The `mknod=1` feature lets a container create device nodes, which can
+        be used to escape unprivileged confinement. Disable it unless
+        absolutely required.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Remove `mknod=1` from the container's feature list:
+
+            ```bash
+            pct set <ctid> -features keyctl=1
+            ```
+
+            (Re-set `features` without `mknod=1`. Use `pct config <ctid>` to
+            see the current value.)
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Strip `mknod=1` from every container config that has it:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            shopt -s nullglob
+            for conf in /etc/pve/lxc/[0-9]*.conf; do
+              ctid=$(basename "$conf" .conf)
+              if grep -q 'mknod=1' "$conf"; then
+                features=$(grep '^features:' "$conf" | sed -E 's/(^|,)mknod=1//; s/^features:\s*,?/features: /; s/,\s*$//')
+                if [ -z "${features#features: }" ]; then
+                  sed -i '/^features:/d' "$conf"
+                else
+                  sed -i "s|^features:.*|$features|" "$conf"
+                fi
+                echo "Removed mknod=1 from container $ctid"
+              fi
+            done
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to remove `mknod=1` from container
+            feature lists:
+
+            ```yaml
+            ---
+            - name: Disable mknod on Proxmox LXC containers
+              hosts: proxmox
+              become: true
+
+              tasks:
+                - name: Find LXC config files with mknod enabled
+                  ansible.builtin.find:
+                    paths: /etc/pve/lxc
+                    patterns: "*.conf"
+                    contains: 'mknod=1'
+                  register: mknod_confs
+
+                - name: Strip ",mknod=1" when it follows another feature
+                  ansible.builtin.replace:
+                    path: "{{ item.path }}"
+                    regexp: '(^features:.*),mknod=1\b'
+                    replace: '\1'
+                  loop: "{{ mknod_confs.files }}"
+
+                - name: Strip "mknod=1," when it leads the features list
+                  ansible.builtin.replace:
+                    path: "{{ item.path }}"
+                    regexp: '^(features:\s*)mknod=1,'
+                    replace: '\1'
+                  loop: "{{ mknod_confs.files }}"
+
+                - name: Remove an empty features line if mknod=1 was the only feature
+                  ansible.builtin.lineinfile:
+                    path: "{{ item.path }}"
+                    regexp: '^features:\s*mknod=1\s*$'
+                    state: absent
+                  loop: "{{ mknod_confs.files }}"
+            ```
 
   - uid: mondoo-proxmox-security-ct-no-fuse
     title: Ensure containers do not allow FUSE mounts
@@ -452,6 +1653,90 @@ queries:
       files.find(from: "/etc/pve/lxc", regex: "[0-9]+.conf$", type: "file").list.all(
         file(_.path).content.contains("fuse=1") == false
       )
+    docs:
+      desc: |
+        The `fuse=1` feature lets a container load FUSE filesystems, which can
+        weaken isolation boundaries. Disable it unless an application strictly
+        requires FUSE.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Remove `fuse=1` from the container's feature list:
+
+            ```bash
+            pct set <ctid> -features keyctl=1
+            ```
+
+            (Re-set `features` without `fuse=1`. Use `pct config <ctid>` to
+            see the current value.)
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Strip `fuse=1` from every container config that has it:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            shopt -s nullglob
+            for conf in /etc/pve/lxc/[0-9]*.conf; do
+              ctid=$(basename "$conf" .conf)
+              if grep -q 'fuse=1' "$conf"; then
+                features=$(grep '^features:' "$conf" | sed -E 's/(^|,)fuse=1//; s/^features:\s*,?/features: /; s/,\s*$//')
+                if [ -z "${features#features: }" ]; then
+                  sed -i '/^features:/d' "$conf"
+                else
+                  sed -i "s|^features:.*|$features|" "$conf"
+                fi
+                echo "Removed fuse=1 from container $ctid"
+              fi
+            done
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to remove `fuse=1` from container
+            feature lists:
+
+            ```yaml
+            ---
+            - name: Disable FUSE on Proxmox LXC containers
+              hosts: proxmox
+              become: true
+
+              tasks:
+                - name: Find LXC config files with FUSE enabled
+                  ansible.builtin.find:
+                    paths: /etc/pve/lxc
+                    patterns: "*.conf"
+                    contains: 'fuse=1'
+                  register: fuse_confs
+
+                - name: Strip ",fuse=1" when it follows another feature
+                  ansible.builtin.replace:
+                    path: "{{ item.path }}"
+                    regexp: '(^features:.*),fuse=1\b'
+                    replace: '\1'
+                  loop: "{{ fuse_confs.files }}"
+
+                - name: Strip "fuse=1," when it leads the features list
+                  ansible.builtin.replace:
+                    path: "{{ item.path }}"
+                    regexp: '^(features:\s*)fuse=1,'
+                    replace: '\1'
+                  loop: "{{ fuse_confs.files }}"
+
+                - name: Remove an empty features line if fuse=1 was the only feature
+                  ansible.builtin.lineinfile:
+                    path: "{{ item.path }}"
+                    regexp: '^features:\s*fuse=1\s*$'
+                    state: absent
+                  loop: "{{ fuse_confs.files }}"
+            ```
 
   - uid: mondoo-proxmox-security-ct-memory-limit-is-set
     title: Ensure all containers have a memory limit
@@ -463,6 +1748,77 @@ queries:
       files.find(from: "/etc/pve/lxc", regex: "[0-9]+.conf$", type: "file").list.all(
         file(_.path).content.lines.where(_ == /^memory:/).length > 0
       )
+    docs:
+      desc: |
+        Every LXC container must have a `memory:` directive. Without one, a
+        runaway process inside the container can starve the host or other
+        guests. The default unit is megabytes.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Set an appropriate memory limit per container (in MiB):
+
+            ```bash
+            pct set <ctid> --memory 1024
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Apply a default memory cap of 1 GiB to every container that has no
+            limit configured:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            default_memory_mib=${1:-1024}
+
+            shopt -s nullglob
+            for conf in /etc/pve/lxc/[0-9]*.conf; do
+              ctid=$(basename "$conf" .conf)
+              if ! grep -q '^memory:' "$conf"; then
+                echo "Setting memory=${default_memory_mib} on container $ctid"
+                pct set "$ctid" --memory "$default_memory_mib"
+              fi
+            done
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to apply a default memory limit to any
+            container that does not have one:
+
+            ```yaml
+            ---
+            - name: Enforce memory limits on Proxmox LXC containers
+              hosts: proxmox
+              become: true
+              vars:
+                default_memory_mib: 1024
+
+              tasks:
+                - name: Find LXC config files
+                  ansible.builtin.find:
+                    paths: /etc/pve/lxc
+                    patterns: "*.conf"
+                  register: lxc_confs
+
+                - name: Detect missing memory directive
+                  ansible.builtin.shell: |
+                    grep -q '^memory:' "{{ item.path }}" || basename "{{ item.path }}" .conf
+                  loop: "{{ lxc_confs.files }}"
+                  register: missing_memory
+                  changed_when: false
+
+                - name: Apply default memory limit
+                  ansible.builtin.command: "pct set {{ item.stdout }} --memory {{ default_memory_mib }}"
+                  loop: "{{ missing_memory.results }}"
+                  when: item.stdout | length > 0
+            ```
 
   # =================================================================
   # QEMU/KVM VM Security
@@ -484,6 +1840,78 @@ queries:
           _ == /[,=]\+?spec-ctrl\b/ || _ == /[,=]\+?ssbd\b/
         )
       )
+    docs:
+      desc: |
+        Each VM's CPU type must expose Spectre/Meltdown mitigations to the
+        guest via the `+spec-ctrl` or `+ssbd` CPU flags. Without them, the
+        guest kernel cannot apply the corresponding software mitigations.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Set the CPU type and add the mitigation flags. The exact CPU
+            string depends on whether you want host pass-through or a stable
+            named CPU. Restart the VM for changes to take effect:
+
+            ```bash
+            qm set <vmid> --cpu host,flags=+spec-ctrl;+ssbd
+            qm stop <vmid> && qm start <vmid>
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Append the mitigation flags to every VM whose `cpu:` line is
+            missing them:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            shopt -s nullglob
+            for conf in /etc/pve/qemu-server/[0-9]*.conf; do
+              vmid=$(basename "$conf" .conf)
+              cpu_line=$(grep '^cpu:' "$conf" || true)
+              if [ -z "$cpu_line" ]; then
+                echo "Setting cpu=host with mitigations on VM $vmid"
+                qm set "$vmid" --cpu 'host,flags=+spec-ctrl;+ssbd'
+                continue
+              fi
+              if [[ "$cpu_line" != *spec-ctrl* ]] || [[ "$cpu_line" != *ssbd* ]]; then
+                echo "Adding +spec-ctrl;+ssbd to VM $vmid (current: $cpu_line)"
+                # Resync existing options without mutating bridge/host overrides:
+                qm set "$vmid" --cpu 'host,flags=+spec-ctrl;+ssbd'
+              fi
+            done
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to set `cpu: host,flags=+spec-ctrl;+ssbd`
+            on every QEMU VM:
+
+            ```yaml
+            ---
+            - name: Apply Spectre/Meltdown mitigations to Proxmox VMs
+              hosts: proxmox
+              become: true
+
+              tasks:
+                - name: Find QEMU VM config files
+                  ansible.builtin.find:
+                    paths: /etc/pve/qemu-server
+                    patterns: "*.conf"
+                  register: vm_confs
+
+                - name: Set CPU mitigations on each VM
+                  ansible.builtin.command: >-
+                    qm set {{ item.path | basename | regex_replace('\\.conf$', '') }}
+                    --cpu host,flags=+spec-ctrl;+ssbd
+                  loop: "{{ vm_confs.files }}"
+                  changed_when: true
+            ```
 
   - uid: mondoo-proxmox-security-vm-firewall-is-enabled
     title: Ensure VM network interfaces have firewall enabled
@@ -492,6 +1920,85 @@ queries:
       files.find(from: "/etc/pve/qemu-server", regex: "[0-9]+.conf$", type: "file").list.all(
         file(_.path).content.lines.where(_ == /^net[0-9]+:/).all(_.contains("firewall=1"))
       )
+    docs:
+      desc: |
+        Every QEMU VM `netN` interface must include `firewall=1` so the
+        per-interface Proxmox firewall enforces cluster, node, and VM rules
+        for that interface.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Re-set each VM interface with `firewall=1`. Keep all of the other
+            parameters (model, bridge, MAC, VLAN tag) intact:
+
+            ```bash
+            qm config <vmid> | grep '^net'
+            qm set <vmid> -<netN> virtio=...,bridge=vmbr0,firewall=1
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Add `firewall=1` to every VM interface that is missing it:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            shopt -s nullglob
+            for conf in /etc/pve/qemu-server/[0-9]*.conf; do
+              vmid=$(basename "$conf" .conf)
+              while IFS= read -r line; do
+                netname=${line%%:*}
+                spec=${line#*: }
+                if [[ "$spec" != *firewall=1* ]]; then
+                  if [[ "$spec" == *firewall=0* ]]; then
+                    new=${spec//firewall=0/firewall=1}
+                  else
+                    new="$spec,firewall=1"
+                  fi
+                  echo "Enabling firewall on VM $vmid $netname"
+                  qm set "$vmid" "-$netname" "$new"
+                fi
+              done < <(grep '^net[0-9]\+:' "$conf")
+            done
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to enforce `firewall=1` on every VM
+            `netN` line:
+
+            ```yaml
+            ---
+            - name: Enable per-interface firewall on Proxmox VMs
+              hosts: proxmox
+              become: true
+
+              tasks:
+                - name: Find QEMU VM config files
+                  ansible.builtin.find:
+                    paths: /etc/pve/qemu-server
+                    patterns: "*.conf"
+                  register: vm_confs
+
+                - name: Replace firewall=0 with firewall=1
+                  ansible.builtin.replace:
+                    path: "{{ item.path }}"
+                    regexp: '(^net\d+:.*?)firewall=0'
+                    replace: '\1firewall=1'
+                  loop: "{{ vm_confs.files }}"
+
+                - name: Append firewall=1 to interfaces missing the directive
+                  ansible.builtin.replace:
+                    path: "{{ item.path }}"
+                    regexp: '^(net\d+:(?!.*firewall=).*)$'
+                    replace: '\1,firewall=1'
+                  loop: "{{ vm_confs.files }}"
+            ```
 
   - uid: mondoo-proxmox-security-vm-no-raw-qemu-args
     title: Ensure VMs do not use raw QEMU arguments
@@ -503,6 +2010,73 @@ queries:
       files.find(from: "/etc/pve/qemu-server", regex: "[0-9]+.conf$", type: "file").list.all(
         file(_.path).content.lines.where(_ == /^args:/).length == 0
       )
+    docs:
+      desc: |
+        The `args:` directive in a VM config injects raw command-line flags
+        into the QEMU process. They bypass Proxmox validation and can disable
+        security features. Remove the directive unless you have a vetted
+        operational reason to keep it.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Stop the VM, remove the `args:` directive, and start it again:
+
+            ```bash
+            qm stop <vmid>
+            qm set <vmid> --delete args
+            qm start <vmid>
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Print every VM that uses raw QEMU arguments and remove the
+            `args:` directive from each. Run on a host where you have already
+            audited the existing `args:` lines:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            shopt -s nullglob
+            for conf in /etc/pve/qemu-server/[0-9]*.conf; do
+              vmid=$(basename "$conf" .conf)
+              if grep -q '^args:' "$conf"; then
+                echo "VM $vmid uses raw QEMU args:"
+                grep '^args:' "$conf"
+                echo "  -> running 'qm set $vmid --delete args'"
+                qm set "$vmid" --delete args
+              fi
+            done
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to remove `args:` from every VM config:
+
+            ```yaml
+            ---
+            - name: Remove raw QEMU args from Proxmox VMs
+              hosts: proxmox
+              become: true
+
+              tasks:
+                - name: Find VM configs that contain raw args
+                  ansible.builtin.find:
+                    paths: /etc/pve/qemu-server
+                    patterns: "*.conf"
+                    contains: '^args:'
+                    use_regex: true
+                  register: arg_confs
+
+                - name: Delete args via qm set --delete args
+                  ansible.builtin.command: "qm set {{ item.path | basename | regex_replace('\\.conf$', '') }} --delete args"
+                  loop: "{{ arg_confs.files }}"
+                  changed_when: true
+            ```
 
   # =================================================================
   # Cluster & Migration
@@ -517,6 +2091,110 @@ queries:
     mql: |
       file("/etc/pve/corosync.conf").content.contains("transport: knet") ||
       file("/etc/pve/corosync.conf").content.contains("secauth: on")
+    docs:
+      desc: |
+        Corosync carries cluster membership and quorum traffic. It must use
+        encrypted transport (`transport: knet`, the default since PVE 6) or
+        legacy authenticated multicast (`secauth: on`).
+
+        Editing `corosync.conf` is a cluster-critical operation - bump
+        `config_version` in the `totem { }` block before reloading or the
+        cluster will reject the change.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            On any node, edit `/etc/pve/corosync.conf` to use knet transport
+            and bump `config_version`:
+
+            ```bash
+            cp /etc/pve/corosync.conf /etc/pve/corosync.conf.bak
+
+            # Inside the totem { } block, ensure these lines exist:
+            #   transport: knet
+            #   crypto_cipher: aes256
+            #   crypto_hash: sha256
+            #   config_version: <current+1>
+
+            # The file is replicated automatically across the cluster.
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Patch `corosync.conf` to enable knet encryption and increment
+            `config_version`. Run on a single node:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            conf=/etc/pve/corosync.conf
+            cp "$conf" "${conf}.bak"
+
+            current=$(awk '/^[[:space:]]*config_version:/ {print $2}' "$conf")
+            next=$((current + 1))
+
+            # Ensure transport/crypto settings exist inside totem { }:
+            python3 - "$conf" "$next" <<'PY'
+            import re, sys
+            path, next_ver = sys.argv[1], sys.argv[2]
+            text = open(path).read()
+            for key, value in (('transport', 'knet'), ('crypto_cipher', 'aes256'), ('crypto_hash', 'sha256')):
+                if re.search(rf'^\s*{key}:', text, re.M):
+                    text = re.sub(rf'^\s*{key}:.*$', f'  {key}: {value}', text, flags=re.M)
+                else:
+                    text = re.sub(r'(totem\s*\{)', rf'\1\n  {key}: {value}', text, count=1)
+            text = re.sub(r'^(\s*)config_version:.*$', rf'\1config_version: {next_ver}', text, flags=re.M)
+            open(path, 'w').write(text)
+            PY
+
+            echo "Updated config_version to $next; cluster will replicate the change."
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to enforce knet encryption on the cluster
+            (run once against any node):
+
+            ```yaml
+            ---
+            - name: Enforce Corosync knet encryption
+              hosts: proxmox[0]
+              become: true
+
+              tasks:
+                - name: Read current corosync config_version
+                  ansible.builtin.shell: awk '/^\s*config_version:/ {print $2}' /etc/pve/corosync.conf
+                  register: config_version
+                  changed_when: false
+
+                - name: Set encrypted knet transport
+                  ansible.builtin.replace:
+                    path: /etc/pve/corosync.conf
+                    regexp: '^\s*transport:.*$'
+                    replace: '  transport: knet'
+
+                - name: Set crypto cipher
+                  ansible.builtin.lineinfile:
+                    path: /etc/pve/corosync.conf
+                    insertafter: '^\s*transport:'
+                    line: '  crypto_cipher: aes256'
+
+                - name: Set crypto hash
+                  ansible.builtin.lineinfile:
+                    path: /etc/pve/corosync.conf
+                    insertafter: '^\s*crypto_cipher:'
+                    line: '  crypto_hash: sha256'
+
+                - name: Bump config_version so corosync reloads
+                  ansible.builtin.replace:
+                    path: /etc/pve/corosync.conf
+                    regexp: '^(\s*config_version:\s*).*$'
+                    replace: '\g<1>{{ (config_version.stdout | int) + 1 }}'
+            ```
 
   - uid: mondoo-proxmox-security-migration-is-encrypted
     title: Ensure live migration traffic is encrypted
@@ -539,9 +2217,44 @@ queries:
       remediation:
         - id: cli
           desc: |
-            Enable encrypted migration:
+            **Using the CLI**
 
-                pvesh set /cluster/options --migration type=secure
+            Force secure migration cluster-wide:
+
+            ```bash
+            pvesh set /cluster/options --migration type=secure
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Set the option and verify the resulting datacenter configuration:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            pvesh set /cluster/options --migration type=secure
+            grep -E '^migration:' /etc/pve/datacenter.cfg
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to enforce secure migration:
+
+            ```yaml
+            ---
+            - name: Enforce encrypted live migration
+              hosts: proxmox
+              become: true
+              run_once: true
+
+              tasks:
+                - name: Set migration type to secure
+                  ansible.builtin.command: pvesh set /cluster/options --migration type=secure
+                  changed_when: true
+            ```
 
   # =================================================================
   # Network Segmentation
@@ -562,6 +2275,85 @@ queries:
       files.find(from: "/etc/pve/lxc", regex: "[0-9]+.conf$", type: "file").list.any(
         file(_.path).content.contains("tag=")
       )
+    docs:
+      desc: |
+        At least some VMs or containers should be tagged with a VLAN ID so the
+        underlying bridge enforces L2 segmentation. Flat networks expose every
+        guest to every other guest at layer 2.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Tag a VM or container interface with a VLAN ID. Replace `<id>`,
+            `<netN>` and `<vlan>` with real values:
+
+            ```bash
+            qm set <vmid> -<netN> virtio=...,bridge=vmbr0,firewall=1,tag=<vlan>
+            pct set <ctid> -<netN> name=eth0,bridge=vmbr0,firewall=1,tag=<vlan>
+            ```
+
+            Make sure the underlying bridge (`vmbr0`) is configured as
+            VLAN-aware in `/etc/network/interfaces`.
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Print every untagged VM and container interface so an operator can
+            assign the correct VLAN per workload:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            shopt -s nullglob
+            echo "Untagged VM interfaces:"
+            for conf in /etc/pve/qemu-server/[0-9]*.conf; do
+              vmid=$(basename "$conf" .conf)
+              while IFS= read -r line; do
+                if [[ "$line" != *tag=* ]]; then
+                  echo "  VM $vmid: $line"
+                fi
+              done < <(grep '^net[0-9]\+:' "$conf")
+            done
+
+            echo "Untagged container interfaces:"
+            for conf in /etc/pve/lxc/[0-9]*.conf; do
+              ctid=$(basename "$conf" .conf)
+              while IFS= read -r line; do
+                if [[ "$line" != *tag=* ]]; then
+                  echo "  CT $ctid: $line"
+                fi
+              done < <(grep '^net[0-9]\+:' "$conf")
+            done
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to tag a specific guest interface with a
+            VLAN. The playbook is illustrative - apply it per workload with the
+            VLAN ID that matches your network design:
+
+            ```yaml
+            ---
+            - name: Apply a VLAN tag to a Proxmox guest interface
+              hosts: proxmox
+              become: true
+              vars:
+                vmid: 100
+                interface: net0
+                bridge: vmbr0
+                model: virtio
+                vlan_tag: 20
+
+              tasks:
+                - name: Tag VM interface with VLAN
+                  ansible.builtin.command: >-
+                    qm set {{ vmid }} -{{ interface }}
+                    {{ model }}=,bridge={{ bridge }},firewall=1,tag={{ vlan_tag }}
+                  changed_when: true
+            ```
 
   # =================================================================
   # Storage & Backup Encryption
@@ -578,6 +2370,81 @@ queries:
     mql: |
       file("/etc/pve/storage.cfg").content.contains("pbs:") == false ||
       files.find(from: "/etc/pve/priv/storage", regex: ".enc$", type: "file").list.length > 0
+    docs:
+      desc: |
+        When a Proxmox Backup Server datastore is attached, every backup
+        written to it must be encrypted with a client-side key. The key is
+        stored at `/etc/pve/priv/storage/<storage-id>.enc`.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Generate an encryption key and attach it to a PBS storage entry:
+
+            ```bash
+            proxmox-backup-client key create /etc/pve/priv/storage/<storage>.enc
+
+            pvesm set <storage> --encryption-key /etc/pve/priv/storage/<storage>.enc
+            ```
+
+            Back up `/etc/pve/priv/storage/<storage>.enc` somewhere safe -
+            without the key, existing backups are unrecoverable.
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Generate and attach an encryption key for every PBS storage that
+            does not have one. Prompts for a passphrase per key:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            mkdir -p /etc/pve/priv/storage
+
+            for storage in $(awk '/^pbs:/ {print $2}' /etc/pve/storage.cfg); do
+              key="/etc/pve/priv/storage/${storage}.enc"
+              if [ -s "$key" ]; then
+                echo "$storage already has an encryption key at $key"
+                continue
+              fi
+
+              echo "Creating encryption key for storage $storage"
+              proxmox-backup-client key create "$key"
+              pvesm set "$storage" --encryption-key "$key"
+            done
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to ensure every PBS storage has an
+            encryption key. Reads the list of PBS storages from
+            `/etc/pve/storage.cfg` and creates a key per entry that is missing:
+
+            ```yaml
+            ---
+            - name: Ensure PBS storages use client-side encryption
+              hosts: proxmox
+              become: true
+
+              tasks:
+                - name: Read PBS storage IDs
+                  ansible.builtin.shell: awk '/^pbs:/ {print $2}' /etc/pve/storage.cfg
+                  register: pbs_storages
+                  changed_when: false
+
+                - name: Create encryption key per storage when missing
+                  ansible.builtin.shell: |
+                    set -e
+                    key=/etc/pve/priv/storage/{{ item }}.enc
+                    if [ ! -s "$key" ]; then
+                      proxmox-backup-client key create "$key"
+                      pvesm set {{ item }} --encryption-key "$key"
+                    fi
+                  loop: "{{ pbs_storages.stdout_lines }}"
+            ```
 
   - uid: mondoo-proxmox-security-pbs-master-key-is-configured
     title: Ensure PBS master key is configured
@@ -585,6 +2452,93 @@ queries:
     mql: |
       file("/etc/pve/storage.cfg").content.contains("pbs:") == false ||
       files.find(from: "/etc/pve/priv/storage", regex: ".master.pem$", type: "file").list.length > 0
+    docs:
+      desc: |
+        A PBS master key (RSA) lets a backup operator decrypt restored backups
+        without the original encryption key. Generate one and attach it to the
+        PBS storage entry. Store the master key offline.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Create a master key pair and attach it:
+
+            ```bash
+            proxmox-backup-client key create-master-key
+
+            cp ~/master-public.pem /etc/pve/priv/storage/<storage>.master.pem
+            pvesm set <storage> --master-pubkey /etc/pve/priv/storage/<storage>.master.pem
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Generate the master key pair and install the public half on every
+            PBS storage that lacks one:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            tmp=$(mktemp -d)
+            trap 'rm -rf "$tmp"' EXIT
+
+            (cd "$tmp" && proxmox-backup-client key create-master-key)
+
+            mkdir -p /etc/pve/priv/storage
+
+            for storage in $(awk '/^pbs:/ {print $2}' /etc/pve/storage.cfg); do
+              dest="/etc/pve/priv/storage/${storage}.master.pem"
+              if [ -s "$dest" ]; then
+                echo "$storage already has a master pubkey at $dest"
+                continue
+              fi
+              cp "$tmp/master-public.pem" "$dest"
+              pvesm set "$storage" --master-pubkey "$dest"
+              echo "Installed master pubkey for $storage"
+            done
+
+            echo
+            echo "Move $tmp/master-private.pem to offline storage NOW; it is required to recover encrypted backups."
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to install a previously generated master
+            public key on every PBS storage. The corresponding private key
+            must already live offline; it is never created by Ansible:
+
+            ```yaml
+            ---
+            - name: Attach PBS master public key to every PBS storage
+              hosts: proxmox
+              become: true
+              vars:
+                master_pubkey_path: /root/master-public.pem
+
+              tasks:
+                - name: Read PBS storage IDs
+                  ansible.builtin.shell: awk '/^pbs:/ {print $2}' /etc/pve/storage.cfg
+                  register: pbs_storages
+                  changed_when: false
+
+                - name: Copy master public key into each storage slot
+                  ansible.builtin.copy:
+                    src: "{{ master_pubkey_path }}"
+                    dest: "/etc/pve/priv/storage/{{ item }}.master.pem"
+                    owner: root
+                    group: root
+                    mode: '0600'
+                  loop: "{{ pbs_storages.stdout_lines }}"
+
+                - name: Register master public key with PBS storage
+                  ansible.builtin.command: >-
+                    pvesm set {{ item }} --master-pubkey /etc/pve/priv/storage/{{ item }}.master.pem
+                  loop: "{{ pbs_storages.stdout_lines }}"
+                  changed_when: true
+            ```
 
   # =================================================================
   # Proxmox-specific Hardening
@@ -604,6 +2558,69 @@ queries:
       desc: |
         KSM enables memory deduplication across VMs, which exposes a
         side-channel attack surface in multi-tenant hypervisor environments.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Stop KSM immediately and prevent the tuner from re-enabling it on
+            boot:
+
+            ```bash
+            echo 0 > /sys/kernel/mm/ksm/run
+            systemctl stop ksmtuned ksm
+            systemctl disable ksmtuned ksm
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Disable KSM at runtime and on boot. The script is idempotent:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            echo 0 > /sys/kernel/mm/ksm/run
+
+            for unit in ksmtuned ksm; do
+              if systemctl list-unit-files | awk '{print $1}' | grep -qx "${unit}.service"; then
+                systemctl stop "$unit" || true
+                systemctl disable "$unit" || true
+              fi
+            done
+
+            cat /sys/kernel/mm/ksm/run
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to stop and disable KSM:
+
+            ```yaml
+            ---
+            - name: Disable Kernel Samepage Merging on Proxmox hosts
+              hosts: proxmox
+              become: true
+
+              tasks:
+                - name: Write 0 to /sys/kernel/mm/ksm/run (sysfs pseudo-file)
+                  ansible.builtin.copy:
+                    dest: /sys/kernel/mm/ksm/run
+                    content: "0\n"
+                    unsafe_writes: true
+
+                - name: Stop and disable KSM systemd units
+                  ansible.builtin.systemd:
+                    name: "{{ item }}"
+                    state: stopped
+                    enabled: false
+                  loop:
+                    - ksmtuned
+                    - ksm
+                  failed_when: false
+            ```
 
   - uid: mondoo-proxmox-security-no-pci-acs-override
     title: Ensure PCI ACS override is not enabled
@@ -619,6 +2636,89 @@ queries:
       desc: |
         `pcie_acs_override` breaks IOMMU group isolation, allowing cross-VM
         memory access via DMA. Never use in production.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Remove `pcie_acs_override=...` from the kernel command line, then
+            rebuild the bootloader and reboot:
+
+            ```bash
+            sed -i -E 's/[[:space:]]*pcie_acs_override=[^[:space:]"]+//g' /etc/default/grub
+            sed -i -E 's/[[:space:]]*pcie_acs_override=[^[:space:]"]+//g' /etc/kernel/cmdline 2>/dev/null || true
+            update-grub
+            command -v proxmox-boot-tool >/dev/null && proxmox-boot-tool refresh
+            echo 'Reboot required for the change to take effect.'
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Strip the override from every place Proxmox might persist kernel
+            arguments and refresh the boot loader:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            files=(/etc/default/grub /etc/kernel/cmdline)
+            changed=0
+            for f in "${files[@]}"; do
+              [ -f "$f" ] || continue
+              if grep -q 'pcie_acs_override' "$f"; then
+                sed -i -E 's/[[:space:]]*pcie_acs_override=[^[:space:]"]+//g' "$f"
+                echo "Removed pcie_acs_override from $f"
+                changed=1
+              fi
+            done
+
+            if [ "$changed" -eq 1 ]; then
+              if command -v update-grub >/dev/null; then
+                update-grub
+              fi
+              if command -v proxmox-boot-tool >/dev/null; then
+                proxmox-boot-tool refresh
+              fi
+              echo "Reboot required for the change to take effect."
+            fi
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to strip the override from grub and the
+            Proxmox kernel cmdline file:
+
+            ```yaml
+            ---
+            - name: Remove pcie_acs_override from kernel cmdline
+              hosts: proxmox
+              become: true
+
+              tasks:
+                - name: Strip pcie_acs_override from /etc/default/grub
+                  ansible.builtin.replace:
+                    path: /etc/default/grub
+                    regexp: '\s*pcie_acs_override=[^\s"]+'
+                    replace: ''
+                  notify: Refresh boot loader
+
+                - name: Strip pcie_acs_override from /etc/kernel/cmdline
+                  ansible.builtin.replace:
+                    path: /etc/kernel/cmdline
+                    regexp: '\s*pcie_acs_override=[^\s"]+'
+                    replace: ''
+                  failed_when: false
+                  notify: Refresh boot loader
+
+              handlers:
+                - name: Refresh boot loader
+                  ansible.builtin.shell: |
+                    set -e
+                    if command -v update-grub >/dev/null; then update-grub; fi
+                    if command -v proxmox-boot-tool >/dev/null; then proxmox-boot-tool refresh; fi
+            ```
 
   - uid: mondoo-proxmox-security-iommu-is-enabled
     title: Ensure IOMMU is enabled for PCI passthrough isolation
@@ -627,6 +2727,96 @@ queries:
       file("/proc/cmdline").content.contains("intel_iommu=on") ||
       file("/proc/cmdline").content.contains("amd_iommu=on") ||
       file("/proc/cmdline").content.contains("iommu=pt")
+    docs:
+      desc: |
+        IOMMU isolates PCI passthrough devices into independent DMA groups.
+        Enable it via `intel_iommu=on` (Intel) or `amd_iommu=on` (AMD), and
+        consider also setting `iommu=pt` for pass-through mode.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Add the appropriate IOMMU flag to the kernel command line. For an
+            Intel system:
+
+            ```bash
+            sed -i -E 's|^(GRUB_CMDLINE_LINUX_DEFAULT=")(.*)"$|\1\2 intel_iommu=on iommu=pt"|' /etc/default/grub
+            update-grub
+            command -v proxmox-boot-tool >/dev/null && proxmox-boot-tool refresh
+            echo 'Reboot required for the change to take effect.'
+            ```
+
+            For AMD, replace `intel_iommu=on` with `amd_iommu=on`.
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Detect CPU vendor, append the right flag if absent, and refresh
+            the boot loader:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            vendor=$(awk -F: '/vendor_id/ {print $2; exit}' /proc/cpuinfo | tr -d ' ')
+            case "$vendor" in
+              GenuineIntel) flag="intel_iommu=on iommu=pt";;
+              AuthenticAMD) flag="amd_iommu=on iommu=pt";;
+              *) echo "Unknown CPU vendor: $vendor" >&2; exit 1;;
+            esac
+
+            if grep -qE 'GRUB_CMDLINE_LINUX_DEFAULT=.*('"intel_iommu=on|amd_iommu=on"')' /etc/default/grub; then
+              echo "IOMMU already configured in /etc/default/grub"
+              exit 0
+            fi
+
+            sed -i -E "s|^(GRUB_CMDLINE_LINUX_DEFAULT=\")(.*)\"$|\\1\\2 ${flag}\"|" /etc/default/grub
+
+            if command -v update-grub >/dev/null; then update-grub; fi
+            if command -v proxmox-boot-tool >/dev/null; then proxmox-boot-tool refresh; fi
+
+            echo "Reboot required for IOMMU change to take effect."
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to add the right IOMMU flag based on CPU
+            vendor:
+
+            ```yaml
+            ---
+            - name: Enable IOMMU on Proxmox hosts
+              hosts: proxmox
+              become: true
+
+              tasks:
+                - name: Determine CPU vendor
+                  ansible.builtin.shell: awk -F: '/vendor_id/ {print $2; exit}' /proc/cpuinfo | tr -d ' '
+                  register: cpu_vendor
+                  changed_when: false
+
+                - name: Set IOMMU flag fact
+                  ansible.builtin.set_fact:
+                    iommu_flag: >-
+                      {{ 'intel_iommu=on iommu=pt' if cpu_vendor.stdout == 'GenuineIntel'
+                         else 'amd_iommu=on iommu=pt' }}
+
+                - name: Add IOMMU flag to GRUB_CMDLINE_LINUX_DEFAULT
+                  ansible.builtin.replace:
+                    path: /etc/default/grub
+                    regexp: '^(GRUB_CMDLINE_LINUX_DEFAULT="(?:(?!{{ iommu_flag }}).)*)"$'
+                    replace: '\1 {{ iommu_flag }}"'
+                  register: grub_change
+
+                - name: Refresh boot loader if grub changed
+                  ansible.builtin.shell: |
+                    set -e
+                    if command -v update-grub >/dev/null; then update-grub; fi
+                    if command -v proxmox-boot-tool >/dev/null; then proxmox-boot-tool refresh; fi
+                  when: grub_change.changed
+            ```
 
   - uid: mondoo-proxmox-security-auditd-watches-pve-directory
     title: Ensure audit rules monitor /etc/pve/ changes
@@ -639,6 +2829,82 @@ queries:
           return mondooProxmoxSecurityAuditFiles.where(file(_).exists).map(file(_).content.lines.where(_ == /^[^#]/))
     mql: |
       props.mondooProxmoxSecurityAuditFiles.any(_.any(_ == /^\s*-w\s+\/etc\/pve/))
+    docs:
+      desc: |
+        `/etc/pve/` is the central configuration tree for the cluster. Audit
+        rules must record any modification to it so unexpected changes can be
+        investigated.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Add an audit rule and reload the audit subsystem:
+
+            ```bash
+            cat > /etc/audit/rules.d/pve.rules <<'EOF'
+            -w /etc/pve/ -p wa -k pve-config
+            EOF
+            augenrules --load
+            systemctl restart auditd
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Install auditd if needed, drop the rule, and reload:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            if ! command -v auditctl >/dev/null; then
+              apt-get update
+              apt-get install -y auditd
+            fi
+
+            install -d -m 0750 /etc/audit/rules.d
+            cat > /etc/audit/rules.d/pve.rules <<'EOF'
+            -w /etc/pve/ -p wa -k pve-config
+            EOF
+
+            augenrules --load
+            systemctl restart auditd
+            auditctl -l | grep '/etc/pve'
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to install the rule and reload auditd:
+
+            ```yaml
+            ---
+            - name: Audit /etc/pve/ for unexpected changes
+              hosts: proxmox
+              become: true
+
+              tasks:
+                - name: Ensure auditd is installed
+                  ansible.builtin.apt:
+                    name: auditd
+                    state: present
+                    update_cache: true
+
+                - name: Install /etc/pve/ watch rule
+                  ansible.builtin.copy:
+                    dest: /etc/audit/rules.d/pve.rules
+                    owner: root
+                    group: root
+                    mode: '0640'
+                    content: |
+                      -w /etc/pve/ -p wa -k pve-config
+                  notify: Reload audit rules
+
+              handlers:
+                - name: Reload audit rules
+                  ansible.builtin.shell: augenrules --load && systemctl restart auditd
+            ```
 
   - uid: mondoo-proxmox-security-update-repo-is-configured
     title: Ensure a PVE update repository is configured
@@ -646,12 +2912,200 @@ queries:
     mql: |
       file("/etc/apt/sources.list.d/pve-enterprise.list").exists ||
       file("/etc/apt/sources.list.d/pve-no-subscription.list").exists
+    docs:
+      desc: |
+        Without a PVE-specific apt source, security updates for the Proxmox
+        VE packages cannot be installed. Use the enterprise repository if you
+        have an active subscription; otherwise use the no-subscription
+        repository.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Configure either the enterprise (preferred) or the no-subscription
+            repository:
+
+            ```bash
+            # Enterprise (requires subscription):
+            cat > /etc/apt/sources.list.d/pve-enterprise.list <<EOF
+            deb https://enterprise.proxmox.com/debian/pve $(lsb_release -cs) pve-enterprise
+            EOF
+
+            # No-subscription (community):
+            cat > /etc/apt/sources.list.d/pve-no-subscription.list <<EOF
+            deb http://download.proxmox.com/debian/pve $(lsb_release -cs) pve-no-subscription
+            EOF
+
+            apt-get update
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Add a repository if none is present. Pass `enterprise` or
+            `no-subscription` as the first argument:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            mode=${1:-no-subscription}
+            codename=$(lsb_release -cs)
+
+            if [ -f /etc/apt/sources.list.d/pve-enterprise.list ] || [ -f /etc/apt/sources.list.d/pve-no-subscription.list ]; then
+              echo "A PVE repository is already configured."
+              exit 0
+            fi
+
+            case "$mode" in
+              enterprise)
+                cat > /etc/apt/sources.list.d/pve-enterprise.list <<EOF
+            deb https://enterprise.proxmox.com/debian/pve $codename pve-enterprise
+            EOF
+                ;;
+              no-subscription)
+                cat > /etc/apt/sources.list.d/pve-no-subscription.list <<EOF
+            deb http://download.proxmox.com/debian/pve $codename pve-no-subscription
+            EOF
+                ;;
+              *)
+                echo "Unknown mode: $mode" >&2
+                exit 1
+                ;;
+            esac
+
+            apt-get update
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to install the no-subscription repo when
+            no PVE repo is present:
+
+            ```yaml
+            ---
+            - name: Ensure a Proxmox VE apt repository is configured
+              hosts: proxmox
+              become: true
+              vars:
+                pve_repo_mode: no-subscription   # or enterprise
+
+              tasks:
+                - name: Detect existing PVE repo
+                  ansible.builtin.stat:
+                    path: "/etc/apt/sources.list.d/pve-{{ pve_repo_mode }}.list"
+                  register: repo_file
+
+                - name: Get Debian codename
+                  ansible.builtin.command: lsb_release -cs
+                  register: codename
+                  changed_when: false
+
+                - name: Write enterprise repo
+                  ansible.builtin.copy:
+                    dest: /etc/apt/sources.list.d/pve-enterprise.list
+                    mode: '0644'
+                    content: |
+                      deb https://enterprise.proxmox.com/debian/pve {{ codename.stdout }} pve-enterprise
+                  when:
+                    - pve_repo_mode == 'enterprise'
+                    - not repo_file.stat.exists
+
+                - name: Write no-subscription repo
+                  ansible.builtin.copy:
+                    dest: /etc/apt/sources.list.d/pve-no-subscription.list
+                    mode: '0644'
+                    content: |
+                      deb http://download.proxmox.com/debian/pve {{ codename.stdout }} pve-no-subscription
+                  when:
+                    - pve_repo_mode == 'no-subscription'
+                    - not repo_file.stat.exists
+
+                - name: Refresh apt cache
+                  ansible.builtin.apt:
+                    update_cache: true
+            ```
 
   - uid: mondoo-proxmox-security-automatic-updates-are-enabled
     title: Ensure unattended-upgrades is installed
     impact: 65
     mql: |
       package("unattended-upgrades").installed
+    docs:
+      desc: |
+        `unattended-upgrades` automatically applies Debian security updates,
+        which limits the time the host stays exposed to known vulnerabilities.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Install and enable unattended-upgrades:
+
+            ```bash
+            apt-get update
+            apt-get install -y unattended-upgrades
+            dpkg-reconfigure -f noninteractive unattended-upgrades
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Idempotently install and enable unattended-upgrades:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            export DEBIAN_FRONTEND=noninteractive
+
+            apt-get update
+            apt-get install -y unattended-upgrades
+
+            cat > /etc/apt/apt.conf.d/20auto-upgrades <<'EOF'
+            APT::Periodic::Update-Package-Lists "1";
+            APT::Periodic::Unattended-Upgrade "1";
+            EOF
+
+            systemctl enable --now unattended-upgrades
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to install and enable unattended-upgrades:
+
+            ```yaml
+            ---
+            - name: Enable unattended security upgrades on Proxmox hosts
+              hosts: proxmox
+              become: true
+
+              tasks:
+                - name: Install unattended-upgrades
+                  ansible.builtin.apt:
+                    name: unattended-upgrades
+                    state: present
+                    update_cache: true
+
+                - name: Enable periodic update / upgrade
+                  ansible.builtin.copy:
+                    dest: /etc/apt/apt.conf.d/20auto-upgrades
+                    owner: root
+                    group: root
+                    mode: '0644'
+                    content: |
+                      APT::Periodic::Update-Package-Lists "1";
+                      APT::Periodic::Unattended-Upgrade "1";
+
+                - name: Ensure unattended-upgrades service is running
+                  ansible.builtin.systemd:
+                    name: unattended-upgrades
+                    state: started
+                    enabled: true
+            ```
 
   # =================================================================
   # ANSSI-BP-028 Kernel Hardening
@@ -670,6 +3124,61 @@ queries:
     mql: |
       kernel.parameters["kernel.unprivileged_bpf_disabled"] == 1 ||
       kernel.parameters["kernel.unprivileged_bpf_disabled"] == 2
+    docs:
+      desc: |
+        Disabling unprivileged BPF closes a recurring privilege-escalation
+        path. Set `kernel.unprivileged_bpf_disabled=1` (or `2` to make the
+        setting itself immutable until reboot).
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Apply the value at runtime and persist it under `/etc/sysctl.d/`:
+
+            ```bash
+            sysctl -w kernel.unprivileged_bpf_disabled=1
+            echo 'kernel.unprivileged_bpf_disabled = 1' > /etc/sysctl.d/60-pve-hardening-bpf.conf
+            sysctl --system
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Persist and apply the sysctl atomically:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            install -d /etc/sysctl.d
+            cat > /etc/sysctl.d/60-pve-hardening-bpf.conf <<'EOF'
+            kernel.unprivileged_bpf_disabled = 1
+            EOF
+            sysctl --system >/dev/null
+            sysctl kernel.unprivileged_bpf_disabled
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to disable unprivileged BPF:
+
+            ```yaml
+            ---
+            - name: Disable unprivileged BPF
+              hosts: proxmox
+              become: true
+
+              tasks:
+                - name: Persist sysctl
+                  ansible.posix.sysctl:
+                    name: kernel.unprivileged_bpf_disabled
+                    value: '1'
+                    state: present
+                    sysctl_file: /etc/sysctl.d/60-pve-hardening-bpf.conf
+                    reload: true
+            ```
 
   - uid: mondoo-proxmox-security-kexec-load-disabled
     title: Ensure kexec_load is disabled
@@ -679,6 +3188,62 @@ queries:
         url: https://cyber.gouv.fr/sites/default/files/document/linux_configuration-en-v2.0.pdf
     mql: |
       kernel.parameters["kernel.kexec_load_disabled"] == 1
+    docs:
+      desc: |
+        `kexec_load_disabled=1` blocks loading a new kernel image at runtime,
+        preventing an attacker from booting an unsigned kernel without going
+        through the normal boot process. The setting is one-way and resets on
+        reboot.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Apply the value at runtime and persist it:
+
+            ```bash
+            sysctl -w kernel.kexec_load_disabled=1
+            echo 'kernel.kexec_load_disabled = 1' > /etc/sysctl.d/60-pve-hardening-kexec.conf
+            sysctl --system
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Persist and apply the sysctl:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            install -d /etc/sysctl.d
+            cat > /etc/sysctl.d/60-pve-hardening-kexec.conf <<'EOF'
+            kernel.kexec_load_disabled = 1
+            EOF
+            sysctl --system >/dev/null
+            sysctl kernel.kexec_load_disabled
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to disable kexec_load:
+
+            ```yaml
+            ---
+            - name: Disable kexec_load
+              hosts: proxmox
+              become: true
+
+              tasks:
+                - name: Persist sysctl
+                  ansible.posix.sysctl:
+                    name: kernel.kexec_load_disabled
+                    value: '1'
+                    state: present
+                    sysctl_file: /etc/sysctl.d/60-pve-hardening-kexec.conf
+                    reload: true
+            ```
 
   - uid: mondoo-proxmox-security-perf-event-paranoid
     title: Ensure perf_event_paranoid is at least 2
@@ -688,6 +3253,61 @@ queries:
         url: https://cyber.gouv.fr/sites/default/files/document/linux_configuration-en-v2.0.pdf
     mql: |
       kernel.parameters["kernel.perf_event_paranoid"] >= 2
+    docs:
+      desc: |
+        `kernel.perf_event_paranoid >= 2` prevents unprivileged users from
+        accessing CPU performance counters, which have been used to mount
+        side-channel attacks against co-located workloads.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Apply the value at runtime and persist it:
+
+            ```bash
+            sysctl -w kernel.perf_event_paranoid=2
+            echo 'kernel.perf_event_paranoid = 2' > /etc/sysctl.d/60-pve-hardening-perf.conf
+            sysctl --system
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Persist and apply the sysctl:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            install -d /etc/sysctl.d
+            cat > /etc/sysctl.d/60-pve-hardening-perf.conf <<'EOF'
+            kernel.perf_event_paranoid = 2
+            EOF
+            sysctl --system >/dev/null
+            sysctl kernel.perf_event_paranoid
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to set perf_event_paranoid:
+
+            ```yaml
+            ---
+            - name: Restrict perf_event_paranoid
+              hosts: proxmox
+              become: true
+
+              tasks:
+                - name: Persist sysctl
+                  ansible.posix.sysctl:
+                    name: kernel.perf_event_paranoid
+                    value: '2'
+                    state: present
+                    sysctl_file: /etc/sysctl.d/60-pve-hardening-perf.conf
+                    reload: true
+            ```
 
   - uid: mondoo-proxmox-security-tty-ldisc-autoload-disabled
     title: Ensure TTY line discipline autoload is disabled
@@ -697,6 +3317,61 @@ queries:
         url: https://cyber.gouv.fr/sites/default/files/document/linux_configuration-en-v2.0.pdf
     mql: |
       kernel.parameters["dev.tty.ldisc_autoload"] == 0
+    docs:
+      desc: |
+        `dev.tty.ldisc_autoload=0` prevents unprivileged users from triggering
+        autoload of arbitrary line-discipline modules, a vector that has led
+        to LPE bugs in the past.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Apply the value at runtime and persist it:
+
+            ```bash
+            sysctl -w dev.tty.ldisc_autoload=0
+            echo 'dev.tty.ldisc_autoload = 0' > /etc/sysctl.d/60-pve-hardening-tty.conf
+            sysctl --system
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Persist and apply the sysctl:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            install -d /etc/sysctl.d
+            cat > /etc/sysctl.d/60-pve-hardening-tty.conf <<'EOF'
+            dev.tty.ldisc_autoload = 0
+            EOF
+            sysctl --system >/dev/null
+            sysctl dev.tty.ldisc_autoload
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to disable TTY line discipline autoload:
+
+            ```yaml
+            ---
+            - name: Disable TTY line discipline autoload
+              hosts: proxmox
+              become: true
+
+              tasks:
+                - name: Persist sysctl
+                  ansible.posix.sysctl:
+                    name: dev.tty.ldisc_autoload
+                    value: '0'
+                    state: present
+                    sysctl_file: /etc/sysctl.d/60-pve-hardening-tty.conf
+                    reload: true
+            ```
 
   - uid: mondoo-proxmox-security-tcp-rfc1337-enabled
     title: Ensure TCP RFC1337 protection is enabled
@@ -706,12 +3381,124 @@ queries:
     docs:
       desc: |
         Protects against TIME-WAIT assassination hazards.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Apply the value at runtime and persist it:
+
+            ```bash
+            sysctl -w net.ipv4.tcp_rfc1337=1
+            echo 'net.ipv4.tcp_rfc1337 = 1' > /etc/sysctl.d/60-pve-hardening-tcp.conf
+            sysctl --system
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Persist and apply the sysctl:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            install -d /etc/sysctl.d
+            cat > /etc/sysctl.d/60-pve-hardening-tcp.conf <<'EOF'
+            net.ipv4.tcp_rfc1337 = 1
+            EOF
+            sysctl --system >/dev/null
+            sysctl net.ipv4.tcp_rfc1337
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to enable RFC1337 protection:
+
+            ```yaml
+            ---
+            - name: Enable TCP RFC1337 protection
+              hosts: proxmox
+              become: true
+
+              tasks:
+                - name: Persist sysctl
+                  ansible.posix.sysctl:
+                    name: net.ipv4.tcp_rfc1337
+                    value: '1'
+                    state: present
+                    sysctl_file: /etc/sysctl.d/60-pve-hardening-tcp.conf
+                    reload: true
+            ```
 
   - uid: mondoo-proxmox-security-user-namespace-unprivileged
     title: Ensure unprivileged user namespaces setting is explicit
     impact: 40
     mql: |
       kernel.parameters["kernel.unprivileged_userns_clone"] != null
+    docs:
+      desc: |
+        Make the policy decision around `kernel.unprivileged_userns_clone`
+        explicit. Set it to `1` if unprivileged LXC containers must be able to
+        create user namespaces (the Proxmox default), or `0` to disable user
+        namespaces entirely. Either way, persist the value so it cannot
+        silently change.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Persist either `1` (allow unprivileged user namespaces) or `0`
+            (disallow). The Proxmox default for unprivileged LXC is `1`:
+
+            ```bash
+            sysctl -w kernel.unprivileged_userns_clone=1
+            echo 'kernel.unprivileged_userns_clone = 1' > /etc/sysctl.d/60-pve-hardening-userns.conf
+            sysctl --system
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Persist an explicit value (default `1` to keep unprivileged LXC
+            containers working):
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            value="${1:-1}"
+            install -d /etc/sysctl.d
+            cat > /etc/sysctl.d/60-pve-hardening-userns.conf <<EOF
+            kernel.unprivileged_userns_clone = $value
+            EOF
+            sysctl --system >/dev/null
+            sysctl kernel.unprivileged_userns_clone
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to set an explicit value:
+
+            ```yaml
+            ---
+            - name: Make unprivileged_userns_clone explicit
+              hosts: proxmox
+              become: true
+              vars:
+                userns_value: '1'   # set to '0' to disable user namespaces
+
+              tasks:
+                - name: Persist sysctl
+                  ansible.posix.sysctl:
+                    name: kernel.unprivileged_userns_clone
+                    value: "{{ userns_value }}"
+                    state: present
+                    sysctl_file: /etc/sysctl.d/60-pve-hardening-userns.conf
+                    reload: true
+            ```
 
   # =================================================================
   # Password Policy
@@ -732,12 +3519,156 @@ queries:
         meaning never expire) allow stale credentials to persist indefinitely.
 
         Expected: 1-365 days.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Set `PASS_MAX_DAYS` to 365 (or fewer):
+
+            ```bash
+            sed -i -E 's|^[#[:space:]]*PASS_MAX_DAYS[[:space:]].*|PASS_MAX_DAYS\t365|' /etc/login.defs
+            grep -q '^PASS_MAX_DAYS' /etc/login.defs || printf 'PASS_MAX_DAYS\t365\n' >> /etc/login.defs
+            ```
+
+            `login.defs` only affects accounts created or aged after the
+            change. Apply to existing accounts:
+
+            ```bash
+            for user in $(awk -F: '$3 >= 1000 && $1 != "nobody" {print $1}' /etc/passwd); do
+              chage --maxdays 365 "$user"
+            done
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Update `login.defs` and apply the new max-age to every existing
+            human account:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            max_days="${1:-365}"
+            file=/etc/login.defs
+
+            if grep -qE '^[#[:space:]]*PASS_MAX_DAYS' "$file"; then
+              sed -i -E "s|^[#[:space:]]*PASS_MAX_DAYS[[:space:]].*|PASS_MAX_DAYS\t${max_days}|" "$file"
+            else
+              printf 'PASS_MAX_DAYS\t%s\n' "$max_days" >> "$file"
+            fi
+
+            for user in $(awk -F: '$3 >= 1000 && $1 != "nobody" {print $1}' /etc/passwd); do
+              chage --maxdays "$max_days" "$user"
+            done
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to enforce `PASS_MAX_DAYS=365`:
+
+            ```yaml
+            ---
+            - name: Enforce password expiration
+              hosts: proxmox
+              become: true
+              vars:
+                pass_max_days: 365
+
+              tasks:
+                - name: Set PASS_MAX_DAYS in login.defs
+                  ansible.builtin.lineinfile:
+                    path: /etc/login.defs
+                    regexp: '^[#\s]*PASS_MAX_DAYS\s+'
+                    line: "PASS_MAX_DAYS\t{{ pass_max_days }}"
+
+                - name: Apply maximum password age to existing human accounts
+                  ansible.builtin.shell: |
+                    for user in $(awk -F: '$3 >= 1000 && $1 != "nobody" {print $1}' /etc/passwd); do
+                      chage --maxdays {{ pass_max_days }} "$user"
+                    done
+                  changed_when: true
+            ```
 
   - uid: mondoo-proxmox-security-login-defs-pass-min-days
     title: Ensure minimum days between password changes is 1 or more
     impact: 50
     mql: |
       logindefs.params["PASS_MIN_DAYS"].trim == /^[1-9][0-9]*$/
+    docs:
+      desc: |
+        Setting `PASS_MIN_DAYS` >= 1 prevents users from cycling through their
+        password history within minutes to bypass the change frequency
+        requirement.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Set `PASS_MIN_DAYS` to 1:
+
+            ```bash
+            sed -i -E 's|^[#[:space:]]*PASS_MIN_DAYS[[:space:]].*|PASS_MIN_DAYS\t1|' /etc/login.defs
+            grep -q '^PASS_MIN_DAYS' /etc/login.defs || printf 'PASS_MIN_DAYS\t1\n' >> /etc/login.defs
+
+            for user in $(awk -F: '$3 >= 1000 && $1 != "nobody" {print $1}' /etc/passwd); do
+              chage --mindays 1 "$user"
+            done
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Update `login.defs` and apply the new min-age to every existing
+            human account:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            min_days="${1:-1}"
+            file=/etc/login.defs
+
+            if grep -qE '^[#[:space:]]*PASS_MIN_DAYS' "$file"; then
+              sed -i -E "s|^[#[:space:]]*PASS_MIN_DAYS[[:space:]].*|PASS_MIN_DAYS\t${min_days}|" "$file"
+            else
+              printf 'PASS_MIN_DAYS\t%s\n' "$min_days" >> "$file"
+            fi
+
+            for user in $(awk -F: '$3 >= 1000 && $1 != "nobody" {print $1}' /etc/passwd); do
+              chage --mindays "$min_days" "$user"
+            done
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to enforce `PASS_MIN_DAYS=1`:
+
+            ```yaml
+            ---
+            - name: Enforce minimum password age
+              hosts: proxmox
+              become: true
+              vars:
+                pass_min_days: 1
+
+              tasks:
+                - name: Set PASS_MIN_DAYS in login.defs
+                  ansible.builtin.lineinfile:
+                    path: /etc/login.defs
+                    regexp: '^[#\s]*PASS_MIN_DAYS\s+'
+                    line: "PASS_MIN_DAYS\t{{ pass_min_days }}"
+
+                - name: Apply minimum password age to existing human accounts
+                  ansible.builtin.shell: |
+                    for user in $(awk -F: '$3 >= 1000 && $1 != "nobody" {print $1}' /etc/passwd); do
+                      chage --mindays {{ pass_min_days }} "$user"
+                    done
+                  changed_when: true
+            ```
 
   - uid: mondoo-proxmox-security-login-defs-encrypt-method
     title: Ensure password hashing algorithm is SHA-512 or YESCRYPT
@@ -748,6 +3679,74 @@ queries:
     mql: |
       logindefs.params["ENCRYPT_METHOD"].trim == "SHA512" ||
       logindefs.params["ENCRYPT_METHOD"].trim == "YESCRYPT"
+    docs:
+      desc: |
+        `ENCRYPT_METHOD` in `/etc/login.defs` selects the hashing algorithm
+        used by `chpasswd` and `passwd`. Set it to `SHA512` or `YESCRYPT`;
+        weaker algorithms (DES, MD5) must not be used. Existing user hashes
+        are not rewritten until the user changes their password.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Set `ENCRYPT_METHOD SHA512`:
+
+            ```bash
+            sed -i -E 's|^[#[:space:]]*ENCRYPT_METHOD[[:space:]].*|ENCRYPT_METHOD SHA512|' /etc/login.defs
+            grep -q '^ENCRYPT_METHOD' /etc/login.defs || echo 'ENCRYPT_METHOD SHA512' >> /etc/login.defs
+            ```
+
+            To rotate every existing user to the new algorithm, force them to
+            change their password on next login:
+
+            ```bash
+            for user in $(awk -F: '$3 >= 1000 && $1 != "nobody" {print $1}' /etc/passwd); do
+              chage --lastday 0 "$user"
+            done
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Set `ENCRYPT_METHOD` and verify the result:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            method="${1:-SHA512}"
+            file=/etc/login.defs
+
+            if grep -qE '^[#[:space:]]*ENCRYPT_METHOD' "$file"; then
+              sed -i -E "s|^[#[:space:]]*ENCRYPT_METHOD[[:space:]].*|ENCRYPT_METHOD ${method}|" "$file"
+            else
+              echo "ENCRYPT_METHOD ${method}" >> "$file"
+            fi
+
+            grep '^ENCRYPT_METHOD' "$file"
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to set `ENCRYPT_METHOD SHA512`:
+
+            ```yaml
+            ---
+            - name: Enforce strong password hashing
+              hosts: proxmox
+              become: true
+              vars:
+                encrypt_method: SHA512
+
+              tasks:
+                - name: Set ENCRYPT_METHOD in login.defs
+                  ansible.builtin.lineinfile:
+                    path: /etc/login.defs
+                    regexp: '^[#\s]*ENCRYPT_METHOD\s+'
+                    line: "ENCRYPT_METHOD {{ encrypt_method }}"
+            ```
 
   # =================================================================
   # Cron Security
@@ -770,6 +3769,57 @@ queries:
         permissions.other_writeable == false
         permissions.other_executable == false
       }
+    docs:
+      desc: |
+        `/etc/crontab` schedules privileged jobs. It must be owned by
+        `root:root` with mode `0600` so unprivileged users cannot read or
+        modify it.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Set ownership and permissions:
+
+            ```bash
+            chown root:root /etc/crontab
+            chmod 0600 /etc/crontab
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Apply ownership and mode in a single idempotent step:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            chown root:root /etc/crontab
+            chmod 0600 /etc/crontab
+            stat -c '%U:%G %a %n' /etc/crontab
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to enforce mode 0600 root:root on
+            `/etc/crontab`:
+
+            ```yaml
+            ---
+            - name: Restrict permissions on /etc/crontab
+              hosts: proxmox
+              become: true
+
+              tasks:
+                - name: Set owner, group, and mode on crontab
+                  ansible.builtin.file:
+                    path: /etc/crontab
+                    owner: root
+                    group: root
+                    mode: '0600'
+            ```
 
   - uid: mondoo-proxmox-security-cron-d-permissions
     title: Ensure permissions on /etc/cron.d are configured
@@ -781,6 +3831,58 @@ queries:
         permissions.other_writeable == false
         permissions.other_executable == false
       }
+    docs:
+      desc: |
+        `/etc/cron.d` holds crontab fragments that run as `root`. The
+        directory must not be writable by `group` and must not be readable,
+        writable, or traversable by `other`.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Set ownership and permissions:
+
+            ```bash
+            chown root:root /etc/cron.d
+            chmod 0700 /etc/cron.d
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Apply ownership and mode in one idempotent step:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            chown root:root /etc/cron.d
+            chmod 0700 /etc/cron.d
+            stat -c '%U:%G %a %n' /etc/cron.d
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to enforce mode 0700 root:root on
+            `/etc/cron.d`:
+
+            ```yaml
+            ---
+            - name: Restrict permissions on /etc/cron.d
+              hosts: proxmox
+              become: true
+
+              tasks:
+                - name: Set owner, group, and mode on cron.d
+                  ansible.builtin.file:
+                    path: /etc/cron.d
+                    state: directory
+                    owner: root
+                    group: root
+                    mode: '0700'
+            ```
 
   - uid: mondoo-proxmox-security-cron-hourly-permissions
     title: Ensure permissions on /etc/cron.hourly are configured
@@ -792,3 +3894,55 @@ queries:
         permissions.other_writeable == false
         permissions.other_executable == false
       }
+    docs:
+      desc: |
+        `/etc/cron.hourly` runs scripts every hour as `root`. The directory
+        must not be writable by `group` and must not be readable, writable,
+        or traversable by `other`.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Set ownership and permissions:
+
+            ```bash
+            chown root:root /etc/cron.hourly
+            chmod 0700 /etc/cron.hourly
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Apply ownership and mode in one idempotent step:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            chown root:root /etc/cron.hourly
+            chmod 0700 /etc/cron.hourly
+            stat -c '%U:%G %a %n' /etc/cron.hourly
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to enforce mode 0700 root:root on
+            `/etc/cron.hourly`:
+
+            ```yaml
+            ---
+            - name: Restrict permissions on /etc/cron.hourly
+              hosts: proxmox
+              become: true
+
+              tasks:
+                - name: Set owner, group, and mode on cron.hourly
+                  ansible.builtin.file:
+                    path: /etc/cron.hourly
+                    state: directory
+                    owner: root
+                    group: root
+                    mode: '0700'
+            ```
