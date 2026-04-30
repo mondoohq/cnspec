@@ -83,18 +83,47 @@ queries:
         **Why this matters**
 
         A Hetzner server with no private network attachment can only reach other resources over the public internet, even resources in the same project. Without network-level segmentation, an attacker who compromises one server has broader reach across the project, and lateral movement is harder to contain. Private networks also reduce unnecessary internet exposure by allowing private-only traffic between resources in the same network.
-      remediation: |
-        **From the Hetzner Cloud Console**
+      remediation:
+        - id: console
+          desc: |
+            1. Navigate to **Networks** and create a network if one does not already exist.
+            2. Open the affected server and go to **Networking**.
+            3. Click **Attach to Network** and select the target network.
+        - id: cli
+          desc: |
+            ```bash
+            hcloud server attach-to-network <server> --network <network>
+            ```
+        - id: terraform
+          desc: |
+            Define a `hcloud_network` (with at least one `hcloud_network_subnet`) and reference it from a `network` block on every `hcloud_server`:
 
-        1. Navigate to **Networks** and create a network if one does not already exist.
-        2. Open the affected server and go to **Networking**.
-        3. Click **Attach to Network** and select the target network.
+            ```hcl
+            resource "hcloud_network" "main" {
+              name     = "main"
+              ip_range = "10.0.0.0/16"
+            }
 
-        **From `hcloud`**
+            resource "hcloud_network_subnet" "main" {
+              network_id   = hcloud_network.main.id
+              type         = "cloud"
+              network_zone = "eu-central"
+              ip_range     = "10.0.1.0/24"
+            }
 
-        ```bash
-        hcloud server attach-to-network <server> --network <network>
-        ```
+            resource "hcloud_server" "example" {
+              name        = "example"
+              image       = "ubuntu-24.04"
+              server_type = "cx22"
+              location    = "nbg1"
+
+              network {
+                network_id = hcloud_network.main.id
+              }
+
+              depends_on = [hcloud_network_subnet.main]
+            }
+            ```
     refs:
       - url: https://docs.hetzner.com/cloud/networks/overview/
         title: Hetzner Cloud Networks overview
@@ -119,18 +148,41 @@ queries:
         **Why this matters**
 
         Hetzner Cloud servers do not have a default-deny firewall posture — a server with no Cloud Firewall attached exposes every listening port on its public interfaces to the entire internet. Any service unintentionally bound to `0.0.0.0` (a debug port, an internal admin tool, a misconfigured database) is reachable by every host on the network. Applying a Cloud Firewall ensures only the explicitly allowed ports are reachable, even if the OS-level firewall is misconfigured or disabled.
-      remediation: |
-        **From the Hetzner Cloud Console**
+      remediation:
+        - id: console
+          desc: |
+            1. Navigate to **Firewalls** and create a firewall with rules appropriate for the server's role.
+            2. Open the firewall and go to **Apply to**.
+            3. Add the affected server (or a label selector that matches it).
+        - id: cli
+          desc: |
+            ```bash
+            hcloud firewall apply-to-resource <firewall> --type server --server <server>
+            ```
+        - id: terraform
+          desc: |
+            Reference at least one `hcloud_firewall` from `firewall_ids` on every `hcloud_server`:
 
-        1. Navigate to **Firewalls** and create a firewall with rules appropriate for the server's role.
-        2. Open the firewall and go to **Apply to**.
-        3. Add the affected server (or a label selector that matches it).
+            ```hcl
+            resource "hcloud_firewall" "default" {
+              name = "default"
 
-        **From `hcloud`**
+              rule {
+                direction  = "in"
+                protocol   = "tcp"
+                port       = "22"
+                source_ips = ["10.0.0.0/16"]
+              }
+            }
 
-        ```bash
-        hcloud firewall apply-to-resource <firewall> --type server --server <server>
-        ```
+            resource "hcloud_server" "example" {
+              name         = "example"
+              image        = "ubuntu-24.04"
+              server_type  = "cx22"
+              location     = "nbg1"
+              firewall_ids = [hcloud_firewall.default.id]
+            }
+            ```
     refs:
       - url: https://docs.hetzner.com/cloud/firewalls/overview/
         title: Hetzner Cloud Firewalls overview
@@ -155,29 +207,40 @@ queries:
         **Why this matters**
 
         Hetzner marks system images deprecated when the upstream operating system reaches end of life or when Hetzner is preparing to remove the image. A server still running a deprecated image is no longer guaranteed to receive vendor security patches; known-exploited CVEs accumulate without remediation. Rebuilding the server from a current image keeps the workload on a supported and patched base.
-      remediation: |
-        Hetzner does not support changing the base image of a running server in place. To remediate, build a new server from a supported image and migrate the workload.
+      remediation:
+        - id: console
+          desc: |
+            Hetzner does not support changing the base image of a running server in place. To remediate, build a new server from a supported image and migrate the workload.
 
-        **From the Hetzner Cloud Console**
+            1. Note the affected server's configuration (type, location, network, firewall, SSH keys).
+            2. Provision a replacement server using a current OS image.
+            3. Migrate data and configuration to the new server.
+            4. Update DNS, monitoring, and dependent services to point at the new server.
+            5. Delete the original server.
+        - id: cli
+          desc: |
+            ```bash
+            hcloud server create \
+              --name <new-name> \
+              --type <server-type> \
+              --image <current-image> \
+              --location <location> \
+              --network <network> \
+              --firewall <firewall> \
+              --ssh-key <ssh-key>
+            ```
+        - id: terraform
+          desc: |
+            Pin `image` on every `hcloud_server` resource to a current, supported OS image. Changing `image` forces server replacement, so plan a data migration before applying:
 
-        1. Note the affected server's configuration (type, location, network, firewall, SSH keys).
-        2. Provision a replacement server using a current OS image.
-        3. Migrate data and configuration to the new server.
-        4. Update DNS, monitoring, and dependent services to point at the new server.
-        5. Delete the original server.
-
-        **From `hcloud`**
-
-        ```bash
-        hcloud server create \
-          --name <new-name> \
-          --type <server-type> \
-          --image <current-image> \
-          --location <location> \
-          --network <network> \
-          --firewall <firewall> \
-          --ssh-key <ssh-key>
-        ```
+            ```hcl
+            resource "hcloud_server" "example" {
+              name        = "example"
+              server_type = "cx22"
+              location    = "nbg1"
+              image       = "ubuntu-24.04"
+            }
+            ```
     refs:
       - url: https://docs.hetzner.com/cloud/servers/faq/#what-does-it-mean-when-an-image-is-deprecated
         title: Hetzner image deprecation policy
@@ -211,21 +274,36 @@ queries:
         **Why this matters**
 
         SSH exposed to the entire internet is a primary target for credential stuffing, brute-force login attempts, and exploitation of any future SSH server CVE. Even with key-based authentication, open SSH exposes the SSH daemon itself as an attack surface. SSH access should be restricted to a known trusted CIDR range, a bastion host, or a VPN.
-      remediation: |
-        **From the Hetzner Cloud Console**
+      remediation:
+        - id: console
+          desc: |
+            1. Navigate to **Firewalls** and open the affected firewall.
+            2. Edit the offending inbound rule for SSH and change the source from `Any IPv4`/`Any IPv6` to a specific trusted CIDR.
+            3. Save the firewall.
+        - id: cli
+          desc: |
+            ```bash
+            hcloud firewall delete-rule <firewall> \
+              --direction in --protocol tcp --port 22 --source-ips 0.0.0.0/0
+            hcloud firewall add-rule <firewall> \
+              --direction in --protocol tcp --port 22 --source-ips <your-trusted-cidr>
+            ```
+        - id: terraform
+          desc: |
+            Scope inbound SSH `source_ips` to a specific trusted CIDR — never `0.0.0.0/0` or `::/0`:
 
-        1. Navigate to **Firewalls** and open the affected firewall.
-        2. Edit the offending inbound rule for SSH and change the source from `Any IPv4`/`Any IPv6` to a specific trusted CIDR.
-        3. Save the firewall.
+            ```hcl
+            resource "hcloud_firewall" "default" {
+              name = "default"
 
-        **From `hcloud`**
-
-        ```bash
-        hcloud firewall delete-rule <firewall> \
-          --direction in --protocol tcp --port 22 --source-ips 0.0.0.0/0
-        hcloud firewall add-rule <firewall> \
-          --direction in --protocol tcp --port 22 --source-ips <your-trusted-cidr>
-        ```
+              rule {
+                direction  = "in"
+                protocol   = "tcp"
+                port       = "22"
+                source_ips = ["203.0.113.0/24"]
+              }
+            }
+            ```
     refs:
       - url: https://docs.hetzner.com/cloud/firewalls/overview/
         title: Hetzner Cloud Firewalls overview
@@ -259,19 +337,34 @@ queries:
         **Why this matters**
 
         RDP is a long-standing target of ransomware deployment and has been involved in repeated high-impact breaches. The RDP protocol itself has had multiple critical pre-authentication RCE CVEs (for example BlueKeep). Exposing RDP to the internet should be treated as an immediate security incident.
-      remediation: |
-        **From the Hetzner Cloud Console**
+      remediation:
+        - id: console
+          desc: |
+            1. Navigate to **Firewalls** and open the affected firewall.
+            2. Remove the RDP rule entirely, or restrict the source to a specific trusted CIDR.
+            3. Save the firewall.
+        - id: cli
+          desc: |
+            ```bash
+            hcloud firewall delete-rule <firewall> \
+              --direction in --protocol tcp --port 3389 --source-ips 0.0.0.0/0
+            ```
+        - id: terraform
+          desc: |
+            Remove any RDP `rule` block sourced from `0.0.0.0/0` or `::/0`. If RDP must remain reachable, scope `source_ips` to a specific trusted CIDR:
 
-        1. Navigate to **Firewalls** and open the affected firewall.
-        2. Remove the RDP rule entirely, or restrict the source to a specific trusted CIDR.
-        3. Save the firewall.
+            ```hcl
+            resource "hcloud_firewall" "default" {
+              name = "default"
 
-        **From `hcloud`**
-
-        ```bash
-        hcloud firewall delete-rule <firewall> \
-          --direction in --protocol tcp --port 3389 --source-ips 0.0.0.0/0
-        ```
+              rule {
+                direction  = "in"
+                protocol   = "tcp"
+                port       = "3389"
+                source_ips = ["203.0.113.0/24"]
+              }
+            }
+            ```
     refs:
       - url: https://docs.hetzner.com/cloud/firewalls/overview/
         title: Hetzner Cloud Firewalls overview
@@ -309,15 +402,34 @@ queries:
         **Why this matters**
 
         Databases exposed directly to the internet are routinely scanned and compromised — credential brute force, unauthenticated misconfiguration exploitation, and ransom-style data extortion are all well-documented outcomes. Database traffic should only traverse private networks; applications needing external access should reach the database through a bastion or through the application tier, not directly.
-      remediation: |
-        Remove or restrict the offending inbound rule so the source is a trusted CIDR.
+      remediation:
+        - id: console
+          desc: |
+            Remove or restrict the offending inbound rule so the source is a trusted CIDR. Repeat for each offending port. Prefer placing databases on a Hetzner private network and reaching them only from within that network.
+        - id: cli
+          desc: |
+            ```bash
+            hcloud firewall delete-rule <firewall> \
+              --direction in --protocol tcp --port 5432 --source-ips 0.0.0.0/0
+            ```
 
-        ```bash
-        hcloud firewall delete-rule <firewall> \
-          --direction in --protocol tcp --port 5432 --source-ips 0.0.0.0/0
-        ```
+            Repeat for each offending port (`3306`, `5432`, `27017`, `6379`, `9092`, `9200`, `1433`).
+        - id: terraform
+          desc: |
+            Database ports should not be exposed to `0.0.0.0/0` or `::/0`. Either drop the rule entirely (databases are best reached over a `hcloud_network`), or scope `source_ips` to a specific trusted CIDR:
 
-        Repeat for each offending port. Prefer placing databases on a Hetzner private network and reaching them only from within that network.
+            ```hcl
+            resource "hcloud_firewall" "default" {
+              name = "default"
+
+              rule {
+                direction  = "in"
+                protocol   = "tcp"
+                port       = "5432"
+                source_ips = ["10.0.0.0/16"]
+              }
+            }
+            ```
     refs:
       - url: https://docs.hetzner.com/cloud/firewalls/overview/
         title: Hetzner Cloud Firewalls overview
@@ -347,13 +459,39 @@ queries:
         **Why this matters**
 
         An "allow all ports from anywhere" rule is functionally equivalent to having no firewall. It exposes every service running on the server — intended or unintended, known or forgotten — to every host on the internet. This is the highest-severity network misconfiguration.
-      remediation: |
-        Remove the wide-open rule and replace it with narrow rules that expose only the specific ports required by the workload, scoped to trusted source CIDRs.
+      remediation:
+        - id: console
+          desc: |
+            Remove the wide-open rule and replace it with narrow rules that expose only the specific ports required by the workload, scoped to trusted source CIDRs.
+        - id: cli
+          desc: |
+            ```bash
+            hcloud firewall delete-rule <firewall> \
+              --direction in --protocol tcp --port any --source-ips 0.0.0.0/0
+            ```
+        - id: terraform
+          desc: |
+            Never declare an inbound `rule` whose `port` is `any`, `1-65535`, or `0-65535` with `source_ips` of `0.0.0.0/0` or `::/0`. Replace it with narrow per-service rules:
 
-        ```bash
-        hcloud firewall delete-rule <firewall> \
-          --direction in --protocol tcp --port any --source-ips 0.0.0.0/0
-        ```
+            ```hcl
+            resource "hcloud_firewall" "default" {
+              name = "default"
+
+              rule {
+                direction  = "in"
+                protocol   = "tcp"
+                port       = "443"
+                source_ips = ["0.0.0.0/0", "::/0"]
+              }
+
+              rule {
+                direction  = "in"
+                protocol   = "tcp"
+                port       = "22"
+                source_ips = ["203.0.113.0/24"]
+              }
+            }
+            ```
     refs:
       - url: https://docs.hetzner.com/cloud/firewalls/overview/
         title: Hetzner Cloud Firewalls overview
@@ -380,19 +518,34 @@ queries:
         **Why this matters**
 
         A load balancer that accepts plaintext HTTP and serves the response in plaintext exposes every request to interception and modification — credentials, session cookies, API keys, and response content are all readable by any host on the network path. Redirecting HTTP to HTTPS forces subsequent requests over TLS, closing the window where a downgrade or sidejacking attack can succeed.
-      remediation: |
-        **From the Hetzner Cloud Console**
+      remediation:
+        - id: console
+          desc: |
+            1. Navigate to **Load Balancers** and open the affected load balancer.
+            2. Go to **Services** and edit the HTTP service.
+            3. Enable **Redirect HTTP to HTTPS**. Confirm that an HTTPS service and TLS certificate are configured.
+        - id: cli
+          desc: |
+            ```bash
+            hcloud load-balancer update-service <lb> \
+              --listen-port 80 --http-redirect-http
+            ```
+        - id: terraform
+          desc: |
+            Set `http.redirect_http = true` on every `hcloud_load_balancer_service` whose `protocol = "http"`. Make sure a paired HTTPS service with a certificate also exists:
 
-        1. Navigate to **Load Balancers** and open the affected load balancer.
-        2. Go to **Services** and edit the HTTP service.
-        3. Enable **Redirect HTTP to HTTPS**. Confirm that an HTTPS service and TLS certificate are configured.
+            ```hcl
+            resource "hcloud_load_balancer_service" "http" {
+              load_balancer_id = hcloud_load_balancer.example.id
+              protocol         = "http"
+              listen_port      = 80
+              destination_port = 80
 
-        **From `hcloud`**
-
-        ```bash
-        hcloud load-balancer update-service <lb> \
-          --listen-port 80 --http-redirect-http
-        ```
+              http {
+                redirect_http = true
+              }
+            }
+            ```
     refs:
       - url: https://docs.hetzner.com/cloud/load-balancers/overview/
         title: Hetzner Cloud Load Balancers overview
@@ -419,21 +572,41 @@ queries:
         **Why this matters**
 
         An HTTPS listener with no certificate cannot terminate TLS for the listening domain — clients either hit certificate warnings, fall back to HTTP, or fail to connect entirely. Either outcome exposes user traffic to interception, content injection, and credential theft, and a "fail open to HTTP" path is a classic downgrade-attack surface.
-      remediation: |
-        **From the Hetzner Cloud Console**
+      remediation:
+        - id: console
+          desc: |
+            1. Navigate to **Load Balancers** and open the affected load balancer.
+            2. Go to **Services** and edit the HTTPS service.
+            3. Under **Certificates**, attach an existing certificate or create a Hetzner-managed certificate for the domain.
+        - id: cli
+          desc: |
+            ```bash
+            hcloud load-balancer add-service <lb> \
+              --protocol https --listen-port 443 \
+              --destination-port 80 \
+              --http-certificates <certificate>
+            ```
+        - id: terraform
+          desc: |
+            Attach at least one certificate to every HTTPS `hcloud_load_balancer_service` via `http.certificates`:
 
-        1. Navigate to **Load Balancers** and open the affected load balancer.
-        2. Go to **Services** and edit the HTTPS service.
-        3. Under **Certificates**, attach an existing certificate or create a Hetzner-managed certificate for the domain.
+            ```hcl
+            resource "hcloud_managed_certificate" "example" {
+              name         = "example"
+              domain_names = ["example.com"]
+            }
 
-        **From `hcloud`**
+            resource "hcloud_load_balancer_service" "https" {
+              load_balancer_id = hcloud_load_balancer.example.id
+              protocol         = "https"
+              listen_port      = 443
+              destination_port = 80
 
-        ```bash
-        hcloud load-balancer add-service <lb> \
-          --protocol https --listen-port 443 \
-          --destination-port 80 \
-          --http-certificates <certificate>
-        ```
+              http {
+                certificates = [hcloud_managed_certificate.example.id]
+              }
+            }
+            ```
     refs:
       - url: https://docs.hetzner.com/cloud/load-balancers/overview/
         title: Hetzner Cloud Load Balancers overview
@@ -458,25 +631,45 @@ queries:
         **Why this matters**
 
         An expired TLS certificate breaks the trust chain clients rely on. Users see certificate warnings and are trained to click through — which normalizes certificate bypass and gives real man-in-the-middle attempts cover. API clients often fail closed and take down dependent services, so an expired certificate is both a security failure and an availability incident.
-      remediation: |
-        **From the Hetzner Cloud Console**
+      remediation:
+        - id: console
+          desc: |
+            1. Navigate to **Certificates**.
+            2. Identify the expired certificate. For Hetzner-managed certificates, deletion and re-creation will trigger reissuance through Let's Encrypt; for uploaded certificates, upload a renewed version.
+            3. Update any load balancers referencing the old certificate to use the renewed certificate.
+        - id: cli
+          desc: |
+            ```bash
+            hcloud certificate create \
+              --type managed \
+              --name <new-name> \
+              --domain <domain>
+            ```
+        - id: terraform
+          desc: |
+            Prefer `hcloud_managed_certificate` so Hetzner auto-renews via Let's Encrypt and certificates do not silently expire:
 
-        1. Navigate to **Certificates**.
-        2. Identify the expired certificate. For Hetzner-managed certificates, deletion and re-creation will trigger reissuance through Let's Encrypt; for uploaded certificates, upload a renewed version.
-        3. Update any load balancers referencing the old certificate to use the renewed certificate.
+            ```hcl
+            resource "hcloud_managed_certificate" "example" {
+              name         = "example"
+              domain_names = ["example.com", "*.example.com"]
+            }
+            ```
 
-        **From `hcloud`**
+            For uploaded certificates, replace the certificate material before expiry:
 
-        ```bash
-        hcloud certificate create \
-          --type managed \
-          --name <new-name> \
-          --domain <domain>
-        ```
+            ```hcl
+            resource "hcloud_uploaded_certificate" "example" {
+              name        = "example"
+              certificate = file("${path.module}/cert.pem")
+              private_key = file("${path.module}/key.pem")
+            }
+            ```
     refs:
       - url: https://docs.hetzner.com/cloud/certificates/overview/
         title: Hetzner Cloud Certificates overview
 
+  # No Terraform remediation: the `blocked` flag is set by Hetzner's abuse team based on observed traffic; it is not a configurable field on `hcloud_floating_ip`. The fix is investigation and remediation of the underlying workload, then a support request.
   - uid: mondoo-hetzner-security-floating-ip-not-blocked
     title: Ensure floating IPs are not blocked by Hetzner abuse
     impact: 70
@@ -497,16 +690,19 @@ queries:
         **Why this matters**
 
         Hetzner sets the `blocked` flag on a floating IP when its abuse team has determined the IP is involved in malicious activity (outbound attack traffic, spam, scanning, hosting malware). A blocked IP that is still attached to a server is a strong indicator that the underlying workload is compromised or being misused, and warrants investigation rather than re-enabling the IP.
-      remediation: |
-        Investigate before unblocking.
+      remediation:
+        - id: console
+          desc: |
+            Investigate before unblocking.
 
-        1. Identify the server the floating IP is attached to and review recent logs, outbound traffic, and authentication events for signs of compromise.
-        2. If the workload is compromised, rebuild the server from a known-good image and rotate any credentials it held.
-        3. Contact Hetzner support to discuss the abuse case and request unblocking once the underlying issue is remediated.
+            1. Identify the server the floating IP is attached to and review recent logs, outbound traffic, and authentication events for signs of compromise.
+            2. If the workload is compromised, rebuild the server from a known-good image and rotate any credentials it held.
+            3. Contact Hetzner support to discuss the abuse case and request unblocking once the underlying issue is remediated.
     refs:
       - url: https://docs.hetzner.com/cloud/floating-ips/overview/
         title: Hetzner Cloud Floating IPs overview
 
+  # No Terraform remediation: the `blocked` flag is set by Hetzner's abuse team based on observed traffic; it is not a configurable field on `hcloud_primary_ip`. The fix is investigation and remediation of the underlying workload, then a support request.
   - uid: mondoo-hetzner-security-primary-ip-not-blocked
     title: Ensure primary IPs are not blocked by Hetzner abuse
     impact: 70
@@ -527,12 +723,14 @@ queries:
         **Why this matters**
 
         Hetzner sets the `blocked` flag on a primary IP when its abuse team has determined the IP is involved in malicious activity originating from the assigned server. A blocked primary IP is a strong indicator that the server is compromised or misconfigured to emit abusive traffic, and warrants investigation rather than re-enabling the IP.
-      remediation: |
-        Investigate before unblocking.
+      remediation:
+        - id: console
+          desc: |
+            Investigate before unblocking.
 
-        1. Identify the server the primary IP is assigned to and review recent logs, outbound traffic, and authentication events for signs of compromise.
-        2. If the workload is compromised, rebuild the server from a known-good image and rotate any credentials it held.
-        3. Contact Hetzner support to discuss the abuse case and request unblocking once the underlying issue is remediated.
+            1. Identify the server the primary IP is assigned to and review recent logs, outbound traffic, and authentication events for signs of compromise.
+            2. If the workload is compromised, rebuild the server from a known-good image and rotate any credentials it held.
+            3. Contact Hetzner support to discuss the abuse case and request unblocking once the underlying issue is remediated.
     refs:
       - url: https://docs.hetzner.com/cloud/primary-ips/overview/
         title: Hetzner Cloud Primary IPs overview
