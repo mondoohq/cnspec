@@ -625,15 +625,15 @@ queries:
   - uid: mondoo-okta-security-okta-mfa-access-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.providers.any( nameLabel == "okta" )
     mql: |
-      terraform.resources.any( nameLabel == "okta_policy_mfa_default" || nameLabel == "okta_policy_factor_enrollment" )
+      terraform.resources.where( nameLabel == "okta_policy_mfa_default" ).any( arguments['okta_otp']['enroll'] == /REQUIRED/ || arguments['okta_verify']['enroll'] == /REQUIRED/ || arguments['fido_webauthn']['enroll'] == /REQUIRED/ || arguments['webauthn']['enroll'] == /REQUIRED/ || arguments['google_otp']['enroll'] == /REQUIRED/ )
   - uid: mondoo-okta-security-okta-mfa-access-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains( providerName == /okta/ )
     mql: |
-      terraform.plan.resourceChanges.any( type == "okta_policy_mfa_default" || type == "okta_policy_factor_enrollment" )
+      terraform.plan.resourceChanges.where( type == "okta_policy_mfa_default" ).any( change.after['okta_otp']['enroll'] == /REQUIRED/ || change.after['okta_verify']['enroll'] == /REQUIRED/ || change.after['fido_webauthn']['enroll'] == /REQUIRED/ || change.after['webauthn']['enroll'] == /REQUIRED/ || change.after['google_otp']['enroll'] == /REQUIRED/ )
   - uid: mondoo-okta-security-okta-mfa-access-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains( type == /okta_policy_mfa_default|okta_policy_factor_enrollment/ )
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains( type == /okta_policy_mfa_default/ )
     mql: |
-      terraform.state.resources.any( type == "okta_policy_mfa_default" || type == "okta_policy_factor_enrollment" )
+      terraform.state.resources.where( type == "okta_policy_mfa_default" ).any( values['okta_otp']['enroll'] == /REQUIRED/ || values['okta_verify']['enroll'] == /REQUIRED/ || values['fido_webauthn']['enroll'] == /REQUIRED/ || values['webauthn']['enroll'] == /REQUIRED/ || values['google_otp']['enroll'] == /REQUIRED/ )
   - uid: mondoo-okta-security-okta-enforce-session-lifetime
     title: Enforce a limited session lifetime for all policies
     impact: 80
@@ -720,6 +720,11 @@ queries:
     mql: |
       okta.policies.signOn.where(_.rules.all(status == "ACTIVE")).all(_.rules.all(actions["signon"]["session"]["mondooOktaSecurityMaxSessionIdleMinutes"] <= props.mondooOktaSecurityMaxSessionIdleMinutes ))
       okta.policies.signOn.where(_.rules.all(status == "ACTIVE")).all(_.rules.all(actions["signon"]["session"]["mondooOktaSecurityMaxSessionLifetimeMinutes"] <= props.mondooOktaSecurityMaxSessionLifetimeMinutes ))
+  # The HCL variant accepts a `var.something` reference for session_idle /
+  # session_lifetime as a static-analysis pass-through — the resolved value
+  # isn't known at HCL-parse time. Plan and state variants below evaluate the
+  # resolved value, so they don't need the escape hatch and intentionally
+  # omit it.
   - uid: mondoo-okta-security-okta-enforce-session-lifetime-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.providers.any( nameLabel == "okta" )
     mql: |
@@ -2810,12 +2815,6 @@ queries:
       okta.policies.signOn.where(status == "ACTIVE").all(
         rules.where(status == "ACTIVE" && name != "Catch-all Rule").all(actions["signon"]["requireFactor"] == true)
       )
-  # No Terraform variants: counts ORG_ADMIN role assignments across the org.
-  # Per-user `okta_user_admin_roles` HCL would only see TF-managed grants and
-  # miss assignments made via the API or Admin Console — the runtime check
-  # against the live tenant is the source of truth.
-  # No Terraform remediation: same reason — guidance limited to TF-managed
-  # users would be misleading.
   - uid: mondoo-okta-security-signon-requires-mfa-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.providers.any( nameLabel == "okta" )
     mql: |
@@ -2828,6 +2827,12 @@ queries:
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains( type == /okta_policy_rule_signon/ )
     mql: |
       terraform.state.resources.where( type == "okta_policy_rule_signon" ).all( values['mfa_required'] == true || values['factor_required'] == true )
+  # No Terraform variants: counts ORG_ADMIN role assignments across the org.
+  # Per-user `okta_user_admin_roles` HCL would only see TF-managed grants and
+  # miss assignments made via the API or Admin Console — the runtime check
+  # against the live tenant is the source of truth.
+  # No Terraform remediation: same reason — guidance limited to TF-managed
+  # users would be misleading.
   - uid: mondoo-okta-security-limit-org-admins
     title: Limit the number of organization admins
     impact: 80
