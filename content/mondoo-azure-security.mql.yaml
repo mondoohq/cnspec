@@ -15983,9 +15983,6 @@ queries:
         values.encryption != null &&
         values.encryption.any(_['key_vault_key_id'] != null && _['key_vault_key_id'] != "")
       )
-  # No Terraform variants: azurerm_monitor_diagnostic_setting targets resources by string-encoded
-  # target_resource_id, so MQL cannot reliably filter diagnostic settings to those scoped at Batch
-  # accounts without parsing reference strings. Revisit if a target-resource-type filter is added.
   - uid: mondoo-azure-security-batch-diagnostic-settings-enabled
     title: Ensure Azure Batch accounts have diagnostic settings enabled
     impact: 60
@@ -16002,6 +15999,18 @@ queries:
         tags:
           mondoo.com/filter-title: Azure Batch Account
           mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-batch-diagnostic-settings-enabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-batch-diagnostic-settings-enabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-batch-diagnostic-settings-enabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that diagnostic settings are enabled on Azure Batch accounts, providing visibility into job execution, authentication events, and configuration changes through centralized logging.
@@ -16105,6 +16114,24 @@ queries:
       asset.platform == "azure-batch-account"
     mql: |
       azure.subscription.batchService.account.diagnosticSettings.length > 0
+  - uid: mondoo-azure-security-batch-diagnostic-settings-enabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_batch_account")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_monitor_diagnostic_setting").any(
+        arguments['target_resource_id'].contains("azurerm_batch_account")
+      )
+  - uid: mondoo-azure-security-batch-diagnostic-settings-enabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_batch_account")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_monitor_diagnostic_setting").any(
+        change.after['target_resource_id'] != empty
+      )
+  - uid: mondoo-azure-security-batch-diagnostic-settings-enabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_batch_account")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_monitor_diagnostic_setting").any(
+        values['target_resource_id'].contains("/batchAccounts/")
+      )
   - uid: mondoo-azure-security-batch-private-endpoints-configured
     title: Ensure Azure Batch accounts have private endpoint connections configured
     impact: 70
@@ -27006,9 +27033,6 @@ queries:
       terraform.state.resources.where(type == "azurerm_container_registry").all(
         values['retention_policy_in_days'] != null && values['retention_policy_in_days'] > 0
       )
-  # No Terraform variants: azurerm_container_registry does not expose a dedicated
-  # keyRotationEnabled flag. Auto-rotation is implied by referencing a Key Vault key URI without a
-  # version, which cannot be reliably detected from the resource configuration alone.
   - uid: mondoo-azure-security-acr-encryption-key-rotation
     title: Ensure ACR encryption key auto-rotation is enabled
     impact: 60
@@ -27025,6 +27049,18 @@ queries:
         tags:
           mondoo.com/filter-title: Azure Subscription
           mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-acr-encryption-key-rotation-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-acr-encryption-key-rotation-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-acr-encryption-key-rotation-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that Azure Container Registry instances with customer-managed key encryption have automatic key rotation enabled. Key rotation ensures that encryption keys are periodically updated, limiting the impact of a compromised key.
@@ -27069,6 +27105,30 @@ queries:
             ```
 
             A versionless key URI has the form `https://<vault>.vault.azure.net/keys/<keyName>` (no version suffix).
+        - id: terraform
+          desc: |
+            Reference the Key Vault key by its versionless identifier so the registry tracks the latest key version automatically:
+
+            ```hcl
+            resource "azurerm_container_registry" "example" {
+              name                = "exampleregistry"
+              resource_group_name = azurerm_resource_group.example.name
+              location            = azurerm_resource_group.example.location
+              sku                 = "Premium"
+
+              identity {
+                type         = "UserAssigned"
+                identity_ids = [azurerm_user_assigned_identity.example.id]
+              }
+
+              encryption {
+                key_vault_key_id   = azurerm_key_vault_key.example.versionless_id
+                identity_client_id = azurerm_user_assigned_identity.example.client_id
+              }
+            }
+            ```
+
+            Use `versionless_id` rather than `id` — auto-rotation requires the URI to omit the key version.
         - id: bicep
           desc: |
             Key rotation is managed through Azure Key Vault key versioning. Configure the registry encryption to use a key URI without a version to enable automatic rotation:
@@ -27108,6 +27168,38 @@ queries:
         encryption.status == "enabled"
       ).all(
         encryption.keyRotationEnabled == true
+      )
+  - uid: mondoo-azure-security-acr-encryption-key-rotation-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_container_registry")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_container_registry").where(
+        blocks.where(type == "encryption") != empty
+      ).all(
+        blocks.where(type == "encryption").all(
+          arguments['key_vault_key_id'].contains("versionless_id") ||
+          arguments['key_vault_key_id'] == /^https:\/\/[^\/]+\/keys\/[^\/]+\/?$/
+        )
+      )
+  - uid: mondoo-azure-security-acr-encryption-key-rotation-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_container_registry")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_container_registry").where(
+        change.after.encryption != null && change.after.encryption.length > 0
+      ).all(
+        change.after.encryption.all(
+          _['key_vault_key_id'] == null ||
+          _['key_vault_key_id'] == /^https:\/\/[^\/]+\/keys\/[^\/]+\/?$/
+        )
+      )
+  - uid: mondoo-azure-security-acr-encryption-key-rotation-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_container_registry")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_container_registry").where(
+        values.encryption != null && values.encryption.length > 0
+      ).all(
+        values.encryption.all(
+          _['key_vault_key_id'] == /^https:\/\/[^\/]+\/keys\/[^\/]+\/?$/
+        )
       )
   - uid: mondoo-azure-security-storage-encryption-scope-cmk
     title: Ensure storage encryption scopes use customer-managed keys
@@ -29910,10 +30002,6 @@ queries:
         values['monitoring'] == empty ||
         values['monitoring'].all(_['alerts_for_all_job_failures_enabled'] != false)
       )
-  # No Terraform variants: backup policies are separate Terraform resources (e.g.
-  # azurerm_backup_policy_vm) that reference the vault via recovery_vault_name. Verifying that
-  # every vault has at least one policy requires cross-resource correlation by string-encoded
-  # references that MQL cannot resolve reliably from Terraform configuration alone.
   - uid: mondoo-azure-security-recovery-vault-backup-policies
     title: Ensure Recovery Services Vaults have backup policies
     impact: 60
@@ -29930,6 +30018,18 @@ queries:
         tags:
           mondoo.com/filter-title: Azure Subscription
           mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-recovery-vault-backup-policies-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-recovery-vault-backup-policies-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-recovery-vault-backup-policies-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that Azure Recovery Services Vaults have at least one backup policy configured. Backup policies define the schedule, retention, and scope of backup operations.
@@ -29996,6 +30096,28 @@ queries:
               --vm <VMResourceId> \
               --policy-name <PolicyName>
             ```
+        - id: terraform
+          desc: |
+            Define a backup policy alongside the vault. For Azure VM backups:
+
+            ```hcl
+            resource "azurerm_backup_policy_vm" "example" {
+              name                = "example-vm-backup-policy"
+              resource_group_name = azurerm_resource_group.example.name
+              recovery_vault_name = azurerm_recovery_services_vault.example.name
+
+              backup {
+                frequency = "Daily"
+                time      = "23:00"
+              }
+
+              retention_daily {
+                count = 30
+              }
+            }
+            ```
+
+            Use `azurerm_backup_policy_file_share` for Azure Files workloads and `azurerm_backup_policy_vm_workload` for SQL Server or SAP HANA backups.
         - id: bicep
           desc: |
             Backup policies are configured as child resources of the vault. Example for a VM backup policy:
@@ -30038,6 +30160,30 @@ queries:
       azure.subscription.recoveryServices.vaults.all(
         backupPolicies.length > 0
       )
+  - uid: mondoo-azure-security-recovery-vault-backup-policies-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_recovery_services_vault")
+    mql: |
+      terraform.resources.where(
+        nameLabel == "azurerm_backup_policy_vm" ||
+        nameLabel == "azurerm_backup_policy_vm_workload" ||
+        nameLabel == "azurerm_backup_policy_file_share"
+      ).length > 0
+  - uid: mondoo-azure-security-recovery-vault-backup-policies-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_recovery_services_vault")
+    mql: |
+      terraform.plan.resourceChanges.where(
+        type == "azurerm_backup_policy_vm" ||
+        type == "azurerm_backup_policy_vm_workload" ||
+        type == "azurerm_backup_policy_file_share"
+      ).length > 0
+  - uid: mondoo-azure-security-recovery-vault-backup-policies-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_recovery_services_vault")
+    mql: |
+      terraform.state.resources.where(
+        type == "azurerm_backup_policy_vm" ||
+        type == "azurerm_backup_policy_vm_workload" ||
+        type == "azurerm_backup_policy_file_share"
+      ).length > 0
   - uid: mondoo-azure-security-recovery-vault-critical-op-alerts
     title: Ensure Recovery Vaults alert on critical operations
     impact: 70
