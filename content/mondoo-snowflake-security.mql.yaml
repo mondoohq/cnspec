@@ -75,10 +75,21 @@ queries:
       compliance/nist-sp-800-171: nist-sp-800-171--3-5-3
       compliance/soc2-2017: soc2-control-cc6-1-4
     mql: |
-      snowflake.account.users.where(disabled == false).all(extAuthnDuo == true)
+      snowflake.account.users.where(disabled == false && hasPassword == true).all(extAuthnDuo == true)
     docs:
       desc: |
-        This check ensures that multi-factor authentication (MFA) via Duo is enabled for all active Snowflake users. MFA adds a critical layer of security beyond passwords, significantly reducing the risk of account compromise.
+        This check ensures that every active user who can sign in with a password has Duo multi-factor authentication enrolled. MFA adds a critical layer of security beyond passwords, significantly reducing the risk of account compromise.
+
+        **Scope of this check**
+
+        The check evaluates `disabled == false && hasPassword == true`. It deliberately excludes users that have no password set — service users using key-pair authentication or OAuth cannot enroll in Duo and would otherwise produce false positives.
+
+        The check looks at the `extAuthnDuo` flag (Duo enrollment). It does *not* yet detect TOTP or SAML-based MFA enforced via an authentication policy. If your account uses authentication policies for MFA enforcement instead of (or in addition to) Duo, also confirm an MFA-required policy is attached account-wide:
+
+        ```sql
+        SHOW PARAMETERS LIKE 'AUTHENTICATION_POLICY' IN ACCOUNT;
+        DESC AUTHENTICATION POLICY <policy_name>;
+        ```
 
         **Why this matters**
 
@@ -90,9 +101,9 @@ queries:
         Snowflake has been the target of high-profile attacks where stolen credentials were used to access customer data. MFA would have prevented many of these breaches.
 
         Risk mitigation
-          •  Enable Duo MFA for all active users.
+          •  Enroll Duo MFA for every user who can authenticate with a password — or attach an authentication policy that requires MFA at the account level.
           •  Prioritize MFA for users with ACCOUNTADMIN, SECURITYADMIN, and SYSADMIN roles.
-          •  Consider using key-pair authentication for service accounts.
+          •  Use key-pair authentication or OAuth for service users instead of passwords.
           •  Regularly audit MFA enrollment status.
       remediation:
         - id: console
@@ -428,10 +439,12 @@ queries:
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
       compliance/soc2-2017: soc2-control-cc6-6-1
     mql: |
-      snowflake.account.networkPolicies.length > 0
+      snowflake.account.parameters.where(key == "NETWORK_POLICY").any(value != "")
     docs:
       desc: |
-        This check ensures that at least one network policy is configured in the Snowflake account. Network policies restrict which IP addresses or network ranges can connect to Snowflake, providing network-level access control.
+        This check ensures that a network policy is *attached* to the Snowflake account. Network policies restrict which IP addresses or network ranges can connect to Snowflake, providing network-level access control.
+
+        Snowflake's `SHOW PARAMETERS LIKE 'NETWORK_POLICY' IN ACCOUNT` returns the name of the policy currently bound at the account level. The check looks at this parameter rather than just whether any policy is defined — an account can have several `CREATE NETWORK POLICY` definitions sitting unattached, in which case no IP gating is enforced at all.
 
         **Why this matters**
 
@@ -507,7 +520,7 @@ queries:
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
       compliance/soc2-2017: soc2-control-cc6-6-1
     mql: |
-      snowflake.account.networkPolicies.none(allowedIpList.contains("0.0.0.0/0"))
+      snowflake.account.networkPolicies.none(allowedIpList.contains("0.0.0.0/0") || allowedIpList.contains("::/0"))
     docs:
       desc: |
         This check ensures that no network policies contain 0.0.0.0/0 in their allowed IP list, which would permit access from any IP address and effectively nullify the network policy.
@@ -529,7 +542,7 @@ queries:
             **Using Snowsight**
 
             1. In Snowsight, go to **Admin** → **Security** → **Network Policies**.
-            2. Open the policy whose **Allowed IPs** include `0.0.0.0/0`.
+            2. Open the policy whose **Allowed IPs** include `0.0.0.0/0` (or the IPv6 wildcard `::/0`).
             3. Replace `0.0.0.0/0` with the specific CIDR ranges your organization actually uses (office, VPN, data-center egress).
             4. Save the policy.
         - id: sql
@@ -543,7 +556,7 @@ queries:
                 DESC NETWORK POLICY <policy_name>;
                 ```
 
-            2. Replace the open `0.0.0.0/0` entry with the specific CIDR ranges your organization actually uses:
+            2. Replace the open `0.0.0.0/0` (and/or IPv6 `::/0`) entry with the specific CIDR ranges your organization actually uses:
 
                 ```sql
                 ALTER NETWORK POLICY <policy_name>
