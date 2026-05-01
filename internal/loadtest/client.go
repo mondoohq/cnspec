@@ -11,6 +11,7 @@ import (
 
 	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
+	"go.mondoo.com/cnspec/v13"
 	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/cnspec/v13/policy/scandb"
 	"go.mondoo.com/cnspec/v13/upload"
@@ -18,7 +19,14 @@ import (
 	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream"
 	"go.mondoo.com/ranger-rpc"
+	"go.mondoo.com/ranger-rpc/plugins/scope"
 )
+
+// UserAgent is sent on every upstream request the loadtest client makes so
+// platform-side telemetry can distinguish synthetic load from real scans.
+// Format mirrors cnspec's normal product-token style; the suffix marks the
+// traffic as load-test origin.
+var UserAgent = "cnspec/" + cnspec.Version + " (loadtest)"
 
 // ScanPayload holds everything that goes into one scan database file: the
 // mutated scores for this iteration plus the (unchanged) template data and
@@ -65,6 +73,12 @@ func NewServicesClient(cfg *upstream.UpstreamConfig, tempDir string) (Client, er
 		}
 		plugins = append(plugins, certAuth)
 	}
+
+	// Stamp every request with a loadtest-flavored User-Agent so the platform
+	// can filter synthetic traffic out of real scan analytics.
+	headers := http.Header{}
+	headers.Set("User-Agent", UserAgent)
+	plugins = append(plugins, scope.NewCustomHeaderRangerPlugin(headers))
 
 	services, err := policy.NewRemoteServices(cfg.ApiEndpoint, plugins, httpClient)
 	if err != nil {
@@ -131,7 +145,11 @@ func (c *servicesClient) UploadScanDB(ctx context.Context, assetMrn string, payl
 		return errors.New("server returned no upload URL")
 	}
 
-	resp, err := upload.UploadFile(ctx, urlResp.UploadUrl.Url, urlResp.UploadUrl.Headers, path, "application/octet-stream")
+	// Inject our load-test User-Agent into the upload PUT. Presigned URL
+	// uploads don't go through ranger, so this is the only place we can
+	// stamp the header — without it, the request would carry Go's default UA.
+	uploadHeaders := mergeHeaders(urlResp.UploadUrl.Headers, map[string]string{"User-Agent": UserAgent})
+	resp, err := upload.UploadFile(ctx, urlResp.UploadUrl.Url, uploadHeaders, path, "application/octet-stream")
 	if err != nil {
 		return errors.Wrap(err, "upload file")
 	}
@@ -148,6 +166,21 @@ func (c *servicesClient) UploadScanDB(ctx context.Context, assetMrn string, payl
 		return errors.Wrap(err, "report upload completed")
 	}
 	return nil
+}
+
+// mergeHeaders returns a new map that contains every entry from base plus
+// every entry from extra, with extra winning on conflict. Used so we can
+// add our load-test User-Agent without losing the presigned URL's auth
+// headers.
+func mergeHeaders(base, extra map[string]string) map[string]string {
+	out := make(map[string]string, len(base)+len(extra))
+	for k, v := range base {
+		out[k] = v
+	}
+	for k, v := range extra {
+		out[k] = v
+	}
+	return out
 }
 
 // writeScanDB stages a scan database file containing payload's asset, scores,
