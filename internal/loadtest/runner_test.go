@@ -21,8 +21,12 @@ import (
 type recordingClient struct {
 	mu      sync.Mutex
 	syncs   []*inventory.Asset
-	stores  []*policy.StoreResultsReq
-	resolve []string
+	uploads []*recordedUpload
+}
+
+type recordedUpload struct {
+	assetMrn string
+	scores   []*policy.Score
 }
 
 func (r *recordingClient) SynchronizeAsset(_ context.Context, _ string, asset *inventory.Asset) (string, error) {
@@ -32,17 +36,10 @@ func (r *recordingClient) SynchronizeAsset(_ context.Context, _ string, asset *i
 	return "//assets.api.mondoo.com/" + asset.PlatformIds[0], nil
 }
 
-func (r *recordingClient) ResolveAndUpdateJobs(_ context.Context, mrn string, _ *inventory.Asset) error {
+func (r *recordingClient) UploadScanDB(_ context.Context, assetMrn string, payload *ScanPayload) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.resolve = append(r.resolve, mrn)
-	return nil
-}
-
-func (r *recordingClient) StoreResults(_ context.Context, req *policy.StoreResultsReq) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.stores = append(r.stores, req)
+	r.uploads = append(r.uploads, &recordedUpload{assetMrn: assetMrn, scores: payload.Scores})
 	return nil
 }
 
@@ -64,10 +61,10 @@ func TestRunnerBaselineUsesTemplateScores(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.EqualValues(t, 1, stats.SyncCalls)
-	require.EqualValues(t, 1, stats.StoreCalls)
+	require.EqualValues(t, 1, stats.UploadCalls)
 
-	require.Len(t, rc.stores, 1)
-	for i, s := range rc.stores[0].Scores {
+	require.Len(t, rc.uploads, 1)
+	for i, s := range rc.uploads[0].scores {
 		require.Equal(t, tpl.Scores[i].Value, s.Value, "baseline (scan 0) must replay template scores even when change-pct > 0")
 	}
 }
@@ -89,8 +86,7 @@ func TestRunnerSyncOnlyOnFirstScan(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, rc.syncs, 2, "one sync per asset")
-	require.Len(t, rc.resolve, 2, "one resolve per asset")
-	require.Len(t, rc.stores, 8, "store on every scan: 2 assets * 4 scans")
+	require.Len(t, rc.uploads, 8, "upload on every scan: 2 assets * 4 scans")
 }
 
 func TestRunnerSharding(t *testing.T) {
@@ -146,7 +142,7 @@ func TestRunnerContinuousStopsOnContextCancel(t *testing.T) {
 	// "stopped on user signal", which is the expected termination path.
 	require.True(t, errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled), "expected ctx error, got: %v", err)
 	require.EqualValues(t, 3, stats.SyncCalls, "each asset still syncs exactly once across the continuous run")
-	require.Greater(t, stats.StoreCalls, int64(3), "continuous mode keeps storing past the initial round")
+	require.Greater(t, stats.UploadCalls, int64(3), "continuous mode keeps uploading past the initial round")
 }
 
 func TestRunnerContinuousRoundRobinsAllAssets(t *testing.T) {
@@ -160,9 +156,9 @@ func TestRunnerContinuousRoundRobinsAllAssets(t *testing.T) {
 	// targets. After one full pass each asset should have been hit at least
 	// once even though we have only 1 worker (proves round-robin distribution).
 	rc := &countingClient{
-		onStore: func(req *policy.StoreResultsReq) {
+		onUpload: func(assetMrn string, _ *ScanPayload) {
 			for i := 0; i < numAssets; i++ {
-				if req.AssetMrn == fakeAssetMrn(i) {
+				if assetMrn == fakeAssetMrn(i) {
 					atomic.AddInt64(&perAsset[i], 1)
 					return
 				}
@@ -189,12 +185,12 @@ func TestRunnerContinuousRoundRobinsAllAssets(t *testing.T) {
 	}
 }
 
-// countingClient builds a stable "sync MRN" per platform_id so the test can
-// correlate StoreResults calls back to specific assets.
+// countingClient assigns a stable MRN per platform_id and forwards each
+// upload to a callback so tests can correlate calls back to specific assets.
 type countingClient struct {
-	mu      sync.Mutex
-	syncCnt int
-	onStore func(*policy.StoreResultsReq)
+	mu       sync.Mutex
+	syncCnt  int
+	onUpload func(string, *ScanPayload)
 }
 
 func (c *countingClient) SynchronizeAsset(_ context.Context, _ string, asset *inventory.Asset) (string, error) {
@@ -205,13 +201,9 @@ func (c *countingClient) SynchronizeAsset(_ context.Context, _ string, asset *in
 	return fakeAssetMrn(idx), nil
 }
 
-func (c *countingClient) ResolveAndUpdateJobs(_ context.Context, _ string, _ *inventory.Asset) error {
-	return nil
-}
-
-func (c *countingClient) StoreResults(_ context.Context, req *policy.StoreResultsReq) error {
-	if c.onStore != nil {
-		c.onStore(req)
+func (c *countingClient) UploadScanDB(_ context.Context, assetMrn string, payload *ScanPayload) error {
+	if c.onUpload != nil {
+		c.onUpload(assetMrn, payload)
 	}
 	return nil
 }

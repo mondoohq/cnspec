@@ -11,7 +11,7 @@ import (
 
 	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
-	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
 	"golang.org/x/time/rate"
 )
 
@@ -74,23 +74,22 @@ type Stats struct {
 	AssetsHandled int64
 	ScansSent     int64
 	SyncCalls     int64
-	ResolveCalls  int64
-	StoreCalls    int64
+	UploadCalls   int64
 	ErrorsSync    int64
-	ErrorsResolve int64
-	ErrorsStore   int64
+	ErrorsUpload  int64
 }
 
 // assetRuntime owns the mutable per-asset state that evolves across scans.
 // Workers acquire mu before mutating so two scans of the same asset never run
 // concurrently — necessary because the score state and "have we synced yet"
 // flag are not atomic individually and SynchronizeAssets must precede the
-// first StoreResults for that asset.
+// first UploadScanDB for that asset.
 type assetRuntime struct {
 	mu       sync.Mutex
 	idx      int
 	template *Template
 	state    *scoreState
+	asset    *inventory.Asset
 	assetMrn string
 	synced   bool
 }
@@ -202,9 +201,14 @@ func produce(ctx context.Context, cfg Config, runtimes []*assetRuntime, work cha
 	return nil
 }
 
-// scanOnce runs a single scan iteration for the given asset: synchronize +
-// resolve on the first scan, mutate scores then store on every scan. The
-// per-asset mutex prevents two workers from racing on the same asset.
+// scanOnce runs a single scan iteration for the given asset: synchronize on
+// the first scan, mutate scores then upload a fresh scan db on every scan.
+// The per-asset mutex prevents two workers from racing on the same asset.
+//
+// ResolveAndUpdateJobs is deliberately omitted — it would require persisting
+// the asset filters (the MQL the resolver uses to pick policies) somewhere,
+// which we want to avoid for now. The server still resolves the policy
+// asynchronously when it processes the uploaded scan db.
 func scanOnce(ctx context.Context, cfg Config, rt *assetRuntime, limiter *rate.Limiter, stats *Stats) error {
 	if limiter != nil {
 		if err := limiter.Wait(ctx); err != nil {
@@ -224,30 +228,24 @@ func scanOnce(ctx context.Context, cfg Config, rt *assetRuntime, limiter *rate.L
 			return errors.Wrap(err, "synchronize")
 		}
 		asset.Mrn = mrn
+		rt.asset = asset
 		rt.assetMrn = mrn
-
-		if err := cfg.Client.ResolveAndUpdateJobs(ctx, mrn, asset); err != nil {
-			atomic.AddInt64(&stats.ErrorsResolve, 1)
-			return errors.Wrap(err, "resolve")
-		}
-		atomic.AddInt64(&stats.ResolveCalls, 1)
 		rt.synced = true
 	} else {
 		rt.state.applyChanges(cfg.ChangePct)
 	}
 
-	req := &policy.StoreResultsReq{
-		AssetMrn:    rt.assetMrn,
-		Scores:      rt.state.snapshot(),
-		Data:        rt.template.Data,
-		Risks:       rt.template.Risks,
-		IsLastBatch: true,
+	payload := &ScanPayload{
+		Asset:  rt.asset,
+		Scores: rt.state.snapshot(),
+		Data:   rt.template.Data,
+		Risks:  rt.template.Risks,
 	}
-	if err := cfg.Client.StoreResults(ctx, req); err != nil {
-		atomic.AddInt64(&stats.ErrorsStore, 1)
-		return errors.Wrap(err, "store")
+	if err := cfg.Client.UploadScanDB(ctx, rt.assetMrn, payload); err != nil {
+		atomic.AddInt64(&stats.ErrorsUpload, 1)
+		return errors.Wrap(err, "upload")
 	}
-	atomic.AddInt64(&stats.StoreCalls, 1)
+	atomic.AddInt64(&stats.UploadCalls, 1)
 	atomic.AddInt64(&stats.ScansSent, 1)
 	return nil
 }

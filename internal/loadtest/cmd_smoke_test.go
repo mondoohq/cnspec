@@ -36,9 +36,7 @@ func TestEndToEndDryRun(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.EqualValues(t, 5, stats.SyncCalls, "one sync per asset")
-	require.EqualValues(t, 5, stats.ResolveCalls, "one resolve per asset")
-	require.EqualValues(t, 15, stats.StoreCalls, "5 assets * 3 scans")
+	require.EqualValues(t, 15, stats.UploadCalls, "5 assets * 3 scans")
 	require.EqualValues(t, 0, stats.ErrorsSync)
-	require.EqualValues(t, 0, stats.ErrorsResolve)
-	require.EqualValues(t, 0, stats.ErrorsStore)
+	require.EqualValues(t, 0, stats.ErrorsUpload)
 }

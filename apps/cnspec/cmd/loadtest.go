@@ -87,7 +87,7 @@ var loadtestCmd = &cobra.Command{
 				ApiProxy:    opts.APIProxy,
 				Creds:       creds,
 			}
-			client, err = loadtest.NewServicesClient(cfg)
+			client, err = loadtest.NewServicesClient(cfg, "")
 			if err != nil {
 				return errors.Wrap(err, "build upstream client")
 			}
@@ -119,11 +119,9 @@ var loadtestCmd = &cobra.Command{
 				Int64("assets", stats.AssetsHandled).
 				Int64("scans", stats.ScansSent).
 				Int64("sync_calls", stats.SyncCalls).
-				Int64("resolve_calls", stats.ResolveCalls).
-				Int64("store_calls", stats.StoreCalls).
+				Int64("upload_calls", stats.UploadCalls).
 				Int64("sync_errors", stats.ErrorsSync).
-				Int64("resolve_errors", stats.ErrorsResolve).
-				Int64("store_errors", stats.ErrorsStore).
+				Int64("upload_errors", stats.ErrorsUpload).
 				Dur("elapsed", elapsed).
 				Msg("loadtest done")
 		}
