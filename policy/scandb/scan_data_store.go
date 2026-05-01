@@ -10,12 +10,14 @@ import (
 	"database/sql"
 	_ "embed"
 	"fmt"
+	"strings"
 	"time"
 
 	"go.mondoo.com/cnspec/v13"
 	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/cnspec/v13/policy/scandb/sqlc"
 	"go.mondoo.com/mql/v13/llx"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -218,6 +220,26 @@ func (s *SqliteScanDataStore) WriteResource(ctx context.Context, resource *llx.R
 	return nil
 }
 
+// WriteAsset persists the inventory.Asset proto for the scanned asset.
+// Schema 1.1+: enables consumers (e.g. cnspec loadtest) to replay scan databases
+// against SynchronizeAssets without out-of-band asset metadata.
+func (s *SqliteScanDataStore) WriteAsset(ctx context.Context, asset *inventory.Asset) error {
+	if s.readOnly {
+		return fmt.Errorf("cannot write asset in read-only mode")
+	}
+	if asset == nil {
+		return fmt.Errorf("cannot write nil asset")
+	}
+	data, err := proto.Marshal(asset)
+	if err != nil {
+		return fmt.Errorf("failed to marshal asset: %w", err)
+	}
+	if err := s.queries.InsertAsset(ctx, data); err != nil {
+		return fmt.Errorf("failed to write asset: %w", err)
+	}
+	return nil
+}
+
 // WriteRisk writes a single risk factor
 func (s *SqliteScanDataStore) WriteRisk(ctx context.Context, risk *policy.ScoredRiskFactor) error {
 	if s.readOnly {
@@ -409,6 +431,32 @@ func (s *SqliteScanDataStore) StreamRisks(ctx context.Context, callback func(*po
 	}
 
 	return nil
+}
+
+// GetAsset retrieves the inventory.Asset proto for the scanned asset.
+// Returns policy.ErrAssetNotFound for older scan databases that lack the
+// optional asset table, or when the asset row has not been written yet.
+func (s *SqliteScanDataStore) GetAsset(ctx context.Context) (*inventory.Asset, error) {
+	data, err := s.queries.GetAsset(ctx)
+	if err != nil {
+		if err == sql.ErrNoRows || isMissingAssetTable(err) {
+			return nil, policy.ErrAssetNotFound
+		}
+		return nil, fmt.Errorf("failed to get asset: %w", err)
+	}
+	asset := &inventory.Asset{}
+	if err := proto.Unmarshal(data, asset); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal asset: %w", err)
+	}
+	return asset, nil
+}
+
+// isMissingAssetTable detects the SQLite error returned when reading from a
+// database that predates the (optional) asset table. SQLite reports it as
+// "no such table: asset"; matching by message keeps us decoupled from the
+// driver-specific error type.
+func isMissingAssetTable(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "no such table: asset")
 }
 
 // GetResource retrieves a specific resource by name and ID

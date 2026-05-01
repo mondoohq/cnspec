@@ -763,7 +763,7 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 		}
 	}
 
-	runtimeErr := WithServices(job.Ctx, s.runtime, job.Asset.Mrn, client, func(services *policy.LocalServices) error {
+	runtimeErr := WithServices(job.Ctx, s.runtime, job.Asset, client, func(services *policy.LocalServices) error {
 		scanner := &localAssetScanner{
 			services:         services,
 			job:              job,
@@ -1282,14 +1282,14 @@ func sendErrorToMondooPlatform(serviceAccount *upstream.ServiceAccountCredential
 	}
 }
 
-func WithServices(ctx context.Context, runtime llx.Runtime, assetMrn string, upstreamClient *upstream.UpstreamClient, f func(*policy.LocalServices) error) error {
-	var withServicesFunc func(context.Context, llx.Runtime, string, *upstream.UpstreamClient, func(*policy.LocalServices) error) error
+func WithServices(ctx context.Context, runtime llx.Runtime, asset *inventory.Asset, upstreamClient *upstream.UpstreamClient, f func(*policy.LocalServices) error) error {
+	var withServicesFunc func(context.Context, llx.Runtime, *inventory.Asset, *upstream.UpstreamClient, func(*policy.LocalServices) error) error
 	if mql.IsFeatureActive(ctx, mql.UploadResultsV2) {
 		withServicesFunc = sqlite.WithServices
 	} else {
 		withServicesFunc = inmemory.WithServices
 	}
-	return withServicesFunc(ctx, runtime, assetMrn, upstreamClient, f)
+	return withServicesFunc(ctx, runtime, asset, upstreamClient, f)
 }
 
 func mustCompile(code string) *llx.CodeBundle {

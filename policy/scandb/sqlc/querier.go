@@ -9,12 +9,15 @@ import (
 )
 
 type Querier interface {
+	GetAsset(ctx context.Context) ([]byte, error)
 	GetData(ctx context.Context, codeID string) ([]byte, error)
 	GetMetadata(ctx context.Context) ([]Metadata, error)
 	GetMetadataByKey(ctx context.Context, key string) (string, error)
 	GetResource(ctx context.Context, arg GetResourceParams) ([]byte, error)
 	GetRiskFactor(ctx context.Context, mrn string) (ScoredRiskFactor, error)
 	GetScore(ctx context.Context, qrID string) (Score, error)
+	// Asset operations (added in schema 1.1)
+	InsertAsset(ctx context.Context, data []byte) error
 	// Data operations
 	InsertData(ctx context.Context, arg InsertDataParams) error
 	// Copyright Mondoo, Inc. 2024, 2026

@@ -57,3 +57,10 @@ SELECT data FROM resources WHERE name = ? AND id = ?;
 
 -- name: StreamResources :many
 SELECT name, id, data FROM resources ORDER BY name, id;
+
+-- Asset operations (added in schema 1.1)
+-- name: InsertAsset :exec
+INSERT OR REPLACE INTO asset (id, data) VALUES (0, ?);
+
+-- name: GetAsset :one
+SELECT data FROM asset WHERE id = 0;

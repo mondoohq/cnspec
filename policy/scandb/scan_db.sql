@@ -54,6 +54,14 @@ CREATE TABLE resources (
     PRIMARY KEY (name, id)           -- Composite primary key for uniqueness
 );
 
+-- Asset table - stores the inventory.Asset proto for the scanned asset.
+-- Single-row table (id=0) added in schema 1.1 to make scan databases
+-- self-contained for replay use cases (e.g. the cnspec loadtest tool).
+CREATE TABLE asset (
+    id INTEGER PRIMARY KEY CHECK (id = 0),
+    data BLOB NOT NULL               -- protobuf encoded inventory.Asset
+);
+
 -- Primary key indexes are automatically created for scores(qr_id) and data(code_id)
 -- No additional indexes needed since we're using the primary keys for lookups
 

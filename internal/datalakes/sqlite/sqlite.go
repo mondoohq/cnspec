@@ -18,12 +18,25 @@ import (
 	"go.mondoo.com/cnspec/v13/policy/scandb"
 	"go.mondoo.com/cnspec/v13/upload"
 	"go.mondoo.com/mql/v13/llx"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/health"
 )
 
-func WithServices(ctx context.Context, runtime llx.Runtime, assetMrn string, upstreamClient *upstream.UpstreamClient, f func(*policy.LocalServices) error) error {
-	err := withSqliteDataStore(assetMrn, func(scanDataStore scandb.ScanDataStore) error {
+func WithServices(ctx context.Context, runtime llx.Runtime, asset *inventory.Asset, upstreamClient *upstream.UpstreamClient, f func(*policy.LocalServices) error) error {
+	assetMrn := ""
+	if asset != nil {
+		assetMrn = asset.Mrn
+	}
+	err := withSqliteDataStore(assetMrn, func(scanDataStore *scandb.SqliteScanDataStore) error {
+		// Persist the inventory.Asset proto so the scan database is self-contained
+		// (consumed by the cnspec loadtest tool to replay against SynchronizeAssets).
+		if asset != nil {
+			if err := scanDataStore.WriteAsset(ctx, asset); err != nil {
+				log.Warn().Err(err).Msg("failed to persist asset to scan data store")
+			}
+		}
+
 		_, ls, err := inmemory.NewServices(runtime, inmemory.WithDataWriter(scandb.NewScanDataStoreWrapper(scanDataStore, assetMrn)))
 
 		if err != nil {
@@ -65,7 +78,7 @@ func WithServices(ctx context.Context, runtime llx.Runtime, assetMrn string, ups
 	return nil
 }
 
-func withSqliteDataStore(assetMrn string, f func(scanDataStore scandb.ScanDataStore) error) error {
+func withSqliteDataStore(assetMrn string, f func(scanDataStore *scandb.SqliteScanDataStore) error) error {
 	// create a temporary file for the scan data store
 	tmpFile, err := os.CreateTemp("", "cnspec-scan-*.db")
 	if err != nil {

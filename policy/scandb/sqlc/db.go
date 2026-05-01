@@ -24,6 +24,9 @@ func New(db DBTX) *Queries {
 func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	q := Queries{db: db}
 	var err error
+	if q.getAssetStmt, err = db.PrepareContext(ctx, getAsset); err != nil {
+		return nil, fmt.Errorf("error preparing query GetAsset: %w", err)
+	}
 	if q.getDataStmt, err = db.PrepareContext(ctx, getData); err != nil {
 		return nil, fmt.Errorf("error preparing query GetData: %w", err)
 	}
@@ -41,6 +44,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.getScoreStmt, err = db.PrepareContext(ctx, getScore); err != nil {
 		return nil, fmt.Errorf("error preparing query GetScore: %w", err)
+	}
+	if q.insertAssetStmt, err = db.PrepareContext(ctx, insertAsset); err != nil {
+		return nil, fmt.Errorf("error preparing query InsertAsset: %w", err)
 	}
 	if q.insertDataStmt, err = db.PrepareContext(ctx, insertData); err != nil {
 		return nil, fmt.Errorf("error preparing query InsertData: %w", err)
@@ -74,6 +80,11 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 
 func (q *Queries) Close() error {
 	var err error
+	if q.getAssetStmt != nil {
+		if cerr := q.getAssetStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getAssetStmt: %w", cerr)
+		}
+	}
 	if q.getDataStmt != nil {
 		if cerr := q.getDataStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getDataStmt: %w", cerr)
@@ -102,6 +113,11 @@ func (q *Queries) Close() error {
 	if q.getScoreStmt != nil {
 		if cerr := q.getScoreStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getScoreStmt: %w", cerr)
+		}
+	}
+	if q.insertAssetStmt != nil {
+		if cerr := q.insertAssetStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing insertAssetStmt: %w", cerr)
 		}
 	}
 	if q.insertDataStmt != nil {
@@ -188,12 +204,14 @@ func (q *Queries) queryRow(ctx context.Context, stmt *sql.Stmt, query string, ar
 type Queries struct {
 	db                    DBTX
 	tx                    *sql.Tx
+	getAssetStmt          *sql.Stmt
 	getDataStmt           *sql.Stmt
 	getMetadataStmt       *sql.Stmt
 	getMetadataByKeyStmt  *sql.Stmt
 	getResourceStmt       *sql.Stmt
 	getRiskFactorStmt     *sql.Stmt
 	getScoreStmt          *sql.Stmt
+	insertAssetStmt       *sql.Stmt
 	insertDataStmt        *sql.Stmt
 	insertMetadataStmt    *sql.Stmt
 	insertResourceStmt    *sql.Stmt
@@ -209,12 +227,14 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 	return &Queries{
 		db:                    tx,
 		tx:                    tx,
+		getAssetStmt:          q.getAssetStmt,
 		getDataStmt:           q.getDataStmt,
 		getMetadataStmt:       q.getMetadataStmt,
 		getMetadataByKeyStmt:  q.getMetadataByKeyStmt,
 		getResourceStmt:       q.getResourceStmt,
 		getRiskFactorStmt:     q.getRiskFactorStmt,
 		getScoreStmt:          q.getScoreStmt,
+		insertAssetStmt:       q.insertAssetStmt,
 		insertDataStmt:        q.insertDataStmt,
 		insertMetadataStmt:    q.insertMetadataStmt,
 		insertResourceStmt:    q.insertResourceStmt,

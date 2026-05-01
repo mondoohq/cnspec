@@ -10,6 +10,7 @@ import (
 
 	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/mql/v13/llx"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream"
 )
 
@@ -148,7 +149,7 @@ func NewServices(runtime llx.Runtime, opts ...ServiceOpt) (*Db, *policy.LocalSer
 	return db, services, nil
 }
 
-func WithServices(ctx context.Context, runtime llx.Runtime, assetMrn string, upstreamClient *upstream.UpstreamClient, f func(*policy.LocalServices) error) error {
+func WithServices(ctx context.Context, runtime llx.Runtime, asset *inventory.Asset, upstreamClient *upstream.UpstreamClient, f func(*policy.LocalServices) error) error {
 	_, ls, err := NewServices(runtime)
 	if err != nil {
 		return err

@@ -10,6 +10,17 @@ import (
 	"database/sql"
 )
 
+const getAsset = `-- name: GetAsset :one
+SELECT data FROM asset WHERE id = 0
+`
+
+func (q *Queries) GetAsset(ctx context.Context) ([]byte, error) {
+	row := q.queryRow(ctx, q.getAssetStmt, getAsset)
+	var data []byte
+	err := row.Scan(&data)
+	return data, err
+}
+
 const getData = `-- name: GetData :one
 SELECT data FROM data WHERE code_id = ?
 `
@@ -111,6 +122,16 @@ func (q *Queries) GetScore(ctx context.Context, qrID string) (Score, error) {
 		&i.Sources,
 	)
 	return i, err
+}
+
+const insertAsset = `-- name: InsertAsset :exec
+INSERT OR REPLACE INTO asset (id, data) VALUES (0, ?)
+`
+
+// Asset operations (added in schema 1.1)
+func (q *Queries) InsertAsset(ctx context.Context, data []byte) error {
+	_, err := q.exec(ctx, q.insertAssetStmt, insertAsset, data)
+	return err
 }
 
 const insertData = `-- name: InsertData :exec
