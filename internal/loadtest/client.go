@@ -41,7 +41,7 @@ type ScanPayload struct {
 // to know about presigned URLs or temp files.
 type Client interface {
 	SynchronizeAsset(ctx context.Context, spaceMrn string, asset *inventory.Asset) (string, error)
-	ResolveAndUpdateJobs(ctx context.Context, assetMrn string, filterCodeIDs []string) error
+	ResolveAndUpdateJobs(ctx context.Context, assetMrn string, filters *policy.Mqueries) error
 	UploadScanDB(ctx context.Context, assetMrn string, payload *ScanPayload) error
 }
 
@@ -94,16 +94,17 @@ func (c *servicesClient) SynchronizeAsset(ctx context.Context, spaceMrn string, 
 }
 
 // ResolveAndUpdateJobs replays the captured filter set against the synthetic
-// asset's MRN. The server only needs the code_ids to identify which filters
-// matched — the MQL/title/etc. live with the owning policies on the server.
-func (c *servicesClient) ResolveAndUpdateJobs(ctx context.Context, assetMrn string, filterCodeIDs []string) error {
-	filters := make([]*policy.Mquery, 0, len(filterCodeIDs))
-	for _, id := range filterCodeIDs {
-		filters = append(filters, &policy.Mquery{CodeId: id})
+// asset's MRN. The server compiles each filter's MQL, so we send the full
+// Mquery list captured at scan time — code_ids alone fail with "query is
+// not implemented".
+func (c *servicesClient) ResolveAndUpdateJobs(ctx context.Context, assetMrn string, filters *policy.Mqueries) error {
+	var items []*policy.Mquery
+	if filters != nil {
+		items = filters.Items
 	}
 	_, err := c.services.ResolveAndUpdateJobs(ctx, &policy.UpdateAssetJobsReq{
 		AssetMrn:     assetMrn,
-		AssetFilters: filters,
+		AssetFilters: items,
 	})
 	return err
 }
@@ -220,8 +221,12 @@ func (d *dryRunClient) SynchronizeAsset(ctx context.Context, spaceMrn string, as
 	return "//captain.api.mondoo.app/spaces/dryrun/assets/" + asset.PlatformIds[0], nil
 }
 
-func (d *dryRunClient) ResolveAndUpdateJobs(_ context.Context, assetMrn string, filterCodeIDs []string) error {
-	log.Info().Str("asset", assetMrn).Int("filters", len(filterCodeIDs)).Msg("dry-run: ResolveAndUpdateJobs")
+func (d *dryRunClient) ResolveAndUpdateJobs(_ context.Context, assetMrn string, filters *policy.Mqueries) error {
+	n := 0
+	if filters != nil {
+		n = len(filters.Items)
+	}
+	log.Info().Str("asset", assetMrn).Int("filters", n).Msg("dry-run: ResolveAndUpdateJobs")
 	return nil
 }
 

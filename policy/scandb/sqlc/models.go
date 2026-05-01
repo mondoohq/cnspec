@@ -14,7 +14,8 @@ type Asset struct {
 }
 
 type AssetFilter struct {
-	CodeID string `json:"code_id"`
+	ID   int64  `json:"id"`
+	Data []byte `json:"data"`
 }
 
 type Datum struct {

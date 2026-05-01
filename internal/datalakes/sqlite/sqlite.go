@@ -54,8 +54,8 @@ func WithServices(ctx context.Context, runtime llx.Runtime, asset *inventory.Ass
 		// the marshalling cost or send filters to the platform.
 		scanCtx := ctx
 		if outputDir != "" {
-			scanCtx = scandb.WithFilterCapture(scanCtx, func(codeIDs []string) {
-				if err := scanDataStore.WriteAssetFilters(context.Background(), codeIDs); err != nil {
+			scanCtx = scandb.WithFilterCapture(scanCtx, func(filters *policy.Mqueries) {
+				if err := scanDataStore.WriteAssetFilters(context.Background(), filters); err != nil {
 					log.Warn().Err(err).Msg("failed to persist asset filters")
 				}
 			})

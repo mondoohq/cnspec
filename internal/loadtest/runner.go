@@ -230,7 +230,7 @@ func scanOnce(ctx context.Context, cfg Config, rt *assetRuntime, limiter *rate.L
 		rt.asset = asset
 		rt.assetMrn = mrn
 
-		if err := cfg.Client.ResolveAndUpdateJobs(ctx, mrn, rt.template.FilterCodeIDs); err != nil {
+		if err := cfg.Client.ResolveAndUpdateJobs(ctx, mrn, rt.template.Filters); err != nil {
 			atomic.AddInt64(&stats.ErrorsResolve, 1)
 			return errors.Wrap(err, "resolve")
 		}

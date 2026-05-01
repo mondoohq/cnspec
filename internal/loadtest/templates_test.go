@@ -31,7 +31,10 @@ func writeFixtureDB(t *testing.T, dir, name string, withAsset bool) string {
 	require.NoError(t, err)
 	if withAsset {
 		require.NoError(t, store.WriteAsset(context.Background(), asset))
-		require.NoError(t, store.WriteAssetFilters(context.Background(), []string{"filter-code-1", "filter-code-2"}))
+		require.NoError(t, store.WriteAssetFilters(context.Background(), &policy.Mqueries{Items: []*policy.Mquery{
+			{CodeId: "filter-code-1", Mql: "asset.platform == \"ubuntu\""},
+			{CodeId: "filter-code-2", Mql: "true"},
+		}}))
 	}
 	require.NoError(t, store.WriteScores(context.Background(), []*policy.Score{
 		{QrId: "q1", Value: 100, Type: 1, Weight: 1},
@@ -60,7 +63,9 @@ func TestLoadTemplatesRoundtrip(t *testing.T) {
 		require.Equal(t, "ubuntu", tpl.Asset.Platform.Name)
 		require.Len(t, tpl.Scores, 2)
 		require.Contains(t, tpl.Data, "c1")
-		require.ElementsMatch(t, []string{"filter-code-1", "filter-code-2"}, tpl.FilterCodeIDs)
+		require.NotNil(t, tpl.Filters)
+		require.Len(t, tpl.Filters.Items, 2)
+		require.Equal(t, "asset.platform == \"ubuntu\"", tpl.Filters.Items[0].Mql, "MQL must round-trip — server compiles it")
 	}
 }
 

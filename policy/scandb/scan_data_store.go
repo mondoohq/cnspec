@@ -220,44 +220,47 @@ func (s *SqliteScanDataStore) WriteResource(ctx context.Context, resource *llx.R
 	return nil
 }
 
-// WriteAssetFilters persists the code_ids of the filters the scanner passed
-// to ResolveAndUpdateJobs so the loadtest tool can replay the same filter
-// set against synthetic assets. Only invoked when --output-scan-db is set;
+// WriteAssetFilters persists the policy.Mqueries the scanner passed to
+// ResolveAndUpdateJobs so the loadtest tool can replay the same filters
+// against synthetic assets. Only invoked when --output-scan-db is set;
 // regular scans skip it to avoid bloating the upload.
 //
-// We store only code_ids (not the full Mquery proto) since that's all the
-// resolver needs to identify a filter — the MQL/title/etc. live with the
-// owning policy on the server.
-func (s *SqliteScanDataStore) WriteAssetFilters(ctx context.Context, codeIDs []string) error {
+// We store the full Mqueries proto (not just code_ids) because the server
+// compiles each filter's MQL during resolution; sending a bare code_id
+// causes ResolveAndUpdateJobs to fail with "query is not implemented".
+func (s *SqliteScanDataStore) WriteAssetFilters(ctx context.Context, filters *policy.Mqueries) error {
 	if s.readOnly {
 		return fmt.Errorf("cannot write asset filters in read-only mode")
 	}
-	for _, id := range codeIDs {
-		if id == "" {
-			continue
-		}
-		if err := s.queries.InsertAssetFilter(ctx, id); err != nil {
-			return fmt.Errorf("failed to write asset filter %s: %w", id, err)
-		}
+	if filters == nil {
+		return fmt.Errorf("cannot write nil asset filters")
+	}
+	data, err := proto.Marshal(filters)
+	if err != nil {
+		return fmt.Errorf("failed to marshal asset filters: %w", err)
+	}
+	if err := s.queries.InsertAssetFilters(ctx, data); err != nil {
+		return fmt.Errorf("failed to write asset filters: %w", err)
 	}
 	return nil
 }
 
-// GetAssetFilters retrieves the code_ids of the asset filters captured during
-// the original scan. Returns policy.ErrAssetFiltersNotFound for scan databases
-// captured without --output-scan-db (filters table missing or no rows).
-func (s *SqliteScanDataStore) GetAssetFilters(ctx context.Context) ([]string, error) {
-	rows, err := s.queries.StreamAssetFilters(ctx)
+// GetAssetFilters retrieves the policy.Mqueries captured during the original
+// scan. Returns policy.ErrAssetFiltersNotFound for scan databases captured
+// without --output-scan-db (filters table missing or row not written).
+func (s *SqliteScanDataStore) GetAssetFilters(ctx context.Context) (*policy.Mqueries, error) {
+	data, err := s.queries.GetAssetFilters(ctx)
 	if err != nil {
-		if isMissingAssetFiltersTable(err) {
+		if err == sql.ErrNoRows || isMissingAssetFiltersTable(err) {
 			return nil, policy.ErrAssetFiltersNotFound
 		}
 		return nil, fmt.Errorf("failed to get asset filters: %w", err)
 	}
-	if len(rows) == 0 {
-		return nil, policy.ErrAssetFiltersNotFound
+	out := &policy.Mqueries{}
+	if err := proto.Unmarshal(data, out); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal asset filters: %w", err)
 	}
-	return rows, nil
+	return out, nil
 }
 
 func isMissingAssetFiltersTable(err error) bool {

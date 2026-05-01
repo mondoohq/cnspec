@@ -26,8 +26,8 @@ type recordingClient struct {
 }
 
 type resolvedCall struct {
-	assetMrn      string
-	filterCodeIDs []string
+	assetMrn string
+	filters  *policy.Mqueries
 }
 
 type recordedUpload struct {
@@ -42,10 +42,10 @@ func (r *recordingClient) SynchronizeAsset(_ context.Context, _ string, asset *i
 	return "//assets.api.mondoo.com/" + asset.PlatformIds[0], nil
 }
 
-func (r *recordingClient) ResolveAndUpdateJobs(_ context.Context, assetMrn string, filterCodeIDs []string) error {
+func (r *recordingClient) ResolveAndUpdateJobs(_ context.Context, assetMrn string, filters *policy.Mqueries) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.resolves = append(r.resolves, resolvedCall{assetMrn: assetMrn, filterCodeIDs: filterCodeIDs})
+	r.resolves = append(r.resolves, resolvedCall{assetMrn: assetMrn, filters: filters})
 	return nil
 }
 
@@ -215,7 +215,7 @@ func (c *countingClient) SynchronizeAsset(_ context.Context, _ string, asset *in
 	return fakeAssetMrn(idx), nil
 }
 
-func (c *countingClient) ResolveAndUpdateJobs(_ context.Context, _ string, _ []string) error {
+func (c *countingClient) ResolveAndUpdateJobs(_ context.Context, _ string, _ *policy.Mqueries) error {
 	return nil
 }
 

@@ -21,12 +21,12 @@ import (
 // Template is the in-memory representation of one scan database, read once at
 // startup and reused as the source-of-truth for synthesizing assets and scans.
 type Template struct {
-	Path          string
-	Asset         *inventory.Asset
-	Scores        []*policy.Score
-	Data          map[string]*llx.Result
-	Risks         []*policy.ScoredRiskFactor
-	FilterCodeIDs []string
+	Path    string
+	Asset   *inventory.Asset
+	Scores  []*policy.Score
+	Data    map[string]*llx.Result
+	Risks   []*policy.ScoredRiskFactor
+	Filters *policy.Mqueries
 }
 
 // LoadTemplates walks dir non-recursively, opens every *.db file as a scan
@@ -83,7 +83,7 @@ func loadTemplate(ctx context.Context, path string) (*Template, error) {
 		return nil, errors.Wrap(err, "read asset")
 	}
 
-	codeIDs, err := store.GetAssetFilters(ctx)
+	filters, err := store.GetAssetFilters(ctx)
 	if err != nil {
 		if errors.Is(err, policy.ErrAssetFiltersNotFound) {
 			return nil, fmt.Errorf("scan db has no asset filters; recapture with `cnspec scan --output-scan-db`")
@@ -92,10 +92,10 @@ func loadTemplate(ctx context.Context, path string) (*Template, error) {
 	}
 
 	t := &Template{
-		Path:          path,
-		Asset:         asset,
-		FilterCodeIDs: codeIDs,
-		Data:          make(map[string]*llx.Result),
+		Path:    path,
+		Asset:   asset,
+		Filters: filters,
+		Data:    make(map[string]*llx.Result),
 	}
 
 	if err := store.StreamScores(ctx, func(s *policy.Score) error {

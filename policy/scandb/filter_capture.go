@@ -5,13 +5,15 @@ package scandb
 
 import (
 	"context"
+
+	"go.mondoo.com/cnspec/v13/policy"
 )
 
-// FilterCaptureFunc is invoked once per asset by the scanner with the
-// code_ids of the filters it sent to ResolveAndUpdateJobs. Implementations
-// typically persist the code_ids to a scan database so the loadtest tool
-// can replay the same filters against synthetic assets.
-type FilterCaptureFunc func(codeIDs []string)
+// FilterCaptureFunc is invoked once per asset by the scanner with the asset
+// filters it sent to ResolveAndUpdateJobs. Implementations typically persist
+// the filters to a scan database so the loadtest tool can replay them
+// against synthetic assets.
+type FilterCaptureFunc func(filters *policy.Mqueries)
 
 type filterCaptureKey struct{}
 
@@ -27,11 +29,11 @@ func WithFilterCapture(ctx context.Context, f FilterCaptureFunc) context.Context
 
 // CaptureFilters invokes the FilterCaptureFunc previously installed via
 // WithFilterCapture, if any. Safe to call on any ctx.
-func CaptureFilters(ctx context.Context, codeIDs []string) {
-	if len(codeIDs) == 0 {
+func CaptureFilters(ctx context.Context, filters *policy.Mqueries) {
+	if filters == nil || len(filters.Items) == 0 {
 		return
 	}
 	if cb, ok := ctx.Value(filterCaptureKey{}).(FilterCaptureFunc); ok && cb != nil {
-		cb(codeIDs)
+		cb(filters)
 	}
 }
