@@ -31,6 +31,7 @@ func init() {
 	loadtestCmd.Flags().Int("workers", 8, "concurrent worker goroutines per process")
 	loadtestCmd.Flags().String("space-mrn", "", "target space MRN (defaults to service-account scope)")
 	loadtestCmd.Flags().Bool("dry-run", false, "log calls instead of sending them upstream")
+	loadtestCmd.Flags().Bool("continuous", false, "scan forever (round-robin through assigned assets) until interrupted; ignores --scans-per-asset")
 	_ = loadtestCmd.MarkFlagRequired("input")
 	_ = loadtestCmd.MarkFlagRequired("assets")
 }
@@ -51,6 +52,7 @@ var loadtestCmd = &cobra.Command{
 		workers, _ := cmd.Flags().GetInt("workers")
 		spaceMrn, _ := cmd.Flags().GetString("space-mrn")
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
+		continuous, _ := cmd.Flags().GetBool("continuous")
 
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer stop()
@@ -106,6 +108,7 @@ var loadtestCmd = &cobra.Command{
 			TotalShards:    totalShards,
 			Workers:        workers,
 			Client:         client,
+			Continuous:     continuous,
 		}
 
 		start := time.Now()
