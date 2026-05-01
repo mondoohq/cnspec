@@ -23,6 +23,17 @@ import (
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/health"
 )
 
+// outputDir, when set via SetOutputDir, redirects per-asset scan databases
+// to a user-specified directory and keeps them there instead of deleting.
+// Dev-only feature wired to the `cnspec scan --output-scan-db` flag; used
+// to capture realistic seeds for the cnspec loadtest tool.
+var outputDir string
+
+// SetOutputDir configures the destination directory for scan databases.
+// Pass "" to restore the default temp-and-delete behavior. Not safe for
+// concurrent calls — call once at startup before any scans run.
+func SetOutputDir(dir string) { outputDir = dir }
+
 func WithServices(ctx context.Context, runtime llx.Runtime, asset *inventory.Asset, upstreamClient *upstream.UpstreamClient, f func(*policy.LocalServices) error) error {
 	assetMrn := ""
 	if asset != nil {
@@ -79,14 +90,29 @@ func WithServices(ctx context.Context, runtime llx.Runtime, asset *inventory.Ass
 }
 
 func withSqliteDataStore(assetMrn string, f func(scanDataStore *scandb.SqliteScanDataStore) error) error {
-	// create a temporary file for the scan data store
-	tmpFile, err := os.CreateTemp("", "cnspec-scan-*.db")
+	// When SetOutputDir is configured, write the scan db to that directory and
+	// keep it after upload — used by `cnspec scan --output-scan-db` to capture
+	// seeds for the loadtest tool. Otherwise create a temp file we delete.
+	dir := outputDir
+	keep := dir != ""
+	if keep {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			log.Error().Err(err).Str("dir", dir).Msg("failed to create scan-db output directory")
+			return err
+		}
+	}
+
+	tmpFile, err := os.CreateTemp(dir, "cnspec-scan-*.db")
 	if err != nil {
-		log.Error().Err(err).Msg("failed to create temporary file for scan data store")
+		log.Error().Err(err).Msg("failed to create file for scan data store")
 		return err
 	}
 	tmpFile.Close() // nolint: errcheck
 	defer func() {
+		if keep {
+			log.Info().Str("path", tmpFile.Name()).Msg("scan database saved")
+			return
+		}
 		if err := os.Remove(tmpFile.Name()); err != nil {
 			log.Warn().Err(err).Msg("failed to remove temporary scan data store file")
 		}
