@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
@@ -34,6 +35,25 @@ type Config struct {
 	// assigned asset and re-scanning each one with mutated scores. ScansPerAsset
 	// is ignored. The loop exits when ctx is cancelled (e.g. SIGINT).
 	Continuous bool
+
+	// IngestOnly switches from "full scan flow per scan" to "warm up once,
+	// then hammer uploads". Default false: each scan issues
+	// SynchronizeAssets + ResolveAndUpdateJobs + UploadScanDB, mirroring real
+	// cnspec scan traffic. With IngestOnly=true: SynchronizeAssets +
+	// ResolveAndUpdateJobs run once per asset during a pre-flight phase, and
+	// the simulated load consists exclusively of UploadScanDB calls — useful
+	// for isolating the platform's ingest pipeline.
+	IngestOnly bool
+
+	// Metrics, if non-nil, receives one observation per RPC the runner makes.
+	// Construct via NewMetrics so the Prometheus endpoint exposes the data.
+	Metrics *Metrics
+
+	// StatsOut, if non-nil, is the Stats struct the runner will populate.
+	// Caller provides this when something else (e.g. a periodic status
+	// reporter) needs to read counters live during the run. If nil, Run
+	// allocates its own.
+	StatsOut *Stats
 }
 
 // Validate checks for the foot-guns we can catch at startup so the user gets
@@ -83,17 +103,16 @@ type Stats struct {
 
 // assetRuntime owns the mutable per-asset state that evolves across scans.
 // Workers acquire mu before mutating so two scans of the same asset never run
-// concurrently — necessary because the score state and "have we synced yet"
-// flag are not atomic individually and SynchronizeAssets must precede the
-// first UploadScanDB for that asset.
+// concurrently — necessary because the score state mutation and the upload
+// must form an atomic unit.
 type assetRuntime struct {
-	mu       sync.Mutex
-	idx      int
-	template *Template
-	state    *scoreState
-	asset    *inventory.Asset
-	assetMrn string
-	synced   bool
+	mu        sync.Mutex
+	idx       int
+	template  *Template
+	state     *scoreState
+	asset     *inventory.Asset
+	assetMrn  string
+	scanCount int
 }
 
 // Run executes the configured load. Per asset: SynchronizeAssets +
@@ -110,7 +129,10 @@ func Run(ctx context.Context, cfg Config) (*Stats, error) {
 		return nil, err
 	}
 
-	stats := &Stats{}
+	stats := cfg.StatsOut
+	if stats == nil {
+		stats = &Stats{}
+	}
 
 	// Build per-asset runtimes for every asset assigned to this shard.
 	runtimes := make([]*assetRuntime, 0, cfg.Assets)
@@ -128,6 +150,14 @@ func Run(ctx context.Context, cfg Config) (*Stats, error) {
 	var limiter *rate.Limiter
 	if cfg.ScansPerSecond > 0 {
 		limiter = rate.NewLimiter(rate.Limit(cfg.ScansPerSecond), int(cfg.ScansPerSecond)+1)
+	}
+
+	if cfg.IngestOnly {
+		if err := preflight(ctx, cfg, runtimes, limiter, stats); err != nil {
+			if !errors.Is(err, context.Canceled) {
+				return stats, err
+			}
+		}
 	}
 
 	work := make(chan *assetRuntime, cfg.Workers)
@@ -154,7 +184,7 @@ func Run(ctx context.Context, cfg Config) (*Stats, error) {
 	// Count distinct assets that completed at least one scan.
 	for _, rt := range runtimes {
 		rt.mu.Lock()
-		if rt.synced {
+		if rt.scanCount > 0 {
 			atomic.AddInt64(&stats.AssetsHandled, 1)
 		}
 		rt.mu.Unlock()
@@ -164,6 +194,69 @@ func Run(ctx context.Context, cfg Config) (*Stats, error) {
 		return stats, produceErr
 	}
 	return stats, ctx.Err()
+}
+
+// preflight runs SynchronizeAsset + ResolveAndUpdateJobs once per asset
+// before the load begins, used by --ingest-only so the actual measured load
+// is upload-only. Errors here are reported but don't abort the run; an asset
+// whose preflight failed will fail loudly on its first upload too.
+func preflight(ctx context.Context, cfg Config, runtimes []*assetRuntime, limiter *rate.Limiter, stats *Stats) error {
+	log.Info().Int("assets", len(runtimes)).Msg("ingest-only: warming up assets (sync+resolve)")
+
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, cfg.Workers)
+
+	for _, rt := range runtimes {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case sem <- struct{}{}:
+		}
+		wg.Add(1)
+		go func(rt *assetRuntime) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			if err := warmupAsset(ctx, cfg, rt, limiter, stats); err != nil && !errors.Is(err, context.Canceled) {
+				log.Error().Err(err).Int("asset", rt.idx).Msg("warmup failed")
+			}
+		}(rt)
+	}
+	wg.Wait()
+	return ctx.Err()
+}
+
+func warmupAsset(ctx context.Context, cfg Config, rt *assetRuntime, limiter *rate.Limiter, stats *Stats) error {
+	if limiter != nil {
+		if err := limiter.Wait(ctx); err != nil {
+			return err
+		}
+	}
+	asset := SynthesizeAsset(rt.template, rt.idx, cfg.Seed)
+
+	syncStart := time.Now()
+	mrn, err := cfg.Client.SynchronizeAsset(ctx, cfg.SpaceMrn, asset)
+	cfg.Metrics.recordSync(ctx, time.Since(syncStart), err)
+	atomic.AddInt64(&stats.SyncCalls, 1)
+	if err != nil {
+		atomic.AddInt64(&stats.ErrorsSync, 1)
+		return errors.Wrap(err, "synchronize")
+	}
+	asset.Mrn = mrn
+
+	resolveStart := time.Now()
+	err = cfg.Client.ResolveAndUpdateJobs(ctx, mrn, rt.template.Filters)
+	cfg.Metrics.recordResolve(ctx, time.Since(resolveStart), err)
+	atomic.AddInt64(&stats.ResolveCalls, 1)
+	if err != nil {
+		atomic.AddInt64(&stats.ErrorsResolve, 1)
+		return errors.Wrap(err, "resolve")
+	}
+
+	rt.mu.Lock()
+	rt.asset = asset
+	rt.assetMrn = mrn
+	rt.mu.Unlock()
+	return nil
 }
 
 // produce emits one work item per scan to be performed. Fixed mode emits
@@ -203,11 +296,11 @@ func produce(ctx context.Context, cfg Config, runtimes []*assetRuntime, work cha
 	return nil
 }
 
-// scanOnce runs a single scan iteration for the given asset: on the first
-// scan it synchronizes the asset and replays the captured filter set against
-// ResolveAndUpdateJobs; every scan then mutates scores and uploads a fresh
-// scan db. The per-asset mutex prevents two workers from racing on the same
-// asset.
+// scanOnce runs a single scan iteration. By default it mirrors a real cnspec
+// scan: SynchronizeAsset → ResolveAndUpdateJobs → UploadScanDB on every scan.
+// In IngestOnly mode the sync/resolve steps already ran during preflight, so
+// scanOnce only mutates scores and uploads. The per-asset mutex serializes
+// scans of the same asset so score mutations stay coherent.
 func scanOnce(ctx context.Context, cfg Config, rt *assetRuntime, limiter *rate.Limiter, stats *Stats) error {
 	if limiter != nil {
 		if err := limiter.Wait(ctx); err != nil {
@@ -215,12 +308,17 @@ func scanOnce(ctx context.Context, cfg Config, rt *assetRuntime, limiter *rate.L
 		}
 	}
 
+	cfg.Metrics.inFlightAdd(ctx, 1)
+	defer cfg.Metrics.inFlightAdd(ctx, -1)
+
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 
-	if !rt.synced {
+	if !cfg.IngestOnly {
 		asset := SynthesizeAsset(rt.template, rt.idx, cfg.Seed)
+		syncStart := time.Now()
 		mrn, err := cfg.Client.SynchronizeAsset(ctx, cfg.SpaceMrn, asset)
+		cfg.Metrics.recordSync(ctx, time.Since(syncStart), err)
 		atomic.AddInt64(&stats.SyncCalls, 1)
 		if err != nil {
 			atomic.AddInt64(&stats.ErrorsSync, 1)
@@ -230,15 +328,26 @@ func scanOnce(ctx context.Context, cfg Config, rt *assetRuntime, limiter *rate.L
 		rt.asset = asset
 		rt.assetMrn = mrn
 
-		if err := cfg.Client.ResolveAndUpdateJobs(ctx, mrn, rt.template.Filters); err != nil {
+		resolveStart := time.Now()
+		err = cfg.Client.ResolveAndUpdateJobs(ctx, mrn, rt.template.Filters)
+		cfg.Metrics.recordResolve(ctx, time.Since(resolveStart), err)
+		atomic.AddInt64(&stats.ResolveCalls, 1)
+		if err != nil {
 			atomic.AddInt64(&stats.ErrorsResolve, 1)
 			return errors.Wrap(err, "resolve")
 		}
-		atomic.AddInt64(&stats.ResolveCalls, 1)
-		rt.synced = true
-	} else {
+	} else if rt.assetMrn == "" {
+		// IngestOnly: preflight failed for this asset, so we have nowhere to
+		// upload. Skip silently — the warmup already counted/logged the error.
+		return nil
+	}
+
+	// Apply mutations on every scan AFTER the first so the baseline replays
+	// the template verbatim. Counts both modes uniformly.
+	if rt.scanCount > 0 {
 		rt.state.applyChanges(cfg.ChangePct)
 	}
+	rt.scanCount++
 
 	payload := &ScanPayload{
 		Asset:  rt.asset,
@@ -246,7 +355,10 @@ func scanOnce(ctx context.Context, cfg Config, rt *assetRuntime, limiter *rate.L
 		Data:   rt.template.Data,
 		Risks:  rt.template.Risks,
 	}
-	if err := cfg.Client.UploadScanDB(ctx, rt.assetMrn, payload); err != nil {
+	uploadStart := time.Now()
+	err := cfg.Client.UploadScanDB(ctx, rt.assetMrn, payload)
+	cfg.Metrics.recordUpload(ctx, time.Since(uploadStart), err)
+	if err != nil {
 		atomic.AddInt64(&stats.ErrorsUpload, 1)
 		return errors.Wrap(err, "upload")
 	}

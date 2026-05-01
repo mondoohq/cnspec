@@ -5,6 +5,8 @@ package cmd
 
 import (
 	"context"
+	"net"
+	"net/http"
 	"os/signal"
 	"syscall"
 	"time"
@@ -32,6 +34,9 @@ func init() {
 	loadtestCmd.Flags().String("space-mrn", "", "target space MRN (defaults to service-account scope)")
 	loadtestCmd.Flags().Bool("dry-run", false, "log calls instead of sending them upstream")
 	loadtestCmd.Flags().Bool("continuous", false, "scan forever (round-robin through assigned assets) until interrupted; ignores --scans-per-asset")
+	loadtestCmd.Flags().Bool("ingest-only", false, "run sync+resolve once per asset upfront, then drive only UploadScanDB during the load")
+	loadtestCmd.Flags().String("metrics-addr", ":2113", "address for the Prometheus /metrics endpoint (empty disables)")
+	loadtestCmd.Flags().Duration("status-interval", 5*time.Second, "how often to print a progress summary to stdout (0 disables)")
 	_ = loadtestCmd.MarkFlagRequired("input")
 	_ = loadtestCmd.MarkFlagRequired("assets")
 }
@@ -53,6 +58,9 @@ var loadtestCmd = &cobra.Command{
 		spaceMrn, _ := cmd.Flags().GetString("space-mrn")
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		continuous, _ := cmd.Flags().GetBool("continuous")
+		ingestOnly, _ := cmd.Flags().GetBool("ingest-only")
+		metricsAddr, _ := cmd.Flags().GetString("metrics-addr")
+		statusInterval, _ := cmd.Flags().GetDuration("status-interval")
 
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer stop()
@@ -96,6 +104,29 @@ var loadtestCmd = &cobra.Command{
 			return errors.New("space-mrn is required (pass --space-mrn or configure a service account with a scope)")
 		}
 
+		metrics, metricsHandler, err := loadtest.NewMetrics(ctx)
+		if err != nil {
+			return errors.Wrap(err, "init metrics")
+		}
+		defer metrics.Shutdown(context.Background())
+
+		// Run the Prometheus endpoint in a goroutine; an error from
+		// ListenAndServe (e.g. port already taken) shouldn't kill the load test
+		// — log it and continue without the metrics endpoint.
+		if metricsAddr != "" {
+			lis, err := net.Listen("tcp", metricsAddr)
+			if err != nil {
+				log.Warn().Err(err).Str("addr", metricsAddr).Msg("metrics endpoint unavailable; continuing without it")
+			} else {
+				mux := http.NewServeMux()
+				mux.Handle("/metrics", metricsHandler)
+				srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+				go func() { _ = srv.Serve(lis) }()
+				defer srv.Shutdown(context.Background())
+				log.Info().Str("addr", lis.Addr().String()).Msg("metrics endpoint listening at /metrics")
+			}
+		}
+
 		runCfg := loadtest.Config{
 			SpaceMrn:       spaceMrn,
 			Templates:      templates,
@@ -109,24 +140,44 @@ var loadtestCmd = &cobra.Command{
 			Workers:        workers,
 			Client:         client,
 			Continuous:     continuous,
+			IngestOnly:     ingestOnly,
+			Metrics:        metrics,
 		}
 
+		// The status reporter shares the runner's Stats by virtue of being
+		// constructed AFTER Run starts populating it (Stats is created inside
+		// Run today — for now the reporter polls a Stats we hand it). To keep
+		// the runner's existing API, we need a stats handle up front.
+		stats := &loadtest.Stats{}
+		runCfg.StatsOut = stats
+		reporter := loadtest.NewStatusReporter(stats, statusInterval)
+
+		statusCtx, statusCancel := context.WithCancel(ctx)
+		statusDone := make(chan struct{})
+		go func() {
+			defer close(statusDone)
+			reporter.Run(statusCtx)
+		}()
+
 		start := time.Now()
-		stats, err := loadtest.Run(ctx, runCfg)
+		_, runErr := loadtest.Run(ctx, runCfg)
 		elapsed := time.Since(start)
-		if stats != nil {
-			log.Info().
-				Int64("assets", stats.AssetsHandled).
-				Int64("scans", stats.ScansSent).
-				Int64("sync_calls", stats.SyncCalls).
-				Int64("resolve_calls", stats.ResolveCalls).
-				Int64("upload_calls", stats.UploadCalls).
-				Int64("sync_errors", stats.ErrorsSync).
-				Int64("resolve_errors", stats.ErrorsResolve).
-				Int64("upload_errors", stats.ErrorsUpload).
-				Dur("elapsed", elapsed).
-				Msg("loadtest done")
-		}
-		return err
+
+		statusCancel()
+		<-statusDone
+		reporter.Final(start, time.Now())
+
+		log.Info().
+			Int64("assets", stats.AssetsHandled).
+			Int64("scans", stats.ScansSent).
+			Int64("sync_calls", stats.SyncCalls).
+			Int64("resolve_calls", stats.ResolveCalls).
+			Int64("upload_calls", stats.UploadCalls).
+			Int64("sync_errors", stats.ErrorsSync).
+			Int64("resolve_errors", stats.ErrorsResolve).
+			Int64("upload_errors", stats.ErrorsUpload).
+			Dur("elapsed", elapsed).
+			Msg("loadtest done")
+		return runErr
 	},
 }
