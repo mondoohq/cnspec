@@ -19,9 +19,15 @@ import (
 // recordingClient implements Client by appending each call into slices guarded
 // by a mutex so concurrent worker goroutines stay safe.
 type recordingClient struct {
-	mu      sync.Mutex
-	syncs   []*inventory.Asset
-	uploads []*recordedUpload
+	mu       sync.Mutex
+	syncs    []*inventory.Asset
+	resolves []resolvedCall
+	uploads  []*recordedUpload
+}
+
+type resolvedCall struct {
+	assetMrn      string
+	filterCodeIDs []string
 }
 
 type recordedUpload struct {
@@ -34,6 +40,13 @@ func (r *recordingClient) SynchronizeAsset(_ context.Context, _ string, asset *i
 	defer r.mu.Unlock()
 	r.syncs = append(r.syncs, asset)
 	return "//assets.api.mondoo.com/" + asset.PlatformIds[0], nil
+}
+
+func (r *recordingClient) ResolveAndUpdateJobs(_ context.Context, assetMrn string, filterCodeIDs []string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.resolves = append(r.resolves, resolvedCall{assetMrn: assetMrn, filterCodeIDs: filterCodeIDs})
+	return nil
 }
 
 func (r *recordingClient) UploadScanDB(_ context.Context, assetMrn string, payload *ScanPayload) error {
@@ -86,6 +99,7 @@ func TestRunnerSyncOnlyOnFirstScan(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, rc.syncs, 2, "one sync per asset")
+	require.Len(t, rc.resolves, 2, "one resolve per asset")
 	require.Len(t, rc.uploads, 8, "upload on every scan: 2 assets * 4 scans")
 }
 
@@ -199,6 +213,10 @@ func (c *countingClient) SynchronizeAsset(_ context.Context, _ string, asset *in
 	idx := c.syncCnt
 	c.syncCnt++
 	return fakeAssetMrn(idx), nil
+}
+
+func (c *countingClient) ResolveAndUpdateJobs(_ context.Context, _ string, _ []string) error {
+	return nil
 }
 
 func (c *countingClient) UploadScanDB(_ context.Context, assetMrn string, payload *ScanPayload) error {

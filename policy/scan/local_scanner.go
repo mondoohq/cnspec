@@ -24,6 +24,7 @@ import (
 	"go.mondoo.com/cnspec/v13/internal/datalakes/sqlite"
 	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/cnspec/v13/policy/executor"
+	"go.mondoo.com/cnspec/v13/policy/scandb"
 	"go.mondoo.com/mql/v13"
 	"go.mondoo.com/mql/v13/cli/config"
 	"go.mondoo.com/mql/v13/cli/execruntime"
@@ -763,7 +764,11 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 		}
 	}
 
-	runtimeErr := WithServices(job.Ctx, s.runtime, job.Asset, client, func(services *policy.LocalServices) error {
+	runtimeErr := WithServices(job.Ctx, s.runtime, job.Asset, client, func(ctx context.Context, services *policy.LocalServices) error {
+		// Adopt the ctx returned from WithServices so any values the datalake
+		// stack injected (e.g. scandb.WithFilterCapture for --output-scan-db)
+		// flow into runPolicy via job.Ctx.
+		job.Ctx = ctx
 		scanner := &localAssetScanner{
 			services:         services,
 			job:              job,
@@ -1182,6 +1187,16 @@ func (s *localAssetScanner) runPolicy() (*policy.ResolvedPolicy, error) {
 	logger.DebugJSON(filters)
 	logger.DebugDumpYAML("assetFilters", filters)
 
+	// Surface the filter code_ids to the scan datalake so --output-scan-db
+	// captures them; no-op when the hook isn't installed (regular scans).
+	filterCodeIDs := make([]string, 0, len(filters))
+	for _, f := range filters {
+		if f.CodeId != "" {
+			filterCodeIDs = append(filterCodeIDs, f.CodeId)
+		}
+	}
+	scandb.CaptureFilters(s.job.Ctx, filterCodeIDs)
+
 	resolvedPolicy, err := resolver.ResolveAndUpdateJobs(s.job.Ctx, &policy.UpdateAssetJobsReq{
 		AssetMrn:     s.job.Asset.Mrn,
 		AssetFilters: filters,
@@ -1282,8 +1297,8 @@ func sendErrorToMondooPlatform(serviceAccount *upstream.ServiceAccountCredential
 	}
 }
 
-func WithServices(ctx context.Context, runtime llx.Runtime, asset *inventory.Asset, upstreamClient *upstream.UpstreamClient, f func(*policy.LocalServices) error) error {
-	var withServicesFunc func(context.Context, llx.Runtime, *inventory.Asset, *upstream.UpstreamClient, func(*policy.LocalServices) error) error
+func WithServices(ctx context.Context, runtime llx.Runtime, asset *inventory.Asset, upstreamClient *upstream.UpstreamClient, f func(context.Context, *policy.LocalServices) error) error {
+	var withServicesFunc func(context.Context, llx.Runtime, *inventory.Asset, *upstream.UpstreamClient, func(context.Context, *policy.LocalServices) error) error
 	if mql.IsFeatureActive(ctx, mql.UploadResultsV2) {
 		withServicesFunc = sqlite.WithServices
 	} else {

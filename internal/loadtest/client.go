@@ -41,6 +41,7 @@ type ScanPayload struct {
 // to know about presigned URLs or temp files.
 type Client interface {
 	SynchronizeAsset(ctx context.Context, spaceMrn string, asset *inventory.Asset) (string, error)
+	ResolveAndUpdateJobs(ctx context.Context, assetMrn string, filterCodeIDs []string) error
 	UploadScanDB(ctx context.Context, assetMrn string, payload *ScanPayload) error
 }
 
@@ -90,6 +91,21 @@ func (c *servicesClient) SynchronizeAsset(ctx context.Context, spaceMrn string, 
 		return d.AssetMrn, nil
 	}
 	return "", errors.New("server returned no asset details")
+}
+
+// ResolveAndUpdateJobs replays the captured filter set against the synthetic
+// asset's MRN. The server only needs the code_ids to identify which filters
+// matched — the MQL/title/etc. live with the owning policies on the server.
+func (c *servicesClient) ResolveAndUpdateJobs(ctx context.Context, assetMrn string, filterCodeIDs []string) error {
+	filters := make([]*policy.Mquery, 0, len(filterCodeIDs))
+	for _, id := range filterCodeIDs {
+		filters = append(filters, &policy.Mquery{CodeId: id})
+	}
+	_, err := c.services.ResolveAndUpdateJobs(ctx, &policy.UpdateAssetJobsReq{
+		AssetMrn:     assetMrn,
+		AssetFilters: filters,
+	})
+	return err
 }
 
 // UploadScanDB writes payload into a fresh SQLite scan database, fetches a
@@ -202,6 +218,11 @@ func NewDryRunClient() Client { return &dryRunClient{} }
 func (d *dryRunClient) SynchronizeAsset(ctx context.Context, spaceMrn string, asset *inventory.Asset) (string, error) {
 	log.Info().Str("space", spaceMrn).Strs("platform_ids", asset.PlatformIds).Msg("dry-run: SynchronizeAsset")
 	return "//captain.api.mondoo.app/spaces/dryrun/assets/" + asset.PlatformIds[0], nil
+}
+
+func (d *dryRunClient) ResolveAndUpdateJobs(_ context.Context, assetMrn string, filterCodeIDs []string) error {
+	log.Info().Str("asset", assetMrn).Int("filters", len(filterCodeIDs)).Msg("dry-run: ResolveAndUpdateJobs")
+	return nil
 }
 
 func (d *dryRunClient) UploadScanDB(_ context.Context, assetMrn string, payload *ScanPayload) error {

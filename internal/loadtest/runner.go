@@ -74,8 +74,10 @@ type Stats struct {
 	AssetsHandled int64
 	ScansSent     int64
 	SyncCalls     int64
+	ResolveCalls  int64
 	UploadCalls   int64
 	ErrorsSync    int64
+	ErrorsResolve int64
 	ErrorsUpload  int64
 }
 
@@ -201,14 +203,11 @@ func produce(ctx context.Context, cfg Config, runtimes []*assetRuntime, work cha
 	return nil
 }
 
-// scanOnce runs a single scan iteration for the given asset: synchronize on
-// the first scan, mutate scores then upload a fresh scan db on every scan.
-// The per-asset mutex prevents two workers from racing on the same asset.
-//
-// ResolveAndUpdateJobs is deliberately omitted — it would require persisting
-// the asset filters (the MQL the resolver uses to pick policies) somewhere,
-// which we want to avoid for now. The server still resolves the policy
-// asynchronously when it processes the uploaded scan db.
+// scanOnce runs a single scan iteration for the given asset: on the first
+// scan it synchronizes the asset and replays the captured filter set against
+// ResolveAndUpdateJobs; every scan then mutates scores and uploads a fresh
+// scan db. The per-asset mutex prevents two workers from racing on the same
+// asset.
 func scanOnce(ctx context.Context, cfg Config, rt *assetRuntime, limiter *rate.Limiter, stats *Stats) error {
 	if limiter != nil {
 		if err := limiter.Wait(ctx); err != nil {
@@ -230,6 +229,12 @@ func scanOnce(ctx context.Context, cfg Config, rt *assetRuntime, limiter *rate.L
 		asset.Mrn = mrn
 		rt.asset = asset
 		rt.assetMrn = mrn
+
+		if err := cfg.Client.ResolveAndUpdateJobs(ctx, mrn, rt.template.FilterCodeIDs); err != nil {
+			atomic.AddInt64(&stats.ErrorsResolve, 1)
+			return errors.Wrap(err, "resolve")
+		}
+		atomic.AddInt64(&stats.ResolveCalls, 1)
 		rt.synced = true
 	} else {
 		rt.state.applyChanges(cfg.ChangePct)

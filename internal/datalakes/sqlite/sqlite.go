@@ -34,7 +34,7 @@ var outputDir string
 // concurrent calls — call once at startup before any scans run.
 func SetOutputDir(dir string) { outputDir = dir }
 
-func WithServices(ctx context.Context, runtime llx.Runtime, asset *inventory.Asset, upstreamClient *upstream.UpstreamClient, f func(*policy.LocalServices) error) error {
+func WithServices(ctx context.Context, runtime llx.Runtime, asset *inventory.Asset, upstreamClient *upstream.UpstreamClient, f func(context.Context, *policy.LocalServices) error) error {
 	assetMrn := ""
 	if asset != nil {
 		assetMrn = asset.Mrn
@@ -46,6 +46,19 @@ func WithServices(ctx context.Context, runtime llx.Runtime, asset *inventory.Ass
 			if err := scanDataStore.WriteAsset(ctx, asset); err != nil {
 				log.Warn().Err(err).Msg("failed to persist asset to scan data store")
 			}
+		}
+
+		// When --output-scan-db is set, install the filter-capture hook so
+		// the scanner's ResolveAndUpdateJobs filters land in the scan db too.
+		// We deliberately gate this on outputDir so regular scans don't pay
+		// the marshalling cost or send filters to the platform.
+		scanCtx := ctx
+		if outputDir != "" {
+			scanCtx = scandb.WithFilterCapture(scanCtx, func(codeIDs []string) {
+				if err := scanDataStore.WriteAssetFilters(context.Background(), codeIDs); err != nil {
+					log.Warn().Err(err).Msg("failed to persist asset filters")
+				}
+			})
 		}
 
 		_, ls, err := inmemory.NewServices(runtime, inmemory.WithDataWriter(scandb.NewScanDataStoreWrapper(scanDataStore, assetMrn)))
@@ -67,7 +80,7 @@ func WithServices(ctx context.Context, runtime llx.Runtime, asset *inventory.Ass
 		}
 
 		ls.Upstream = upstream
-		if err := f(ls); err != nil {
+		if err := f(scanCtx, ls); err != nil {
 			return err
 		}
 

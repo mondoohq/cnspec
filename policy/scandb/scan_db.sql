@@ -62,6 +62,15 @@ CREATE TABLE asset (
     data BLOB NOT NULL               -- protobuf encoded inventory.Asset
 );
 
+-- Asset filter code_ids - one row per filter the scanner passed to
+-- ResolveAndUpdateJobs. Storing only code_ids (not the full Mquery proto)
+-- because that's all the server needs to look the filters back up. Only
+-- written when --output-scan-db is set so the loadtest tool can replay the
+-- same filter set against synthetic assets.
+CREATE TABLE asset_filters (
+    code_id TEXT NOT NULL PRIMARY KEY
+);
+
 -- Primary key indexes are automatically created for scores(qr_id) and data(code_id)
 -- No additional indexes needed since we're using the primary keys for lookups
 

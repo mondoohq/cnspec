@@ -119,8 +119,10 @@ var loadtestCmd = &cobra.Command{
 				Int64("assets", stats.AssetsHandled).
 				Int64("scans", stats.ScansSent).
 				Int64("sync_calls", stats.SyncCalls).
+				Int64("resolve_calls", stats.ResolveCalls).
 				Int64("upload_calls", stats.UploadCalls).
 				Int64("sync_errors", stats.ErrorsSync).
+				Int64("resolve_errors", stats.ErrorsResolve).
 				Int64("upload_errors", stats.ErrorsUpload).
 				Dur("elapsed", elapsed).
 				Msg("loadtest done")

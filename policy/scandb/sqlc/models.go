@@ -13,6 +13,10 @@ type Asset struct {
 	Data []byte `json:"data"`
 }
 
+type AssetFilter struct {
+	CodeID string `json:"code_id"`
+}
+
 type Datum struct {
 	CodeID string `json:"code_id"`
 	Data   []byte `json:"data"`

@@ -220,6 +220,50 @@ func (s *SqliteScanDataStore) WriteResource(ctx context.Context, resource *llx.R
 	return nil
 }
 
+// WriteAssetFilters persists the code_ids of the filters the scanner passed
+// to ResolveAndUpdateJobs so the loadtest tool can replay the same filter
+// set against synthetic assets. Only invoked when --output-scan-db is set;
+// regular scans skip it to avoid bloating the upload.
+//
+// We store only code_ids (not the full Mquery proto) since that's all the
+// resolver needs to identify a filter — the MQL/title/etc. live with the
+// owning policy on the server.
+func (s *SqliteScanDataStore) WriteAssetFilters(ctx context.Context, codeIDs []string) error {
+	if s.readOnly {
+		return fmt.Errorf("cannot write asset filters in read-only mode")
+	}
+	for _, id := range codeIDs {
+		if id == "" {
+			continue
+		}
+		if err := s.queries.InsertAssetFilter(ctx, id); err != nil {
+			return fmt.Errorf("failed to write asset filter %s: %w", id, err)
+		}
+	}
+	return nil
+}
+
+// GetAssetFilters retrieves the code_ids of the asset filters captured during
+// the original scan. Returns policy.ErrAssetFiltersNotFound for scan databases
+// captured without --output-scan-db (filters table missing or no rows).
+func (s *SqliteScanDataStore) GetAssetFilters(ctx context.Context) ([]string, error) {
+	rows, err := s.queries.StreamAssetFilters(ctx)
+	if err != nil {
+		if isMissingAssetFiltersTable(err) {
+			return nil, policy.ErrAssetFiltersNotFound
+		}
+		return nil, fmt.Errorf("failed to get asset filters: %w", err)
+	}
+	if len(rows) == 0 {
+		return nil, policy.ErrAssetFiltersNotFound
+	}
+	return rows, nil
+}
+
+func isMissingAssetFiltersTable(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "no such table: asset_filters")
+}
+
 // WriteAsset persists the inventory.Asset proto for the scanned asset.
 // Schema 1.1+: enables consumers (e.g. cnspec loadtest) to replay scan databases
 // against SynchronizeAssets without out-of-band asset metadata.

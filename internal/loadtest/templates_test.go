@@ -31,6 +31,7 @@ func writeFixtureDB(t *testing.T, dir, name string, withAsset bool) string {
 	require.NoError(t, err)
 	if withAsset {
 		require.NoError(t, store.WriteAsset(context.Background(), asset))
+		require.NoError(t, store.WriteAssetFilters(context.Background(), []string{"filter-code-1", "filter-code-2"}))
 	}
 	require.NoError(t, store.WriteScores(context.Background(), []*policy.Score{
 		{QrId: "q1", Value: 100, Type: 1, Weight: 1},
@@ -59,7 +60,32 @@ func TestLoadTemplatesRoundtrip(t *testing.T) {
 		require.Equal(t, "ubuntu", tpl.Asset.Platform.Name)
 		require.Len(t, tpl.Scores, 2)
 		require.Contains(t, tpl.Data, "c1")
+		require.ElementsMatch(t, []string{"filter-code-1", "filter-code-2"}, tpl.FilterCodeIDs)
 	}
+}
+
+func TestLoadTemplatesRejectsMissingFilters(t *testing.T) {
+	dir := t.TempDir()
+	// Write a fixture with the asset but no filters by calling WriteAsset
+	// directly without WriteAssetFilters. (The default writeFixtureDB writes
+	// both, so this case needs a manual setup.)
+	path := filepath.Join(dir, "noflt.db")
+	asset := &inventory.Asset{
+		Mrn:         "//assets.api.mondoo.com/spaces/x/assets/noflt",
+		Name:        "noflt",
+		PlatformIds: []string{"//platformid.api.mondoo.app/runtime/test/noflt"},
+		Platform:    &inventory.Platform{Name: "ubuntu"},
+	}
+	store, err := scandb.NewSqliteScanDataStore(path, asset.Mrn)
+	require.NoError(t, err)
+	require.NoError(t, store.WriteAsset(context.Background(), asset))
+	require.NoError(t, store.WriteScores(context.Background(), []*policy.Score{{QrId: "q1", Value: 100, Type: 1, Weight: 1}}))
+	_, err = store.Finalize()
+	require.NoError(t, err)
+	require.NoError(t, store.Close())
+
+	_, err = LoadTemplates(context.Background(), dir)
+	require.Error(t, err, "loadtest must refuse scan dbs without captured filters")
 }
 
 func TestLoadTemplatesRejectsMissingAsset(t *testing.T) {
