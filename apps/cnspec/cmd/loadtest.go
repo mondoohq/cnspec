@@ -22,7 +22,7 @@ import (
 
 func init() {
 	rootCmd.AddCommand(loadtestCmd)
-	loadtestCmd.Flags().String("input", "", "directory containing scan database (.db) templates")
+	loadtestCmd.Flags().String("input", "", "scan-db (.db) templates source: a local directory or a gs://bucket/prefix/ URI")
 	loadtestCmd.Flags().Int("assets", 0, "number of synthetic assets to simulate")
 	loadtestCmd.Flags().Int("scans-per-asset", 1, "scans to send per asset (first is the baseline)")
 	loadtestCmd.Flags().Float64("scans-per-second", 0, "global scan-rate cap (0 = unlimited)")
@@ -65,11 +65,17 @@ var loadtestCmd = &cobra.Command{
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer stop()
 
-		templates, err := loadtest.LoadTemplates(ctx, input)
+		seedDir, cleanup, err := loadtest.MaterializeSeeds(ctx, input)
+		if err != nil {
+			return errors.Wrap(err, "materialize seeds")
+		}
+		defer cleanup()
+
+		templates, err := loadtest.LoadTemplates(ctx, seedDir)
 		if err != nil {
 			return errors.Wrap(err, "load templates")
 		}
-		log.Info().Int("templates", len(templates)).Str("dir", input).Msg("loaded scan-db templates")
+		log.Info().Int("templates", len(templates)).Str("source", input).Msg("loaded scan-db templates")
 
 		var client loadtest.Client
 		if dryRun {
