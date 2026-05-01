@@ -82,7 +82,12 @@ func TestRunnerBaselineUsesTemplateScores(t *testing.T) {
 	}
 }
 
-func TestRunnerSyncOnlyOnFirstScan(t *testing.T) {
+// TestRunnerDefaultIssuesFullFlowPerScan asserts the default flow mirrors a
+// real cnspec scan: every scan goes through SynchronizeAsset +
+// ResolveAndUpdateJobs + UploadScanDB. Without this, we'd silently regress
+// to "warm up once, hammer uploads" and stop exercising the sync/resolve
+// paths under load.
+func TestRunnerDefaultIssuesFullFlowPerScan(t *testing.T) {
 	tpl := makeStateTemplate(3)
 	tpl.Asset = &inventory.Asset{Name: "tpl", PlatformIds: []string{"x"}}
 	rc := &recordingClient{}
@@ -98,8 +103,32 @@ func TestRunnerSyncOnlyOnFirstScan(t *testing.T) {
 		Client:        rc,
 	})
 	require.NoError(t, err)
-	require.Len(t, rc.syncs, 2, "one sync per asset")
-	require.Len(t, rc.resolves, 2, "one resolve per asset")
+	require.Len(t, rc.syncs, 8, "default flow: sync on every scan")
+	require.Len(t, rc.resolves, 8, "default flow: resolve on every scan")
+	require.Len(t, rc.uploads, 8, "upload on every scan")
+}
+
+// TestRunnerIngestOnly asserts sync/resolve happen exactly once per asset
+// during preflight, with the actual load consisting only of uploads.
+func TestRunnerIngestOnly(t *testing.T) {
+	tpl := makeStateTemplate(3)
+	tpl.Asset = &inventory.Asset{Name: "tpl", PlatformIds: []string{"x"}}
+	rc := &recordingClient{}
+
+	_, err := Run(context.Background(), Config{
+		SpaceMrn:      "//captain.api.mondoo.app/spaces/test",
+		Templates:     []*Template{tpl},
+		Assets:        2,
+		ScansPerAsset: 4,
+		IngestOnly:    true,
+		Seed:          1,
+		TotalShards:   1,
+		Workers:       1,
+		Client:        rc,
+	})
+	require.NoError(t, err)
+	require.Len(t, rc.syncs, 2, "ingest-only: one sync per asset (preflight)")
+	require.Len(t, rc.resolves, 2, "ingest-only: one resolve per asset (preflight)")
 	require.Len(t, rc.uploads, 8, "upload on every scan: 2 assets * 4 scans")
 }
 
@@ -146,7 +175,8 @@ func TestRunnerContinuousStopsOnContextCancel(t *testing.T) {
 		Templates:      []*Template{tpl},
 		Assets:         3,
 		Continuous:     true,
-		ScansPerSecond: 200, // bound work so the test can't blow up
+		IngestOnly:     true, // keep sync count predictable so we can assert termination separately
+		ScansPerSecond: 200,  // bound work so the test can't blow up
 		Seed:           1,
 		TotalShards:    1,
 		Workers:        2,
@@ -155,7 +185,7 @@ func TestRunnerContinuousStopsOnContextCancel(t *testing.T) {
 	// Continuous mode exits via ctx; both Canceled and DeadlineExceeded mean
 	// "stopped on user signal", which is the expected termination path.
 	require.True(t, errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled), "expected ctx error, got: %v", err)
-	require.EqualValues(t, 3, stats.SyncCalls, "each asset still syncs exactly once across the continuous run")
+	require.EqualValues(t, 3, stats.SyncCalls, "ingest-only: each asset syncs exactly once during preflight")
 	require.Greater(t, stats.UploadCalls, int64(3), "continuous mode keeps uploading past the initial round")
 }
 
