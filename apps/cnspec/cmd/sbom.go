@@ -24,7 +24,7 @@ import (
 func init() {
 	rootCmd.AddCommand(sbomCmd)
 	sbomCmd.Flags().String("asset-name", "", "User-override for the asset name")
-	sbomCmd.Flags().StringToString("annotation", nil, "Add an annotation to the asset") // user-added, editable
+	sbomCmd.Flags().StringToString("annotation", nil, "Add an annotation to the asset in the form KEY=VALUE") // user-added, editable
 	sbomCmd.Flags().StringP("output", "o", "list", "Set output format: "+sbom.AllFormats())
 	sbomCmd.Flags().String("output-target", "", "Set output target to which the SBOM report will be written")
 	sbomCmd.Flags().Bool("with-evidence", false, "Include evidence for each component")
