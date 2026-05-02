@@ -54,6 +54,17 @@ Known high-value anchors (verify before using):
 - Identity proofing / email verification: `iso-27001-2022-a-5-16` (Identity management), `nist-csf-2-pr-aa-02` ("Identities are proofed and bound to credentials"), `nist-sp-800-53-rev5-ia-12` (Identity Proofing). No direct equivalent in NIST CSF 1.x, NIST 800-171 rev2, NIS2 Article 21(2), or SOC 2 2017.
 - Authenticator / MFA strength: `iso-27001-2022-a-8-5`, `nist-csf-2-pr-aa-03`, `nist-sp-800-53-rev5-ia-2`, `soc2-control-cc6-1-4`. Do **not** reuse these for identity-proofing checks.
 
+### Backfilling the 6 derived frameworks
+
+After hand-mapping the 7 base frameworks (iso-27001-2022, nis-2, nist-csf-1, nist-csf-2, nist-sp-800-53-rev5, nist-sp-800-171, soc2-2017), use the backfill tool to fill in the 6 derived frameworks (bsi-grundschutz-sys15, csa-cloud-controls-matrix-4, dora, hipaa, pci-dss-4, vda-isa-5):
+
+```bash
+python3 content/validation/backfill_compliance_frameworks.py --dry-run content/mondoo-foo-security.mql.yaml
+python3 content/validation/backfill_compliance_frameworks.py content/mondoo-foo-security.mql.yaml
+```
+
+The tool categorizes each parent check by its (iso-27001-2022, nist-csf-2, nist-sp-800-53-rev5) signature and applies a 6-framework template derived from the AWS source-of-truth policy. It is idempotent and never overwrites existing keys — it only fills missing ones. If a check uses a novel signature the categorizer doesn't recognize it falls back to all-false; extend `categorize()` in the script with a new rule rather than letting wrong tags slip in.
+
 ## Terraform variants and remediation for cloud policies
 
 When you add or modify a check in a cloud policy (`mondoo-aws-security`, `mondoo-azure-security`, `mondoo-gcp-security`, `mondoo-oci-security`, `mondoo-hetzner-security`, `mondoo-digitalocean-security`, etc.), **two things** must ship together:
