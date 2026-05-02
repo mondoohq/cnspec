@@ -64,7 +64,7 @@ func init() {
 		return getPoliciesForCompletion(), cobra.ShellCompDirectiveDefault
 	})
 	_ = scanCmd.Flags().String("asset-name", "", "Override the asset name")
-	_ = scanCmd.Flags().StringToString("annotation", nil, "Add an annotation to the asset") // user-added, editable
+	_ = scanCmd.Flags().StringToString("annotation", nil, "Add an annotation to the asset in the form KEY=VALUE") // user-added, editable
 	_ = scanCmd.Flags().StringToString("props", nil, "Set custom values for properties")
 	_ = scanCmd.Flags().String("trace-id", "", "Set a trace identifier")
 

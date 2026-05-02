@@ -180,7 +180,7 @@ cnspec scan --inventory-file FILENAME
 ### Options
 
 ```
-      --annotation stringToString     Add an annotation to the asset in this format: key=value. (default [])
+      --annotation stringToString     Add an annotation to the asset in the form KEY=VALUE (default [])
       --asset-name string             User-override for the asset name
       --detect-cicd                   Try to detect CI/CD environments. If detected, set the asset category to 'cicd'. (default true)
   -h, --help                          help for scan
