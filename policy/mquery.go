@@ -39,6 +39,14 @@ func RefreshMRN(ownerMRN string, existingMRN string, resource string, uid string
 
 func ChecksumAssetFilters(queries []*Mquery, conf mqlc.CompilerConfig) (string, error) {
 	for i := range queries {
+		// If the caller already supplied a code_id (e.g. the loadtest replay
+		// path that recovers code_ids from a captured scan db), there's no
+		// MQL to compile and RefreshAsFilter would fail with "query is not
+		// implemented". The checksum below only consumes CodeId anyway, so
+		// skipping the refresh is safe and produces the same result.
+		if queries[i].CodeId != "" && queries[i].Mql == "" {
+			continue
+		}
 		if _, err := queries[i].RefreshAsFilter("", conf); err != nil {
 			return "", errors.New("failed to compile query: " + err.Error())
 		}
