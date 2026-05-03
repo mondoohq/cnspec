@@ -27,9 +27,6 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getAssetStmt, err = db.PrepareContext(ctx, getAsset); err != nil {
 		return nil, fmt.Errorf("error preparing query GetAsset: %w", err)
 	}
-	if q.getAssetFiltersStmt, err = db.PrepareContext(ctx, getAssetFilters); err != nil {
-		return nil, fmt.Errorf("error preparing query GetAssetFilters: %w", err)
-	}
 	if q.getDataStmt, err = db.PrepareContext(ctx, getData); err != nil {
 		return nil, fmt.Errorf("error preparing query GetData: %w", err)
 	}
@@ -51,8 +48,8 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.insertAssetStmt, err = db.PrepareContext(ctx, insertAsset); err != nil {
 		return nil, fmt.Errorf("error preparing query InsertAsset: %w", err)
 	}
-	if q.insertAssetFiltersStmt, err = db.PrepareContext(ctx, insertAssetFilters); err != nil {
-		return nil, fmt.Errorf("error preparing query InsertAssetFilters: %w", err)
+	if q.insertAssetFilterStmt, err = db.PrepareContext(ctx, insertAssetFilter); err != nil {
+		return nil, fmt.Errorf("error preparing query InsertAssetFilter: %w", err)
 	}
 	if q.insertDataStmt, err = db.PrepareContext(ctx, insertData); err != nil {
 		return nil, fmt.Errorf("error preparing query InsertData: %w", err)
@@ -68,6 +65,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.insertScoreStmt, err = db.PrepareContext(ctx, insertScore); err != nil {
 		return nil, fmt.Errorf("error preparing query InsertScore: %w", err)
+	}
+	if q.streamAssetFiltersStmt, err = db.PrepareContext(ctx, streamAssetFilters); err != nil {
+		return nil, fmt.Errorf("error preparing query StreamAssetFilters: %w", err)
 	}
 	if q.streamDataStmt, err = db.PrepareContext(ctx, streamData); err != nil {
 		return nil, fmt.Errorf("error preparing query StreamData: %w", err)
@@ -89,11 +89,6 @@ func (q *Queries) Close() error {
 	if q.getAssetStmt != nil {
 		if cerr := q.getAssetStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getAssetStmt: %w", cerr)
-		}
-	}
-	if q.getAssetFiltersStmt != nil {
-		if cerr := q.getAssetFiltersStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing getAssetFiltersStmt: %w", cerr)
 		}
 	}
 	if q.getDataStmt != nil {
@@ -131,9 +126,9 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing insertAssetStmt: %w", cerr)
 		}
 	}
-	if q.insertAssetFiltersStmt != nil {
-		if cerr := q.insertAssetFiltersStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing insertAssetFiltersStmt: %w", cerr)
+	if q.insertAssetFilterStmt != nil {
+		if cerr := q.insertAssetFilterStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing insertAssetFilterStmt: %w", cerr)
 		}
 	}
 	if q.insertDataStmt != nil {
@@ -159,6 +154,11 @@ func (q *Queries) Close() error {
 	if q.insertScoreStmt != nil {
 		if cerr := q.insertScoreStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing insertScoreStmt: %w", cerr)
+		}
+	}
+	if q.streamAssetFiltersStmt != nil {
+		if cerr := q.streamAssetFiltersStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing streamAssetFiltersStmt: %w", cerr)
 		}
 	}
 	if q.streamDataStmt != nil {
@@ -221,7 +221,6 @@ type Queries struct {
 	db                     DBTX
 	tx                     *sql.Tx
 	getAssetStmt           *sql.Stmt
-	getAssetFiltersStmt    *sql.Stmt
 	getDataStmt            *sql.Stmt
 	getMetadataStmt        *sql.Stmt
 	getMetadataByKeyStmt   *sql.Stmt
@@ -229,12 +228,13 @@ type Queries struct {
 	getRiskFactorStmt      *sql.Stmt
 	getScoreStmt           *sql.Stmt
 	insertAssetStmt        *sql.Stmt
-	insertAssetFiltersStmt *sql.Stmt
+	insertAssetFilterStmt  *sql.Stmt
 	insertDataStmt         *sql.Stmt
 	insertMetadataStmt     *sql.Stmt
 	insertResourceStmt     *sql.Stmt
 	insertRiskFactorStmt   *sql.Stmt
 	insertScoreStmt        *sql.Stmt
+	streamAssetFiltersStmt *sql.Stmt
 	streamDataStmt         *sql.Stmt
 	streamResourcesStmt    *sql.Stmt
 	streamRiskFactorsStmt  *sql.Stmt
@@ -246,7 +246,6 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		db:                     tx,
 		tx:                     tx,
 		getAssetStmt:           q.getAssetStmt,
-		getAssetFiltersStmt:    q.getAssetFiltersStmt,
 		getDataStmt:            q.getDataStmt,
 		getMetadataStmt:        q.getMetadataStmt,
 		getMetadataByKeyStmt:   q.getMetadataByKeyStmt,
@@ -254,12 +253,13 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getRiskFactorStmt:      q.getRiskFactorStmt,
 		getScoreStmt:           q.getScoreStmt,
 		insertAssetStmt:        q.insertAssetStmt,
-		insertAssetFiltersStmt: q.insertAssetFiltersStmt,
+		insertAssetFilterStmt:  q.insertAssetFilterStmt,
 		insertDataStmt:         q.insertDataStmt,
 		insertMetadataStmt:     q.insertMetadataStmt,
 		insertResourceStmt:     q.insertResourceStmt,
 		insertRiskFactorStmt:   q.insertRiskFactorStmt,
 		insertScoreStmt:        q.insertScoreStmt,
+		streamAssetFiltersStmt: q.streamAssetFiltersStmt,
 		streamDataStmt:         q.streamDataStmt,
 		streamResourcesStmt:    q.streamResourcesStmt,
 		streamRiskFactorsStmt:  q.streamRiskFactorsStmt,

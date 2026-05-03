@@ -1187,11 +1187,16 @@ func (s *localAssetScanner) runPolicy() (*policy.ResolvedPolicy, error) {
 	logger.DebugJSON(filters)
 	logger.DebugDumpYAML("assetFilters", filters)
 
-	// Surface the filters to the scan datalake so --output-scan-db captures
-	// them; no-op when the hook isn't installed (regular scans). Storing the
-	// full Mquery proto (not just code_ids) is required because the server
-	// compiles each filter's MQL during resolution.
-	scandb.CaptureFilters(s.job.Ctx, &policy.Mqueries{Items: filters})
+	// Surface the filter code_ids to the scan datalake. No-op when the hook
+	// isn't installed (e.g. inmemory datalake). The server can re-resolve a
+	// filter from its code_id alone, so we don't need to ship the MQL.
+	filterCodeIDs := make([]string, 0, len(filters))
+	for _, f := range filters {
+		if f.CodeId != "" {
+			filterCodeIDs = append(filterCodeIDs, f.CodeId)
+		}
+	}
+	scandb.CaptureFilters(s.job.Ctx, filterCodeIDs)
 
 	resolvedPolicy, err := resolver.ResolveAndUpdateJobs(s.job.Ctx, &policy.UpdateAssetJobsReq{
 		AssetMrn:     s.job.Asset.Mrn,

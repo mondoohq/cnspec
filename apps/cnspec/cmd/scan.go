@@ -157,12 +157,6 @@ To manually configure a policy, use this:
 var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *plugin.ParseCLIRes) {
 	ctx := context.Background()
 
-	// Hidden dev flag — preserve a copy of each scan database under this dir
-	// so it can be replayed by `cnspec loadtest`.
-	if dir := viper.GetString("output-scan-db"); dir != "" {
-		sqlite.SetOutputDir(dir)
-	}
-
 	conf, err := getCobraScanConfig(cmd, runtime, cliRes)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to prepare config")
@@ -225,6 +219,7 @@ type scanConfig struct {
 	ReportType   scan.ReportType
 	OutputTarget string
 	OutputFormat string
+	OutputScanDB string
 	PolicyPaths  []string
 	PolicyNames  []string
 	Props        map[string]string
@@ -322,6 +317,7 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 		runtime:       runtime,
 		AgentMrn:      opts.AgentMrn,
 		OutputTarget:  viper.GetString("output-target"),
+		OutputScanDB:  viper.GetString("output-scan-db"),
 		Parallelism:   viper.GetInt("parallelism"),
 	}
 
@@ -461,6 +457,9 @@ func RunScan(config *scanConfig, scannerOpts ...scan.ScannerOption) (*policy.Rep
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	ctx = mql.SetFeatures(ctx, config.Features)
+	// Carry --output-scan-db through ctx so the SQLite datalake knows where
+	// to keep the captured scan db. No-op when the flag isn't set.
+	ctx = sqlite.WithOutputDir(ctx, config.OutputScanDB)
 
 	var res *scan.ScanResult
 	var err error

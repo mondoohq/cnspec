@@ -62,15 +62,13 @@ CREATE TABLE asset (
     data BLOB NOT NULL               -- protobuf encoded inventory.Asset
 );
 
--- Asset filters - the policy.Mqueries the scanner passed to
--- ResolveAndUpdateJobs. We store the full proto (not just code_ids)
--- because the server compiles each filter's MQL during resolution; an
--- Mquery missing its MQL causes a 500. Only written when --output-scan-db
--- is set so the loadtest tool can replay the same filter set against
--- synthetic assets.
+-- Asset filter code_ids - one row per filter the scanner passed to
+-- ResolveAndUpdateJobs. We store only code_ids, not the full Mquery
+-- proto, because the server can re-resolve a filter from its code_id
+-- alone (ChecksumAssetFilters skips RefreshAsFilter when no MQL is
+-- supplied). Captured on every scan that uses the SQLite datalake.
 CREATE TABLE asset_filters (
-    id INTEGER PRIMARY KEY CHECK (id = 0),
-    data BLOB NOT NULL               -- protobuf encoded policy.Mqueries
+    code_id TEXT NOT NULL PRIMARY KEY
 );
 
 -- Primary key indexes are automatically created for scores(qr_id) and data(code_id)

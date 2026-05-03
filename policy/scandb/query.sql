@@ -65,9 +65,9 @@ INSERT OR REPLACE INTO asset (id, data) VALUES (0, ?);
 -- name: GetAsset :one
 SELECT data FROM asset WHERE id = 0;
 
--- Asset filter operations (added in schema 1.1)
--- name: InsertAssetFilters :exec
-INSERT OR REPLACE INTO asset_filters (id, data) VALUES (0, ?);
+-- Asset filter code_id operations (added in schema 1.1)
+-- name: InsertAssetFilter :exec
+INSERT OR REPLACE INTO asset_filters (code_id) VALUES (?);
 
--- name: GetAssetFilters :one
-SELECT data FROM asset_filters WHERE id = 0;
+-- name: StreamAssetFilters :many
+SELECT code_id FROM asset_filters ORDER BY code_id;

@@ -23,23 +23,36 @@ import (
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/health"
 )
 
-// outputDir, when set via SetOutputDir, redirects per-asset scan databases
-// to a user-specified directory and keeps them there instead of deleting.
-// Dev-only feature wired to the `cnspec scan --output-scan-db` flag; used
-// to capture realistic seeds for the cnspec loadtest tool.
-var outputDir string
+// outputDirCtxKey is the unexported key used to thread the
+// `cnspec scan --output-scan-db` directory through the scan ctx so the
+// SQLite datalake knows where to keep the captured scan database. Set on
+// the scan command's ctx via WithOutputDir; consumed inside withSqliteDataStore.
+type outputDirCtxKey struct{}
 
-// SetOutputDir configures the destination directory for scan databases.
-// Pass "" to restore the default temp-and-delete behavior. Not safe for
-// concurrent calls — call once at startup before any scans run.
-func SetOutputDir(dir string) { outputDir = dir }
+// WithOutputDir returns a copy of ctx that, when threaded through the scan
+// pipeline into WithServices, makes the SQLite datalake write its scan
+// database to dir and keep it after upload (instead of using a temp file
+// that gets deleted). Pass "" to restore the default behavior.
+func WithOutputDir(ctx context.Context, dir string) context.Context {
+	if dir == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, outputDirCtxKey{}, dir)
+}
+
+func outputDirFromCtx(ctx context.Context) string {
+	if v, ok := ctx.Value(outputDirCtxKey{}).(string); ok {
+		return v
+	}
+	return ""
+}
 
 func WithServices(ctx context.Context, runtime llx.Runtime, asset *inventory.Asset, upstreamClient *upstream.UpstreamClient, f func(context.Context, *policy.LocalServices) error) error {
 	assetMrn := ""
 	if asset != nil {
 		assetMrn = asset.Mrn
 	}
-	err := withSqliteDataStore(assetMrn, func(scanDataStore *scandb.SqliteScanDataStore) error {
+	err := withSqliteDataStore(ctx, assetMrn, func(scanDataStore *scandb.SqliteScanDataStore) error {
 		// Persist the inventory.Asset proto so the scan database is self-contained
 		// (consumed by the cnspec loadtest tool to replay against SynchronizeAssets).
 		if asset != nil {
@@ -48,18 +61,15 @@ func WithServices(ctx context.Context, runtime llx.Runtime, asset *inventory.Ass
 			}
 		}
 
-		// When --output-scan-db is set, install the filter-capture hook so
-		// the scanner's ResolveAndUpdateJobs filters land in the scan db too.
-		// We deliberately gate this on outputDir so regular scans don't pay
-		// the marshalling cost or send filters to the platform.
-		scanCtx := ctx
-		if outputDir != "" {
-			scanCtx = scandb.WithFilterCapture(scanCtx, func(filters *policy.Mqueries) {
-				if err := scanDataStore.WriteAssetFilters(context.Background(), filters); err != nil {
-					log.Warn().Err(err).Msg("failed to persist asset filters")
-				}
-			})
-		}
+		// Always install the filter-capture hook on the SQLite datalake path —
+		// filter code_ids are tiny and we want them in every scan db so any
+		// downstream replay can call ResolveAndUpdateJobs without re-deriving
+		// them.
+		scanCtx := scandb.WithFilterCapture(ctx, func(codeIDs []string) {
+			if err := scanDataStore.WriteAssetFilters(context.Background(), codeIDs); err != nil {
+				log.Warn().Err(err).Msg("failed to persist asset filters")
+			}
+		})
 
 		_, ls, err := inmemory.NewServices(runtime, inmemory.WithDataWriter(scandb.NewScanDataStoreWrapper(scanDataStore, assetMrn)))
 
@@ -102,11 +112,11 @@ func WithServices(ctx context.Context, runtime llx.Runtime, asset *inventory.Ass
 	return nil
 }
 
-func withSqliteDataStore(assetMrn string, f func(scanDataStore *scandb.SqliteScanDataStore) error) error {
-	// When SetOutputDir is configured, write the scan db to that directory and
-	// keep it after upload — used by `cnspec scan --output-scan-db` to capture
-	// seeds for the loadtest tool. Otherwise create a temp file we delete.
-	dir := outputDir
+func withSqliteDataStore(ctx context.Context, assetMrn string, f func(scanDataStore *scandb.SqliteScanDataStore) error) error {
+	// When the scan ctx carries an output dir (set via WithOutputDir from the
+	// `cnspec scan --output-scan-db` flag), write the scan db there and keep
+	// it after upload. Otherwise create a temp file we delete.
+	dir := outputDirFromCtx(ctx)
 	keep := dir != ""
 	if keep {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
