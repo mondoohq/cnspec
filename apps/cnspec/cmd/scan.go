@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"go.mondoo.com/cnspec/v13/cli/reporter"
+	"go.mondoo.com/cnspec/v13/internal/datalakes/sqlite"
 	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/cnspec/v13/policy/scan"
 	"go.mondoo.com/mql/v13"
@@ -80,6 +81,8 @@ func init() {
 	_ = scanCmd.Flags().Int("risk-threshold", reporter.DEFAULT_RISK_THRESHOLD, "Set the risk threshold. Exit with status 1 if any risk meets or exceeds this value")
 	_ = scanCmd.Flags().String("output-target", "", "Set the output target for the asset report. Currently only supports AWS SQS topic URLs and local files")
 	_ = scanCmd.Flags().Int("parallelism", 1, "Set the number of assets to scan in parallel. A value of 0 or 1 means sequential")
+	_ = scanCmd.Flags().String("output-scan-db", "", "Save each asset's scan database (SQLite) to this directory in addition to uploading. Used to capture seeds for the cnspec loadtest tool")
+	_ = scanCmd.Flags().MarkHidden("output-scan-db")
 }
 
 var scanCmd = &cobra.Command{
@@ -139,6 +142,7 @@ To manually configure a policy, use this:
 		_ = viper.BindPFlag("output", cmd.Flags().Lookup("output"))
 		_ = viper.BindPFlag("output-target", cmd.Flags().Lookup("output-target"))
 		_ = viper.BindPFlag("parallelism", cmd.Flags().Lookup("parallelism"))
+		_ = viper.BindPFlag("output-scan-db", cmd.Flags().Lookup("output-scan-db"))
 	},
 	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		if len(args) == 0 {
@@ -152,6 +156,7 @@ To manually configure a policy, use this:
 
 var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *plugin.ParseCLIRes) {
 	ctx := context.Background()
+
 	conf, err := getCobraScanConfig(cmd, runtime, cliRes)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to prepare config")
@@ -214,6 +219,7 @@ type scanConfig struct {
 	ReportType   scan.ReportType
 	OutputTarget string
 	OutputFormat string
+	OutputScanDB string
 	PolicyPaths  []string
 	PolicyNames  []string
 	Props        map[string]string
@@ -291,8 +297,16 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 		reportType = scan.ReportType_NONE
 	}
 
+	features := opts.GetFeatures()
+	// --output-scan-db requires the SQLite scan-db datalake (UploadResultsV2);
+	// turn it on automatically so users don't have to know about the feature flag.
+	if viper.GetString("output-scan-db") != "" && !features.IsActive(mql.UploadResultsV2) {
+		features = append(features, byte(mql.UploadResultsV2))
+		log.Info().Msg("--output-scan-db: enabling UploadResultsV2 feature so the scan database is produced")
+	}
+
 	conf := scanConfig{
-		Features:      opts.GetFeatures(),
+		Features:      features,
 		IsIncognito:   viper.GetBool("incognito"),
 		Inventory:     inv,
 		ReportType:    reportType,
@@ -303,6 +317,7 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 		runtime:       runtime,
 		AgentMrn:      opts.AgentMrn,
 		OutputTarget:  viper.GetString("output-target"),
+		OutputScanDB:  viper.GetString("output-scan-db"),
 		Parallelism:   viper.GetInt("parallelism"),
 	}
 
@@ -442,6 +457,9 @@ func RunScan(config *scanConfig, scannerOpts ...scan.ScannerOption) (*policy.Rep
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	ctx = mql.SetFeatures(ctx, config.Features)
+	// Carry --output-scan-db through ctx so the SQLite datalake knows where
+	// to keep the captured scan db. No-op when the flag isn't set.
+	ctx = sqlite.WithOutputDir(ctx, config.OutputScanDB)
 
 	var res *scan.ScanResult
 	var err error

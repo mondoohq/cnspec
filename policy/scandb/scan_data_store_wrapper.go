@@ -133,3 +133,31 @@ func (w *ScanDataStoreWrapper) StreamRisks(ctx context.Context, assetMrn string,
 func (w *ScanDataStoreWrapper) Finalize() (string, error) {
 	return w.store.Finalize()
 }
+
+// SetAssetFilters records the code_ids of the filters the scanner sent to
+// ResolveAndUpdateJobs into the scan database. Verifies the asset MRN
+// matches and pulls just the code_ids from the proto — no MQL/text is
+// persisted, since downstream replay can recover the filter from its
+// code_id alone.
+func (w *ScanDataStoreWrapper) SetAssetFilters(ctx context.Context, assetMrn string, filters *policy.Mqueries) error {
+	if err := w.validate(assetMrn); err != nil {
+		return err
+	}
+	if filters == nil {
+		return nil
+	}
+	codeIDs := make([]string, 0, len(filters.Items))
+	for _, f := range filters.Items {
+		if f.CodeId != "" {
+			codeIDs = append(codeIDs, f.CodeId)
+		}
+	}
+	if len(codeIDs) == 0 {
+		return nil
+	}
+	store, ok := w.store.(*SqliteScanDataStore)
+	if !ok {
+		return nil
+	}
+	return store.WriteAssetFilters(ctx, codeIDs)
+}

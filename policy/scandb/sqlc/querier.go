@@ -9,12 +9,17 @@ import (
 )
 
 type Querier interface {
+	GetAsset(ctx context.Context) ([]byte, error)
 	GetData(ctx context.Context, codeID string) ([]byte, error)
 	GetMetadata(ctx context.Context) ([]Metadata, error)
 	GetMetadataByKey(ctx context.Context, key string) (string, error)
 	GetResource(ctx context.Context, arg GetResourceParams) ([]byte, error)
 	GetRiskFactor(ctx context.Context, mrn string) (ScoredRiskFactor, error)
 	GetScore(ctx context.Context, qrID string) (Score, error)
+	// Asset operations (added in schema 1.1)
+	InsertAsset(ctx context.Context, data []byte) error
+	// Asset filter code_id operations (added in schema 1.1)
+	InsertAssetFilter(ctx context.Context, codeID string) error
 	// Data operations
 	InsertData(ctx context.Context, arg InsertDataParams) error
 	// Copyright Mondoo, Inc. 2024, 2026
@@ -27,6 +32,7 @@ type Querier interface {
 	InsertRiskFactor(ctx context.Context, arg InsertRiskFactorParams) error
 	// Scores operations
 	InsertScore(ctx context.Context, arg InsertScoreParams) error
+	StreamAssetFilters(ctx context.Context) ([]string, error)
 	StreamData(ctx context.Context) ([]Datum, error)
 	StreamResources(ctx context.Context) ([]Resource, error)
 	StreamRiskFactors(ctx context.Context) ([]ScoredRiskFactor, error)

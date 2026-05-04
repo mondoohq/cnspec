@@ -7,3 +7,5 @@ import "github.com/cockroachdb/errors"
 
 var ErrRiskNotFound = errors.New("risk not found")
 var ErrResourceNotFound = errors.New("resource not found")
+var ErrAssetNotFound = errors.New("asset not found")
+var ErrAssetFiltersNotFound = errors.New("asset filters not found")

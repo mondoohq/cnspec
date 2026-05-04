@@ -10,6 +10,7 @@ import (
 
 	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/mql/v13/llx"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream"
 )
 
@@ -32,6 +33,11 @@ type DataStore interface {
 	GetRisk(ctx context.Context, assetMrn string, riskMrn string) (*policy.ScoredRiskFactor, error)
 	StreamRisks(ctx context.Context, assetMrn string, f func(risk *policy.ScoredRiskFactor) error) error
 	WriteResource(ctx context.Context, assetMrn string, resource *llx.ResourceRecording) error
+	// SetAssetFilters records the asset filters the scanner sent to
+	// ResolveAndUpdateJobs. The default in-memory cache treats it as a
+	// no-op; the SQLite scandb wrapper persists the code_ids so a
+	// captured scan db carries enough state for offline replay.
+	SetAssetFilters(ctx context.Context, assetMrn string, filters *policy.Mqueries) error
 }
 
 type cacheDataWriter struct {
@@ -114,6 +120,12 @@ func (n *cacheDataWriter) StreamRisks(ctx context.Context, assetMrn string, f fu
 	return nil
 }
 
+// SetAssetFilters is a no-op for the cache writer — filter capture is only
+// useful when the scan database is being persisted (i.e. the scandb wrapper).
+func (n *cacheDataWriter) SetAssetFilters(_ context.Context, _ string, _ *policy.Mqueries) error {
+	return nil
+}
+
 func (n *cacheDataWriter) WriteResource(ctx context.Context, assetMrn string, resource *llx.ResourceRecording) error {
 	return nil
 }
@@ -148,7 +160,7 @@ func NewServices(runtime llx.Runtime, opts ...ServiceOpt) (*Db, *policy.LocalSer
 	return db, services, nil
 }
 
-func WithServices(ctx context.Context, runtime llx.Runtime, assetMrn string, upstreamClient *upstream.UpstreamClient, f func(*policy.LocalServices) error) error {
+func WithServices(ctx context.Context, runtime llx.Runtime, asset *inventory.Asset, upstreamClient *upstream.UpstreamClient, f func(context.Context, *policy.LocalServices) error) error {
 	_, ls, err := NewServices(runtime)
 	if err != nil {
 		return err
@@ -165,7 +177,7 @@ func WithServices(ctx context.Context, runtime llx.Runtime, assetMrn string, ups
 
 	ls.Upstream = upstream
 
-	return f(ls)
+	return f(ctx, ls)
 }
 
 // Prefixes for all keys that are stored in the cache.
@@ -185,6 +197,18 @@ const (
 	dbIDFramework      = "f\x00"
 	dbIDFrameworkMap   = "fm\x00"
 )
+
+// SetAssetFilters delegates filter capture to the underlying writer. The
+// default in-memory cache is a no-op; the scandb wrapper persists code_ids
+// for offline replay. Exposed on Db so callers reaching the DataLake via
+// LocalServices can type-assert this method without depending on the
+// inmemory package directly.
+func (db *Db) SetAssetFilters(ctx context.Context, assetMrn string, filters *policy.Mqueries) error {
+	if db.writer == nil {
+		return nil
+	}
+	return db.writer.SetAssetFilters(ctx, assetMrn, filters)
+}
 
 func (db *Db) SetNowProvider(f func() time.Time) {
 	db.nowProvider = f

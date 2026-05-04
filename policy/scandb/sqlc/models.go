@@ -8,6 +8,15 @@ import (
 	"database/sql"
 )
 
+type Asset struct {
+	ID   int64  `json:"id"`
+	Data []byte `json:"data"`
+}
+
+type AssetFilter struct {
+	CodeID string `json:"code_id"`
+}
+
 type Datum struct {
 	CodeID string `json:"code_id"`
 	Data   []byte `json:"data"`

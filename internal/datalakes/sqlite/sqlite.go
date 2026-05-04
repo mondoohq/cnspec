@@ -18,12 +18,49 @@ import (
 	"go.mondoo.com/cnspec/v13/policy/scandb"
 	"go.mondoo.com/cnspec/v13/upload"
 	"go.mondoo.com/mql/v13/llx"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/health"
 )
 
-func WithServices(ctx context.Context, runtime llx.Runtime, assetMrn string, upstreamClient *upstream.UpstreamClient, f func(*policy.LocalServices) error) error {
-	err := withSqliteDataStore(assetMrn, func(scanDataStore scandb.ScanDataStore) error {
+// outputDirCtxKey is the unexported key used to thread the
+// `cnspec scan --output-scan-db` directory through the scan ctx so the
+// SQLite datalake knows where to keep the captured scan database. Set on
+// the scan command's ctx via WithOutputDir; consumed inside withSqliteDataStore.
+type outputDirCtxKey struct{}
+
+// WithOutputDir returns a copy of ctx that, when threaded through the scan
+// pipeline into WithServices, makes the SQLite datalake write its scan
+// database to dir and keep it after upload (instead of using a temp file
+// that gets deleted). Pass "" to restore the default behavior.
+func WithOutputDir(ctx context.Context, dir string) context.Context {
+	if dir == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, outputDirCtxKey{}, dir)
+}
+
+func outputDirFromCtx(ctx context.Context) string {
+	if v, ok := ctx.Value(outputDirCtxKey{}).(string); ok {
+		return v
+	}
+	return ""
+}
+
+func WithServices(ctx context.Context, runtime llx.Runtime, asset *inventory.Asset, upstreamClient *upstream.UpstreamClient, f func(context.Context, *policy.LocalServices) error) error {
+	assetMrn := ""
+	if asset != nil {
+		assetMrn = asset.Mrn
+	}
+	err := withSqliteDataStore(ctx, assetMrn, func(scanDataStore *scandb.SqliteScanDataStore) error {
+		// Persist the inventory.Asset proto so the scan database is self-contained
+		// (consumed by the cnspec loadtest tool to replay against SynchronizeAssets).
+		if asset != nil {
+			if err := scanDataStore.WriteAsset(ctx, asset); err != nil {
+				log.Warn().Err(err).Msg("failed to persist asset to scan data store")
+			}
+		}
+
 		_, ls, err := inmemory.NewServices(runtime, inmemory.WithDataWriter(scandb.NewScanDataStoreWrapper(scanDataStore, assetMrn)))
 
 		if err != nil {
@@ -43,7 +80,7 @@ func WithServices(ctx context.Context, runtime llx.Runtime, assetMrn string, ups
 		}
 
 		ls.Upstream = upstream
-		if err := f(ls); err != nil {
+		if err := f(ctx, ls); err != nil {
 			return err
 		}
 
@@ -65,15 +102,30 @@ func WithServices(ctx context.Context, runtime llx.Runtime, assetMrn string, ups
 	return nil
 }
 
-func withSqliteDataStore(assetMrn string, f func(scanDataStore scandb.ScanDataStore) error) error {
-	// create a temporary file for the scan data store
-	tmpFile, err := os.CreateTemp("", "cnspec-scan-*.db")
+func withSqliteDataStore(ctx context.Context, assetMrn string, f func(scanDataStore *scandb.SqliteScanDataStore) error) error {
+	// When the scan ctx carries an output dir (set via WithOutputDir from the
+	// `cnspec scan --output-scan-db` flag), write the scan db there and keep
+	// it after upload. Otherwise create a temp file we delete.
+	dir := outputDirFromCtx(ctx)
+	keep := dir != ""
+	if keep {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			log.Error().Err(err).Str("dir", dir).Msg("failed to create scan-db output directory")
+			return err
+		}
+	}
+
+	tmpFile, err := os.CreateTemp(dir, "cnspec-scan-*.db")
 	if err != nil {
-		log.Error().Err(err).Msg("failed to create temporary file for scan data store")
+		log.Error().Err(err).Msg("failed to create file for scan data store")
 		return err
 	}
 	tmpFile.Close() // nolint: errcheck
 	defer func() {
+		if keep {
+			log.Info().Str("path", tmpFile.Name()).Msg("scan database saved")
+			return
+		}
 		if err := os.Remove(tmpFile.Name()); err != nil {
 			log.Warn().Err(err).Msg("failed to remove temporary scan data store file")
 		}

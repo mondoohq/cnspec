@@ -10,6 +10,17 @@ import (
 	"database/sql"
 )
 
+const getAsset = `-- name: GetAsset :one
+SELECT data FROM asset WHERE id = 0
+`
+
+func (q *Queries) GetAsset(ctx context.Context) ([]byte, error) {
+	row := q.queryRow(ctx, q.getAssetStmt, getAsset)
+	var data []byte
+	err := row.Scan(&data)
+	return data, err
+}
+
 const getData = `-- name: GetData :one
 SELECT data FROM data WHERE code_id = ?
 `
@@ -111,6 +122,26 @@ func (q *Queries) GetScore(ctx context.Context, qrID string) (Score, error) {
 		&i.Sources,
 	)
 	return i, err
+}
+
+const insertAsset = `-- name: InsertAsset :exec
+INSERT OR REPLACE INTO asset (id, data) VALUES (0, ?)
+`
+
+// Asset operations (added in schema 1.1)
+func (q *Queries) InsertAsset(ctx context.Context, data []byte) error {
+	_, err := q.exec(ctx, q.insertAssetStmt, insertAsset, data)
+	return err
+}
+
+const insertAssetFilter = `-- name: InsertAssetFilter :exec
+INSERT OR REPLACE INTO asset_filters (code_id) VALUES (?)
+`
+
+// Asset filter code_id operations (added in schema 1.1)
+func (q *Queries) InsertAssetFilter(ctx context.Context, codeID string) error {
+	_, err := q.exec(ctx, q.insertAssetFilterStmt, insertAssetFilter, codeID)
+	return err
 }
 
 const insertData = `-- name: InsertData :exec
@@ -215,6 +246,33 @@ func (q *Queries) InsertScore(ctx context.Context, arg InsertScoreParams) error 
 		arg.Sources,
 	)
 	return err
+}
+
+const streamAssetFilters = `-- name: StreamAssetFilters :many
+SELECT code_id FROM asset_filters ORDER BY code_id
+`
+
+func (q *Queries) StreamAssetFilters(ctx context.Context) ([]string, error) {
+	rows, err := q.query(ctx, q.streamAssetFiltersStmt, streamAssetFilters)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var code_id string
+		if err := rows.Scan(&code_id); err != nil {
+			return nil, err
+		}
+		items = append(items, code_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const streamData = `-- name: StreamData :many

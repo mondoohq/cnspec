@@ -763,7 +763,11 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 		}
 	}
 
-	runtimeErr := WithServices(job.Ctx, s.runtime, job.Asset.Mrn, client, func(services *policy.LocalServices) error {
+	runtimeErr := WithServices(job.Ctx, s.runtime, job.Asset, client, func(ctx context.Context, services *policy.LocalServices) error {
+		// Adopt the ctx returned from WithServices so any values the datalake
+		// stack injected (e.g. sqlite.WithOutputDir for --output-scan-db)
+		// flow into runPolicy via job.Ctx.
+		job.Ctx = ctx
 		scanner := &localAssetScanner{
 			services:         services,
 			job:              job,
@@ -1182,6 +1186,12 @@ func (s *localAssetScanner) runPolicy() (*policy.ResolvedPolicy, error) {
 	logger.DebugJSON(filters)
 	logger.DebugDumpYAML("assetFilters", filters)
 
+	// Surface the filters to the datalake so persistent stores (e.g. the
+	// SQLite scandb) can record them. Server-side datalakes can no-op.
+	if err := s.services.DataLake.SetAssetFilters(s.job.Ctx, s.job.Asset.Mrn, &policy.Mqueries{Items: filters}); err != nil {
+		log.Warn().Err(err).Msg("failed to capture asset filters")
+	}
+
 	resolvedPolicy, err := resolver.ResolveAndUpdateJobs(s.job.Ctx, &policy.UpdateAssetJobsReq{
 		AssetMrn:     s.job.Asset.Mrn,
 		AssetFilters: filters,
@@ -1282,14 +1292,14 @@ func sendErrorToMondooPlatform(serviceAccount *upstream.ServiceAccountCredential
 	}
 }
 
-func WithServices(ctx context.Context, runtime llx.Runtime, assetMrn string, upstreamClient *upstream.UpstreamClient, f func(*policy.LocalServices) error) error {
-	var withServicesFunc func(context.Context, llx.Runtime, string, *upstream.UpstreamClient, func(*policy.LocalServices) error) error
+func WithServices(ctx context.Context, runtime llx.Runtime, asset *inventory.Asset, upstreamClient *upstream.UpstreamClient, f func(context.Context, *policy.LocalServices) error) error {
+	var withServicesFunc func(context.Context, llx.Runtime, *inventory.Asset, *upstream.UpstreamClient, func(context.Context, *policy.LocalServices) error) error
 	if mql.IsFeatureActive(ctx, mql.UploadResultsV2) {
 		withServicesFunc = sqlite.WithServices
 	} else {
 		withServicesFunc = inmemory.WithServices
 	}
-	return withServicesFunc(ctx, runtime, assetMrn, upstreamClient, f)
+	return withServicesFunc(ctx, runtime, asset, upstreamClient, f)
 }
 
 func mustCompile(code string) *llx.CodeBundle {
