@@ -5,8 +5,8 @@ package bundle
 
 import (
 	"fmt"
+	"sort"
 
-	"go.mondoo.com/mql/v13/llx"
 	"go.mondoo.com/mql/v13/mqlc"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/resources"
 )
@@ -57,99 +57,66 @@ func walkQueryForDeprecatedSymbols(schema resources.ResourcesSchema, conf mqlc.C
 		return nil
 	}
 
-	bundle, err := mqlc.Compile(q.Mql, mqlc.EmptyPropsHandler, conf)
-	if err != nil || bundle == nil || bundle.CodeV2 == nil {
+	usage, _, err := mqlc.AnalyzeQuery(q.Mql, mqlc.EmptyPropsHandler, conf)
+	if err != nil || usage == nil {
 		return nil
 	}
 
-	seen := map[string]struct{}{}
-	var entries []*Entry
-	emit := func(symbol, message string) {
-		if _, ok := seen[symbol]; ok {
-			return
-		}
-		seen[symbol] = struct{}{}
-		entries = append(entries, &Entry{
-			RuleID:  QueryDeprecatedSymbolRuleID,
-			Level:   LevelWarning,
-			Message: message,
-			Location: []Location{{
-				File:   filename,
-				Line:   q.FileContext.Line,
-				Column: q.FileContext.Column,
-			}},
-		})
-	}
+	loc := []Location{{File: filename, Line: q.FileContext.Line, Column: q.FileContext.Column}}
+	display := queryDisplayID(q)
 
-	code := bundle.CodeV2
-	for _, block := range code.Blocks {
-		for _, chunk := range block.Chunks {
-			if chunk == nil || chunk.Call != llx.Chunk_FUNCTION || chunk.Id == "" {
+	// Sort for stable output across runs.
+	providerIDs := make([]string, 0, len(usage.Providers))
+	for id := range usage.Providers {
+		providerIDs = append(providerIDs, id)
+	}
+	sort.Strings(providerIDs)
+
+	var entries []*Entry
+	for _, pid := range providerIDs {
+		pu := usage.Providers[pid]
+		resourceNames := make([]string, 0, len(pu.Resources))
+		for name := range pu.Resources {
+			resourceNames = append(resourceNames, name)
+		}
+		sort.Strings(resourceNames)
+
+		for _, rname := range resourceNames {
+			ru := pu.Resources[rname]
+			if ru.Maturity == resources.MaturityDeprecated {
+				entries = append(entries, &Entry{
+					RuleID:   QueryDeprecatedSymbolRuleID,
+					Level:    LevelWarning,
+					Message:  fmt.Sprintf("query '%s' uses deprecated resource '%s'", display, rname),
+					Location: loc,
+				})
+				// Skip field warnings on a deprecated resource — every field
+				// inherits the deprecated effective maturity, which would
+				// drown the resource-level warning in noise.
 				continue
 			}
 
-			// A bare resource access (e.g. `processes`) is emitted as a FUNCTION
-			// chunk with Function == nil. A resource initialized with arguments
-			// (e.g. `file('/etc/passwd')`) is a FUNCTION chunk with Function set
-			// and Binding == 0.
-			if chunk.Function == nil || chunk.Function.Binding == 0 {
-				resource := schema.Lookup(chunk.Id)
-				if resource == nil {
+			fieldNames := make([]string, 0, len(ru.Fields))
+			for name := range ru.Fields {
+				fieldNames = append(fieldNames, name)
+			}
+			sort.Strings(fieldNames)
+
+			for _, fname := range fieldNames {
+				if ru.Fields[fname].EffectiveMaturity != resources.MaturityDeprecated {
 					continue
 				}
-				if resource.GetMaturity() == resources.MaturityDeprecated {
-					emit("resource:"+chunk.Id,
-						fmt.Sprintf("query '%s' uses deprecated resource '%s'", queryDisplayID(q), chunk.Id))
-				}
-				continue
-			}
-
-			parentName := bindingResourceName(code, chunk.Function.Binding)
-			if parentName == "" {
-				continue
-			}
-			resource, field := schema.LookupField(parentName, chunk.Id)
-			if resource == nil || field == nil {
-				continue
-			}
-			if resources.EffectiveFieldMaturity(resource, field) == resources.MaturityDeprecated {
-				emit("field:"+parentName+"."+chunk.Id,
-					fmt.Sprintf("query '%s' uses deprecated field '%s.%s'", queryDisplayID(q), parentName, chunk.Id))
+				entries = append(entries, &Entry{
+					RuleID:   QueryDeprecatedSymbolRuleID,
+					Level:    LevelWarning,
+					Message:  fmt.Sprintf("query '%s' uses deprecated field '%s.%s'", display, rname, fname),
+					Location: loc,
+				})
 			}
 		}
 	}
 
 	return entries
-}
-
-// bindingResourceName resolves the resource name returned by the chunk that a
-// function call is bound to. Returns "" if the binding does not resolve to a
-// resource type (e.g. a builtin operating on a primitive, or a block parameter).
-func bindingResourceName(code *llx.CodeV2, ref uint64) string {
-	if ref == 0 {
-		return ""
-	}
-	blockIdx := int(ref>>32) - 1
-	if blockIdx < 0 || blockIdx >= len(code.Blocks) {
-		return ""
-	}
-	block := code.Blocks[blockIdx]
-	chunkIdx := int(uint32(ref)) - 1
-	if chunkIdx < 0 || chunkIdx >= len(block.Chunks) {
-		return ""
-	}
-	chunk := block.Chunks[chunkIdx]
-	if chunk == nil {
-		return ""
-	}
-	typ := chunk.Type()
-	for typ.IsArray() || typ.IsMap() {
-		typ = typ.Child()
-	}
-	if !typ.IsResource() {
-		return ""
-	}
-	return typ.ResourceName()
 }
 
 func queryDisplayID(q *Mquery) string {
