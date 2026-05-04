@@ -61,16 +61,6 @@ func WithServices(ctx context.Context, runtime llx.Runtime, asset *inventory.Ass
 			}
 		}
 
-		// Always install the filter-capture hook on the SQLite datalake path —
-		// filter code_ids are tiny and we want them in every scan db so any
-		// downstream replay can call ResolveAndUpdateJobs without re-deriving
-		// them.
-		scanCtx := scandb.WithFilterCapture(ctx, func(codeIDs []string) {
-			if err := scanDataStore.WriteAssetFilters(context.Background(), codeIDs); err != nil {
-				log.Warn().Err(err).Msg("failed to persist asset filters")
-			}
-		})
-
 		_, ls, err := inmemory.NewServices(runtime, inmemory.WithDataWriter(scandb.NewScanDataStoreWrapper(scanDataStore, assetMrn)))
 
 		if err != nil {
@@ -90,7 +80,7 @@ func WithServices(ctx context.Context, runtime llx.Runtime, asset *inventory.Ass
 		}
 
 		ls.Upstream = upstream
-		if err := f(scanCtx, ls); err != nil {
+		if err := f(ctx, ls); err != nil {
 			return err
 		}
 

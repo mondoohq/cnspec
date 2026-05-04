@@ -24,7 +24,6 @@ import (
 	"go.mondoo.com/cnspec/v13/internal/datalakes/sqlite"
 	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/cnspec/v13/policy/executor"
-	"go.mondoo.com/cnspec/v13/policy/scandb"
 	"go.mondoo.com/mql/v13"
 	"go.mondoo.com/mql/v13/cli/config"
 	"go.mondoo.com/mql/v13/cli/execruntime"
@@ -1187,16 +1186,18 @@ func (s *localAssetScanner) runPolicy() (*policy.ResolvedPolicy, error) {
 	logger.DebugJSON(filters)
 	logger.DebugDumpYAML("assetFilters", filters)
 
-	// Surface the filter code_ids to the scan datalake. No-op when the hook
-	// isn't installed (e.g. inmemory datalake). The server can re-resolve a
-	// filter from its code_id alone, so we don't need to ship the MQL.
-	filterCodeIDs := make([]string, 0, len(filters))
-	for _, f := range filters {
-		if f.CodeId != "" {
-			filterCodeIDs = append(filterCodeIDs, f.CodeId)
+	// Surface the filters to the datalake so persistent stores (e.g. the
+	// SQLite scandb) can record them. The cache writer treats this as a
+	// no-op. Type-asserted so we don't have to expand the public DataLake
+	// interface — keeps downstream implementors unaffected.
+	type assetFiltersWriter interface {
+		SetAssetFilters(ctx context.Context, assetMrn string, filters *policy.Mqueries) error
+	}
+	if w, ok := s.services.DataLake.(assetFiltersWriter); ok {
+		if err := w.SetAssetFilters(s.job.Ctx, s.job.Asset.Mrn, &policy.Mqueries{Items: filters}); err != nil {
+			log.Warn().Err(err).Msg("failed to capture asset filters")
 		}
 	}
-	scandb.CaptureFilters(s.job.Ctx, filterCodeIDs)
 
 	resolvedPolicy, err := resolver.ResolveAndUpdateJobs(s.job.Ctx, &policy.UpdateAssetJobsReq{
 		AssetMrn:     s.job.Asset.Mrn,
