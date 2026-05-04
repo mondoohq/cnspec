@@ -128,8 +128,9 @@ func LintPolicyBundle(schema resources.ResourcesSchema, filename string, data []
 		ctx := context.Background()
 		features := mql.DefaultFeatures
 		features = append(features, byte(mql.FailIfNoEntryPoints))
+		compilerConfig := mqlc.NewConfig(schema, features)
 		cfg := policy.BundleCompileConf{
-			CompilerConfig: mqlc.NewConfig(schema, features),
+			CompilerConfig: compilerConfig,
 		}
 		_, compileErr := policyBundleForCompilation.CompileExt(ctx, cfg)
 		if compileErr != nil {
@@ -146,6 +147,8 @@ func LintPolicyBundle(schema resources.ResourcesSchema, filename string, data []
 				Location: locs,
 			})
 		}
+
+		aggregatedEntries = append(aggregatedEntries, lintDeprecatedSymbols(schema, compilerConfig, filename, policyBundle)...)
 	}
 
 	aggregatedEntries = append(aggregatedEntries, lintParsedBundle(schema, filename, policyBundle)...)

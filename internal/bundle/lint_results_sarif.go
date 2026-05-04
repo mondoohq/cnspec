@@ -87,6 +87,11 @@ func sarifLinterRules() []Rule {
 		Name:        "Query UID uniqueness",
 		Description: "Query UID must be unique within the file",
 	})
+	rules = append(rules, Rule{
+		ID:          QueryDeprecatedSymbolRuleID,
+		Name:        "Query uses deprecated MQL symbol",
+		Description: "Query references a resource or field annotated with @maturity('deprecated')",
+	})
 
 	return rules
 }
