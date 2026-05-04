@@ -1187,16 +1187,9 @@ func (s *localAssetScanner) runPolicy() (*policy.ResolvedPolicy, error) {
 	logger.DebugDumpYAML("assetFilters", filters)
 
 	// Surface the filters to the datalake so persistent stores (e.g. the
-	// SQLite scandb) can record them. The cache writer treats this as a
-	// no-op. Type-asserted so we don't have to expand the public DataLake
-	// interface — keeps downstream implementors unaffected.
-	type assetFiltersWriter interface {
-		SetAssetFilters(ctx context.Context, assetMrn string, filters *policy.Mqueries) error
-	}
-	if w, ok := s.services.DataLake.(assetFiltersWriter); ok {
-		if err := w.SetAssetFilters(s.job.Ctx, s.job.Asset.Mrn, &policy.Mqueries{Items: filters}); err != nil {
-			log.Warn().Err(err).Msg("failed to capture asset filters")
-		}
+	// SQLite scandb) can record them. Server-side datalakes can no-op.
+	if err := s.services.DataLake.SetAssetFilters(s.job.Ctx, s.job.Asset.Mrn, &policy.Mqueries{Items: filters}); err != nil {
+		log.Warn().Err(err).Msg("failed to capture asset filters")
 	}
 
 	resolvedPolicy, err := resolver.ResolveAndUpdateJobs(s.job.Ctx, &policy.UpdateAssetJobsReq{

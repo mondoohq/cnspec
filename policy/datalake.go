@@ -106,4 +106,12 @@ type DataLake interface {
 
 	// EnsureAsset makes sure an asset with mrn exists
 	EnsureAsset(ctx context.Context, mrn string) error
+
+	// SetAssetFilters records the asset filters the scanner sent to
+	// ResolveAndUpdateJobs for assetMrn. Implementations that don't need
+	// to retain this (e.g. the server's persistent datalake) can return nil.
+	// The cnspec client-side datalake persists the filter code_ids when a
+	// scan database is being captured, so offline replay can call
+	// ResolveAndUpdateJobs without re-deriving the filter set.
+	SetAssetFilters(ctx context.Context, assetMrn string, filters *Mqueries) error
 }
