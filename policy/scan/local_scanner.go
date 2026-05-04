@@ -765,7 +765,7 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 
 	runtimeErr := WithServices(job.Ctx, s.runtime, job.Asset, client, func(ctx context.Context, services *policy.LocalServices) error {
 		// Adopt the ctx returned from WithServices so any values the datalake
-		// stack injected (e.g. scandb.WithFilterCapture for --output-scan-db)
+		// stack injected (e.g. sqlite.WithOutputDir for --output-scan-db)
 		// flow into runPolicy via job.Ctx.
 		job.Ctx = ctx
 		scanner := &localAssetScanner{

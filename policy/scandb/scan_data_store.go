@@ -9,6 +9,7 @@ import (
 	"context"
 	"database/sql"
 	_ "embed"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -408,7 +409,7 @@ func (s *SqliteScanDataStore) StreamData(ctx context.Context, callback func(stri
 func (s *SqliteScanDataStore) GetScore(ctx context.Context, qrId string) (*policy.Score, error) {
 	scoreRow, err := s.queries.GetScore(ctx, qrId)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("score not found: %s", qrId)
 		}
 		return nil, fmt.Errorf("failed to get score: %w", err)
@@ -421,7 +422,7 @@ func (s *SqliteScanDataStore) GetScore(ctx context.Context, qrId string) (*polic
 func (s *SqliteScanDataStore) GetData(ctx context.Context, codeId string) (*llx.Result, error) {
 	data, err := s.queries.GetData(ctx, codeId)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("data not found: %s", codeId)
 		}
 		return nil, fmt.Errorf("failed to get data: %w", err)
@@ -439,7 +440,7 @@ func (s *SqliteScanDataStore) GetData(ctx context.Context, codeId string) (*llx.
 func (s *SqliteScanDataStore) GetRisk(ctx context.Context, mrn string) (*policy.ScoredRiskFactor, error) {
 	riskRow, err := s.queries.GetRiskFactor(ctx, mrn)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, policy.ErrRiskNotFound
 		}
 		return nil, fmt.Errorf("failed to get risk: %w", err)
@@ -482,7 +483,7 @@ func (s *SqliteScanDataStore) StreamRisks(ctx context.Context, callback func(*po
 func (s *SqliteScanDataStore) GetAsset(ctx context.Context) (*inventory.Asset, error) {
 	data, err := s.queries.GetAsset(ctx)
 	if err != nil {
-		if err == sql.ErrNoRows || isMissingAssetTable(err) {
+		if errors.Is(err, sql.ErrNoRows) || isMissingAssetTable(err) {
 			return nil, policy.ErrAssetNotFound
 		}
 		return nil, fmt.Errorf("failed to get asset: %w", err)
@@ -509,7 +510,7 @@ func (s *SqliteScanDataStore) GetResource(ctx context.Context, resource string, 
 		ID:   id,
 	})
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, policy.ErrResourceNotFound
 		}
 		return nil, fmt.Errorf("failed to get resource: %w", err)
