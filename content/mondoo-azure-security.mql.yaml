@@ -100,6 +100,10 @@ policies:
           - uid: mondoo-azure-security-sql-audit-retention-90-days
           - uid: mondoo-azure-security-sql-threat-alert-emails-configured
           - uid: mondoo-azure-security-sql-threat-detection-types-configured
+          - uid: mondoo-azure-security-sql-server-audit-destination-configured
+          - uid: mondoo-azure-security-sql-database-audit-on
+          - uid: mondoo-azure-security-sql-server-devops-auditing-enabled
+          - uid: mondoo-azure-security-mysql-flexible-geo-backup-cmk
       - title: Azure Key Vault
         checks:
           - uid: mondoo-azure-security-ensure-the-expiration-date-is-set-for-all-keys-and-secrets-in-kv
@@ -22438,7 +22442,10 @@ queries:
     filters: |
       asset.platform == "azure-sql-server"
     mql: |
-      azure.subscription.sql.server.encryptionProtectorServerKeyType == "AzureKeyVault"
+      azure.subscription.sql.server.encryptionProtectorConfig.serverKeyType == "AzureKeyVault"
+      azure.subscription.sql.server.encryptionProtectorConfig.key != null
+      azure.subscription.sql.server.encryptionProtectorConfig.key.expires == null ||
+        azure.subscription.sql.server.encryptionProtectorConfig.key.expires > time.now
   - uid: mondoo-azure-security-sql-tde-cmk-encryption-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_mssql_server_transparent_data_encryption")
     mql: |
@@ -32546,4 +32553,539 @@ queries:
     mql: |
       azure.subscription.frontDoor.profiles.all(
         originGroups.all(origins.all(httpPort == 0))
+      )
+  - uid: mondoo-azure-security-sql-server-audit-destination-configured
+    title: Ensure Azure SQL Server auditing has a log destination configured
+    impact: 70
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
+      compliance/dora: dora-art-10
+      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
+      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-de-cm-1
+      compliance/nist-csf-2: nist-csf-2-de-cm-09
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/pci-dss-4: pcidss-requirement-10-2-1
+      compliance/soc2-2017: soc2-control-cc7-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-4
+    variants:
+      - uid: mondoo-azure-security-sql-server-audit-destination-configured-azure
+        tags:
+          mondoo.com/filter-title: Azure SQL Server
+          mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-sql-server-audit-destination-configured-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-sql-server-audit-destination-configured-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-sql-server-audit-destination-configured-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Azure SQL Server auditing is enabled and configured to send logs to a retained destination — either an Azure Storage account or Log Analytics / Event Hub via Azure Monitor. Auditing with no destination produces no useful evidence: events are generated but never persisted for review.
+
+        **Why this matters**
+
+        - **Audit evidence**: Without a configured destination, audit events are dropped. A "state: Enabled" policy with no storage endpoint and no Azure Monitor target produces zero retrievable logs.
+        - **Compliance alignment**: Frameworks that require database activity logging assume the logs are actually retained. A misconfigured policy fails the underlying control even when the toggle reads as enabled.
+        - **Incident response**: Investigators need historical audit data. A destination must be configured before an incident, not after.
+
+        This check uses the typed `blobAuditingPolicy` resource introduced in Azure provider v13.8 to assert both that auditing is enabled and that at least one destination — `storageEndpoint` or `isAzureMonitorTargetEnabled` — is set.
+      audit: |
+        **Manual Audit via Azure Portal:**
+
+        1. In the Azure Portal, navigate to **SQL servers** and select the server.
+        2. Under **Security**, select **Auditing**.
+        3. Verify that auditing is enabled and that at least one destination is selected — Storage, Log Analytics, or Event Hub.
+
+        **Automated Audit with Azure CLI:**
+
+        ```bash
+        az sql server audit-policy show --name <ServerName> --resource-group <ResourceGroupName>
+        ```
+
+        Confirm that `state` is `Enabled` and that either `storageEndpoint` is non-empty or `isAzureMonitorTargetEnabled` is `true`.
+      remediation:
+        - id: portal
+          desc: |
+            To configure a destination for SQL Server auditing using the Azure Portal:
+
+            1. Log into the Azure Portal at https://portal.azure.com.
+            2. Navigate to **SQL servers** and select the server.
+            3. Under **Security**, select **Auditing**.
+            4. Set **Enable Azure SQL Auditing** to **On**.
+            5. Select at least one destination: **Storage**, **Log Analytics**, or **Event Hub**.
+            6. Select **Save**.
+        - id: cli
+          desc: |
+            To enable auditing with a Storage Account destination using the Azure CLI:
+
+            ```bash
+            az sql server audit-policy update --name <ServerName> --resource-group <ResourceGroupName> --state Enabled --blob-storage-target-state Enabled --storage-endpoint <StorageAccountBlobEndpoint> --storage-key <StorageAccountKey> --retention-days 90
+            ```
+
+            To enable auditing with a Log Analytics destination, use `--log-analytics-target-state Enabled --log-analytics-workspace-resource-id <WorkspaceResourceId>`.
+        - id: terraform
+          desc: |
+            To configure SQL Server auditing with a destination in Terraform:
+
+            ```hcl
+            resource "azurerm_mssql_server_extended_auditing_policy" "example" {
+              server_id              = azurerm_mssql_server.example.id
+              storage_endpoint       = azurerm_storage_account.example.primary_blob_endpoint
+              log_monitoring_enabled = true
+              retention_in_days      = 90
+            }
+            ```
+        - id: bicep
+          desc: |
+            To configure SQL Server auditing with a destination in Bicep:
+
+            ```bicep
+            resource sqlAuditing 'Microsoft.Sql/servers/auditingSettings@2022-05-01-preview' = {
+              parent: sqlServer
+              name: 'default'
+              properties: {
+                state: 'Enabled'
+                storageEndpoint: storageAccount.properties.primaryEndpoints.blob
+                storageAccountAccessKey: listKeys(storageAccount.id, '2022-09-01').keys[0].value
+                isAzureMonitorTargetEnabled: true
+                retentionDays: 90
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/azure-sql/database/auditing-overview
+        title: Azure SQL Auditing overview
+  - uid: mondoo-azure-security-sql-server-audit-destination-configured-azure
+    filters: |
+      asset.platform == "azure-sql-server"
+    mql: |
+      azure.subscription.sql.server.blobAuditingPolicy.state == "Enabled"
+      azure.subscription.sql.server.blobAuditingPolicy.storageEndpoint != "" || azure.subscription.sql.server.blobAuditingPolicy.isAzureMonitorTargetEnabled == true
+  - uid: mondoo-azure-security-sql-server-audit-destination-configured-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_mssql_server_extended_auditing_policy")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_mssql_server_extended_auditing_policy").all(
+        arguments['storage_endpoint'] != null || arguments['log_monitoring_enabled'] != false
+      )
+  - uid: mondoo-azure-security-sql-server-audit-destination-configured-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_mssql_server_extended_auditing_policy")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_mssql_server_extended_auditing_policy").all(
+        change.after['storage_endpoint'] != null || change.after['log_monitoring_enabled'] != false
+      )
+  - uid: mondoo-azure-security-sql-server-audit-destination-configured-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_mssql_server_extended_auditing_policy")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_mssql_server_extended_auditing_policy").all(
+        values['storage_endpoint'] != null || values['log_monitoring_enabled'] != false
+      )
+  - uid: mondoo-azure-security-sql-database-audit-on
+    title: Ensure auditing is enabled for every Azure SQL database
+    impact: 60
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
+      compliance/dora: dora-art-10
+      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
+      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-de-cm-1
+      compliance/nist-csf-2: nist-csf-2-de-cm-09
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/pci-dss-4: pcidss-requirement-10-2-1
+      compliance/soc2-2017: soc2-control-cc7-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-4
+    variants:
+      - uid: mondoo-azure-security-sql-database-audit-on-azure
+        tags:
+          mondoo.com/filter-title: Azure SQL Server
+          mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-sql-database-audit-on-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-sql-database-audit-on-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-sql-database-audit-on-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that database-level auditing is enabled on every Azure SQL database. Server-level auditing alone is not sufficient — a database can override the server policy and disable its own auditing, producing a coverage gap that is invisible if you only inspect the server.
+
+        **Why this matters**
+
+        - **Per-database overrides**: Azure SQL allows each database to define its own `blobAuditingPolicy`. A database whose policy is `Disabled` produces no audit events even when the parent server's auditing is enabled.
+        - **Coverage gaps**: A scan that only verifies the server policy will report compliance while individual databases silently log nothing.
+        - **Compliance alignment**: Audit controls require continuous logging across all in-scope data stores; a single database without auditing breaks that posture.
+
+        This check uses the typed `database.blobAuditingPolicy` resource introduced in Azure provider v13.8 to assert that every database on the SQL server has its audit policy set to `Enabled`.
+      audit: |
+        **Manual Audit via Azure Portal:**
+
+        1. In the Azure Portal, navigate to **SQL databases** under each SQL server.
+        2. Select each database and open **Auditing** under **Security**.
+        3. Verify that **Enable Azure SQL Auditing** is **On** for every database.
+
+        **Automated Audit with Azure CLI:**
+
+        ```bash
+        az sql db audit-policy show --name <DatabaseName> --resource-group <ResourceGroupName> --server <ServerName>
+        ```
+
+        Confirm `state` is `Enabled` for each database returned by `az sql db list`.
+      remediation:
+        - id: portal
+          desc: |
+            To enable database-level auditing using the Azure Portal:
+
+            1. Navigate to the **SQL database** in the Azure Portal.
+            2. Under **Security**, select **Auditing**.
+            3. Set **Enable Azure SQL Auditing** to **On** and pick a destination (Storage, Log Analytics, or Event Hub).
+            4. Select **Save**.
+        - id: cli
+          desc: |
+            To enable database-level auditing using the Azure CLI:
+
+            ```bash
+            az sql db audit-policy update --name <DatabaseName> --resource-group <ResourceGroupName> --server <ServerName> --state Enabled --blob-storage-target-state Enabled --storage-endpoint <StorageAccountBlobEndpoint> --storage-key <StorageAccountKey> --retention-days 90
+            ```
+        - id: terraform
+          desc: |
+            To enable database-level auditing in Terraform:
+
+            ```hcl
+            resource "azurerm_mssql_database_extended_auditing_policy" "example" {
+              database_id            = azurerm_mssql_database.example.id
+              storage_endpoint       = azurerm_storage_account.example.primary_blob_endpoint
+              log_monitoring_enabled = true
+              retention_in_days      = 90
+            }
+            ```
+        - id: bicep
+          desc: |
+            To enable database-level auditing in Bicep:
+
+            ```bicep
+            resource dbAuditing 'Microsoft.Sql/servers/databases/auditingSettings@2022-05-01-preview' = {
+              parent: sqlDatabase
+              name: 'default'
+              properties: {
+                state: 'Enabled'
+                storageEndpoint: storageAccount.properties.primaryEndpoints.blob
+                storageAccountAccessKey: listKeys(storageAccount.id, '2022-09-01').keys[0].value
+                retentionDays: 90
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/azure-sql/database/auditing-overview
+        title: Azure SQL Auditing overview
+  - uid: mondoo-azure-security-sql-database-audit-on-azure
+    filters: |
+      asset.platform == "azure-sql-server"
+    mql: |
+      azure.subscription.sql.server.databases.all(blobAuditingPolicy.state == "Enabled")
+  - uid: mondoo-azure-security-sql-database-audit-on-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_mssql_database_extended_auditing_policy")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_mssql_database_extended_auditing_policy").all(
+        arguments['enabled'] != false
+      )
+  - uid: mondoo-azure-security-sql-database-audit-on-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_mssql_database_extended_auditing_policy")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_mssql_database_extended_auditing_policy").all(
+        change.after['enabled'] != false
+      )
+  - uid: mondoo-azure-security-sql-database-audit-on-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_mssql_database_extended_auditing_policy")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_mssql_database_extended_auditing_policy").all(
+        values['enabled'] != false
+      )
+  - uid: mondoo-azure-security-sql-server-devops-auditing-enabled
+    title: Ensure DevOps auditing is enabled on Azure SQL Server
+    impact: 50
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
+      compliance/dora: dora-art-10
+      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
+      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-de-cm-1
+      compliance/nist-csf-2: nist-csf-2-de-cm-09
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/pci-dss-4: pcidss-requirement-10-2-1
+      compliance/soc2-2017: soc2-control-cc7-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-4
+    variants:
+      - uid: mondoo-azure-security-sql-server-devops-auditing-enabled-azure
+        tags:
+          mondoo.com/filter-title: Azure SQL Server
+          mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-sql-server-devops-auditing-enabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-sql-server-devops-auditing-enabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-sql-server-devops-auditing-enabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that **DevOps auditing** (also called Microsoft Support operations auditing) is enabled on Azure SQL Server. DevOps auditing logs operations performed by Microsoft support engineers and similar privileged paths that are not captured by the regular database audit policy.
+
+        **Why this matters**
+
+        - **Privileged-access visibility**: Regular `blobAuditingPolicy` does not capture Microsoft support operations. Without DevOps auditing, those activities are invisible to the customer.
+        - **Compliance alignment**: Frameworks that require auditing of privileged or third-party access expect a record of all administrative activity, not just user-driven queries.
+        - **Forensic completeness**: Investigating an incident is significantly harder when one class of access leaves no trace.
+
+        This check uses the typed `devOpsAuditingSetting` resource introduced in Azure provider v13.8 to assert that DevOps auditing is enabled on the SQL server.
+      audit: |
+        **Manual Audit via Azure Portal:**
+
+        1. Navigate to **SQL servers** in the Azure Portal and select the server.
+        2. Under **Security**, select **Microsoft Defender for SQL** and review the **DevOps auditing** settings (the setting is also surfaced via ARM as `devOpsAuditingSettings/default`).
+
+        **Automated Audit:**
+
+        Query the ARM resource directly:
+
+        ```bash
+        az rest --method get --url "https://management.azure.com/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Sql/servers/<server>/devOpsAuditingSettings/default?api-version=2022-05-01-preview"
+        ```
+
+        Confirm `properties.state` is `Enabled`.
+      remediation:
+        - id: portal
+          desc: |
+            To enable DevOps auditing using the Azure Portal:
+
+            1. Navigate to **SQL servers** and select the server.
+            2. Under **Security**, open **Auditing** and review any DevOps / Microsoft support auditing toggle exposed by the portal.
+            3. Enable the setting and pick a destination (Storage, Log Analytics, or Event Hub).
+            4. Select **Save**.
+        - id: terraform
+          desc: |
+            To enable DevOps auditing in Terraform:
+
+            ```hcl
+            resource "azurerm_mssql_server_microsoft_support_auditing_policy" "example" {
+              server_id              = azurerm_mssql_server.example.id
+              blob_storage_endpoint  = azurerm_storage_account.example.primary_blob_endpoint
+              log_monitoring_enabled = true
+            }
+            ```
+        - id: bicep
+          desc: |
+            To enable DevOps auditing in Bicep:
+
+            ```bicep
+            resource devOpsAuditing 'Microsoft.Sql/servers/devOpsAuditingSettings@2022-05-01-preview' = {
+              parent: sqlServer
+              name: 'default'
+              properties: {
+                state: 'Enabled'
+                storageEndpoint: storageAccount.properties.primaryEndpoints.blob
+                storageAccountAccessKey: listKeys(storageAccount.id, '2022-09-01').keys[0].value
+                isAzureMonitorTargetEnabled: true
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/azure-sql/database/auditing-overview
+        title: Azure SQL Auditing overview
+  - uid: mondoo-azure-security-sql-server-devops-auditing-enabled-azure
+    filters: |
+      asset.platform == "azure-sql-server"
+    mql: |
+      azure.subscription.sql.server.devOpsAuditingSetting.state == "Enabled"
+  - uid: mondoo-azure-security-sql-server-devops-auditing-enabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_mssql_server_microsoft_support_auditing_policy")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_mssql_server_microsoft_support_auditing_policy").length > 0
+  - uid: mondoo-azure-security-sql-server-devops-auditing-enabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_mssql_server_microsoft_support_auditing_policy")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_mssql_server_microsoft_support_auditing_policy").length > 0
+  - uid: mondoo-azure-security-sql-server-devops-auditing-enabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_mssql_server_microsoft_support_auditing_policy")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_mssql_server_microsoft_support_auditing_policy").length > 0
+  - uid: mondoo-azure-security-mysql-flexible-geo-backup-cmk
+    title: Ensure MySQL Flexible Server geo-redundant backup uses CMK
+    impact: 70
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-10
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-azure-security-mysql-flexible-geo-backup-cmk-azure
+        tags:
+          mondoo.com/filter-title: Azure MySQL Flexible Server
+          mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-mysql-flexible-geo-backup-cmk-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-mysql-flexible-geo-backup-cmk-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-mysql-flexible-geo-backup-cmk-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Azure Database for MySQL Flexible Server uses a customer-managed key for **geo-redundant backups**, not just the primary data encryption. The geo-backup key is a separate Key Vault key from the primary CMK; without it, geo-redundant backups fall back to Microsoft-managed encryption even when the primary server is configured with CMK.
+
+        **Why this matters**
+
+        - **Backup encryption parity**: Compliance frameworks that require CMK for production data also require CMK for the backups of that data. A CMK primary with an MMK geo-backup is a partial control.
+        - **Cross-region key control**: Geo-redundant backups replicate to a paired region. The geo-backup key lives in that paired region's Key Vault, so customer revocation must be enforced in both regions.
+        - **Key revocation**: If geo-backups are not encrypted with a CMK, revoking the primary CMK does not prevent restore from the geo-backup copy.
+
+        This check uses the typed `geoBackupEncryptionKey` field introduced in Azure provider v13.8 to assert that a Key Vault key is configured for the MySQL Flexible Server's geo-backup.
+      audit: |
+        **Manual Audit via Azure Portal:**
+
+        1. Navigate to **Azure Database for MySQL flexible servers** in the Azure Portal.
+        2. Select the server.
+        3. Under **Security**, select **Data encryption**.
+        4. Verify that a customer-managed key is configured for **Geo-backup**, in addition to the primary encryption key.
+
+        **Automated Audit with Azure CLI:**
+
+        ```bash
+        az mysql flexible-server show --resource-group <ResourceGroupName> --name <ServerName> --query "dataEncryption"
+        ```
+
+        Confirm a `geoBackupKeyURI` and `geoBackupUserAssignedIdentityId` are set in the `dataEncryption` block.
+      remediation:
+        - id: portal
+          desc: |
+            To configure geo-backup CMK using the Azure Portal:
+
+            1. Navigate to **Azure Database for MySQL flexible servers**.
+            2. Select the server.
+            3. Under **Security**, select **Data encryption**.
+            4. Select **Customer-managed key** and configure both the primary key and the geo-backup key. Each key must live in a Key Vault in the matching region.
+            5. Select **Save**.
+        - id: cli
+          desc: |
+            To configure geo-backup CMK using the Azure CLI:
+
+            ```bash
+            az mysql flexible-server update --resource-group <ResourceGroupName> --name <ServerName> --key <PrimaryKeyVaultKeyId> --identity <UserAssignedIdentityId> --backup-key <GeoBackupKeyVaultKeyId> --backup-identity <GeoBackupUserAssignedIdentityId>
+            ```
+        - id: terraform
+          desc: |
+            To configure geo-backup CMK in Terraform:
+
+            ```hcl
+            resource "azurerm_mysql_flexible_server" "example" {
+              name                = "example-mysql"
+              resource_group_name = azurerm_resource_group.example.name
+              location            = azurerm_resource_group.example.location
+
+              customer_managed_key {
+                key_vault_key_id                     = azurerm_key_vault_key.primary.id
+                primary_user_assigned_identity_id    = azurerm_user_assigned_identity.primary.id
+                geo_backup_key_vault_key_id          = azurerm_key_vault_key.geo.id
+                geo_backup_user_assigned_identity_id = azurerm_user_assigned_identity.geo.id
+              }
+
+              identity {
+                type = "UserAssigned"
+                identity_ids = [
+                  azurerm_user_assigned_identity.primary.id,
+                  azurerm_user_assigned_identity.geo.id,
+                ]
+              }
+            }
+            ```
+        - id: bicep
+          desc: |
+            To configure geo-backup CMK in Bicep:
+
+            ```bicep
+            resource mysqlServer 'Microsoft.DBforMySQL/flexibleServers@2023-12-30' = {
+              name: 'example-mysql'
+              location: resourceGroup().location
+              identity: {
+                type: 'UserAssigned'
+                userAssignedIdentities: {
+                  '${primaryIdentity.id}': {}
+                  '${geoIdentity.id}': {}
+                }
+              }
+              properties: {
+                dataEncryption: {
+                  type: 'AzureKeyVault'
+                  primaryKeyURI: primaryKey.properties.keyUriWithVersion
+                  primaryUserAssignedIdentityId: primaryIdentity.id
+                  geoBackupKeyURI: geoKey.properties.keyUriWithVersion
+                  geoBackupUserAssignedIdentityId: geoIdentity.id
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/mysql/flexible-server/concepts-customer-managed-key
+        title: Data encryption for Azure Database for MySQL Flexible Server
+  - uid: mondoo-azure-security-mysql-flexible-geo-backup-cmk-azure
+    filters: |
+      asset.platform == "azure-mysql-flexible-server"
+    mql: |
+      azure.subscription.mySql.flexibleServer.geoBackupEncryptionKey != null
+  - uid: mondoo-azure-security-mysql-flexible-geo-backup-cmk-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_mysql_flexible_server")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_mysql_flexible_server").all(
+        blocks.where(type == "customer_managed_key").any(arguments['geo_backup_key_vault_key_id'] != null)
+      )
+  - uid: mondoo-azure-security-mysql-flexible-geo-backup-cmk-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_mysql_flexible_server")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_mysql_flexible_server").all(
+        change.after['customer_managed_key'] != null && change.after['customer_managed_key'][0]['geo_backup_key_vault_key_id'] != null
+      )
+  - uid: mondoo-azure-security-mysql-flexible-geo-backup-cmk-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_mysql_flexible_server")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_mysql_flexible_server").all(
+        values['customer_managed_key'] != null && values['customer_managed_key'][0]['geo_backup_key_vault_key_id'] != null
       )
