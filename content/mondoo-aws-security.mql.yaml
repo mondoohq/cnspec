@@ -347,7 +347,7 @@ policies:
           - uid: mondoo-aws-security-cloudfront-origin-mtls-cert-not-expired
           - uid: mondoo-aws-security-cloudfront-trust-store-not-empty
           - uid: mondoo-aws-security-cloudfront-private-origin-mtls
-          - uid: mondoo-aws-security-cloudfront-trust-store-cert-not-expired
+          - uid: mondoo-aws-security-cloudfront-trust-store-recently-updated
       - title: AWS CloudTrail Trail
         checks:
           - uid: mondoo-aws-security-cloud-trail-encryption-enabled
@@ -53066,28 +53066,28 @@ queries:
     mql: |
       aws.appstream.stacks.all(
         embedHostDomains == null ||
-        embedHostDomains.none(_ == "*" || _.contains("*") || _ == "")
+        embedHostDomains.none(_.contains("*") || _ == "")
       )
   - uid: mondoo-aws-security-appstream-stack-embed-host-domains-no-wildcards-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_appstream_stack")
     mql: |
       terraform.resources.where(nameLabel == "aws_appstream_stack").all(
         arguments["embed_host_domains"] == null ||
-        arguments["embed_host_domains"].none(_ == "*" || _.contains("*") || _ == "")
+        arguments["embed_host_domains"].none(_.contains("*") || _ == "")
       )
   - uid: mondoo-aws-security-appstream-stack-embed-host-domains-no-wildcards-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_appstream_stack")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_appstream_stack").all(
         change.after["embed_host_domains"] == null ||
-        change.after["embed_host_domains"].none(_ == "*" || _.contains("*") || _ == "")
+        change.after["embed_host_domains"].none(_.contains("*") || _ == "")
       )
   - uid: mondoo-aws-security-appstream-stack-embed-host-domains-no-wildcards-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_appstream_stack")
     mql: |
       terraform.state.resources.where(type == "aws_appstream_stack").all(
         values["embed_host_domains"] == null ||
-        values["embed_host_domains"].none(_ == "*" || _.contains("*") || _ == "")
+        values["embed_host_domains"].none(_.contains("*") || _ == "")
       )
   - uid: mondoo-aws-security-workspaces-web-ip-access-no-public
     title: Ensure WorkSpaces Web IP access settings exclude public CIDR ranges
@@ -53314,13 +53314,14 @@ queries:
             4. Save the changes.
         - id: cli
           desc: |
-            To populate the trust store using the AWS CLI:
+            To list trust stores and confirm CA contents using the AWS CLI:
 
             ```bash
-            aws cloudfront create-trust-store-version \
-              --trust-store-id <id> \
-              --ca-certificates-bundle file://ca-bundle.pem
+            aws cloudfront list-trust-stores
+            aws cloudfront get-trust-store --identifier <id>
             ```
+
+            Use `aws cloudfront update-trust-store --id <id> --if-match <etag> --ca-certificates-bundle-source <source>` to replace the CA bundle. The `--ca-certificates-bundle-source` value is the JSON shape described in the CloudFront API reference (S3 location of the bundle).
     refs:
       - url: https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/mutual-tls-authentication.html
         title: Amazon CloudFront - Configuring mutual TLS authentication
@@ -53396,8 +53397,8 @@ queries:
           domainName.contains(".internal")
         ).all(originMtlsClientCertificate != null)
       )
-  # No Terraform variants: trust store rotation cadence is operational telemetry derived from `lastModifiedTime` and has no Terraform configuration analog.
-  - uid: mondoo-aws-security-cloudfront-trust-store-cert-not-expired
+  # No Terraform variants: trust store rotation cadence is operational telemetry derived from `lastModifiedAt` and has no Terraform configuration analog.
+  - uid: mondoo-aws-security-cloudfront-trust-store-recently-updated
     title: Ensure CloudFront trust stores have been refreshed within the last year
     impact: 70
     tags:
@@ -53415,13 +53416,13 @@ queries:
       compliance/soc2-2017: false
       compliance/vda-isa-5: false
     variants:
-      - uid: mondoo-aws-security-cloudfront-trust-store-cert-not-expired-aws
+      - uid: mondoo-aws-security-cloudfront-trust-store-recently-updated-aws
         tags:
           mondoo.com/filter-title: AWS Account
           mondoo.com/filter-icon: aws
     docs:
       desc: |
-        This check ensures that CloudFront trust stores have been modified within the last 365 days. The `lastModifiedTime` field is a proxy for CA bundle freshness: a trust store untouched for over a year is likely to contain CA certificates that are nearing or past expiry, breaking the mTLS validation chain or, on misconfigured origins, allowing certificates to be accepted that should be rejected.
+        This check ensures that CloudFront trust stores have been modified within the last 365 days. The `lastModifiedAt` field is a proxy for CA bundle freshness: a trust store untouched for over a year is likely to contain CA certificates that are nearing or past expiry, breaking the mTLS validation chain or, on misconfigured origins, allowing certificates to be accepted that should be rejected.
 
         **Why this matters**
 
@@ -53444,17 +53445,21 @@ queries:
             4. Save the changes.
         - id: cli
           desc: |
-            To refresh the trust store using the AWS CLI:
+            To rotate the trust store CA bundle using the AWS CLI:
 
             ```bash
-            aws cloudfront create-trust-store-version \
-              --trust-store-id <id> \
-              --ca-certificates-bundle file://current-ca-bundle.pem
+            aws cloudfront list-trust-stores
+            aws cloudfront update-trust-store \
+              --id <id> \
+              --if-match <etag> \
+              --ca-certificates-bundle-source <source>
             ```
+
+            The `--ca-certificates-bundle-source` value is the JSON shape described in the CloudFront API reference (S3 location of the current PEM bundle).
     refs:
       - url: https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/mutual-tls-authentication.html
         title: Amazon CloudFront - Configuring mutual TLS authentication
-  - uid: mondoo-aws-security-cloudfront-trust-store-cert-not-expired-aws
+  - uid: mondoo-aws-security-cloudfront-trust-store-recently-updated-aws
     filters: asset.platform == "aws"
     mql: |
       aws.cloudfront.trustStores.all(
@@ -53487,6 +53492,8 @@ queries:
       desc: |
         This check ensures that the IAM role attached to a Transfer Family connector via `accessRole` does not grant wildcard S3 actions or `Resource: "*"`. Connectors are partner-facing data exchange endpoints; an over-privileged accessRole can be abused by a compromised connector to read or write across every bucket in the account.
 
+        The check inspects every statement on every managed (attached) policy. The IAM role resource exposes inline policy *names* but not their documents, so this check additionally requires that the accessRole has no inline policies attached — otherwise wildcards inside an inline policy would be invisible to the wildcard scan and the check could pass with hidden over-privilege.
+
         **Why this matters**
 
         - Connectors initiate outbound SFTP and AS2 transfers using the accessRole; the blast radius is bounded by what that role can do.
@@ -53497,6 +53504,7 @@ queries:
 
         - **Least privilege:** Restricts connector authority to only the buckets and actions required for the data exchange.
         - **Blast radius reduction:** Limits the exposure of an accidentally or maliciously misused connector.
+        - **Audit completeness:** Requiring managed-only policies makes the wildcard scan authoritative rather than partial.
       remediation:
         - id: console
           desc: |
@@ -53525,10 +53533,12 @@ queries:
     mql: |
       aws.transfer.connectors.all(
         accessRole != null &&
+        accessRole.inlinePolicies.length == 0 &&
         accessRole.attachedPolicies.all(
           defaultVersion.document['Statement'].all(
             _['Effect'].upcase == "DENY" ||
-            _['Resource'] != "*" && _['Action'] != "s3:*" && _['Action'] != "*"
+            [_['Resource']].flat.none(_ == "*") &&
+            [_['Action']].flat.none(_ == "*" || _ == "s3:*")
           )
         )
       )
