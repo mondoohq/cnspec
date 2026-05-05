@@ -96,6 +96,15 @@ policies:
         checks:
           - uid: mondoo-oci-security-vault-secrets-rotation-enabled
           - uid: mondoo-oci-security-vault-secrets-not-expired
+      - title: OCI Cache
+        checks:
+          - uid: mondoo-oci-security-redis-cluster-private-subnet
+          - uid: mondoo-oci-security-redis-cluster-nsg-attached
+          - uid: mondoo-oci-security-redis-cluster-supported-version
+      - title: Cloud Guard
+        checks:
+          - uid: mondoo-oci-security-cloudguard-security-zones-configured
+          - uid: mondoo-oci-security-cloudguard-security-zone-inherit-after-delete
       - title: Functions
         checks:
           - uid: mondoo-oci-security-functions-config-no-credentials
@@ -7666,4 +7675,509 @@ queries:
     mql: |
       terraform.state.resources.where(type == 'oci_certificates_management_certificate_authority').all(
         values['kms_key_id'] != null && values['kms_key_id'] != ""
+      )
+  # No Terraform variants: the runtime check resolves the cluster's typed `subnet` reference and reads `prohibitPublicIpOnVnic`. Terraform stores subnet references as opaque strings (`oci_core_subnet.foo.id`) that cannot be cross-resolved against `oci_core_subnet.arguments['prohibit_public_ip_on_vnic']` without brittle reference-string parsing. The same limitation is documented on `mondoo-oci-security-oke-node-pool-private-subnets`.
+  - uid: mondoo-oci-security-redis-cluster-private-subnet
+    title: Ensure OCI Cache clusters are deployed in private subnets
+    impact: 90
+    filters: asset.platform == 'oci'
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: false
+    mql: |
+      oci.redis.clusters.all(subnet.prohibitPublicIpOnVnic == true)
+    docs:
+      desc: |
+        This check verifies that every OCI Cache cluster is deployed in a subnet whose `prohibitPublicIpOnVnic` is `true`. A cache cluster reachable via a public IP exposes session state, tokens, and feature-flag data to internet scanning, with no application-layer authentication between the attacker and the in-memory store.
+
+        **Why this matters**
+
+        OCI Cache (Redis or Valkey) is typically used to store data that must not leave the tenancy:
+
+        - Session identifiers, OAuth refresh tokens, and other bearer credentials.
+        - Cached query results that may contain personally identifiable information.
+        - Feature-flag and configuration data that an attacker can manipulate to bypass application logic.
+        - Rate-limit counters that an attacker can clear to bypass throttling.
+
+        Cache engines historically default to no authentication; even with auth enabled, exposing a cache cluster to the internet means any auth weakness or future CVE is immediately exploitable from anywhere.
+
+        **Risk mitigation**
+
+        - Removes internet reachability of the cache endpoint.
+        - Forces all cache traffic to traverse VCN routes, NSGs, and service gateways where it can be logged and filtered.
+        - Provides a structural guarantee that the cluster cannot be assigned a public IP at any point in its lifecycle.
+      remediation:
+        - id: console
+          desc: |
+            Move the cluster to a private subnet:
+
+            1. Identify or create a subnet in the cluster's VCN with **Prohibit public IP on VNIC** set to **Yes**.
+            2. The cluster's subnet is set at create time and cannot be changed in place.
+            3. Take a backup of the existing cluster, then recreate it in the private subnet from the backup.
+            4. Update application connection strings to the new cluster endpoint, then delete the old cluster.
+        - id: cli
+          desc: |
+            Take a backup, then recreate the cluster from the backup in a private subnet:
+
+            ```bash
+            oci redis oci-cache-backup oci-cache-backup create \
+              --source-cluster-id <old-cluster-ocid> \
+              --display-name pre-migration
+
+            oci redis redis-cluster redis-cluster create \
+              --compartment-id <compartment-ocid> \
+              --display-name <name> \
+              --node-count <n> \
+              --node-memory-in-gbs <gb> \
+              --software-version VALKEY_8_1 \
+              --subnet-id <private-subnet-ocid> \
+              --backup-id <backup-ocid>
+            ```
+        - id: terraform
+          desc: |
+            Reference a subnet that prohibits public IPs:
+
+            ```hcl
+            resource "oci_core_subnet" "cache_private" {
+              compartment_id             = var.compartment_ocid
+              vcn_id                     = oci_core_vcn.app.id
+              cidr_block                 = "10.0.20.0/24"
+              prohibit_public_ip_on_vnic = true
+              prohibit_internet_ingress  = true
+            }
+
+            resource "oci_redis_redis_cluster" "app" {
+              compartment_id     = var.compartment_ocid
+              display_name       = "app-cache"
+              node_count         = 3
+              node_memory_in_gbs = 4
+              software_version   = "VALKEY_8_1"
+              subnet_id          = oci_core_subnet.cache_private.id
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/ocicache/home.htm
+        title: OCI Cache Overview
+  - uid: mondoo-oci-security-redis-cluster-nsg-attached
+    title: Ensure OCI Cache clusters have Network Security Groups attached
+    impact: 70
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-oci-security-redis-cluster-nsg-attached-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-redis-cluster-nsg-attached-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-redis-cluster-nsg-attached-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-redis-cluster-nsg-attached-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that every OCI Cache cluster has at least one Network Security Group attached. Subnet rules alone are coarse-grained; NSGs provide per-cluster east-west controls and are the layer Oracle's connection guide recommends for OCI Cache.
+
+        **Why this matters**
+
+        Subnet security lists apply uniformly to every VNIC in the subnet. Adding a new workload to the subnet inherits all rules, in both directions. NSGs scope rules to the specific cluster:
+
+        - An NSG attached to the cluster lets you allow only the application tier's NSG as a source, blocking lateral access from other workloads sharing the subnet.
+        - A subnet-only model means any compromised host in the subnet can reach the cache, even if its own NSG would otherwise block it.
+        - NSGs are also the unit Oracle's logging and flow-log integration uses for per-cluster traffic visibility.
+
+        **Risk mitigation**
+
+        - Limits cache reachability to known client workloads.
+        - Decouples cache access controls from subnet membership, so adding a new workload does not silently grant cache access.
+        - Provides per-cluster network telemetry separate from the subnet aggregate.
+      remediation:
+        - id: console
+          desc: |
+            Attach an NSG to the cluster:
+
+            1. Open **Databases** -> **OCI Cache** -> select the cluster.
+            2. Under **Network**, select **Edit network security groups**.
+            3. Add at least one NSG whose ingress rules cover the application tier's expected source.
+        - id: cli
+          desc: |
+            Update the cluster to attach NSGs:
+
+            ```bash
+            oci redis redis-cluster redis-cluster update \
+              --redis-cluster-id <cluster-ocid> \
+              --nsg-ids '["<nsg-ocid-1>","<nsg-ocid-2>"]'
+            ```
+        - id: terraform
+          desc: |
+            Set `nsg_ids` on the cluster:
+
+            ```hcl
+            resource "oci_core_network_security_group" "cache" {
+              compartment_id = var.compartment_ocid
+              vcn_id         = oci_core_vcn.app.id
+              display_name   = "cache-nsg"
+            }
+
+            resource "oci_redis_redis_cluster" "app" {
+              compartment_id     = var.compartment_ocid
+              display_name       = "app-cache"
+              node_count         = 3
+              node_memory_in_gbs = 4
+              software_version   = "VALKEY_8_1"
+              subnet_id          = oci_core_subnet.cache_private.id
+              nsg_ids            = [oci_core_network_security_group.cache.id]
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/ocicache/connecttocluster.htm
+        title: OCI Cache - Connect to a Cluster
+  - uid: mondoo-oci-security-redis-cluster-nsg-attached-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.redis.clusters.all(networkSecurityGroups.length > 0)
+  - uid: mondoo-oci-security-redis-cluster-nsg-attached-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_redis_redis_cluster')
+    mql: |
+      terraform.resources('oci_redis_redis_cluster').all(
+        arguments['nsg_ids'] != null && arguments['nsg_ids'].length > 0
+      )
+  - uid: mondoo-oci-security-redis-cluster-nsg-attached-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_redis_redis_cluster')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_redis_redis_cluster').all(
+        change.after['nsg_ids'] != null && change.after['nsg_ids'].length > 0
+      )
+  - uid: mondoo-oci-security-redis-cluster-nsg-attached-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_redis_redis_cluster')
+    mql: |
+      terraform.state.resources.where(type == 'oci_redis_redis_cluster').all(
+        values['nsg_ids'] != null && values['nsg_ids'].length > 0
+      )
+  - uid: mondoo-oci-security-redis-cluster-supported-version
+    title: Ensure OCI Cache clusters use a supported software version
+    impact: 60
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-8
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-2
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-oci-security-redis-cluster-supported-version-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-redis-cluster-supported-version-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-redis-cluster-supported-version-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-redis-cluster-supported-version-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that every OCI Cache cluster runs a vendor-supported software version. Out-of-support engine versions miss CVE backports and security fixes; running them in production extends the exploitable window for any in-memory store vulnerability.
+
+        **Why this matters**
+
+        Cache engines move quickly:
+
+        - The shift from Redis to Valkey means the legacy `REDIS_*` track no longer receives upstream security updates from the Valkey project.
+        - Older Valkey minor versions are dropped from Oracle's patch matrix once a successor reaches GA.
+        - In-memory stores often run with elevated privileges inside the VCN; a remote-code-execution CVE in an unsupported engine is a direct path to data exfiltration.
+
+        **Risk mitigation**
+
+        - Ensures the cluster receives security patches on Oracle's published cadence.
+        - Aligns with the Valkey project's supported branches.
+        - Forces an upgrade path before the engine reaches end-of-life rather than at incident time.
+
+        The list of supported versions is hardcoded inline in the check. Update it when Oracle adds or deprecates a Valkey or Redis version.
+      remediation:
+        - id: console
+          desc: |
+            Upgrade the cluster's engine version:
+
+            1. Open **Databases** -> **OCI Cache** -> select the cluster.
+            2. Select **Edit** and choose a supported `softwareVersion`.
+            3. Apply the change. OCI Cache supports in-place engine version updates.
+        - id: cli
+          desc: |
+            Update the engine version in place:
+
+            ```bash
+            oci redis redis-cluster redis-cluster update \
+              --redis-cluster-id <cluster-ocid> \
+              --software-version VALKEY_8_1
+            ```
+        - id: terraform
+          desc: |
+            Pin `software_version` to a supported value:
+
+            ```hcl
+            resource "oci_redis_redis_cluster" "app" {
+              compartment_id     = var.compartment_ocid
+              display_name       = "app-cache"
+              node_count         = 3
+              node_memory_in_gbs = 4
+              software_version   = "VALKEY_8_1"
+              subnet_id          = oci_core_subnet.cache_private.id
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/ocicache/home.htm
+        title: OCI Cache Overview
+  # The supported version literal `["VALKEY_7_2", "VALKEY_8_1"]` is repeated in all four variant queries below. cnspec policy YAML does not support anchors inside MQL block scalars and the OCI policy file does not use `props:`, so the list cannot be defined once. When Oracle adds or deprecates a version, update the literal in all four variants together.
+  - uid: mondoo-oci-security-redis-cluster-supported-version-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      # MAINTAIN-TOGETHER: keep this version list in sync with the other three variants of mondoo-oci-security-redis-cluster-supported-version
+      oci.redis.clusters.all(softwareVersion.in(["VALKEY_7_2", "VALKEY_8_1"]))
+  - uid: mondoo-oci-security-redis-cluster-supported-version-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_redis_redis_cluster')
+    mql: |
+      # MAINTAIN-TOGETHER: keep this version list in sync with the other three variants of mondoo-oci-security-redis-cluster-supported-version
+      terraform.resources('oci_redis_redis_cluster').all(
+        arguments['software_version'].in(["VALKEY_7_2", "VALKEY_8_1"])
+      )
+  - uid: mondoo-oci-security-redis-cluster-supported-version-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_redis_redis_cluster')
+    mql: |
+      # MAINTAIN-TOGETHER: keep this version list in sync with the other three variants of mondoo-oci-security-redis-cluster-supported-version
+      terraform.plan.resourceChanges.where(type == 'oci_redis_redis_cluster').all(
+        change.after['software_version'].in(["VALKEY_7_2", "VALKEY_8_1"])
+      )
+  - uid: mondoo-oci-security-redis-cluster-supported-version-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_redis_redis_cluster')
+    mql: |
+      # MAINTAIN-TOGETHER: keep this version list in sync with the other three variants of mondoo-oci-security-redis-cluster-supported-version
+      terraform.state.resources.where(type == 'oci_redis_redis_cluster').all(
+        values['software_version'].in(["VALKEY_7_2", "VALKEY_8_1"])
+      )
+  # No Terraform variants: this is a tenancy-level posture check ("at least one zone exists somewhere in the tenancy"). The Terraform-asset equivalent would have to either fire on every Terraform asset (flagging every config that doesn't manage Cloud Guard, even unrelated ones) or gate on the resource type (which then can't detect absence). Same scoping limitation as `mondoo-oci-security-iam-mfa-enabled-for-active-users`.
+  - uid: mondoo-oci-security-cloudguard-security-zones-configured
+    title: Ensure at least one Cloud Guard security zone is configured
+    impact: 80
+    filters: asset.platform == 'oci'
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-5-23
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-2
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc7-1-1
+      compliance/vda-isa-5: false
+    mql: |
+      oci.cloudGuard.securityZones.length > 0
+    docs:
+      desc: |
+        This check verifies that the tenancy has at least one Cloud Guard security zone configured. Security Zones are OCI's preventive-control layer: any operation in a zoned compartment that violates the recipe's policies is blocked at the API layer rather than detected after the fact.
+
+        **Why this matters**
+
+        Detective controls alone leave a window between misconfiguration and remediation:
+
+        - A bucket created with public access in a non-zoned compartment is publicly readable until a detector raises an alert and an operator reacts. With a zone, the create call fails.
+        - An operator with permissions to break a guardrail can do so with no friction outside a zone; inside a zone, the API enforces the recipe.
+        - Zones cover services that detective tooling can miss: encryption-at-rest with customer-managed keys, network-resource exposure, and database public endpoints.
+
+        **Risk mitigation**
+
+        - Converts a detect-and-react workflow into a prevent-at-create workflow for the covered policies.
+        - Reduces the dwell time of misconfigurations from hours or days to zero.
+        - Provides a structural enforcement point that survives changes to detective tooling.
+      remediation:
+        - id: console
+          desc: |
+            Create a security zone covering the tenancy's production compartments:
+
+            1. Open **Identity & Security** -> **Cloud Guard** -> **Security Zones**.
+            2. Select **Create Security Zone**, choose the production compartment, and apply the Oracle-managed maximum-security recipe.
+            3. Build a custom recipe only when a specific policy must be relaxed; document the deviation.
+        - id: cli
+          desc: |
+            Create a security zone bound to a target compartment:
+
+            ```bash
+            oci cloud-guard security-zone create \
+              --compartment-id <compartment-ocid> \
+              --display-name <name> \
+              --security-zone-recipe-id <recipe-ocid>
+            ```
+        - id: terraform
+          desc: |
+            Declare at least one security zone in your IaC:
+
+            ```hcl
+            resource "oci_cloud_guard_security_zone" "production" {
+              compartment_id           = var.production_compartment_ocid
+              display_name             = "production-zone"
+              security_zone_recipe_id  = var.security_zone_recipe_id
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/cloud-guard/using/security-zones.htm
+        title: OCI Cloud Guard Security Zones
+  - uid: mondoo-oci-security-cloudguard-security-zone-inherit-after-delete
+    title: Ensure Cloud Guard security zones inherit protection after deletion
+    impact: 70
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-32
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-3
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc8-1-1
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-oci-security-cloudguard-security-zone-inherit-after-delete-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-cloudguard-security-zone-inherit-after-delete-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-cloudguard-security-zone-inherit-after-delete-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-cloudguard-security-zone-inherit-after-delete-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that every Cloud Guard security zone has `is_inheritance_after_delete_enabled` set to `true`. Without it, deleting the zone strips child compartments of any parent-zone protections, the failure mode the field exists to prevent.
+
+        **Why this matters**
+
+        Security zones nest. A child compartment usually inherits its parent's zone, which means its API operations are screened against the parent's recipe. With `is_inheritance_after_delete_enabled = false`:
+
+        - Deleting the parent zone leaves the child compartment unprotected, even though the child still nests under the same compartment hierarchy.
+        - The deletion can be triggered by a recipe rebuild, a tenancy reorganization, or a misconfigured pipeline. None of these look like security events to detective tooling.
+        - The protection gap appears instantly and silently; nothing in the audit log says "this compartment is no longer in a zone."
+
+        **Risk mitigation**
+
+        - Preserves zone protection for child compartments through delete-recreate cycles.
+        - Reduces the blast radius of accidental zone deletion.
+        - Aligns with Oracle's recommended setting on the field.
+      remediation:
+        - id: console
+          desc: |
+            Toggle the inheritance setting on each zone:
+
+            1. Open **Identity & Security** -> **Cloud Guard** -> **Security Zones** -> select the zone.
+            2. Select **Edit** and enable **Inherit parent security zone after deletion**.
+            3. Save. The change is in-place.
+        - id: cli
+          desc: |
+            Update the zone in place:
+
+            ```bash
+            oci cloud-guard security-zone update \
+              --security-zone-id <zone-ocid> \
+              --is-inheritance-after-delete-enabled true
+            ```
+        - id: terraform
+          desc: |
+            Set `is_inheritance_after_delete_enabled = true` on every zone:
+
+            ```hcl
+            resource "oci_cloud_guard_security_zone" "production" {
+              compartment_id                       = var.production_compartment_ocid
+              display_name                         = "production-zone"
+              security_zone_recipe_id              = var.recipe_id
+              is_inheritance_after_delete_enabled  = true
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/cloud-guard/using/security-zones.htm
+        title: OCI Cloud Guard Security Zones
+  - uid: mondoo-oci-security-cloudguard-security-zone-inherit-after-delete-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.cloudGuard.securityZones.all(isInheritanceAfterDeleteEnabled == true)
+  - uid: mondoo-oci-security-cloudguard-security-zone-inherit-after-delete-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_cloud_guard_security_zone')
+    mql: |
+      terraform.resources('oci_cloud_guard_security_zone').all(
+        arguments['is_inheritance_after_delete_enabled'] == true
+      )
+  - uid: mondoo-oci-security-cloudguard-security-zone-inherit-after-delete-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_cloud_guard_security_zone')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_cloud_guard_security_zone').all(
+        change.after['is_inheritance_after_delete_enabled'] == true
+      )
+  - uid: mondoo-oci-security-cloudguard-security-zone-inherit-after-delete-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_cloud_guard_security_zone')
+    mql: |
+      terraform.state.resources.where(type == 'oci_cloud_guard_security_zone').all(
+        values['is_inheritance_after_delete_enabled'] == true
       )
