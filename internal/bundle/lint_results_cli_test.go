@@ -62,4 +62,3 @@ func TestResults_PromoteWarnings(t *testing.T) {
 		assert.NotPanics(t, func() { r.PromoteWarnings([]string{StrictRuleAll}) })
 	})
 }
-
