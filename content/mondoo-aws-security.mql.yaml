@@ -70,6 +70,7 @@ policies:
         - Amazon MemoryDB
         - Amazon DocumentDB
         - Amazon WorkSpaces
+        - Amazon WorkSpaces Web
         - Amazon AppStream 2.0
         - AWS Directory Service
         - Amazon MQ
@@ -343,6 +344,10 @@ policies:
           - uid: mondoo-aws-security-cloudfront-waf-enabled
           - uid: mondoo-aws-security-cloudfront-sni-only
           - uid: mondoo-aws-security-cloudfront-access-logging-enabled
+          - uid: mondoo-aws-security-cloudfront-origin-mtls-cert-not-expired
+          - uid: mondoo-aws-security-cloudfront-trust-store-not-empty
+          - uid: mondoo-aws-security-cloudfront-private-origin-mtls
+          - uid: mondoo-aws-security-cloudfront-trust-store-recently-updated
       - title: AWS CloudTrail Trail
         checks:
           - uid: mondoo-aws-security-cloud-trail-encryption-enabled
@@ -524,6 +529,9 @@ policies:
           - uid: mondoo-aws-security-workspaces-directory-web-access-disabled
           - uid: mondoo-aws-security-workspaces-directory-maintenance-mode
           - uid: mondoo-aws-security-workspaces-no-unrestricted-inbound
+      - title: Amazon WorkSpaces Web
+        checks:
+          - uid: mondoo-aws-security-workspaces-web-ip-access-no-public
       - title: Amazon AppStream 2.0
         checks:
           - uid: mondoo-aws-security-appstream-fleet-no-default-internet-access
@@ -531,6 +539,8 @@ policies:
           - uid: mondoo-aws-security-appstream-fleet-idle-disconnect
           - uid: mondoo-aws-security-appstream-image-builder-no-default-internet-access
           - uid: mondoo-aws-security-appstream-stack-url-redirection-disabled
+          - uid: mondoo-aws-security-appstream-image-no-public-visibility
+          - uid: mondoo-aws-security-appstream-stack-embed-host-domains-no-wildcards
       - title: AWS Directory Service
         checks:
           - uid: mondoo-aws-security-directoryservice-os-version
@@ -578,6 +588,10 @@ policies:
           - uid: mondoo-aws-security-transfer-logging-enabled
           - uid: mondoo-aws-security-transfer-security-policy
           - uid: mondoo-aws-security-transfer-identity-provider
+          - uid: mondoo-aws-security-transfer-connector-access-role-no-wildcards
+          - uid: mondoo-aws-security-transfer-connector-logging-role
+          - uid: mondoo-aws-security-transfer-web-app-not-public
+          - uid: mondoo-aws-security-transfer-workflow-exception-handling
       - title: AWS App Mesh
         checks:
           - uid: mondoo-aws-security-appmesh-egress-filter
@@ -52902,3 +52916,863 @@ queries:
         properties['KmsMasterKeyId'] != empty &&
         properties['KmsMasterKeyId'] != "alias/aws/sqs"
       )
+  # No Terraform variants: AppStream image visibility is a runtime image-sharing setting controlled via `aws appstream update-image-permissions`, with no analog argument on Terraform AppStream resources.
+  - uid: mondoo-aws-security-appstream-image-no-public-visibility
+    title: Ensure customer-built AppStream images are not publicly visible
+    impact: 90
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: false
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: false
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-aws-security-appstream-image-no-public-visibility-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that customer-built AppStream 2.0 images are not configured with `PUBLIC` visibility. A customer image marked `PUBLIC` is shared cross-account and can be discovered and launched by other AWS accounts, leaking the contents of the image.
+
+        **Why this matters**
+
+        - AppStream images can contain installed applications, configuration files, registry settings, license keys, and credentials baked into the gold image at build time.
+        - `PUBLIC` visibility on a customer-built image exposes that material to every AWS account.
+        - AWS-published base images are intentionally `PUBLIC`; this check excludes them by filtering on `baseImageArn`, which is set only on customer-built images.
+
+        **Risk mitigation**
+
+        - **Data exposure:** Keeping customer images `PRIVATE` (or scoped via image sharing) prevents proprietary content from being launched outside the owning organization.
+        - **Credential containment:** Limits blast radius if secrets were accidentally baked into a gold image.
+      remediation:
+        - id: console
+          desc: |
+            To remove public visibility from a customer-built AppStream image using the AWS Console:
+
+            1. Open the **AppStream 2.0 Console** and select **Images**.
+            2. Select the customer-built image flagged as `PUBLIC`.
+            3. Choose **Actions** then **Update image permissions**.
+            4. Set **Allow public access** to **Disabled**.
+            5. Save the changes.
+        - id: cli
+          desc: |
+            To restrict image sharing to a specific account using the AWS CLI:
+
+            ```bash
+            aws appstream update-image-permissions \
+              --name <image-name> \
+              --shared-account-id <account-id> \
+              --image-permissions allowFleet=true,allowImageBuilder=false
+            ```
+
+            To remove sharing entirely, run `aws appstream delete-image-permissions --name <image-name> --shared-account-id <account-id>` for each previously-shared account.
+    refs:
+      - url: https://docs.aws.amazon.com/appstream2/latest/developerguide/share-image-with-other-accounts.html
+        title: Amazon AppStream 2.0 - Share an image with other AWS accounts
+  - uid: mondoo-aws-security-appstream-image-no-public-visibility-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.appstream.images.where(baseImageArn != null && baseImageArn != "").all(visibility != "PUBLIC")
+  - uid: mondoo-aws-security-appstream-stack-embed-host-domains-no-wildcards
+    title: Ensure AppStream stack embedHostDomains do not contain wildcards
+    impact: 80
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: false
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: false
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-aws-security-appstream-stack-embed-host-domains-no-wildcards-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-appstream-stack-embed-host-domains-no-wildcards-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-appstream-stack-embed-host-domains-no-wildcards-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-appstream-stack-embed-host-domains-no-wildcards-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that the `embedHostDomains` allowlist on each AppStream 2.0 stack contains only specific FQDNs and does not include wildcard entries. `embedHostDomains` controls which host pages are permitted to embed the streaming session in an iframe; a wildcard entry effectively allows any site to frame the session, opening the door to clickjacking and session UI redress.
+
+        **Why this matters**
+
+        - The streaming session can be wrapped by an attacker-controlled page if any embedding origin is allowed.
+        - Once embedded, the attacker controls page chrome around the session and can mount UI redress to harvest credentials or trigger unintended actions in the streamed app.
+        - Wildcard or scheme-only entries should not appear in the allowlist.
+
+        **Risk mitigation**
+
+        - **Clickjacking prevention:** Restricting `embedHostDomains` to known internal FQDNs blocks third-party sites from framing the streaming session.
+        - **Defense in depth:** Pairs with browser CSP at the embedding origin.
+      remediation:
+        - id: console
+          desc: |
+            To restrict AppStream embed host domains using the AWS Console:
+
+            1. Open the **AppStream 2.0 Console** and select **Stacks**.
+            2. Select the stack and choose **Edit**.
+            3. Under **Embed AppStream 2.0**, replace any wildcard entry with the specific FQDNs allowed to embed the session.
+            4. Save the changes.
+        - id: cli
+          desc: |
+            To restrict AppStream embed host domains using the AWS CLI:
+
+            ```bash
+            aws appstream update-stack \
+              --name <stack-name> \
+              --embed-host-domains app.example.com portal.example.com
+            ```
+        - id: terraform
+          desc: |
+            To restrict AppStream embed host domains in Terraform:
+
+            ```hcl
+            resource "aws_appstream_stack" "example" {
+              name               = "example"
+              embed_host_domains = ["app.example.com", "portal.example.com"]
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/appstream2/latest/developerguide/embed-streaming-sessions.html
+        title: Amazon AppStream 2.0 - Embed AppStream 2.0 streaming sessions
+  - uid: mondoo-aws-security-appstream-stack-embed-host-domains-no-wildcards-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.appstream.stacks.all(
+        embedHostDomains == null ||
+        embedHostDomains.none(_.contains("*") || _ == "")
+      )
+  - uid: mondoo-aws-security-appstream-stack-embed-host-domains-no-wildcards-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_appstream_stack")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_appstream_stack").all(
+        arguments["embed_host_domains"] == null ||
+        arguments["embed_host_domains"].none(_.contains("*") || _ == "")
+      )
+  - uid: mondoo-aws-security-appstream-stack-embed-host-domains-no-wildcards-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_appstream_stack")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_appstream_stack").all(
+        change.after["embed_host_domains"] == null ||
+        change.after["embed_host_domains"].none(_.contains("*") || _ == "")
+      )
+  - uid: mondoo-aws-security-appstream-stack-embed-host-domains-no-wildcards-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_appstream_stack")
+    mql: |
+      terraform.state.resources.where(type == "aws_appstream_stack").all(
+        values["embed_host_domains"] == null ||
+        values["embed_host_domains"].none(_.contains("*") || _ == "")
+      )
+  - uid: mondoo-aws-security-workspaces-web-ip-access-no-public
+    title: Ensure WorkSpaces Web IP access settings exclude public CIDR ranges
+    impact: 90
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: false
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: false
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-aws-security-workspaces-web-ip-access-no-public-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-workspaces-web-ip-access-no-public-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-workspaces-web-ip-access-no-public-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-workspaces-web-ip-access-no-public-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that WorkSpaces Web IP access settings do not include the unrestricted IPv4 range `0.0.0.0/0` or the IPv6 range `::/0`. An IP allowlist that admits any source address provides no meaningful network restriction on browser session access.
+
+        **Why this matters**
+
+        - WorkSpaces Web portals broker access to internal applications; the IP access settings are the network boundary in front of those apps.
+        - An allowlist containing `0.0.0.0/0` or `::/0` is functionally equivalent to having no IP restriction.
+        - Tightening the source ranges to corporate egress IPs reduces the attack surface for stolen-credential and session-hijack scenarios.
+
+        **Risk mitigation**
+
+        - **Network boundary enforcement:** Restricts portal access to known networks.
+        - **Defense in depth:** Pairs with portal authentication so even valid credentials cannot be used from arbitrary networks.
+      remediation:
+        - id: console
+          desc: |
+            To restrict WorkSpaces Web IP access settings using the AWS Console:
+
+            1. Open the **Amazon WorkSpaces Web Console** and select **IP access settings**.
+            2. Select the IP access settings flagged by this check.
+            3. Remove `0.0.0.0/0` and `::/0` rules and replace with specific source CIDR ranges.
+            4. Save the changes.
+        - id: cli
+          desc: |
+            To restrict WorkSpaces Web IP access settings using the AWS CLI:
+
+            ```bash
+            aws workspaces-web update-ip-access-settings \
+              --ip-access-settings-arn <arn> \
+              --ip-rules ipRange=203.0.113.0/24,description="Corporate egress"
+            ```
+        - id: terraform
+          desc: |
+            To restrict WorkSpaces Web IP access settings in Terraform:
+
+            ```hcl
+            resource "aws_workspacesweb_ip_access_settings" "example" {
+              display_name = "corporate-only"
+
+              ip_rules {
+                ip_range    = "203.0.113.0/24"
+                description = "Corporate egress"
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/workspaces-web/latest/adminguide/ip-access-settings.html
+        title: Amazon WorkSpaces Web - IP access settings
+  - uid: mondoo-aws-security-workspaces-web-ip-access-no-public-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.workspacesweb.ipAccessSettings.all(
+        ipRules.none(_['ipRange'] == "0.0.0.0/0" || _['ipRange'] == "::/0")
+      )
+  - uid: mondoo-aws-security-workspaces-web-ip-access-no-public-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_workspacesweb_ip_access_settings")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_workspacesweb_ip_access_settings").all(
+        blocks.where(type == "ip_rules").all(
+          arguments["ip_range"] != "0.0.0.0/0" && arguments["ip_range"] != "::/0"
+        )
+      )
+  - uid: mondoo-aws-security-workspaces-web-ip-access-no-public-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_workspacesweb_ip_access_settings")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_workspacesweb_ip_access_settings").all(
+        change.after["ip_rules"] == null ||
+        change.after["ip_rules"].all(_["ip_range"] != "0.0.0.0/0" && _["ip_range"] != "::/0")
+      )
+  - uid: mondoo-aws-security-workspaces-web-ip-access-no-public-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_workspacesweb_ip_access_settings")
+    mql: |
+      terraform.state.resources.where(type == "aws_workspacesweb_ip_access_settings").all(
+        values["ip_rules"] == null ||
+        values["ip_rules"].all(_["ip_range"] != "0.0.0.0/0" && _["ip_range"] != "::/0")
+      )
+  # No Terraform variants: certificate expiry is operational telemetry on the ACM certificate behind the origin mTLS reference, not a configuration argument on `aws_cloudfront_distribution`.
+  - uid: mondoo-aws-security-cloudfront-origin-mtls-cert-not-expired
+    title: Ensure CloudFront origin mTLS certificates are not expired or expiring
+    impact: 90
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: false
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: false
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-aws-security-cloudfront-origin-mtls-cert-not-expired-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that ACM certificates referenced by CloudFront origin mTLS configurations are valid and have at least 30 days remaining before expiry. CloudFront uses these client certificates to authenticate to the origin; once the certificate expires, the origin handshake breaks and depending on origin configuration the request may fall through to a path that does not require client authentication.
+
+        **Why this matters**
+
+        - Origin mTLS is an authentication control between CloudFront and a private origin; an expired certificate either fails closed (outage) or, in misconfigured origins, fails open (auth bypass).
+        - ACM does not auto-renew imported certificates; certificates supplied by customers must be rotated manually before they expire.
+        - 30 days of headroom gives time to detect and rotate before user impact or auth-bypass exposure.
+
+        **Risk mitigation**
+
+        - **Authentication continuity:** Detects imminent failure of origin authentication before clients are impacted.
+        - **Bypass prevention:** Forces rotation before the certificate enters the post-expiry state where origin behavior may differ.
+      remediation:
+        - id: console
+          desc: |
+            To rotate the CloudFront origin mTLS certificate using the AWS Console:
+
+            1. Open the **AWS Certificate Manager Console** in the certificate's region.
+            2. Locate the certificate referenced by the CloudFront origin mTLS configuration.
+            3. If the certificate is ACM-managed, ensure renewal has not failed. If imported, import a new certificate with extended validity.
+            4. Update the CloudFront distribution origin to reference the new certificate ARN.
+        - id: cli
+          desc: |
+            To inspect and rotate the certificate using the AWS CLI:
+
+            ```bash
+            aws acm describe-certificate --certificate-arn <arn> --query 'Certificate.NotAfter'
+            aws cloudfront update-distribution --id <dist-id> --distribution-config file://updated-config.json
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/origin-mtls.html
+        title: Amazon CloudFront - Origin mutual TLS
+  - uid: mondoo-aws-security-cloudfront-origin-mtls-cert-not-expired-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.cloudfront.distributions.all(
+        origins.all(
+          originMtlsClientCertificate == null ||
+          originMtlsClientCertificate.notAfter > time.now + 30 * time.day
+        )
+      )
+  # No Terraform variants: CloudFront trust stores are managed via the CloudFront API and do not yet have a Terraform resource analog.
+  - uid: mondoo-aws-security-cloudfront-trust-store-not-empty
+    title: Ensure CloudFront trust stores contain at least one CA certificate
+    impact: 90
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: false
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: false
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-aws-security-cloudfront-trust-store-not-empty-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that CloudFront trust stores configured for viewer mTLS contain at least one CA certificate. A trust store with `numberOfCaCertificates == 0` is referenced by the distribution but has no anchors to validate viewer client certificates against, which results in either every certificate being rejected (outage) or, depending on configuration, every certificate being accepted (mTLS bypass).
+
+        **Why this matters**
+
+        - Viewer mTLS is a client authentication control on the CloudFront edge; a zero-CA trust store breaks the validation chain.
+        - The configuration "trust store referenced, zero CAs" is the same shape as a developer mistake during rotation where old CAs were removed before new ones were added.
+        - Detecting empty trust stores prevents a class of mTLS configuration errors that look correct in console summaries.
+
+        **Risk mitigation**
+
+        - **Authentication enforcement:** Ensures CloudFront actually has CAs to validate against when mTLS is configured.
+        - **Configuration hygiene:** Catches mid-rotation gaps before viewer clients are affected.
+      remediation:
+        - id: console
+          desc: |
+            To populate an empty CloudFront trust store using the AWS Console:
+
+            1. Open the **CloudFront Console** and select **Trust stores**.
+            2. Select the trust store flagged by this check.
+            3. Choose **Add CA certificates** and upload the PEM-encoded CA bundle.
+            4. Save the changes.
+        - id: cli
+          desc: |
+            To list trust stores and confirm CA contents using the AWS CLI:
+
+            ```bash
+            aws cloudfront list-trust-stores
+            aws cloudfront get-trust-store --identifier <id>
+            ```
+
+            Use `aws cloudfront update-trust-store --id <id> --if-match <etag> --ca-certificates-bundle-source <source>` to replace the CA bundle. The `--ca-certificates-bundle-source` value is the JSON shape described in the CloudFront API reference (S3 location of the bundle).
+    refs:
+      - url: https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/mutual-tls-authentication.html
+        title: Amazon CloudFront - Configuring mutual TLS authentication
+  - uid: mondoo-aws-security-cloudfront-trust-store-not-empty-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.cloudfront.trustStores.all(numberOfCaCertificates > 0)
+  # No Terraform variants: this check correlates origin domain heuristics against optional origin mTLS configuration; the heuristic is best applied at runtime where origin DNS resolution is observable.
+  - uid: mondoo-aws-security-cloudfront-private-origin-mtls
+    title: Ensure CloudFront distributions to internal origins use origin mTLS
+    impact: 80
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: false
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: false
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-aws-security-cloudfront-private-origin-mtls-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that CloudFront distribution origins whose `domainName` resolves to internal AWS endpoints (ELB, internal hostnames) are configured with origin mTLS. Without origin mTLS, anyone who can reach the origin URL directly can bypass CloudFront and the WAF or signed URL controls applied at the edge.
+
+        **Why this matters**
+
+        - Internal load balancer hostnames are routinely leaked or guessable; if the origin accepts TLS without client cert validation, an attacker who finds the origin URL can request the same content directly.
+        - Origin mTLS forces the origin to require a CloudFront-supplied client certificate, restoring the property that the only way to reach this origin is through CloudFront.
+        - The heuristic flags origins matching `*.elb.amazonaws.com` and `*.internal` as candidates that should require origin mTLS.
+
+        **Risk mitigation**
+
+        - **Origin protection:** Prevents direct-to-origin requests that bypass edge controls.
+        - **WAF enforcement:** Ensures the WAF cannot be skipped by routing around CloudFront.
+      remediation:
+        - id: console
+          desc: |
+            To enable origin mTLS on a CloudFront distribution using the AWS Console:
+
+            1. Open the **CloudFront Console** and select **Distributions** then the distribution then **Origins**.
+            2. Select the origin and choose **Edit**.
+            3. Under **Origin TLS settings**, enable **Origin mutual TLS** and select an ACM certificate.
+            4. Save the changes.
+        - id: cli
+          desc: |
+            To enable origin mTLS using the AWS CLI:
+
+            ```bash
+            aws cloudfront get-distribution-config --id <dist-id> > config.json
+            aws cloudfront update-distribution --id <dist-id> --distribution-config file://updated-config.json --if-match <etag>
+            ```
+
+            Edit `config.json` to set `Origins.Items[N].CustomOriginConfig.OriginMtlsConfig` before calling `update-distribution`.
+    refs:
+      - url: https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/origin-mtls.html
+        title: Amazon CloudFront - Origin mutual TLS
+  - uid: mondoo-aws-security-cloudfront-private-origin-mtls-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.cloudfront.distributions.all(
+        origins.where(
+          domainName.contains(".elb.amazonaws.com") ||
+          domainName.contains(".internal")
+        ).all(originMtlsClientCertificate != null)
+      )
+  # No Terraform variants: trust store rotation cadence is operational telemetry derived from `lastModifiedAt` and has no Terraform configuration analog.
+  - uid: mondoo-aws-security-cloudfront-trust-store-recently-updated
+    title: Ensure CloudFront trust stores have been refreshed within the last year
+    impact: 70
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: false
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: false
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-aws-security-cloudfront-trust-store-recently-updated-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that CloudFront trust stores have been modified within the last 365 days. The `lastModifiedAt` field is a proxy for CA bundle freshness: a trust store untouched for over a year is likely to contain CA certificates that are nearing or past expiry, breaking the mTLS validation chain or, on misconfigured origins, allowing certificates to be accepted that should be rejected.
+
+        **Why this matters**
+
+        - Public CA root certificates have multi-year validity; intermediate CAs commonly used in customer trust stores have shorter rotation cycles.
+        - A trust store that has not been updated for over a year almost certainly contains at least one cert nearing end of life.
+        - Bundle staleness is a leading indicator of upcoming mTLS breakage.
+
+        **Risk mitigation**
+
+        - **Validation continuity:** Forces rotation cadence on the CA bundle.
+        - **Bypass prevention:** Reduces the window where expired CAs in the trust store can lead to inconsistent validation behavior.
+      remediation:
+        - id: console
+          desc: |
+            To refresh a CloudFront trust store CA bundle using the AWS Console:
+
+            1. Open the **CloudFront Console** and select **Trust stores**.
+            2. Select the trust store.
+            3. Choose **Update CA certificates** and upload a current PEM-encoded CA bundle.
+            4. Save the changes.
+        - id: cli
+          desc: |
+            To rotate the trust store CA bundle using the AWS CLI:
+
+            ```bash
+            aws cloudfront list-trust-stores
+            aws cloudfront update-trust-store \
+              --id <id> \
+              --if-match <etag> \
+              --ca-certificates-bundle-source <source>
+            ```
+
+            The `--ca-certificates-bundle-source` value is the JSON shape described in the CloudFront API reference (S3 location of the current PEM bundle).
+    refs:
+      - url: https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/mutual-tls-authentication.html
+        title: Amazon CloudFront - Configuring mutual TLS authentication
+  - uid: mondoo-aws-security-cloudfront-trust-store-recently-updated-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.cloudfront.trustStores.all(
+        time.now - lastModifiedAt < 365 * time.day
+      )
+  # No Terraform variants: this check walks IAM role policy documents from the connector's `access_role` ARN; correlating across IAM resources in Terraform is brittle and the runtime walk is authoritative.
+  - uid: mondoo-aws-security-transfer-connector-access-role-no-wildcards
+    title: Ensure Transfer Family connectors use accessRoles without wildcard permissions
+    impact: 90
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: false
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: false
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-aws-security-transfer-connector-access-role-no-wildcards-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that the IAM role attached to a Transfer Family connector via `accessRole` does not grant wildcard S3 actions or `Resource: "*"`. Connectors are partner-facing data exchange endpoints; an over-privileged accessRole can be abused by a compromised connector to read or write across every bucket in the account.
+
+        The check inspects every statement on every managed (attached) policy. The IAM role resource exposes inline policy *names* but not their documents, so this check additionally requires that the accessRole has no inline policies attached — otherwise wildcards inside an inline policy would be invisible to the wildcard scan and the check could pass with hidden over-privilege.
+
+        **Why this matters**
+
+        - Connectors initiate outbound SFTP and AS2 transfers using the accessRole; the blast radius is bounded by what that role can do.
+        - `Resource: "*"` or `s3:*` on the accessRole turns a single-purpose data exchange role into a cross-account data exfiltration tool if the connector is compromised.
+        - Scoping the role to specific buckets and prefixes contains the impact of partner-side compromise.
+
+        **Risk mitigation**
+
+        - **Least privilege:** Restricts connector authority to only the buckets and actions required for the data exchange.
+        - **Blast radius reduction:** Limits the exposure of an accidentally or maliciously misused connector.
+        - **Audit completeness:** Requiring managed-only policies makes the wildcard scan authoritative rather than partial.
+      remediation:
+        - id: console
+          desc: |
+            To scope a Transfer connector accessRole using the AWS Console:
+
+            1. Open the **IAM Console** and locate the role attached to the Transfer Family connector as `accessRole`.
+            2. Replace any policy with `Action: s3:*` or `Resource: "*"` with statements scoped to specific buckets and the minimum S3 actions needed.
+            3. Save the policy.
+        - id: cli
+          desc: |
+            To replace the accessRole policy using the AWS CLI:
+
+            ```bash
+            aws iam put-role-policy \
+              --role-name <role> \
+              --policy-name connector-access \
+              --policy-document file://scoped-policy.json
+            ```
+
+            `scoped-policy.json` should list explicit bucket ARNs and the minimum actions needed (`s3:GetObject`, `s3:PutObject`).
+    refs:
+      - url: https://docs.aws.amazon.com/transfer/latest/userguide/configure-as2-connector.html
+        title: AWS Transfer Family - Connector access role
+  - uid: mondoo-aws-security-transfer-connector-access-role-no-wildcards-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.transfer.connectors.all(
+        accessRole != null &&
+        accessRole.inlinePolicies.length == 0 &&
+        accessRole.attachedPolicies.all(
+          defaultVersion.document['Statement'].all(
+            _['Effect'].upcase == "DENY" ||
+            [_['Resource']].flat.none(_ == "*") &&
+            [_['Action']].flat.none(_ == "*" || _ == "s3:*")
+          )
+        )
+      )
+  - uid: mondoo-aws-security-transfer-connector-logging-role
+    title: Ensure Transfer Family connectors have a loggingRole configured
+    impact: 70
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: false
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: false
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-aws-security-transfer-connector-logging-role-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-transfer-connector-logging-role-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-transfer-connector-logging-role-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-transfer-connector-logging-role-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Transfer Family connectors have a `loggingRole` configured. Without a logging role, transfer events for the connector are not delivered to CloudWatch Logs, leaving outbound SFTP and AS2 file movements with no durable audit trail.
+
+        **Why this matters**
+
+        - Connectors move data out of the account to partner systems; without logs there is no way to attribute who moved what, when.
+        - Detection and incident response for data exfiltration scenarios depend on having the connector's CloudWatch log stream available.
+        - The `loggingRole` is the only mechanism by which connector activity is delivered to CloudWatch Logs.
+
+        **Risk mitigation**
+
+        - **Forensic trail:** Ensures every transfer event is captured for audit and incident response.
+        - **Data exfiltration detection:** Enables alerting on unusual transfer volume or destinations.
+      remediation:
+        - id: console
+          desc: |
+            To attach a logging role to a Transfer Family connector using the AWS Console:
+
+            1. Open the **AWS Transfer Family Console** and select **Connectors**.
+            2. Select the connector and choose **Edit**.
+            3. Under **Logging role**, select an IAM role that grants permission to write to CloudWatch Logs.
+            4. Save the changes.
+        - id: cli
+          desc: |
+            To attach a logging role using the AWS CLI:
+
+            ```bash
+            aws transfer update-connector \
+              --connector-id <connector-id> \
+              --logging-role <role-arn>
+            ```
+        - id: terraform
+          desc: |
+            To configure a Transfer Family connector with a logging role in Terraform:
+
+            ```hcl
+            resource "aws_transfer_connector" "example" {
+              access_role  = aws_iam_role.connector_access.arn
+              logging_role = aws_iam_role.connector_logging.arn
+              url          = "sftp://partner.example.com"
+
+              sftp_config {
+                trusted_host_keys = ["..."]
+                user_secret_id    = aws_secretsmanager_secret.connector.id
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/transfer/latest/userguide/monitoring.html
+        title: AWS Transfer Family - Monitoring with CloudWatch
+  - uid: mondoo-aws-security-transfer-connector-logging-role-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.transfer.connectors.all(loggingRole != null)
+  - uid: mondoo-aws-security-transfer-connector-logging-role-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_transfer_connector")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_transfer_connector").all(
+        arguments["logging_role"] != null && arguments["logging_role"] != ""
+      )
+  - uid: mondoo-aws-security-transfer-connector-logging-role-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_transfer_connector")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_transfer_connector").all(
+        change.after["logging_role"] != null && change.after["logging_role"] != ""
+      )
+  - uid: mondoo-aws-security-transfer-connector-logging-role-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_transfer_connector")
+    mql: |
+      terraform.state.resources.where(type == "aws_transfer_connector").all(
+        values["logging_role"] != null && values["logging_role"] != ""
+      )
+  # No Terraform variants: the AWS Terraform provider does not yet expose a Transfer Web App resource. Add Terraform variants once the resource lands in the provider.
+  - uid: mondoo-aws-security-transfer-web-app-not-public
+    title: Ensure Transfer Family Web Apps are not exposed via PUBLIC endpoints
+    impact: 90
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: false
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: false
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-aws-security-transfer-web-app-not-public-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that Transfer Family Web Apps are not configured with `endpointType=PUBLIC`. A public endpoint exposes the browser-based file transfer front door directly to the internet; even with strong IAM Identity Center authentication this exposes the login surface to credential stuffing and session-hijack attacks.
+
+        **Why this matters**
+
+        - Transfer Web Apps are SaaS-style file transfer UIs; their endpoint type controls whether the front door is reachable from the internet or only from inside a VPC.
+        - PUBLIC endpoints face all of the credential abuse and authentication-bypass attacks aimed at SaaS login pages.
+        - Constraining the endpoint to a private network materially shrinks the attack surface.
+
+        **Risk mitigation**
+
+        - **Network boundary:** Removes the public attack surface for the auth flow.
+        - **Defense in depth:** Pairs with IP access settings and IAM Identity Center MFA to enforce both network and identity boundaries.
+      remediation:
+        - id: console
+          desc: |
+            To recreate a Transfer Web App with a private endpoint using the AWS Console:
+
+            1. Open the **AWS Transfer Family Console** and select **Web Apps**. The endpoint type is set at creation, so a new Web App is required.
+            2. Choose **Create Web App** and select a non-PUBLIC endpoint type.
+            3. Migrate identity provider configuration and unit names from the old Web App.
+            4. Delete the old Web App once the migration is complete.
+        - id: cli
+          desc: |
+            To create a Transfer Web App with a non-public endpoint using the AWS CLI:
+
+            ```bash
+            aws transfer create-web-app \
+              --identity-provider-details Type=IDENTITY_CENTER,InstanceArn=<arn>,Role=<role-arn> \
+              --access-endpoint <internal-endpoint>
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/transfer/latest/userguide/web-apps.html
+        title: AWS Transfer Family - Web Apps
+  - uid: mondoo-aws-security-transfer-web-app-not-public-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.transfer.webApps.all(endpointType != "PUBLIC")
+  # No Terraform variants: workflow step types are heterogeneous unions surfaced as `[]dict` and require structural inspection that is more reliable at runtime than against arbitrary Terraform shapes.
+  - uid: mondoo-aws-security-transfer-workflow-exception-handling
+    title: Ensure Transfer workflows with DECRYPT or COPY steps define onExceptionSteps
+    impact: 70
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: false
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: false
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-aws-security-transfer-workflow-exception-handling-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that any Transfer Family workflow containing `DECRYPT` or `COPY` steps also defines `onExceptionSteps`. Without exception handling, a partial workflow failure leaves intermediate decrypted or copied files in their staging location, where they may persist longer than intended and bypass the encryption posture the workflow was meant to maintain.
+
+        **Why this matters**
+
+        - `DECRYPT` produces cleartext output in S3 as an intermediate step; if a downstream step fails, the cleartext sits in the staging bucket without cleanup.
+        - `COPY` similarly fans data out to additional locations; failure mid-flow leaves data in places the workflow author did not intend it to live.
+        - `onExceptionSteps` are the only mechanism Transfer offers to clean up or quarantine partial output on failure.
+
+        **Risk mitigation**
+
+        - **Data residue prevention:** Ensures cleartext or fan-out copies are removed when the workflow fails.
+        - **Encryption posture:** Maintains the at-rest encryption guarantee even on partial failures.
+      remediation:
+        - id: console
+          desc: |
+            To add exception handling to a Transfer workflow using the AWS Console:
+
+            1. Open the **AWS Transfer Family Console** and select **Workflows**. Workflow steps are immutable so a new workflow is required.
+            2. Choose **Create workflow** and replicate the existing nominal steps.
+            3. Under **Exception handlers**, add `DELETE` or `TAG` steps that operate on the partial output of `DECRYPT` and `COPY`.
+            4. Switch the Transfer servers and connectors to reference the new workflow ID.
+            5. Delete the old workflow once the migration is complete.
+        - id: cli
+          desc: |
+            To create a workflow with exception handling using the AWS CLI:
+
+            ```bash
+            aws transfer create-workflow \
+              --steps file://steps.json \
+              --on-exception-steps file://exception-steps.json
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/transfer/latest/userguide/nominal-steps-workflow.html
+        title: AWS Transfer Family - Workflow steps and exception handling
+  - uid: mondoo-aws-security-transfer-workflow-exception-handling-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.transfer.workflows.where(
+        steps.any(_['Type'] == "DECRYPT" || _['Type'] == "COPY")
+      ).all(onExceptionSteps != null && onExceptionSteps.length > 0)
