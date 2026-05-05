@@ -53,6 +53,7 @@ func init() {
 	// lint
 	policyLintCmd.Flags().StringP("output", "o", "cli", "Set the output format: compact, sarif")
 	policyLintCmd.Flags().String("output-file", "", "Set the output file")
+	policyLintCmd.Flags().StringSlice("strict-rule", nil, "Treat warnings from these rule IDs as errors (repeatable). Use 'all' to promote every warning to an error.")
 	policyCmd.AddCommand(policyLintCmd)
 
 	// fmt
@@ -648,6 +649,9 @@ var policyLintCmd = &cobra.Command{
 		if err := viper.BindPFlag("output-file", cmd.Flags().Lookup("output-file")); err != nil {
 			return err
 		}
+		if err := viper.BindPFlag("strict-rule", cmd.Flags().Lookup("strict-rule")); err != nil {
+			return err
+		}
 		return nil
 	},
 	Run: runPolicyLint,
@@ -672,6 +676,10 @@ func runPolicyLint(cmd *cobra.Command, args []string) {
 	}, files...)
 	if err != nil {
 		log.Fatal().Err(err).Msg("could not lint bundle files")
+	}
+
+	if strictRules := viper.GetStringSlice("strict-rule"); len(strictRules) > 0 {
+		result.PromoteWarnings(strictRules)
 	}
 
 	out := os.Stdout

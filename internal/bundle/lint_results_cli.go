@@ -72,6 +72,43 @@ func (r *Results) HasWarning() bool {
 	return false
 }
 
+// StrictRuleAll is the sentinel value that promotes every warning entry to an
+// error, regardless of its rule ID.
+const StrictRuleAll = "all"
+
+// PromoteWarnings rewrites warning-level entries to error-level for the given
+// rule IDs. The sentinel "all" promotes every warning. Unknown rule IDs are
+// silently ignored so CI configs stay portable across cnspec versions that
+// add or remove rules.
+func (r *Results) PromoteWarnings(ruleIDs []string) {
+	if r == nil || len(ruleIDs) == 0 {
+		return
+	}
+
+	promoteAll := false
+	selected := make(map[string]struct{}, len(ruleIDs))
+	for _, id := range ruleIDs {
+		if id == StrictRuleAll {
+			promoteAll = true
+			continue
+		}
+		selected[id] = struct{}{}
+	}
+
+	for i := range r.Entries {
+		if r.Entries[i].Level != LevelWarning {
+			continue
+		}
+		if promoteAll {
+			r.Entries[i].Level = LevelError
+			continue
+		}
+		if _, ok := selected[r.Entries[i].RuleID]; ok {
+			r.Entries[i].Level = LevelError
+		}
+	}
+}
+
 func (r *Results) ToCli() []byte {
 	// lets not render the result table if no findings are present
 	if r == nil || len(r.Entries) == 0 {
