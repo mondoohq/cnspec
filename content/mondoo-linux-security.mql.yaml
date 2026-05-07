@@ -12885,20 +12885,13 @@ queries:
       compliance/vda-isa-5: vda-isa-5-4-1-1
     filters: |
       asset.kind != "container-image"
-    props:
-      - uid: mondooLinuxSecuritySudoGroup
-        title: Define the members of the sudo or wheel group
-        mql: |
-          return /root|ec2-user|centos|ubuntu|admin|mondoo/
     mql: |
-      pam.conf.entries["/etc/pam.d/su"].where(pamType == "auth" && module == "pam_wheel.so").any(options.contains("use_uid"))
-      groups.any(name == "wheel" || name == "sudo")
-      groups.where(name == "wheel" || name == "sudo") {
-        members {
-          name
-          name == props.mondooLinuxSecuritySudoGroup
-        }
-      }
+      suRestrictedPam = pam.conf.entries["/etc/pam.d/su"].where(pamType == "auth" && module == "pam_wheel.so" && options.contains("use_uid"))
+      suRestrictedGroups = suRestrictedPam.map(options.where(_ == /^group=/).map(_.split("group=")[1])).flat
+
+      suRestrictedPam != empty
+      suRestrictedGroups == empty || groups.map(name).containsAll(suRestrictedGroups)
+      suRestrictedGroups != empty || groups.any(name == "wheel" || name == "sudo")
     docs:
       desc: |
         This check ensures that access to the `su` command is restricted to authorized users by configuring the `pam_wheel.so` module in the `/etc/pam.d/su` file. This configuration limits the use of the `su` command to members of the `wheel` or `sudo` group, enhancing system security.
@@ -12912,8 +12905,6 @@ queries:
         - System integrity and compliance with security policies could be jeopardized.
 
         By restricting access to the `su` command, organizations can ensure that only authorized users can perform privileged actions, reducing the risk of unauthorized access and maintaining a secure system configuration.
-
-        NOTE: The users allowed in the wheel group are defined in the property `props.mondooLinuxSecuritySudoGroup` field of this policy. By default the users "root", "ec2-user", "centos" and "ubuntu" are included. To include custom users you need to define additional users in this property.
       audit: |
         Run this command and verify output includes matching line:
 
@@ -12922,7 +12913,7 @@ queries:
         auth required pam_wheel.so use_uid
         ```
 
-        Run this command and verify users in wheel group match site policy:
+        If the PAM line does not specify a `group=` option, verify users in the `wheel` or `sudo` group match site policy:
 
         ```console
         # grep wheel /etc/group
@@ -12975,12 +12966,6 @@ queries:
                     regexp: '^auth required pam_wheel.so use_uid'
                     line: 'auth required pam_wheel.so use_uid'
                     create: yes
-                - name: Ensure users are in the wheel group
-                  ansible.builtin.user:
-                    name: "{{ item }}"
-                    group: wheel
-                    append: yes
-                  loop: "{{ props.mondooLinuxSecuritySudoGroup }}"
             ```
         - id: bash
           desc: |
