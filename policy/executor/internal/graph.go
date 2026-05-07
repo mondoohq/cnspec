@@ -241,9 +241,14 @@ func (ge *GraphExecutor) Debug(name string) {
 			shape = "ellipse"
 			label = fmt.Sprintf("%squery_id\n%s", label, k)
 		case ReportingJobNodeType:
-			nodeData := n.data.(*ReportingJobNodeData)
-			label = fmt.Sprintf("%srj_id\n%s\nquery_id\n%s\nscoring_system\n%s",
-				label, k, nodeData.queryID, nodeData.scoringSystem.String())
+			switch nd := n.data.(type) {
+			case *ReportingJobNodeData:
+				label = fmt.Sprintf("%srj_id\n%s\nquery_id\n%s\nscoring_system\n%s",
+					label, k, nd.queryID, nd.scoringSystem.String())
+			case *StaticReportingJobNodeData:
+				label = fmt.Sprintf("%srj_id\n%s\nstatic_score\n%d",
+					label, k, nd.score.Value)
+			}
 			shape = "box"
 		case DatapointCollectorNodeType:
 			shape = "cds"
