@@ -20,6 +20,34 @@ type GraphExecutor interface {
 	Execute()
 }
 
+// ScoreCollector receives scores emitted by the graph executor. Re-exported
+// for callers of RescoreResolvedPolicy.
+type ScoreCollector = internal.ScoreCollector
+
+// RescoreResolvedPolicy rolls up pre-computed leaf scores through the graph
+// executor without running any queries. Reporting jobs whose QrId is a key
+// in scores are built as static nodes holding the supplied score; aggregate
+// reporting jobs (policies, controls, frameworks) roll up their children
+// using their configured ScoringSystem. Rolled-up scores are delivered to
+// scoreCollector. The "root" reporting job's QrId is rewritten to assetMrn
+// when matching against scores, consistent with the normal execution path.
+func RescoreResolvedPolicy(
+	assetMrn string,
+	resolvedPolicy *policy.ResolvedPolicy,
+	scores map[string]*policy.Score,
+	scoreCollector ScoreCollector,
+) error {
+	builder := builderFromResolvedPolicy(resolvedPolicy)
+	builder.AddScoreCollector(scoreCollector)
+	builder.WithRescore(scores)
+
+	ge, err := builder.Build(nil, assetMrn)
+	if err != nil {
+		return err
+	}
+	return ge.Execute()
+}
+
 func ExecuteResolvedPolicy(ctx context.Context, runtime llx.Runtime, collectorSvc policy.PolicyResolver, assetMrn string,
 	resolvedPolicy *policy.ResolvedPolicy, features mql.Features, progressReporter progress.Progress,
 ) error {
@@ -171,25 +199,25 @@ func ExecuteQuery(runtime llx.Runtime, codeBundle *llx.CodeBundle, props map[str
 func builderFromResolvedPolicy(resolvedPolicy *policy.ResolvedPolicy) *internal.GraphBuilder {
 	b := internal.NewBuilder()
 
-	rqs := resolvedPolicy.CollectorJob.ReportingQueries
+	rqs := resolvedPolicy.GetCollectorJob().GetReportingQueries()
 	if rqs == nil {
 		rqs = map[string]*policy.StringArray{}
 	}
-	for _, eq := range resolvedPolicy.ExecutionJob.Queries {
+	for _, eq := range resolvedPolicy.GetExecutionJob().GetQueries() {
 		var notifies []string
-		if sa := rqs[eq.Code.GetCodeV2().GetId()]; sa != nil {
+		if sa := rqs[eq.GetCode().GetCodeV2().GetId()]; sa != nil {
 			if len(sa.Items) > 0 {
 				notifies = sa.Items
 			}
 		}
-		b.AddQuery(eq.Code, eq.Properties, nil, notifies)
+		b.AddQuery(eq.GetCode(), eq.GetProperties(), nil, notifies)
 	}
 
-	for _, rj := range resolvedPolicy.CollectorJob.ReportingJobs {
+	for _, rj := range resolvedPolicy.GetCollectorJob().GetReportingJobs() {
 		b.AddReportingJob(rj)
 	}
 
-	for datapointChecksum, dqi := range resolvedPolicy.CollectorJob.Datapoints {
+	for datapointChecksum, dqi := range resolvedPolicy.GetCollectorJob().GetDatapoints() {
 		b.AddDatapointType(datapointChecksum, dqi.Type)
 	}
 

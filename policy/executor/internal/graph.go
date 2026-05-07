@@ -93,14 +93,27 @@ type GraphExecutor struct {
 // and we assign a priority to each node, each node in the graph should only
 // recalculate at most once in each round
 func (ge *GraphExecutor) Execute() error {
-	ge.executionManager.Start()
+	if ge.executionManager != nil {
+		ge.executionManager.Start()
+	}
 
 	// Trigger the execution nodes
 	maxPriority := len(ge.nodes) + 1
 	q := make(PriorityQueue, 0, len(ge.nodes))
 	heap.Init(&q)
+	rescore := ge.executionManager == nil
 	for nodeID, n := range ge.nodes {
 		n.data.initialize()
+		if rescore {
+			// In rescore mode, only static reporting-job nodes produce output
+			// unprompted; every other node will be queued via consume +
+			// cascade once a static node emits. Skipping the rest avoids
+			// redundant nil-recalculates on aggregate nodes during the
+			// initial sweep.
+			if _, ok := n.data.(*StaticReportingJobNodeData); !ok {
+				continue
+			}
+		}
 		heap.Push(&q, &Item{
 			priority: maxPriority,
 			receiver: nodeID,
@@ -143,6 +156,13 @@ OUTER:
 			}
 		}
 
+		// Rescore mode: nothing else will feed the graph. Once the initial
+		// priority-queue pass propagates all static scores through their
+		// edges, we're done.
+		if ge.executionManager == nil {
+			break OUTER
+		}
+
 		if done {
 			break OUTER
 		}
@@ -182,7 +202,9 @@ OUTER:
 		}
 	}
 
-	ge.executionManager.Stop()
+	if ge.executionManager != nil {
+		ge.executionManager.Stop()
+	}
 	return err
 }
 
@@ -219,9 +241,14 @@ func (ge *GraphExecutor) Debug(name string) {
 			shape = "ellipse"
 			label = fmt.Sprintf("%squery_id\n%s", label, k)
 		case ReportingJobNodeType:
-			nodeData := n.data.(*ReportingJobNodeData)
-			label = fmt.Sprintf("%srj_id\n%s\nquery_id\n%s\nscoring_system\n%s",
-				label, k, nodeData.queryID, nodeData.scoringSystem.String())
+			switch nd := n.data.(type) {
+			case *ReportingJobNodeData:
+				label = fmt.Sprintf("%srj_id\n%s\nquery_id\n%s\nscoring_system\n%s",
+					label, k, nd.queryID, nd.scoringSystem.String())
+			case *StaticReportingJobNodeData:
+				label = fmt.Sprintf("%srj_id\n%s\nstatic_score\n%d",
+					label, k, nd.score.Value)
+			}
 			shape = "box"
 		case DatapointCollectorNodeType:
 			shape = "cds"
