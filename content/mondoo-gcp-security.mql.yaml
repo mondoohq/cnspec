@@ -27474,16 +27474,26 @@ queries:
         values['role'] != "roles/editor" &&
         values['role'] != "roles/viewer"
       )
-  # No Terraform variants: planned for a follow-up alongside HCL/plan/state coverage for Artifact Registry repositories.
-  # No Terraform remediation: planned for a follow-up alongside HCL/plan/state coverage for Artifact Registry repositories.
   - uid: mondoo-gcp-security-artifact-registry-repository-cmek-encryption
     title: Ensure Artifact Registry repositories are encrypted with CMEK
     impact: 75
-    filters: asset.platform == 'gcp'
-    mql: |
-      gcp.project.artifactRegistryService.repositories.all(
-        kmsKeyName != ""
-      )
+    variants:
+      - uid: mondoo-gcp-security-artifact-registry-repository-cmek-encryption-gcp
+        tags:
+          mondoo.com/filter-title: GCP Artifact Registry Repository
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-artifact-registry-repository-cmek-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-artifact-registry-repository-cmek-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-artifact-registry-repository-cmek-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that every Artifact Registry repository in the project is encrypted with a customer-managed encryption key (CMEK). Repositories without a `kmsKeyName` rely solely on Google-managed encryption, which does not provide tenant-scoped key control or independent revocation.
@@ -27502,6 +27512,18 @@ queries:
         - Restrict the IAM policy on the encryption key so only the Artifact Registry service agent and approved operators can use it.
         - Monitor Cloud KMS audit logs for unauthorized key access patterns.
       remediation:
+        - id: terraform
+          desc: |
+            Create a CMEK-protected Artifact Registry repository. The KMS key must live in the same region as the repository, and the Artifact Registry service agent needs `roles/cloudkms.cryptoKeyEncrypterDecrypter` on the key:
+
+            ```hcl
+            resource "google_artifact_registry_repository" "cmek" {
+              location      = "us-central1"
+              repository_id = "secure-images"
+              format        = "DOCKER"
+              kms_key_name  = google_kms_crypto_key.artifact_registry.id
+            }
+            ```
         - id: console
           desc: |
             Configure CMEK on a new Artifact Registry repository:
@@ -27526,18 +27548,53 @@ queries:
     refs:
       - url: https://cloud.google.com/artifact-registry/docs/cmek
         title: Artifact Registry - Enable customer-managed encryption keys
-  # No Terraform variants: planned for a follow-up alongside HCL/plan/state coverage for Artifact Registry IAM bindings.
-  # No Terraform remediation: planned for a follow-up alongside HCL/plan/state coverage for Artifact Registry IAM bindings.
-  - uid: mondoo-gcp-security-artifact-registry-repository-iam-no-public-principals
-    title: Ensure Artifact Registry repositories are not publicly accessible
-    impact: 90
+  - uid: mondoo-gcp-security-artifact-registry-repository-cmek-encryption-gcp
     filters: asset.platform == 'gcp'
     mql: |
       gcp.project.artifactRegistryService.repositories.all(
-        iamPolicy.all(
-          members.none(_ == "allUsers" || _ == "allAuthenticatedUsers")
-        )
+        kmsKeyName != ""
       )
+  - uid: mondoo-gcp-security-artifact-registry-repository-cmek-encryption-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_artifact_registry_repository')
+    mql: |
+      terraform.resources('google_artifact_registry_repository').all(
+        arguments['kms_key_name'] != null && arguments['kms_key_name'] != ""
+      )
+  - uid: mondoo-gcp-security-artifact-registry-repository-cmek-encryption-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_artifact_registry_repository')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_artifact_registry_repository').all(
+        change.after['kms_key_name'] != null && change.after['kms_key_name'] != ""
+      )
+  - uid: mondoo-gcp-security-artifact-registry-repository-cmek-encryption-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_artifact_registry_repository')
+    mql: |
+      terraform.state.resources.where(type == 'google_artifact_registry_repository').all(
+        values['kms_key_name'] != null && values['kms_key_name'] != ""
+      )
+  - uid: mondoo-gcp-security-artifact-registry-repository-iam-no-public-principals
+    title: Ensure Artifact Registry repositories are not publicly accessible
+    impact: 90
+    variants:
+      - uid: mondoo-gcp-security-artifact-registry-repository-iam-no-public-principals-gcp
+        tags:
+          mondoo.com/filter-title: GCP Artifact Registry Repository
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-artifact-registry-repository-iam-no-public-principals-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-artifact-registry-repository-iam-no-public-principals-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-artifact-registry-repository-iam-no-public-principals-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that no Artifact Registry repository grants reader, writer, or administrator roles to `allUsers` or `allAuthenticatedUsers`. Public bindings expose container images and packages to anonymous internet users or to any authenticated Google account, which is almost never the intent.
@@ -27556,6 +27613,21 @@ queries:
         - Replace public access with explicit IAM bindings to specific service accounts, groups, or workload identity pools.
         - For genuinely public artifacts, publish them through a deliberately scoped distribution channel rather than the source repository.
       remediation:
+        - id: terraform
+          desc: |
+            Manage Artifact Registry repository IAM with `google_artifact_registry_repository_iam_member` resources whose `member` is a specific identity, not `allUsers` or `allAuthenticatedUsers`:
+
+            ```hcl
+            resource "google_artifact_registry_repository_iam_member" "reader" {
+              project    = "my-project"
+              location   = google_artifact_registry_repository.cmek.location
+              repository = google_artifact_registry_repository.cmek.name
+              role       = "roles/artifactregistry.reader"
+              member     = "serviceAccount:gke-puller@my-project.iam.gserviceaccount.com"
+            }
+            ```
+
+            Audit any `google_artifact_registry_repository_iam_binding` and `google_artifact_registry_repository_iam_policy` resources for public-principal members and remove them at the source.
         - id: console
           desc: |
             Remove public principals from a repository's IAM policy:
@@ -27585,17 +27657,70 @@ queries:
     refs:
       - url: https://cloud.google.com/artifact-registry/docs/access-control
         title: Artifact Registry - Access control with IAM
-  # No Terraform variants: planned for a follow-up alongside HCL/plan/state coverage for Artifact Registry vulnerability scanning.
-  # No Terraform remediation: planned for a follow-up alongside HCL/plan/state coverage for Artifact Registry vulnerability scanning.
+  - uid: mondoo-gcp-security-artifact-registry-repository-iam-no-public-principals-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.project.artifactRegistryService.repositories.all(
+        iamPolicy.all(
+          members.none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+        )
+      )
+  - uid: mondoo-gcp-security-artifact-registry-repository-iam-no-public-principals-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_artifact_registry_repository_iam_member') ||
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_artifact_registry_repository_iam_binding')
+    mql: |
+      terraform.resources('google_artifact_registry_repository_iam_member').all(
+        arguments['member'] != "allUsers" &&
+        arguments['member'] != "allAuthenticatedUsers"
+      )
+      terraform.resources('google_artifact_registry_repository_iam_binding').all(
+        arguments['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-artifact-registry-repository-iam-no-public-principals-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_artifact_registry_repository_iam_member') ||
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_artifact_registry_repository_iam_binding')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_artifact_registry_repository_iam_member').all(
+        change.after['member'] != "allUsers" &&
+        change.after['member'] != "allAuthenticatedUsers"
+      )
+      terraform.plan.resourceChanges.where(type == 'google_artifact_registry_repository_iam_binding').all(
+        change.after['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-artifact-registry-repository-iam-no-public-principals-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_artifact_registry_repository_iam_member') ||
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_artifact_registry_repository_iam_binding')
+    mql: |
+      terraform.state.resources.where(type == 'google_artifact_registry_repository_iam_member').all(
+        values['member'] != "allUsers" &&
+        values['member'] != "allAuthenticatedUsers"
+      )
+      terraform.state.resources.where(type == 'google_artifact_registry_repository_iam_binding').all(
+        values['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
   - uid: mondoo-gcp-security-artifact-registry-repository-vulnerability-scanning-enabled
     title: Ensure container repositories have vulnerability scanning enabled
     impact: 75
-    filters: asset.platform == 'gcp'
-    mql: |
-      gcp.project.artifactRegistryService.repositories.where(format == "DOCKER").all(
-        vulnerabilityScanningConfig.enablementConfig != "DISABLED" &&
-        vulnerabilityScanningConfig.enablementState != "SCANNING_DISABLED"
-      )
+    variants:
+      - uid: mondoo-gcp-security-artifact-registry-repository-vulnerability-scanning-enabled-gcp
+        tags:
+          mondoo.com/filter-title: GCP Artifact Registry Repository
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-artifact-registry-repository-vulnerability-scanning-enabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-artifact-registry-repository-vulnerability-scanning-enabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-artifact-registry-repository-vulnerability-scanning-enabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that every Docker-format Artifact Registry repository has vulnerability scanning enabled. Scanning surfaces known CVEs in operating system packages and language dependencies inside container images so that maintainers can rebuild and redeploy affected images before the vulnerabilities reach production.
@@ -27614,6 +27739,26 @@ queries:
         - Wire scan findings into Security Command Center and the team's triage process so high and critical CVEs trigger image rebuilds and redeployments.
         - Avoid setting `enablementConfig` to DISABLED on shared registries.
       remediation:
+        - id: terraform
+          desc: |
+            Leave the repository's `vulnerability_scanning_config.enablement_config` at the default `INHERITED` (which honors the project Container Scanning API setting), or set it to `SCANNING_ENABLED`. Never set it to `SCANNING_DISABLED`. Pair the repository with the Container Scanning API enabled at the project:
+
+            ```hcl
+            resource "google_project_service" "container_scanning" {
+              service            = "containerscanning.googleapis.com"
+              disable_on_destroy = false
+            }
+
+            resource "google_artifact_registry_repository" "scanned" {
+              location      = "us-central1"
+              repository_id = "scanned-images"
+              format        = "DOCKER"
+
+              vulnerability_scanning_config {
+                enablement_config = "SCANNING_ENABLED"
+              }
+            }
+            ```
         - id: console
           desc: |
             Re-enable vulnerability scanning on a repository:
@@ -27639,18 +27784,62 @@ queries:
     refs:
       - url: https://cloud.google.com/artifact-analysis/docs/container-scanning-overview
         title: Container scanning overview
-  # No Terraform variants: planned for a follow-up alongside HCL/plan/state coverage for Cloud Build trigger substitutions.
-  # No Terraform remediation: planned for a follow-up alongside HCL/plan/state coverage for Cloud Build trigger substitutions.
+  - uid: mondoo-gcp-security-artifact-registry-repository-vulnerability-scanning-enabled-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.project.artifactRegistryService.repositories.where(format == "DOCKER").all(
+        vulnerabilityScanningConfig.enablementConfig != "DISABLED" &&
+        vulnerabilityScanningConfig.enablementState != "SCANNING_DISABLED"
+      )
+  - uid: mondoo-gcp-security-artifact-registry-repository-vulnerability-scanning-enabled-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_artifact_registry_repository' && arguments['format'] == 'DOCKER')
+    mql: |
+      terraform.resources('google_artifact_registry_repository').where(arguments['format'] == 'DOCKER').all(
+        blocks.where(type == 'vulnerability_scanning_config').all(
+          arguments['enablement_config'] != "SCANNING_DISABLED"
+        )
+      )
+  - uid: mondoo-gcp-security-artifact-registry-repository-vulnerability-scanning-enabled-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_artifact_registry_repository' && change.after['format'] == 'DOCKER')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_artifact_registry_repository' && change.after['format'] == 'DOCKER').all(
+        change.after['vulnerability_scanning_config'] == null ||
+        change.after['vulnerability_scanning_config'].all(
+          _['enablement_config'] != "SCANNING_DISABLED"
+        )
+      )
+  - uid: mondoo-gcp-security-artifact-registry-repository-vulnerability-scanning-enabled-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_artifact_registry_repository' && values['format'] == 'DOCKER')
+    mql: |
+      terraform.state.resources.where(type == 'google_artifact_registry_repository' && values['format'] == 'DOCKER').all(
+        values['vulnerability_scanning_config'] == null ||
+        values['vulnerability_scanning_config'].all(
+          _['enablement_config'] != "SCANNING_DISABLED"
+        )
+      )
   - uid: mondoo-gcp-security-cloud-build-trigger-no-plaintext-secrets-in-substitutions
     title: Ensure Cloud Build triggers do not store plaintext secrets in substitutions
     impact: 80
-    filters: asset.platform == 'gcp'
-    mql: |
-      gcp.project.cloudBuildService.triggers.all(
-        substitutions.keys.none(
-          _ == /(?i)(password|secret|api[_-]?key|private[_-]?key|access[_-]?token|auth[_-]?token|credentials|connection[_-]?string)/
-        )
-      )
+    variants:
+      - uid: mondoo-gcp-security-cloud-build-trigger-no-plaintext-secrets-in-substitutions-gcp
+        tags:
+          mondoo.com/filter-title: GCP Cloud Build Trigger
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-cloud-build-trigger-no-plaintext-secrets-in-substitutions-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-cloud-build-trigger-no-plaintext-secrets-in-substitutions-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-cloud-build-trigger-no-plaintext-secrets-in-substitutions-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check uses heuristic pattern matching on Cloud Build trigger `substitutions` keys to flag triggers that likely embed plaintext secrets in user substitution variables. Cloud Build supports first-class Secret Manager integration through `availableSecrets`, which exposes secrets to build steps without storing them in trigger configuration.
@@ -27671,6 +27860,31 @@ queries:
         - Reference the secret through `availableSecrets.secretManager` in the build configuration and consume it from a build step's environment.
         - Rotate any secret that has been stored in plaintext on a trigger.
       remediation:
+        - id: terraform
+          desc: |
+            Remove credential-shaped keys from the trigger's `substitutions` map and consume secrets through Secret Manager via `available_secrets` in the build configuration:
+
+            ```hcl
+            resource "google_cloudbuild_trigger" "deploy" {
+              name        = "deploy-app"
+              location    = "us-central1"
+              filename    = "cloudbuild.yaml"
+
+              substitutions = {
+                _ENVIRONMENT = "prod"
+                _IMAGE_TAG   = "v1.2.3"
+              }
+            }
+            ```
+
+            Reference secrets from `cloudbuild.yaml` instead:
+
+            ```yaml
+            availableSecrets:
+              secretManager:
+                - versionName: projects/$PROJECT_ID/secrets/api-token/versions/latest
+                  env: API_TOKEN
+            ```
         - id: console
           desc: |
             Replace plaintext substitution secrets with a Secret Manager reference:
@@ -27706,18 +27920,64 @@ queries:
     refs:
       - url: https://cloud.google.com/build/docs/securing-builds/use-secrets
         title: Cloud Build - Use secrets from Secret Manager
-  # No Terraform variants: planned for a follow-up alongside HCL/plan/state coverage for Cloud Build worker pools.
-  # No Terraform remediation: planned for a follow-up alongside HCL/plan/state coverage for Cloud Build worker pools.
+  - uid: mondoo-gcp-security-cloud-build-trigger-no-plaintext-secrets-in-substitutions-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.project.cloudBuildService.triggers.all(
+        substitutions.keys.none(
+          _ == /(?i)(password|secret|api[_-]?key|private[_-]?key|access[_-]?token|auth[_-]?token|credentials|connection[_-]?string)/
+        )
+      )
+  - uid: mondoo-gcp-security-cloud-build-trigger-no-plaintext-secrets-in-substitutions-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_cloudbuild_trigger')
+    mql: |
+      terraform.resources('google_cloudbuild_trigger').all(
+        arguments['substitutions'] == null ||
+        arguments['substitutions'].keys.none(
+          _ == /(?i)(password|secret|api[_-]?key|private[_-]?key|access[_-]?token|auth[_-]?token|credentials|connection[_-]?string)/
+        )
+      )
+  - uid: mondoo-gcp-security-cloud-build-trigger-no-plaintext-secrets-in-substitutions-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_cloudbuild_trigger')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_cloudbuild_trigger').all(
+        change.after['substitutions'] == null ||
+        change.after['substitutions'].keys.none(
+          _ == /(?i)(password|secret|api[_-]?key|private[_-]?key|access[_-]?token|auth[_-]?token|credentials|connection[_-]?string)/
+        )
+      )
+  - uid: mondoo-gcp-security-cloud-build-trigger-no-plaintext-secrets-in-substitutions-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_cloudbuild_trigger')
+    mql: |
+      terraform.state.resources.where(type == 'google_cloudbuild_trigger').all(
+        values['substitutions'] == null ||
+        values['substitutions'].keys.none(
+          _ == /(?i)(password|secret|api[_-]?key|private[_-]?key|access[_-]?token|auth[_-]?token|credentials|connection[_-]?string)/
+        )
+      )
   - uid: mondoo-gcp-security-cloud-build-worker-pool-private
     title: Ensure Cloud Build worker pools run privately with no public egress
     impact: 80
-    filters: asset.platform == 'gcp'
-    mql: |
-      gcp.project.cloudBuildService.workerPools.all(
-        networkConfig != null &&
-        networkConfig.peeredNetwork != "" &&
-        networkConfig.egressOption == "NO_PUBLIC_EGRESS"
-      )
+    variants:
+      - uid: mondoo-gcp-security-cloud-build-worker-pool-private-gcp
+        tags:
+          mondoo.com/filter-title: GCP Cloud Build Worker Pool
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-cloud-build-worker-pool-private-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-cloud-build-worker-pool-private-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-cloud-build-worker-pool-private-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that every Cloud Build private worker pool is peered to a customer VPC and configured with `NO_PUBLIC_EGRESS`. Worker pools without a peered network or with `PUBLIC_EGRESS` use Google-owned external IPs that can reach arbitrary internet destinations, which removes the egress-control benefits of using a private pool in the first place.
@@ -27736,6 +27996,28 @@ queries:
         - Provide controlled internet access through Cloud NAT and a perimeter firewall in the peered VPC, with logging enabled.
         - Migrate any worker pool that still uses `PUBLIC_EGRESS` and re-run affected builds against the private pool.
       remediation:
+        - id: terraform
+          desc: |
+            Configure the worker pool with a peered customer VPC and `NO_PUBLIC_EGRESS`. The peered network must be a Service Networking peering of a VPC in the host project:
+
+            ```hcl
+            resource "google_cloudbuild_worker_pool" "private" {
+              name     = "private-pool"
+              location = "us-central1"
+
+              worker_config {
+                disk_size_gb   = 100
+                machine_type   = "e2-medium"
+                no_external_ip = true
+              }
+
+              network_config {
+                peered_network          = "projects/HOST_PROJECT/global/networks/VPC_NAME"
+                peered_network_ip_range = "/24"
+                egress_option           = "NO_PUBLIC_EGRESS"
+              }
+            }
+            ```
         - id: console
           desc: |
             Reconfigure a worker pool to use the customer VPC with no public egress:
@@ -27766,17 +28048,70 @@ queries:
     refs:
       - url: https://cloud.google.com/build/docs/private-pools/private-pools-overview
         title: Cloud Build - Private pools overview
-  # No Terraform variants: planned for a follow-up alongside HCL/plan/state coverage for Cloud Build trigger service accounts.
-  # No Terraform remediation: planned for a follow-up alongside HCL/plan/state coverage for Cloud Build trigger service accounts.
+  - uid: mondoo-gcp-security-cloud-build-worker-pool-private-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.project.cloudBuildService.workerPools.all(
+        networkConfig != null &&
+        networkConfig.peeredNetwork != "" &&
+        networkConfig.egressOption == "NO_PUBLIC_EGRESS"
+      )
+  - uid: mondoo-gcp-security-cloud-build-worker-pool-private-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_cloudbuild_worker_pool')
+    mql: |
+      terraform.resources('google_cloudbuild_worker_pool').all(
+        blocks.where(type == 'network_config') != empty &&
+        blocks.where(type == 'network_config').all(
+          arguments['peered_network'] != null &&
+          arguments['peered_network'] != "" &&
+          arguments['egress_option'] == "NO_PUBLIC_EGRESS"
+        )
+      )
+  - uid: mondoo-gcp-security-cloud-build-worker-pool-private-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_cloudbuild_worker_pool')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_cloudbuild_worker_pool').all(
+        change.after['network_config'] != null &&
+        change.after['network_config'].any(
+          _['peered_network'] != null &&
+          _['peered_network'] != "" &&
+          _['egress_option'] == "NO_PUBLIC_EGRESS"
+        )
+      )
+  - uid: mondoo-gcp-security-cloud-build-worker-pool-private-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_cloudbuild_worker_pool')
+    mql: |
+      terraform.state.resources.where(type == 'google_cloudbuild_worker_pool').all(
+        values['network_config'] != null &&
+        values['network_config'].any(
+          _['peered_network'] != null &&
+          _['peered_network'] != "" &&
+          _['egress_option'] == "NO_PUBLIC_EGRESS"
+        )
+      )
   - uid: mondoo-gcp-security-cloud-build-trigger-no-default-service-account
     title: Ensure Cloud Build triggers do not run as the default Compute Engine SA
     impact: 80
-    filters: asset.platform == 'gcp'
-    mql: |
-      gcp.project.cloudBuildService.triggers.all(
-        serviceAccount != "" &&
-        serviceAccount != /\/\d+-compute@developer\.gserviceaccount\.com$/
-      )
+    variants:
+      - uid: mondoo-gcp-security-cloud-build-trigger-no-default-service-account-gcp
+        tags:
+          mondoo.com/filter-title: GCP Cloud Build Trigger
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-cloud-build-trigger-no-default-service-account-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-cloud-build-trigger-no-default-service-account-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-cloud-build-trigger-no-default-service-account-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that every Cloud Build trigger runs under an explicit, dedicated service account that is not the project's default Compute Engine service account. Triggers without a configured `serviceAccount` fall back to the legacy Cloud Build SA or the default Compute SA depending on project age, both of which carry broad project-wide permissions.
@@ -27795,6 +28130,23 @@ queries:
         - Set the trigger's `serviceAccount` to the dedicated SA's resource name.
         - Remove broad roles from the default Compute Engine service account and consider disabling it once nothing depends on it.
       remediation:
+        - id: terraform
+          desc: |
+            Set `service_account` on `google_cloudbuild_trigger` to a dedicated service account whose IAM grants are scoped to the build's needs:
+
+            ```hcl
+            resource "google_service_account" "cloudbuild_runner" {
+              account_id   = "cloudbuild-runner"
+              display_name = "Cloud Build trigger runner"
+            }
+
+            resource "google_cloudbuild_trigger" "deploy" {
+              name            = "deploy-app"
+              location        = "us-central1"
+              filename        = "cloudbuild.yaml"
+              service_account = google_service_account.cloudbuild_runner.id
+            }
+            ```
         - id: console
           desc: |
             Assign a dedicated service account to a trigger:
@@ -27814,21 +28166,60 @@ queries:
     refs:
       - url: https://cloud.google.com/build/docs/cloud-build-service-account
         title: Cloud Build service account
-  # No Terraform variants: Dataflow jobs are submitted imperatively (gcloud, SDK, Flex templates) and the Terraform job resource only models a thin subset; revisit if first-class HCL coverage lands.
-  # No Terraform remediation: Dataflow jobs are submitted imperatively, so the durable fix lives in the submission tooling rather than HCL.
+  - uid: mondoo-gcp-security-cloud-build-trigger-no-default-service-account-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.project.cloudBuildService.triggers.all(
+        serviceAccount != "" &&
+        serviceAccount != /\/\d+-compute@developer\.gserviceaccount\.com$/
+      )
+  - uid: mondoo-gcp-security-cloud-build-trigger-no-default-service-account-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_cloudbuild_trigger')
+    mql: |
+      terraform.resources('google_cloudbuild_trigger').all(
+        arguments['service_account'] != null &&
+        arguments['service_account'] != "" &&
+        arguments['service_account'] != /\d+-compute@developer\.gserviceaccount\.com/
+      )
+  - uid: mondoo-gcp-security-cloud-build-trigger-no-default-service-account-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_cloudbuild_trigger')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_cloudbuild_trigger').all(
+        change.after['service_account'] != null &&
+        change.after['service_account'] != "" &&
+        change.after['service_account'] != /\d+-compute@developer\.gserviceaccount\.com/
+      )
+  - uid: mondoo-gcp-security-cloud-build-trigger-no-default-service-account-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_cloudbuild_trigger')
+    mql: |
+      terraform.state.resources.where(type == 'google_cloudbuild_trigger').all(
+        values['service_account'] != null &&
+        values['service_account'] != "" &&
+        values['service_account'] != /\d+-compute@developer\.gserviceaccount\.com/
+      )
   - uid: mondoo-gcp-security-dataflow-job-no-public-ips
     title: Ensure Dataflow jobs run on workers with no public IPs
     impact: 80
-    filters: asset.platform == 'gcp'
-    mql: |
-      gcp.project.dataflowService.jobs.where(
-        currentState == "JOB_STATE_RUNNING" || currentState == "JOB_STATE_PENDING" || currentState == "JOB_STATE_QUEUED"
-      ).all(
-        environment['workerPools'] != null &&
-        environment['workerPools'].all(
-          _['ipConfiguration'] == "WORKER_IP_PRIVATE"
-        )
-      )
+    variants:
+      - uid: mondoo-gcp-security-dataflow-job-no-public-ips-gcp
+        tags:
+          mondoo.com/filter-title: GCP Dataflow Job
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-dataflow-job-no-public-ips-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-dataflow-job-no-public-ips-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-dataflow-job-no-public-ips-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that every running, pending, or queued Dataflow job uses worker pools configured with `ipConfiguration: WORKER_IP_PRIVATE`. Workers with public IPs reach the internet directly and bypass the egress controls implemented in the customer VPC.
@@ -27847,6 +28238,21 @@ queries:
         - Enable Private Google Access on the worker subnetwork so workers can still reach Google APIs without public IPs.
         - Provide controlled internet access, when needed, through Cloud NAT with logging.
       remediation:
+        - id: terraform
+          desc: |
+            For Dataflow jobs declared in HCL, set `ip_configuration` to `WORKER_IP_PRIVATE` and pin the worker subnetwork. The same field exists on `google_dataflow_flex_template_job`:
+
+            ```hcl
+            resource "google_dataflow_job" "pipeline" {
+              name              = "stream-processor"
+              template_gcs_path = "gs://dataflow-templates/latest/Stream"
+              temp_gcs_location = "gs://my-bucket/tmp"
+              region            = "us-central1"
+              network           = google_compute_network.workers.name
+              subnetwork        = google_compute_subnetwork.workers.self_link
+              ip_configuration  = "WORKER_IP_PRIVATE"
+            }
+            ```
         - id: console
           desc: |
             Configure private workers when launching a Dataflow template from the console:
@@ -27875,20 +28281,70 @@ queries:
     refs:
       - url: https://cloud.google.com/dataflow/docs/guides/routes-firewall#turn_off_external_ip_address
         title: Dataflow - Turn off external IP addresses
-  # No Terraform variants: Dataflow jobs are submitted imperatively (gcloud, SDK, Flex templates) and the Terraform job resource only models a thin subset; revisit if first-class HCL coverage lands.
-  # No Terraform remediation: Dataflow jobs are submitted imperatively, so the durable fix lives in the submission tooling rather than HCL.
-  - uid: mondoo-gcp-security-dataflow-job-no-default-service-account
-    title: Ensure Dataflow jobs use a custom worker service account
-    impact: 80
+  - uid: mondoo-gcp-security-dataflow-job-no-public-ips-gcp
     filters: asset.platform == 'gcp'
     mql: |
       gcp.project.dataflowService.jobs.where(
         currentState == "JOB_STATE_RUNNING" || currentState == "JOB_STATE_PENDING" || currentState == "JOB_STATE_QUEUED"
       ).all(
-        environment['serviceAccountEmail'] != null &&
-        environment['serviceAccountEmail'] != "" &&
-        environment['serviceAccountEmail'] != /^\d+-compute@developer\.gserviceaccount\.com$/
+        environment['workerPools'] != null &&
+        environment['workerPools'].all(
+          _['ipConfiguration'] == "WORKER_IP_PRIVATE"
+        )
       )
+  - uid: mondoo-gcp-security-dataflow-job-no-public-ips-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_dataflow_job') ||
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_dataflow_flex_template_job')
+    mql: |
+      terraform.resources('google_dataflow_job').all(
+        arguments['ip_configuration'] == "WORKER_IP_PRIVATE"
+      )
+      terraform.resources('google_dataflow_flex_template_job').all(
+        arguments['ip_configuration'] == "WORKER_IP_PRIVATE"
+      )
+  - uid: mondoo-gcp-security-dataflow-job-no-public-ips-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_dataflow_job') ||
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_dataflow_flex_template_job')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_dataflow_job').all(
+        change.after['ip_configuration'] == "WORKER_IP_PRIVATE"
+      )
+      terraform.plan.resourceChanges.where(type == 'google_dataflow_flex_template_job').all(
+        change.after['ip_configuration'] == "WORKER_IP_PRIVATE"
+      )
+  - uid: mondoo-gcp-security-dataflow-job-no-public-ips-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_dataflow_job') ||
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_dataflow_flex_template_job')
+    mql: |
+      terraform.state.resources.where(type == 'google_dataflow_job').all(
+        values['ip_configuration'] == "WORKER_IP_PRIVATE"
+      )
+      terraform.state.resources.where(type == 'google_dataflow_flex_template_job').all(
+        values['ip_configuration'] == "WORKER_IP_PRIVATE"
+      )
+  - uid: mondoo-gcp-security-dataflow-job-no-default-service-account
+    title: Ensure Dataflow jobs use a custom worker service account
+    impact: 80
+    variants:
+      - uid: mondoo-gcp-security-dataflow-job-no-default-service-account-gcp
+        tags:
+          mondoo.com/filter-title: GCP Dataflow Job
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-dataflow-job-no-default-service-account-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-dataflow-job-no-default-service-account-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-dataflow-job-no-default-service-account-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that every running, pending, or queued Dataflow job uses an explicit worker service account that is not the project's default Compute Engine service account. Jobs that omit `serviceAccountEmail` inherit the default Compute SA, which holds the Editor role by default and is shared across many unrelated workloads.
@@ -27907,6 +28363,24 @@ queries:
         - Submit jobs with `--service-account-email` (gcloud) or `service_account_email` (SDK / templates) set to the dedicated SA.
         - Tighten or revoke broad roles on the default Compute Engine service account.
       remediation:
+        - id: terraform
+          desc: |
+            Set `service_account_email` on `google_dataflow_job` (or `google_dataflow_flex_template_job`) to a dedicated worker service account scoped to the source, sink, and intermediate resources the pipeline touches:
+
+            ```hcl
+            resource "google_service_account" "dataflow_worker" {
+              account_id   = "dataflow-worker"
+              display_name = "Dataflow worker"
+            }
+
+            resource "google_dataflow_job" "pipeline" {
+              name                  = "stream-processor"
+              template_gcs_path     = "gs://dataflow-templates/latest/Stream"
+              temp_gcs_location     = "gs://my-bucket/tmp"
+              region                = "us-central1"
+              service_account_email = google_service_account.dataflow_worker.email
+            }
+            ```
         - id: console
           desc: |
             Submit a Dataflow template with a dedicated worker service account:
@@ -27931,16 +28405,81 @@ queries:
     refs:
       - url: https://cloud.google.com/dataflow/docs/concepts/security-and-permissions#worker_service_account
         title: Dataflow - Worker service account
-  # No Terraform variants: planned for a follow-up alongside HCL/plan/state coverage for Filestore CMEK.
-  # No Terraform remediation: planned for a follow-up alongside HCL/plan/state coverage for Filestore CMEK.
+  - uid: mondoo-gcp-security-dataflow-job-no-default-service-account-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.project.dataflowService.jobs.where(
+        currentState == "JOB_STATE_RUNNING" || currentState == "JOB_STATE_PENDING" || currentState == "JOB_STATE_QUEUED"
+      ).all(
+        environment['serviceAccountEmail'] != null &&
+        environment['serviceAccountEmail'] != "" &&
+        environment['serviceAccountEmail'] != /^\d+-compute@developer\.gserviceaccount\.com$/
+      )
+  - uid: mondoo-gcp-security-dataflow-job-no-default-service-account-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_dataflow_job') ||
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_dataflow_flex_template_job')
+    mql: |
+      terraform.resources('google_dataflow_job').all(
+        arguments['service_account_email'] != null &&
+        arguments['service_account_email'] != "" &&
+        arguments['service_account_email'] != /\d+-compute@developer\.gserviceaccount\.com/
+      )
+      terraform.resources('google_dataflow_flex_template_job').all(
+        arguments['service_account_email'] != null &&
+        arguments['service_account_email'] != "" &&
+        arguments['service_account_email'] != /\d+-compute@developer\.gserviceaccount\.com/
+      )
+  - uid: mondoo-gcp-security-dataflow-job-no-default-service-account-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_dataflow_job') ||
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_dataflow_flex_template_job')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_dataflow_job').all(
+        change.after['service_account_email'] != null &&
+        change.after['service_account_email'] != "" &&
+        change.after['service_account_email'] != /\d+-compute@developer\.gserviceaccount\.com/
+      )
+      terraform.plan.resourceChanges.where(type == 'google_dataflow_flex_template_job').all(
+        change.after['service_account_email'] != null &&
+        change.after['service_account_email'] != "" &&
+        change.after['service_account_email'] != /\d+-compute@developer\.gserviceaccount\.com/
+      )
+  - uid: mondoo-gcp-security-dataflow-job-no-default-service-account-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_dataflow_job') ||
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_dataflow_flex_template_job')
+    mql: |
+      terraform.state.resources.where(type == 'google_dataflow_job').all(
+        values['service_account_email'] != null &&
+        values['service_account_email'] != "" &&
+        values['service_account_email'] != /\d+-compute@developer\.gserviceaccount\.com/
+      )
+      terraform.state.resources.where(type == 'google_dataflow_flex_template_job').all(
+        values['service_account_email'] != null &&
+        values['service_account_email'] != "" &&
+        values['service_account_email'] != /\d+-compute@developer\.gserviceaccount\.com/
+      )
   - uid: mondoo-gcp-security-filestore-instance-cmek-encryption
     title: Ensure Filestore instances are encrypted with CMEK
     impact: 75
-    filters: asset.platform == 'gcp'
-    mql: |
-      gcp.project.filestoreService.instances.all(
-        kmsKeyName != ""
-      )
+    variants:
+      - uid: mondoo-gcp-security-filestore-instance-cmek-encryption-gcp
+        tags:
+          mondoo.com/filter-title: GCP Filestore Instance
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-filestore-instance-cmek-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-filestore-instance-cmek-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-filestore-instance-cmek-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that every Filestore instance is encrypted with a customer-managed encryption key (CMEK). Instances without `kmsKeyName` rely on Google-managed keys, which do not provide tenant-scoped key control or independent revocation.
@@ -27959,6 +28498,29 @@ queries:
         - Restrict the IAM policy on the encryption key so only the Filestore service agent and approved operators can use it.
         - Monitor Cloud KMS audit logs for unauthorized key access patterns against the Filestore service agent.
       remediation:
+        - id: terraform
+          desc: |
+            Configure `kms_key_name` on `google_filestore_instance` and grant the Filestore service agent `roles/cloudkms.cryptoKeyEncrypterDecrypter` on the key:
+
+            ```hcl
+            resource "google_filestore_instance" "secure" {
+              name     = "secure-share"
+              location = "us-central1"
+              tier     = "ENTERPRISE"
+
+              file_shares {
+                name        = "share1"
+                capacity_gb = 1024
+              }
+
+              networks {
+                network = "default"
+                modes   = ["MODE_IPV4"]
+              }
+
+              kms_key_name = google_kms_crypto_key.filestore.id
+            }
+            ```
         - id: console
           desc: |
             Create a CMEK-protected Filestore instance:
@@ -27985,18 +28547,55 @@ queries:
     refs:
       - url: https://cloud.google.com/filestore/docs/cmek
         title: Filestore - Customer-managed encryption keys
-  # No Terraform variants: planned for a follow-up alongside HCL/plan/state coverage for project IAM bindings.
-  # No Terraform remediation: planned for a follow-up alongside HCL/plan/state coverage for project IAM bindings.
+  - uid: mondoo-gcp-security-filestore-instance-cmek-encryption-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.project.filestoreService.instances.all(
+        kmsKeyName != ""
+      )
+  - uid: mondoo-gcp-security-filestore-instance-cmek-encryption-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_filestore_instance')
+    mql: |
+      terraform.resources('google_filestore_instance').all(
+        arguments['kms_key_name'] != null && arguments['kms_key_name'] != ""
+      )
+  - uid: mondoo-gcp-security-filestore-instance-cmek-encryption-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_filestore_instance')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_filestore_instance').all(
+        change.after['kms_key_name'] != null && change.after['kms_key_name'] != ""
+      )
+  - uid: mondoo-gcp-security-filestore-instance-cmek-encryption-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_filestore_instance')
+    mql: |
+      terraform.state.resources.where(type == 'google_filestore_instance').all(
+        values['kms_key_name'] != null && values['kms_key_name'] != ""
+      )
+  # google_project_iam_policy is intentionally not covered by the Terraform variants because the
+  # policy is supplied as opaque policy_data JSON that cannot be filtered by role pattern from MQL.
   - uid: mondoo-gcp-security-firestore-project-iam-no-public-datastore-roles
     title: Ensure project IAM does not grant Datastore roles to public principals
     impact: 90
-    filters: asset.platform == 'gcp'
-    mql: |
-      gcp.project.iamPolicy.where(
-        role == /^roles\/datastore\./
-      ).all(
-        members.none(_ == "allUsers" || _ == "allAuthenticatedUsers")
-      )
+    variants:
+      - uid: mondoo-gcp-security-firestore-project-iam-no-public-datastore-roles-gcp
+        tags:
+          mondoo.com/filter-title: GCP Project
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-firestore-project-iam-no-public-datastore-roles-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-firestore-project-iam-no-public-datastore-roles-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-firestore-project-iam-no-public-datastore-roles-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that no project-level IAM binding grants any `roles/datastore.*` role to `allUsers` or `allAuthenticatedUsers`. Firestore in Native and Datastore mode authorize access through the project IAM policy; public bindings on these roles expose every database in the project to anonymous internet users or to any authenticated Google account.
@@ -28015,6 +28614,19 @@ queries:
         - Replace public bindings with explicit IAM bindings to the workload service accounts that legitimately need access.
         - For genuinely public read flows, expose data through an authenticated API in front of Firestore rather than granting public IAM.
       remediation:
+        - id: terraform
+          desc: |
+            Manage project Datastore role bindings with `google_project_iam_member` resources whose `member` is a specific identity, not a public principal:
+
+            ```hcl
+            resource "google_project_iam_member" "datastore_user" {
+              project = "my-project"
+              role    = "roles/datastore.user"
+              member  = "serviceAccount:app@my-project.iam.gserviceaccount.com"
+            }
+            ```
+
+            Audit any `google_project_iam_binding` resources whose `role` matches `roles/datastore.*` and remove `allUsers` and `allAuthenticatedUsers` from `members`.
         - id: console
           desc: |
             Remove public Datastore role bindings from the project:
@@ -28040,8 +28652,52 @@ queries:
     refs:
       - url: https://cloud.google.com/datastore/docs/access/iam
         title: Firestore in Datastore mode - Identity and Access Management
-  # No Terraform variants: Vertex AI custom jobs are submitted imperatively through the SDK / gcloud; revisit if a first-class job resource lands in HCL.
-  # No Terraform remediation: Vertex AI custom jobs are submitted imperatively, so the durable fix lives in the submission tooling rather than HCL.
+  - uid: mondoo-gcp-security-firestore-project-iam-no-public-datastore-roles-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.project.iamPolicy.where(
+        role == /^roles\/datastore\./
+      ).all(
+        members.none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-firestore-project-iam-no-public-datastore-roles-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_project_iam_member' && arguments['role'] == /^roles\/datastore\./) ||
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_project_iam_binding' && arguments['role'] == /^roles\/datastore\./)
+    mql: |
+      terraform.resources('google_project_iam_member').where(arguments['role'] == /^roles\/datastore\./).all(
+        arguments['member'] != "allUsers" &&
+        arguments['member'] != "allAuthenticatedUsers"
+      )
+      terraform.resources('google_project_iam_binding').where(arguments['role'] == /^roles\/datastore\./).all(
+        arguments['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-firestore-project-iam-no-public-datastore-roles-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_project_iam_member' && change.after['role'] == /^roles\/datastore\./) ||
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_project_iam_binding' && change.after['role'] == /^roles\/datastore\./)
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_project_iam_member' && change.after['role'] == /^roles\/datastore\./).all(
+        change.after['member'] != "allUsers" &&
+        change.after['member'] != "allAuthenticatedUsers"
+      )
+      terraform.plan.resourceChanges.where(type == 'google_project_iam_binding' && change.after['role'] == /^roles\/datastore\./).all(
+        change.after['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-firestore-project-iam-no-public-datastore-roles-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_project_iam_member' && values['role'] == /^roles\/datastore\./) ||
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_project_iam_binding' && values['role'] == /^roles\/datastore\./)
+    mql: |
+      terraform.state.resources.where(type == 'google_project_iam_member' && values['role'] == /^roles\/datastore\./).all(
+        values['member'] != "allUsers" &&
+        values['member'] != "allAuthenticatedUsers"
+      )
+      terraform.state.resources.where(type == 'google_project_iam_binding' && values['role'] == /^roles\/datastore\./).all(
+        values['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  # No Terraform variants: Vertex AI custom training jobs are imperative API operations with no Terraform resource analog (no google_vertex_ai_custom_job exists).
+  # No Terraform remediation: Vertex AI custom training jobs are imperative API operations with no Terraform resource analog; the fix lives in the submission tooling.
   - uid: mondoo-gcp-security-vertexai-custom-job-no-default-service-account
     title: Ensure Vertex AI custom jobs do not run as the default Compute Engine SA
     impact: 80
@@ -28093,16 +28749,26 @@ queries:
     refs:
       - url: https://cloud.google.com/vertex-ai/docs/general/custom-service-account
         title: Vertex AI - Use a custom service account
-  # No Terraform variants: Essential Contacts have a Terraform analog but this check evaluates inherited org/folder/project state; revisit when the policy adds HCL coverage.
-  # No Terraform remediation: planned for a follow-up alongside HCL/plan/state coverage for Essential Contacts.
   - uid: mondoo-gcp-security-essential-contacts-security-category-configured
     title: Ensure Essential Contacts cover the SECURITY notification category
     impact: 75
-    filters: asset.platform == 'gcp'
-    mql: |
-      gcp.project.essentialContacts.any(
-        notificationCategories.any(_ == "SECURITY" || _ == "ALL")
-      )
+    variants:
+      - uid: mondoo-gcp-security-essential-contacts-security-category-configured-gcp
+        tags:
+          mondoo.com/filter-title: GCP Project
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-essential-contacts-security-category-configured-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-essential-contacts-security-category-configured-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-essential-contacts-security-category-configured-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that the project has at least one Essential Contact registered for the `SECURITY` notification category, either explicitly or via the `ALL` category. Essential Contacts are the only channel Google Cloud uses to deliver security notifications such as pre-disclosure vulnerability advisories and account compromise alerts.
@@ -28121,6 +28787,20 @@ queries:
         - Configure contacts at the organization or folder level so child projects inherit them by default.
         - Validate every contact promptly so Google considers the address authoritative.
       remediation:
+        - id: terraform
+          desc: |
+            Declare a `google_essential_contacts_contact` whose `notification_category_subscriptions` includes `SECURITY` (or `ALL`):
+
+            ```hcl
+            resource "google_essential_contacts_contact" "security" {
+              parent                              = "projects/my-project"
+              email                               = "security-team@example.com"
+              language_tag                        = "en"
+              notification_category_subscriptions = ["SECURITY"]
+            }
+            ```
+
+            Place the resource at organization or folder scope instead of project scope to inherit the contact across child projects.
         - id: console
           desc: |
             Register a security contact:
@@ -28152,3 +28832,30 @@ queries:
     refs:
       - url: https://cloud.google.com/resource-manager/docs/managing-notification-contacts
         title: Manage Essential Contacts
+  - uid: mondoo-gcp-security-essential-contacts-security-category-configured-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.project.essentialContacts.any(
+        notificationCategories.any(_ == "SECURITY" || _ == "ALL")
+      )
+  - uid: mondoo-gcp-security-essential-contacts-security-category-configured-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_essential_contacts_contact')
+    mql: |
+      terraform.resources('google_essential_contacts_contact').any(
+        arguments['notification_category_subscriptions'].any(_ == "SECURITY" || _ == "ALL")
+      )
+  - uid: mondoo-gcp-security-essential-contacts-security-category-configured-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_essential_contacts_contact')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_essential_contacts_contact').any(
+        change.after['notification_category_subscriptions'].any(_ == "SECURITY" || _ == "ALL")
+      )
+  - uid: mondoo-gcp-security-essential-contacts-security-category-configured-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_essential_contacts_contact')
+    mql: |
+      terraform.state.resources.where(type == 'google_essential_contacts_contact').any(
+        values['notification_category_subscriptions'].any(_ == "SECURITY" || _ == "ALL")
+      )
