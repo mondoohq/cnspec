@@ -53804,14 +53804,27 @@ queries:
       aws.transfer.workflows.where(
         steps.any(_['Type'] == "DECRYPT" || _['Type'] == "COPY")
       ).all(onExceptionSteps != null && onExceptionSteps.length > 0)
+  # No CloudFormation variant: AWS::Bedrock::CustomModel is not a CloudFormation resource type.
   - uid: mondoo-aws-security-bedrock-custom-model-cmk-encryption
     title: Ensure Bedrock custom models use a customer-managed KMS key
     impact: 80
-    filters: asset.platform == "aws"
-    mql: |
-      aws.bedrock.customModels.all(
-        kmsKey != null && kmsKey.keyManager == "CUSTOMER"
-      )
+    variants:
+      - uid: mondoo-aws-security-bedrock-custom-model-cmk-encryption-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-bedrock-custom-model-cmk-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-bedrock-custom-model-cmk-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-bedrock-custom-model-cmk-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures every Amazon Bedrock custom model is encrypted at rest with a customer-managed KMS key (CMK). Custom models are derived from the training data you provide and the resulting model artifacts retain the sensitivity of that source data. When Bedrock encrypts a custom model with the AWS-owned default key, you cannot rotate, audit, or revoke access to the encryption key independently of the AWS account.
@@ -53844,19 +53857,79 @@ queries:
               --output-data-config '{"s3Uri":"s3://<bucket>/output/"}' \
               --custom-model-kms-key-id <cmk-arn>
             ```
+        - id: terraform
+          desc: |
+            To create a Bedrock custom model encrypted with a customer-managed KMS key in Terraform, set `custom_model_kms_key_id` on the `aws_bedrock_custom_model` resource:
+
+            ```hcl
+            resource "aws_bedrock_custom_model" "example" {
+              custom_model_name     = "example-custom-model"
+              job_name              = "example-job"
+              base_model_identifier = "amazon.titan-text-express-v1"
+              role_arn              = aws_iam_role.bedrock.arn
+
+              custom_model_kms_key_id = aws_kms_key.bedrock.arn
+
+              training_data_config {
+                s3_uri = "s3://${aws_s3_bucket.train.id}/train.jsonl"
+              }
+
+              output_data_config {
+                s3_uri = "s3://${aws_s3_bucket.output.id}/output/"
+              }
+            }
+            ```
     refs:
       - url: https://docs.aws.amazon.com/bedrock/latest/userguide/custom-models-encryption.html
         title: Encryption of custom models
+  - uid: mondoo-aws-security-bedrock-custom-model-cmk-encryption-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.bedrock.customModels.all(
+        kmsKey != null && kmsKey.keyManager == "CUSTOMER"
+      )
+  - uid: mondoo-aws-security-bedrock-custom-model-cmk-encryption-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_bedrock_custom_model")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_bedrock_custom_model").all(
+        arguments['custom_model_kms_key_id'] != null && arguments['custom_model_kms_key_id'] != ""
+      )
+  - uid: mondoo-aws-security-bedrock-custom-model-cmk-encryption-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_bedrock_custom_model")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_bedrock_custom_model").all(
+        change.after.custom_model_kms_key_id != null && change.after.custom_model_kms_key_id != ""
+      )
+  - uid: mondoo-aws-security-bedrock-custom-model-cmk-encryption-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_bedrock_custom_model")
+    mql: |
+      terraform.state.resources.where(type == "aws_bedrock_custom_model").all(
+        values.custom_model_kms_key_id != null && values.custom_model_kms_key_id != ""
+      )
   - uid: mondoo-aws-security-waf-managed-rule-groups
     title: Ensure Web ACLs include managed rule groups for SQLi, XSS, and known-bad inputs
     impact: 80
-    filters: asset.platform == "aws"
-    mql: |
-      aws.waf.acls.all(
-        rules.any(statement.managedRuleGroupStatement != null && statement.managedRuleGroupStatement.name == "AWSManagedRulesCommonRuleSet") &&
-        rules.any(statement.managedRuleGroupStatement != null && statement.managedRuleGroupStatement.name == "AWSManagedRulesSQLiRuleSet") &&
-        rules.any(statement.managedRuleGroupStatement != null && statement.managedRuleGroupStatement.name == "AWSManagedRulesKnownBadInputsRuleSet")
-      )
+    variants:
+      - uid: mondoo-aws-security-waf-managed-rule-groups-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-waf-managed-rule-groups-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-waf-managed-rule-groups-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-waf-managed-rule-groups-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-waf-managed-rule-groups-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that every AWS WAFv2 web ACL references the AWS-managed rule groups that cover SQL injection, cross-site scripting, and known-bad inputs. AWS publishes and maintains these rule groups so customers do not have to author and update signatures themselves. The expected groups are:
@@ -53896,18 +53969,203 @@ queries:
             ```
 
             Where `rules.json` references each of `AWSManagedRulesCommonRuleSet`, `AWSManagedRulesSQLiRuleSet`, and `AWSManagedRulesKnownBadInputsRuleSet` under `Statement.ManagedRuleGroupStatement`.
+        - id: terraform
+          desc: |
+            To attach the required managed rule groups in Terraform, declare a `rule` block for each managed rule group on `aws_wafv2_web_acl`:
+
+            ```hcl
+            resource "aws_wafv2_web_acl" "example" {
+              name  = "example"
+              scope = "REGIONAL"
+
+              default_action {
+                allow {}
+              }
+
+              rule {
+                name     = "AWS-AWSManagedRulesCommonRuleSet"
+                priority = 1
+                override_action { none {} }
+                statement {
+                  managed_rule_group_statement {
+                    name        = "AWSManagedRulesCommonRuleSet"
+                    vendor_name = "AWS"
+                  }
+                }
+                visibility_config {
+                  cloudwatch_metrics_enabled = true
+                  metric_name                = "AWSManagedRulesCommonRuleSet"
+                  sampled_requests_enabled   = true
+                }
+              }
+
+              rule {
+                name     = "AWS-AWSManagedRulesSQLiRuleSet"
+                priority = 2
+                override_action { none {} }
+                statement {
+                  managed_rule_group_statement {
+                    name        = "AWSManagedRulesSQLiRuleSet"
+                    vendor_name = "AWS"
+                  }
+                }
+                visibility_config {
+                  cloudwatch_metrics_enabled = true
+                  metric_name                = "AWSManagedRulesSQLiRuleSet"
+                  sampled_requests_enabled   = true
+                }
+              }
+
+              rule {
+                name     = "AWS-AWSManagedRulesKnownBadInputsRuleSet"
+                priority = 3
+                override_action { none {} }
+                statement {
+                  managed_rule_group_statement {
+                    name        = "AWSManagedRulesKnownBadInputsRuleSet"
+                    vendor_name = "AWS"
+                  }
+                }
+                visibility_config {
+                  cloudwatch_metrics_enabled = true
+                  metric_name                = "AWSManagedRulesKnownBadInputsRuleSet"
+                  sampled_requests_enabled   = true
+                }
+              }
+
+              visibility_config {
+                cloudwatch_metrics_enabled = true
+                metric_name                = "example"
+                sampled_requests_enabled   = true
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To attach managed rule groups in CloudFormation, declare each one under `Rules` on `AWS::WAFv2::WebACL`:
+
+            ```yaml
+            Resources:
+              ExampleWebACL:
+                Type: AWS::WAFv2::WebACL
+                Properties:
+                  Name: example
+                  Scope: REGIONAL
+                  DefaultAction:
+                    Allow: {}
+                  VisibilityConfig:
+                    SampledRequestsEnabled: true
+                    CloudWatchMetricsEnabled: true
+                    MetricName: example
+                  Rules:
+                    - Name: AWS-AWSManagedRulesCommonRuleSet
+                      Priority: 1
+                      OverrideAction:
+                        None: {}
+                      Statement:
+                        ManagedRuleGroupStatement:
+                          VendorName: AWS
+                          Name: AWSManagedRulesCommonRuleSet
+                      VisibilityConfig:
+                        SampledRequestsEnabled: true
+                        CloudWatchMetricsEnabled: true
+                        MetricName: AWSManagedRulesCommonRuleSet
+                    - Name: AWS-AWSManagedRulesSQLiRuleSet
+                      Priority: 2
+                      OverrideAction:
+                        None: {}
+                      Statement:
+                        ManagedRuleGroupStatement:
+                          VendorName: AWS
+                          Name: AWSManagedRulesSQLiRuleSet
+                      VisibilityConfig:
+                        SampledRequestsEnabled: true
+                        CloudWatchMetricsEnabled: true
+                        MetricName: AWSManagedRulesSQLiRuleSet
+                    - Name: AWS-AWSManagedRulesKnownBadInputsRuleSet
+                      Priority: 3
+                      OverrideAction:
+                        None: {}
+                      Statement:
+                        ManagedRuleGroupStatement:
+                          VendorName: AWS
+                          Name: AWSManagedRulesKnownBadInputsRuleSet
+                      VisibilityConfig:
+                        SampledRequestsEnabled: true
+                        CloudWatchMetricsEnabled: true
+                        MetricName: AWSManagedRulesKnownBadInputsRuleSet
+            ```
     refs:
       - url: https://docs.aws.amazon.com/waf/latest/developerguide/aws-managed-rule-groups-list.html
         title: AWS Managed Rules rule groups list
+  - uid: mondoo-aws-security-waf-managed-rule-groups-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.waf.acls.all(
+        rules.any(statement.managedRuleGroupStatement != null && statement.managedRuleGroupStatement.name == "AWSManagedRulesCommonRuleSet") &&
+        rules.any(statement.managedRuleGroupStatement != null && statement.managedRuleGroupStatement.name == "AWSManagedRulesSQLiRuleSet") &&
+        rules.any(statement.managedRuleGroupStatement != null && statement.managedRuleGroupStatement.name == "AWSManagedRulesKnownBadInputsRuleSet")
+      )
+  - uid: mondoo-aws-security-waf-managed-rule-groups-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_wafv2_web_acl")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_wafv2_web_acl").all(
+        blocks.where(type == "rule").any(
+          blocks.where(type == "statement").any(
+            blocks.where(type == "managed_rule_group_statement").any(arguments.name == "AWSManagedRulesCommonRuleSet")
+          )
+        ) &&
+        blocks.where(type == "rule").any(
+          blocks.where(type == "statement").any(
+            blocks.where(type == "managed_rule_group_statement").any(arguments.name == "AWSManagedRulesSQLiRuleSet")
+          )
+        ) &&
+        blocks.where(type == "rule").any(
+          blocks.where(type == "statement").any(
+            blocks.where(type == "managed_rule_group_statement").any(arguments.name == "AWSManagedRulesKnownBadInputsRuleSet")
+          )
+        )
+      )
+  - uid: mondoo-aws-security-waf-managed-rule-groups-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_wafv2_web_acl")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_wafv2_web_acl").all(
+        change.after.rule != empty &&
+        change.after.rule.any(_['statement'].any(_['managed_rule_group_statement'].any(_['name'] == "AWSManagedRulesCommonRuleSet"))) &&
+        change.after.rule.any(_['statement'].any(_['managed_rule_group_statement'].any(_['name'] == "AWSManagedRulesSQLiRuleSet"))) &&
+        change.after.rule.any(_['statement'].any(_['managed_rule_group_statement'].any(_['name'] == "AWSManagedRulesKnownBadInputsRuleSet")))
+      )
+  - uid: mondoo-aws-security-waf-managed-rule-groups-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_wafv2_web_acl")
+    mql: |
+      terraform.state.resources.where(type == "aws_wafv2_web_acl").all(
+        values.rule != empty &&
+        values.rule.any(_['statement'].any(_['managed_rule_group_statement'].any(_['name'] == "AWSManagedRulesCommonRuleSet"))) &&
+        values.rule.any(_['statement'].any(_['managed_rule_group_statement'].any(_['name'] == "AWSManagedRulesSQLiRuleSet"))) &&
+        values.rule.any(_['statement'].any(_['managed_rule_group_statement'].any(_['name'] == "AWSManagedRulesKnownBadInputsRuleSet")))
+      )
+  - uid: mondoo-aws-security-waf-managed-rule-groups-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::WAFv2::WebACL")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::WAFv2::WebACL").all(
+        properties['Rules'] != empty &&
+        properties['Rules'].any(_['Statement']['ManagedRuleGroupStatement']['Name'] == "AWSManagedRulesCommonRuleSet") &&
+        properties['Rules'].any(_['Statement']['ManagedRuleGroupStatement']['Name'] == "AWSManagedRulesSQLiRuleSet") &&
+        properties['Rules'].any(_['Statement']['ManagedRuleGroupStatement']['Name'] == "AWSManagedRulesKnownBadInputsRuleSet")
+      )
+  # No Terraform variants: aws_batch_job_definition stores container settings as a JSON-encoded string in `container_properties`, so the `privileged` field is not addressable as a structured argument.
   - uid: mondoo-aws-security-batch-no-privileged-containers
     title: Ensure AWS Batch job definitions do not run privileged containers
     impact: 90
-    filters: asset.platform == "aws"
-    mql: |
-      aws.batch.jobDefinitions.where(status == "ACTIVE").none(
-        container.privileged == true ||
-        nodeRangeProperties.any(container.privileged == true)
-      )
+    variants:
+      - uid: mondoo-aws-security-batch-no-privileged-containers-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-batch-no-privileged-containers-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that AWS Batch job definitions do not request privileged containers. A privileged container shares the host's namespaces and capabilities, including the ability to load kernel modules and access raw devices. On EC2-backed compute environments this gives the container code root on the underlying host.
@@ -53936,22 +54194,56 @@ queries:
               --type container \
               --container-properties '{"image":"<image>","privileged":false,"vcpus":1,"memory":2048,"jobRoleArn":"<role-arn>"}'
             ```
+        - id: cloudformation
+          desc: |
+            To register a non-privileged Batch job definition in CloudFormation, leave `Privileged` off or set it to `false` under `ContainerProperties`:
+
+            ```yaml
+            Resources:
+              ExampleJobDefinition:
+                Type: AWS::Batch::JobDefinition
+                Properties:
+                  Type: container
+                  JobDefinitionName: example
+                  ContainerProperties:
+                    Image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/example:latest
+                    Privileged: false
+                    JobRoleArn: !GetAtt JobRole.Arn
+                    ResourceRequirements:
+                      - Type: VCPU
+                        Value: "1"
+                      - Type: MEMORY
+                        Value: "2048"
+            ```
     refs:
       - url: https://docs.aws.amazon.com/batch/latest/userguide/job_definition_parameters.html
         title: Batch job definition parameters
-  - uid: mondoo-aws-security-batch-approved-image-registry
-    title: Ensure AWS Batch job definitions use approved private registries
-    impact: 70
+  - uid: mondoo-aws-security-batch-no-privileged-containers-aws
     filters: asset.platform == "aws"
     mql: |
       aws.batch.jobDefinitions.where(status == "ACTIVE").none(
-        container.image == /^public\.ecr\.aws\// ||
-        container.image == /^docker\.io\// ||
-        container.image == /^registry\.hub\.docker\.com\// ||
-        nodeRangeProperties.any(container.image == /^public\.ecr\.aws\//) ||
-        nodeRangeProperties.any(container.image == /^docker\.io\//) ||
-        nodeRangeProperties.any(container.image == /^registry\.hub\.docker\.com\//)
+        container.privileged == true ||
+        nodeRangeProperties.any(container.privileged == true)
       )
+  - uid: mondoo-aws-security-batch-no-privileged-containers-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Batch::JobDefinition")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::Batch::JobDefinition").all(
+        properties['ContainerProperties'] == empty || properties['ContainerProperties']['Privileged'] != true
+      )
+  # No Terraform variants: aws_batch_job_definition stores container settings as a JSON-encoded string in `container_properties`, so the `image` field is not addressable as a structured argument.
+  - uid: mondoo-aws-security-batch-approved-image-registry
+    title: Ensure AWS Batch job definitions use approved private registries
+    impact: 70
+    variants:
+      - uid: mondoo-aws-security-batch-approved-image-registry-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-batch-approved-image-registry-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures AWS Batch job definitions reference container images from approved private registries rather than public ones such as Amazon ECR Public (`public.ecr.aws`) or Docker Hub (`docker.io`, `registry.hub.docker.com`). Public registries can serve images that have been retagged or compromised by a third party between scan and execution.
@@ -53981,19 +54273,61 @@ queries:
               --type container \
               --container-properties '{"image":"123456789012.dkr.ecr.us-east-1.amazonaws.com/<repo>:<tag>","vcpus":1,"memory":2048,"jobRoleArn":"<role-arn>","executionRoleArn":"<exec-role-arn>"}'
             ```
+        - id: cloudformation
+          desc: |
+            To register a Batch job definition that pulls from a private ECR repository in CloudFormation, set `Image` under `ContainerProperties` to a private registry URI:
+
+            ```yaml
+            Resources:
+              ExampleJobDefinition:
+                Type: AWS::Batch::JobDefinition
+                Properties:
+                  Type: container
+                  JobDefinitionName: example
+                  ContainerProperties:
+                    Image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/example:latest
+                    JobRoleArn: !GetAtt JobRole.Arn
+                    ExecutionRoleArn: !GetAtt ExecRole.Arn
+                    ResourceRequirements:
+                      - Type: VCPU
+                        Value: "1"
+                      - Type: MEMORY
+                        Value: "2048"
+            ```
     refs:
       - url: https://docs.aws.amazon.com/batch/latest/userguide/job_definitions.html
         title: AWS Batch job definitions
+  - uid: mondoo-aws-security-batch-approved-image-registry-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.batch.jobDefinitions.where(status == "ACTIVE").none(
+        container.image == /^public\.ecr\.aws\// ||
+        container.image == /^docker\.io\// ||
+        container.image == /^registry\.hub\.docker\.com\// ||
+        nodeRangeProperties.any(container.image == /^public\.ecr\.aws\//) ||
+        nodeRangeProperties.any(container.image == /^docker\.io\//) ||
+        nodeRangeProperties.any(container.image == /^registry\.hub\.docker\.com\//)
+      )
+  - uid: mondoo-aws-security-batch-approved-image-registry-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Batch::JobDefinition")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::Batch::JobDefinition").all(
+        properties['ContainerProperties'] == empty ||
+        properties['ContainerProperties']['Image'] == null ||
+        properties['ContainerProperties']['Image'] != /^public\.ecr\.aws\// &&
+        properties['ContainerProperties']['Image'] != /^docker\.io\// &&
+        properties['ContainerProperties']['Image'] != /^registry\.hub\.docker\.com\//
+      )
+  # No Terraform variants: this check follows job-queue references into compute environments and then into subnet configuration; the cross-resource hop and `map_public_ip_on_launch` lookup on aws_subnet cannot be resolved against arbitrary Terraform configurations without traversing references.
+  # No CloudFormation variant: same cross-resource correlation between AWS::Batch::JobQueue, AWS::Batch::ComputeEnvironment, and AWS::EC2::Subnet (`MapPublicIpOnLaunch`) is required.
   - uid: mondoo-aws-security-batch-compute-env-private-subnets
     title: Ensure AWS Batch compute environments use private subnets
     impact: 80
-    filters: asset.platform == "aws"
-    mql: |
-      aws.batch.jobQueues.where(state == "ENABLED").all(
-        computeEnvironmentOrderTyped.all(
-          computeEnvironment.subnets.all(mapPublicIpOnLaunch == false)
-        )
-      )
+    variants:
+      - uid: mondoo-aws-security-batch-compute-env-private-subnets-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
     docs:
       desc: |
         This check ensures that the compute environments backing every enabled AWS Batch job queue land in private subnets, where instances do not receive a public IPv4 address on launch. Batch jobs typically only need outbound access through a NAT gateway or VPC endpoint, never inbound reachability from the internet.
@@ -54033,21 +54367,24 @@ queries:
     refs:
       - url: https://docs.aws.amazon.com/batch/latest/userguide/compute_environments.html
         title: AWS Batch compute environments
+  - uid: mondoo-aws-security-batch-compute-env-private-subnets-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.batch.jobQueues.where(state == "ENABLED").all(
+        computeEnvironmentOrderTyped.all(
+          computeEnvironment.subnets.all(mapPublicIpOnLaunch == false)
+        )
+      )
+  # No Terraform variants: this check follows job-definition references into the IAM role and inspects attached managed-policy documents; that cross-resource correlation against arbitrary aws_iam_role / aws_iam_role_policy / aws_iam_policy resources cannot be replicated structurally.
+  # No CloudFormation variant: same cross-resource correlation between AWS::Batch::JobDefinition, AWS::IAM::Role, and AWS::IAM::Policy / AWS::IAM::ManagedPolicy is required.
   - uid: mondoo-aws-security-batch-job-role-no-wildcards
     title: Ensure AWS Batch job roles do not grant wildcard actions or resources
     impact: 80
-    filters: asset.platform == "aws"
-    mql: |
-      aws.batch.jobDefinitions.where(status == "ACTIVE" && container != null && container.jobRole != null).all(
-        container.jobRole.inlinePolicies.length == 0 &&
-        container.jobRole.attachedPolicies.all(
-          defaultVersion.document['Statement'].all(
-            _['Effect'].upcase == "DENY" ||
-            [_['Resource']].flat.none(_ == "*") &&
-            [_['Action']].flat.none(_ == "*")
-          )
-        )
-      )
+    variants:
+      - uid: mondoo-aws-security-batch-job-role-no-wildcards-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
     docs:
       desc: |
         This check ensures that the IAM role assumed by an AWS Batch container does not grant `Action: "*"` or `Resource: "*"` in any allow statement. Batch job code runs with the permissions of the job role, so a wildcard policy gives the workload full control over the AWS account whenever it is invoked.
@@ -54085,20 +54422,29 @@ queries:
     refs:
       - url: https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html
         title: IAM security best practices
-  - uid: mondoo-aws-security-sfn-role-no-wildcard-resource
-    title: Ensure Step Functions state machine roles do not allow wildcard resources
-    impact: 80
+  - uid: mondoo-aws-security-batch-job-role-no-wildcards-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.stepfunctions.stateMachines.where(iamRole != null).all(
-        iamRole.inlinePolicies.length == 0 &&
-        iamRole.attachedPolicies.all(
+      aws.batch.jobDefinitions.where(status == "ACTIVE" && container != null && container.jobRole != null).all(
+        container.jobRole.inlinePolicies.length == 0 &&
+        container.jobRole.attachedPolicies.all(
           defaultVersion.document['Statement'].all(
             _['Effect'].upcase == "DENY" ||
-            [_['Resource']].flat.none(_ == "*")
+            [_['Resource']].flat.none(_ == "*") &&
+            [_['Action']].flat.none(_ == "*")
           )
         )
       )
+  # No Terraform variants: this check follows state-machine references into the IAM role and inspects attached managed-policy documents; that cross-resource correlation against arbitrary aws_iam_role / aws_iam_role_policy / aws_iam_policy resources cannot be replicated structurally.
+  # No CloudFormation variant: same cross-resource correlation between AWS::StepFunctions::StateMachine, AWS::IAM::Role, and AWS::IAM::Policy / AWS::IAM::ManagedPolicy is required.
+  - uid: mondoo-aws-security-sfn-role-no-wildcard-resource
+    title: Ensure Step Functions state machine roles do not allow wildcard resources
+    impact: 80
+    variants:
+      - uid: mondoo-aws-security-sfn-role-no-wildcard-resource-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
     docs:
       desc: |
         This check ensures that the IAM execution role of every Step Functions state machine does not contain an allow statement with `Resource: "*"`. State machines orchestrate AWS service calls under their execution role, so a wildcard resource lets the state machine invoke `lambda:InvokeFunction`, `dynamodb:*`, and similar service actions against every resource in the account.
@@ -54137,14 +54483,42 @@ queries:
     refs:
       - url: https://docs.aws.amazon.com/step-functions/latest/dg/concepts-iam.html
         title: IAM and Step Functions
+  - uid: mondoo-aws-security-sfn-role-no-wildcard-resource-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.stepfunctions.stateMachines.where(iamRole != null).all(
+        iamRole.inlinePolicies.length == 0 &&
+        iamRole.attachedPolicies.all(
+          defaultVersion.document['Statement'].all(
+            _['Effect'].upcase == "DENY" ||
+            [_['Resource']].flat.none(_ == "*")
+          )
+        )
+      )
   - uid: mondoo-aws-security-privateca-strong-signing-algorithm
     title: Ensure Private CAs use SHA256 or stronger signing algorithms
     impact: 80
-    filters: asset.platform == "aws"
-    mql: |
-      aws.privateca.certificateAuthorities.where(status != "DELETED").all(
-        signingAlgorithm == /SHA(256|384|512)/
-      )
+    variants:
+      - uid: mondoo-aws-security-privateca-strong-signing-algorithm-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-privateca-strong-signing-algorithm-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-privateca-strong-signing-algorithm-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-privateca-strong-signing-algorithm-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-privateca-strong-signing-algorithm-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that AWS Private Certificate Authority (ACM PCA) instances sign issued certificates with SHA-256 or stronger digest algorithms. SHA-1 is broken for collision resistance and has been deprecated by all major browsers and TLS libraries, so a CA that signs with SHA-1 issues certificates that downstream consumers will reject or treat as untrustworthy.
@@ -54172,17 +54546,100 @@ queries:
               --certificate-authority-configuration '{"KeyAlgorithm":"RSA_2048","SigningAlgorithm":"SHA256WITHRSA","Subject":{"CommonName":"example-root"}}' \
               --certificate-authority-type ROOT
             ```
+        - id: terraform
+          desc: |
+            To create a Private CA with a SHA-256 or stronger signing algorithm in Terraform, set `signing_algorithm` on `aws_acmpca_certificate_authority`:
+
+            ```hcl
+            resource "aws_acmpca_certificate_authority" "example" {
+              type = "ROOT"
+
+              certificate_authority_configuration {
+                key_algorithm     = "RSA_2048"
+                signing_algorithm = "SHA256WITHRSA"
+
+                subject {
+                  common_name = "example-root"
+                }
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To create a Private CA with a SHA-256 or stronger signing algorithm in CloudFormation, set `SigningAlgorithm` on `AWS::ACMPCA::CertificateAuthority`:
+
+            ```yaml
+            Resources:
+              ExamplePrivateCA:
+                Type: AWS::ACMPCA::CertificateAuthority
+                Properties:
+                  Type: ROOT
+                  KeyAlgorithm: RSA_2048
+                  SigningAlgorithm: SHA256WITHRSA
+                  Subject:
+                    CommonName: example-root
+            ```
     refs:
       - url: https://docs.aws.amazon.com/privateca/latest/userguide/PcaApiCertificateAuthority.html
         title: AWS Private CA API reference
-  - uid: mondoo-aws-security-privateca-hsm-key-storage
-    title: Ensure Private CA private keys use FIPS 140-2 Level 3 HSM-backed storage
-    impact: 80
+  - uid: mondoo-aws-security-privateca-strong-signing-algorithm-aws
     filters: asset.platform == "aws"
     mql: |
       aws.privateca.certificateAuthorities.where(status != "DELETED").all(
-        keyStorageSecurityStandard == "FIPS_140_2_LEVEL_3_OR_HIGHER"
+        signingAlgorithm == /SHA(256|384|512)/
       )
+  - uid: mondoo-aws-security-privateca-strong-signing-algorithm-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_acmpca_certificate_authority")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_acmpca_certificate_authority").all(
+        blocks.where(type == "certificate_authority_configuration").all(
+          arguments.signing_algorithm == /SHA(256|384|512)/
+        )
+      )
+  - uid: mondoo-aws-security-privateca-strong-signing-algorithm-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_acmpca_certificate_authority")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_acmpca_certificate_authority").all(
+        change.after.certificate_authority_configuration != empty &&
+        change.after.certificate_authority_configuration.all(_['signing_algorithm'] == /SHA(256|384|512)/)
+      )
+  - uid: mondoo-aws-security-privateca-strong-signing-algorithm-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_acmpca_certificate_authority")
+    mql: |
+      terraform.state.resources.where(type == "aws_acmpca_certificate_authority").all(
+        values.certificate_authority_configuration != empty &&
+        values.certificate_authority_configuration.all(_['signing_algorithm'] == /SHA(256|384|512)/)
+      )
+  - uid: mondoo-aws-security-privateca-strong-signing-algorithm-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::ACMPCA::CertificateAuthority")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::ACMPCA::CertificateAuthority").all(
+        properties['SigningAlgorithm'] == /SHA(256|384|512)/
+      )
+  - uid: mondoo-aws-security-privateca-hsm-key-storage
+    title: Ensure Private CA private keys use FIPS 140-2 Level 3 HSM-backed storage
+    impact: 80
+    variants:
+      - uid: mondoo-aws-security-privateca-hsm-key-storage-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-privateca-hsm-key-storage-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-privateca-hsm-key-storage-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-privateca-hsm-key-storage-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-privateca-hsm-key-storage-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that every AWS Private CA stores its private signing key in HSM-backed storage that is certified to FIPS 140-2 Level 3 or higher. The CA private key is the trust anchor for every certificate the CA issues, so its compromise lets an attacker forge certificates that downstream services will accept.
@@ -54212,29 +54669,98 @@ queries:
               --certificate-authority-type ROOT \
               --key-storage-security-standard FIPS_140_2_LEVEL_3_OR_HIGHER
             ```
+        - id: terraform
+          desc: |
+            To create a Private CA whose private key is held in FIPS 140-2 Level 3 HSM-backed storage in Terraform, set `key_storage_security_standard` on `aws_acmpca_certificate_authority`:
+
+            ```hcl
+            resource "aws_acmpca_certificate_authority" "example" {
+              type                          = "ROOT"
+              key_storage_security_standard = "FIPS_140_2_LEVEL_3_OR_HIGHER"
+
+              certificate_authority_configuration {
+                key_algorithm     = "RSA_2048"
+                signing_algorithm = "SHA256WITHRSA"
+
+                subject {
+                  common_name = "example-root"
+                }
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To create a Private CA whose private key is held in FIPS 140-2 Level 3 HSM-backed storage in CloudFormation, set `KeyStorageSecurityStandard` on `AWS::ACMPCA::CertificateAuthority`:
+
+            ```yaml
+            Resources:
+              ExamplePrivateCA:
+                Type: AWS::ACMPCA::CertificateAuthority
+                Properties:
+                  Type: ROOT
+                  KeyAlgorithm: RSA_2048
+                  SigningAlgorithm: SHA256WITHRSA
+                  KeyStorageSecurityStandard: FIPS_140_2_LEVEL_3_OR_HIGHER
+                  Subject:
+                    CommonName: example-root
+            ```
     refs:
       - url: https://docs.aws.amazon.com/privateca/latest/userguide/data-protection.html
         title: Data protection in AWS Private CA
+  - uid: mondoo-aws-security-privateca-hsm-key-storage-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.privateca.certificateAuthorities.where(status != "DELETED").all(
+        keyStorageSecurityStandard == "FIPS_140_2_LEVEL_3_OR_HIGHER"
+      )
+  - uid: mondoo-aws-security-privateca-hsm-key-storage-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_acmpca_certificate_authority")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_acmpca_certificate_authority").all(
+        arguments.key_storage_security_standard == "FIPS_140_2_LEVEL_3_OR_HIGHER"
+      )
+  - uid: mondoo-aws-security-privateca-hsm-key-storage-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_acmpca_certificate_authority")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_acmpca_certificate_authority").all(
+        change.after.key_storage_security_standard == "FIPS_140_2_LEVEL_3_OR_HIGHER"
+      )
+  - uid: mondoo-aws-security-privateca-hsm-key-storage-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_acmpca_certificate_authority")
+    mql: |
+      terraform.state.resources.where(type == "aws_acmpca_certificate_authority").all(
+        values.key_storage_security_standard == "FIPS_140_2_LEVEL_3_OR_HIGHER"
+      )
+  - uid: mondoo-aws-security-privateca-hsm-key-storage-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::ACMPCA::CertificateAuthority")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::ACMPCA::CertificateAuthority").all(
+        properties['KeyStorageSecurityStandard'] == "FIPS_140_2_LEVEL_3_OR_HIGHER"
+      )
+  # No CloudFormation variant: AWS::Lightsail::Instance Networking.Ports is exposed in CloudFormation, but the variant adds little over the Terraform/runtime checks for Lightsail-managed resources; revisit if customer demand for CFN-only Lightsail coverage emerges.
   - uid: mondoo-aws-security-lightsail-instance-no-public-sensitive-ports
     title: Ensure Lightsail instances do not expose sensitive ports to the internet
     impact: 90
-    filters: asset.platform == "aws"
-    mql: |
-      aws.lightsail.instances.all(
-        firewallRules.where(_['cidrs'].contains("0.0.0.0/0")).none(
-          _['fromPort'] <= 22 && _['toPort'] >= 22 ||
-          _['fromPort'] <= 3389 && _['toPort'] >= 3389 ||
-          _['fromPort'] <= 3306 && _['toPort'] >= 3306 ||
-          _['fromPort'] <= 5432 && _['toPort'] >= 5432 ||
-          _['fromPort'] <= 1433 && _['toPort'] >= 1433 ||
-          _['fromPort'] <= 27017 && _['toPort'] >= 27017 ||
-          _['fromPort'] <= 6379 && _['toPort'] >= 6379 ||
-          _['fromPort'] <= 9200 && _['toPort'] >= 9200
-        )
-      )
+    variants:
+      - uid: mondoo-aws-security-lightsail-instance-no-public-sensitive-ports-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-lightsail-instance-no-public-sensitive-ports-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-lightsail-instance-no-public-sensitive-ports-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-lightsail-instance-no-public-sensitive-ports-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that Lightsail instances do not have firewall rules that expose remote-administration or database ports — 22, 3389, 3306, 5432, 1433, 27017, 6379, 9200 — to `0.0.0.0/0`. Lightsail instances are often used for quick stand-ups, and the per-instance firewall is the only network control between the instance and the public internet.
+        This check ensures that Lightsail instances do not have firewall rules that expose remote-administration or database ports such as 22, 3389, 3306, 5432, 1433, 27017, 6379, and 9200 to `0.0.0.0/0`. Lightsail instances are often used for quick stand-ups, and the per-instance firewall is the only network control between the instance and the public internet.
 
         **Why this matters**
 
@@ -54267,15 +54793,114 @@ queries:
               --instance-name <instance-name> \
               --port-info fromPort=22,toPort=22,protocol=tcp
             ```
+        - id: terraform
+          desc: |
+            To restrict sensitive ports on a Lightsail instance in Terraform, scope `cidrs` on each `port_info` block of `aws_lightsail_instance_public_ports` so that ports such as 22 and 3389 are not open to `0.0.0.0/0`:
+
+            ```hcl
+            resource "aws_lightsail_instance_public_ports" "example" {
+              instance_name = aws_lightsail_instance.example.name
+
+              port_info {
+                from_port = 22
+                to_port   = 22
+                protocol  = "tcp"
+                cidrs     = ["10.0.0.0/8"]
+              }
+
+              port_info {
+                from_port = 443
+                to_port   = 443
+                protocol  = "tcp"
+                cidrs     = ["0.0.0.0/0"]
+              }
+            }
+            ```
     refs:
       - url: https://docs.aws.amazon.com/lightsail/latest/userguide/amazon-lightsail-editing-firewall-rules.html
         title: Editing Lightsail instance firewall rules
+  - uid: mondoo-aws-security-lightsail-instance-no-public-sensitive-ports-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.lightsail.instances.all(
+        firewallRules.where(_['cidrs'].contains("0.0.0.0/0")).none(
+          _['fromPort'] <= 22 && _['toPort'] >= 22 ||
+          _['fromPort'] <= 3389 && _['toPort'] >= 3389 ||
+          _['fromPort'] <= 3306 && _['toPort'] >= 3306 ||
+          _['fromPort'] <= 5432 && _['toPort'] >= 5432 ||
+          _['fromPort'] <= 1433 && _['toPort'] >= 1433 ||
+          _['fromPort'] <= 27017 && _['toPort'] >= 27017 ||
+          _['fromPort'] <= 6379 && _['toPort'] >= 6379 ||
+          _['fromPort'] <= 9200 && _['toPort'] >= 9200
+        )
+      )
+  - uid: mondoo-aws-security-lightsail-instance-no-public-sensitive-ports-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_lightsail_instance_public_ports")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_lightsail_instance_public_ports").all(
+        blocks.where(type == "port_info").where(arguments.cidrs.contains("0.0.0.0/0")).none(
+          arguments.from_port <= 22 && arguments.to_port >= 22 ||
+          arguments.from_port <= 3389 && arguments.to_port >= 3389 ||
+          arguments.from_port <= 3306 && arguments.to_port >= 3306 ||
+          arguments.from_port <= 5432 && arguments.to_port >= 5432 ||
+          arguments.from_port <= 1433 && arguments.to_port >= 1433 ||
+          arguments.from_port <= 27017 && arguments.to_port >= 27017 ||
+          arguments.from_port <= 6379 && arguments.to_port >= 6379 ||
+          arguments.from_port <= 9200 && arguments.to_port >= 9200
+        )
+      )
+  - uid: mondoo-aws-security-lightsail-instance-no-public-sensitive-ports-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_lightsail_instance_public_ports")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_lightsail_instance_public_ports").all(
+        change.after.port_info == empty ||
+        change.after.port_info.where(_['cidrs'] != null && _['cidrs'].contains("0.0.0.0/0")).none(
+          _['from_port'] <= 22 && _['to_port'] >= 22 ||
+          _['from_port'] <= 3389 && _['to_port'] >= 3389 ||
+          _['from_port'] <= 3306 && _['to_port'] >= 3306 ||
+          _['from_port'] <= 5432 && _['to_port'] >= 5432 ||
+          _['from_port'] <= 1433 && _['to_port'] >= 1433 ||
+          _['from_port'] <= 27017 && _['to_port'] >= 27017 ||
+          _['from_port'] <= 6379 && _['to_port'] >= 6379 ||
+          _['from_port'] <= 9200 && _['to_port'] >= 9200
+        )
+      )
+  - uid: mondoo-aws-security-lightsail-instance-no-public-sensitive-ports-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_lightsail_instance_public_ports")
+    mql: |
+      terraform.state.resources.where(type == "aws_lightsail_instance_public_ports").all(
+        values.port_info == empty ||
+        values.port_info.where(_['cidrs'] != null && _['cidrs'].contains("0.0.0.0/0")).none(
+          _['from_port'] <= 22 && _['to_port'] >= 22 ||
+          _['from_port'] <= 3389 && _['to_port'] >= 3389 ||
+          _['from_port'] <= 3306 && _['to_port'] >= 3306 ||
+          _['from_port'] <= 5432 && _['to_port'] >= 5432 ||
+          _['from_port'] <= 1433 && _['to_port'] >= 1433 ||
+          _['from_port'] <= 27017 && _['to_port'] >= 27017 ||
+          _['from_port'] <= 6379 && _['to_port'] >= 6379 ||
+          _['from_port'] <= 9200 && _['to_port'] >= 9200
+        )
+      )
   - uid: mondoo-aws-security-lightsail-database-not-public
     title: Ensure Lightsail managed databases are not publicly accessible
     impact: 90
-    filters: asset.platform == "aws"
-    mql: |
-      aws.lightsail.databases.all(publiclyAccessible == false)
+    variants:
+      - uid: mondoo-aws-security-lightsail-database-not-public-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-lightsail-database-not-public-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-lightsail-database-not-public-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-lightsail-database-not-public-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that Lightsail managed databases have `publiclyAccessible` set to `false`. A publicly accessible Lightsail database receives a public IP and can be reached from the internet, with only the database engine's authentication standing between the data and the world.
@@ -54304,19 +54929,72 @@ queries:
               --no-publicly-accessible \
               --apply-immediately
             ```
+        - id: terraform
+          desc: |
+            To create a Lightsail managed database that is not publicly accessible in Terraform, set `publicly_accessible = false` on `aws_lightsail_database`:
+
+            ```hcl
+            resource "aws_lightsail_database" "example" {
+              relational_database_name      = "example"
+              availability_zone             = "us-east-1a"
+              master_database_name          = "exampledb"
+              master_username               = "admin"
+              master_password               = var.db_password
+              blueprint_id                  = "mysql_8_0"
+              bundle_id                     = "micro_1_0"
+              publicly_accessible           = false
+              skip_final_snapshot           = true
+            }
+            ```
     refs:
       - url: https://docs.aws.amazon.com/lightsail/latest/userguide/amazon-lightsail-managing-database-public-mode.html
         title: Managing Lightsail database public mode
+  - uid: mondoo-aws-security-lightsail-database-not-public-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.lightsail.databases.all(publiclyAccessible == false)
+  - uid: mondoo-aws-security-lightsail-database-not-public-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_lightsail_database")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_lightsail_database").all(
+        arguments.publicly_accessible == false || arguments.publicly_accessible == null
+      )
+  - uid: mondoo-aws-security-lightsail-database-not-public-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_lightsail_database")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_lightsail_database").all(
+        change.after.publicly_accessible == false || change.after.publicly_accessible == null
+      )
+  - uid: mondoo-aws-security-lightsail-database-not-public-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_lightsail_database")
+    mql: |
+      terraform.state.resources.where(type == "aws_lightsail_database").all(
+        values.publicly_accessible == false || values.publicly_accessible == null
+      )
   - uid: mondoo-aws-security-apigatewayv2-routes-require-authorizer
     title: Ensure API Gateway v2 routes require an authorizer
     impact: 80
-    filters: asset.platform == "aws"
-    mql: |
-      aws.apigatewayv2.apis.all(
-        routes.where(routeKey != /^OPTIONS /).all(
-          authorizationType != "NONE"
-        )
-      )
+    variants:
+      - uid: mondoo-aws-security-apigatewayv2-routes-require-authorizer-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-apigatewayv2-routes-require-authorizer-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-apigatewayv2-routes-require-authorizer-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-apigatewayv2-routes-require-authorizer-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-apigatewayv2-routes-require-authorizer-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that every non-`OPTIONS` route on an API Gateway v2 HTTP or WebSocket API has an `authorizationType` other than `NONE`. The `OPTIONS` method is excluded because browsers send pre-flight CORS requests without credentials and the API must be able to answer them anonymously.
@@ -54346,17 +55024,93 @@ queries:
               --authorization-type JWT \
               --authorizer-id <authorizer-id>
             ```
+        - id: terraform
+          desc: |
+            To require an authorizer on an API Gateway v2 route in Terraform, set `authorization_type` to a non-`NONE` value and attach an `authorizer_id`:
+
+            ```hcl
+            resource "aws_apigatewayv2_route" "example" {
+              api_id             = aws_apigatewayv2_api.example.id
+              route_key          = "POST /signup"
+              target             = "integrations/${aws_apigatewayv2_integration.example.id}"
+              authorization_type = "JWT"
+              authorizer_id      = aws_apigatewayv2_authorizer.example.id
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To require an authorizer on an API Gateway v2 route in CloudFormation, set `AuthorizationType` to a non-`NONE` value and attach an `AuthorizerId`:
+
+            ```yaml
+            Resources:
+              ExampleRoute:
+                Type: AWS::ApiGatewayV2::Route
+                Properties:
+                  ApiId: !Ref ExampleApi
+                  RouteKey: POST /signup
+                  Target: !Sub integrations/${ExampleIntegration}
+                  AuthorizationType: JWT
+                  AuthorizerId: !Ref ExampleAuthorizer
+            ```
     refs:
       - url: https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-jwt-authorizer.html
         title: API Gateway v2 JWT authorizers
+  - uid: mondoo-aws-security-apigatewayv2-routes-require-authorizer-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.apigatewayv2.apis.all(
+        routes.where(routeKey != /^OPTIONS /).all(
+          authorizationType != "NONE"
+        )
+      )
+  - uid: mondoo-aws-security-apigatewayv2-routes-require-authorizer-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_apigatewayv2_route")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_apigatewayv2_route").where(arguments.route_key != /^OPTIONS /).all(
+        arguments.authorization_type != null && arguments.authorization_type != "NONE"
+      )
+  - uid: mondoo-aws-security-apigatewayv2-routes-require-authorizer-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_apigatewayv2_route")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_apigatewayv2_route").where(change.after.route_key != /^OPTIONS /).all(
+        change.after.authorization_type != null && change.after.authorization_type != "NONE"
+      )
+  - uid: mondoo-aws-security-apigatewayv2-routes-require-authorizer-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_apigatewayv2_route")
+    mql: |
+      terraform.state.resources.where(type == "aws_apigatewayv2_route").where(values.route_key != /^OPTIONS /).all(
+        values.authorization_type != null && values.authorization_type != "NONE"
+      )
+  - uid: mondoo-aws-security-apigatewayv2-routes-require-authorizer-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::ApiGatewayV2::Route")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::ApiGatewayV2::Route").where(properties['RouteKey'] != /^OPTIONS /).all(
+        properties['AuthorizationType'] != null && properties['AuthorizationType'] != "NONE"
+      )
   - uid: mondoo-aws-security-apigatewayv2-domain-tls-1-2
     title: Ensure API Gateway v2 custom domains enforce TLS 1.2
     impact: 80
-    filters: asset.platform == "aws"
-    mql: |
-      aws.apigatewayv2.domainNames.all(
-        domainNameConfigurations.all(_['SecurityPolicy'] == "TLS_1_2")
-      )
+    variants:
+      - uid: mondoo-aws-security-apigatewayv2-domain-tls-1-2-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-apigatewayv2-domain-tls-1-2-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-apigatewayv2-domain-tls-1-2-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-apigatewayv2-domain-tls-1-2-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-apigatewayv2-domain-tls-1-2-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that every API Gateway v2 custom domain is configured with the `TLS_1_2` security policy on each of its endpoint configurations. The older `TLS_1_0` policy permits TLS 1.0 and TLS 1.1 negotiation, both of which are deprecated and disallowed by modern compliance baselines.
@@ -54384,19 +55138,97 @@ queries:
               --domain-name <domain> \
               --domain-name-configurations CertificateArn=<acm-arn>,EndpointType=REGIONAL,SecurityPolicy=TLS_1_2
             ```
+        - id: terraform
+          desc: |
+            To enforce TLS 1.2 on an API Gateway v2 custom domain in Terraform, set `security_policy = "TLS_1_2"` on each `domain_name_configuration` block of `aws_apigatewayv2_domain_name`:
+
+            ```hcl
+            resource "aws_apigatewayv2_domain_name" "example" {
+              domain_name = "api.example.com"
+
+              domain_name_configuration {
+                certificate_arn = aws_acm_certificate.example.arn
+                endpoint_type   = "REGIONAL"
+                security_policy = "TLS_1_2"
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To enforce TLS 1.2 on an API Gateway v2 custom domain in CloudFormation, set `SecurityPolicy: TLS_1_2` on each entry of `DomainNameConfigurations` on `AWS::ApiGatewayV2::DomainName`:
+
+            ```yaml
+            Resources:
+              ExampleDomain:
+                Type: AWS::ApiGatewayV2::DomainName
+                Properties:
+                  DomainName: api.example.com
+                  DomainNameConfigurations:
+                    - CertificateArn: !Ref ExampleCertificate
+                      EndpointType: REGIONAL
+                      SecurityPolicy: TLS_1_2
+            ```
     refs:
       - url: https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-custom-domain-tls-version.html
         title: Choosing a minimum TLS version for an API Gateway custom domain
+  - uid: mondoo-aws-security-apigatewayv2-domain-tls-1-2-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.apigatewayv2.domainNames.all(
+        domainNameConfigurations.all(_['SecurityPolicy'] == "TLS_1_2")
+      )
+  - uid: mondoo-aws-security-apigatewayv2-domain-tls-1-2-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_apigatewayv2_domain_name")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_apigatewayv2_domain_name").all(
+        blocks.where(type == "domain_name_configuration") != empty &&
+        blocks.where(type == "domain_name_configuration").all(arguments.security_policy == "TLS_1_2")
+      )
+  - uid: mondoo-aws-security-apigatewayv2-domain-tls-1-2-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_apigatewayv2_domain_name")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_apigatewayv2_domain_name").all(
+        change.after.domain_name_configuration != empty &&
+        change.after.domain_name_configuration.all(_['security_policy'] == "TLS_1_2")
+      )
+  - uid: mondoo-aws-security-apigatewayv2-domain-tls-1-2-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_apigatewayv2_domain_name")
+    mql: |
+      terraform.state.resources.where(type == "aws_apigatewayv2_domain_name").all(
+        values.domain_name_configuration != empty &&
+        values.domain_name_configuration.all(_['security_policy'] == "TLS_1_2")
+      )
+  - uid: mondoo-aws-security-apigatewayv2-domain-tls-1-2-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::ApiGatewayV2::DomainName")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::ApiGatewayV2::DomainName").all(
+        properties['DomainNameConfigurations'] != empty &&
+        properties['DomainNameConfigurations'].all(_['SecurityPolicy'] == "TLS_1_2")
+      )
   - uid: mondoo-aws-security-glue-catalog-encryption-cmk
     title: Ensure Glue Data Catalog encryption uses SSE-KMS with a CMK
     impact: 70
-    filters: asset.platform == "aws"
-    mql: |
-      aws.glue.catalogEncryptionSettings.all(
-        _['EncryptionAtRest']['CatalogEncryptionMode'] == "SSE-KMS" &&
-        _['EncryptionAtRest']['SseAwsKmsKeyId'] != null &&
-        _['EncryptionAtRest']['SseAwsKmsKeyId'] != ""
-      )
+    variants:
+      - uid: mondoo-aws-security-glue-catalog-encryption-cmk-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-glue-catalog-encryption-cmk-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-glue-catalog-encryption-cmk-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-glue-catalog-encryption-cmk-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-glue-catalog-encryption-cmk-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that AWS Glue Data Catalog encryption-at-rest is set to `SSE-KMS` with an explicit KMS key identifier. The Data Catalog stores table schemas, partition metadata, and connection passwords; encrypting the catalog with a customer-managed KMS key gives you a key policy and rotation control over the metadata that describes your data lake.
@@ -54428,22 +55260,120 @@ queries:
                 }
               }'
             ```
+        - id: terraform
+          desc: |
+            To configure Glue Data Catalog encryption with `SSE-KMS` and a CMK in Terraform, set `aws_glue_data_catalog_encryption_settings` with an `encryption_at_rest` block:
+
+            ```hcl
+            resource "aws_glue_data_catalog_encryption_settings" "example" {
+              data_catalog_encryption_settings {
+                encryption_at_rest {
+                  catalog_encryption_mode = "SSE-KMS"
+                  sse_aws_kms_key_id      = aws_kms_key.glue.arn
+                }
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To configure Glue Data Catalog encryption with `SSE-KMS` and a CMK in CloudFormation, declare an `AWS::Glue::DataCatalogEncryptionSettings` resource with `EncryptionAtRest` set:
+
+            ```yaml
+            Resources:
+              ExampleCatalogEncryption:
+                Type: AWS::Glue::DataCatalogEncryptionSettings
+                Properties:
+                  CatalogId: !Ref AWS::AccountId
+                  DataCatalogEncryptionSettings:
+                    EncryptionAtRest:
+                      CatalogEncryptionMode: SSE-KMS
+                      SseAwsKmsKeyId: !GetAtt GlueKey.Arn
+            ```
     refs:
       - url: https://docs.aws.amazon.com/glue/latest/dg/encrypt-glue-data-catalog.html
         title: Encrypting your AWS Glue Data Catalog
+  - uid: mondoo-aws-security-glue-catalog-encryption-cmk-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.glue.catalogEncryptionSettings.all(
+        _['EncryptionAtRest']['CatalogEncryptionMode'] == "SSE-KMS" &&
+        _['EncryptionAtRest']['SseAwsKmsKeyId'] != null &&
+        _['EncryptionAtRest']['SseAwsKmsKeyId'] != ""
+      )
+  - uid: mondoo-aws-security-glue-catalog-encryption-cmk-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_glue_data_catalog_encryption_settings")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_glue_data_catalog_encryption_settings").all(
+        blocks.where(type == "data_catalog_encryption_settings").all(
+          blocks.where(type == "encryption_at_rest").all(
+            arguments.catalog_encryption_mode == "SSE-KMS" &&
+            arguments.sse_aws_kms_key_id != null &&
+            arguments.sse_aws_kms_key_id != ""
+          )
+        )
+      )
+  - uid: mondoo-aws-security-glue-catalog-encryption-cmk-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_glue_data_catalog_encryption_settings")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_glue_data_catalog_encryption_settings").all(
+        change.after.data_catalog_encryption_settings != empty &&
+        change.after.data_catalog_encryption_settings.all(
+          _['encryption_at_rest'] != empty &&
+          _['encryption_at_rest'].all(
+            _['catalog_encryption_mode'] == "SSE-KMS" &&
+            _['sse_aws_kms_key_id'] != null &&
+            _['sse_aws_kms_key_id'] != ""
+          )
+        )
+      )
+  - uid: mondoo-aws-security-glue-catalog-encryption-cmk-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_glue_data_catalog_encryption_settings")
+    mql: |
+      terraform.state.resources.where(type == "aws_glue_data_catalog_encryption_settings").all(
+        values.data_catalog_encryption_settings != empty &&
+        values.data_catalog_encryption_settings.all(
+          _['encryption_at_rest'] != empty &&
+          _['encryption_at_rest'].all(
+            _['catalog_encryption_mode'] == "SSE-KMS" &&
+            _['sse_aws_kms_key_id'] != null &&
+            _['sse_aws_kms_key_id'] != ""
+          )
+        )
+      )
+  - uid: mondoo-aws-security-glue-catalog-encryption-cmk-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Glue::DataCatalogEncryptionSettings")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::Glue::DataCatalogEncryptionSettings").all(
+        properties['DataCatalogEncryptionSettings'] != empty &&
+        properties['DataCatalogEncryptionSettings']['EncryptionAtRest'] != empty &&
+        properties['DataCatalogEncryptionSettings']['EncryptionAtRest']['CatalogEncryptionMode'] == "SSE-KMS" &&
+        properties['DataCatalogEncryptionSettings']['EncryptionAtRest']['SseAwsKmsKeyId'] != null &&
+        properties['DataCatalogEncryptionSettings']['EncryptionAtRest']['SseAwsKmsKeyId'] != ""
+      )
   - uid: mondoo-aws-security-glue-security-config-cmk-encryption
     title: Ensure Glue security configurations encrypt bookmarks and S3 outputs with a CMK
     impact: 70
-    filters: asset.platform == "aws"
-    mql: |
-      aws.glue.securityConfigurations.all(
-        s3Encryption['S3EncryptionMode'] == "SSE-KMS" &&
-        s3Encryption['KmsKeyArn'] != null &&
-        s3Encryption['KmsKeyArn'] != "" &&
-        jobBookmarksEncryption['JobBookmarksEncryptionMode'] == "CSE-KMS" &&
-        jobBookmarksEncryption['KmsKeyArn'] != null &&
-        jobBookmarksEncryption['KmsKeyArn'] != ""
-      )
+    variants:
+      - uid: mondoo-aws-security-glue-security-config-cmk-encryption-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-glue-security-config-cmk-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-glue-security-config-cmk-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-glue-security-config-cmk-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-glue-security-config-cmk-encryption-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that every Glue security configuration encrypts both job bookmarks and S3 outputs with a referenced KMS key. Glue jobs that lack a security configuration with both modes set inherit the catalog-level defaults, which may rely on AWS-owned keys without per-key access control or audit.
@@ -54475,23 +55405,152 @@ queries:
                 "JobBookmarksEncryption":{"JobBookmarksEncryptionMode":"CSE-KMS","KmsKeyArn":"arn:aws:kms:<region>:<account>:key/<key-id>"}
               }'
             ```
+        - id: terraform
+          desc: |
+            To create a Glue security configuration that encrypts both bookmarks and S3 outputs with a CMK in Terraform, set both encryption blocks on `aws_glue_security_configuration`:
+
+            ```hcl
+            resource "aws_glue_security_configuration" "example" {
+              name = "example"
+
+              encryption_configuration {
+                s3_encryption {
+                  s3_encryption_mode = "SSE-KMS"
+                  kms_key_arn        = aws_kms_key.glue.arn
+                }
+                job_bookmarks_encryption {
+                  job_bookmarks_encryption_mode = "CSE-KMS"
+                  kms_key_arn                   = aws_kms_key.glue.arn
+                }
+                cloudwatch_encryption {
+                  cloudwatch_encryption_mode = "DISABLED"
+                }
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To create a Glue security configuration that encrypts bookmarks and S3 outputs with a CMK in CloudFormation, set the encryption modes on `AWS::Glue::SecurityConfiguration`:
+
+            ```yaml
+            Resources:
+              ExampleSecurityConfig:
+                Type: AWS::Glue::SecurityConfiguration
+                Properties:
+                  Name: example
+                  EncryptionConfiguration:
+                    S3Encryptions:
+                      - S3EncryptionMode: SSE-KMS
+                        KmsKeyArn: !GetAtt GlueKey.Arn
+                    JobBookmarksEncryption:
+                      JobBookmarksEncryptionMode: CSE-KMS
+                      KmsKeyArn: !GetAtt GlueKey.Arn
+            ```
     refs:
       - url: https://docs.aws.amazon.com/glue/latest/dg/encryption-security-configuration.html
         title: Setting up encryption with AWS Glue
+  - uid: mondoo-aws-security-glue-security-config-cmk-encryption-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.glue.securityConfigurations.all(
+        s3Encryption['S3EncryptionMode'] == "SSE-KMS" &&
+        s3Encryption['KmsKeyArn'] != null &&
+        s3Encryption['KmsKeyArn'] != "" &&
+        jobBookmarksEncryption['JobBookmarksEncryptionMode'] == "CSE-KMS" &&
+        jobBookmarksEncryption['KmsKeyArn'] != null &&
+        jobBookmarksEncryption['KmsKeyArn'] != ""
+      )
+  - uid: mondoo-aws-security-glue-security-config-cmk-encryption-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_glue_security_configuration")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_glue_security_configuration").all(
+        blocks.where(type == "encryption_configuration").all(
+          blocks.where(type == "s3_encryption").all(
+            arguments.s3_encryption_mode == "SSE-KMS" &&
+            arguments.kms_key_arn != null &&
+            arguments.kms_key_arn != ""
+          ) &&
+          blocks.where(type == "job_bookmarks_encryption").all(
+            arguments.job_bookmarks_encryption_mode == "CSE-KMS" &&
+            arguments.kms_key_arn != null &&
+            arguments.kms_key_arn != ""
+          )
+        )
+      )
+  - uid: mondoo-aws-security-glue-security-config-cmk-encryption-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_glue_security_configuration")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_glue_security_configuration").all(
+        change.after.encryption_configuration != empty &&
+        change.after.encryption_configuration.all(
+          _['s3_encryption'] != empty && _['s3_encryption'].all(
+            _['s3_encryption_mode'] == "SSE-KMS" &&
+            _['kms_key_arn'] != null && _['kms_key_arn'] != ""
+          ) &&
+          _['job_bookmarks_encryption'] != empty && _['job_bookmarks_encryption'].all(
+            _['job_bookmarks_encryption_mode'] == "CSE-KMS" &&
+            _['kms_key_arn'] != null && _['kms_key_arn'] != ""
+          )
+        )
+      )
+  - uid: mondoo-aws-security-glue-security-config-cmk-encryption-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_glue_security_configuration")
+    mql: |
+      terraform.state.resources.where(type == "aws_glue_security_configuration").all(
+        values.encryption_configuration != empty &&
+        values.encryption_configuration.all(
+          _['s3_encryption'] != empty && _['s3_encryption'].all(
+            _['s3_encryption_mode'] == "SSE-KMS" &&
+            _['kms_key_arn'] != null && _['kms_key_arn'] != ""
+          ) &&
+          _['job_bookmarks_encryption'] != empty && _['job_bookmarks_encryption'].all(
+            _['job_bookmarks_encryption_mode'] == "CSE-KMS" &&
+            _['kms_key_arn'] != null && _['kms_key_arn'] != ""
+          )
+        )
+      )
+  - uid: mondoo-aws-security-glue-security-config-cmk-encryption-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Glue::SecurityConfiguration")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::Glue::SecurityConfiguration").all(
+        properties['EncryptionConfiguration'] != empty &&
+        properties['EncryptionConfiguration']['S3Encryptions'] != empty &&
+        properties['EncryptionConfiguration']['S3Encryptions'].all(
+          _['S3EncryptionMode'] == "SSE-KMS" &&
+          _['KmsKeyArn'] != null && _['KmsKeyArn'] != ""
+        ) &&
+        properties['EncryptionConfiguration']['JobBookmarksEncryption'] != empty &&
+        properties['EncryptionConfiguration']['JobBookmarksEncryption']['JobBookmarksEncryptionMode'] == "CSE-KMS" &&
+        properties['EncryptionConfiguration']['JobBookmarksEncryption']['KmsKeyArn'] != null &&
+        properties['EncryptionConfiguration']['JobBookmarksEncryption']['KmsKeyArn'] != ""
+      )
   - uid: mondoo-aws-security-athena-workgroup-results-cmk-encrypted
     title: Ensure Athena workgroups encrypt query results with a KMS-backed CMK
     impact: 80
-    filters: asset.platform == "aws"
-    mql: |
-      aws.athena.workgroups.where(state == "ENABLED").all(
-        resultConfiguration['EncryptionConfiguration'] != null &&
-        resultConfiguration['EncryptionConfiguration']['EncryptionOption'] == /^(SSE|CSE)_KMS$/ &&
-        resultConfiguration['EncryptionConfiguration']['KmsKey'] != null &&
-        resultConfiguration['EncryptionConfiguration']['KmsKey'] != ""
-      )
+    variants:
+      - uid: mondoo-aws-security-athena-workgroup-results-cmk-encrypted-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-athena-workgroup-results-cmk-encrypted-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-athena-workgroup-results-cmk-encrypted-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-athena-workgroup-results-cmk-encrypted-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-athena-workgroup-results-cmk-encrypted-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check ensures that every enabled Athena workgroup encrypts query results using `SSE_KMS` or `CSE_KMS` with an explicit KMS key reference. Athena query results can contain sensitive content from the underlying data sources — CloudTrail logs, application data, PII — and writing them to S3 without a KMS-backed key leaves the audit and access-control gap that S3 default encryption alone cannot close.
+        This check ensures that every enabled Athena workgroup encrypts query results using `SSE_KMS` or `CSE_KMS` with an explicit KMS key reference. Athena query results can contain sensitive content from the underlying data sources such as CloudTrail logs, application data, and PII; writing them to S3 without a KMS-backed key leaves the audit and access-control gap that S3 default encryption alone cannot close.
 
         **Why this matters**
 
@@ -54517,6 +55576,110 @@ queries:
               --work-group <workgroup-name> \
               --configuration-updates 'EnforceWorkGroupConfiguration=true,ResultConfigurationUpdates={EncryptionConfiguration={EncryptionOption=SSE_KMS,KmsKey=arn:aws:kms:<region>:<account>:key/<key-id>}}'
             ```
+        - id: terraform
+          desc: |
+            To configure Athena workgroup query-result encryption with a CMK in Terraform, set `result_configuration.encryption_configuration` on `aws_athena_workgroup`:
+
+            ```hcl
+            resource "aws_athena_workgroup" "example" {
+              name = "example"
+
+              configuration {
+                enforce_workgroup_configuration = true
+
+                result_configuration {
+                  output_location = "s3://${aws_s3_bucket.athena.id}/query-results/"
+
+                  encryption_configuration {
+                    encryption_option = "SSE_KMS"
+                    kms_key_arn       = aws_kms_key.athena.arn
+                  }
+                }
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To configure Athena workgroup query-result encryption with a CMK in CloudFormation, set `WorkGroupConfiguration.ResultConfiguration.EncryptionConfiguration` on `AWS::Athena::WorkGroup`:
+
+            ```yaml
+            Resources:
+              ExampleWorkGroup:
+                Type: AWS::Athena::WorkGroup
+                Properties:
+                  Name: example
+                  WorkGroupConfiguration:
+                    EnforceWorkGroupConfiguration: true
+                    ResultConfiguration:
+                      OutputLocation: s3://example-athena-results/
+                      EncryptionConfiguration:
+                        EncryptionOption: SSE_KMS
+                        KmsKey: !GetAtt AthenaKey.Arn
+            ```
     refs:
       - url: https://docs.aws.amazon.com/athena/latest/ug/encryption.html
         title: Encrypting Athena query results
+  - uid: mondoo-aws-security-athena-workgroup-results-cmk-encrypted-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.athena.workgroups.where(state == "ENABLED").all(
+        resultConfiguration['EncryptionConfiguration'] != null &&
+        resultConfiguration['EncryptionConfiguration']['EncryptionOption'] == /^(SSE|CSE)_KMS$/ &&
+        resultConfiguration['EncryptionConfiguration']['KmsKey'] != null &&
+        resultConfiguration['EncryptionConfiguration']['KmsKey'] != ""
+      )
+  - uid: mondoo-aws-security-athena-workgroup-results-cmk-encrypted-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_athena_workgroup")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_athena_workgroup").all(
+        blocks.where(type == "configuration").all(
+          blocks.where(type == "result_configuration").all(
+            blocks.where(type == "encryption_configuration") != empty &&
+            blocks.where(type == "encryption_configuration").all(
+              arguments.encryption_option == /^(SSE|CSE)_KMS$/ &&
+              arguments.kms_key_arn != null && arguments.kms_key_arn != ""
+            )
+          )
+        )
+      )
+  - uid: mondoo-aws-security-athena-workgroup-results-cmk-encrypted-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_athena_workgroup")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_athena_workgroup").all(
+        change.after.configuration != empty &&
+        change.after.configuration.all(
+          _['result_configuration'] != empty && _['result_configuration'].all(
+            _['encryption_configuration'] != empty &&
+            _['encryption_configuration'].all(
+              _['encryption_option'] == /^(SSE|CSE)_KMS$/ &&
+              _['kms_key_arn'] != null && _['kms_key_arn'] != ""
+            )
+          )
+        )
+      )
+  - uid: mondoo-aws-security-athena-workgroup-results-cmk-encrypted-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_athena_workgroup")
+    mql: |
+      terraform.state.resources.where(type == "aws_athena_workgroup").all(
+        values.configuration != empty &&
+        values.configuration.all(
+          _['result_configuration'] != empty && _['result_configuration'].all(
+            _['encryption_configuration'] != empty &&
+            _['encryption_configuration'].all(
+              _['encryption_option'] == /^(SSE|CSE)_KMS$/ &&
+              _['kms_key_arn'] != null && _['kms_key_arn'] != ""
+            )
+          )
+        )
+      )
+  - uid: mondoo-aws-security-athena-workgroup-results-cmk-encrypted-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Athena::WorkGroup")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::Athena::WorkGroup").all(
+        properties['WorkGroupConfiguration'] != empty &&
+        properties['WorkGroupConfiguration']['ResultConfiguration'] != empty &&
+        properties['WorkGroupConfiguration']['ResultConfiguration']['EncryptionConfiguration'] != empty &&
+        properties['WorkGroupConfiguration']['ResultConfiguration']['EncryptionConfiguration']['EncryptionOption'] == /^(SSE|CSE)_KMS$/ &&
+        properties['WorkGroupConfiguration']['ResultConfiguration']['EncryptionConfiguration']['KmsKey'] != null &&
+        properties['WorkGroupConfiguration']['ResultConfiguration']['EncryptionConfiguration']['KmsKey'] != ""
+      )
