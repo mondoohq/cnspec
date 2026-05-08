@@ -486,6 +486,7 @@ policies:
         checks:
           - uid: mondoo-aws-security-athena-workgroup-enforce-configuration
           - uid: mondoo-aws-security-athena-workgroup-results-encrypted
+          - uid: mondoo-aws-security-athena-workgroup-results-cmk-encrypted
       - title: Amazon Kinesis Data Streams
         checks:
           - uid: mondoo-aws-security-kinesis-stream-encrypted
@@ -516,9 +517,11 @@ policies:
           - uid: mondoo-aws-security-glue-job-security-configuration
           - uid: mondoo-aws-security-glue-crawler-security-configuration
           - uid: mondoo-aws-security-glue-catalog-encryption-enabled
+          - uid: mondoo-aws-security-glue-catalog-encryption-cmk
           - uid: mondoo-aws-security-glue-security-config-s3-encryption
           - uid: mondoo-aws-security-glue-security-config-cloudwatch-encryption
           - uid: mondoo-aws-security-glue-security-config-bookmark-encryption
+          - uid: mondoo-aws-security-glue-security-config-cmk-encryption
           - uid: mondoo-aws-security-glue-job-supported-version
       - title: AWS Elastic Beanstalk
         checks:
@@ -577,6 +580,7 @@ policies:
         checks:
           - uid: mondoo-aws-security-sfn-logging-enabled
           - uid: mondoo-aws-security-sfn-encryption-configured
+          - uid: mondoo-aws-security-sfn-role-no-wildcard-resource
       - title: AWS Resource Access Manager
         checks:
           - uid: mondoo-aws-security-ram-no-external-principals
@@ -600,6 +604,30 @@ policies:
           - uid: mondoo-aws-security-identitycenter-session-duration
           - uid: mondoo-aws-security-identitycenter-no-inline-policy
           - uid: mondoo-aws-security-identitycenter-group-assignments
+      - title: Amazon Bedrock
+        checks:
+          - uid: mondoo-aws-security-bedrock-custom-model-cmk-encryption
+      - title: AWS WAF
+        checks:
+          - uid: mondoo-aws-security-waf-managed-rule-groups
+      - title: AWS Batch
+        checks:
+          - uid: mondoo-aws-security-batch-no-privileged-containers
+          - uid: mondoo-aws-security-batch-approved-image-registry
+          - uid: mondoo-aws-security-batch-compute-env-private-subnets
+          - uid: mondoo-aws-security-batch-job-role-no-wildcards
+      - title: AWS Private CA
+        checks:
+          - uid: mondoo-aws-security-privateca-strong-signing-algorithm
+          - uid: mondoo-aws-security-privateca-hsm-key-storage
+      - title: Amazon Lightsail
+        checks:
+          - uid: mondoo-aws-security-lightsail-instance-no-public-sensitive-ports
+          - uid: mondoo-aws-security-lightsail-database-not-public
+      - title: Amazon API Gateway v2
+        checks:
+          - uid: mondoo-aws-security-apigatewayv2-routes-require-authorizer
+          - uid: mondoo-aws-security-apigatewayv2-domain-tls-1-2
     scoring_system: highest impact
 queries:
   - uid: mondoo-aws-security-eks-cluster-cmks-in-kms
@@ -53776,3 +53804,719 @@ queries:
       aws.transfer.workflows.where(
         steps.any(_['Type'] == "DECRYPT" || _['Type'] == "COPY")
       ).all(onExceptionSteps != null && onExceptionSteps.length > 0)
+  - uid: mondoo-aws-security-bedrock-custom-model-cmk-encryption
+    title: Ensure Bedrock custom models use a customer-managed KMS key
+    impact: 80
+    filters: asset.platform == "aws"
+    mql: |
+      aws.bedrock.customModels.all(
+        kmsKey != null && kmsKey.keyManager == "CUSTOMER"
+      )
+    docs:
+      desc: |
+        This check ensures every Amazon Bedrock custom model is encrypted at rest with a customer-managed KMS key (CMK). Custom models are derived from the training data you provide and the resulting model artifacts retain the sensitivity of that source data. When Bedrock encrypts a custom model with the AWS-owned default key, you cannot rotate, audit, or revoke access to the encryption key independently of the AWS account.
+
+        **Why this matters**
+
+        - Custom-model artifacts can leak the patterns and content of the training data through model inversion or membership inference attacks. Encrypting them with a CMK lets you delete the key to render the model unrecoverable.
+        - A CMK gives you a key policy and grants you control over which principals can decrypt the model and its training-data outputs.
+        - CloudTrail logs every CMK use, so you get a per-decryption audit trail that AWS-managed keys do not provide.
+      remediation:
+        - id: console
+          desc: |
+            Custom-model encryption is set at creation time and cannot be modified after the fact. To migrate to a CMK using the AWS Console:
+
+            1. Open the **Amazon Bedrock Console** and select **Custom models**.
+            2. Note the base model, training-data location, hyperparameters, and output-data location of the existing custom model.
+            3. Choose **Customize model** and recreate the job, selecting your CMK under **Encryption** for the model output.
+            4. Once the new model is trained and validated, delete the prior custom model.
+        - id: cli
+          desc: |
+            To create a Bedrock custom model encrypted with a CMK using the AWS CLI:
+
+            ```bash
+            aws bedrock create-model-customization-job \
+              --job-name <job-name> \
+              --custom-model-name <model-name> \
+              --role-arn <role-arn> \
+              --base-model-identifier <base-model-id> \
+              --training-data-config '{"s3Uri":"s3://<bucket>/train.jsonl"}' \
+              --output-data-config '{"s3Uri":"s3://<bucket>/output/"}' \
+              --custom-model-kms-key-id <cmk-arn>
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/bedrock/latest/userguide/custom-models-encryption.html
+        title: Encryption of custom models
+  - uid: mondoo-aws-security-waf-managed-rule-groups
+    title: Ensure Web ACLs include managed rule groups for SQLi, XSS, and known-bad inputs
+    impact: 80
+    filters: asset.platform == "aws"
+    mql: |
+      aws.waf.acls.all(
+        rules.any(statement.managedRuleGroupStatement != null && statement.managedRuleGroupStatement.name == "AWSManagedRulesCommonRuleSet") &&
+        rules.any(statement.managedRuleGroupStatement != null && statement.managedRuleGroupStatement.name == "AWSManagedRulesSQLiRuleSet") &&
+        rules.any(statement.managedRuleGroupStatement != null && statement.managedRuleGroupStatement.name == "AWSManagedRulesKnownBadInputsRuleSet")
+      )
+    docs:
+      desc: |
+        This check ensures that every AWS WAFv2 web ACL references the AWS-managed rule groups that cover SQL injection, cross-site scripting, and known-bad inputs. AWS publishes and maintains these rule groups so customers do not have to author and update signatures themselves. The expected groups are:
+
+        - **AWSManagedRulesCommonRuleSet:** OWASP Top 10 coverage including XSS.
+        - **AWSManagedRulesSQLiRuleSet:** SQL injection patterns.
+        - **AWSManagedRulesKnownBadInputsRuleSet:** Exploit attempts against common CVEs and bad inputs.
+
+        **Why this matters**
+
+        - A web ACL with custom IP allow lists or rate-limiting alone does not block injection attacks at the application layer.
+        - AWS keeps these managed rule groups current as new CVEs and exploit patterns emerge, so referencing them is more durable than maintaining hand-rolled signatures.
+        - Skipping the SQLi or XSS rule group is the single most common cause of WAF-protected applications still being compromised by injection attacks.
+      remediation:
+        - id: console
+          desc: |
+            To attach the required managed rule groups to a web ACL using the AWS Console:
+
+            1. Open the **AWS WAF & Shield Console** and select **Web ACLs**.
+            2. Select the web ACL and choose **Add rules** then **Add managed rule groups**.
+            3. Under **AWS managed rule groups**, enable **Core rule set**, **SQL database**, and **Known bad inputs**.
+            4. Set the action for each rule group to **Block** unless you have a documented reason to use **Count**.
+            5. Save and deploy the web ACL.
+        - id: cli
+          desc: |
+            To attach managed rule groups using the AWS CLI, fetch the current web ACL configuration, append the managed rule statements, and update:
+
+            ```bash
+            aws wafv2 update-web-acl \
+              --name <web-acl-name> \
+              --scope REGIONAL \
+              --id <web-acl-id> \
+              --lock-token <lock-token> \
+              --default-action Allow={} \
+              --visibility-config SampledRequestsEnabled=true,CloudWatchMetricsEnabled=true,MetricName=<metric> \
+              --rules file://rules.json
+            ```
+
+            Where `rules.json` references each of `AWSManagedRulesCommonRuleSet`, `AWSManagedRulesSQLiRuleSet`, and `AWSManagedRulesKnownBadInputsRuleSet` under `Statement.ManagedRuleGroupStatement`.
+    refs:
+      - url: https://docs.aws.amazon.com/waf/latest/developerguide/aws-managed-rule-groups-list.html
+        title: AWS Managed Rules rule groups list
+  - uid: mondoo-aws-security-batch-no-privileged-containers
+    title: Ensure AWS Batch job definitions do not run privileged containers
+    impact: 90
+    filters: asset.platform == "aws"
+    mql: |
+      aws.batch.jobDefinitions.where(status == "ACTIVE").none(
+        container.privileged == true ||
+        nodeRangeProperties.any(container.privileged == true)
+      )
+    docs:
+      desc: |
+        This check ensures that AWS Batch job definitions do not request privileged containers. A privileged container shares the host's namespaces and capabilities, including the ability to load kernel modules and access raw devices. On EC2-backed compute environments this gives the container code root on the underlying host.
+
+        **Why this matters**
+
+        - A compromised privileged container can break out of its isolation boundary and attack other Batch jobs running on the same host.
+        - Privileged mode bypasses the user-namespace and capability dropping that Batch jobs would otherwise inherit, raising the blast radius of any code-execution flaw.
+        - Most Batch workloads do not need raw device access; the privileged flag is usually a leftover from local container debugging.
+      remediation:
+        - id: console
+          desc: |
+            Job definitions are immutable, so privileged mode is removed by registering a new revision:
+
+            1. Open the **AWS Batch Console** and select **Job definitions**.
+            2. Select the offending job definition and choose **Create new revision**.
+            3. Under **Container properties**, clear the **Privileged** option.
+            4. Save the new revision and update the queue or workflow to use the new revision.
+        - id: cli
+          desc: |
+            To register a non-privileged revision of a Batch job definition using the AWS CLI:
+
+            ```bash
+            aws batch register-job-definition \
+              --job-definition-name <name> \
+              --type container \
+              --container-properties '{"image":"<image>","privileged":false,"vcpus":1,"memory":2048,"jobRoleArn":"<role-arn>"}'
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/batch/latest/userguide/job_definition_parameters.html
+        title: Batch job definition parameters
+  - uid: mondoo-aws-security-batch-approved-image-registry
+    title: Ensure AWS Batch job definitions use approved private registries
+    impact: 70
+    filters: asset.platform == "aws"
+    mql: |
+      aws.batch.jobDefinitions.where(status == "ACTIVE").none(
+        container.image == /^public\.ecr\.aws\// ||
+        container.image == /^docker\.io\// ||
+        container.image == /^registry\.hub\.docker\.com\// ||
+        nodeRangeProperties.any(container.image == /^public\.ecr\.aws\//) ||
+        nodeRangeProperties.any(container.image == /^docker\.io\//) ||
+        nodeRangeProperties.any(container.image == /^registry\.hub\.docker\.com\//)
+      )
+    docs:
+      desc: |
+        This check ensures AWS Batch job definitions reference container images from approved private registries rather than public ones such as Amazon ECR Public (`public.ecr.aws`) or Docker Hub (`docker.io`, `registry.hub.docker.com`). Public registries can serve images that have been retagged or compromised by a third party between scan and execution.
+
+        **Why this matters**
+
+        - Public images can be replaced or yanked at any time by the publisher, breaking reproducibility and opening supply-chain attacks.
+        - Images from private registries can be required to pass internal vulnerability scanning, signing, and admission policies before being usable as a Batch job source.
+        - Pulling from public registries on every job submission depends on third-party availability and rate limits that are outside your control.
+      remediation:
+        - id: console
+          desc: |
+            To migrate a Batch job to a private registry using the AWS Console:
+
+            1. Push or replicate the desired image to a private Amazon ECR repository in the same region as the Batch compute environment.
+            2. Open the **AWS Batch Console** and select **Job definitions**.
+            3. Select the job definition and choose **Create new revision**.
+            4. Replace the public image reference in **Image** with the ECR URI such as `123456789012.dkr.ecr.us-east-1.amazonaws.com/<repo>:<tag>`.
+            5. Save the new revision and update the queue or workflow to use it.
+        - id: cli
+          desc: |
+            To register a Batch job definition that uses an Amazon ECR private repository:
+
+            ```bash
+            aws batch register-job-definition \
+              --job-definition-name <name> \
+              --type container \
+              --container-properties '{"image":"123456789012.dkr.ecr.us-east-1.amazonaws.com/<repo>:<tag>","vcpus":1,"memory":2048,"jobRoleArn":"<role-arn>","executionRoleArn":"<exec-role-arn>"}'
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/batch/latest/userguide/job_definitions.html
+        title: AWS Batch job definitions
+  - uid: mondoo-aws-security-batch-compute-env-private-subnets
+    title: Ensure AWS Batch compute environments use private subnets
+    impact: 80
+    filters: asset.platform == "aws"
+    mql: |
+      aws.batch.jobQueues.where(state == "ENABLED").all(
+        computeEnvironmentOrderTyped.all(
+          computeEnvironment.subnets.all(mapPublicIpOnLaunch == false)
+        )
+      )
+    docs:
+      desc: |
+        This check ensures that the compute environments backing every enabled AWS Batch job queue land in private subnets, where instances do not receive a public IPv4 address on launch. Batch jobs typically only need outbound access through a NAT gateway or VPC endpoint, never inbound reachability from the internet.
+
+        **Why this matters**
+
+        - A Batch instance with a public IP exposes the AMI's services and any container ports bound to the host network directly to the internet.
+        - Public IPs widen the attack surface available to scanners that probe random IPv4 space looking for misconfigured services.
+        - Private subnets force traffic through controlled egress paths, where a NAT gateway or VPC endpoint can be audited and rate-limited.
+      remediation:
+        - id: console
+          desc: |
+            To move Batch compute environments into private subnets using the AWS Console:
+
+            1. Open the **AWS Batch Console** and select **Compute environments**.
+            2. Identify the compute environment with public-subnet membership and create a new compute environment that references private subnet IDs in the same VPC.
+            3. Open the affected job queue and update its compute environment order to point at the new private compute environment.
+            4. Once jobs have drained from the original compute environment, delete it.
+        - id: cli
+          desc: |
+            To create a private-subnet compute environment using the AWS CLI:
+
+            ```bash
+            aws batch create-compute-environment \
+              --compute-environment-name <name> \
+              --type MANAGED \
+              --state ENABLED \
+              --service-role <service-role-arn> \
+              --compute-resources type=EC2,minvCpus=0,maxvCpus=64,desiredvCpus=0,subnets=<priv-subnet-1>,<priv-subnet-2>,securityGroupIds=<sg-id>,instanceRole=<instance-profile>,instanceTypes=optimal
+            ```
+
+            Then update the job queue to reference the new compute environment:
+
+            ```bash
+            aws batch update-job-queue --job-queue <queue> --compute-environment-order order=1,computeEnvironment=<new-env-arn>
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/batch/latest/userguide/compute_environments.html
+        title: AWS Batch compute environments
+  - uid: mondoo-aws-security-batch-job-role-no-wildcards
+    title: Ensure AWS Batch job roles do not grant wildcard actions or resources
+    impact: 80
+    filters: asset.platform == "aws"
+    mql: |
+      aws.batch.jobDefinitions.where(status == "ACTIVE" && container != null && container.jobRole != null).all(
+        container.jobRole.inlinePolicies.length == 0 &&
+        container.jobRole.attachedPolicies.all(
+          defaultVersion.document['Statement'].all(
+            _['Effect'].upcase == "DENY" ||
+            [_['Resource']].flat.none(_ == "*") &&
+            [_['Action']].flat.none(_ == "*")
+          )
+        )
+      )
+    docs:
+      desc: |
+        This check ensures that the IAM role assumed by an AWS Batch container does not grant `Action: "*"` or `Resource: "*"` in any allow statement. Batch job code runs with the permissions of the job role, so a wildcard policy gives the workload full control over the AWS account whenever it is invoked.
+
+        **Why this matters**
+
+        - A Batch job that processes untrusted data and assumes a wildcard role can be pivoted by an attacker into account-wide read or write access.
+        - `iam:PassRole` combined with `Resource: "*"` lets the job role escalate to any other role in the account by passing it to a service.
+        - Inline policies are not evaluated by this check because their content is not exposed via the IAM API in a structured way; the check fails when inline policies are present so they can be reviewed and converted to managed policies.
+      remediation:
+        - id: console
+          desc: |
+            To remove wildcard permissions from a Batch job role using the AWS Console:
+
+            1. Open the **IAM Console** and select **Roles**.
+            2. Select the role used as the Batch job role and review each attached managed policy and inline policy.
+            3. Replace any statement whose `Action` or `Resource` is `"*"` with the explicit list of actions and resource ARNs the workload actually needs.
+            4. Detach or rewrite inline policies so the job role has only the least-privilege managed policies your governance pipeline produces.
+        - id: cli
+          desc: |
+            To list policies on a Batch job role using the AWS CLI:
+
+            ```bash
+            aws iam list-attached-role-policies --role-name <role-name>
+            aws iam list-role-policies --role-name <role-name>
+            ```
+
+            Then create a least-privilege policy and attach it in place of the wildcard policy:
+
+            ```bash
+            aws iam create-policy --policy-name <name> --policy-document file://policy.json
+            aws iam attach-role-policy --role-name <role-name> --policy-arn <new-policy-arn>
+            aws iam detach-role-policy --role-name <role-name> --policy-arn <old-wildcard-policy-arn>
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html
+        title: IAM security best practices
+  - uid: mondoo-aws-security-sfn-role-no-wildcard-resource
+    title: Ensure Step Functions state machine roles do not allow wildcard resources
+    impact: 80
+    filters: asset.platform == "aws"
+    mql: |
+      aws.stepfunctions.stateMachines.where(iamRole != null).all(
+        iamRole.inlinePolicies.length == 0 &&
+        iamRole.attachedPolicies.all(
+          defaultVersion.document['Statement'].all(
+            _['Effect'].upcase == "DENY" ||
+            [_['Resource']].flat.none(_ == "*")
+          )
+        )
+      )
+    docs:
+      desc: |
+        This check ensures that the IAM execution role of every Step Functions state machine does not contain an allow statement with `Resource: "*"`. State machines orchestrate AWS service calls under their execution role, so a wildcard resource lets the state machine invoke `lambda:InvokeFunction`, `dynamodb:*`, and similar service actions against every resource in the account.
+
+        **Why this matters**
+
+        - A workflow that takes input from an untrusted source and passes it to a Lambda invocation parameter can become a confused-deputy primitive if the role can invoke any Lambda function.
+        - Resource wildcards prevent meaningful least-privilege auditing because they mask which downstream resources the workflow actually depends on.
+        - Inline policies are not evaluated structurally by this check; their presence fails the check so they can be reviewed and converted into managed policies that this control can audit.
+      remediation:
+        - id: console
+          desc: |
+            To scope a Step Functions execution role using the AWS Console:
+
+            1. Open the **AWS Step Functions Console** and select the state machine.
+            2. Note the execution role ARN, then open that role in the **IAM Console**.
+            3. Replace any allow statement whose `Resource` is `"*"` with the explicit list of resource ARNs (Lambda functions, DynamoDB tables, SNS topics) the state machine actually integrates with.
+            4. If the role has inline policies, convert each one to a managed policy so it can be reviewed in change control.
+        - id: cli
+          desc: |
+            To inspect the role attached to a state machine using the AWS CLI:
+
+            ```bash
+            aws stepfunctions describe-state-machine --state-machine-arn <state-machine-arn> \
+              --query 'roleArn'
+            aws iam list-attached-role-policies --role-name <role-name>
+            ```
+
+            Then attach a scoped-down policy and detach the wildcard policy:
+
+            ```bash
+            aws iam create-policy --policy-name <name> --policy-document file://policy.json
+            aws iam attach-role-policy --role-name <role-name> --policy-arn <scoped-arn>
+            aws iam detach-role-policy --role-name <role-name> --policy-arn <wildcard-arn>
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/step-functions/latest/dg/concepts-iam.html
+        title: IAM and Step Functions
+  - uid: mondoo-aws-security-privateca-strong-signing-algorithm
+    title: Ensure Private CAs use SHA256 or stronger signing algorithms
+    impact: 80
+    filters: asset.platform == "aws"
+    mql: |
+      aws.privateca.certificateAuthorities.where(status != "DELETED").all(
+        signingAlgorithm == /SHA(256|384|512)/
+      )
+    docs:
+      desc: |
+        This check ensures that AWS Private Certificate Authority (ACM PCA) instances sign issued certificates with SHA-256 or stronger digest algorithms. SHA-1 is broken for collision resistance and has been deprecated by all major browsers and TLS libraries, so a CA that signs with SHA-1 issues certificates that downstream consumers will reject or treat as untrustworthy.
+
+        **Why this matters**
+
+        - SHA-1 collisions are computationally feasible and have been demonstrated against real-world signature schemes.
+        - Modern TLS clients refuse SHA-1-signed certificates outright, breaking the services that depend on them.
+        - The signing algorithm of a CA cannot be changed after the CA is created, so a SHA-1 CA must be replaced with a new SHA-256 or stronger CA.
+      remediation:
+        - id: console
+          desc: |
+            ACM Private CA does not allow the signing algorithm to be changed after creation. To migrate to a stronger algorithm using the AWS Console:
+
+            1. Open the **AWS Certificate Manager Console** and select **Private CAs**.
+            2. Choose **Create a private CA** and select a signing algorithm of `SHA256WITHRSA`, `SHA384WITHRSA`, `SHA512WITHRSA`, `SHA256WITHECDSA`, `SHA384WITHECDSA`, or `SHA512WITHECDSA`.
+            3. Reissue downstream certificates from the new CA.
+            4. Disable, then delete, the legacy SHA-1 CA once dependents have rotated.
+        - id: cli
+          desc: |
+            To create a Private CA with a SHA-256 signing algorithm using the AWS CLI:
+
+            ```bash
+            aws acm-pca create-certificate-authority \
+              --certificate-authority-configuration '{"KeyAlgorithm":"RSA_2048","SigningAlgorithm":"SHA256WITHRSA","Subject":{"CommonName":"example-root"}}' \
+              --certificate-authority-type ROOT
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/privateca/latest/userguide/PcaApiCertificateAuthority.html
+        title: AWS Private CA API reference
+  - uid: mondoo-aws-security-privateca-hsm-key-storage
+    title: Ensure Private CA private keys use FIPS 140-2 Level 3 HSM-backed storage
+    impact: 80
+    filters: asset.platform == "aws"
+    mql: |
+      aws.privateca.certificateAuthorities.where(status != "DELETED").all(
+        keyStorageSecurityStandard == "FIPS_140_2_LEVEL_3_OR_HIGHER"
+      )
+    docs:
+      desc: |
+        This check ensures that every AWS Private CA stores its private signing key in HSM-backed storage that is certified to FIPS 140-2 Level 3 or higher. The CA private key is the trust anchor for every certificate the CA issues, so its compromise lets an attacker forge certificates that downstream services will accept.
+
+        **Why this matters**
+
+        - FIPS 140-2 Level 3 HSMs enforce tamper-resistance and identity-based authentication for key operations, which software-only key storage cannot provide.
+        - The `keyStorageSecurityStandard` is fixed at CA creation time, so a CA created without explicit HSM storage cannot be upgraded in place.
+        - Compliance frameworks such as PCI DSS, FedRAMP, and HIPAA expect CA private keys to live in hardware-backed key stores.
+      remediation:
+        - id: console
+          desc: |
+            ACM Private CA does not allow the key storage standard to be changed after creation. To migrate using the AWS Console:
+
+            1. Open the **AWS Certificate Manager Console** and select **Private CAs**.
+            2. Choose **Create a private CA** and under **Key algorithm and storage** select a region whose Private CA service is backed by FIPS 140-2 Level 3 HSMs and confirm the storage standard is `FIPS_140_2_LEVEL_3_OR_HIGHER`.
+            3. Reissue downstream certificates from the new CA.
+            4. Disable, then delete, the legacy CA once dependents have rotated.
+        - id: cli
+          desc: |
+            To create a Private CA in a region that uses FIPS 140-2 Level 3 key storage using the AWS CLI:
+
+            ```bash
+            aws acm-pca create-certificate-authority \
+              --region <fips-l3-region> \
+              --certificate-authority-configuration '{"KeyAlgorithm":"RSA_2048","SigningAlgorithm":"SHA256WITHRSA","Subject":{"CommonName":"example-root"}}' \
+              --certificate-authority-type ROOT \
+              --key-storage-security-standard FIPS_140_2_LEVEL_3_OR_HIGHER
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/privateca/latest/userguide/data-protection.html
+        title: Data protection in AWS Private CA
+  - uid: mondoo-aws-security-lightsail-instance-no-public-sensitive-ports
+    title: Ensure Lightsail instances do not expose sensitive ports to the internet
+    impact: 90
+    filters: asset.platform == "aws"
+    mql: |
+      aws.lightsail.instances.all(
+        firewallRules.where(_['cidrs'].contains("0.0.0.0/0")).none(
+          _['fromPort'] <= 22 && _['toPort'] >= 22 ||
+          _['fromPort'] <= 3389 && _['toPort'] >= 3389 ||
+          _['fromPort'] <= 3306 && _['toPort'] >= 3306 ||
+          _['fromPort'] <= 5432 && _['toPort'] >= 5432 ||
+          _['fromPort'] <= 1433 && _['toPort'] >= 1433 ||
+          _['fromPort'] <= 27017 && _['toPort'] >= 27017 ||
+          _['fromPort'] <= 6379 && _['toPort'] >= 6379 ||
+          _['fromPort'] <= 9200 && _['toPort'] >= 9200
+        )
+      )
+    docs:
+      desc: |
+        This check ensures that Lightsail instances do not have firewall rules that expose remote-administration or database ports — 22, 3389, 3306, 5432, 1433, 27017, 6379, 9200 — to `0.0.0.0/0`. Lightsail instances are often used for quick stand-ups, and the per-instance firewall is the only network control between the instance and the public internet.
+
+        **Why this matters**
+
+        - SSH (22) and RDP (3389) exposed to the world receive constant credential-stuffing and brute-force attacks.
+        - Database ports (MySQL 3306, PostgreSQL 5432, SQL Server 1433, MongoDB 27017, Redis 6379, Elasticsearch 9200) reveal data stores that often run with default credentials or no authentication.
+        - Lightsail does not provide VPC-level controls equivalent to security groups for non-Lightsail traffic, so the instance firewall is the last line of defense.
+      remediation:
+        - id: console
+          desc: |
+            To restrict sensitive Lightsail ports using the AWS Console:
+
+            1. Open the **Amazon Lightsail Console** and select the instance.
+            2. Choose the **Networking** tab and locate the **IPv4 Firewall** section.
+            3. For each rule that exposes a sensitive port to `Anywhere`, edit the **Source** to a specific IP, CIDR range, or remove the rule entirely.
+            4. Save the firewall configuration.
+        - id: cli
+          desc: |
+            To restrict a Lightsail instance firewall rule using the AWS CLI:
+
+            ```bash
+            aws lightsail put-instance-public-ports \
+              --instance-name <instance-name> \
+              --port-infos fromPort=22,toPort=22,protocol=tcp,cidrs=10.0.0.0/8
+            ```
+
+            To remove a sensitive port entirely:
+
+            ```bash
+            aws lightsail close-instance-public-ports \
+              --instance-name <instance-name> \
+              --port-info fromPort=22,toPort=22,protocol=tcp
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/lightsail/latest/userguide/amazon-lightsail-editing-firewall-rules.html
+        title: Editing Lightsail instance firewall rules
+  - uid: mondoo-aws-security-lightsail-database-not-public
+    title: Ensure Lightsail managed databases are not publicly accessible
+    impact: 90
+    filters: asset.platform == "aws"
+    mql: |
+      aws.lightsail.databases.all(publiclyAccessible == false)
+    docs:
+      desc: |
+        This check ensures that Lightsail managed databases have `publiclyAccessible` set to `false`. A publicly accessible Lightsail database receives a public IP and can be reached from the internet, with only the database engine's authentication standing between the data and the world.
+
+        **Why this matters**
+
+        - Database engines listen on well-known ports that internet scanners enumerate continuously, so a public Lightsail database is fingerprinted within minutes of being created.
+        - Authentication on the database alone is too thin a defense for production data; CVEs against the engine, weak credentials, or a single leaked password become a full data breach.
+        - A private Lightsail database can still be reached from Lightsail instances and peered VPCs through the Lightsail VPC peering feature.
+      remediation:
+        - id: console
+          desc: |
+            To make a Lightsail database private using the AWS Console:
+
+            1. Open the **Amazon Lightsail Console** and select **Databases**.
+            2. Select the database and choose **Networking**.
+            3. Disable **Public mode** and confirm the change.
+            4. Update application hosts to connect via the database's private endpoint.
+        - id: cli
+          desc: |
+            To disable public access on a Lightsail database using the AWS CLI:
+
+            ```bash
+            aws lightsail update-relational-database \
+              --relational-database-name <database-name> \
+              --no-publicly-accessible \
+              --apply-immediately
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/lightsail/latest/userguide/amazon-lightsail-managing-database-public-mode.html
+        title: Managing Lightsail database public mode
+  - uid: mondoo-aws-security-apigatewayv2-routes-require-authorizer
+    title: Ensure API Gateway v2 routes require an authorizer
+    impact: 80
+    filters: asset.platform == "aws"
+    mql: |
+      aws.apigatewayv2.apis.all(
+        routes.where(routeKey != /^OPTIONS /).all(
+          authorizationType != "NONE"
+        )
+      )
+    docs:
+      desc: |
+        This check ensures that every non-`OPTIONS` route on an API Gateway v2 HTTP or WebSocket API has an `authorizationType` other than `NONE`. The `OPTIONS` method is excluded because browsers send pre-flight CORS requests without credentials and the API must be able to answer them anonymously.
+
+        **Why this matters**
+
+        - A route with `AuthorizationType: NONE` is open to any caller on the internet who can reach the API endpoint.
+        - The default route key `$default` and catch-all route keys are easy to leave on `NONE` while testing and to forget about before going live.
+        - Authorization is enforced per-route, so adding an authorizer at the API level does not protect routes that explicitly opt out.
+      remediation:
+        - id: console
+          desc: |
+            To add authorization to API Gateway v2 routes using the AWS Console:
+
+            1. Open the **API Gateway Console** and select the v2 HTTP or WebSocket API.
+            2. In the left pane, choose **Routes** and select the route with `Authorization` set to `NONE`.
+            3. Under **Authorization**, attach an existing authorizer of type `JWT` or `Lambda`, or create a new one and attach it.
+            4. Save the route configuration.
+        - id: cli
+          desc: |
+            To attach an authorizer to a route using the AWS CLI:
+
+            ```bash
+            aws apigatewayv2 update-route \
+              --api-id <api-id> \
+              --route-id <route-id> \
+              --authorization-type JWT \
+              --authorizer-id <authorizer-id>
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-jwt-authorizer.html
+        title: API Gateway v2 JWT authorizers
+  - uid: mondoo-aws-security-apigatewayv2-domain-tls-1-2
+    title: Ensure API Gateway v2 custom domains enforce TLS 1.2
+    impact: 80
+    filters: asset.platform == "aws"
+    mql: |
+      aws.apigatewayv2.domainNames.all(
+        domainNameConfigurations.all(_['SecurityPolicy'] == "TLS_1_2")
+      )
+    docs:
+      desc: |
+        This check ensures that every API Gateway v2 custom domain is configured with the `TLS_1_2` security policy on each of its endpoint configurations. The older `TLS_1_0` policy permits TLS 1.0 and TLS 1.1 negotiation, both of which are deprecated and disallowed by modern compliance baselines.
+
+        **Why this matters**
+
+        - TLS 1.0 and TLS 1.1 have known cryptographic weaknesses including BEAST, POODLE, and weak cipher suites that no longer satisfy PCI DSS, HIPAA, and FedRAMP.
+        - The security policy is set per endpoint configuration, so a multi-region domain can have one configuration on the strong policy and another on the weak one.
+        - Enforcing `TLS_1_2` on the custom domain forces all clients to negotiate at least TLS 1.2, regardless of what the client library would default to.
+      remediation:
+        - id: console
+          desc: |
+            To enforce TLS 1.2 on an API Gateway v2 custom domain using the AWS Console:
+
+            1. Open the **API Gateway Console** and select **Custom domain names**.
+            2. Select the domain and switch to the **Domain name configurations** tab.
+            3. For each configuration whose security policy is `TLS 1.0`, choose **Edit** and set **TLS minimum version** to `TLS 1.2`.
+            4. Save each configuration.
+        - id: cli
+          desc: |
+            To update a custom domain to enforce TLS 1.2 using the AWS CLI:
+
+            ```bash
+            aws apigatewayv2 update-domain-name \
+              --domain-name <domain> \
+              --domain-name-configurations CertificateArn=<acm-arn>,EndpointType=REGIONAL,SecurityPolicy=TLS_1_2
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-custom-domain-tls-version.html
+        title: Choosing a minimum TLS version for an API Gateway custom domain
+  - uid: mondoo-aws-security-glue-catalog-encryption-cmk
+    title: Ensure Glue Data Catalog encryption uses SSE-KMS with a CMK
+    impact: 70
+    filters: asset.platform == "aws"
+    mql: |
+      aws.glue.catalogEncryptionSettings.all(
+        _['EncryptionAtRest']['CatalogEncryptionMode'] == "SSE-KMS" &&
+        _['EncryptionAtRest']['SseAwsKmsKeyId'] != null &&
+        _['EncryptionAtRest']['SseAwsKmsKeyId'] != ""
+      )
+    docs:
+      desc: |
+        This check ensures that AWS Glue Data Catalog encryption-at-rest is set to `SSE-KMS` with an explicit KMS key identifier. The Data Catalog stores table schemas, partition metadata, and connection passwords; encrypting the catalog with a customer-managed KMS key gives you a key policy and rotation control over the metadata that describes your data lake.
+
+        **Why this matters**
+
+        - The `DISABLED` mode leaves catalog metadata unencrypted at rest, exposing schema and connection details to any AWS Glue or KMS-unaware integrator that lands in the account.
+        - `SSE-KMS` with a referenced KMS key id is the only catalog encryption mode that integrates with KMS audit logs and per-key access control.
+        - The catalog also stores connection passwords, so loose catalog encryption can become a credential-leak path.
+      remediation:
+        - id: console
+          desc: |
+            To configure Glue Data Catalog encryption using the AWS Console:
+
+            1. Open the **AWS Glue Console** and select **Data Catalog settings**.
+            2. Enable **Metadata encryption** and select an existing KMS key or create a new customer-managed key.
+            3. Enable **Encrypt connection passwords** and select a KMS key.
+            4. Choose **Save**.
+        - id: cli
+          desc: |
+            To configure Glue Data Catalog encryption using the AWS CLI:
+
+            ```bash
+            aws glue put-data-catalog-encryption-settings \
+              --data-catalog-encryption-settings '{
+                "EncryptionAtRest": {
+                  "CatalogEncryptionMode": "SSE-KMS",
+                  "SseAwsKmsKeyId": "arn:aws:kms:<region>:<account>:key/<key-id>"
+                }
+              }'
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/glue/latest/dg/encrypt-glue-data-catalog.html
+        title: Encrypting your AWS Glue Data Catalog
+  - uid: mondoo-aws-security-glue-security-config-cmk-encryption
+    title: Ensure Glue security configurations encrypt bookmarks and S3 outputs with a CMK
+    impact: 70
+    filters: asset.platform == "aws"
+    mql: |
+      aws.glue.securityConfigurations.all(
+        s3Encryption['S3EncryptionMode'] == "SSE-KMS" &&
+        s3Encryption['KmsKeyArn'] != null &&
+        s3Encryption['KmsKeyArn'] != "" &&
+        jobBookmarksEncryption['JobBookmarksEncryptionMode'] == "CSE-KMS" &&
+        jobBookmarksEncryption['KmsKeyArn'] != null &&
+        jobBookmarksEncryption['KmsKeyArn'] != ""
+      )
+    docs:
+      desc: |
+        This check ensures that every Glue security configuration encrypts both job bookmarks and S3 outputs with a referenced KMS key. Glue jobs that lack a security configuration with both modes set inherit the catalog-level defaults, which may rely on AWS-owned keys without per-key access control or audit.
+
+        **Why this matters**
+
+        - Job bookmarks record the position of incremental ETL runs and can leak data structure and processing patterns; encrypting them with `CSE-KMS` keeps them confidential at rest in the Glue metadata store.
+        - S3 outputs from a Glue job inherit the security configuration's S3 encryption mode; pairing `SSE-KMS` with an explicit key id gives you a key policy that controls who can decrypt the resulting partitions.
+        - A KmsKeyArn that is empty implies AWS managed defaults, which cannot be governed by your key administrators.
+      remediation:
+        - id: console
+          desc: |
+            Glue security configurations are immutable, so changing encryption requires creating a new configuration. To do so using the AWS Console:
+
+            1. Open the **AWS Glue Console** and select **Security configurations**.
+            2. Choose **Add security configuration**.
+            3. Enable **S3 encryption** with mode `SSE-KMS` and select a customer-managed KMS key.
+            4. Enable **Job bookmark encryption** with mode `CSE-KMS` and select a customer-managed KMS key.
+            5. Save the configuration and update each Glue job and crawler to reference the new security configuration.
+        - id: cli
+          desc: |
+            To create a Glue security configuration with CMK-backed encryption using the AWS CLI:
+
+            ```bash
+            aws glue create-security-configuration \
+              --name <name> \
+              --encryption-configuration '{
+                "S3Encryption":[{"S3EncryptionMode":"SSE-KMS","KmsKeyArn":"arn:aws:kms:<region>:<account>:key/<key-id>"}],
+                "JobBookmarksEncryption":{"JobBookmarksEncryptionMode":"CSE-KMS","KmsKeyArn":"arn:aws:kms:<region>:<account>:key/<key-id>"}
+              }'
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/glue/latest/dg/encryption-security-configuration.html
+        title: Setting up encryption with AWS Glue
+  - uid: mondoo-aws-security-athena-workgroup-results-cmk-encrypted
+    title: Ensure Athena workgroups encrypt query results with a KMS-backed CMK
+    impact: 80
+    filters: asset.platform == "aws"
+    mql: |
+      aws.athena.workgroups.where(state == "ENABLED").all(
+        resultConfiguration['EncryptionConfiguration'] != null &&
+        resultConfiguration['EncryptionConfiguration']['EncryptionOption'] == /^(SSE|CSE)_KMS$/ &&
+        resultConfiguration['EncryptionConfiguration']['KmsKey'] != null &&
+        resultConfiguration['EncryptionConfiguration']['KmsKey'] != ""
+      )
+    docs:
+      desc: |
+        This check ensures that every enabled Athena workgroup encrypts query results using `SSE_KMS` or `CSE_KMS` with an explicit KMS key reference. Athena query results can contain sensitive content from the underlying data sources — CloudTrail logs, application data, PII — and writing them to S3 without a KMS-backed key leaves the audit and access-control gap that S3 default encryption alone cannot close.
+
+        **Why this matters**
+
+        - `SSE_S3` covers data-at-rest but provides no per-key audit trail, so you cannot determine who decrypted query results after the fact.
+        - `SSE_KMS` and `CSE_KMS` both produce CloudTrail events for every decryption, which is essential for incident response on sensitive query output.
+        - A workgroup whose encryption is enforced but whose `KmsKey` is empty falls back to AWS-owned keys, which sit outside customer key administration.
+      remediation:
+        - id: console
+          desc: |
+            To configure Athena workgroup query-result encryption using the AWS Console:
+
+            1. Open the **Amazon Athena Console** and select **Workgroups**.
+            2. Select the workgroup and choose **Edit**.
+            3. Under **Query result configuration**, enable **Encrypt query results** and choose **SSE-KMS** or **CSE-KMS**.
+            4. Select a customer-managed KMS key.
+            5. Enable **Override client-side settings** and save the workgroup.
+        - id: cli
+          desc: |
+            To configure Athena workgroup query-result encryption with a CMK using the AWS CLI:
+
+            ```bash
+            aws athena update-work-group \
+              --work-group <workgroup-name> \
+              --configuration-updates 'EnforceWorkGroupConfiguration=true,ResultConfigurationUpdates={EncryptionConfiguration={EncryptionOption=SSE_KMS,KmsKey=arn:aws:kms:<region>:<account>:key/<key-id>}}'
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/athena/latest/ug/encryption.html
+        title: Encrypting Athena query results
