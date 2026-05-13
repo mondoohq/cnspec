@@ -7,25 +7,22 @@ import (
 	"context"
 	"net/http"
 	"os"
+
+	"go.mondoo.com/mql/v13/cli/config"
 )
 
-// UploadFile uploads a file to a pre-signed URL via HTTP PUT using the default
-// HTTP client. The default client honors HTTP(S)_PROXY/NO_PROXY environment
-// variables but does not consult the Mondoo CLI's api_proxy config; callers
-// that need to honor api_proxy should use UploadFileWithClient.
+// UploadFile uploads a file to a pre-signed URL via HTTP PUT.
+//
+// The request honors the Mondoo CLI's api_proxy setting in addition to the
+// standard HTTPS_PROXY/HTTP_PROXY env vars: config.GetAPIProxy() resolves
+// MONDOO_API_PROXY, viper's api_proxy (mondoo.yml / --api-proxy), and finally
+// HTTPS_PROXY. When no proxy is configured, the default transport's
+// http.ProxyFromEnvironment is used (which also honors NO_PROXY).
 //
 // It sets the provided headers and Content-Type to application/octet-stream.
 // The caller is responsible for checking the response status code and closing
 // the response body.
 func UploadFile(ctx context.Context, url string, headers map[string]string, filePath string, contentType string) (*http.Response, error) {
-	return UploadFileWithClient(ctx, url, headers, filePath, contentType, nil)
-}
-
-// UploadFileWithClient is like UploadFile but routes the request through the
-// supplied HTTP client. Pass a client configured with a proxy-aware transport
-// to honor the Mondoo CLI's api_proxy setting. If client is nil, a default
-// http.Client is used (env-var proxies only).
-func UploadFileWithClient(ctx context.Context, url string, headers map[string]string, filePath string, contentType string, client *http.Client) (*http.Response, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return nil, err
@@ -48,8 +45,27 @@ func UploadFileWithClient(ctx context.Context, url string, headers map[string]st
 	req.ContentLength = fileInfo.Size()
 	req.Header.Set("Content-Type", contentType)
 
-	if client == nil {
-		client = &http.Client{}
+	client, err := newHTTPClient()
+	if err != nil {
+		return nil, err
 	}
 	return client.Do(req)
+}
+
+// newHTTPClient builds the HTTP client used by UploadFile. When api_proxy is
+// configured (via mondoo.yml, MONDOO_API_PROXY, --api-proxy, or HTTPS_PROXY)
+// the transport is set to route through that proxy URL; otherwise we return
+// a plain client whose default transport already honors HTTP(S)_PROXY/NO_PROXY
+// via http.ProxyFromEnvironment.
+func newHTTPClient() (*http.Client, error) {
+	proxy, err := config.GetAPIProxy()
+	if err != nil {
+		return nil, err
+	}
+	if proxy == nil {
+		return &http.Client{}, nil
+	}
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.Proxy = http.ProxyURL(proxy)
+	return &http.Client{Transport: tr}, nil
 }

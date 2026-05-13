@@ -17,7 +17,6 @@ import (
 	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/cnspec/v13/policy/scandb"
 	"go.mondoo.com/cnspec/v13/upload"
-	"go.mondoo.com/mql/v13/cli/config"
 	"go.mondoo.com/mql/v13/llx"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream"
@@ -142,24 +141,6 @@ func withSqliteDataStore(ctx context.Context, assetMrn string, f func(scanDataSt
 	return f(scanDataStore)
 }
 
-// newUploadHTTPClient builds an HTTP client for the bucket-based scan upload
-// that honors the Mondoo CLI's api_proxy setting (mondoo.yml, MONDOO_API_PROXY,
-// --api-proxy) in addition to the standard HTTPS_PROXY/HTTP_PROXY env vars.
-// We can't rely on http.DefaultClient here because it only consults env vars
-// via http.ProxyFromEnvironment.
-func newUploadHTTPClient() (*http.Client, error) {
-	proxy, err := config.GetAPIProxy()
-	if err != nil {
-		return nil, err
-	}
-	if proxy == nil {
-		return &http.Client{}, nil
-	}
-	tr := http.DefaultTransport.(*http.Transport).Clone()
-	tr.Proxy = http.ProxyURL(proxy)
-	return &http.Client{Transport: tr}, nil
-}
-
 func uploadScanDataStore(ctx context.Context, services *policy.Services, assetMrn string, scanDataPath string) error {
 	urlResp, err := services.GetUploadURL(ctx, &policy.GetUploadURLReq{
 		Kind:     policy.UploadURLKind_UPLOAD_URL_KIND_SCAN_DATABASE_V0,
@@ -177,12 +158,7 @@ func uploadScanDataStore(ctx context.Context, services *policy.Services, assetMr
 	headers := uploadUrl.Headers
 	url := uploadUrl.Url
 
-	httpClient, err := newUploadHTTPClient()
-	if err != nil {
-		return err
-	}
-
-	resp, err := upload.UploadFileWithClient(ctx, url, headers, scanDataPath, "application/octet-stream", httpClient)
+	resp, err := upload.UploadFile(ctx, url, headers, scanDataPath, "application/octet-stream")
 	if err != nil {
 		return err
 	}
