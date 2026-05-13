@@ -41,6 +41,8 @@ policies:
         - Synapse Analytics
         - Event Hubs
         - VPN Gateway
+        - Azure Container Apps
+        - Azure Container Instances
         - Azure Container Registry (ACR)
         - Azure DNS
         - Azure Front Door
@@ -326,6 +328,14 @@ policies:
       - title: Azure Front Door
         checks:
           - uid: mondoo-azure-security-frontdoor-origin-https
+      - title: Azure Container Apps
+        checks:
+          - uid: mondoo-azure-security-container-app-https-ingress
+          - uid: mondoo-azure-security-container-app-managed-identity-registries
+          - uid: mondoo-azure-security-container-app-image-digest-pinned
+      - title: Azure Container Instances
+        checks:
+          - uid: mondoo-azure-security-container-instance-private-registry
     scoring_system: highest impact
 queries:
   - uid: mondoo-azure-security-ensure-os-disk-are-encrypted
@@ -32886,6 +32896,16 @@ queries:
             2. Under **Security**, open **Auditing** and review any DevOps / Microsoft support auditing toggle exposed by the portal.
             3. Enable the setting and pick a destination (Storage, Log Analytics, or Event Hub).
             4. Select **Save**.
+        - id: cli
+          desc: |
+            To enable DevOps auditing using the Azure CLI:
+
+            ```bash
+            az sql server ms-support audit-policy update \
+              --resource-group-name <rg> --server-name <server> \
+              --state Enabled --blob-storage-target-state Enabled \
+              --storage-account <storage-account-id>
+            ```
         - id: terraform
           desc: |
             To enable DevOps auditing in Terraform:
@@ -33087,4 +33107,732 @@ queries:
     mql: |
       terraform.state.resources.where(type == "azurerm_mysql_flexible_server").all(
         values['customer_managed_key'] != null && values['customer_managed_key'][0]['geo_backup_key_vault_key_id'] != null
+      )
+  - uid: mondoo-azure-security-container-app-https-ingress
+    title: Ensure Container Apps enforce HTTPS for ingress traffic
+    impact: 80
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    variants:
+      - uid: mondoo-azure-security-container-app-https-ingress-azure
+        tags:
+          mondoo.com/filter-title: Azure Subscription
+          mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-container-app-https-ingress-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-container-app-https-ingress-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-container-app-https-ingress-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Azure Container Apps with ingress enabled redirect all incoming traffic to HTTPS rather than allowing plain HTTP. When `allowInsecure` is true on the ingress configuration, the platform serves traffic over HTTP, exposing requests, response bodies, and any session tokens to network observers.
+
+        **Why this matters**
+
+        - Plaintext HTTP traffic can be intercepted, modified, or replayed by anyone on the network path between the client and the Container App. Authentication cookies, API keys, and personal data carried in headers or bodies become trivially harvestable.
+        - The Container Apps ingress configuration accepts an `allowInsecure` flag. Setting it to `true` keeps the listener responding on HTTP without an automatic redirect to HTTPS, which silently erodes transport security for any client that follows an `http://` link.
+        - Modern browsers, mobile platforms, and compliance regimes treat HTTP traffic as a vulnerability finding. Enforcing HTTPS-only ingress aligns the workload with TLS hardening expectations and prevents accidental downgrades.
+      audit: |
+        **Manual Audit via Azure Portal:**
+
+        1. Navigate to **Container Apps** in the Azure Portal.
+        2. Select a container app.
+        3. Go to **Ingress** under **Settings**.
+        4. Confirm that **Insecure connections** is set to **Disabled** so HTTP requests are redirected to HTTPS.
+
+        **Automated Audit with Azure CLI:**
+
+        ```bash
+        az containerapp ingress show --name <ContainerAppName> --resource-group <ResourceGroupName> --query "allowInsecure"
+        ```
+      remediation:
+        - id: portal
+          desc: |
+            To enforce HTTPS ingress on a Container App using the Azure Portal:
+
+            1. Navigate to **Container Apps** in the Azure Portal.
+            2. Select the container app.
+            3. Go to **Ingress** under **Settings**.
+            4. Set **Insecure connections** to **Disabled**.
+            5. Select **Save**.
+        - id: cli
+          desc: |
+            To enforce HTTPS ingress on a Container App using the Azure CLI:
+
+            ```bash
+            az containerapp ingress update --name <ContainerAppName> --resource-group <ResourceGroupName> --allow-insecure false
+            ```
+        - id: bicep
+          desc: |
+            To enforce HTTPS ingress on a Container App in Bicep:
+
+            ```bicep
+            resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
+              name: 'example-app'
+              location: resourceGroup().location
+              properties: {
+                managedEnvironmentId: environment.id
+                configuration: {
+                  ingress: {
+                    external: true
+                    targetPort: 8080
+                    allowInsecure: false
+                    transport: 'auto'
+                  }
+                }
+                template: {
+                  containers: [
+                    {
+                      name: 'app'
+                      image: 'myacr.azurecr.io/app@sha256:abcdef'
+                    }
+                  ]
+                }
+              }
+            }
+            ```
+        - id: terraform
+          desc: |
+            To enforce HTTPS ingress on a Container App in Terraform, leave `allow_insecure_connections` at its default of `false` or set it explicitly:
+
+            ```hcl
+            resource "azurerm_container_app" "example" {
+              name                         = "example-app"
+              resource_group_name          = azurerm_resource_group.example.name
+              container_app_environment_id = azurerm_container_app_environment.example.id
+              revision_mode                = "Single"
+
+              ingress {
+                external_enabled           = true
+                target_port                = 8080
+                transport                  = "auto"
+                allow_insecure_connections = false
+
+                traffic_weight {
+                  latest_revision = true
+                  percentage      = 100
+                }
+              }
+
+              template {
+                container {
+                  name   = "app"
+                  image  = "myacr.azurecr.io/app@sha256:abcdef"
+                  cpu    = 0.25
+                  memory = "0.5Gi"
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/container-apps/ingress-overview
+        title: Ingress in Azure Container Apps
+  - uid: mondoo-azure-security-container-app-https-ingress-azure
+    filters: |
+      asset.platform == "azure"
+    mql: |
+      azure.subscription.containerApp.containerApps.where(ingressEnabled).all(
+        httpsOnly == true
+      )
+  - uid: mondoo-azure-security-container-app-https-ingress-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_container_app")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_container_app").all(
+        blocks.where(type == "ingress").all(
+          arguments['allow_insecure_connections'] == null ||
+          arguments['allow_insecure_connections'] == false
+        )
+      )
+  - uid: mondoo-azure-security-container-app-https-ingress-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_container_app")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_container_app").all(
+        change.after['ingress'] == null ||
+        change.after['ingress'] == empty ||
+        change.after['ingress'].all(
+          _['allow_insecure_connections'] == null ||
+          _['allow_insecure_connections'] == false
+        )
+      )
+  - uid: mondoo-azure-security-container-app-https-ingress-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_container_app")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_container_app").all(
+        values['ingress'] == null ||
+        values['ingress'] == empty ||
+        values['ingress'].all(
+          _['allow_insecure_connections'] == null ||
+          _['allow_insecure_connections'] == false
+        )
+      )
+  - uid: mondoo-azure-security-container-app-managed-identity-registries
+    title: Ensure Container Apps pull images using managed identity
+    impact: 75
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-14
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-9
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-2
+      compliance/pci-dss-4: pcidss-requirement-8-6-2
+      compliance/soc2-2017: soc2-control-cc6-1-8
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-azure-security-container-app-managed-identity-registries-azure
+        tags:
+          mondoo.com/filter-title: Azure Subscription
+          mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-container-app-managed-identity-registries-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-container-app-managed-identity-registries-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-container-app-managed-identity-registries-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Azure Container Apps that reference one or more private container registries authenticate to those registries using a managed identity rather than embedded credentials stored as Container Apps secrets.
+
+        **Why this matters**
+
+        - Registry credentials embedded as secrets are long-lived, copied across environments, and easy to leak through configuration exports, source control, or backup files. An attacker who reads a single secret value gains push or pull access to every image in the registry.
+        - Managed identity authentication issues short-lived tokens that are scoped to the specific Container App and rotated automatically by Azure. There is no shared password to leak and no rotation playbook to maintain.
+        - Azure RBAC on the registry can grant the Container App identity precisely the role it needs, such as `AcrPull`, following the principle of least privilege. Embedded secrets typically carry broader permissions because they are reused across multiple workloads.
+      audit: |
+        **Manual Audit via Azure Portal:**
+
+        1. Navigate to **Container Apps** in the Azure Portal.
+        2. Select a container app.
+        3. Go to **Containers** under **Application** and review the registry under **Image source**.
+        4. Confirm the registry is configured with **Managed Identity** rather than a username and password backed by a secret.
+
+        **Automated Audit with Azure CLI:**
+
+        ```bash
+        az containerapp show --name <ContainerAppName> --resource-group <ResourceGroupName> --query "properties.configuration.registries"
+        ```
+
+        Each registry entry should expose an `identity` value rather than a `passwordSecretRef`.
+      remediation:
+        - id: portal
+          desc: |
+            To switch a Container App to managed identity for registry authentication using the Azure Portal:
+
+            1. Assign the Container App a system-assigned or user-assigned managed identity under **Identity**.
+            2. In the target Azure Container Registry, grant that identity the **AcrPull** role under **Access control (IAM)**.
+            3. Edit the Container App revision and set the registry **Authentication** to **Managed Identity**, choosing the identity assigned in step 1.
+            4. Remove the registry password secret from the Container App **Secrets** list once the new revision is healthy.
+        - id: cli
+          desc: |
+            To configure managed identity registry authentication using the Azure CLI:
+
+            ```bash
+            az containerapp identity assign --name <ContainerAppName> --resource-group <ResourceGroupName> --system-assigned
+            az role assignment create --assignee <PrincipalId> --role AcrPull --scope <RegistryResourceId>
+            az containerapp registry set --name <ContainerAppName> --resource-group <ResourceGroupName> --server <RegistryName>.azurecr.io --identity system
+            ```
+        - id: bicep
+          desc: |
+            To configure managed identity registry authentication in Bicep:
+
+            ```bicep
+            resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
+              name: 'example-app'
+              location: resourceGroup().location
+              identity: {
+                type: 'SystemAssigned'
+              }
+              properties: {
+                managedEnvironmentId: environment.id
+                configuration: {
+                  registries: [
+                    {
+                      server: 'myacr.azurecr.io'
+                      identity: 'system'
+                    }
+                  ]
+                }
+                template: {
+                  containers: [
+                    {
+                      name: 'app'
+                      image: 'myacr.azurecr.io/app@sha256:abcdef'
+                    }
+                  ]
+                }
+              }
+            }
+            ```
+        - id: terraform
+          desc: |
+            To configure managed identity registry authentication on a Container App in Terraform, attach an identity to the resource and reference it from each `registry` block:
+
+            ```hcl
+            resource "azurerm_user_assigned_identity" "app" {
+              name                = "example-app-identity"
+              resource_group_name = azurerm_resource_group.example.name
+              location            = azurerm_resource_group.example.location
+            }
+
+            resource "azurerm_role_assignment" "acr_pull" {
+              scope                = azurerm_container_registry.example.id
+              role_definition_name = "AcrPull"
+              principal_id         = azurerm_user_assigned_identity.app.principal_id
+            }
+
+            resource "azurerm_container_app" "example" {
+              name                         = "example-app"
+              resource_group_name          = azurerm_resource_group.example.name
+              container_app_environment_id = azurerm_container_app_environment.example.id
+              revision_mode                = "Single"
+
+              identity {
+                type         = "UserAssigned"
+                identity_ids = [azurerm_user_assigned_identity.app.id]
+              }
+
+              registry {
+                server   = azurerm_container_registry.example.login_server
+                identity = azurerm_user_assigned_identity.app.id
+              }
+
+              template {
+                container {
+                  name   = "app"
+                  image  = "${azurerm_container_registry.example.login_server}/app@sha256:abcdef"
+                  cpu    = 0.25
+                  memory = "0.5Gi"
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/container-apps/managed-identity-image-pull
+        title: Pull images from Azure Container Registry using managed identity
+  - uid: mondoo-azure-security-container-app-managed-identity-registries-azure
+    filters: |
+      asset.platform == "azure"
+    mql: |
+      azure.subscription.containerApp.containerApps.where(registries.length > 0).all(
+        registryAuthUsesIdentity == true
+      )
+  - uid: mondoo-azure-security-container-app-managed-identity-registries-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_container_app")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_container_app").all(
+        blocks.where(type == "registry").all(
+          arguments['identity'] != null && arguments['identity'] != ""
+        )
+      )
+  - uid: mondoo-azure-security-container-app-managed-identity-registries-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_container_app")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_container_app").all(
+        change.after['registry'] == null ||
+        change.after['registry'] == empty ||
+        change.after['registry'].all(
+          _['identity'] != null && _['identity'] != ""
+        )
+      )
+  - uid: mondoo-azure-security-container-app-managed-identity-registries-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_container_app")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_container_app").all(
+        values['registry'] == null ||
+        values['registry'] == empty ||
+        values['registry'].all(
+          _['identity'] != null && _['identity'] != ""
+        )
+      )
+  - uid: mondoo-azure-security-container-app-image-digest-pinned
+    title: Ensure Container Apps pin container images by digest
+    impact: 70
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-19
+      compliance/nis-2: nis-2-21-2-d
+      compliance/nist-csf-1: nist-csf-1-pr-ds-6
+      compliance/nist-csf-2: nist-csf-2-id-ra-09
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-8
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-azure-security-container-app-image-digest-pinned-azure
+        tags:
+          mondoo.com/filter-title: Azure Subscription
+          mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-container-app-image-digest-pinned-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-container-app-image-digest-pinned-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-container-app-image-digest-pinned-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that every container in an Azure Container App references its image by SHA-256 digest, for example `myacr.azurecr.io/app@sha256:abcdef...`, rather than by a mutable tag such as `latest` or `1.0`.
+
+        **Why this matters**
+
+        - Tags in a container registry are mutable. A `latest` or `v1.0` tag can be repointed at a different image at any time, including by an attacker who has compromised the registry, a CI pipeline, or a developer workstation. Pinning by digest makes the deployment cryptographically tied to the exact image bytes that were reviewed and tested.
+        - Without digest pinning, a Container App revision can silently change behavior between scaling events, restarts, or new replica startups whenever the registry serves an updated image for the same tag. Audits and incident response become harder because the running code no longer matches what was deployed.
+        - Supply-chain attacks frequently target the gap between image build and image pull. Digest pinning closes that gap and lets image scanning, signing, and provenance attestations apply to the same artifact that actually runs in production.
+      audit: |
+        **Manual Audit via Azure Portal:**
+
+        1. Navigate to **Container Apps** in the Azure Portal.
+        2. Select a container app.
+        3. Go to **Containers** under **Application** and review each container's **Image and tag**.
+        4. Confirm each image reference contains an `@sha256:` digest rather than a tag.
+
+        **Automated Audit with Azure CLI:**
+
+        ```bash
+        az containerapp show --name <ContainerAppName> --resource-group <ResourceGroupName> --query "properties.template.containers[].image"
+        ```
+      remediation:
+        - id: portal
+          desc: |
+            To pin Container App images by digest using the Azure Portal:
+
+            1. Resolve the digest of the desired image, for example by running `az acr repository show-manifests --name <RegistryName> --repository <RepositoryName>`.
+            2. Navigate to **Container Apps** in the Azure Portal.
+            3. Select the container app and edit the active revision.
+            4. Update each container **Image and tag** field to the form `<registry>/<repository>@sha256:<digest>`.
+            5. Create the new revision.
+        - id: cli
+          desc: |
+            To pin Container App images by digest using the Azure CLI:
+
+            ```bash
+            az containerapp update --name <ContainerAppName> --resource-group <ResourceGroupName> --image <Registry>.azurecr.io/<Repository>@sha256:<Digest>
+            ```
+        - id: bicep
+          desc: |
+            To pin Container App images by digest in Bicep:
+
+            ```bicep
+            resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
+              name: 'example-app'
+              location: resourceGroup().location
+              properties: {
+                managedEnvironmentId: environment.id
+                template: {
+                  containers: [
+                    {
+                      name: 'app'
+                      image: 'myacr.azurecr.io/app@sha256:abcdef0123456789'
+                    }
+                  ]
+                }
+              }
+            }
+            ```
+        - id: terraform
+          desc: |
+            To pin Container App images by digest in Terraform, set every `template.container.image` to a `registry/repo@sha256:<digest>` reference:
+
+            ```hcl
+            resource "azurerm_container_app" "example" {
+              name                         = "example-app"
+              resource_group_name          = azurerm_resource_group.example.name
+              container_app_environment_id = azurerm_container_app_environment.example.id
+              revision_mode                = "Single"
+
+              template {
+                container {
+                  name   = "app"
+                  image  = "myacr.azurecr.io/app@sha256:abcdef0123456789"
+                  cpu    = 0.25
+                  memory = "0.5Gi"
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/container-apps/containers
+        title: Containers in Azure Container Apps
+  - uid: mondoo-azure-security-container-app-image-digest-pinned-azure
+    filters: |
+      asset.platform == "azure"
+    mql: |
+      azure.subscription.containerApp.containerApps.all(
+        containers.all(imagePinned == true)
+      )
+  - uid: mondoo-azure-security-container-app-image-digest-pinned-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_container_app")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_container_app").all(
+        blocks.where(type == "template") != empty &&
+        blocks.where(type == "template").all(
+          blocks.where(type == "container") != empty &&
+          blocks.where(type == "container").all(
+            arguments['image'] != null && arguments['image'].contains("@sha256:")
+          )
+        )
+      )
+  - uid: mondoo-azure-security-container-app-image-digest-pinned-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_container_app")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_container_app").all(
+        change.after['template'] != null &&
+        change.after['template'] != empty &&
+        change.after['template'].all(
+          _['container'] != null &&
+          _['container'] != empty &&
+          _['container'].all(_['image'].contains("@sha256:"))
+        )
+      )
+  - uid: mondoo-azure-security-container-app-image-digest-pinned-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_container_app")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_container_app").all(
+        values['template'] != null &&
+        values['template'] != empty &&
+        values['template'].all(
+          _['container'] != null &&
+          _['container'] != empty &&
+          _['container'].all(_['image'].contains("@sha256:"))
+        )
+      )
+  - uid: mondoo-azure-security-container-instance-private-registry
+    title: Ensure Container Instances pull images from Azure Container Registry
+    impact: 70
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-19
+      compliance/nis-2: nis-2-21-2-d
+      compliance/nist-csf-1: nist-csf-1-id-sc-2
+      compliance/nist-csf-2: nist-csf-2-id-ra-09
+      compliance/nist-sp-800-53-rev5: false
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-8
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-azure-security-container-instance-private-registry-azure
+        tags:
+          mondoo.com/filter-title: Azure Subscription
+          mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-container-instance-private-registry-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-container-instance-private-registry-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-container-instance-private-registry-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that every container in an Azure Container Instance group references an image hosted in a private Azure Container Registry, identified by the `*.azurecr.io/` server prefix, rather than a public registry such as Docker Hub, Quay, or `ghcr.io`.
+
+        **Why this matters**
+
+        - Public registries serve images that any account can publish or update. Workloads that pull from public namespaces inherit the trust posture of those publishers and become exposed to typo-squatting, account takeover, and supply-chain compromise of upstream maintainers.
+        - Azure Container Registry supports private network access, role-based access control, content trust, image scanning, and image signing. Sourcing images from ACR keeps every running workload covered by the same access control, scanning, and retention policies that apply to internally produced images.
+        - Centralizing image pulls in ACR also produces a clean audit trail of who pushed each image and when, which is required by most regulated environments and is impossible to reproduce with arbitrary public registries.
+      audit: |
+        **Manual Audit via Azure Portal:**
+
+        1. Navigate to **Container instances** in the Azure Portal.
+        2. Select a container group.
+        3. Go to **Containers** under **Settings** and review each container's **Image** value.
+        4. Confirm every image reference begins with a `*.azurecr.io/` host name pointing at an Azure Container Registry your organization controls.
+
+        **Automated Audit with Azure CLI:**
+
+        ```bash
+        az container show --name <ContainerGroupName> --resource-group <ResourceGroupName> --query "containers[].properties.image"
+        ```
+      remediation:
+        - id: portal
+          desc: |
+            To move a Container Instance group to a private Azure Container Registry source using the Azure Portal:
+
+            1. Push the desired image to an Azure Container Registry your organization owns.
+            2. Navigate to **Container instances** in the Azure Portal.
+            3. Recreate the container group with the new image reference of the form `<RegistryName>.azurecr.io/<Repository>:<Tag>` or `<RegistryName>.azurecr.io/<Repository>@sha256:<Digest>`.
+            4. Configure registry credentials using a managed identity or registry credentials backed by Azure Key Vault.
+        - id: cli
+          desc: |
+            To launch a Container Instance group from a private Azure Container Registry using the Azure CLI:
+
+            ```bash
+            az container create \
+              --name <ContainerGroupName> \
+              --resource-group <ResourceGroupName> \
+              --image <RegistryName>.azurecr.io/<Repository>@sha256:<Digest> \
+              --acr-identity <UserAssignedIdentityResourceId> \
+              --assign-identity <UserAssignedIdentityResourceId>
+            ```
+        - id: bicep
+          desc: |
+            To launch a Container Instance group from a private Azure Container Registry in Bicep:
+
+            ```bicep
+            resource containerGroup 'Microsoft.ContainerInstance/containerGroups@2023-05-01' = {
+              name: 'example-group'
+              location: resourceGroup().location
+              identity: {
+                type: 'UserAssigned'
+                userAssignedIdentities: {
+                  '${userAssignedIdentity.id}': {}
+                }
+              }
+              properties: {
+                osType: 'Linux'
+                containers: [
+                  {
+                    name: 'app'
+                    properties: {
+                      image: 'myacr.azurecr.io/app@sha256:abcdef'
+                      resources: {
+                        requests: {
+                          cpu: 1
+                          memoryInGB: json('1.5')
+                        }
+                      }
+                    }
+                  }
+                ]
+                imageRegistryCredentials: [
+                  {
+                    server: 'myacr.azurecr.io'
+                    identity: userAssignedIdentity.id
+                  }
+                ]
+              }
+            }
+            ```
+        - id: terraform
+          desc: |
+            To launch a Container Instance group from a private Azure Container Registry in Terraform, set every `container.image` to an `*.azurecr.io/` reference and authenticate with a user-assigned identity:
+
+            ```hcl
+            resource "azurerm_user_assigned_identity" "ci" {
+              name                = "example-ci-identity"
+              resource_group_name = azurerm_resource_group.example.name
+              location            = azurerm_resource_group.example.location
+            }
+
+            resource "azurerm_role_assignment" "acr_pull" {
+              scope                = azurerm_container_registry.example.id
+              role_definition_name = "AcrPull"
+              principal_id         = azurerm_user_assigned_identity.ci.principal_id
+            }
+
+            resource "azurerm_container_group" "example" {
+              name                = "example-group"
+              resource_group_name = azurerm_resource_group.example.name
+              location            = azurerm_resource_group.example.location
+              os_type             = "Linux"
+
+              identity {
+                type         = "UserAssigned"
+                identity_ids = [azurerm_user_assigned_identity.ci.id]
+              }
+
+              image_registry_credential {
+                server                    = azurerm_container_registry.example.login_server
+                user_assigned_identity_id = azurerm_user_assigned_identity.ci.id
+              }
+
+              container {
+                name   = "app"
+                image  = "${azurerm_container_registry.example.login_server}/app@sha256:abcdef"
+                cpu    = "1"
+                memory = "1.5"
+
+                ports {
+                  port     = 80
+                  protocol = "TCP"
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/container-instances/container-instances-using-azure-container-registry
+        title: Deploy to Azure Container Instances from Azure Container Registry
+  - uid: mondoo-azure-security-container-instance-private-registry-azure
+    filters: |
+      asset.platform == "azure"
+    mql: |
+      azure.subscription.containerInstance.containerGroups.all(
+        containers.all(image == /^[A-Za-z0-9.-]+\.azurecr\.io\//)
+      )
+  - uid: mondoo-azure-security-container-instance-private-registry-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_container_group")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_container_group").all(
+        blocks.where(type == "container") != empty &&
+        blocks.where(type == "container").all(
+          arguments['image'] != null &&
+          arguments['image'] == /^[A-Za-z0-9.-]+\.azurecr\.io\//
+        )
+      )
+  - uid: mondoo-azure-security-container-instance-private-registry-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_container_group")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_container_group").all(
+        change.after['container'] != null &&
+        change.after['container'] != empty &&
+        change.after['container'].all(
+          _['image'] == /^[A-Za-z0-9.-]+\.azurecr\.io\//
+        )
+      )
+  - uid: mondoo-azure-security-container-instance-private-registry-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_container_group")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_container_group").all(
+        values['container'] != null &&
+        values['container'] != empty &&
+        values['container'].all(
+          _['image'] == /^[A-Za-z0-9.-]+\.azurecr\.io\//
+        )
       )
