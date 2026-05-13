@@ -9,11 +9,23 @@ import (
 	"os"
 )
 
-// UploadFile uploads a file to a pre-signed URL via HTTP PUT.
+// UploadFile uploads a file to a pre-signed URL via HTTP PUT using the default
+// HTTP client. The default client honors HTTP(S)_PROXY/NO_PROXY environment
+// variables but does not consult the Mondoo CLI's api_proxy config; callers
+// that need to honor api_proxy should use UploadFileWithClient.
+//
 // It sets the provided headers and Content-Type to application/octet-stream.
 // The caller is responsible for checking the response status code and closing
 // the response body.
 func UploadFile(ctx context.Context, url string, headers map[string]string, filePath string, contentType string) (*http.Response, error) {
+	return UploadFileWithClient(ctx, url, headers, filePath, contentType, nil)
+}
+
+// UploadFileWithClient is like UploadFile but routes the request through the
+// supplied HTTP client. Pass a client configured with a proxy-aware transport
+// to honor the Mondoo CLI's api_proxy setting. If client is nil, a default
+// http.Client is used (env-var proxies only).
+func UploadFileWithClient(ctx context.Context, url string, headers map[string]string, filePath string, contentType string, client *http.Client) (*http.Response, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return nil, err
@@ -36,6 +48,8 @@ func UploadFile(ctx context.Context, url string, headers map[string]string, file
 	req.ContentLength = fileInfo.Size()
 	req.Header.Set("Content-Type", contentType)
 
-	client := &http.Client{}
+	if client == nil {
+		client = &http.Client{}
+	}
 	return client.Do(req)
 }
