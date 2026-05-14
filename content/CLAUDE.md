@@ -35,7 +35,92 @@ policies:
 
 - All `desc` and `remediation` fields must be valid Markdown (rendered in the UI). Use proper headings, lists, code blocks, links.
 - Check `title` fields must be 75 characters or fewer.
+- Check `title` must match the action enforced by the `mql` query and described in `desc`. If the title says "Ensure X is enabled" the query must assert X is enabled and the description must explain X — don't let titles drift from what the check actually does (e.g., a title about "encryption at rest" paired with a query that inspects TLS settings).
+- Every check's `docs:` block must include all three sections: `desc:`, `audit:`, and `remediation:`. None of these are optional — `desc` explains *what and why*, `audit` explains *how to verify manually*, and `remediation` explains *how to fix*.
+- `audit:` instructions must use the **vendor's own tooling** — the cloud console or the vendor CLI (`aws`, `az`, `gcloud`, `oci`, `doctl`, `kubectl`, `gh`, …). **Never** reference Mondoo tools (`cnspec`, `mql`, the Mondoo console) in audit steps. Prefer the vendor CLI for an automated path; fall back to console click-through when no CLI exists. The point of `audit:` is to give an auditor a vendor-native way to reproduce the finding without trusting Mondoo's output.
+- `remediation:` must include **every remediation method the target platform supports** — not just one or two. Use `- id: <method>` entries in the list. Required coverage by platform:
+  - **AWS**: `console`, `cli`, `terraform`, `cloudformation`
+  - **Azure**: `console`, `cli`, `terraform`, `bicep`
+  - **GCP / OCI / DigitalOcean / Cloudflare / Hetzner / other clouds**: `console`, `cli`, `terraform`
+  - **Windows / macOS**: `gui`, `cli`, `ansible`, and `script` (PowerShell on Windows, bash on macOS)
+  - **Linux**: `cli`, `script` (bash), `ansible`
+  - **Kubernetes**: `kubectl`, `manifest` (YAML), and where applicable `helm`
+
+  Omit a method only when it genuinely doesn't apply, and leave a YAML comment above the check explaining why (same pattern as the "No Terraform variants" comment above).
 - Verify CLI commands in remediation steps with the validator (see below) before committing.
+
+## Impact scoring
+
+`impact:` drives prioritization in scan output and dashboards. Pick from the established bands — these match the observed distribution across this repo and avoid drift toward unhelpful precision (`impact: 65` etc.).
+
+| Impact | When to use |
+|--------|-------------|
+| 90–100 | Direct path to data loss, account compromise, or full takeover. Public exposure of customer data, unauthenticated admin endpoints, plaintext secrets in shared storage, disabled audit logging on production. |
+| 80 | High-confidence misconfiguration with realistic exploit chain. Encryption disabled on sensitive resources, overly permissive IAM, network-wide ingress on management ports, missing MFA on privileged identities. |
+| 70 | Important hardening that meaningfully reduces blast radius. CMK encryption instead of vendor-managed keys, private endpoints over public, log retention/aggregation. |
+| 60 | Recommended hardening with moderate risk reduction. Tag/label hygiene that gates other controls, non-default versions of managed services, password complexity above vendor defaults. |
+| 30–50 | Best practices and informational. Defense-in-depth that rarely changes outcomes on its own (resource labeling, optional telemetry, naming conventions). |
+
+Anchor to a sibling check in the same policy whenever possible — if you're adding an encryption-at-rest check next to five others at `impact: 70`, use 70 unless you can justify why this one differs. Cite a sibling UID in the PR description.
+
+## UID and naming conventions
+
+**Pattern**: `mondoo-<provider>-security-<resource>-<rule>`
+
+- `<provider>` is the policy's cloud/platform — `aws`, `azure`, `gcp`, `oci`, `digitalocean`, `hetzner`, `linux`, `windows`, `macos`, `kubernetes`, `github`, `gitlab`, etc.
+- `<resource>` is the service or object being checked — `eks-cluster`, `s3-bucket`, `cloud-sql-mysql`, `network-security-group`. Use the vendor's own naming where it exists; don't invent new terminology.
+- `<rule>` describes the assertion in active voice — `cmks-in-kms`, `private-controlplane`, `logging-enabled`, `restrict-public-access`. Keep it short and concrete; avoid generic suffixes like `-misconfigured` or `-check`.
+
+**Variant suffixes** (parent UID + suffix; see the Terraform variants section for context):
+
+- `-<cloud>` — runtime variant (e.g., `-aws`, `-azure`, `-gcp`). Match the parent's cloud.
+- `-terraform-hcl` / `-terraform-plan` / `-terraform-state` — Terraform asset variants.
+- `-cloudformation` / `-bicep` — IaC variants for AWS / Azure where applicable.
+
+The parent check carries `title`, `impact`, `tags`, and `docs:`; variants carry the platform-specific `mql:` and a `mondoo.com/filter-title` + `mondoo.com/filter-icon` tag pair. Don't repeat compliance tags on variants.
+
+**Before adding a new UID**: grep the existing policy for the resource name to confirm there isn't already a check on the same control objective (`grep -i "<resource>-<rule>" content/mondoo-<provider>-security.mql.yaml`). Duplicate checks fragment compliance mappings and confuse scan output.
+
+## `docs:` body structure
+
+The three required sections follow a consistent shape across the repo. Match it so new checks are visually and structurally indistinguishable from the surrounding policy.
+
+**`desc:`** — what the check enforces, then why it matters.
+
+```markdown
+This check ensures that <resource> is configured to <enforced behavior>. By default <vendor default>, but <why the safer setting matters>.
+
+**Why this matters**
+
+- **<benefit 1>:** <one sentence>.
+- **<benefit 2>:** <one sentence>.
+- **<benefit 3>:** <one sentence>.
+
+**Risk mitigation**
+
+- **<mitigation 1>:** <one sentence>.
+- **<mitigation 2>:** <one sentence>.
+```
+
+Lead with the assertion (one paragraph), then bullet the benefits. Don't restate the title verbatim. Don't reference the MQL query, variant UIDs, or "this policy" — the reader sees the check in isolation.
+
+**`audit:`** — vendor-native verification steps. Use H3 headers (`### Audit via Console`, `### Audit via CLI`) when both a console path and a CLI path exist. Each path is a short numbered list ending with what a passing vs. failing result looks like. Never reference `cnspec`, `mql`, or the Mondoo console (see the formatting rule above).
+
+**`remediation:`** — a list of `- id: <method>` entries, one per supported management surface (see the remediation-coverage rule above). Each entry's `desc:` follows the same shape:
+
+```markdown
+To <restate the fix in active voice> using <method>:
+
+1. <step>
+2. <step>
+3. <step>
+
+```<lang>
+<example code or command>
+```
+```
+
+Order the list consistently: `console` → `cli` → `terraform` → `cloudformation`/`bicep` for clouds; `gui` → `cli` → `script` → `ansible` for OS targets. Reviewers scan in this order — keep it predictable.
 
 ## Compliance tags (`compliance/<framework>: <control-uid>`)
 
