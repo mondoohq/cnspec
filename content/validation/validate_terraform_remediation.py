@@ -110,7 +110,7 @@ def extract_hcl_blocks(content: str, filepath: Path) -> list[HclBlock]:
         return result
 
     pattern = re.compile(
-        r"- id: terraform\s*\n\s+desc: \|\s*\n(.*?)(?=\n\s+- id: |\n\s+refs:|\n  - uid: |\Z)",
+        r"- id: terraform\s*\n\s+desc: \|-?\s*\n(.*?)(?=\n\s+- id: |\n\s+refs:|\n  - uid: |\Z)",
         re.DOTALL,
     )
     blocks = []
@@ -120,14 +120,25 @@ def extract_hcl_blocks(content: str, filepath: Path) -> list[HclBlock]:
         tf_line = content[: match.start()].count("\n") + 1
         uid = find_uid_for_line(tf_line)
 
+        # A single terraform remediation desc may split one logical config
+        # across multiple ```hcl``` fences interleaved with prose. Concatenate
+        # them so tflint sees the complete configuration, not fragments where
+        # a `data` source in one fence appears "unused" in isolation.
+        fences = []
+        first_line = None
         for fence in re.finditer(r"```hcl\s*\n(.*?)```", desc_block, re.DOTALL):
             block = fence.group(1).strip()
-            if block:
+            if not block:
+                continue
+            if first_line is None:
                 code_offset = desc_start + fence.start(1)
-                line_number = content[:code_offset].count("\n") + 1
-                blocks.append(HclBlock(
-                    code=block, line=line_number, uid=uid, file=filepath,
-                ))
+                first_line = content[:code_offset].count("\n") + 1
+            fences.append(block)
+
+        if fences:
+            blocks.append(HclBlock(
+                code="\n\n".join(fences), line=first_line, uid=uid, file=filepath,
+            ))
     return blocks
 
 
