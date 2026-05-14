@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-azure-security
     name: Mondoo Microsoft Azure Security
-    version: 8.1.0
+    version: 9.0.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -41,6 +41,10 @@ policies:
         - Synapse Analytics
         - Event Hubs
         - VPN Gateway
+        - Azure AI Search
+        - Azure API Management
+        - Azure App Configuration
+        - Azure Cognitive Services
         - Azure Container Apps
         - Azure Container Instances
         - Azure Container Registry (ACR)
@@ -264,9 +268,11 @@ policies:
           - uid: mondoo-azure-security-appgw-ssl-policy-tls12
           - uid: mondoo-azure-security-appgw-min-tls-version
           - uid: mondoo-azure-security-appgw-no-weak-ciphers
+          - uid: mondoo-azure-security-application-gateway-no-public-frontend
       - title: VPN Gateway
         checks:
           - uid: mondoo-azure-security-vpn-gateway-ikev2
+          - uid: mondoo-azure-security-vpn-gateway-ikev2-strong-ipsec-policy
       - title: Azure Databricks
         checks:
           - uid: mondoo-azure-security-databricks-public-access-disabled
@@ -299,6 +305,7 @@ policies:
           - uid: mondoo-azure-security-log-analytics-public-ingestion-disabled
           - uid: mondoo-azure-security-log-analytics-public-query-disabled
           - uid: mondoo-azure-security-log-analytics-cmk-for-query
+          - uid: mondoo-azure-security-log-analytics-workspace-cmk-encryption
       - title: Azure Recovery Services
         checks:
           - uid: mondoo-azure-security-recovery-vault-soft-delete
@@ -313,15 +320,38 @@ policies:
       - title: Azure Service Bus
         checks:
           - uid: mondoo-azure-security-servicebus-local-auth-disabled
+          - uid: mondoo-azure-security-servicebus-namespace-public-network-access-disabled
+          - uid: mondoo-azure-security-servicebus-namespace-cmk-encryption
+          - uid: mondoo-azure-security-servicebus-namespace-min-tls-1-2
       - title: Azure Event Hubs
         checks:
           - uid: mondoo-azure-security-eventhubs-local-auth-disabled
           - uid: mondoo-azure-security-eventhubs-minimum-tls-1-2
+          - uid: mondoo-azure-security-eventhub-namespace-public-network-access-disabled
+          - uid: mondoo-azure-security-eventhub-namespace-cmk-encryption
       - title: Azure Functions
         checks:
           - uid: mondoo-azure-security-function-app-https-only
           - uid: mondoo-azure-security-function-app-client-cert-required
           - uid: mondoo-azure-security-function-app-managed-identity
+          - uid: mondoo-azure-security-function-app-public-network-access-disabled
+          - uid: mondoo-azure-security-function-app-cmk-encryption
+          - uid: mondoo-azure-security-function-app-min-tls-1-2
+      - title: Azure AI Search
+        checks:
+          - uid: mondoo-azure-security-search-service-public-network-access-disabled
+          - uid: mondoo-azure-security-search-service-cmk-encryption
+      - title: Azure API Management
+        checks:
+          - uid: mondoo-azure-security-api-management-internal-vnet-mode
+          - uid: mondoo-azure-security-api-management-gateway-min-tls-1-2
+      - title: Azure App Configuration
+        checks:
+          - uid: mondoo-azure-security-appconfiguration-public-network-access-disabled
+          - uid: mondoo-azure-security-appconfiguration-cmk-encryption
+      - title: Azure Cognitive Services
+        checks:
+          - uid: mondoo-azure-security-cognitive-services-public-network-access-disabled
       - title: Azure DNS
         checks:
           - uid: mondoo-azure-security-private-dns-no-auto-registration
@@ -9546,7 +9576,7 @@ queries:
     filters: |
       asset.platform == "azure-aks-cluster"
     mql: |
-      azure.subscription.aksService.cluster.agentPoolProfiles.all(_["enableEncryptionAtHost"] == true)
+      azure.subscription.aksService.cluster.nodePools.all(enableEncryptionAtHost == true)
   - uid: mondoo-azure-security-aks-encryption-at-host-enabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_kubernetes_cluster")
     mql: |
@@ -33836,3 +33866,2703 @@ queries:
           _['image'] == /^[A-Za-z0-9.-]+\.azurecr\.io\//
         )
       )
+  - uid: mondoo-azure-security-servicebus-namespace-public-network-access-disabled
+    title: Ensure Service Bus namespaces disable public network access
+    impact: 70
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-6
+    variants:
+      - uid: mondoo-azure-security-servicebus-namespace-public-network-access-disabled-azure
+        tags:
+          mondoo.com/filter-title: Azure Service Bus
+          mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-servicebus-namespace-public-network-access-disabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-servicebus-namespace-public-network-access-disabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-servicebus-namespace-public-network-access-disabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Azure Service Bus namespaces have public network access disabled, forcing all client traffic through private endpoints or trusted Azure services.
+
+        **Why this matters**
+
+        - **Network isolation**: Messaging endpoints exposed to the public internet attract credential stuffing, SAS-key exfiltration attempts, and reconnaissance traffic that consumes namespace throughput units.
+        - **Private connectivity**: Disabling public access requires consumers to reach the namespace over private endpoints, Microsoft backbone-only paths, or trusted-service exceptions, narrowing the blast radius of a leaked SAS key.
+        - **Defense in depth**: Layer-7 message-level authorization with Microsoft Entra ID is strongest when paired with layer-3 isolation; turning off public ingress prevents attackers from probing the namespace from outside the VNet.
+
+        **Risk mitigation**
+
+        - Disable public network access at the namespace level and configure private endpoints in each consumer VNet.
+        - Use the Premium SKU for production workloads; Basic and Standard namespaces do not support private endpoints.
+      audit: |
+        **Manual Audit via Azure Portal:**
+
+        1. Navigate to **Service Bus** in the Azure Portal.
+        2. Select a namespace.
+        3. Open **Networking** under **Settings**.
+        4. On the **Public access** tab, confirm that public network access is **Disabled** (or restricted to selected networks only).
+
+        **Automated Audit with Azure CLI:**
+
+        ```bash
+        az servicebus namespace show --resource-group <ResourceGroupName> --name <NamespaceName> --query "publicNetworkAccess"
+        ```
+      remediation:
+        - id: portal
+          desc: |
+            To disable public network access on a Service Bus namespace using the Azure Portal:
+
+            1. Navigate to **Service Bus** in the Azure Portal.
+            2. Select the namespace.
+            3. Under **Settings**, select **Networking**.
+            4. On the **Public access** tab, set **Public network access** to **Disabled**.
+            5. Configure private endpoints for authorized consumer subnets.
+            6. Select **Save**.
+        - id: cli
+          desc: |
+            To disable public network access on a Service Bus namespace using the Azure CLI:
+
+            ```bash
+            az servicebus namespace update --resource-group <ResourceGroupName> --name <NamespaceName> --set publicNetworkAccess=Disabled
+            ```
+        - id: terraform
+          desc: |
+            To disable public network access on a Service Bus namespace in Terraform:
+
+            ```hcl
+            resource "azurerm_servicebus_namespace" "example" {
+              name                          = "example-sb-namespace"
+              location                      = azurerm_resource_group.example.location
+              resource_group_name           = azurerm_resource_group.example.name
+              sku                           = "Premium"
+              capacity                      = 1
+              public_network_access_enabled = false
+            }
+            ```
+        - id: bicep
+          desc: |
+            To disable public network access on a Service Bus namespace in Bicep:
+
+            ```bicep
+            resource serviceBusNamespace 'Microsoft.ServiceBus/namespaces@2024-01-01' = {
+              name: 'example-sb-namespace'
+              location: resourceGroup().location
+              sku: {
+                name: 'Premium'
+                tier: 'Premium'
+                capacity: 1
+              }
+              properties: {
+                publicNetworkAccess: 'Disabled'
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/service-bus-messaging/network-security
+        title: Network security for Azure Service Bus
+  - uid: mondoo-azure-security-servicebus-namespace-public-network-access-disabled-azure
+    filters: |
+      asset.platform == "azure"
+    mql: |
+      azure.subscription.serviceBus.namespaces.all(
+        networkRuleSet["publicNetworkAccess"] == "Disabled"
+      )
+  - uid: mondoo-azure-security-servicebus-namespace-public-network-access-disabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_servicebus_namespace")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_servicebus_namespace").all(
+        arguments['public_network_access_enabled'] == false
+      )
+  - uid: mondoo-azure-security-servicebus-namespace-public-network-access-disabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_servicebus_namespace")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_servicebus_namespace").all(
+        change.after['public_network_access_enabled'] == false
+      )
+  - uid: mondoo-azure-security-servicebus-namespace-public-network-access-disabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_servicebus_namespace")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_servicebus_namespace").all(
+        values['public_network_access_enabled'] == false
+      )
+  - uid: mondoo-azure-security-eventhub-namespace-public-network-access-disabled
+    title: Ensure Event Hubs namespaces disable public network access
+    impact: 70
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-6
+    variants:
+      - uid: mondoo-azure-security-eventhub-namespace-public-network-access-disabled-azure
+        tags:
+          mondoo.com/filter-title: Azure Event Hubs
+          mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-eventhub-namespace-public-network-access-disabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-eventhub-namespace-public-network-access-disabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-eventhub-namespace-public-network-access-disabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Azure Event Hubs namespaces have public network access disabled, forcing all producer and consumer traffic through private endpoints or trusted Azure services.
+
+        **Why this matters**
+
+        - **Network isolation**: Streaming ingestion endpoints exposed to the public internet are a high-value target for credential abuse and exfiltration; restricting public access cuts that attack surface entirely.
+        - **Private connectivity**: Disabling public access forces clients to use private endpoints inside a peered VNet, so a leaked SAS key cannot be exercised from arbitrary networks.
+        - **Defense in depth**: Combining Microsoft Entra ID authorization with network-level isolation prevents an attacker who obtains a connection string from reaching the namespace at all.
+
+        **Risk mitigation**
+
+        - Disable public network access at the namespace level and configure private endpoints for each producer and consumer subnet.
+        - Use the Premium or Dedicated SKU for production workloads, since Basic and Standard namespaces do not support private endpoints.
+      audit: |
+        **Manual Audit via Azure Portal:**
+
+        1. Navigate to **Event Hubs** in the Azure Portal.
+        2. Select a namespace.
+        3. Open **Networking** under **Settings**.
+        4. On the **Public access** tab, confirm that public network access is **Disabled**.
+
+        **Automated Audit with Azure CLI:**
+
+        ```bash
+        az eventhubs namespace show --resource-group <ResourceGroupName> --name <NamespaceName> --query "publicNetworkAccess"
+        ```
+      remediation:
+        - id: portal
+          desc: |
+            To disable public network access on an Event Hubs namespace using the Azure Portal:
+
+            1. Navigate to **Event Hubs** in the Azure Portal.
+            2. Select the namespace.
+            3. Under **Settings**, select **Networking**.
+            4. On the **Public access** tab, set **Public network access** to **Disabled**.
+            5. Configure private endpoints for authorized producer and consumer subnets.
+            6. Select **Save**.
+        - id: cli
+          desc: |
+            To disable public network access on an Event Hubs namespace using the Azure CLI:
+
+            ```bash
+            az eventhubs namespace update --resource-group <ResourceGroupName> --name <NamespaceName> --set publicNetworkAccess=Disabled
+            ```
+        - id: terraform
+          desc: |
+            To disable public network access on an Event Hubs namespace in Terraform:
+
+            ```hcl
+            resource "azurerm_eventhub_namespace" "example" {
+              name                          = "example-eh-namespace"
+              location                      = azurerm_resource_group.example.location
+              resource_group_name           = azurerm_resource_group.example.name
+              sku                           = "Premium"
+              capacity                      = 1
+              public_network_access_enabled = false
+            }
+            ```
+        - id: bicep
+          desc: |
+            To disable public network access on an Event Hubs namespace in Bicep:
+
+            ```bicep
+            resource eventHubNamespace 'Microsoft.EventHub/namespaces@2024-01-01' = {
+              name: 'example-eh-namespace'
+              location: resourceGroup().location
+              sku: {
+                name: 'Premium'
+                tier: 'Premium'
+                capacity: 1
+              }
+              properties: {
+                publicNetworkAccess: 'Disabled'
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/event-hubs/network-security
+        title: Network security for Azure Event Hubs
+  - uid: mondoo-azure-security-eventhub-namespace-public-network-access-disabled-azure
+    filters: |
+      asset.platform == "azure"
+    mql: |
+      azure.subscription.eventHub.namespaces.all(
+        publicNetworkAccess == "Disabled"
+      )
+  - uid: mondoo-azure-security-eventhub-namespace-public-network-access-disabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_eventhub_namespace")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_eventhub_namespace").all(
+        arguments['public_network_access_enabled'] == false
+      )
+  - uid: mondoo-azure-security-eventhub-namespace-public-network-access-disabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_eventhub_namespace")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_eventhub_namespace").all(
+        change.after['public_network_access_enabled'] == false
+      )
+  - uid: mondoo-azure-security-eventhub-namespace-public-network-access-disabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_eventhub_namespace")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_eventhub_namespace").all(
+        values['public_network_access_enabled'] == false
+      )
+  - uid: mondoo-azure-security-function-app-public-network-access-disabled
+    title: Ensure Function Apps disable public network access
+    impact: 70
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-6
+    variants:
+      - uid: mondoo-azure-security-function-app-public-network-access-disabled-azure
+        tags:
+          mondoo.com/filter-title: Azure Functions
+          mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-function-app-public-network-access-disabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-function-app-public-network-access-disabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-function-app-public-network-access-disabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Azure Function Apps have public network access disabled, requiring all inbound HTTP traffic to flow through private endpoints or VNet integration.
+
+        **Why this matters**
+
+        - **Network isolation**: Function endpoints exposed to the public internet are easily discoverable by attackers scanning Azure-owned IP ranges and are routinely abused for credential probing and HTTP-trigger replay.
+        - **Private connectivity**: Disabling public access forces traffic through private endpoints, so only authorized peered networks can invoke the function HTTP trigger.
+        - **Defense in depth**: Network-level restrictions complement function-key, Easy Auth, and managed-identity controls so a stolen function key cannot be replayed from outside the VNet.
+
+        **Risk mitigation**
+
+        - Set the Function App's public network access to **Disabled** and configure private endpoints.
+        - Front internet-facing function endpoints with Azure Front Door or Application Gateway over private link instead of exposing the function app directly.
+      audit: |
+        **Manual Audit via Azure Portal:**
+
+        1. Navigate to **Function App** in the Azure Portal.
+        2. Select a function app.
+        3. Open **Networking** under **Settings**.
+        4. Verify that **Public network access** is **Disabled**.
+
+        **Automated Audit with Azure CLI:**
+
+        ```bash
+        az functionapp show --resource-group <ResourceGroupName> --name <FunctionAppName> --query "publicNetworkAccess"
+        ```
+      remediation:
+        - id: portal
+          desc: |
+            To disable public network access on a Function App using the Azure Portal:
+
+            1. Navigate to **Function App** in the Azure Portal.
+            2. Select the function app.
+            3. Under **Settings**, select **Networking**.
+            4. Set **Public network access** to **Disabled**.
+            5. Configure private endpoints for authorized network access.
+            6. Select **Save**.
+        - id: cli
+          desc: |
+            To disable public network access on a Function App using the Azure CLI:
+
+            ```bash
+            az functionapp update --resource-group <ResourceGroupName> --name <FunctionAppName> --set publicNetworkAccess=Disabled
+            ```
+        - id: terraform
+          desc: |
+            To disable public network access on a Function App in Terraform:
+
+            ```hcl
+            resource "azurerm_linux_function_app" "example" {
+              name                          = "example-funcapp"
+              resource_group_name           = azurerm_resource_group.example.name
+              location                      = azurerm_resource_group.example.location
+              service_plan_id               = azurerm_service_plan.example.id
+              storage_account_name          = azurerm_storage_account.example.name
+              storage_account_access_key    = azurerm_storage_account.example.primary_access_key
+              public_network_access_enabled = false
+
+              site_config {}
+            }
+            ```
+        - id: bicep
+          desc: |
+            To disable public network access on a Function App in Bicep:
+
+            ```bicep
+            resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
+              name: 'example-funcapp'
+              location: resourceGroup().location
+              kind: 'functionapp,linux'
+              properties: {
+                serverFarmId: appServicePlan.id
+                publicNetworkAccess: 'Disabled'
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/azure-functions/functions-networking-options
+        title: Azure Functions networking options
+  - uid: mondoo-azure-security-function-app-public-network-access-disabled-azure
+    filters: |
+      asset.platform == "azure"
+    mql: |
+      azure.subscription.functions.functionApps.all(
+        properties["publicNetworkAccess"] == "Disabled"
+      )
+  - uid: mondoo-azure-security-function-app-public-network-access-disabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == /azurerm_(linux|windows)_function_app/)
+    mql: |
+      terraform.resources.where(nameLabel == /azurerm_(linux|windows)_function_app/).all(
+        arguments['public_network_access_enabled'] == false
+      )
+  - uid: mondoo-azure-security-function-app-public-network-access-disabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == /azurerm_(linux|windows)_function_app/)
+    mql: |
+      terraform.plan.resourceChanges.where(type == /azurerm_(linux|windows)_function_app/).all(
+        change.after['public_network_access_enabled'] == false
+      )
+  - uid: mondoo-azure-security-function-app-public-network-access-disabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == /azurerm_(linux|windows)_function_app/)
+    mql: |
+      terraform.state.resources.where(type == /azurerm_(linux|windows)_function_app/).all(
+        values['public_network_access_enabled'] == false
+      )
+  # No runtime variant: cnquery azure provider does not expose Microsoft.Search/searchServices resources. Revisit once the provider adds an azure.subscription.searchService resource.
+  - uid: mondoo-azure-security-search-service-public-network-access-disabled
+    title: Ensure Azure AI Search services disable public network access
+    impact: 70
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-6
+    variants:
+      - uid: mondoo-azure-security-search-service-public-network-access-disabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-search-service-public-network-access-disabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-search-service-public-network-access-disabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Azure AI Search services have public network access disabled, requiring index and query traffic to flow over private endpoints.
+
+        **Why this matters**
+
+        - **Network isolation**: Search endpoints often contain document content extracted from sensitive line-of-business systems; exposing the search endpoint to the public internet exposes that content to indexer scraping and credential abuse.
+        - **Private connectivity**: Disabling public access forces ingestion and query traffic through Private Link, so only authorized peered networks can reach the search service.
+        - **Defense in depth**: Even with API-key or role-based authentication, removing public network exposure stops attackers from probing the service for index names, schema, and known-vulnerable query patterns.
+
+        **Risk mitigation**
+
+        - Set the search service's public network access to **Disabled** and configure private endpoints for index, query, and management traffic.
+        - Restrict access to indexer source connectors (Storage, SQL, Cosmos DB) via shared private link resources so the indexer never traverses the public internet.
+      audit: |
+        **Manual Audit via Azure Portal:**
+
+        1. Navigate to **Azure AI Search** in the Azure Portal.
+        2. Select a search service.
+        3. Open **Networking** under **Settings**.
+        4. Verify that **Public network access** is **Disabled**.
+
+        **Automated Audit with Azure CLI:**
+
+        ```bash
+        az search service show --resource-group <ResourceGroupName> --name <SearchServiceName> --query "publicNetworkAccess"
+        ```
+      remediation:
+        - id: portal
+          desc: |
+            To disable public network access on an Azure AI Search service using the Azure Portal:
+
+            1. Navigate to **Azure AI Search** in the Azure Portal.
+            2. Select the search service.
+            3. Under **Settings**, select **Networking**.
+            4. Set **Public network access** to **Disabled**.
+            5. Configure private endpoints for clients and indexers.
+            6. Select **Save**.
+        - id: cli
+          desc: |
+            To disable public network access on an Azure AI Search service using the Azure CLI:
+
+            ```bash
+            az search service update --resource-group <ResourceGroupName> --name <SearchServiceName> --public-network-access disabled
+            ```
+        - id: terraform
+          desc: |
+            To disable public network access on an Azure AI Search service in Terraform:
+
+            ```hcl
+            resource "azurerm_search_service" "example" {
+              name                          = "example-search"
+              resource_group_name           = azurerm_resource_group.example.name
+              location                      = azurerm_resource_group.example.location
+              sku                           = "standard"
+              public_network_access_enabled = false
+            }
+            ```
+        - id: bicep
+          desc: |
+            To disable public network access on an Azure AI Search service in Bicep:
+
+            ```bicep
+            resource searchService 'Microsoft.Search/searchServices@2024-06-01-preview' = {
+              name: 'example-search'
+              location: resourceGroup().location
+              sku: {
+                name: 'standard'
+              }
+              properties: {
+                publicNetworkAccess: 'Disabled'
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/search/service-configure-firewall
+        title: Configure network access and firewall rules for Azure AI Search
+  - uid: mondoo-azure-security-search-service-public-network-access-disabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_search_service")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_search_service").all(
+        arguments['public_network_access_enabled'] == false
+      )
+  - uid: mondoo-azure-security-search-service-public-network-access-disabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_search_service")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_search_service").all(
+        change.after['public_network_access_enabled'] == false
+      )
+  - uid: mondoo-azure-security-search-service-public-network-access-disabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_search_service")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_search_service").all(
+        values['public_network_access_enabled'] == false
+      )
+  - uid: mondoo-azure-security-api-management-internal-vnet-mode
+    title: Ensure API Management uses VNet integration
+    impact: 70
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/pci-dss-4: pcidss-requirement-1-3-2
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-6
+    variants:
+      - uid: mondoo-azure-security-api-management-internal-vnet-mode-azure
+        tags:
+          mondoo.com/filter-title: Azure API Management
+          mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-api-management-internal-vnet-mode-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-api-management-internal-vnet-mode-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-api-management-internal-vnet-mode-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Azure API Management services are deployed with virtual network integration in either **Internal** or **External** mode rather than the default **None** mode, which leaves the gateway entirely on the public internet.
+
+        **Why this matters**
+
+        - **Network segmentation**: API Management gateways often front line-of-business APIs containing customer or partner data; running the gateway with no VNet integration places that traffic on the public internet by default.
+        - **Internal mode** keeps the gateway endpoint fully private and reachable only from peered networks, which is the correct posture for APIs consumed by internal apps or partners over ExpressRoute or VPN.
+        - **External mode** keeps the management plane and developer portal private while still publishing the gateway publicly. This is appropriate for public APIs, but only when paired with WAF and rate-limit policies.
+        - **None mode** offers no network segmentation, leaving every API endpoint and the management plane exposed.
+
+        **Risk mitigation**
+
+        - Deploy API Management in **Internal** mode for internal APIs, and front public APIs with Application Gateway or Azure Front Door over Private Link to an **External**-mode gateway.
+        - Do not run production API Management instances with `virtualNetworkType` set to **None**.
+      audit: |
+        **Manual Audit via Azure Portal:**
+
+        1. Navigate to **API Management services** in the Azure Portal.
+        2. Select a service instance.
+        3. Open **Virtual network** under **Deployment + infrastructure**.
+        4. Verify that the **Virtual network type** is **Internal** or **External**, not **None**.
+
+        **Automated Audit with Azure CLI:**
+
+        ```bash
+        az apim show --resource-group <ResourceGroupName> --name <ApiManagementServiceName> --query "virtualNetworkType"
+        ```
+      remediation:
+        - id: portal
+          desc: |
+            To configure VNet integration on an API Management service using the Azure Portal:
+
+            1. Navigate to **API Management services** in the Azure Portal.
+            2. Select the service instance (must be Developer or Premium SKU for VNet integration).
+            3. Under **Deployment + infrastructure**, select **Virtual network**.
+            4. Set **Virtual network type** to **Internal** (recommended) or **External**.
+            5. Select the target virtual network and subnet.
+            6. Select **Apply**.
+        - id: cli
+          desc: |
+            To configure VNet integration on an API Management service using the Azure CLI:
+
+            ```bash
+            az apim update --resource-group <ResourceGroupName> --name <ApiManagementServiceName> --set virtualNetworkType=Internal virtualNetworkConfiguration.subnetResourceId=<SubnetResourceId>
+            ```
+        - id: terraform
+          desc: |
+            To configure VNet integration on an API Management service in Terraform:
+
+            ```hcl
+            resource "azurerm_api_management" "example" {
+              name                 = "example-apim"
+              location             = azurerm_resource_group.example.location
+              resource_group_name  = azurerm_resource_group.example.name
+              publisher_name       = "Example Publisher"
+              publisher_email      = "publisher@example.com"
+              sku_name             = "Premium_1"
+              virtual_network_type = "Internal"
+
+              virtual_network_configuration {
+                subnet_id = azurerm_subnet.apim.id
+              }
+            }
+            ```
+        - id: bicep
+          desc: |
+            To configure VNet integration on an API Management service in Bicep:
+
+            ```bicep
+            resource apiManagement 'Microsoft.ApiManagement/service@2023-05-01-preview' = {
+              name: 'example-apim'
+              location: resourceGroup().location
+              sku: {
+                name: 'Premium'
+                capacity: 1
+              }
+              properties: {
+                publisherEmail: 'publisher@example.com'
+                publisherName: 'Example Publisher'
+                virtualNetworkType: 'Internal'
+                virtualNetworkConfiguration: {
+                  subnetResourceId: subnet.id
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/api-management/virtual-network-concepts
+        title: Use a virtual network with Azure API Management
+  - uid: mondoo-azure-security-api-management-internal-vnet-mode-azure
+    filters: |
+      asset.platform == "azure"
+    mql: |
+      azure.subscription.apiManagement.services.all(
+        virtualNetworkType == "Internal" || virtualNetworkType == "External"
+      )
+  - uid: mondoo-azure-security-api-management-internal-vnet-mode-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_api_management")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_api_management").all(
+        arguments['virtual_network_type'] == "Internal" ||
+        arguments['virtual_network_type'] == "External"
+      )
+  - uid: mondoo-azure-security-api-management-internal-vnet-mode-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_api_management")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_api_management").all(
+        change.after['virtual_network_type'] == "Internal" ||
+        change.after['virtual_network_type'] == "External"
+      )
+  - uid: mondoo-azure-security-api-management-internal-vnet-mode-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_api_management")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_api_management").all(
+        values['virtual_network_type'] == "Internal" ||
+        values['virtual_network_type'] == "External"
+      )
+  # No runtime variant: cnquery azure provider does not expose Microsoft.AppConfiguration/configurationStores resources. Revisit once the provider adds an azure.subscription.appConfiguration resource.
+  - uid: mondoo-azure-security-appconfiguration-public-network-access-disabled
+    title: Ensure App Configuration stores disable public network access
+    impact: 70
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-6
+    variants:
+      - uid: mondoo-azure-security-appconfiguration-public-network-access-disabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-appconfiguration-public-network-access-disabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-appconfiguration-public-network-access-disabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Azure App Configuration stores have public network access disabled, so configuration keys, feature flags, and Key Vault references can only be read by clients on authorized private networks.
+
+        **Why this matters**
+
+        - **Network isolation**: App Configuration stores commonly hold connection strings, feature flags, and Key Vault references that describe the runtime topology of an application. Exposing the store endpoint to the public internet exposes that topology to anyone who can guess or harvest the endpoint name.
+        - **Private connectivity**: Disabling public access forces clients to read configuration through a private endpoint inside a peered VNet, which prevents access from outside the perimeter even if access keys leak.
+        - **Defense in depth**: Combining Microsoft Entra ID authentication with network-level isolation prevents a leaked access key from being usable from arbitrary networks.
+
+        **Risk mitigation**
+
+        - Set the App Configuration store's public network access to **Disabled** and configure a private endpoint in each consumer VNet.
+        - Disable access key authentication where possible and require Microsoft Entra ID-only access.
+      audit: |
+        **Manual Audit via Azure Portal:**
+
+        1. Navigate to **App Configuration** in the Azure Portal.
+        2. Select a configuration store.
+        3. Open **Networking** under **Settings**.
+        4. On the **Public access** tab, verify that **Public network access** is **Disabled**.
+
+        **Automated Audit with Azure CLI:**
+
+        ```bash
+        az appconfig show --resource-group <ResourceGroupName> --name <ConfigStoreName> --query "publicNetworkAccess"
+        ```
+      remediation:
+        - id: portal
+          desc: |
+            To disable public network access on an App Configuration store using the Azure Portal:
+
+            1. Navigate to **App Configuration** in the Azure Portal.
+            2. Select the configuration store.
+            3. Under **Settings**, select **Networking**.
+            4. On the **Public access** tab, set **Public network access** to **Disabled**.
+            5. Configure private endpoints for authorized consumer subnets.
+            6. Select **Save**.
+        - id: cli
+          desc: |
+            To disable public network access on an App Configuration store using the Azure CLI:
+
+            ```bash
+            az appconfig update --resource-group <ResourceGroupName> --name <ConfigStoreName> --enable-public-network false
+            ```
+        - id: terraform
+          desc: |
+            To disable public network access on an App Configuration store in Terraform:
+
+            ```hcl
+            resource "azurerm_app_configuration" "example" {
+              name                  = "example-appconfig"
+              resource_group_name   = azurerm_resource_group.example.name
+              location              = azurerm_resource_group.example.location
+              sku                   = "standard"
+              public_network_access = "Disabled"
+            }
+            ```
+        - id: bicep
+          desc: |
+            To disable public network access on an App Configuration store in Bicep:
+
+            ```bicep
+            resource appConfig 'Microsoft.AppConfiguration/configurationStores@2024-05-01' = {
+              name: 'example-appconfig'
+              location: resourceGroup().location
+              sku: {
+                name: 'standard'
+              }
+              properties: {
+                publicNetworkAccess: 'Disabled'
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/azure-app-configuration/concept-private-endpoint
+        title: Private access to Azure App Configuration
+  - uid: mondoo-azure-security-appconfiguration-public-network-access-disabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_app_configuration")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_app_configuration").all(
+        arguments['public_network_access'] == "Disabled"
+      )
+  - uid: mondoo-azure-security-appconfiguration-public-network-access-disabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_app_configuration")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_app_configuration").all(
+        change.after['public_network_access'] == "Disabled"
+      )
+  - uid: mondoo-azure-security-appconfiguration-public-network-access-disabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_app_configuration")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_app_configuration").all(
+        values['public_network_access'] == "Disabled"
+      )
+  # No runtime variant: cnquery azure provider does not expose Microsoft.CognitiveServices/accounts resources. Revisit once the provider adds an azure.subscription.cognitiveServices resource.
+  - uid: mondoo-azure-security-cognitive-services-public-network-access-disabled
+    title: Ensure Cognitive Services accounts disable public network access
+    impact: 80
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-6
+    variants:
+      - uid: mondoo-azure-security-cognitive-services-public-network-access-disabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-cognitive-services-public-network-access-disabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-cognitive-services-public-network-access-disabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Azure Cognitive Services (Azure AI Services) accounts have public network access disabled, so prompt content, model inputs, and embeddings only traverse private endpoints inside an authorized VNet.
+
+        **Why this matters**
+
+        - **Sensitive data exposure**: Cognitive Services accounts routinely process unredacted customer documents, user prompts, transcribed audio, and other sensitive payloads. Exposing the inference endpoint to the public internet exposes those payloads to interception of leaked subscription keys and to API-key brute-force attempts.
+        - **Network isolation**: Disabling public access forces inference and management traffic through Private Link, which prevents access from outside the perimeter even when an API key is stolen.
+        - **Defense in depth**: Microsoft Entra ID authentication, customer-managed keys, and content filtering policies are most effective when combined with network-level isolation that blocks direct internet probing of the endpoint.
+
+        **Risk mitigation**
+
+        - Set the Cognitive Services account's public network access to **Disabled** and configure private endpoints in each consumer VNet.
+        - Disable account access keys and require Microsoft Entra ID authentication for production workloads.
+      audit: |
+        **Manual Audit via Azure Portal:**
+
+        1. Navigate to **Azure AI services** (Cognitive Services) in the Azure Portal.
+        2. Select an account.
+        3. Open **Networking** under **Resource Management**.
+        4. On the **Public access** tab, verify that **Allow access from** is set to **Disabled**.
+
+        **Automated Audit with Azure CLI:**
+
+        ```bash
+        az cognitiveservices account show --resource-group <ResourceGroupName> --name <AccountName> --query "properties.publicNetworkAccess"
+        ```
+      remediation:
+        - id: portal
+          desc: |
+            To disable public network access on a Cognitive Services account using the Azure Portal:
+
+            1. Navigate to **Azure AI services** in the Azure Portal.
+            2. Select the account.
+            3. Under **Resource Management**, select **Networking**.
+            4. On the **Public access** tab, set **Allow access from** to **Disabled**.
+            5. Configure private endpoints for authorized consumer subnets.
+            6. Select **Save**.
+        - id: cli
+          desc: |
+            To disable public network access on a Cognitive Services account using the Azure CLI:
+
+            ```bash
+            az resource update --resource-type Microsoft.CognitiveServices/accounts --resource-group <ResourceGroupName> --name <AccountName> --set properties.publicNetworkAccess=Disabled
+            ```
+        - id: terraform
+          desc: |
+            To disable public network access on a Cognitive Services account in Terraform:
+
+            ```hcl
+            resource "azurerm_cognitive_account" "example" {
+              name                          = "example-cognitive"
+              location                      = azurerm_resource_group.example.location
+              resource_group_name           = azurerm_resource_group.example.name
+              kind                          = "OpenAI"
+              sku_name                      = "S0"
+              public_network_access_enabled = false
+            }
+            ```
+        - id: bicep
+          desc: |
+            To disable public network access on a Cognitive Services account in Bicep:
+
+            ```bicep
+            resource cognitiveAccount 'Microsoft.CognitiveServices/accounts@2024-10-01' = {
+              name: 'example-cognitive'
+              location: resourceGroup().location
+              kind: 'OpenAI'
+              sku: {
+                name: 'S0'
+              }
+              properties: {
+                publicNetworkAccess: 'Disabled'
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/ai-services/cognitive-services-virtual-networks
+        title: Configure Azure AI services virtual networks
+  - uid: mondoo-azure-security-cognitive-services-public-network-access-disabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_cognitive_account")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_cognitive_account").all(
+        arguments['public_network_access_enabled'] == false
+      )
+  - uid: mondoo-azure-security-cognitive-services-public-network-access-disabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_cognitive_account")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_cognitive_account").all(
+        change.after['public_network_access_enabled'] == false
+      )
+  - uid: mondoo-azure-security-cognitive-services-public-network-access-disabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_cognitive_account")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_cognitive_account").all(
+        values['public_network_access_enabled'] == false
+      )
+  - uid: mondoo-azure-security-application-gateway-no-public-frontend
+    title: Ensure Application Gateways have at least one private frontend
+    impact: 30
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/pci-dss-4: pcidss-requirement-1-3-2
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-6
+    variants:
+      - uid: mondoo-azure-security-application-gateway-no-public-frontend-azure
+        tags:
+          mondoo.com/filter-title: Azure Application Gateway
+          mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-application-gateway-no-public-frontend-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-application-gateway-no-public-frontend-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-application-gateway-no-public-frontend-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This is an informational check that flags Application Gateways whose every frontend IP configuration is public, so operators can confirm that exposing the gateway directly to the internet is intentional.
+
+        Many production Application Gateways legitimately need a public frontend — that is the entire purpose of the L7 load balancer. This check does not fail on the presence of a public frontend. It fails only when an Application Gateway has *no* private (subnet-attached) frontend, which is a useful trigger for review:
+
+        - Internal-only gateways that are accidentally publishing a public IP show up here.
+        - Hybrid gateways that should expose internal listeners to peered VNets but were misconfigured with only public listeners show up here.
+        - Gateways intentionally fronted by Front Door over Private Link should have a private frontend; their absence is worth confirming.
+
+        Because this is a posture-review trigger and not a definitive misconfiguration, the impact score is informational. Treat a failure as a prompt to read the gateway's listener and routing configuration and confirm that exclusive public exposure is the desired design.
+      audit: |
+        **Manual Audit via Azure Portal:**
+
+        1. Navigate to **Application gateways** in the Azure Portal.
+        2. Select a gateway.
+        3. Open **Frontend IP configurations** under **Settings**.
+        4. Verify that at least one frontend IP configuration is attached to a subnet (Private), unless the gateway is intentionally public-only.
+
+        **Automated Audit with Azure CLI:**
+
+        ```bash
+        az network application-gateway show --resource-group <ResourceGroupName> --name <AppGatewayName> --query "frontendIPConfigurations[].{name:name, subnet:subnet.id, publicIp:publicIPAddress.id}"
+        ```
+      remediation:
+        - id: portal
+          desc: |
+            To add a private frontend IP configuration to an Application Gateway using the Azure Portal:
+
+            1. Navigate to **Application gateways** in the Azure Portal.
+            2. Select the gateway.
+            3. Under **Settings**, select **Frontend IP configurations**.
+            4. Select **Add** and choose **Private**.
+            5. Select the dedicated Application Gateway subnet and either dynamic or static private IP allocation.
+            6. Select **Save**, then update relevant listeners to use the new private frontend.
+
+            If the gateway should be exclusively public, document the decision and suppress this check for the workspace.
+        - id: cli
+          desc: |
+            To add a private frontend IP configuration using the Azure CLI:
+
+            ```bash
+            az network application-gateway frontend-ip create \
+              --resource-group <ResourceGroupName> \
+              --gateway-name <AppGatewayName> \
+              --name privateFrontend \
+              --vnet-name <VNetName> \
+              --subnet <SubnetName> \
+              --private-ip-address <PrivateIPAddress>
+            ```
+        - id: terraform
+          desc: |
+            To define an Application Gateway with at least one private frontend in Terraform, include a `frontend_ip_configuration` block that references a subnet:
+
+            ```hcl
+            resource "azurerm_application_gateway" "example" {
+              name                = "example-appgw"
+              resource_group_name = azurerm_resource_group.example.name
+              location            = azurerm_resource_group.example.location
+
+              sku {
+                name     = "Standard_v2"
+                tier     = "Standard_v2"
+                capacity = 2
+              }
+
+              gateway_ip_configuration {
+                name      = "gatewayIpConfig"
+                subnet_id = azurerm_subnet.appgw.id
+              }
+
+              frontend_ip_configuration {
+                name                          = "privateFrontend"
+                subnet_id                     = azurerm_subnet.appgw.id
+                private_ip_address_allocation = "Dynamic"
+              }
+
+              # ... listeners, backend pools, rules ...
+            }
+            ```
+        - id: bicep
+          desc: |
+            To define an Application Gateway with at least one private frontend in Bicep:
+
+            ```bicep
+            resource appGateway 'Microsoft.Network/applicationGateways@2024-05-01' = {
+              name: 'example-appgw'
+              location: resourceGroup().location
+              properties: {
+                sku: {
+                  name: 'Standard_v2'
+                  tier: 'Standard_v2'
+                  capacity: 2
+                }
+                gatewayIPConfigurations: [
+                  {
+                    name: 'gatewayIpConfig'
+                    properties: {
+                      subnet: {
+                        id: appgwSubnet.id
+                      }
+                    }
+                  }
+                ]
+                frontendIPConfigurations: [
+                  {
+                    name: 'privateFrontend'
+                    properties: {
+                      subnet: {
+                        id: appgwSubnet.id
+                      }
+                      privateIPAllocationMethod: 'Dynamic'
+                    }
+                  }
+                ]
+                // ... listeners, backendAddressPools, requestRoutingRules ...
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/application-gateway/configuration-front-end-ip
+        title: Application Gateway frontend IP address configuration
+  - uid: mondoo-azure-security-application-gateway-no-public-frontend-azure
+    filters: |
+      asset.platform == "azure"
+    mql: |
+      azure.subscription.network.applicationGateways.all(
+        properties["frontendIPConfigurations"].any(
+          _["properties"]["subnet"] != null
+        )
+      )
+  - uid: mondoo-azure-security-application-gateway-no-public-frontend-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_application_gateway")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_application_gateway").all(
+        blocks.where(type == "frontend_ip_configuration").any(
+          arguments['subnet_id'] != null
+        )
+      )
+  - uid: mondoo-azure-security-application-gateway-no-public-frontend-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_application_gateway")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_application_gateway").all(
+        change.after['frontend_ip_configuration'] != null &&
+        change.after['frontend_ip_configuration'].any(
+          _['subnet_id'] != null
+        )
+      )
+  - uid: mondoo-azure-security-application-gateway-no-public-frontend-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_application_gateway")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_application_gateway").all(
+        values['frontend_ip_configuration'] != null &&
+        values['frontend_ip_configuration'].any(
+          _['subnet_id'] != null
+        )
+      )
+  - uid: mondoo-azure-security-servicebus-namespace-cmk-encryption
+    title: Ensure Service Bus namespaces use customer-managed encryption keys
+    impact: 60
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-10
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-azure-security-servicebus-namespace-cmk-encryption-azure
+        tags:
+          mondoo.com/filter-title: Azure Service Bus
+          mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-servicebus-namespace-cmk-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-servicebus-namespace-cmk-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-servicebus-namespace-cmk-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Azure Service Bus namespaces encrypt data at rest with customer-managed keys (CMK) stored in Azure Key Vault, rather than relying on platform-managed keys.
+
+        **Why this matters**
+
+        - **Key custody**: Platform-managed keys are owned and rotated by Microsoft. Customer-managed keys live in a Key Vault that the organization controls, so cryptographic material is governed by the same access policies, rotation schedules, and audit pipeline as other regulated secrets.
+        - **Revocation**: When CMK is enabled, revoking the Key Vault key immediately renders namespace data unreadable, which is a meaningful incident-response lever during a suspected compromise.
+        - **Compliance alignment**: Many regulated frameworks require sensitive workload data at rest to be encrypted with keys the customer manages, especially when the data includes business-impacting messaging.
+
+        **Risk mitigation**
+
+        - Configure CMK on Premium-tier Service Bus namespaces with the key stored in a Key Vault that has soft delete and purge protection enabled.
+        - Pair CMK with infrastructure-layer (double) encryption for workloads that require defense-in-depth at the storage layer.
+
+        Note: Only the Premium SKU supports CMK; Basic and Standard namespaces use platform-managed encryption only.
+      audit: |
+        **Manual Audit via Azure Portal:**
+
+        1. Navigate to **Service Bus** in the Azure Portal.
+        2. Select a Premium-tier namespace.
+        3. Open **Encryption** under **Settings**.
+        4. Verify that the encryption key source is **Customer-managed key** and a Key Vault key is selected.
+
+        **Automated Audit with Azure CLI:**
+
+        ```bash
+        az servicebus namespace show --resource-group <ResourceGroupName> --name <NamespaceName> --query "encryption"
+        ```
+      remediation:
+        - id: portal
+          desc: |
+            To configure CMK on a Service Bus namespace using the Azure Portal:
+
+            1. Ensure the namespace is on the Premium SKU and has a system-assigned or user-assigned managed identity.
+            2. Grant the namespace's identity the **Key Vault Crypto Service Encryption User** role on the target Key Vault.
+            3. Navigate to **Service Bus** and select the namespace.
+            4. Under **Settings**, select **Encryption**.
+            5. Choose **Customer-managed key**, select the Key Vault and key, and **Save**.
+        - id: cli
+          desc: |
+            To configure CMK on a Service Bus namespace using the Azure CLI:
+
+            ```bash
+            az servicebus namespace encryption add \
+              --resource-group <ResourceGroupName> \
+              --namespace-name <NamespaceName> \
+              --encryption-config key-name=<KeyName> key-vault-uri=<KeyVaultUri>
+            ```
+        - id: terraform
+          desc: |
+            To configure CMK on a Service Bus namespace in Terraform:
+
+            ```hcl
+            resource "azurerm_servicebus_namespace" "example" {
+              name                = "example-sb-namespace"
+              location            = azurerm_resource_group.example.location
+              resource_group_name = azurerm_resource_group.example.name
+              sku                 = "Premium"
+              capacity            = 1
+
+              identity {
+                type = "SystemAssigned"
+              }
+
+              customer_managed_key {
+                key_vault_key_id              = azurerm_key_vault_key.example.id
+                infrastructure_encryption_enabled = false
+              }
+            }
+            ```
+        - id: bicep
+          desc: |
+            To configure CMK on a Service Bus namespace in Bicep:
+
+            ```bicep
+            resource serviceBusNamespace 'Microsoft.ServiceBus/namespaces@2024-01-01' = {
+              name: 'example-sb-namespace'
+              location: resourceGroup().location
+              sku: {
+                name: 'Premium'
+                tier: 'Premium'
+                capacity: 1
+              }
+              identity: {
+                type: 'SystemAssigned'
+              }
+              properties: {
+                encryption: {
+                  keySource: 'Microsoft.KeyVault'
+                  keyVaultProperties: [
+                    {
+                      keyName: 'example-key'
+                      keyVaultUri: 'https://example-kv.vault.azure.net'
+                    }
+                  ]
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/service-bus-messaging/configure-customer-managed-key
+        title: Configure customer-managed keys for Azure Service Bus
+  - uid: mondoo-azure-security-servicebus-namespace-cmk-encryption-azure
+    filters: |
+      asset.platform == "azure"
+    mql: |
+      azure.subscription.serviceBus.namespaces.all(
+        cmkKeySource == "Microsoft.KeyVault" && cmkKeys.length > 0
+      )
+  - uid: mondoo-azure-security-servicebus-namespace-cmk-encryption-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_servicebus_namespace")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_servicebus_namespace").all(
+        blocks.where(type == "customer_managed_key") != empty
+      )
+  - uid: mondoo-azure-security-servicebus-namespace-cmk-encryption-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_servicebus_namespace")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_servicebus_namespace").all(
+        change.after['customer_managed_key'] != empty
+      )
+  - uid: mondoo-azure-security-servicebus-namespace-cmk-encryption-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_servicebus_namespace")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_servicebus_namespace").all(
+        values['customer_managed_key'] != empty
+      )
+  - uid: mondoo-azure-security-eventhub-namespace-cmk-encryption
+    title: Ensure Event Hubs namespaces use customer-managed encryption keys
+    impact: 60
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-10
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-azure-security-eventhub-namespace-cmk-encryption-azure
+        tags:
+          mondoo.com/filter-title: Azure Event Hubs
+          mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-eventhub-namespace-cmk-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-eventhub-namespace-cmk-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-eventhub-namespace-cmk-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Azure Event Hubs namespaces encrypt event payloads at rest with customer-managed keys (CMK) stored in Azure Key Vault, rather than relying on platform-managed keys.
+
+        **Why this matters**
+
+        - **Key custody**: Event Hubs persists ingested events on Azure-managed storage for the retention window. Customer-managed keys put the encryption key under the organization's control, so key rotation and revocation are governed by the same policies as other regulated secrets.
+        - **Revocation**: Revoking the Key Vault key renders namespace data unreadable, providing a fast containment lever if a key is suspected of compromise.
+        - **Compliance alignment**: Workloads regulated under HIPAA, PCI DSS, ISO 27001, and SOC 2 commonly require customer-managed encryption for sensitive at-rest data, including streaming telemetry that contains personally identifiable information.
+
+        **Risk mitigation**
+
+        - Configure CMK on Premium or Dedicated tier Event Hubs namespaces using a Key Vault with soft delete and purge protection enabled.
+        - Combine CMK with infrastructure (double) encryption for workloads that require defense-in-depth at the storage layer.
+
+        Note: Only the Premium and Dedicated SKUs support CMK; Basic and Standard namespaces use platform-managed encryption only.
+      audit: |
+        **Manual Audit via Azure Portal:**
+
+        1. Navigate to **Event Hubs** in the Azure Portal.
+        2. Select a Premium or Dedicated tier namespace.
+        3. Open **Encryption** under **Settings**.
+        4. Verify that the encryption key source is **Customer-managed key** and a Key Vault key is selected.
+
+        **Automated Audit with Azure CLI:**
+
+        ```bash
+        az eventhubs namespace show --resource-group <ResourceGroupName> --name <NamespaceName> --query "encryption"
+        ```
+      remediation:
+        - id: portal
+          desc: |
+            To configure CMK on an Event Hubs namespace using the Azure Portal:
+
+            1. Ensure the namespace is on the Premium or Dedicated SKU and has a system-assigned or user-assigned managed identity.
+            2. Grant the namespace's identity the **Key Vault Crypto Service Encryption User** role on the target Key Vault.
+            3. Navigate to **Event Hubs** and select the namespace.
+            4. Under **Settings**, select **Encryption**.
+            5. Choose **Customer-managed key**, select the Key Vault and key, and **Save**.
+        - id: cli
+          desc: |
+            To configure CMK on an Event Hubs namespace using the Azure CLI:
+
+            ```bash
+            az eventhubs namespace encryption add \
+              --resource-group <ResourceGroupName> \
+              --namespace-name <NamespaceName> \
+              --encryption-config key-name=<KeyName> key-vault-uri=<KeyVaultUri>
+            ```
+        - id: terraform
+          desc: |
+            To configure CMK on an Event Hubs namespace in Terraform:
+
+            ```hcl
+            resource "azurerm_eventhub_namespace" "example" {
+              name                = "example-eh-namespace"
+              location            = azurerm_resource_group.example.location
+              resource_group_name = azurerm_resource_group.example.name
+              sku                 = "Premium"
+              capacity            = 1
+
+              identity {
+                type = "SystemAssigned"
+              }
+            }
+
+            resource "azurerm_eventhub_namespace_customer_managed_key" "example" {
+              eventhub_namespace_id = azurerm_eventhub_namespace.example.id
+              key_vault_key_ids     = [azurerm_key_vault_key.example.id]
+            }
+            ```
+        - id: bicep
+          desc: |
+            To configure CMK on an Event Hubs namespace in Bicep:
+
+            ```bicep
+            resource eventHubNamespace 'Microsoft.EventHub/namespaces@2024-01-01' = {
+              name: 'example-eh-namespace'
+              location: resourceGroup().location
+              sku: {
+                name: 'Premium'
+                tier: 'Premium'
+                capacity: 1
+              }
+              identity: {
+                type: 'SystemAssigned'
+              }
+              properties: {
+                encryption: {
+                  keySource: 'Microsoft.KeyVault'
+                  keyVaultProperties: [
+                    {
+                      keyName: 'example-key'
+                      keyVaultUri: 'https://example-kv.vault.azure.net'
+                    }
+                  ]
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/event-hubs/configure-customer-managed-key
+        title: Configure customer-managed keys for Azure Event Hubs
+  - uid: mondoo-azure-security-eventhub-namespace-cmk-encryption-azure
+    filters: |
+      asset.platform == "azure"
+    mql: |
+      azure.subscription.eventHub.namespaces.all(
+        cmkKeySource == "Microsoft.KeyVault" && cmkKeys.length > 0
+      )
+  - uid: mondoo-azure-security-eventhub-namespace-cmk-encryption-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_eventhub_namespace_customer_managed_key")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_eventhub_namespace_customer_managed_key").all(
+        arguments['key_vault_key_ids'] != empty
+      )
+  - uid: mondoo-azure-security-eventhub-namespace-cmk-encryption-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_eventhub_namespace_customer_managed_key")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_eventhub_namespace_customer_managed_key").all(
+        change.after['key_vault_key_ids'] != empty
+      )
+  - uid: mondoo-azure-security-eventhub-namespace-cmk-encryption-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_eventhub_namespace_customer_managed_key")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_eventhub_namespace_customer_managed_key").all(
+        values['key_vault_key_ids'] != empty
+      )
+  # No runtime variant: cnquery azure provider does not expose Microsoft.Search/searchServices resources. Revisit once the provider adds an azure.subscription.searchService resource.
+  - uid: mondoo-azure-security-search-service-cmk-encryption
+    title: Ensure Azure AI Search services enforce customer-managed key encryption
+    impact: 60
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-10
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-azure-security-search-service-cmk-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-search-service-cmk-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-search-service-cmk-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Azure AI Search services enforce customer-managed key (CMK) encryption for indexes and synonym maps, instead of allowing them to fall back to platform-managed keys.
+
+        **Why this matters**
+
+        - **Indexed content sensitivity**: Indexes built by AI Search often mirror sensitive line-of-business content extracted from storage accounts, Cosmos DB, or SQL databases. The indexed copy must be encrypted with keys the organization controls, otherwise CMK on the source data is undermined the moment that data is indexed.
+        - **Key custody**: Customer-managed keys live in a Key Vault that the organization controls, so key rotation, revocation, and access policies follow the organization's existing key-management governance.
+        - **Enforcement vs. opt-in**: Without `encryptionWithCmk.enforcement` set to **Enabled**, individual indexes can be created without specifying a CMK and silently fall back to platform-managed encryption.
+
+        **Risk mitigation**
+
+        - Set the service-level CMK enforcement policy to **Enabled** so any index or synonym map created without a Key Vault key is rejected at creation.
+        - Grant the search service's managed identity the **Key Vault Crypto Service Encryption User** role on the target Key Vault.
+      audit: |
+        **Manual Audit via Azure Portal:**
+
+        1. Navigate to **Azure AI Search** in the Azure Portal.
+        2. Select a search service.
+        3. Open **Keys** under **Settings**.
+        4. Verify that **Encryption with customer-managed keys** is set to **Enforced**.
+
+        **Automated Audit with Azure CLI:**
+
+        ```bash
+        az search service show --resource-group <ResourceGroupName> --name <SearchServiceName> --query "encryptionWithCmk"
+        ```
+      remediation:
+        - id: portal
+          desc: |
+            To enforce CMK on an Azure AI Search service using the Azure Portal:
+
+            1. Navigate to **Azure AI Search** in the Azure Portal.
+            2. Select the search service.
+            3. Under **Settings**, select **Keys**.
+            4. Set **Encryption with customer-managed keys** to **Enforced**.
+            5. Save the change, then create or update each index with a `encryptionKey` reference to a Key Vault key.
+        - id: cli
+          desc: |
+            To enforce CMK on an Azure AI Search service using the Azure CLI, patch the service resource directly:
+
+            ```bash
+            az resource update \
+              --resource-type Microsoft.Search/searchServices \
+              --name <SearchServiceName> \
+              --resource-group <ResourceGroupName> \
+              --set properties.encryptionWithCmk.enforcement=Enabled
+            ```
+        - id: terraform
+          desc: |
+            To enforce CMK on an Azure AI Search service in Terraform:
+
+            ```hcl
+            resource "azurerm_search_service" "example" {
+              name                                     = "example-search"
+              resource_group_name                      = azurerm_resource_group.example.name
+              location                                 = azurerm_resource_group.example.location
+              sku                                      = "standard"
+              customer_managed_key_enforcement_enabled = true
+            }
+            ```
+        - id: bicep
+          desc: |
+            To enforce CMK on an Azure AI Search service in Bicep:
+
+            ```bicep
+            resource searchService 'Microsoft.Search/searchServices@2024-06-01-preview' = {
+              name: 'example-search'
+              location: resourceGroup().location
+              sku: {
+                name: 'standard'
+              }
+              properties: {
+                encryptionWithCmk: {
+                  enforcement: 'Enabled'
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/search/search-security-manage-encryption-keys
+        title: Configure customer-managed keys for data encryption in Azure AI Search
+  - uid: mondoo-azure-security-search-service-cmk-encryption-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_search_service")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_search_service").all(
+        arguments['customer_managed_key_enforcement_enabled'] == true
+      )
+  - uid: mondoo-azure-security-search-service-cmk-encryption-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_search_service")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_search_service").all(
+        change.after['customer_managed_key_enforcement_enabled'] == true
+      )
+  - uid: mondoo-azure-security-search-service-cmk-encryption-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_search_service")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_search_service").all(
+        values['customer_managed_key_enforcement_enabled'] == true
+      )
+  # No runtime variant: cnquery azure provider does not expose Microsoft.AppConfiguration/configurationStores resources. Revisit once the provider adds an azure.subscription.appConfiguration resource.
+  - uid: mondoo-azure-security-appconfiguration-cmk-encryption
+    title: Ensure App Configuration stores use customer-managed encryption keys
+    impact: 70
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-10
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-azure-security-appconfiguration-cmk-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-appconfiguration-cmk-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-appconfiguration-cmk-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Azure App Configuration stores encrypt configuration values at rest with customer-managed keys (CMK) stored in Azure Key Vault, instead of relying on platform-managed keys.
+
+        **Why this matters**
+
+        - **Secret-adjacent data**: App Configuration stores hold connection strings, feature flag definitions, and Key Vault references that describe an application's runtime topology. The Key Vault references themselves are not secrets, but the surrounding context routinely leaks information about which secrets, hosts, and dependencies an application uses.
+        - **Key custody**: Customer-managed keys live in a Key Vault that the organization controls, so key rotation, revocation, and access policies follow the organization's existing key-management governance.
+        - **Compliance alignment**: PCI DSS, ISO 27001, and SOC 2 require customer-managed encryption for sensitive at-rest data, including configuration data that exposes deployment topology.
+
+        **Risk mitigation**
+
+        - Configure the App Configuration store with a managed identity and reference a Key Vault key in the `encryption.key_vault_key_identifier` argument.
+        - Use the Standard tier (CMK is not available on the Free tier) and ensure the target Key Vault has soft delete and purge protection enabled.
+      audit: |
+        **Manual Audit via Azure Portal:**
+
+        1. Navigate to **App Configuration** in the Azure Portal.
+        2. Select a configuration store.
+        3. Open **Encryption** under **Settings**.
+        4. Verify that the encryption key source is **Customer-managed key** and a Key Vault key is selected.
+
+        **Automated Audit with Azure CLI:**
+
+        ```bash
+        az appconfig show --resource-group <ResourceGroupName> --name <ConfigStoreName> --query "encryption"
+        ```
+      remediation:
+        - id: portal
+          desc: |
+            To configure CMK on an App Configuration store using the Azure Portal:
+
+            1. Ensure the store is on the Standard tier and has a system-assigned or user-assigned managed identity.
+            2. Grant the store's identity the **Key Vault Crypto Service Encryption User** role on the target Key Vault.
+            3. Navigate to **App Configuration** and select the store.
+            4. Under **Settings**, select **Encryption**.
+            5. Choose **Customer-managed key**, select the Key Vault key, and **Save**.
+        - id: cli
+          desc: |
+            To configure CMK on an App Configuration store using the Azure CLI:
+
+            ```bash
+            az appconfig update \
+              --resource-group <ResourceGroupName> \
+              --name <ConfigStoreName> \
+              --encryption-key-name <KeyName> \
+              --encryption-key-vault <KeyVaultUri> \
+              --identity-client-id <UserAssignedIdentityClientId>
+            ```
+        - id: terraform
+          desc: |
+            To configure CMK on an App Configuration store in Terraform:
+
+            ```hcl
+            resource "azurerm_app_configuration" "example" {
+              name                = "example-appconfig"
+              resource_group_name = azurerm_resource_group.example.name
+              location            = azurerm_resource_group.example.location
+              sku                 = "standard"
+
+              identity {
+                type         = "UserAssigned"
+                identity_ids = [azurerm_user_assigned_identity.example.id]
+              }
+
+              encryption {
+                key_vault_key_identifier = azurerm_key_vault_key.example.id
+                identity_client_id       = azurerm_user_assigned_identity.example.client_id
+              }
+            }
+            ```
+        - id: bicep
+          desc: |
+            To configure CMK on an App Configuration store in Bicep:
+
+            ```bicep
+            resource appConfig 'Microsoft.AppConfiguration/configurationStores@2024-05-01' = {
+              name: 'example-appconfig'
+              location: resourceGroup().location
+              sku: {
+                name: 'standard'
+              }
+              identity: {
+                type: 'UserAssigned'
+                userAssignedIdentities: {
+                  '${userAssignedIdentity.id}': {}
+                }
+              }
+              properties: {
+                encryption: {
+                  keyVaultProperties: {
+                    keyIdentifier: keyVaultKey.properties.keyUriWithVersion
+                    identityClientId: userAssignedIdentity.properties.clientId
+                  }
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/azure-app-configuration/concept-customer-managed-keys
+        title: Customer-managed keys for Azure App Configuration
+  - uid: mondoo-azure-security-appconfiguration-cmk-encryption-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_app_configuration")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_app_configuration").all(
+        blocks.where(type == "encryption") != empty
+      )
+  - uid: mondoo-azure-security-appconfiguration-cmk-encryption-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_app_configuration")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_app_configuration").all(
+        change.after['encryption'] != empty
+      )
+  - uid: mondoo-azure-security-appconfiguration-cmk-encryption-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_app_configuration")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_app_configuration").all(
+        values['encryption'] != empty
+      )
+  - uid: mondoo-azure-security-function-app-cmk-encryption
+    title: Ensure Function Apps reference a managed identity for Key Vault access
+    impact: 30
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-10
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-azure-security-function-app-cmk-encryption-azure
+        tags:
+          mondoo.com/filter-title: Azure Functions
+          mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-function-app-cmk-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-function-app-cmk-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-function-app-cmk-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This is a soft check that verifies each Function App declares a `keyVaultReferenceIdentity` so that Key Vault references in app settings resolve through a managed identity rather than the App Service shared identity. Setting this property is a prerequisite for the customer-managed-key pattern used to encrypt application secrets and the storage account backing the function host.
+
+        **Why this matters**
+
+        - **Function App encryption surface**: A Function App does not have a single CMK toggle. End-to-end customer-managed encryption requires the backing storage account to use CMK and the function host to read secrets through a managed identity that has access to the Key Vault holding those secrets. The `keyVaultReferenceIdentity` property is the integration point that ties those two halves together.
+        - **Identity-based Key Vault access**: When `keyVaultReferenceIdentity` is set, the function reads secrets using its own managed identity, so revoking that identity's Key Vault access revokes the function's ability to use the secrets. This is a meaningful incident-response lever.
+        - **Posture signal**: A Function App that does not declare this property is almost certainly not participating in a CMK-managed secret flow. The presence of the property does not by itself prove CMK is end-to-end, but its absence is a strong negative signal worth flagging for review.
+
+        **Risk mitigation**
+
+        - Set `key_vault_reference_identity` on `azurerm_linux_function_app` or `azurerm_windows_function_app` to a user-assigned managed identity with `Key Vault Secrets User` on the secrets Key Vault.
+        - Ensure the storage account in `storage_account_name` is itself configured with CMK using `azurerm_storage_account.customer_managed_key`.
+      audit: |
+        **Manual Audit via Azure Portal:**
+
+        1. Navigate to **Function App** in the Azure Portal.
+        2. Select a function app.
+        3. Open **Identity** under **Settings** and confirm a system-assigned or user-assigned identity is configured.
+        4. Open **Configuration** under **Settings** and confirm that **Key Vault reference identity** is set to a managed identity (not **System assigned**, unless that is the intended identity).
+
+        **Automated Audit with Azure CLI:**
+
+        ```bash
+        az functionapp show --resource-group <ResourceGroupName> --name <FunctionAppName> --query "properties.keyVaultReferenceIdentity"
+        ```
+      remediation:
+        - id: portal
+          desc: |
+            To configure a Key Vault reference identity on a Function App using the Azure Portal:
+
+            1. Ensure the function app has a user-assigned managed identity attached under **Identity**.
+            2. Grant that identity **Key Vault Secrets User** on the Key Vault holding application secrets.
+            3. Under **Configuration**, set **Key Vault reference identity** to the user-assigned identity.
+            4. Confirm that the storage account in **Configuration** is itself configured with customer-managed key encryption.
+        - id: cli
+          desc: |
+            To configure a Key Vault reference identity on a Function App using the Azure CLI:
+
+            ```bash
+            az functionapp update \
+              --resource-group <ResourceGroupName> \
+              --name <FunctionAppName> \
+              --set properties.keyVaultReferenceIdentity=<UserAssignedIdentityResourceId>
+            ```
+        - id: terraform
+          desc: |
+            To configure a Key Vault reference identity on a Function App in Terraform:
+
+            ```hcl
+            resource "azurerm_linux_function_app" "example" {
+              name                          = "example-funcapp"
+              resource_group_name           = azurerm_resource_group.example.name
+              location                      = azurerm_resource_group.example.location
+              service_plan_id               = azurerm_service_plan.example.id
+              storage_account_name          = azurerm_storage_account.example.name
+              storage_account_access_key    = azurerm_storage_account.example.primary_access_key
+              key_vault_reference_identity  = azurerm_user_assigned_identity.example.id
+
+              identity {
+                type         = "UserAssigned"
+                identity_ids = [azurerm_user_assigned_identity.example.id]
+              }
+
+              site_config {}
+            }
+            ```
+        - id: bicep
+          desc: |
+            To configure a Key Vault reference identity on a Function App in Bicep:
+
+            ```bicep
+            resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
+              name: 'example-funcapp'
+              location: resourceGroup().location
+              kind: 'functionapp,linux'
+              identity: {
+                type: 'UserAssigned'
+                userAssignedIdentities: {
+                  '${userAssignedIdentity.id}': {}
+                }
+              }
+              properties: {
+                serverFarmId: appServicePlan.id
+                keyVaultReferenceIdentity: userAssignedIdentity.id
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/app-service/app-service-key-vault-references
+        title: Use Key Vault references for App Service and Azure Functions
+  - uid: mondoo-azure-security-function-app-cmk-encryption-azure
+    filters: |
+      asset.platform == "azure"
+    mql: |
+      azure.subscription.functions.functionApps.all(
+        properties["keyVaultReferenceIdentity"] != null &&
+        properties["keyVaultReferenceIdentity"] != ""
+      )
+  - uid: mondoo-azure-security-function-app-cmk-encryption-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == /azurerm_(linux|windows)_function_app/)
+    mql: |
+      terraform.resources.where(nameLabel == /azurerm_(linux|windows)_function_app/).all(
+        arguments['key_vault_reference_identity'] != null &&
+        arguments['key_vault_reference_identity'] != ""
+      )
+  - uid: mondoo-azure-security-function-app-cmk-encryption-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == /azurerm_(linux|windows)_function_app/)
+    mql: |
+      terraform.plan.resourceChanges.where(type == /azurerm_(linux|windows)_function_app/).all(
+        change.after['key_vault_reference_identity'] != null &&
+        change.after['key_vault_reference_identity'] != ""
+      )
+  - uid: mondoo-azure-security-function-app-cmk-encryption-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == /azurerm_(linux|windows)_function_app/)
+    mql: |
+      terraform.state.resources.where(type == /azurerm_(linux|windows)_function_app/).all(
+        values['key_vault_reference_identity'] != null &&
+        values['key_vault_reference_identity'] != ""
+      )
+  - uid: mondoo-azure-security-log-analytics-workspace-cmk-encryption
+    title: Ensure Log Analytics workspaces use a CMK-enabled dedicated cluster
+    impact: 40
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-10
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-azure-security-log-analytics-workspace-cmk-encryption-azure
+        tags:
+          mondoo.com/filter-title: Azure Log Analytics
+          mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-log-analytics-workspace-cmk-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-log-analytics-workspace-cmk-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-log-analytics-workspace-cmk-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Azure Log Analytics workspaces are linked to a dedicated Log Analytics cluster. A cluster link is the prerequisite for customer-managed-key (CMK) encryption of ingested log data: the cluster holds the CMK reference, and every workspace linked to that cluster inherits CMK protection for at-rest log data.
+
+        **Why this matters**
+
+        - **CMK is cluster-scoped**: Standalone workspaces always use platform-managed encryption. Customer-managed encryption for Log Analytics is configured on the dedicated cluster (`Microsoft.OperationalInsights/clusters`) and applies to every workspace linked to that cluster.
+        - **Sensitive log content**: Log Analytics workspaces commonly hold authentication events, KQL detection results, and other security telemetry that should be encrypted with keys the organization controls.
+        - **Posture signal**: A workspace with no linked cluster cannot have CMK applied. The presence of a cluster link is necessary but not sufficient — the cluster itself must also have CMK configured, which this check does not validate directly.
+
+        **Risk mitigation**
+
+        - Create a `Microsoft.OperationalInsights/clusters` resource with `keyVaultProperties` and a system-assigned identity that has access to the Key Vault key.
+        - Link the workspace to the cluster via `azurerm_log_analytics_linked_service` (or the Azure equivalent).
+
+        This check has a lower impact score because cluster-link visibility is a posture signal, not a definitive misconfiguration; the dedicated-cluster requirement also has a high commitment cost (a minimum capacity reservation) that not all workspaces meet.
+      audit: |
+        **Manual Audit via Azure Portal:**
+
+        1. Navigate to **Log Analytics workspaces** in the Azure Portal.
+        2. Select a workspace.
+        3. Open **Properties** under **Settings**.
+        4. Verify that the workspace is linked to a **Dedicated cluster** and the cluster has customer-managed key encryption configured.
+
+        **Automated Audit with Azure CLI:**
+
+        ```bash
+        az monitor log-analytics workspace show --resource-group <ResourceGroupName> --workspace-name <WorkspaceName> --query "features.clusterResourceId"
+        ```
+      remediation:
+        - id: portal
+          desc: |
+            To link a Log Analytics workspace to a CMK-enabled dedicated cluster using the Azure Portal:
+
+            1. Create a dedicated **Log Analytics cluster** (`Microsoft.OperationalInsights/clusters`) with a capacity reservation and a system-assigned managed identity.
+            2. Grant the cluster's identity **Key Vault Crypto Service Encryption User** on the target Key Vault.
+            3. On the cluster, configure **Encryption** with the Key Vault key.
+            4. Link the workspace to the cluster from the cluster's **Linked workspaces** blade.
+        - id: cli
+          desc: |
+            To link a Log Analytics workspace to a CMK-enabled dedicated cluster using the Azure CLI:
+
+            ```bash
+            az monitor log-analytics cluster create \
+              --resource-group <ResourceGroupName> \
+              --name <ClusterName> \
+              --sku-capacity 500 \
+              --identity-type SystemAssigned
+
+            az monitor log-analytics cluster update \
+              --resource-group <ResourceGroupName> \
+              --name <ClusterName> \
+              --key-vault-uri <KeyVaultUri> \
+              --key-name <KeyName> \
+              --key-version <KeyVersion>
+
+            az monitor log-analytics workspace linked-service create \
+              --resource-group <ResourceGroupName> \
+              --workspace-name <WorkspaceName> \
+              --name cluster \
+              --write-access-resource-id <ClusterResourceId>
+            ```
+        - id: terraform
+          desc: |
+            To link a Log Analytics workspace to a CMK-enabled dedicated cluster in Terraform:
+
+            ```hcl
+            resource "azurerm_log_analytics_cluster" "example" {
+              name                = "example-cluster"
+              resource_group_name = azurerm_resource_group.example.name
+              location            = azurerm_resource_group.example.location
+              size_gb             = 500
+
+              identity {
+                type = "SystemAssigned"
+              }
+            }
+
+            resource "azurerm_log_analytics_cluster_customer_managed_key" "example" {
+              log_analytics_cluster_id = azurerm_log_analytics_cluster.example.id
+              key_vault_key_id         = azurerm_key_vault_key.example.id
+            }
+
+            resource "azurerm_log_analytics_linked_service" "example" {
+              resource_group_name = azurerm_resource_group.example.name
+              workspace_id        = azurerm_log_analytics_workspace.example.id
+              read_access_id      = azurerm_log_analytics_cluster.example.id
+            }
+            ```
+        - id: bicep
+          desc: |
+            To link a Log Analytics workspace to a CMK-enabled dedicated cluster in Bicep:
+
+            ```bicep
+            resource cluster 'Microsoft.OperationalInsights/clusters@2022-10-01' = {
+              name: 'example-cluster'
+              location: resourceGroup().location
+              identity: {
+                type: 'SystemAssigned'
+              }
+              sku: {
+                name: 'CapacityReservation'
+                capacity: 500
+              }
+              properties: {
+                keyVaultProperties: {
+                  keyVaultUri: keyVault.properties.vaultUri
+                  keyName: 'example-key'
+                  keyVersion: ''
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/azure-monitor/logs/customer-managed-keys
+        title: Azure Monitor customer-managed key
+  - uid: mondoo-azure-security-log-analytics-workspace-cmk-encryption-azure
+    filters: |
+      asset.platform == "azure"
+    mql: |
+      azure.subscription.monitor.workspaces.all(
+        features.clusterResourceId != null && features.clusterResourceId != ""
+      )
+  - uid: mondoo-azure-security-log-analytics-workspace-cmk-encryption-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_log_analytics_workspace")
+    mql: |
+      terraform.resources.contains(nameLabel == "azurerm_log_analytics_cluster_customer_managed_key")
+  - uid: mondoo-azure-security-log-analytics-workspace-cmk-encryption-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_log_analytics_workspace")
+    mql: |
+      terraform.plan.resourceChanges.contains(type == "azurerm_log_analytics_cluster_customer_managed_key")
+  - uid: mondoo-azure-security-log-analytics-workspace-cmk-encryption-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_log_analytics_workspace")
+    mql: |
+      terraform.state.resources.contains(type == "azurerm_log_analytics_cluster_customer_managed_key")
+  # No runtime variant: cnquery azure provider does not expose `minimumTlsVersion` on azure.subscription.serviceBus.namespaces. Ship Terraform variants only; revisit once the provider adds the field to the Service Bus namespace resource.
+  - uid: mondoo-azure-security-servicebus-namespace-min-tls-1-2
+    title: Ensure Service Bus namespaces enforce TLS 1.2 or higher
+    impact: 70
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    variants:
+      - uid: mondoo-azure-security-servicebus-namespace-min-tls-1-2-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-servicebus-namespace-min-tls-1-2-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-servicebus-namespace-min-tls-1-2-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Azure Service Bus namespaces enforce a minimum TLS version of 1.2 for all client connections. TLS 1.0 and 1.1 are deprecated and have known cryptographic weaknesses.
+
+        **Why this matters**
+
+        - **Protocol weaknesses**: TLS 1.0 and 1.1 are vulnerable to BEAST, POODLE, and downgrade attacks that can expose AMQP and HTTP message traffic in flight.
+        - **Compliance**: PCI DSS, NIST SP 800-53, and HIPAA require TLS 1.2 or higher for data in transit; allowing TLS 1.0 or 1.1 puts the workload out of compliance.
+        - **Downgrade protection**: Setting the namespace-level minimum to TLS 1.2 prevents a misconfigured client or an attacker performing a downgrade from negotiating a weaker protocol.
+
+        **Risk mitigation**
+
+        - Set `minimumTlsVersion` to `1.2` on every namespace.
+        - The Service Bus namespace minimum TLS setting is a property on the namespace itself; this check verifies Infrastructure-as-Code definitions enforce it.
+      audit: |
+        **Manual Audit via Azure Portal:**
+
+        1. Navigate to **Service Bus** in the Azure Portal.
+        2. Select a namespace.
+        3. Open **Configuration** under **Settings**.
+        4. Verify that **Minimum TLS Version** is set to **1.2**.
+
+        **Automated Audit with Azure CLI:**
+
+        ```bash
+        az servicebus namespace show --resource-group <ResourceGroupName> --name <NamespaceName> --query "minimumTlsVersion"
+        ```
+      remediation:
+        - id: portal
+          desc: |
+            To enforce TLS 1.2 on a Service Bus namespace using the Azure Portal:
+
+            1. Navigate to **Service Bus** in the Azure Portal.
+            2. Select the namespace.
+            3. Under **Settings**, select **Configuration**.
+            4. Set **Minimum TLS Version** to **1.2**.
+            5. Select **Save**.
+        - id: cli
+          desc: |
+            To enforce TLS 1.2 on a Service Bus namespace using the Azure CLI:
+
+            ```bash
+            az servicebus namespace update --resource-group <ResourceGroupName> --name <NamespaceName> --minimum-tls-version 1.2
+            ```
+        - id: terraform
+          desc: |
+            To enforce TLS 1.2 on a Service Bus namespace in Terraform:
+
+            ```hcl
+            resource "azurerm_servicebus_namespace" "example" {
+              name                = "example-sb-namespace"
+              location            = azurerm_resource_group.example.location
+              resource_group_name = azurerm_resource_group.example.name
+              sku                 = "Premium"
+              capacity            = 1
+              minimum_tls_version = "1.2"
+            }
+            ```
+        - id: bicep
+          desc: |
+            To enforce TLS 1.2 on a Service Bus namespace in Bicep:
+
+            ```bicep
+            resource serviceBusNamespace 'Microsoft.ServiceBus/namespaces@2024-01-01' = {
+              name: 'example-sb-namespace'
+              location: resourceGroup().location
+              sku: {
+                name: 'Premium'
+                tier: 'Premium'
+                capacity: 1
+              }
+              properties: {
+                minimumTlsVersion: '1.2'
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/service-bus-messaging/transport-layer-security-configure-minimum-version
+        title: Configure the minimum TLS version for an Azure Service Bus namespace
+  - uid: mondoo-azure-security-servicebus-namespace-min-tls-1-2-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_servicebus_namespace")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_servicebus_namespace").all(
+        arguments['minimum_tls_version'] == "1.2"
+      )
+  - uid: mondoo-azure-security-servicebus-namespace-min-tls-1-2-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_servicebus_namespace")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_servicebus_namespace").all(
+        change.after['minimum_tls_version'] == "1.2"
+      )
+  - uid: mondoo-azure-security-servicebus-namespace-min-tls-1-2-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_servicebus_namespace")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_servicebus_namespace").all(
+        values['minimum_tls_version'] == "1.2"
+      )
+  # No runtime variant: cnquery azure provider does not expose `siteConfig.minTlsVersion` on azure.subscription.functions.functionApps. Ship Terraform variants only; revisit once the provider adds site-config TLS fields to the Function App resource.
+  - uid: mondoo-azure-security-function-app-min-tls-1-2
+    title: Ensure Function Apps enforce minimum TLS 1.2 on the site
+    impact: 70
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    variants:
+      - uid: mondoo-azure-security-function-app-min-tls-1-2-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-function-app-min-tls-1-2-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-function-app-min-tls-1-2-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Azure Function Apps enforce a minimum TLS version of 1.2 on the main site, preventing clients from negotiating TLS 1.0 or 1.1 against the function endpoints.
+
+        **Why this matters**
+
+        - **Protocol weaknesses**: TLS 1.0 and 1.1 are vulnerable to BEAST, POODLE, and other downgrade or cryptographic attacks that can expose function request and response bodies in flight.
+        - **HTTPS-only is not enough**: A function app set to HTTPS-only still negotiates whatever TLS versions the site config allows; without an explicit minimum, TLS 1.0/1.1 connections may succeed.
+        - **Compliance**: PCI DSS, NIST SP 800-53, and HIPAA require TLS 1.2 or higher for data in transit; lower versions put the workload out of compliance.
+
+        **Risk mitigation**
+
+        - Set `site_config.minimum_tls_version` to `"1.2"` on every function app (Linux and Windows).
+        - Pair this check with the function-app HTTPS-only check so unencrypted HTTP is rejected and remaining TLS traffic is at least TLS 1.2.
+      audit: |
+        **Manual Audit via Azure Portal:**
+
+        1. Navigate to **Function Apps** in the Azure Portal.
+        2. Select a function app.
+        3. Under **Settings**, open **Configuration** then **General settings**.
+        4. Verify that **Minimum Inbound TLS Version** is **1.2**.
+
+        **Automated Audit with Azure CLI:**
+
+        ```bash
+        az functionapp config show --resource-group <ResourceGroupName> --name <FunctionAppName> --query "minTlsVersion"
+        ```
+      remediation:
+        - id: portal
+          desc: |
+            To enforce TLS 1.2 on a Function App using the Azure Portal:
+
+            1. Navigate to **Function Apps** in the Azure Portal.
+            2. Select the function app.
+            3. Under **Settings**, select **Configuration** then **General settings**.
+            4. Set **Minimum Inbound TLS Version** to **1.2**.
+            5. Select **Save**.
+        - id: cli
+          desc: |
+            To enforce TLS 1.2 on a Function App using the Azure CLI:
+
+            ```bash
+            az functionapp config set --resource-group <ResourceGroupName> --name <FunctionAppName> --min-tls-version 1.2
+            ```
+        - id: terraform
+          desc: |
+            To enforce TLS 1.2 on a Function App in Terraform:
+
+            ```hcl
+            resource "azurerm_linux_function_app" "example" {
+              name                = "example-function"
+              resource_group_name = azurerm_resource_group.example.name
+              location            = azurerm_resource_group.example.location
+              service_plan_id     = azurerm_service_plan.example.id
+              storage_account_name       = azurerm_storage_account.example.name
+              storage_account_access_key = azurerm_storage_account.example.primary_access_key
+
+              https_only = true
+
+              site_config {
+                minimum_tls_version = "1.2"
+              }
+            }
+            ```
+        - id: bicep
+          desc: |
+            To enforce TLS 1.2 on a Function App in Bicep:
+
+            ```bicep
+            resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
+              name: 'example-function'
+              location: resourceGroup().location
+              kind: 'functionapp,linux'
+              properties: {
+                httpsOnly: true
+                serverFarmId: appServicePlan.id
+                siteConfig: {
+                  minTlsVersion: '1.2'
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/app-service/configure-ssl-bindings
+        title: Configure TLS/SSL settings for Azure App Service and Functions
+  - uid: mondoo-azure-security-function-app-min-tls-1-2-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == /azurerm_(linux|windows)_function_app/)
+    mql: |
+      terraform.resources.where(nameLabel == /azurerm_(linux|windows)_function_app/).all(
+        blocks.where(type == "site_config") != empty &&
+        blocks.where(type == "site_config").all(arguments['minimum_tls_version'] == "1.2")
+      )
+  - uid: mondoo-azure-security-function-app-min-tls-1-2-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == /azurerm_(linux|windows)_function_app/)
+    mql: |
+      terraform.plan.resourceChanges.where(type == /azurerm_(linux|windows)_function_app/).all(
+        change.after['site_config'] != empty &&
+        change.after['site_config'].all(_['minimum_tls_version'] == "1.2")
+      )
+  - uid: mondoo-azure-security-function-app-min-tls-1-2-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == /azurerm_(linux|windows)_function_app/)
+    mql: |
+      terraform.state.resources.where(type == /azurerm_(linux|windows)_function_app/).all(
+        values['site_config'] != empty &&
+        values['site_config'].all(_['minimum_tls_version'] == "1.2")
+      )
+  - uid: mondoo-azure-security-api-management-gateway-min-tls-1-2
+    title: Ensure API Management gateway disables TLS 1.0 and TLS 1.1
+    impact: 70
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    variants:
+      - uid: mondoo-azure-security-api-management-gateway-min-tls-1-2-azure
+        tags:
+          mondoo.com/filter-title: Azure API Management
+          mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-api-management-gateway-min-tls-1-2-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-api-management-gateway-min-tls-1-2-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-api-management-gateway-min-tls-1-2-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Azure API Management gateways do not accept TLS 1.0 or TLS 1.1 on either the frontend (client-to-gateway) or backend (gateway-to-API) hops. TLS 1.0 and 1.1 are deprecated and carry known cryptographic weaknesses.
+
+        **Why this matters**
+
+        - **Protocol weaknesses**: TLS 1.0 and 1.1 are vulnerable to BEAST, POODLE, and downgrade attacks that can expose API request and response bodies in flight.
+        - **Gateway position**: An API Management gateway typically sits in front of business-critical APIs; weak protocol negotiation there exposes every API behind the gateway.
+        - **Two hops**: The gateway has independent TLS settings for the inbound (frontend) leg from clients and the outbound (backend) leg to upstream APIs; both must reject TLS 1.0 and 1.1.
+        - **Compliance**: PCI DSS, NIST SP 800-53, and HIPAA require TLS 1.2 or higher for data in transit.
+
+        **Risk mitigation**
+
+        - Set the `Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls10` and `...Protocols.Tls11` custom properties to `"False"` on both the frontend and backend.
+        - Pair this check with cipher-suite hardening (disabling Triple-DES and other legacy ciphers via the same custom-property map).
+      audit: |
+        **Manual Audit via Azure Portal:**
+
+        1. Navigate to **API Management services** in the Azure Portal.
+        2. Select a service instance.
+        3. Under **Security**, open **Protocols + ciphers**.
+        4. Verify that **TLS 1.0** and **TLS 1.1** are **Disabled** for both client and backend connections.
+
+        **Automated Audit with Azure CLI:**
+
+        ```bash
+        az apim show --resource-group <ResourceGroupName> --name <ApiManagementServiceName> --query "customProperties"
+        ```
+      remediation:
+        - id: portal
+          desc: |
+            To disable TLS 1.0 and 1.1 on an API Management gateway using the Azure Portal:
+
+            1. Navigate to **API Management services** in the Azure Portal.
+            2. Select the service instance.
+            3. Under **Security**, select **Protocols + ciphers**.
+            4. Set **TLS 1.0** and **TLS 1.1** to **Disabled** for both client and backend.
+            5. Select **Save**.
+        - id: cli
+          desc: |
+            To disable TLS 1.0 and 1.1 on an API Management gateway using the Azure CLI:
+
+            ```bash
+            az apim update --resource-group <ResourceGroupName> --name <ApiManagementServiceName> \
+              --set customProperties."Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls10"=False \
+                    customProperties."Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls11"=False \
+                    customProperties."Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Backend.Protocols.Tls10"=False \
+                    customProperties."Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Backend.Protocols.Tls11"=False
+            ```
+        - id: terraform
+          desc: |
+            To disable TLS 1.0 and 1.1 on an API Management gateway in Terraform:
+
+            ```hcl
+            resource "azurerm_api_management" "example" {
+              name                = "example-apim"
+              location            = azurerm_resource_group.example.location
+              resource_group_name = azurerm_resource_group.example.name
+              publisher_name      = "Example Publisher"
+              publisher_email     = "publisher@example.com"
+              sku_name            = "Premium_1"
+
+              security {
+                enable_backend_tls10  = false
+                enable_backend_tls11  = false
+                enable_frontend_tls10 = false
+                enable_frontend_tls11 = false
+              }
+            }
+            ```
+        - id: bicep
+          desc: |
+            To disable TLS 1.0 and 1.1 on an API Management gateway in Bicep:
+
+            ```bicep
+            resource apiManagement 'Microsoft.ApiManagement/service@2023-05-01-preview' = {
+              name: 'example-apim'
+              location: resourceGroup().location
+              sku: {
+                name: 'Premium'
+                capacity: 1
+              }
+              properties: {
+                publisherEmail: 'publisher@example.com'
+                publisherName: 'Example Publisher'
+                customProperties: {
+                  'Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls10': 'False'
+                  'Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls11': 'False'
+                  'Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Backend.Protocols.Tls10': 'False'
+                  'Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Backend.Protocols.Tls11': 'False'
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/api-management/api-management-howto-manage-protocols-ciphers
+        title: Manage protocols and ciphers in Azure API Management
+  - uid: mondoo-azure-security-api-management-gateway-min-tls-1-2-azure
+    filters: |
+      asset.platform == "azure"
+    mql: |
+      azure.subscription.apiManagement.services.all(
+        customProperties["Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls10"] != "True" &&
+        customProperties["Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls11"] != "True" &&
+        customProperties["Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Backend.Protocols.Tls10"] != "True" &&
+        customProperties["Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Backend.Protocols.Tls11"] != "True"
+      )
+  - uid: mondoo-azure-security-api-management-gateway-min-tls-1-2-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_api_management")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_api_management").all(
+        blocks.where(type == "security") != empty &&
+        blocks.where(type == "security").all(
+          arguments['enable_frontend_tls10'] != true &&
+          arguments['enable_frontend_tls11'] != true &&
+          arguments['enable_backend_tls10'] != true &&
+          arguments['enable_backend_tls11'] != true
+        )
+      )
+  - uid: mondoo-azure-security-api-management-gateway-min-tls-1-2-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_api_management")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_api_management").all(
+        change.after['security'] != empty &&
+        change.after['security'].all(
+          _['enable_frontend_tls10'] != true &&
+          _['enable_frontend_tls11'] != true &&
+          _['enable_backend_tls10'] != true &&
+          _['enable_backend_tls11'] != true
+        )
+      )
+  - uid: mondoo-azure-security-api-management-gateway-min-tls-1-2-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_api_management")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_api_management").all(
+        values['security'] != empty &&
+        values['security'].all(
+          _['enable_frontend_tls10'] != true &&
+          _['enable_frontend_tls11'] != true &&
+          _['enable_backend_tls10'] != true &&
+          _['enable_backend_tls11'] != true
+        )
+      )
+  # No runtime variant: cnquery azure provider exposes virtual-network-gateway connections but does not surface the typed `ipsecPolicies` array; the strong-IPsec policy check has no runtime analog. Ship Terraform variants only; revisit if the provider adds typed IPsec policy fields to azure.subscription.network.virtualNetworkGateways.connections.
+  - uid: mondoo-azure-security-vpn-gateway-ikev2-strong-ipsec-policy
+    title: Ensure VPN gateway connections use IKEv2 and strong IPsec ciphers
+    impact: 70
+    tags:
+      compliance/bsi-grundschutz-sys15: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-13
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    variants:
+      - uid: mondoo-azure-security-vpn-gateway-ikev2-strong-ipsec-policy-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-vpn-gateway-ikev2-strong-ipsec-policy-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-vpn-gateway-ikev2-strong-ipsec-policy-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Azure VPN gateway connections that define a custom IPsec/IKE policy use IKEv2 with strong cipher suites — AES-256 (or GCM-AES-256) for both IKE and IPsec encryption.
+
+        **Why this matters**
+
+        - **IKEv1 weaknesses**: IKEv1 aggressive mode leaks a hash of the pre-shared key during the handshake and supports deprecated ciphers (DES, 3DES, MD5). An attacker who captures the handshake can perform offline brute-force attacks and decrypt or impersonate the tunnel.
+        - **Weak ciphers cause real downgrades**: A policy that allows AES-128, 3DES, or SHA-1 lets the peer negotiate down to those algorithms; an attacker who controls the network path can force a weaker selection unless the policy excludes them.
+        - **Companion to the IKEv2 gateway check**: The route-based-vs-policy-based gateway check enforces that the gateway *can* speak IKEv2, but it doesn't verify that each connection actually uses IKEv2 with strong ciphers. This check covers the per-connection settings.
+
+        **Risk mitigation**
+
+        - On `azurerm_virtual_network_gateway_connection` resources that define an `ipsec_policy` block, set `ike_encryption` and `ipsec_encryption` to `AES256` or `GCMAES256`.
+        - Avoid `DHGroup1` and `DHGroup2`; prefer `DHGroup14` or higher, with `PFSGroup14` or higher for perfect forward secrecy.
+        - When `ipsec_policy` is omitted, Azure negotiates from a set of default proposals that already exclude IKEv1 on route-based gateways; this check intentionally verifies only connections that pin a policy explicitly so a weak custom policy cannot slip through.
+      audit: |
+        **Manual Audit via Azure Portal:**
+
+        1. Navigate to **Virtual network gateways** in the Azure Portal.
+        2. Select a VPN gateway and open **Connections**.
+        3. For each connection, open **Configuration** and review the **IPsec / IKE policy** settings.
+        4. Verify that **IKE Phase 1 Encryption** and **IPsec Encryption** use **AES256** or **GCMAES256**, and that Diffie-Hellman groups are 14 or higher.
+
+        **Automated Audit with Azure CLI:**
+
+        ```bash
+        az network vpn-connection list --resource-group <ResourceGroupName> --query "[].{Name:name, IpsecPolicies:ipsecPolicies}"
+        ```
+      remediation:
+        - id: portal
+          desc: |
+            To configure a strong IPsec/IKE policy on a VPN gateway connection using the Azure Portal:
+
+            1. Navigate to **Virtual network gateways** in the Azure Portal.
+            2. Select the VPN gateway and open **Connections**.
+            3. Select the connection and open **Configuration**.
+            4. Enable **Custom IPsec / IKE policy** and set IKE and IPsec encryption to **AES256** or **GCMAES256**, integrity to **SHA256**, and Diffie-Hellman group to **DHGroup14** (or higher).
+            5. Select **Save**.
+        - id: cli
+          desc: |
+            To configure a strong IPsec/IKE policy on a VPN gateway connection using the Azure CLI:
+
+            ```bash
+            az network vpn-connection ipsec-policy add \
+              --connection-name <ConnectionName> \
+              --resource-group <ResourceGroupName> \
+              --ike-encryption AES256 \
+              --ike-integrity SHA256 \
+              --dh-group DHGroup14 \
+              --ipsec-encryption AES256 \
+              --ipsec-integrity SHA256 \
+              --pfs-group PFS2048 \
+              --sa-lifetime 27000 \
+              --sa-max-size 102400000
+            ```
+        - id: terraform
+          desc: |
+            To configure a strong IPsec/IKE policy on a VPN gateway connection in Terraform:
+
+            ```hcl
+            resource "azurerm_virtual_network_gateway_connection" "example" {
+              name                = "example-connection"
+              location            = azurerm_resource_group.example.location
+              resource_group_name = azurerm_resource_group.example.name
+
+              type                       = "IPsec"
+              virtual_network_gateway_id = azurerm_virtual_network_gateway.example.id
+              local_network_gateway_id   = azurerm_local_network_gateway.example.id
+
+              shared_key = var.shared_key
+
+              ipsec_policy {
+                ike_encryption   = "AES256"
+                ike_integrity    = "SHA256"
+                ipsec_encryption = "AES256"
+                ipsec_integrity  = "SHA256"
+                dh_group         = "DHGroup14"
+                pfs_group        = "PFS2048"
+                sa_datasize      = 102400000
+                sa_lifetime      = 27000
+              }
+            }
+            ```
+        - id: bicep
+          desc: |
+            To configure a strong IPsec/IKE policy on a VPN gateway connection in Bicep:
+
+            ```bicep
+            resource vpnConnection 'Microsoft.Network/connections@2024-05-01' = {
+              name: 'example-connection'
+              location: resourceGroup().location
+              properties: {
+                connectionType: 'IPsec'
+                virtualNetworkGateway1: {
+                  id: vpnGateway.id
+                  properties: {}
+                }
+                localNetworkGateway2: {
+                  id: localGateway.id
+                  properties: {}
+                }
+                sharedKey: sharedKey
+                ipsecPolicies: [
+                  {
+                    saLifeTimeSeconds: 27000
+                    saDataSizeKilobytes: 102400000
+                    ipsecEncryption: 'AES256'
+                    ipsecIntegrity: 'SHA256'
+                    ikeEncryption: 'AES256'
+                    ikeIntegrity: 'SHA256'
+                    dhGroup: 'DHGroup14'
+                    pfsGroup: 'PFS2048'
+                  }
+                ]
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/vpn-gateway/vpn-gateway-about-compliance-crypto
+        title: Configure cryptographic requirements for Azure VPN gateway connections
+  - uid: mondoo-azure-security-vpn-gateway-ikev2-strong-ipsec-policy-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_virtual_network_gateway_connection")
+    mql: |
+      terraform.resources.where(nameLabel == "azurerm_virtual_network_gateway_connection").where(blocks.where(type == "ipsec_policy").length > 0).all(
+        blocks.where(type == "ipsec_policy").all(
+          arguments['ike_encryption'] == "AES256" || arguments['ike_encryption'] == "GCMAES256"
+        ) &&
+        blocks.where(type == "ipsec_policy").all(
+          arguments['ipsec_encryption'] == "AES256" || arguments['ipsec_encryption'] == "GCMAES256"
+        )
+      )
+  - uid: mondoo-azure-security-vpn-gateway-ikev2-strong-ipsec-policy-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_virtual_network_gateway_connection")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_virtual_network_gateway_connection").where(change.after['ipsec_policy'] != empty).all(
+        change.after['ipsec_policy'].all(
+          _['ike_encryption'] == "AES256" || _['ike_encryption'] == "GCMAES256"
+        ) &&
+        change.after['ipsec_policy'].all(
+          _['ipsec_encryption'] == "AES256" || _['ipsec_encryption'] == "GCMAES256"
+        )
+      )
+  - uid: mondoo-azure-security-vpn-gateway-ikev2-strong-ipsec-policy-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_virtual_network_gateway_connection")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_virtual_network_gateway_connection").where(values['ipsec_policy'] != empty).all(
+        values['ipsec_policy'].all(
+          _['ike_encryption'] == "AES256" || _['ike_encryption'] == "GCMAES256"
+        ) &&
+        values['ipsec_policy'].all(
+          _['ipsec_encryption'] == "AES256" || _['ipsec_encryption'] == "GCMAES256"
+        )
+      )
+  # No transit-encryption check for Azure AI Search: the data and management endpoints (`*.search.windows.net`) are HTTPS-only by Microsoft platform design, with TLS 1.2+ enforced by the service. `azurerm_search_service` exposes no `tls_min_version` argument and the runtime resource has no TLS-version field. There is no meaningful misconfiguration to detect.
+  # No transit-encryption check for Azure App Configuration: the data plane endpoint (`*.azconfig.io`) is HTTPS-only by Microsoft platform design with TLS 1.2+ enforced by the service. `azurerm_app_configuration` exposes no `tls_min_version` argument. There is no meaningful misconfiguration to detect.
+  # No transit-encryption check for Azure Cognitive Services: the data plane endpoints (`*.cognitiveservices.azure.com`) are HTTPS-only by Microsoft platform design with TLS 1.2+ enforced by the service. `azurerm_cognitive_account` exposes no `tls_min_version` argument and the cnquery azure provider does not expose Cognitive Services accounts. There is no meaningful misconfiguration to detect.
+  # No transit-encryption check for Azure Log Analytics workspace ingestion: TLS 1.2+ is enforced by Microsoft Azure Monitor platform policy across all ingestion endpoints (since 2022). Neither `azurerm_log_analytics_workspace` nor the cnquery `azure.subscription.monitor.workspaces` resource exposes a per-workspace TLS-version toggle. There is no meaningful misconfiguration to detect at the workspace level.
+  # No transit-encryption check for Azure Databricks workspaces: workspace endpoints (`*.azuredatabricks.net`) are HTTPS-only by Microsoft platform design with TLS 1.2+ enforced by the service. `azurerm_databricks_workspace` exposes no `tls_min_version` argument and the runtime resource has no TLS-version field. There is no meaningful misconfiguration to detect.
