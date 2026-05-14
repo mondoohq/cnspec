@@ -1648,8 +1648,7 @@ queries:
   - uid: mondoo-aws-security-access-keys-rotated-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_iam_access_key")
     mql: |
-      creationDate = parse.date(terraform.state.resources.where(type == "aws_iam_access_key").map(values.create_date).first)
-      time.now - creationDate
+      terraform.state.resources.where(type == "aws_iam_access_key").all(time.now - parse.date(values.create_date) < props.mondooAWSSecurityMaxAccessKeyAge * time.day)
   - uid: mondoo-aws-security-mfa-enabled-for-iam-console-access
     title: Ensure MFA is enabled for all IAM users with console access
     impact: 90
@@ -3345,10 +3344,18 @@ queries:
       )
   - uid: mondoo-aws-security-ec2-imdsv2-check-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains( type == "aws_instance")
-    mql: terraform.plan.resourceChanges.where( type == "aws_instance" ).all( change.after.metadata_options[0].http_endpoint == "disabled" || change.after.metadata_options[0].http_tokens == "required" )
+    mql: |
+      terraform.plan.resourceChanges.where( type == "aws_instance" ).all(
+        change.after.metadata_options != empty && change.after.metadata_options[0].http_endpoint == "disabled" ||
+        change.after.metadata_options != empty && change.after.metadata_options[0].http_tokens == "required"
+      )
   - uid: mondoo-aws-security-ec2-imdsv2-check-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains( type == "aws_instance")
-    mql: terraform.state.resources.where( type == "aws_instance" ).all( values.metadata_options[0].http_endpoint == "disabled" || values.metadata_options[0].http_tokens == "required" )
+    mql: |
+      terraform.state.resources.where( type == "aws_instance" ).all(
+        values.metadata_options != empty && values.metadata_options[0].http_endpoint == "disabled" ||
+        values.metadata_options != empty && values.metadata_options[0].http_tokens == "required"
+      )
   - uid: mondoo-aws-security-ec2-imdsv2-check-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::Instance")
     mql: |
@@ -3653,7 +3660,7 @@ queries:
         destination != empty &&
         destinationType == "cloud-watch-logs" &&
         deliverLogsStatus == "SUCCESS" &&
-        trafficType == "REJECT" || trafficType == "ALL"
+        trafficType.in(["REJECT", "ALL"])
       )
   - uid: mondoo-aws-security-vpc-flow-logs-enabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_flow_log")
@@ -4008,34 +4015,29 @@ queries:
     filters: asset.platform == "aws-lambda-function"
     mql: |
       aws.lambda.function.concurrency > 0
-      aws.lambda.function.concurrency <= 100
   - uid: mondoo-aws-security-lambda-concurrency-check-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_lambda_function")
     mql: |
       terraform.resources.where(nameLabel == "aws_lambda_function").all(
-        arguments.reserved_concurrent_executions > 0 &&
-        arguments.reserved_concurrent_executions <= 100
+        arguments.reserved_concurrent_executions > 0
       )
   - uid: mondoo-aws-security-lambda-concurrency-check-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_lambda_function")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_lambda_function").all(
-        change.after.reserved_concurrent_executions > 0 &&
-        change.after.reserved_concurrent_executions <= 100
+        change.after.reserved_concurrent_executions > 0
       )
   - uid: mondoo-aws-security-lambda-concurrency-check-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_lambda_function")
     mql: |
       terraform.state.resources.where(type == "aws_lambda_function").all(
-        values.reserved_concurrent_executions > 0 &&
-        values.reserved_concurrent_executions <= 100
+        values.reserved_concurrent_executions > 0
       )
   - uid: mondoo-aws-security-lambda-concurrency-check-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Lambda::Function")
     mql: |
       cloudformation.template.resources.where(type == "AWS::Lambda::Function").all(
-      properties['ReservedConcurrentExecutions'] > 0 &&
-      properties['ReservedConcurrentExecutions'] <= 100
+      properties['ReservedConcurrentExecutions'] > 0
       )
   - uid: mondoo-aws-security-lambda-function-public-access-prohibited
     title: Ensure the policy attached to the lambda function prohibits public access
@@ -4055,19 +4057,19 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-3
       compliance/vda-isa-5: vda-isa-5-4-1-1
     variants:
-      - uid: mondoo-aws-lambda-function-public-access-prohibited-aws
+      - uid: mondoo-aws-security-lambda-function-public-access-prohibited-aws
         tags:
           mondoo.com/filter-title: AWS Lambda Function
           mondoo.com/filter-icon: aws
-      - uid: mondoo-aws-lambda-function-public-access-prohibited-terraform-hcl
+      - uid: mondoo-aws-security-lambda-function-public-access-prohibited-terraform-hcl
         tags:
           mondoo.com/filter-title: Terraform HCL
           mondoo.com/filter-icon: terraform
-      - uid: mondoo-aws-lambda-function-public-access-prohibited-terraform-plan
+      - uid: mondoo-aws-security-lambda-function-public-access-prohibited-terraform-plan
         tags:
           mondoo.com/filter-title: Terraform Plan
           mondoo.com/filter-icon: terraform
-      - uid: mondoo-aws-lambda-function-public-access-prohibited-terraform-state
+      - uid: mondoo-aws-security-lambda-function-public-access-prohibited-terraform-state
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
@@ -4183,24 +4185,24 @@ queries:
         title: AWS Lambda Security
       - url: https://docs.aws.amazon.com/lambda/latest/dg/access-control-resource-based.html
         title: AWS Lambda Resource-Based Policies
-  - uid: mondoo-aws-lambda-function-public-access-prohibited-aws
+  - uid: mondoo-aws-security-lambda-function-public-access-prohibited-aws
     filters: |
       asset.platform == "aws-lambda-function"
     mql: |
       aws.lambda.function.policy.Statement.where(Effect == "Allow").all(Principal {AWS {_ != "*"}})
-  - uid: mondoo-aws-lambda-function-public-access-prohibited-terraform-hcl
+  - uid: mondoo-aws-security-lambda-function-public-access-prohibited-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_lambda_permission")
     mql: |
       terraform.resources.where(nameLabel == "aws_lambda_permission").none(
         arguments.principal == "*"
       )
-  - uid: mondoo-aws-lambda-function-public-access-prohibited-terraform-plan
+  - uid: mondoo-aws-security-lambda-function-public-access-prohibited-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_lambda_permission")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_lambda_permission").none(
         change.after.principal == "*"
       )
-  - uid: mondoo-aws-lambda-function-public-access-prohibited-terraform-state
+  - uid: mondoo-aws-security-lambda-function-public-access-prohibited-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_lambda_permission")
     mql: |
       terraform.state.resources.where(type == "aws_lambda_permission").none(
@@ -4710,6 +4712,7 @@ queries:
     filters: asset.platform == "aws-rds-dbcluster"
     mql: |
       clusterParameterGroup = aws.rds.dbcluster.parameterGroupName
+      aws.rds.clusterParameterGroups.where(name == clusterParameterGroup) != empty
       aws.rds.clusterParameterGroups.where(name == clusterParameterGroup)
         .all(
           parameters.where(name == 'ssl').any(value == 1)
@@ -4728,7 +4731,7 @@ queries:
       terraform.resources.where(nameLabel == "aws_rds_cluster_parameter_group" && arguments.family == /postgres/).all(
         blocks.any(
           attributes.name.value =='ssl'
-            && attributes.value.value == 1
+            && attributes.value.value == "1"
         )
       )
   - uid: mondoo-aws-security-rds-cluster-parameter-group-ssl-terraform-plan
@@ -5803,7 +5806,7 @@ queries:
   - uid: mondoo-aws-security-ec2-volume-inuse-check-aws
     filters: asset.platform == "aws-ebs-volume" && aws.ec2.volume.attachments != empty
     mql: |
-      aws.ec2.volume.attachments.any(DeleteOnTermination == true)
+      aws.ec2.volume.attachments.all(DeleteOnTermination == true)
   - uid: mondoo-aws-security-ec2-volume-inuse-check-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_instance")
     mql: |
@@ -6878,7 +6881,7 @@ queries:
   - uid: mondoo-aws-security-cloudwatch-log-group-encrypted-aws
     filters: asset.platform == "aws-cloudwatch-loggroup"
     mql: |
-      aws.cloudwatch.loggroup.kmsKey != empty
+      aws.cloudwatch.loggroup.kmsKey != null && aws.cloudwatch.loggroup.kmsKey.keyManager == "CUSTOMER"
   - uid: mondoo-aws-security-cloudwatch-log-group-encrypted-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_group")
     mql: |
@@ -9282,7 +9285,7 @@ queries:
         **Risk mitigation**
 
         - Prevents unauthorized access by restricting inbound and outbound traffic.
-        - Reduces exposure to external attacks (e.g., brute force, malware injections).
+        - Reduces exposure to external attacks such as brute force or malware injection.
         - Ensures compliance with industry best practices and cloud security standards.
       remediation:
         - id: console
@@ -9294,7 +9297,7 @@ queries:
             3.  Identify security groups with inbound rules allowing 0.0.0.0/0 or ::/0.
             4.  If a rule allows unrestricted access, modify it:
               - Select Edit inbound rules.
-              - Restrict the source IP range to trusted networks (e.g., corporate VPN, private subnets, specific IPs).
+              - Restrict the source IP range to trusted networks such as a corporate VPN, private subnets, or specific IPs.
               - Select Save changes.
             5.  Repeat for outbound rules, ensuring traffic is limited to necessary destinations.
         - id: cli
@@ -9313,7 +9316,7 @@ queries:
             --ip-permissions IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges='[{CidrIp=0.0.0.0/0}]'
             ```
 
-            Add a restricted rule (e.g., allow SSH only from a trusted IP range):
+            Add a restricted rule that allows SSH only from a trusted IP range:
 
             ```bash
             aws ec2 authorize-security-group-ingress \
@@ -9435,10 +9438,7 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform Plan
           mondoo.com/filter-icon: terraform
-      - uid: mondoo-aws-security-no-static-credentials-in-providers-terraform-state
-        tags:
-          mondoo.com/filter-title: Terraform State
-          mondoo.com/filter-icon: terraform
+      # No terraform-state variant: Terraform state files do not preserve provider credentials, so the check would always trivially pass.
     docs:
       desc: |
         This check ensures that AWS provider configurations in Terraform do not contain hard-coded access keys or secret keys. Hard-coded credentials pose a significant security risk, especially if the Terraform configuration is committed to version control systems.
@@ -9524,11 +9524,6 @@ queries:
         _['expressions']['access_key'] == null
         _['expressions']['secret_key'] == null
       }
-  - uid: mondoo-aws-security-no-static-credentials-in-providers-terraform-state
-    filters: asset.platform == "terraform-state"
-    mql: |
-      # Terraform state does not store provider credentials, so this check passes if no credentials are found in configuration
-      true
   - uid: mondoo-aws-security-api-gw-cache-enabled-and-encrypted
     title: Ensure API Gateway cache is enabled and encrypted
     impact: 70
@@ -9651,7 +9646,8 @@ queries:
     filters: asset.platform == "aws-gateway-restapi"
     mql: |
       aws.apigateway.restapi.stages.all(
-        methodSettings['*/*']['CacheDataEncrypted'] == true || methodSettings == empty
+        methodSettings['*/*']['CachingEnabled'] == true &&
+        methodSettings['*/*']['CacheDataEncrypted'] == true
       )
   - uid: mondoo-aws-security-api-gw-cache-enabled-and-encrypted-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_api_gateway_method_settings")
@@ -9694,23 +9690,12 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-10-2-1
       compliance/soc2-2017: soc2-control-cc7-2-1
       compliance/vda-isa-5: vda-isa-5-5-2-4
+    # No Terraform variants: aws_api_gateway_method_settings stores logging level per-method which doesn't round-trip cleanly via .resources() iteration
     variants:
       - uid: mondoo-aws-security-api-gw-execution-logging-enabled-aws
         tags:
           mondoo.com/filter-title: AWS Gateway REST API
           mondoo.com/filter-icon: aws
-      - uid: mondoo-aws-security-api-gw-execution-logging-enabled-terraform-hcl
-        tags:
-          mondoo.com/filter-title: Terraform HCL
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-aws-security-api-gw-execution-logging-enabled-terraform-plan
-        tags:
-          mondoo.com/filter-title: Terraform Plan
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-aws-security-api-gw-execution-logging-enabled-terraform-state
-        tags:
-          mondoo.com/filter-title: Terraform State
-          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that Amazon API Gateway stages have access logging enabled. Access logs capture detailed information about API requests, which is essential for monitoring, troubleshooting, and security analysis.
@@ -9737,7 +9722,7 @@ queries:
             2.  Select the desired API and stage.
             3.  Go to the "Logs/Tracing" tab.
             4.  Enable "Access Logging" and specify a CloudWatch Log Group for storing logs.
-            5.  Define a log format (e.g., JSON format with relevant context variables).
+            5.  Define a log format such as JSON with relevant context variables.
             6.  Save the changes.
         - id: cli
           desc: |
@@ -9750,33 +9735,7 @@ queries:
               --patch-operations op=replace,path=/accessLogSettings/destinationArn,value=<log-group-arn> \
               op=replace,path=/accessLogSettings/format,value='<log-format>'
             ```
-        - id: terraform
-          desc: |
-            To ensure API Gateway stages have execution logging enabled in Terraform, enable access logging for API Gateway stages:
-
-            ```hcl
-            resource "aws_api_gateway_stage" "example" {
-              deployment_id = aws_api_gateway_deployment.example.id
-              rest_api_id   = aws_api_gateway_rest_api.example.id
-              stage_name    = "prod"
-
-              access_log_settings {
-                destination_arn = aws_cloudwatch_log_group.api_gw.arn
-                format          = jsonencode({
-                  requestId      = "$context.requestId"
-                  ip             = "$context.identity.sourceIp"
-                  caller         = "$context.identity.caller"
-                  user           = "$context.identity.user"
-                  requestTime    = "$context.requestTime"
-                  httpMethod     = "$context.httpMethod"
-                  resourcePath   = "$context.resourcePath"
-                  status         = "$context.status"
-                  protocol       = "$context.protocol"
-                  responseLength = "$context.responseLength"
-                })
-              }
-            }
-            ```
+        # No Terraform remediation: aws_api_gateway_method_settings stores logging level per-method which doesn't round-trip cleanly via .resources() iteration
         - id: cloudformation
           desc: |
             To ensure API Gateway stages have execution logging enabled in CloudFormation:
@@ -9808,33 +9767,6 @@ queries:
         methodSettings['*/*'] != empty &&
         methodSettings['*/*']['LoggingLevel'] != "" &&
         methodSettings['*/*']['LoggingLevel'] != "OFF"
-      )
-  - uid: mondoo-aws-security-api-gw-execution-logging-enabled-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_api_gateway_stage" || nameLabel == "aws_apigatewayv2_stage")
-    mql: |
-      terraform.resources.where( nameLabel == "aws_api_gateway_stage").all(
-        blocks.one(type == "access_log_settings" && arguments["destination_arn"] != "" )
-      )
-      terraform.resources.where( nameLabel == "aws_apigatewayv2_stage").all(
-        blocks.one(type == "access_log_settings" && arguments["destination_arn"] != "" )
-      )
-  - uid: mondoo-aws-security-api-gw-execution-logging-enabled-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_api_gateway_stage" || type == "aws_apigatewayv2_stage")
-    mql: |
-      terraform.plan.resourceChanges.where(type == "aws_api_gateway_stage").all(
-        change.after.access_log_settings != empty && change.after.access_log_settings[0].destination_arn != ""
-      )
-      terraform.plan.resourceChanges.where(type == "aws_apigatewayv2_stage").all(
-        change.after.access_log_settings != empty && change.after.access_log_settings[0].destination_arn != ""
-      )
-  - uid: mondoo-aws-security-api-gw-execution-logging-enabled-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_api_gateway_stage" || type == "aws_apigatewayv2_stage")
-    mql: |
-      terraform.state.resources.where(type == "aws_api_gateway_stage").all(
-        values.access_log_settings != empty && values.access_log_settings[0].destination_arn != ""
-      )
-      terraform.state.resources.where(type == "aws_apigatewayv2_stage").all(
-        values.access_log_settings != empty && values.access_log_settings[0].destination_arn != ""
       )
   - uid: mondoo-aws-security-api-gw-require-authentication
     title: Ensure API Gateway methods require authentication
@@ -9891,7 +9823,7 @@ queries:
             1.  Navigate to the Amazon API Gateway Console.
             2.  Select the desired API and resource/method.
             3.  Go to the "Method Request" section.
-            4.  Set "Authorization" to a valid method (e.g., AWS_IAM, COGNITO_USER_POOLS, CUSTOM).
+            4.  Set "Authorization" to a valid method such as AWS_IAM, COGNITO_USER_POOLS, or CUSTOM.
             5.  If "Authorization" must be NONE, enable "API Key Required".
             6.  Save the changes.
         - id: cli
@@ -10529,7 +10461,7 @@ queries:
       aws.iam.policies.where(isAttachable == true) {
         defaultVersion.document.where(_['Statement'] != empty) {
           _['Statement'].all(
-            _['Resource'] != "*" || _['Effect'].upcase == "DENY"
+            _['Resource'].toString().contains("*") == false && _['Action'].toString().contains("*") == false || _['Effect'].upcase == "DENY"
           )
         }
       }
@@ -13217,7 +13149,7 @@ queries:
 
         Without tag immutability, an attacker or misconfigured pipeline could overwrite a trusted image tag with a malicious or vulnerable image:
 
-        - Deployments referencing a specific tag (e.g., `v1.2.3`) could silently pull a different image.
+        - Deployments referencing a specific tag such as `v1.2.3` could silently pull a different image.
         - Supply chain attacks become possible by replacing known-good images with compromised ones.
         - Audit trails become unreliable when tags can point to different images over time.
 
@@ -13524,7 +13456,7 @@ queries:
             3. Select the task definition to review.
             4. For each container definition, check the Storage and logging section.
             5. Enable Read only root file system.
-            6. Add volume mounts for any directories that require write access (e.g., `/tmp`, `/var/log`).
+            6. Add volume mounts for any directories that require write access such as `/tmp` or `/var/log`.
             7. Create a new revision with the updated settings.
         - id: cli
           desc: |
@@ -13687,7 +13619,7 @@ queries:
             2. Select Task definitions in the left panel.
             3. Select the task definition to review.
             4. For each container definition, check the Storage and logging section.
-            5. Configure a log driver (e.g., `awslogs` for CloudWatch Logs).
+            5. Configure a log driver such as `awslogs` for CloudWatch Logs.
             6. Specify the log group, region, and stream prefix.
             7. Create a new revision with the updated settings.
         - id: cli
@@ -14312,7 +14244,7 @@ queries:
             2. Select the EKS cluster you want to configure.
             3. In the Networking tab, select Manage networking.
             4. Under Advanced Settings, configure the Public access CIDR restrictions.
-            5. Remove 0.0.0.0/0 and add only the specific CIDR blocks that need access (e.g., your corporate network).
+            5. Remove 0.0.0.0/0 and add only the specific CIDR blocks that need access, such as your corporate network.
             6. Select Save changes.
         - id: cli
           desc: |
@@ -16510,7 +16442,7 @@ queries:
 
         - An attacker with `sqs:SendMessage` permissions can inject malformed messages that cause processing failures, silently dropping security-relevant events such as CloudTrail notifications, GuardDuty alerts, or incident response triggers.
         - Without a DLQ, failed messages are silently discarded after the maximum receive count, leaving no forensic evidence of the attack or the lost events.
-        - SQS queues used in security pipelines (such as S3 event notifications triggering security scans, or SNS-to-SQS alert routing) become single points of failure when malformed messages can silently disrupt processing.
+        - SQS queues used in security pipelines such as S3 event notifications triggering security scans or SNS-to-SQS alert routing become single points of failure when malformed messages can silently disrupt processing.
 
         **Risk mitigation**
 
@@ -18241,7 +18173,7 @@ queries:
             2. Select Task definitions in the left panel.
             3. Select the task definition to review.
             4. For each container definition, check the User setting under Container configuration.
-            5. Set the User field to a non-root user (e.g., `1000` or `appuser`).
+            5. Set the User field to a non-root user such as `1000` or `appuser`.
             6. Create a new revision with the updated setting.
         - id: cli
           desc: |
@@ -18582,7 +18514,7 @@ queries:
             2. Select Log Groups from the left panel.
             3. Select a log group.
             4. Under Actions, choose Edit retention setting.
-            5. Set the retention period to an appropriate value (e.g., 90 days, 1 year).
+            5. Set the retention period to an appropriate value such as 90 days or 1 year.
             6. Choose Save.
         - id: cli
           desc: |
@@ -19109,13 +19041,13 @@ queries:
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_instance")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_instance").all(
-        change.after.metadata_options[0].http_put_response_hop_limit == 1
+        change.after.metadata_options != empty && change.after.metadata_options[0].http_put_response_hop_limit == 1
       )
   - uid: mondoo-aws-security-ec2-imds-hop-limit-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_instance")
     mql: |
       terraform.state.resources.where(type == "aws_instance").all(
-        values.metadata_options[0].http_put_response_hop_limit == 1
+        values.metadata_options != empty && values.metadata_options[0].http_put_response_hop_limit == 1
       )
   - uid: mondoo-aws-security-ec2-imds-hop-limit-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::Instance")
@@ -19509,7 +19441,7 @@ queries:
 
         **Important caveats:**
 
-        - Some AWS services (such as AWS EBS, RDS, and S3) create grants with `CreateGrant` as part of their normal operation when using customer-managed CMKs. Review flagged grants to determine if they are service-linked before removing them.
+        - Some AWS services such as EBS, RDS, and S3 create grants with `CreateGrant` as part of their normal operation when using customer-managed CMKs. Review flagged grants to determine if they are service-linked before removing them.
         - Removing `CreateGrant` from service-linked grants may break encryption workflows for those services.
       remediation:
         - id: console
@@ -19766,7 +19698,7 @@ queries:
 
         **Important caveats:**
 
-        - Some organizations have regulatory requirements to use externally generated key material (e.g., BYOK mandates). In those cases, `EXTERNAL` origin is intentional and this check can be excluded for those keys.
+        - Some organizations have regulatory requirements such as BYOK mandates that require externally generated key material. In those cases, `EXTERNAL` origin is intentional and this check can be excluded for those keys.
         - `AWS_CLOUDHSM` origin may be required for specific compliance scenarios that mandate single-tenant HSM hardware. Evaluate flagged keys against your compliance requirements.
       remediation:
         - id: console
@@ -22096,7 +22028,7 @@ queries:
         - **Network policy bypass:** A degraded VPC CNI plugin can fail to enforce network policies, allowing pods to communicate freely and enabling lateral movement from a compromised container to other workloads in the cluster.
         - **kube-proxy security bypass:** A failed or degraded kube-proxy can cause network policy enforcement to stop functioning, removing pod-level network segmentation that prevents attackers from reaching sensitive services.
         - **Security patch gaps:** Unhealthy add-ons may be running outdated versions with known vulnerabilities that attackers can exploit for container escape or privilege escalation.
-        - **DNS manipulation risk:** Degraded CoreDNS can fail to resolve security-critical endpoints (such as OIDC providers or admission webhook services), bypassing authentication and admission controls.
+        - **DNS manipulation risk:** Degraded CoreDNS can fail to resolve security-critical endpoints such as OIDC providers or admission webhook services, bypassing authentication and admission controls.
       remediation:
         - id: console
           desc: |
@@ -22188,7 +22120,7 @@ queries:
         **Why this matters**
 
         - **Cryptomining detection:** Cryptomining in compromised containers produces distinctive CPU usage patterns that Container Insights can detect. Without these metrics, cryptomining can run undetected, consuming resources and indicating a broader compromise.
-        - **Data exfiltration detection:** Abnormal network egress patterns from containers (such as large data transfers to unexpected destinations) are only visible through Container Insights metrics, which provide task-level network monitoring.
+        - **Data exfiltration detection:** Abnormal network egress patterns from containers such as large data transfers to unexpected destinations are only visible through Container Insights metrics, which provide task-level network monitoring.
         - **Unauthorized container activity:** Container Insights reveals unexpected container launches, resource consumption spikes, and task-level anomalies that indicate an attacker has deployed malicious containers or compromised existing ones.
         - **Incident response capability:** Without container-level metrics, security teams cannot determine which specific tasks or containers were involved in a breach, significantly slowing incident response and scope assessment.
       remediation:
@@ -30750,7 +30682,7 @@ queries:
       desc: |
         This check ensures that AWS Glue ETL jobs are configured to use a supported Glue version (3.0 or later). Older Glue versions may contain unpatched vulnerabilities and lack security features available in newer releases. AWS Security Hub control Glue.4 recommends running jobs on supported versions.
 
-        **Known limitation:** This check uses lexicographic string comparison on version numbers (e.g., `glueVersion >= "3.0"`). This is correct for current AWS Glue versions (2.0–4.0) but would produce incorrect results for future double-digit versions (e.g., "10.0" < "3.0" lexicographically). Update this check if AWS releases Glue version 10.0 or higher.
+        **Known limitation:** This check uses lexicographic string comparison on version numbers such as `glueVersion >= "3.0"`. This is correct for current AWS Glue versions 2.0 through 4.0 but would produce incorrect results for future double-digit versions because "10.0" sorts before "3.0" lexicographically. Update this check if AWS releases Glue version 10.0 or higher.
 
         **Why this matters**
 
@@ -33386,7 +33318,7 @@ queries:
 
             1. Open **SageMaker Console** → **Notebook** → **Notebook instances** → select the instance → note the IAM role.
             2. Open the **IAM Console** → **Roles** → select that role → **Permissions**.
-            3. Detach `AdministratorAccess` and attach a scoped policy (e.g., `AmazonSageMakerFullAccess` plus only the specific S3 / KMS / Secrets Manager resources the notebook needs).
+            3. Detach `AdministratorAccess` and attach a scoped policy such as `AmazonSageMakerFullAccess` plus only the specific S3, KMS, and Secrets Manager resources the notebook needs.
             4. Stop and start the notebook instance so running kernels pick up the new role policies.
         - id: cli
           desc: |
@@ -38272,7 +38204,7 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        Lambda resource-based policy statements that grant Allow permissions to AWS services (such as S3, SNS, or EventBridge) should include a Condition that specifies a source ARN. Without this condition, any resource in the granting service's account can invoke the function, creating a confused deputy vulnerability.
+        Lambda resource-based policy statements that grant Allow permissions to AWS services such as S3, SNS, or EventBridge should include a Condition that specifies a source ARN. Without this condition, any resource in the granting service's account can invoke the function, creating a confused deputy vulnerability.
 
         **Why this matters**
 
@@ -39822,7 +39754,7 @@ queries:
         - **Rotation difficulty:** Hardcoded secrets require redeployment of task definitions to rotate, making it difficult to respond to compromises.
         - **Blast radius:** A single compromised task definition can expose multiple secrets simultaneously.
 
-        **Scope:** This check detects common secret patterns in environment variable names (e.g., `DB_PASSWORD`, `API_KEY`, `AWS_SECRET_ACCESS_KEY`) and values (AWS access key IDs, private key headers). Secrets stored under non-standard variable names without recognizable value patterns will not be detected.
+        **Scope:** This check detects common secret patterns in environment variable names such as `DB_PASSWORD`, `API_KEY`, and `AWS_SECRET_ACCESS_KEY`, as well as values matching AWS access key IDs or private key headers. Secrets stored under non-standard variable names without recognizable value patterns will not be detected.
 
         **Risk mitigation**
 
@@ -39838,7 +39770,7 @@ queries:
             2. Select **Task definitions** in the left panel.
             3. Select the task definition to review.
             4. For each container definition, review the **Environment variables** section.
-            5. Remove any environment variables with names that store secrets (e.g., `DB_PASSWORD`, `API_KEY`, `SECRET_KEY`, `AWS_SECRET_ACCESS_KEY`).
+            5. Remove any environment variables with names that store secrets such as `DB_PASSWORD`, `API_KEY`, `SECRET_KEY`, or `AWS_SECRET_ACCESS_KEY`.
             6. Instead, use the **Secrets** section to reference values from AWS Secrets Manager or SSM Parameter Store.
             7. Create a new revision of the task definition with the changes.
         - id: cli
@@ -40400,7 +40332,7 @@ queries:
             3. Select the cluster to configure.
             4. Choose **Modify**.
             5. Under **Backup**, set **Enable automatic backups** to **Yes**.
-            6. Set the **Backup retention period** to an appropriate value (e.g., 7 days).
+            6. Set the **Backup retention period** to an appropriate value such as 7 days.
             7. Save the changes.
         - id: cli
           desc: |
@@ -40544,7 +40476,7 @@ queries:
             2. Select **Databases** in the left panel.
             3. Select the DB instance to configure.
             4. Choose **Modify**.
-            5. Under **Backup**, set the **Backup retention period** to a value greater than 0 (e.g., 7 days).
+            5. Under **Backup**, set the **Backup retention period** to a value greater than 0, such as 7 days.
             6. Choose **Apply immediately** or during the next maintenance window.
             7. Save the changes.
         - id: cli
@@ -40671,7 +40603,7 @@ queries:
 
         - **SQL injection blind spots:** Abnormal query patterns from SQL injection attacks are invisible without query-level performance data, allowing attackers to extract data undetected.
         - **Data exfiltration detection:** Bulk SELECT operations or unusual data transfer volumes that indicate exfiltration are only visible through detailed performance metrics.
-        - **Cryptomining and abuse:** Unauthorized compute-intensive workloads running against the database (such as cryptomining queries) appear as unexplained CPU spikes that require Performance Insights to diagnose.
+        - **Cryptomining and abuse:** Unauthorized compute-intensive workloads running against the database such as cryptomining queries appear as unexplained CPU spikes that require Performance Insights to diagnose.
 
         **Risk mitigation**
 
@@ -41249,7 +41181,7 @@ queries:
 
         Without audit log export, Neptune database attacks cannot be detected or investigated:
 
-        - **Unauthorized graph traversal:** Attackers can traverse the graph to map sensitive relationships (such as organizational hierarchies, access paths, or data lineage) without any record of the queries they executed.
+        - **Unauthorized graph traversal:** Attackers can traverse the graph to map sensitive relationships such as organizational hierarchies, access paths, or data lineage without any record of the queries they executed.
         - **Authentication brute force:** Failed authentication attempts against the Neptune cluster are not visible to centralized security monitoring, allowing credential attacks to proceed undetected.
         - **Privilege abuse:** Over-permissioned users or compromised service accounts can execute unauthorized queries or administrative actions without leaving a forensic trail outside the cluster.
 
@@ -44572,7 +44504,7 @@ queries:
       desc: |
         This check ensures that AWS Lambda functions are deployed within a VPC. Lambda functions outside a VPC cannot leverage network-level security controls such as security groups, NACLs, or private subnets.
 
-        **Note:** This check is most relevant for Lambda functions that access private VPC resources (such as RDS databases, ElastiCache clusters, or internal APIs). Functions that only call public AWS APIs or external endpoints and do not require access to private resources may not benefit from VPC deployment, and placing them in a VPC adds complexity (subnet management, NAT gateway costs) without meaningful security improvement.
+        **Note:** This check is most relevant for Lambda functions that access private VPC resources such as RDS databases, ElastiCache clusters, or internal APIs. Functions that only call public AWS APIs or external endpoints and do not require access to private resources may not benefit from VPC deployment, and placing them in a VPC adds complexity such as subnet management and NAT gateway costs without meaningful security improvement.
 
         **Why this matters**
 
@@ -45670,7 +45602,7 @@ queries:
         **Why this matters**
 
         - The default AmazonProvidedDNS does not provide DNS query logging or filtering at the VPC level, limiting visibility into DNS-based threats such as data exfiltration via DNS tunneling.
-        - Custom DNS servers (such as Route 53 Resolver endpoints, corporate DNS, or third-party DNS firewalls) enable DNS query inspection, domain blocklists, and centralized logging.
+        - Custom DNS servers such as Route 53 Resolver endpoints, corporate DNS, or third-party DNS firewalls enable DNS query inspection, domain blocklists, and centralized logging.
         - Organizations with compliance requirements for DNS monitoring may not meet audit expectations when using the default DNS configuration.
 
         **Risk mitigation**
@@ -46055,7 +45987,7 @@ queries:
         **Why this matters**
 
         - VPC-level flow logs may not be present in all environments. Subnet-level flow logs provide a safety net to ensure critical subnets are always monitored.
-        - High-value subnets (such as those hosting databases, internal APIs, or management infrastructure) benefit from dedicated flow logs that can be routed to separate log groups for focused analysis.
+        - High-value subnets such as those hosting databases, internal APIs, or management infrastructure benefit from dedicated flow logs that can be routed to separate log groups for focused analysis.
         - Subnet-level logging enables more granular alerting and incident response when combined with CloudWatch metrics filters or SIEM integrations.
 
         **Risk mitigation**
@@ -48747,7 +48679,7 @@ queries:
         **Why this matters**
 
         - Inline policies are not visible in centralized policy listings and require per-permission-set inspection to discover, making them ideal hiding spots for attacker-planted backdoor permissions.
-        - An attacker with `sso:PutInlinePolicyToPermissionSet` access can embed broad permissions (such as `*:*`) in a permission set's inline policy, granting persistent cross-account access that survives credential rotation.
+        - An attacker with `sso:PutInlinePolicyToPermissionSet` access can embed broad permissions such as `*:*` in a permission set's inline policy, granting persistent cross-account access that survives credential rotation.
         - Inline policies bypass the change tracking and version history provided by managed policies, making it harder to detect when unauthorized permissions were added or by whom.
         - Policy sprawl from inline policies makes it difficult to maintain least-privilege, increasing the permissions available for an attacker to exploit after initial compromise.
 
@@ -49767,7 +49699,7 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check ensures that AWS Security Hub has at least one security standard enabled. Security standards (such as AWS Foundational Security Best Practices, CIS AWS Foundations Benchmark, or PCI DSS) provide automated security checks against AWS resources.
+        This check ensures that AWS Security Hub has at least one security standard enabled. Security standards such as AWS Foundational Security Best Practices, CIS AWS Foundations Benchmark, or PCI DSS provide automated security checks against AWS resources.
 
         **Why this matters**
 
@@ -52314,7 +52246,7 @@ queries:
             1. Open the S3 console and select the bucket.
             2. Choose **Permissions** → **Bucket policy**.
             3. Remove any statement with `"Principal": "*"` or `"Principal": {"AWS": "*"}` and `"Effect": "Allow"`.
-            4. If a wildcard principal is required (e.g., for a public website), pair it with a strict `Condition` such as `aws:SourceVpce` or `aws:SourceIp`.
+            4. If a wildcard principal is required, such as for a public website, pair it with a strict `Condition` like `aws:SourceVpce` or `aws:SourceIp`.
         - id: cli
           desc: |
             ```bash
