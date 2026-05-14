@@ -45,7 +45,8 @@ policies:
   - **Windows / macOS**: `gui`, `cli`, `ansible`, and `script` (PowerShell on Windows, bash on macOS)
   - **Linux**: `cli`, `script` (bash), `ansible`
   - **Kubernetes**: `kubectl`, `manifest` (YAML), and where applicable `helm`
-  This list isn't exhaustive — if the platform has another first-class management surface (e.g., Pulumi, Crossplane, an SDK-only API), add it too. Omit a method only when it genuinely doesn't apply, and leave a YAML comment above the check explaining why (same pattern as the "No Terraform variants" comment above).
+
+  Omit a method only when it genuinely doesn't apply, and leave a YAML comment above the check explaining why (same pattern as the "No Terraform variants" comment above).
 - Verify CLI commands in remediation steps with the validator (see below) before committing.
 
 ## Impact scoring
