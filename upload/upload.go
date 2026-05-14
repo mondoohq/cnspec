@@ -7,9 +7,18 @@ import (
 	"context"
 	"net/http"
 	"os"
+
+	"go.mondoo.com/mql/v13/cli/config"
 )
 
 // UploadFile uploads a file to a pre-signed URL via HTTP PUT.
+//
+// The request honors the Mondoo CLI's api_proxy setting in addition to the
+// standard HTTPS_PROXY/HTTP_PROXY env vars: config.GetAPIProxy() resolves
+// MONDOO_API_PROXY, viper's api_proxy (mondoo.yml / --api-proxy), and finally
+// HTTPS_PROXY. When no proxy is configured, the default transport's
+// http.ProxyFromEnvironment is used (which also honors NO_PROXY).
+//
 // It sets the provided headers and Content-Type to application/octet-stream.
 // The caller is responsible for checking the response status code and closing
 // the response body.
@@ -36,6 +45,37 @@ func UploadFile(ctx context.Context, url string, headers map[string]string, file
 	req.ContentLength = fileInfo.Size()
 	req.Header.Set("Content-Type", contentType)
 
-	client := &http.Client{}
+	client, err := newHTTPClient()
+	if err != nil {
+		return nil, err
+	}
 	return client.Do(req)
+}
+
+// newHTTPClient builds the HTTP client used by UploadFile. When api_proxy is
+// configured (via mondoo.yml, MONDOO_API_PROXY, --api-proxy, or HTTPS_PROXY)
+// the transport is set to route through that proxy URL; otherwise we return
+// a plain client whose default transport already honors HTTP(S)_PROXY/NO_PROXY
+// via http.ProxyFromEnvironment.
+func newHTTPClient() (*http.Client, error) {
+	proxy, err := config.GetAPIProxy()
+	if err != nil {
+		return nil, err
+	}
+	if proxy == nil {
+		return &http.Client{}, nil
+	}
+	// Clone the default transport when possible so we inherit TLS settings,
+	// timeouts, and connection-pool tuning. Guard the assertion: callers (or
+	// tests) may have replaced http.DefaultTransport with a non-*http.Transport
+	// wrapper, in which case we fall back to a fresh transport rather than
+	// panicking.
+	var tr *http.Transport
+	if base, ok := http.DefaultTransport.(*http.Transport); ok {
+		tr = base.Clone()
+	} else {
+		tr = &http.Transport{}
+	}
+	tr.Proxy = http.ProxyURL(proxy)
+	return &http.Client{Transport: tr}, nil
 }
