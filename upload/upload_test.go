@@ -73,6 +73,11 @@ func TestUploadFile_PUTsContent(t *testing.T) {
 // bucket-upload-ignores-api_proxy bug. When mondoo.yml sets api_proxy, the
 // scan-db upload client must route through that proxy URL — previously the
 // bare http.Client used here ignored config-file proxy settings entirely.
+//
+// NOTE: this test (and TestNewHTTPClient_NoProxyConfigured below) mutates the
+// global viper instance via viper.Set, so neither test may call t.Parallel()
+// and the package must not be run with -parallel against other tests that
+// touch viper's api_proxy key.
 func TestNewHTTPClient_HonorsAPIProxy(t *testing.T) {
 	// Isolate from the host environment so this test only exercises the viper
 	// (mondoo.yml) path that the bug report covers.

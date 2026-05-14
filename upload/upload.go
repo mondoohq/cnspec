@@ -65,7 +65,17 @@ func newHTTPClient() (*http.Client, error) {
 	if proxy == nil {
 		return &http.Client{}, nil
 	}
-	tr := http.DefaultTransport.(*http.Transport).Clone()
+	// Clone the default transport when possible so we inherit TLS settings,
+	// timeouts, and connection-pool tuning. Guard the assertion: callers (or
+	// tests) may have replaced http.DefaultTransport with a non-*http.Transport
+	// wrapper, in which case we fall back to a fresh transport rather than
+	// panicking.
+	var tr *http.Transport
+	if base, ok := http.DefaultTransport.(*http.Transport); ok {
+		tr = base.Clone()
+	} else {
+		tr = &http.Transport{}
+	}
 	tr.Proxy = http.ProxyURL(proxy)
 	return &http.Client{Transport: tr}, nil
 }
