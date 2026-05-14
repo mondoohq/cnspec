@@ -149,7 +149,7 @@ func TestBundles(t *testing.T) {
 			bundleFile: "./mondoo-aws-security.mql.yaml",
 			testDir:    "./testdata/mondoo-aws-security-tf-pass",
 			policyMrn:  "//policy.api.mondoo.app/policies/mondoo-aws-security",
-			score:      0x5, // TODO: remove mondoo-aws-security-root-account-mfa-enabled as this is standard now
+			score:      0xa, // TODO: remove mondoo-aws-security-root-account-mfa-enabled as this is standard now
 		},
 		{
 			provider:   "terraform",
