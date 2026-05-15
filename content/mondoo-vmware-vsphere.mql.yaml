@@ -104,17 +104,35 @@ queries:
       vsphere.datacenters.all( vms.all( vtpmPresent == true ) )
     docs:
       desc: |-
-        A virtual Trusted Platform Module (vTPM) is a software-based TPM 2.0 device that vSphere presents to a virtual machine. It provides the guest operating system with a hardware-rooted store for cryptographic keys and platform measurements.
+        This check ensures that each virtual machine has a virtual Trusted Platform Module (vTPM) attached. A vTPM is a software-based TPM 2.0 device that gives the guest operating system a hardware-rooted store for cryptographic keys and platform measurements, which modern guest security features depend on.
 
-        A vTPM enables guest security features that depend on a TPM, including Windows BitLocker, Measured Boot, Credential Guard, and Device Guard. The vTPM's secrets are protected by VM encryption and backed by the configured key provider.
+        **Why this matters**
 
-        **A vTPM provides:**
-        - A protected store for guest disk-encryption keys
-        - Measured Boot and remote attestation for the guest OS
-        - Backing for Windows Credential Guard and Device Guard
+        - **Key protection:** A vTPM provides the guest with a tamper-resistant store for disk-encryption keys such as those used by Windows BitLocker.
+        - **Trusted boot:** It supports Measured Boot and remote attestation, so the guest can prove its boot integrity.
+        - **Credential defense:** It backs Windows Credential Guard and Device Guard, protecting domain credentials from theft.
 
-        **Best Practice:**
-        - Attach a vTPM to virtual machines that run modern Windows or Linux guests requiring trusted-platform features.
+        **Risk mitigation**
+
+        - **Hardware-rooted trust:** Cryptographic secrets are bound to the vTPM rather than held in guest memory or on disk in the clear.
+        - **Encrypted secrets:** The vTPM's contents are protected by VM encryption and the configured key provider, keeping keys safe even if VM files are copied.
+      audit: |-
+        ### Audit via the vSphere Client
+
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. On the `Virtual Hardware` tab, review the list of devices.
+        3. Confirm a `Trusted Platform Module` device is listed.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Get-VTpm
+        ```
+
+        The check passes when every virtual machine has a vTPM device present. It fails for any VM that returns no Trusted Platform Module device.
       remediation: |-
         Adding a vTPM requires that a key provider is configured in vCenter Server and that the virtual machine uses EFI firmware.
 
@@ -135,28 +153,36 @@ queries:
       vsphere.datacenters.all( vms.all( advancedSettings['isolation.tools.ghi.autologon.disable'].downcase == "true" ) )
     docs:
       desc: |-
-        This check ensures that automatic login (Autologon) is disabled on VMware ESXi hosts unless explicitly required for a controlled use case. Disabling Autologon helps maintain access control integrity by ensuring that only authenticated users can access the ESXi Shell or DCUI (Direct Console User Interface).
+        This check ensures that automatic login is disabled for each virtual machine through the `isolation.tools.ghi.autologon.disable` parameter. Autologon lets a guest operating system sign in a user at startup without authentication, and disabling it ensures only authenticated users can reach an interactive session.
 
-        **Rationale:**
+        **Why this matters**
 
-        Autologon allows a system to automatically log in a specified user at startup without requiring manual authentication. In the context of ESXi:
-          - Autologon may be enabled through configuration settings in /etc/rc.local.d/local.sh or other initialization scripts.
-          - Systems configured with Autologon bypass the need for credential-based access to the ESXi Shell or DCUI.
-          - If a user account is pre-configured for Autologon, it may also have elevated privileges or unrestricted shell access.
+        - **Access control:** Autologon bypasses credential checks, so anyone who can reach the VM console gains a logged-in session.
+        - **Privilege exposure:** An autologon account often has standing privileges that an attacker inherits without authenticating.
+        - **Accountability:** Individual logins tie console activity to a named user, which autologon removes.
 
-        Enabling Autologon on ESXi hosts can result in:
-          - Unauthorized access if physical or network-level security is compromised.
-          - Privilege escalation if the Autologon user has administrative rights.
-          - Compliance violations under standards like CIS VMware ESXi Benchmark, NIST 800-53, PCI DSS, and ISO 27001.
-          - Audit trail disruption, as access is not tied to unique, authenticated user sessions.
+        **Risk mitigation**
 
-        **Risk mitigation:**
-          - Prevents unauthorized or unmonitored access to critical system interfaces.
-          - Enforces strong authentication practices for interactive shell or console access.
-          - Ensures accountability by requiring individual logins, enabling accurate logging and auditing.
-          - Aligns with industry best practices for securing hypervisor access.
+        - **Authenticated sessions:** Console and guest access requires valid credentials, closing an unauthenticated entry path.
+        - **Auditability:** Requiring per-user logins preserves an accurate trail of who accessed the virtual machine.
+      audit: |-
+        ### Audit via the vSphere Client
 
-        Disabling Autologon strengthens ESXi host security by reducing the attack surface and ensuring that only authorized, authenticated users can access sensitive host interfaces.
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. Select the `VM Options` tab and expand `Advanced`.
+        3. Select `EDIT CONFIGURATION`.
+        4. Locate the `isolation.tools.ghi.autologon.disable` parameter and read its value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Get-AdvancedSetting -Name 'isolation.tools.ghi.autologon.disable'
+        ```
+
+        The check passes only when the parameter is present and set to `TRUE` for every virtual machine. It fails if the parameter is absent or set to any other value.
       remediation: |-
         To set this configuration utilize the vSphere interface as follows:
 
@@ -181,28 +207,36 @@ queries:
       vsphere.datacenters.all( vms.all( advancedSettings['isolation.bios.bbs.disable'].downcase == "true" ) )
     docs:
       desc: |-
-        This check ensures that BIOS Boot Specification (BBS) is disabled on VMware ESXi hosts unless explicitly required for legacy boot configurations. Disabling BBS helps prevent unauthorized boot sources from being prioritized and reduces the risk of system compromise via external or removable media.
+        This check ensures that the BIOS Boot Specification (BBS) is disabled for each virtual machine through the `isolation.bios.bbs.disable` parameter. BBS lets the virtual firmware enumerate and prioritize bootable devices, and disabling it prevents the guest from being booted from unauthorized or removable media.
 
-        **Rationale:**
+        **Why this matters**
 
-        The BIOS Boot Specification allows systems to enumerate and prioritize bootable devices, including network adapters, USB drives, and optical media. On ESXi hosts:
-          - BBS can enable boot from removable devices that may bypass normal bootloader integrity checks.
-          - Attackers with physical or low-level access could exploit BBS settings to boot unauthorized operating systems or recovery tools.
-          - Legacy boot methods via BBS may not support modern security features like Secure Boot, increasing exposure to rootkits or bootkits.
+        - **Boot integrity:** BBS can allow a VM to boot from removable media that bypasses normal bootloader integrity checks.
+        - **Alternate OS risk:** An attacker with low-level access could use BBS to boot recovery tools or an alternate operating system.
+        - **Legacy exposure:** BBS boot paths predate Secure Boot, leaving the VM open to bootkits and rootkits.
 
-        Enabling BIOS BBS without a specific need can lead to:
-          - Unauthorized access to host resources via rogue boot media.
-          - Bypassing of hypervisor security controls by booting alternative OS environments.
-          - Loss of integrity in the hypervisor boot chain, undermining trust in the platform.
-          - Non-compliance with hardening guidance from standards like the CIS VMware ESXi Benchmark and NIST SP 800-147.
+        **Risk mitigation**
 
-        **Risk mitigation:**
-          - Reduces the risk of malicious or accidental boot from external or legacy devices.
-          - Enforces a secure, predictable boot process aligned with UEFI and Secure Boot best practices.
-          - Strengthens the chain of trust by limiting boot sources to verified, intended media.
-          - Supports compliance with hypervisor hardening requirements in regulated environments.
+        - **Predictable boot:** The virtual machine boots only from its intended disk, removing rogue boot sources.
+        - **Chain of trust:** Limiting boot media to verified sources keeps the guest startup process trustworthy.
+      audit: |-
+        ### Audit via the vSphere Client
 
-        Disabling BIOS BBS when not required limits the system's exposure to boot-level threats and helps maintain the integrity of the ESXi host's startup process.
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. Select the `VM Options` tab and expand `Advanced`.
+        3. Select `EDIT CONFIGURATION`.
+        4. Locate the `isolation.bios.bbs.disable` parameter and read its value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Get-AdvancedSetting -Name 'isolation.bios.bbs.disable'
+        ```
+
+        The check passes only when the parameter is present and set to `TRUE` for every virtual machine. It fails if the parameter is absent or set to any other value.
       remediation: |-
         To set this configuration utilize the vSphere interface as follows:
 
@@ -224,28 +258,36 @@ queries:
       vsphere.datacenters.all( vms.all( advancedSettings['isolation.tools.vmxDnDVersionGet.disable'].downcase == "true" ) )
     docs:
       desc: |-
-        This check ensures that the Drag and Drop Version Get feature is disabled on VMware ESXi hosts to prevent unauthorized or unintended data exchange between guest VMs and the host system. Disabling this feature reduces the risk of information leakage and maintains strict isolation between virtual machines and the hypervisor.
+        This check ensures that the Drag and Drop Version Get feature is disabled for each virtual machine through the `isolation.tools.vmxDnDVersionGet.disable` parameter. The feature lets the guest query the host's drag-and-drop capability version, and disabling it removes an unnecessary guest-to-host communication path.
 
-        **Rationale:**
+        **Why this matters**
 
-        The Drag and Drop Version Get feature is part of VMware Tools and supports enhanced interaction between guest VMs and the host, including clipboard and drag-and-drop operations. While convenient for some desktop virtualization use cases, in server or sensitive environments it introduces unnecessary risk:
-          - This feature enables a guest to detect host drag-and-drop capability versions, which may be exploited for compatibility probing or feature enumeration.
-          - It can facilitate unintended host-to-guest or guest-to-host communication channels.
-          - Combined with other VMware Tools features, it could be used as a stepping stone for more advanced guest-to-host interaction or lateral movement in a compromised environment.
+        - **Feature enumeration:** The guest can probe host drag-and-drop versions, aiding compatibility fingerprinting of the platform.
+        - **Communication channel:** It opens a host-to-guest interaction path that is rarely needed for server workloads.
+        - **Attack chaining:** Combined with other VMware Tools features, it can serve as a stepping stone for guest-to-host movement.
 
-        Leaving Drag and Drop Version Get enabled can result in:
-          - Data exfiltration from guest VMs or the host through side channels.
-          - Loss of VM isolation, violating secure multi-tenancy principles.
-          - Expanded attack surface, particularly in environments with untrusted or external workloads.
-          - Non-compliance with virtualization hardening benchmarks such as CIS VMware ESXi and DISA STIGs.
+        **Risk mitigation**
 
-        **Risk mitigation:**
-          - Eliminates unnecessary guest-host integration features that could be exploited.
-          - Enforces stronger workload isolation, especially in multi-tenant or regulated environments.
-          - Aligns with VMware hardening guidance for server-class deployments.
-          - Reduces visibility of host-side capabilities from within the guest operating system.
+        - **Reduced surface:** Disabling an unused integration feature removes a path an attacker could exploit.
+        - **Stronger isolation:** The guest cannot enumerate host-side capabilities, preserving the boundary between VM and hypervisor.
+      audit: |-
+        ### Audit via the vSphere Client
 
-        Disabling Drag and Drop Version Get helps ensure that VMware Tools do not introduce communication channels that compromise the security posture of ESXi hosts and virtual machines.
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. Select the `VM Options` tab and expand `Advanced`.
+        3. Select `EDIT CONFIGURATION`.
+        4. Locate the `isolation.tools.vmxDnDVersionGet.disable` parameter and read its value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Get-AdvancedSetting -Name 'isolation.tools.vmxDnDVersionGet.disable'
+        ```
+
+        The check passes only when the parameter is present and set to `TRUE` for every virtual machine. It fails if the parameter is absent or set to any other value.
       remediation: |-
         To set this configuration utilize the vSphere interface as follows:
 
@@ -271,28 +313,36 @@ queries:
       vsphere.datacenters.all( vms.all( advancedSettings['isolation.tools.guestDnDVersionSet.disable'].downcase == "true" ) )
     docs:
       desc: |-
-        This check ensures that the Drag and Drop Version Set feature is disabled on VMware ESXi hosts to prevent guest virtual machines from interacting with host-side drag-and-drop capabilities. Disabling this feature helps preserve strong isolation between the guest and host, minimizing the risk of data leakage or lateral movement.
+        This check ensures that the Drag and Drop Version Set feature is disabled for each virtual machine through the `isolation.tools.guestDnDVersionSet.disable` parameter. The feature lets the guest set the drag-and-drop protocol version, and disabling it prevents the guest from initiating host-side drag-and-drop interaction.
 
-        **Rationale:**
+        **Why this matters**
 
-        The Drag and Drop Version Set feature, exposed via VMware Tools, allows guest VMs to interact with and set the drag-and-drop protocol version. While primarily designed for improved usability in desktop virtualization, this capability can introduce security concerns in server or sensitive environments:
-          - It allows a guest VM to initiate communication with the host environment by setting drag-and-drop version parameters.
-          - Combined with other guest-host integration features, it may enable or escalate unintended data exchange channels.
-          - Attackers with access to a compromised VM may abuse this feature to enumerate, influence, or exploit host-side functionality.
+        - **Guest-initiated contact:** The guest can reach into the host environment by setting drag-and-drop parameters.
+        - **Channel escalation:** Combined with other integration features, it can extend or escalate unintended data exchange paths.
+        - **Abuse potential:** A compromised guest could use it to enumerate or influence host-side functionality.
 
-        Leaving Drag and Drop Version Set enabled can result in:
-          - Increased attack surface, enabling guest-to-host communication paths not typically needed in secure environments.
-          - Potential data leakage through misused or hijacked drag-and-drop operations.
-          - Weakened workload isolation, undermining virtualization boundaries.
-          - Non-compliance with hardening frameworks such as the CIS VMware ESXi Benchmark, DISA STIGs, or NIST guidelines.
+        **Risk mitigation**
 
-        **Risk mitigation:**
-          - Prevents guest VMs from attempting to set or alter host drag-and-drop communication protocols.
-          - Enforces stricter boundaries between guest and host systems to protect against lateral threats.
-          - Aligns with best practices for securing hypervisors in production or regulated environments.
-          - Reduces the potential for VMware Tools misuse in compromised guest environments.
+        - **Boundary enforcement:** The guest cannot alter host drag-and-drop protocols, keeping VM and hypervisor separated.
+        - **Reduced surface:** Disabling an unused VMware Tools feature limits what a compromised guest can misuse.
+      audit: |-
+        ### Audit via the vSphere Client
 
-        Disabling Drag and Drop Version Set is a key step in securing ESXi deployments by ensuring guest VMs cannot influence or initiate host-side drag-and-drop behaviors, thereby upholding strong host-to-guest isolation.
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. Select the `VM Options` tab and expand `Advanced`.
+        3. Select `EDIT CONFIGURATION`.
+        4. Locate the `isolation.tools.guestDnDVersionSet.disable` parameter and read its value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Get-AdvancedSetting -Name 'isolation.tools.guestDnDVersionSet.disable'
+        ```
+
+        The check passes only when the parameter is present and set to `TRUE` for every virtual machine. It fails if the parameter is absent or set to any other value.
       remediation: |-
         To set this configuration utilize the vSphere interface as follows:
 
@@ -318,28 +368,36 @@ queries:
       vsphere.datacenters.all( vms.all( advancedSettings['isolation.tools.getCreds.disable'].downcase == "true" ) )
     docs:
       desc: |-
-        This check ensures that the GetCreds functionality in VMware Tools is disabled on VMware ESXi hosts. GetCreds can expose sensitive credential-related operations between guest virtual machines and the host, and disabling it helps maintain strict isolation and reduces the risk of credential leakage or misuse.
+        This check ensures that the GetCreds feature is disabled for each virtual machine through the `isolation.tools.getCreds.disable` parameter. GetCreds lets a guest request credential-related operations from the host through VMware Tools, and disabling it removes a guest-accessible path to sensitive credential data.
 
-        **Rationale:**
+        **Why this matters**
 
-        The GetCreds feature is part of VMware's guest-host communication mechanisms. It allows guest virtual machines to request or interact with credential services exposed by the host through VMware Tools. While useful in certain enterprise integrations, in most environments—especially sensitive or multi-tenant deployments—this capability presents a security risk:
-          - It enables a guest VM to retrieve authentication or credential information intended for host or service use.
-          - If misconfigured or abused, it could allow unauthorized access to sensitive data or services through improperly scoped credential requests.
-          - An attacker with access to a compromised VM may attempt to harvest host-related credentials or escalate privileges.
+        - **Credential exposure:** The guest can request authentication information intended for host or service use.
+        - **Improper scoping:** A misconfigured or abused request could grant access to data or services it should not reach.
+        - **Privilege escalation:** A compromised guest could attempt to harvest host credentials and escalate.
 
-        Leaving GetCreds enabled can result in:
-          - Credential exposure, particularly in environments where host-agent communication is not tightly controlled.
-          - Unauthorized access to services or APIs leveraging shared or injected credentials.
-          - Breakdown of guest-host trust boundaries, weakening isolation guarantees.
-          - Non-compliance with virtualization security guidelines such as CIS VMware ESXi Benchmark, DISA STIGs, and NIST SP 800-53 controls for credential management.
+        **Risk mitigation**
 
-        **Risk mitigation:**
-          - Eliminates a guest-accessible path to sensitive credential operations or data.
-          - Enforces a clear separation of duties and access between guest VMs and host-level services.
-          - Protects against misuse of VMware Tools capabilities in compromised or untrusted environments.
-          - Supports compliance with least privilege and secure credential handling best practices.
+        - **Separation of duties:** Guest VMs cannot retrieve host-level credentials, keeping access cleanly divided.
+        - **Least privilege:** Removing the credential path enforces secure handling between guest and host services.
+      audit: |-
+        ### Audit via the vSphere Client
 
-        Disabling GetCreds ensures that guest VMs cannot interact with or retrieve credentials from host systems or integrated services, maintaining a secure and isolated virtualization environment.
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. Select the `VM Options` tab and expand `Advanced`.
+        3. Select `EDIT CONFIGURATION`.
+        4. Locate the `isolation.tools.getCreds.disable` parameter and read its value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Get-AdvancedSetting -Name 'isolation.tools.getCreds.disable'
+        ```
+
+        The check passes only when the parameter is present and set to `TRUE` for every virtual machine. It fails if the parameter is absent or set to any other value.
       remediation: |-
         To set this configuration utilize the vSphere interface as follows:
 
@@ -365,28 +423,36 @@ queries:
       vsphere.datacenters.all( vms.all( advancedSettings['isolation.tools.ghi.launchmenu.change'].downcase == "true" ) )
     docs:
       desc: |-
-        This check ensures that the Guest Host Interaction Launch Menu feature is disabled on VMware ESXi hosts. Disabling this setting prevents guest virtual machines from invoking host-side functionality through interactive VMware Tools features, reducing the risk of unauthorized actions and preserving strict isolation between guests and the hypervisor.
+        This check ensures that the Guest Host Interaction Launch Menu feature is disabled for each virtual machine through the `isolation.tools.ghi.launchmenu.change` parameter. The feature lets a guest trigger host-side actions or launchable menu items, and disabling it keeps the guest from invoking host functionality.
 
-        **Rationale:**
+        **Why this matters**
 
-        The Guest Host Interaction Launch Menu is a VMware Tools feature that allows guest operating systems to trigger host-side actions or display launchable menu items. While intended to enhance usability in desktop or test environments, this capability poses a risk in production or multi-tenant server environments:
-          - It enables a guest VM to request and potentially initiate host-side operations, which may expose administrative interfaces or execute host-level processes.
-          - Attackers could use this feature as an entry point to pivot toward the hypervisor or to interact with host-managed tools or services.
-          - This level of guest-host interaction contradicts the principle of strong isolation and minimal trust between virtual machines and their underlying hosts.
+        - **Host operations:** The guest can request host-side operations that may expose administrative interfaces or run host processes.
+        - **Pivot point:** An attacker could use it as an entry point to reach the hypervisor or host-managed services.
+        - **Trust violation:** Guest-initiated host actions contradict the principle of minimal trust between VM and host.
 
-        Leaving this feature enabled can result in:
-          - Inadvertent exposure of host functionality to untrusted or compromised guest systems.
-          - Privilege escalation opportunities if guest-triggered actions affect host behavior or services.
-          - Non-compliance with hypervisor hardening guidance from frameworks such as CIS VMware ESXi Benchmark, DISA STIGs, and NIST security controls.
-          - Security boundary erosion, especially in regulated or multi-user virtual environments.
+        **Risk mitigation**
 
-        **Risk mitigation:**
-          - Blocks the ability for guest VMs to invoke host-side launch menus or UI-driven actions.
-          - Strengthens the virtualization boundary by ensuring guest systems operate in isolation from the host.
-          - Reduces potential attack vectors that rely on VMware Tools integration features.
-          - Supports secure deployment best practices in both enterprise and cloud-hosted environments.
+        - **Blocked invocation:** Guest VMs cannot invoke host-side launch menus or UI-driven actions.
+        - **Stronger boundary:** The guest operates in isolation, removing an attack vector that relies on VMware Tools integration.
+      audit: |-
+        ### Audit via the vSphere Client
 
-        Disabling the Guest Host Interaction Launch Menu helps enforce clean separation between virtual machines and host infrastructure, reducing the risk of misuse and enhancing the overall security posture of VMware ESXi environments.
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. Select the `VM Options` tab and expand `Advanced`.
+        3. Select `EDIT CONFIGURATION`.
+        4. Locate the `isolation.tools.ghi.launchmenu.change` parameter and read its value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Get-AdvancedSetting -Name 'isolation.tools.ghi.launchmenu.change'
+        ```
+
+        The check passes only when the parameter is present and set to `TRUE` for every virtual machine. It fails if the parameter is absent or set to any other value.
       remediation: |-
         To set this configuration utilize the vSphere interface as follows:
 
@@ -412,28 +478,36 @@ queries:
       vsphere.datacenters.all( vms.all( advancedSettings['isolation.tools.ghi.protocolhandler.info.disable'].downcase == "true" ) )
     docs:
       desc: |-
-        This check ensures that the Guest Host Interaction Protocol Handler feature is disabled on VMware ESXi hosts. Disabling this setting prevents guest virtual machines from invoking or registering protocol handlers on the host system, maintaining strict isolation and minimizing the risk of abuse or lateral movement.
+        This check ensures that the Guest Host Interaction Protocol Handler feature is disabled for each virtual machine through the `isolation.tools.ghi.protocolhandler.info.disable` parameter. The feature lets a guest interact with URI-based protocol handlers on the host, and disabling it keeps the guest from triggering or registering them.
 
-        **Rationale:**
+        **Why this matters**
 
-        The Guest Host Interaction Protocol Handler is a VMware Tools feature that allows guest virtual machines to interact with specific URI-based protocol handlers on the host, enabling certain types of guest-triggered operations. While useful in development or desktop environments, it introduces security concerns in production ESXi deployments:
-          - It allows guest systems to initiate host-side actions via registered protocol handlers (e.g., vmware:// URIs).
-          - This communication channel can be misused by attackers to execute host-side behaviors, potentially bypassing intended access controls.
-          - In environments with untrusted workloads or multi-tenancy, this feature creates unnecessary risk and undermines isolation guarantees.
+        - **Host-side actions:** The guest can initiate host operations through registered protocol handlers such as vmware URIs.
+        - **Control bypass:** Attackers can misuse the channel to run host-side behaviors that bypass intended access controls.
+        - **Escalation vector:** Host-level integration abuse can lead to code execution, information disclosure, or privilege escalation.
 
-        If this feature remains enabled, it can lead to:
-          - Unauthorized access to host features or services exposed via protocol handlers.
-          - Abuse of host-level integrations that could allow code execution, information disclosure, or privilege escalation.
-          - Non-compliance with virtualization hardening frameworks like CIS VMware ESXi Benchmark, DISA STIGs, and NIST 800-53.
-          - Expanded attack surface, especially when combined with other guest-host interaction mechanisms.
+        **Risk mitigation**
 
-        **Risk mitigation:**
-          - Prevents guest VMs from triggering or registering host-level protocol handlers.
-          - Maintains strict separation between guest OS behavior and host system functions.
-          - Limits potential vectors for privilege escalation or lateral movement via VMware Tools.
-          - Aligns with industry best practices for securing virtualized infrastructure and minimizing trust between guest and host.
+        - **Channel removal:** Guest VMs cannot trigger or register host-level protocol handlers.
+        - **Separation:** Guest behavior stays isolated from host system functions, closing a lateral-movement path.
+      audit: |-
+        ### Audit via the vSphere Client
 
-        Disabling the Guest Host Interaction Protocol Handler is a critical step in securing VMware ESXi environments, ensuring that guest virtual machines cannot leverage protocol-based communication channels to affect or manipulate host behavior.
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. Select the `VM Options` tab and expand `Advanced`.
+        3. Select `EDIT CONFIGURATION`.
+        4. Locate the `isolation.tools.ghi.protocolhandler.info.disable` parameter and read its value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Get-AdvancedSetting -Name 'isolation.tools.ghi.protocolhandler.info.disable'
+        ```
+
+        The check passes only when the parameter is present and set to `TRUE` for every virtual machine. It fails if the parameter is absent or set to any other value.
       remediation: |-
         To set this configuration utilize the vSphere interface as follows:
 
@@ -459,28 +533,36 @@ queries:
       vsphere.datacenters.all( vms.all( advancedSettings['isolation.tools.ghi.trayicon.disable'].downcase == "true" ) )
     docs:
       desc: |-
-        This check ensures that the Guest Host Interaction Tray Icon feature is disabled on VMware ESXi hosts. Disabling this setting helps reduce unnecessary visibility into VMware Tools features from within guest virtual machines and limits potential user interaction with host-integrated functionality.
+        This check ensures that the Guest Host Interaction Tray Icon feature is disabled for each virtual machine through the `isolation.tools.ghi.trayicon.disable` parameter. The tray icon surfaces host-integration shortcuts inside the guest, and disabling it limits guest-side visibility into host functionality.
 
-        **Rationale:**
+        **Why this matters**
 
-        The Guest Host Interaction Tray Icon is part of the VMware Tools suite and displays a system tray icon inside guest operating systems. This icon can expose host-guest integration features or shortcuts for initiating host-side actions. While useful in desktop environments, it presents risks in production, multi-tenant, or server-class deployments:
-          - It may enable or encourage end users within guest VMs to initiate actions that interface with the ESXi host.
-          - The icon exposes functionality that could lead to unintended interactions with the host, especially when other guest-host features are enabled.
-          - In sensitive environments, this visibility increases the risk of misconfiguration, misuse, or attack surface exposure.
+        - **User-driven actions:** The icon lets guest users initiate actions that interface with the host.
+        - **Capability exposure:** It reveals virtualization tooling and host integration features to anyone inside the guest.
+        - **Isolation erosion:** Surfacing host shortcuts undermines the separation between guest and host.
 
-        Leaving the tray icon enabled can result in:
-          - User-initiated host interactions from within guest VMs, increasing risk of configuration drift or unauthorized actions.
-          - Information exposure, revealing underlying virtualization tooling or host capabilities.
-          - Degradation of workload isolation, especially when users are not meant to know they are operating in a virtualized environment.
-          - Non-compliance with hardening recommendations such as those from CIS VMware ESXi Benchmark and DISA STIGs.
+        **Risk mitigation**
 
-        **Risk mitigation:**
-          - Removes unnecessary guest-facing indicators of host integration, limiting end-user interaction vectors.
-          - Prevents misuse of VMware Tools capabilities through the tray interface.
-          - Enforces a clean separation between host management and guest user experience.
-          - Reduces the attack surface, especially in shared or regulated environments.
+        - **Reduced visibility:** Removing the guest-facing indicator limits end-user interaction vectors with the host.
+        - **Clean separation:** Host management stays independent of the guest user experience.
+      audit: |-
+        ### Audit via the vSphere Client
 
-        Disabling the Guest Host Interaction Tray Icon helps enforce stronger security boundaries by limiting visibility into virtualization tooling and preventing user-driven interactions with host-level features from within guest systems.
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. Select the `VM Options` tab and expand `Advanced`.
+        3. Select `EDIT CONFIGURATION`.
+        4. Locate the `isolation.tools.ghi.trayicon.disable` parameter and read its value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Get-AdvancedSetting -Name 'isolation.tools.ghi.trayicon.disable'
+        ```
+
+        The check passes only when the parameter is present and set to `TRUE` for every virtual machine. It fails if the parameter is absent or set to any other value.
       remediation: |-
         To set this configuration utilize the vSphere interface as follows:
 
@@ -505,27 +587,36 @@ queries:
     mql: vsphere.datacenters.all( vms.all( advancedSettings['mks.enable3d'].downcase == "false" ) )
     docs:
       desc: |-
-        This check ensures that hardware-based 3D acceleration is disabled for virtual machines running on VMware ESXi hosts unless explicitly required. Disabling 3D acceleration minimizes attack surface and reduces the risk of GPU-based vulnerabilities that could compromise host integrity or impact performance isolation.
+        This check ensures that hardware-based 3D acceleration is disabled for each virtual machine through the `mks.enable3d` parameter. The feature lets a VM use physical GPU resources, and disabling it where 3D graphics are not required removes avoidable virtual-hardware exposure.
 
-        **Rationale:**
+        **Why this matters**
 
-        VMware ESXi supports hardware-based 3D graphics acceleration by allowing virtual machines to leverage physical GPU resources via DirectPath I/O or vGPU technology. While beneficial for workloads requiring rich graphical interfaces—such as VDI or CAD applications—enabling 3D acceleration in environments where it's not needed introduces avoidable risk:
-          - It increases the complexity of the virtual hardware environment, expanding the potential for misconfiguration or exploitation.
-          - GPU passthrough or sharing features have historically been vulnerable to escape conditions or denial-of-service (DoS) scenarios.
-          - Multi-tenant workloads sharing GPU resources may experience performance interference or information leakage across isolation boundaries.
+        - **GPU vulnerabilities:** Passthrough and shared-GPU features have historically been prone to escape and denial-of-service conditions.
+        - **Configuration complexity:** Enabling 3D hardware expands the virtual hardware surface that can be misconfigured or exploited.
+        - **Tenant interference:** Workloads sharing GPU resources may see performance interference or information leakage across boundaries.
 
-        If left enabled without a specific business need, hardware-based 3D acceleration can lead to:
-          - Guest-to-host escape vulnerabilities, especially through graphics drivers or hypervisor interfaces.
-          - Performance unpredictability due to resource contention or overprovisioned GPU access.
-          - Non-compliance with security baselines like the CIS VMware ESXi Benchmark, DISA STIGs, or NIST 800-53, which recommend minimizing non-essential virtual hardware.
+        **Risk mitigation**
 
-        **Risk mitigation:**
-          - Prevents exposure to GPU driver or passthrough-related vulnerabilities.
-          - Ensures consistent performance and stronger isolation for workloads that do not require 3D graphics.
-          - Reduces complexity in virtual machine configuration and maintenance.
-          - Aligns with hypervisor hardening standards and secure virtualization practices.
+        - **Driver exposure removed:** The VM is not exposed to graphics driver or passthrough vulnerabilities it does not need.
+        - **Predictable isolation:** Workloads without 3D requirements get consistent performance and a smaller attack surface.
+      audit: |-
+        ### Audit via the vSphere Client
 
-        Disabling hardware-based 3D acceleration helps secure ESXi environments by minimizing unnecessary virtual hardware exposure and preventing graphics-related vulnerabilities that could affect host stability or tenant isolation.
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. Select the `VM Options` tab and expand `Advanced`.
+        3. Select `EDIT CONFIGURATION`.
+        4. Locate the `mks.enable3d` parameter and read its value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Get-AdvancedSetting -Name 'mks.enable3d'
+        ```
+
+        The check passes only when the parameter is present and set to `FALSE` for every virtual machine. It fails if the parameter is absent or set to any other value.
       remediation: |-
         To set this configuration utilize the vSphere interface as follows:
 
@@ -550,28 +641,36 @@ queries:
       vsphere.datacenters.all( vms.all( advancedSettings['isolation.tools.hgfsServerSet.disable'].downcase == "true" ) )
     docs:
       desc: |-
-        This check ensures that the Host Guest File System (HGFS) Server is disabled on VMware ESXi hosts to prevent direct file sharing between guest virtual machines and the host. Disabling HGFS helps enforce strong isolation boundaries and protects against data leakage, unauthorized access, or misuse of host resources.
+        This check ensures that the Host Guest File System (HGFS) Server is disabled for each virtual machine through the `isolation.tools.hgfsServerSet.disable` parameter. HGFS provides shared folders between the guest and the host, and disabling it removes a direct file-sharing path that bypasses normal access controls.
 
-        **Rationale:**
+        **Why this matters**
 
-        The Host Guest File System Server is a VMware Tools feature that enables shared folders between a guest VM and the ESXi host. This functionality allows files to be transferred seamlessly without using network file sharing protocols. While convenient in development or testing environments, it introduces significant security concerns in production deployments:
-          - HGFS provides a direct communication path between the guest OS and host file system, bypassing traditional access controls.
-          - If a VM is compromised, an attacker could use HGFS to access or manipulate host files or shared data.
-          - File sharing via HGFS may violate data segmentation policies in regulated or multi-tenant environments.
+        - **Control bypass:** HGFS opens a direct path between the guest and the host file system without traditional access checks.
+        - **Host file access:** A compromised guest could use HGFS to read or modify host files and shared data.
+        - **Weak auditability:** File access through HGFS is often not logged, leaving activity unmonitored.
 
-        If HGFS is enabled, it may result in:
-          - Unauthorized file access or modification, especially in cases of misconfiguration or insufficient file permission enforcement.
-          - Increased risk of lateral movement, as the guest can access host-side directories or services not otherwise exposed.
-          - Compliance violations with hardening standards such as the CIS VMware ESXi Benchmark, NIST 800-53, and PCI DSS.
-          - Reduced auditability, since file access via HGFS may not be logged or monitored effectively.
+        **Risk mitigation**
 
-        **Risk mitigation:**
-          - Prevents guest VMs from accessing or sharing files with the ESXi host or other VMs.
-          - Reinforces secure workload isolation and reduces the risk of data exposure.
-          - Aligns with best practices for securing virtualization platforms by disabling unnecessary integration features.
-          - Supports compliance with security frameworks that require strict separation of roles and data access.
+        - **No shared path:** Guest VMs cannot access or share files with the host or other VMs.
+        - **Reinforced isolation:** Removing the integration feature reduces the risk of data exposure and lateral movement.
+      audit: |-
+        ### Audit via the vSphere Client
 
-        Disabling the Host Guest File System Server helps protect VMware ESXi environments by eliminating insecure file-sharing mechanisms and enforcing clear boundaries between guest virtual machines and the host operating system.
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. Select the `VM Options` tab and expand `Advanced`.
+        3. Select `EDIT CONFIGURATION`.
+        4. Locate the `isolation.tools.hgfsServerSet.disable` parameter and read its value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Get-AdvancedSetting -Name 'isolation.tools.hgfsServerSet.disable'
+        ```
+
+        The check passes only when the parameter is present and set to `TRUE` for every virtual machine. It fails if the parameter is absent or set to any other value.
       remediation: |-
         To set this configuration utilize the vSphere interface as follows:
 
@@ -597,28 +696,36 @@ queries:
       vsphere.datacenters.all( vms.all( advancedSettings['tools.guestlib.enableHostInfo'].downcase == "false" ) )
     docs:
       desc: |-
-        This check ensures that VMware Tools is configured to prevent the transmission of host system information to guest virtual machines unless explicitly required for legitimate performance monitoring. Disabling unnecessary host-to-guest data sharing helps preserve workload isolation and minimizes the risk of system reconnaissance or data leakage from the hypervisor.
+        This check ensures that host system information is not sent to each virtual machine through the `tools.guestlib.enableHostInfo` parameter. VMware Tools can expose host details such as hostname, CPU model, and memory capacity to the guest, and disabling that sharing keeps host metadata out of the guest unless it is genuinely needed.
 
-        **Rationale:**
+        **Why this matters**
 
-        VMware Tools provides enhanced integration between the guest operating system and the hypervisor, including the ability for the guest to receive details about the underlying host—such as hostname, CPU model, memory capacity, or other system metadata. While useful for monitoring or diagnostics in some scenarios, exposing host information to all guest VMs introduces risk:
-          - It enables system reconnaissance from within the guest, allowing attackers to learn about the host infrastructure.
-          - Host metadata could be used to fingerprint environments, identify targets for attack, or coordinate lateral movement.
-          - In shared or multi-tenant environments, this violates the principle of least knowledge and undermines workload separation.
+        - **Reconnaissance:** Host metadata lets an attacker inside the guest learn about the underlying infrastructure.
+        - **Environment fingerprinting:** Exposed details help identify targets and coordinate lateral movement.
+        - **Least knowledge:** In shared environments, sharing host data violates the principle of least knowledge between tenants.
 
-        Leaving this setting enabled without a specific business need may result in:
-          - Information disclosure about the host system that can aid in targeted attacks.
-          - Weakened isolation between guests and the hypervisor.
-          - Non-compliance with hardening baselines such as the CIS VMware ESXi Benchmark, DISA STIGs, or ISO 27001.
-          - Reduced control over what telemetry is shared with potentially untrusted VMs.
+        **Risk mitigation**
 
-        **Risk mitigation:**
-          - Restricts guest access to sensitive host metadata unless explicitly required for performance tooling.
-          - Reduces visibility into the hypervisor and physical infrastructure from within guest operating systems.
-          - Enforces strict separation between the host and guest environments in line with zero-trust principles.
-          - Aligns with secure virtualization practices and regulatory requirements that emphasize data minimization.
+        - **Restricted metadata:** Guest VMs no longer see sensitive host details unless explicitly enabled.
+        - **Stronger separation:** Reducing hypervisor visibility from within the guest enforces a clean host-to-guest boundary.
+      audit: |-
+        ### Audit via the vSphere Client
 
-        Configuring VMware Tools to block host information sharing by default helps limit exposure of internal infrastructure details and ensures that only authorized VMs can access such data for legitimate performance monitoring purposes.
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. Select the `VM Options` tab and expand `Advanced`.
+        3. Select `EDIT CONFIGURATION`.
+        4. Locate the `tools.guestlib.enableHostInfo` parameter and read its value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Get-AdvancedSetting -Name 'tools.guestlib.enableHostInfo'
+        ```
+
+        The check passes only when the parameter is present and set to `FALSE` for every virtual machine. It fails if the parameter is absent or set to any other value.
       remediation: |-
         To set this configuration utilize the vSphere interface as follows:
 
@@ -643,28 +750,36 @@ queries:
       vsphere.datacenters.all( vms.all( advancedSettings['tools.setInfo.sizeLimit'] == 1048576 ) )
     docs:
       desc: |-
-        This check ensures that informational messages written from the guest VM to the VMX configuration file are limited, helping to prevent unnecessary datastore consumption and maintaining the stability of the VMware ESXi host environment.
+        This check ensures that informational messages written from each virtual machine to its VMX configuration file are capped at 1 MB through the `tools.setInfo.sizeLimit` parameter. The VMX file holds the VM's hardware and runtime configuration, and bounding guest-generated data keeps it from growing without limit.
 
-        **Rationale:**
+        **Why this matters**
 
-        The VMX file is the configuration file for a virtual machine and contains critical name-value pairs that define its virtual hardware and runtime behavior. In some environments, guest operating systems or applications may log custom data or diagnostic messages to the VMX file. Although the default file size is limited to 1 MB, excessive or unregulated message logging can lead to:
-          - VMX files growing beyond their intended size, especially if the size limit is increased to accommodate custom metadata.
-          - Datastore exhaustion, which can cause service degradation, failure to power on VMs, or broader instability across the host.
-          - Loss of important configuration or state data if the VMX file becomes corrupted due to overuse.
+        - **Datastore exhaustion:** Unbounded VMX growth can fill shared datastores, degrading service or preventing VMs from powering on.
+        - **Configuration integrity:** An oversized or overused VMX file risks corruption and loss of critical configuration state.
+        - **Operational bloat:** Excessive VMX content inflates backups and snapshots, raising time and storage cost.
 
-        Uncontrolled VMX logging may result in:
-          - Storage resource exhaustion across shared datastores, impacting multiple VMs.
-          - Performance degradation during VM operations or host maintenance tasks.
-          - Compliance or operational risks if configuration files contain excessive, sensitive, or unmanaged custom data.
-          - Backup and snapshot bloat, increasing time and storage cost for routine VM lifecycle operations.
+        **Risk mitigation**
 
-        **Risk mitigation:**
-          - Enforces size and verbosity limits on guest-generated data written to the VMX configuration file.
-          - Helps maintain VM configuration integrity and supports consistent VM lifecycle operations.
-          - Prevents accidental denial-of-service conditions caused by oversized or overused configuration files.
-          - Aligns with operational hardening best practices recommended in VMware documentation and security benchmarks.
+        - **Bounded growth:** A fixed size limit caps guest-generated data written to the configuration file.
+        - **Denial-of-service prevention:** Capping the file avoids storage-exhaustion conditions that would affect other VMs.
+      audit: |-
+        ### Audit via the vSphere Client
 
-        Limiting informational messages written to the VMX file ensures that guest activity does not unintentionally consume critical storage or affect the stability of the ESXi environment, particularly in multi-VM or shared-datastore scenarios.
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. Select the `VM Options` tab and expand `Advanced`.
+        3. Select `EDIT CONFIGURATION`.
+        4. Locate the `tools.setInfo.sizeLimit` parameter and read its value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Get-AdvancedSetting -Name 'tools.setInfo.sizeLimit'
+        ```
+
+        The check passes only when the parameter is present and set to `1048576` for every virtual machine. It fails if the parameter is absent or set to any other value.
       remediation: |-
         To set this configuration run the following PowerCLI command for each VM:
 
@@ -681,28 +796,36 @@ queries:
       vsphere.datacenters.all( vms.all( advancedSettings['isolation.tools.memSchedFakeSampleStats.disable'].downcase == "true" ) )
     docs:
       desc: |-
-        This check ensures that the memSchedFakeSampleStats setting is disabled on VMware ESXi hosts. Disabling this advanced memory scheduler feature prevents the generation of synthetic memory statistics, ensuring that only accurate, real-time memory usage data is collected and reported for virtual machines.
+        This check ensures that the memSchedFakeSampleStats feature is disabled for each virtual machine through the `isolation.tools.memSchedFakeSampleStats.disable` parameter. The setting is an internal debugging aid that fabricates memory scheduler statistics, and disabling it ensures the guest sees only real memory telemetry.
 
-        **Rationale:**
+        **Why this matters**
 
-        The memSchedFakeSampleStats parameter is an internal debugging setting used by VMware to simulate memory scheduling statistics. When enabled, it can populate memory statistics fields with fabricated data, which may be useful for development or testing but is inappropriate for production environments:
-          - It skews monitoring and performance data, potentially leading to misinterpretation of memory behavior or resource bottlenecks.
-          - Misleading statistics can negatively impact capacity planning, troubleshooting, or automated policy enforcement tools that rely on accurate telemetry.
-          - Environments using memory-based alerting or chargeback models may report incorrect usage, leading to financial, operational, or compliance discrepancies.
+        - **Skewed data:** Fabricated statistics misrepresent memory behavior and hide real resource bottlenecks.
+        - **Bad decisions:** Capacity planning, troubleshooting, and automated policy tools act on false telemetry.
+        - **Reporting discrepancies:** Memory-based alerting or chargeback models report incorrect usage.
 
-        If memSchedFakeSampleStats is enabled in production, it can lead to:
-          - Inaccurate performance monitoring, making it difficult to identify real memory contention or overcommitment.
-          - Misguided tuning decisions, based on false indicators.
-          - Non-compliance with service-level objectives (SLOs) or regulatory reporting that depends on accurate usage data.
-          - Reduced confidence in the virtualization platform's observability and automation systems.
+        **Risk mitigation**
 
-        **Risk mitigation:**
-          - Ensures memory scheduler statistics accurately reflect real VM usage and contention.
-          - Supports trustworthy monitoring, alerting, and reporting systems.
-          - Prevents internal debugging features from affecting production observability or resource management.
-          - Aligns with VMware ESXi hardening guidance by disabling non-essential and potentially misleading advanced features.
+        - **Accurate telemetry:** Memory scheduler statistics reflect actual VM usage and contention.
+        - **Trustworthy monitoring:** Disabling a debugging feature keeps observability and automation systems reliable.
+      audit: |-
+        ### Audit via the vSphere Client
 
-        Disabling memSchedFakeSampleStats is a critical step in maintaining the integrity of memory usage telemetry within VMware ESXi environments, ensuring reliable operations, accurate diagnostics, and effective resource planning.
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. Select the `VM Options` tab and expand `Advanced`.
+        3. Select `EDIT CONFIGURATION`.
+        4. Locate the `isolation.tools.memSchedFakeSampleStats.disable` parameter and read its value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Get-AdvancedSetting -Name 'isolation.tools.memSchedFakeSampleStats.disable'
+        ```
+
+        The check passes only when the parameter is present and set to `TRUE` for every virtual machine. It fails if the parameter is absent or set to any other value.
       remediation: |-
         To set this configuration utilize the vSphere interface as follows:
 
@@ -735,32 +858,35 @@ queries:
         )
     docs:
       desc: |-
-        This check ensures that virtual machine disks are not configured in independent nonpersistent mode unless explicitly required for disposable workloads. Nonpersistent mode should be avoided in production environments where data integrity and persistence are critical, as all disk changes are lost upon VM reboot.
+        This check ensures that no virtual machine disk is configured in independent nonpersistent mode. In nonpersistent mode all disk changes are discarded when the VM powers off or reboots, so it should be reserved for disposable workloads and avoided where data must persist.
 
-        **Rationale:**
+        **Why this matters**
 
-        By default, virtual disks in VMware are created in dependent mode, meaning they are affected by snapshots. When configured in independent mode, a disk operates outside the scope of VM snapshots and can be further configured as:
-          - Persistent: All changes are immediately and permanently written to disk.
-          - Nonpersistent: All changes are discarded when the VM is powered off or rebooted, restoring the disk to its original state.
+        - **Data loss:** Configuration changes, logs, and user data written during runtime are discarded on shutdown.
+        - **Inconsistent recovery:** Backup and recovery processes can miss critical data when the disk resets each reboot.
+        - **Lost audit trails:** Regulated systems that must retain logs and persistent state cannot do so on a nonpersistent disk.
 
-        While nonpersistent mode is useful for temporary workloads—such as kiosks, training environments, or stateless testing—its use in production or critical systems presents serious risks:
-          - Data loss: Any changes to the disk are lost on shutdown, potentially resulting in lost configurations, logs, or user data.
-          - Inconsistent recovery: Backup and recovery processes may fail to capture critical data if the disk state resets after each reboot.
-          - Compliance violations: Many data protection and retention standards require that systems maintain audit logs and persistent configurations.
+        **Risk mitigation**
 
-        If used improperly, nonpersistent disks can result in:
-          - Unrecoverable operational data, increasing incident response time.
-          - Loss of audit trails in regulated environments.
-          - Misalignment with disaster recovery strategies that depend on consistent disk states.
-          - Unexpected system behavior when changes made during runtime are not preserved.
+        - **Durable state:** Persistent or snapshot-compatible disk modes keep runtime data across restarts.
+        - **Recoverable systems:** Consistent disk state aligns virtual machines with disaster recovery and retention requirements.
+      audit: |-
+        ### Audit via the vSphere Client
 
-        **Risk mitigation:**
-          - Enforces the use of persistent or snapshot-compatible disk modes in systems where data retention is necessary.
-          - Ensures that data written during system operation is preserved across restarts.
-          - Helps meet regulatory requirements for data integrity, auditability, and recoverability.
-          - Prevents accidental use of stateless disk configurations in production workloads.
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. On the `Virtual Hardware` tab, expand each `Hard disk` entry.
+        3. Review the `Disk Mode` field for each virtual disk.
 
-        Use of independent nonpersistent mode should be limited to VMs explicitly designed to operate without persistent disk data. For all other workloads, persistent or dependent disk modes provide greater reliability, auditability, and data protection within VMware ESXi environments.
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Get-HardDisk | Select-Object Parent, Name, Persistence
+        ```
+
+        The check passes when no virtual disk uses independent nonpersistent mode. It fails for any VM that has a disk reported as `IndependentNonPersistent`.
       remediation: |-
         To limit the use of nonpersistent mode, run the following PowerCLI command:
 
@@ -778,28 +904,36 @@ queries:
       vsphere.datacenters.all( vms.all( advancedSettings['RemoteDisplay.maxConnections'] == 1 ) )
     docs:
       desc: |-
-        This check ensures that only a single remote console connection is permitted to a virtual machine (VM) at any given time. Limiting remote console access helps maintain control over administrative sessions, reduces the risk of conflicting actions, and prevents unauthorized observation or interference with VM operations.
+        This check ensures that each virtual machine permits only one remote console connection at a time through the `RemoteDisplay.maxConnections` parameter. The remote console grants display, keyboard, and mouse access to a VM, and limiting it to a single session keeps administrative access controlled.
 
-        **Rationale:**
+        **Why this matters**
 
-        The VMware remote console allows administrators to interact with a VM's display, keyboard, and mouse—similar to physical console access on a physical machine. By default, multiple remote console sessions may be allowed simultaneously, which introduces potential security and operational concerns:
-          - Multiple users could interfere with each other's actions, leading to configuration errors or system instability.
-          - Unmonitored sessions may allow unauthorized users to observe or control the VM, increasing the risk of insider threats or privilege abuse.
-          - Session concurrency complicates audit trails, making it harder to attribute changes to specific users.
+        - **Session conflicts:** Concurrent users can interfere with each other's actions and cause configuration errors.
+        - **Unmonitored observation:** Extra sessions let unauthorized users watch or control the VM console.
+        - **Weak attribution:** Concurrent sessions blur audit trails and make it hard to tie changes to a user.
 
-        Allowing more than one remote console session can result in:
-          - Unauthorized access to sensitive VM consoles, particularly in shared administrative environments.
-          - Operational conflicts when simultaneous users attempt to modify system settings or troubleshoot issues.
-          - Compliance violations if session control and accountability are required by frameworks such as PCI DSS, HIPAA, or NIST 800-53.
-          - Reduced visibility and control over critical administrative interfaces.
+        **Risk mitigation**
 
-        **Risk mitigation:**
-          - Enforces exclusive console access, ensuring only one administrator can interact with the VM console at a time.
-          - Prevents unauthorized monitoring or manipulation of VM consoles by additional users.
-          - Simplifies session auditing by ensuring clear attribution of actions.
-          - Aligns with security best practices that prioritize session control and administrative accountability.
+        - **Exclusive access:** Only one administrator can interact with the console at a time.
+        - **Clear auditing:** Single-session access keeps console activity attributable to a named user.
+      audit: |-
+        ### Audit via the vSphere Client
 
-        Restricting remote console access to a single active connection per VM improves security posture, minimizes operational risk, and supports compliance with access control and monitoring requirements in VMware ESXi environments.
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. Select the `VM Options` tab and expand `Advanced`.
+        3. Select `EDIT CONFIGURATION`.
+        4. Locate the `RemoteDisplay.maxConnections` parameter and read its value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Get-AdvancedSetting -Name 'RemoteDisplay.maxConnections'
+        ```
+
+        The check passes only when the parameter is present and set to `1` for every virtual machine. It fails if the parameter is absent or set to any other value.
       remediation: |-
         To set this configuration utilize the vSphere interface as follows:
 
@@ -829,28 +963,35 @@ queries:
       vsphere.datacenters.all( vms.all( advancedSettings.where ( key.contains('pciPassthru')).length == 0 ) )
     docs:
       desc: |-
-        This check ensures that PCI and PCIe device pass-through (VMDirectPath I/O) is disabled on VMware ESXi hosts unless explicitly required. Disabling this feature helps maintain workload isolation, reduces the risk of hardware-level attacks, and supports secure, manageable virtual infrastructure.
+        This check ensures that no virtual machine has PCI or PCIe device pass-through configured, verified by the absence of any `pciPassthru` advanced parameter. Pass-through lets a VM access physical PCI hardware directly by bypassing the hypervisor, and it should be reserved for trusted workloads with a documented need.
 
-        **Rationale:**
+        **Why this matters**
 
-        VMDirectPath I/O enables a virtual machine to access physical PCI or PCIe devices directly by bypassing the ESXi hypervisor. While this offers performance benefits for specific use cases—such as high-performance networking or GPU workloads—it also introduces significant security and operational risks:
-          - Pass-through devices bypass hypervisor-level controls, including resource scheduling, isolation, and introspection.
-          - Malicious or compromised VMs may be able to interact directly with hardware, increasing the risk of host compromise or denial-of-service.
-          - Direct hardware assignment complicates live migration, high availability, and backup, reducing operational flexibility and resilience.
+        - **Control bypass:** Pass-through devices skip hypervisor scheduling, isolation, and introspection.
+        - **Hardware-level attacks:** A compromised VM can interact directly with hardware, raising the risk of host compromise or denial-of-service.
+        - **Lost portability:** Direct hardware assignment blocks live migration, high availability, and backup.
 
-        When PCI/PCIe pass-through is enabled unnecessarily, it can result in:
-          - Breakdown of isolation between VMs and the hypervisor, exposing the host to hardware-level attacks.
-          - Loss of visibility into VM behavior through hypervisor-level security and monitoring tools.
-          - Reduced VM portability, making it difficult to migrate workloads or perform routine maintenance.
-          - Compliance challenges when device-level control and auditability are required (e.g., under PCI DSS, NIST 800-53, or ISO 27001).
+        **Risk mitigation**
 
-        **Risk mitigation:**
-          - Prevents unauthorized or unnecessary direct access to hardware from guest virtual machines.
-          - Maintains hypervisor-level visibility and control over I/O operations.
-          - Supports robust workload isolation and protects the integrity of the host environment.
-          - Ensures compatibility with advanced virtualization features like vMotion, snapshots, and HA.
+        - **Hypervisor oversight:** I/O operations stay visible to and controlled by the hypervisor.
+        - **Preserved isolation:** Guest VMs cannot reach physical hardware directly, protecting host integrity.
+      audit: |-
+        ### Audit via the vSphere Client
 
-        PCI and PCIe device pass-through should only be enabled for trusted workloads with clear, documented requirements. In all other cases, disabling VMDirectPath I/O strengthens security boundaries and simplifies the management of VMware ESXi environments.
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. On the `Virtual Hardware` tab, review the device list for any `PCI device` entries.
+        3. Select the `VM Options` tab, expand `Advanced`, and select `EDIT CONFIGURATION`. Confirm no parameters whose name contains `pciPassthru` are defined.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Get-AdvancedSetting -Name 'pciPassthru*'
+        ```
+
+        The check passes when no virtual machine has any `pciPassthru` advanced parameter defined. It fails for any VM where the command returns one or more matching parameters.
       remediation: |-
         The following PowerCLI command can be used:
 
@@ -868,28 +1009,36 @@ queries:
       vsphere.datacenters.all( vms.all( advancedSettings['isolation.tools.dispTopoRequest.disable'].downcase == "true" ) )
     docs:
       desc: |-
-        This check ensures that the Request Disk Topology feature is disabled on VMware ESXi hosts to prevent guest virtual machines from retrieving detailed information about the underlying physical disk layout. Disabling this capability helps preserve host confidentiality and reduces the risk of targeted attacks or system reconnaissance.
+        This check ensures that the Request Disk Topology feature is disabled for each virtual machine through the `isolation.tools.dispTopoRequest.disable` parameter. The feature lets a guest query the physical layout of its backing storage, and disabling it keeps host storage details hidden from the guest.
 
-        **Rationale:**
+        **Why this matters**
 
-        The Request Disk Topology feature allows guest operating systems to query and receive information about the structure of the storage backing their virtual disks—such as physical sector size, alignment, and other topology details. While useful in certain performance tuning scenarios, this feature introduces potential risks:
-          - It exposes host storage configuration to the guest, increasing the visibility of the virtualization and hardware layer.
-          - Malicious actors in the guest OS could use this data for system fingerprinting, identifying underlying infrastructure to inform targeted exploits.
-          - In multi-tenant or regulated environments, exposing topology data can violate isolation principles or compliance requirements.
+        - **Storage disclosure:** The guest can read physical sector size, alignment, and other topology details of the host storage.
+        - **Fingerprinting:** An attacker in the guest can use that data to identify the underlying infrastructure for targeted exploits.
+        - **Lost abstraction:** Exposing topology undermines the virtualization layer's role in concealing hardware from guests.
 
-        If left enabled without a legitimate need, Request Disk Topology may lead to:
-          - Information disclosure of storage architecture, potentially aiding in hypervisor or host-targeted attacks.
-          - Reduced abstraction, undermining the virtualization layer's role in concealing hardware details from guests.
-          - Compliance violations in environments that require strict separation between tenant workloads and host metadata (e.g., PCI DSS, FedRAMP, ISO 27001).
-          - Greater risk during compromise, as attackers gain deeper insight into how storage is structured and accessed.
+        **Risk mitigation**
 
-        **Risk mitigation:**
-          - Prevents guest VMs from accessing detailed physical storage characteristics.
-          - Maintains abstraction boundaries between guest and host, reinforcing virtualization security.
-          - Reduces attack surface and limits reconnaissance opportunities from within guest operating systems.
-          - Aligns with VMware ESXi hardening best practices and regulatory requirements for workload isolation.
+        - **Hidden layout:** Guest VMs cannot read detailed physical storage characteristics.
+        - **Reduced reconnaissance:** Maintaining the abstraction boundary limits what a compromised guest can learn about the host.
+      audit: |-
+        ### Audit via the vSphere Client
 
-        Disabling the Request Disk Topology feature ensures that virtual machines operate independently of underlying storage layout details, preserving security boundaries and reducing the risk of host infrastructure exposure.
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. Select the `VM Options` tab and expand `Advanced`.
+        3. Select `EDIT CONFIGURATION`.
+        4. Locate the `isolation.tools.dispTopoRequest.disable` parameter and read its value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Get-AdvancedSetting -Name 'isolation.tools.dispTopoRequest.disable'
+        ```
+
+        The check passes only when the parameter is present and set to `TRUE` for every virtual machine. It fails if the parameter is absent or set to any other value.
       remediation: |-
         To set this configuration utilize the vSphere interface as follows:
 
@@ -915,28 +1064,36 @@ queries:
       vsphere.datacenters.all( vms.all( advancedSettings['isolation.ghi.host.shellAction.disable'].downcase == "true" ) )
     docs:
       desc: |-
-        This check ensures that the Shell Action feature is disabled on VMware ESXi hosts. Disabling Shell Action helps prevent guest virtual machines from executing commands or triggering actions in the ESXi Shell, thereby preserving hypervisor integrity and reducing the risk of privilege escalation or host compromise.
+        This check ensures that the Shell Action feature is disabled for each virtual machine through the `isolation.ghi.host.shellAction.disable` parameter. The feature lets a guest initiate shell commands or scripts on the host, and disabling it removes a direct control path from the guest to the hypervisor.
 
-        **Rationale:**
+        **Why this matters**
 
-        The Shell Action capability allows guest virtual machines—via VMware Tools and certain APIs—to initiate shell commands or scripts on the ESXi host. While intended for automation and advanced integration, this feature creates a direct control path from the guest to the host, which poses serious security risks in most environments:
-          - It violates the principle of least privilege, allowing VMs to potentially influence host behavior.
-          - If a VM is compromised, attackers could leverage Shell Action to execute arbitrary commands on the host, leading to full system compromise.
-          - This type of guest-to-host interaction undermines workload isolation and hypervisor hardening, increasing the attack surface.
+        - **Least privilege violation:** Shell Action lets a VM influence host behavior it should never reach.
+        - **Host compromise:** A compromised guest could run arbitrary commands on the host and take over the system.
+        - **Isolation breakdown:** Guest-to-host command execution undermines hypervisor hardening and expands the attack surface.
 
-        If Shell Action is enabled in environments where it is not explicitly required, it may result in:
-          - Unauthorized command execution on the ESXi host from within guest systems.
-          - Privilege escalation, allowing lateral movement from guest to host.
-          - Audit and compliance issues, particularly under frameworks like NIST 800-53, CIS VMware ESXi Benchmark, and ISO 27001, which require strict access control and system boundary enforcement.
-          - Loss of control over critical administrative interfaces.
+        **Risk mitigation**
 
-        **Risk mitigation:**
-          - Prevents guest VMs from initiating shell commands on the ESXi host.
-          - Reinforces strict boundaries between virtual machines and the hypervisor control plane.
-          - Reduces the risk of host compromise via VMware Tools or remote management interfaces.
-          - Supports secure configuration baselines that disable unneeded guest-host integration features.
+        - **No host commands:** Guest VMs cannot initiate shell commands on the hypervisor.
+        - **Enforced boundary:** Removing the control path keeps virtual machines separated from the hypervisor control plane.
+      audit: |-
+        ### Audit via the vSphere Client
 
-        Disabling Shell Action is essential for maintaining a secure VMware ESXi environment, ensuring that guest virtual machines cannot execute host-level commands and preserving the integrity and security of the hypervisor.
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. Select the `VM Options` tab and expand `Advanced`.
+        3. Select `EDIT CONFIGURATION`.
+        4. Locate the `isolation.ghi.host.shellAction.disable` parameter and read its value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Get-AdvancedSetting -Name 'isolation.ghi.host.shellAction.disable'
+        ```
+
+        The check passes only when the parameter is present and set to `TRUE` for every virtual machine. It fails if the parameter is absent or set to any other value.
       remediation: |-
         To set this configuration utilize the vSphere interface as follows:
 
@@ -962,27 +1119,36 @@ queries:
       vsphere.datacenters.all( vms.all( advancedSettings['log.keepOld'] == 10 ) )
     docs:
       desc: |-
-        This check ensures that the maximum number of log files retained for each virtual machine (VM) is configured appropriately to balance diagnostic value with storage efficiency and prevent datastore clutter. Proper log file retention helps maintain system performance, supports auditing, and reduces the risk of storage overutilization.
+        This check ensures that each virtual machine retains 10 log files through the `log.keepOld` parameter. Setting a defined retention count balances diagnostic history against storage use, so logs stay useful without filling the datastore.
 
-        **Rationale:**
+        **Why this matters**
 
-        Each VMware virtual machine generates log files (vmware.log) to capture operational events, errors, and activity during runtime. By default, multiple rotated logs are retained to support historical troubleshooting and auditing. However, if the number of retained log files is too high—or left at default in high-activity environments—it can lead to:
-          - Excessive datastore usage, especially across many VMs with high churn or verbose logging.
-          - Performance degradation, as backup, snapshot, or replication operations process unnecessary log data.
-          - Loss of visibility if too few logs are retained and older diagnostic information is overwritten too quickly.
+        - **Forensic visibility:** Retaining 10 rotated logs preserves enough history for root cause analysis and incident response.
+        - **Storage control:** A fixed retention count keeps log files from accumulating without bound across many VMs.
+        - **Operational performance:** Bounded log data avoids slowing backup, snapshot, and replication operations.
 
-        Improper log file retention configuration may result in:
-          - Storage exhaustion on shared datastores or local disk, affecting VM availability and host operations.
-          - Inadequate forensic data, impairing root cause analysis and incident response.
-          - Non-compliance with audit requirements under standards such as PCI DSS, HIPAA, or NIST 800-92, which may mandate a minimum retention period or log availability for security events.
+        **Risk mitigation**
 
-        **Risk mitigation:**
-          - Controls the number of log file rotations (log.rotateSize, log.keepOld) to retain essential diagnostic history without bloating storage.
-          - Ensures that VMs do not accumulate excessive logs over time, especially in long-running workloads.
-          - Supports reliable auditing and troubleshooting by preserving the right amount of historical data.
-          - Aligns with VMware operational best practices and reduces administrative overhead.
+        - **Bounded retention:** A defined log count prevents both storage exhaustion and premature loss of diagnostic data.
+        - **Reliable auditing:** The right amount of historical log data stays available for troubleshooting and audits.
+      audit: |-
+        ### Audit via the vSphere Client
 
-        Configuring the number of VM log files properly helps organizations maintain a secure and efficient VMware ESXi environment by balancing the need for historical visibility with the realities of limited storage resources and operational performance.
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. Select the `VM Options` tab and expand `Advanced`.
+        3. Select `EDIT CONFIGURATION`.
+        4. Locate the `log.keepOld` parameter and read its value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Get-AdvancedSetting -Name 'log.keepOld'
+        ```
+
+        The check passes only when the parameter is present and set to `10` for every virtual machine. It fails if the parameter is absent or set to any other value.
       remediation: |-
         To set this configuration utilize the vSphere interface as follows:
 
@@ -1008,28 +1174,36 @@ queries:
       vsphere.datacenters.all( vms.all( advancedSettings['isolation.tools.trashFolderState.disable'].downcase == "true" ) )
     docs:
       desc: |-
-        This check ensures that the Trash Folder State feature is disabled on VMware ESXi hosts to prevent the creation and retention of deleted file references within virtual machine environments. Disabling this feature helps reduce unnecessary datastore usage and prevents unintended data persistence in secure or regulated environments.
+        This check ensures that the Trash Folder State feature is disabled for each virtual machine through the `isolation.tools.trashFolderState.disable` parameter. The feature keeps deleted files in a recycle-like state, and disabling it ensures deletions are final and immediate.
 
-        **Rationale:**
+        **Why this matters**
 
-        The Trash Folder State feature allows virtual machines to retain deleted files temporarily in a trash or recycle-like state rather than removing them immediately. While this may offer convenience for desktop or end-user environments, it introduces several security and operational concerns in server-class, multi-tenant, or regulated deployments:
-          - Deleted files may continue to consume storage, contributing to datastore sprawl or unexpected capacity issues.
-          - Sensitive data may remain recoverable beyond its intended lifecycle, violating data retention or disposal policies.
-          - In environments with strict audit or compliance requirements, retaining deleted files could lead to regulatory violations or forensic concerns.
+        - **Residual data:** Deleted files kept in a trash state remain recoverable beyond their intended lifecycle.
+        - **Storage sprawl:** Retained deleted files consume datastore space, especially in high-churn workloads.
+        - **Disposal policy:** Retaining deleted data conflicts with secure data sanitization requirements.
 
-        If Trash Folder State is left enabled, it may result in:
-          - Data persistence risks, where deleted files remain accessible or recoverable.
-          - Storage inefficiency, particularly in high-churn environments where file deletion is frequent.
-          - Failure to meet data sanitization policies, especially under compliance frameworks such as GDPR, HIPAA, or NIST SP 800-88.
-          - Reduced clarity around what data is actively in use versus what is marked for deletion.
+        **Risk mitigation**
 
-        **Risk mitigation:**
-          - Ensures that file deletions from guest VMs are final and immediate, minimizing residual data.
-          - Reduces unnecessary use of datastore space, improving overall storage management.
-          - Aligns with secure data handling and disposal practices required by regulatory standards.
-          - Limits the risk of unintentional data exposure or recovery in sensitive environments.
+        - **Final deletion:** File deletions from the guest are immediate, minimizing recoverable residual data.
+        - **Efficient storage:** Removing deleted files promptly keeps datastore usage predictable.
+      audit: |-
+        ### Audit via the vSphere Client
 
-        Disabling the Trash Folder State strengthens data hygiene practices in VMware ESXi environments by ensuring that deleted files are truly removed, supporting both operational efficiency and compliance with secure data lifecycle management standards.
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. Select the `VM Options` tab and expand `Advanced`.
+        3. Select `EDIT CONFIGURATION`.
+        4. Locate the `isolation.tools.trashFolderState.disable` parameter and read its value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Get-AdvancedSetting -Name 'isolation.tools.trashFolderState.disable'
+        ```
+
+        The check passes only when the parameter is present and set to `TRUE` for every virtual machine. It fails if the parameter is absent or set to any other value.
       remediation: |-
         To set this configuration utilize the vSphere interface as follows:
 
@@ -1056,12 +1230,35 @@ queries:
       vsphere.datacenters.all( vms.all( secureBootEnabled == true ) )
     docs:
       desc: |-
-        UEFI Secure Boot validates the cryptographic signature of the guest bootloader, kernel, and drivers each time a virtual machine starts. Code that is unsigned or signed by an untrusted authority is prevented from running.
+        This check ensures that each virtual machine uses EFI firmware with UEFI Secure Boot enabled. Secure Boot validates the cryptographic signature of the guest bootloader, kernel, and drivers at every start, so code that is unsigned or signed by an untrusted authority is blocked from running.
 
-        Secure Boot protects a guest operating system against bootkits and rootkits that attempt to load before the OS. It requires the virtual machine to use EFI firmware rather than legacy BIOS.
+        **Why this matters**
 
-        **Best Practice:**
-        - Configure virtual machines with EFI firmware and enable Secure Boot for guest operating systems that support it.
+        - **Bootkit defense:** Secure Boot stops bootkits and rootkits that try to load before the guest operating system.
+        - **Verified code:** Only signed bootloader, kernel, and driver code is allowed to execute.
+        - **Firmware baseline:** Secure Boot requires EFI firmware, replacing legacy BIOS boot paths that lack signature checks.
+
+        **Risk mitigation**
+
+        - **Trusted startup:** Each VM boots only verified code, keeping the early boot chain trustworthy.
+        - **Tamper resistance:** Unsigned modifications to the guest boot path are rejected before they can run.
+      audit: |-
+        ### Audit via the vSphere Client
+
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. Select the `VM Options` tab and expand `Boot Options`.
+        3. Confirm `Firmware` is set to `EFI` and the `Secure Boot` checkbox is selected.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Select-Object Name, @{N='Firmware';E={$_.ExtensionData.Config.Firmware}}, @{N='SecureBoot';E={$_.ExtensionData.Config.BootOptions.EfiSecureBootEnabled}}
+        ```
+
+        The check passes when every virtual machine reports `efi` firmware and Secure Boot enabled. It fails for any VM that uses BIOS firmware or has Secure Boot disabled.
       remediation: |-
         **To enable Secure Boot via the vSphere Client:**
 
@@ -1083,28 +1280,36 @@ queries:
       vsphere.datacenters.all( vms.all( advancedSettings['isolation.device.connectable.disable'].downcase == "true" ) )
     docs:
       desc: |-
-        This check ensures that unauthorized device connections—such as USB, CD/DVD, and other removable or passthrough devices—are disabled for virtual machines in VMware ESXi environments. Disabling or restricting dynamic device connections helps prevent data leakage, malware introduction, and unauthorized access to sensitive resources.
+        This check ensures that unauthorized device connections are blocked for each virtual machine through the `isolation.device.connectable.disable` parameter. The setting prevents a guest from dynamically connecting devices such as USB drives or CD/DVD images, removing a path for data leakage or malware introduction.
 
-        **Rationale:**
+        **Why this matters**
 
-        VMware allows administrators—and potentially end users with sufficient permissions—to connect devices such as USB drives, CD/DVD images, and other hardware interfaces to running virtual machines. While useful for certain workflows, this functionality poses significant risks in production, multi-tenant, or regulated environments:
-          - Removable media can be used to introduce malicious payloads or exfiltrate sensitive data.
-          - Device passthrough enables direct communication between the guest and host or external devices, bypassing security controls.
-          - Uncontrolled device access violates the principle of least privilege and can undermine host integrity or VM isolation.
+        - **Removable media:** Connected media can carry malicious payloads or be used to exfiltrate sensitive data.
+        - **Passthrough exposure:** Device passthrough opens direct communication with the host or external hardware, bypassing controls.
+        - **Least privilege:** Uncontrolled device connection lets a guest reach hardware it has no need for.
 
-        Allowing unauthorized or unmanaged device connections can result in:
-          - Data loss or theft, especially when external storage is mounted to sensitive VMs.
-          - Malware injection, including ransomware or rootkits introduced via removable media.
-          - Non-compliance with data protection and access control standards such as PCI DSS, NIST 800-171, HIPAA, and ISO 27001.
-          - Audit trail gaps, where devices are added without proper authorization or monitoring.
+        **Risk mitigation**
 
-        **Risk mitigation:**
-          - Restricts the ability to connect devices dynamically unless explicitly authorized for the workload.
-          - Prevents VMs from interfacing with removable media or passthrough hardware that could expose data or the hypervisor.
-          - Enforces secure configuration baselines by limiting access to only essential virtual hardware components.
-          - Supports compliance with security frameworks requiring control over external device access.
+        - **Restricted attachment:** Devices cannot be connected dynamically unless explicitly authorized for the workload.
+        - **Protected hypervisor:** Blocking passthrough connections keeps a guest from interfacing with host hardware.
+      audit: |-
+        ### Audit via the vSphere Client
 
-        Disabling unauthorized connection of devices is a critical control for maintaining the security, integrity, and compliance of VMware ESXi environments, particularly where data sensitivity, workload isolation, or regulatory enforcement is a concern.
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. Select the `VM Options` tab and expand `Advanced`.
+        3. Select `EDIT CONFIGURATION`.
+        4. Locate the `isolation.device.connectable.disable` parameter and read its value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Get-AdvancedSetting -Name 'isolation.device.connectable.disable'
+        ```
+
+        The check passes only when the parameter is present and set to `TRUE` for every virtual machine. It fails if the parameter is absent or set to any other value.
       remediation: |-
         To prevent unauthorized device connections, run the following PowerCLI command for each VM:
 
@@ -1118,28 +1323,36 @@ queries:
       vsphere.datacenters.all( vms.all( advancedSettings['isolation.device.edit.disable'].downcase == "true" ) )
     docs:
       desc: |-
-        This check ensures that unauthorized users are prevented from modifying or disconnecting virtual hardware devices—such as network adapters, hard disks, and virtual NICs—attached to virtual machines in VMware ESXi environments. Restricting these actions helps maintain system integrity, prevents misconfiguration, and protects against intentional or accidental disruption of VM operations.
+        This check ensures that unauthorized modification and disconnection of virtual devices is blocked for each virtual machine through the `isolation.device.edit.disable` parameter. The setting prevents a guest from editing or disconnecting attached hardware such as network adapters and disks, protecting the VM from disruption or tampering.
 
-        **Rationale:**
+        **Why this matters**
 
-        VMware ESXi allows users with appropriate permissions to modify or disconnect virtual devices while a VM is powered on. While this capability can be useful for administrative tasks, it introduces substantial risks if left unrestricted:
-          - Users could disconnect critical virtual hardware, such as network adapters or system disks, causing VM outages or service disruption.
-          - Malicious insiders or compromised accounts may alter device configurations to reroute traffic, disable logging, or bypass security controls.
-          - Improper modifications can result in configuration drift, making VMs inconsistent with security baselines or automation templates.
+        - **Service disruption:** Disconnecting critical hardware like network adapters or system disks can take a VM offline.
+        - **Control bypass:** Altering device configuration can reroute traffic, disable logging, or evade security controls.
+        - **Configuration drift:** Improper modifications leave VMs inconsistent with security baselines and templates.
 
-        Allowing unregulated modification or disconnection of virtual devices can lead to:
-          - System outages, affecting availability and business continuity.
-          - Security control bypasses, such as disabling firewalls, security monitoring, or network segmentation.
-          - Non-compliance with operational and regulatory requirements, including PCI DSS, HIPAA, and CIS VMware ESXi Benchmark.
-          - Lack of accountability, as actions may not be properly logged or attributed if privilege boundaries are not enforced.
+        **Risk mitigation**
 
-        **Risk mitigation:**
-          - Ensures only authorized users can modify or disconnect virtual hardware on running or powered-off VMs.
-          - Maintains system availability and reduces the risk of accidental or malicious misconfiguration.
-          - Preserves integrity of VM configurations across lifecycle events and security audits.
-          - Aligns with best practices for access control, change management, and secure virtualization.
+        - **Stable hardware:** Only authorized changes to virtual hardware are possible, keeping the VM running as intended.
+        - **Preserved integrity:** Locking device configuration keeps VMs aligned with their secure baseline.
+      audit: |-
+        ### Audit via the vSphere Client
 
-        Disabling unauthorized modification and disconnection of virtual devices helps secure VMware ESXi environments by enforcing strict control over hardware configurations, supporting both operational reliability and compliance with security standards.
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. Select the `VM Options` tab and expand `Advanced`.
+        3. Select `EDIT CONFIGURATION`.
+        4. Locate the `isolation.device.edit.disable` parameter and read its value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Get-AdvancedSetting -Name 'isolation.device.edit.disable'
+        ```
+
+        The check passes only when the parameter is present and set to `TRUE` for every virtual machine. It fails if the parameter is absent or set to any other value.
       remediation: |-
         To prevent unauthorized device modifications and disconnections, run the following PowerCLI command for each VM:
 
@@ -1153,28 +1366,36 @@ queries:
       vsphere.datacenters.all( vms.all( advancedSettings['isolation.tools.unityActive.disable'].downcase == "true" ) )
     docs:
       desc: |-
-        This check ensures that the Unity Active feature is disabled on VMware ESXi hosts to prevent guest virtual machines from displaying applications seamlessly on the host desktop using VMware Unity mode. Disabling Unity mode reduces the risk of unauthorized interactions between the guest and host environments and preserves clear isolation boundaries.
+        This check ensures that the Unity Active feature is disabled for each virtual machine through the `isolation.tools.unityActive.disable` parameter. Unity mode lets guest applications appear on the host desktop, and disabling it preserves a clear boundary between guest and host.
 
-        **Rationale:**
+        **Why this matters**
 
-        Unity Mode is a VMware feature designed primarily for desktop virtualization products (like VMware Workstation and Fusion), allowing applications running inside a VM to appear as if they are native to the host operating system. While this may enhance usability in certain desktop scenarios, it introduces significant security concerns in server, multi-tenant, or regulated environments:
-          - It blurs the boundary between guest and host, making it more difficult to enforce separation of duties and control over system interactions.
-          - A compromised guest VM may attempt to interact with or manipulate host UI components through Unity integration.
-          - In environments where security, data segmentation, or auditability is critical, Unity mode violates isolation principles.
+        - **Blurred boundary:** Unity integration merges guest and host, making separation of duties harder to enforce.
+        - **UI manipulation:** A compromised guest could interact with or manipulate host UI components.
+        - **Data leakage:** Shared windows and input handling create a path for data to cross between guest and host.
 
-        Leaving Unity Active enabled can lead to:
-          - Data leakage between guest and host systems through shared windows or input handling.
-          - Unauthorized access or monitoring of host desktop activity from within the guest.
-          - Non-compliance with virtualization hardening benchmarks such as the CIS VMware ESXi Benchmark, DISA STIGs, or industry-specific regulatory frameworks.
-          - Increased attack surface, especially when the guest OS is untrusted or exposed to external users.
+        **Risk mitigation**
 
-        **Risk mitigation:**
-          - Enforces strong host-guest separation, reducing the risk of UI-based or interaction-driven exploits.
-          - Prevents guest applications from presenting themselves on the host desktop, maintaining a secure VM boundary.
-          - Supports compliance with security frameworks that mandate virtualization isolation and access control.
-          - Aligns with VMware best practices for server-class deployments by disabling non-essential desktop features.
+        - **Host-guest separation:** Disabling Unity reduces the risk of UI-based or interaction-driven exploits.
+        - **Secure boundary:** Guest applications cannot present themselves on the host desktop.
+      audit: |-
+        ### Audit via the vSphere Client
 
-        Disabling Unity Active is essential in securing VMware ESXi environments, particularly where guest VMs should remain strictly isolated from the host and where host desktop interaction is unnecessary or explicitly prohibited.
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. Select the `VM Options` tab and expand `Advanced`.
+        3. Select `EDIT CONFIGURATION`.
+        4. Locate the `isolation.tools.unityActive.disable` parameter and read its value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Get-AdvancedSetting -Name 'isolation.tools.unityActive.disable'
+        ```
+
+        The check passes only when the parameter is present and set to `TRUE` for every virtual machine. It fails if the parameter is absent or set to any other value.
       remediation: |-
         To set this configuration utilize the vSphere interface as follows:
 
@@ -1200,28 +1421,36 @@ queries:
       vsphere.datacenters.all( vms.all( advancedSettings['isolation.tools.unityInterlockOperation.disable'].downcase == "true" ) )
     docs:
       desc: |-
-        This check ensures that the Unity Interlock feature is disabled on VMware ESXi hosts to prevent guest virtual machines from interacting with host-side user interface components through Unity mode. Disabling Unity Interlock strengthens the isolation between guest and host environments, reducing the risk of unauthorized access or data leakage.
+        This check ensures that the Unity Interlock feature is disabled for each virtual machine through the `isolation.tools.unityInterlockOperation.disable` parameter. Unity Interlock supports deep UI integration between guest applications and the host desktop, and disabling it strengthens guest-host isolation.
 
-        **Rationale:**
+        **Why this matters**
 
-        Unity Interlock is a supporting mechanism for VMware Unity mode, primarily used in desktop virtualization products like VMware Workstation and Fusion. It facilitates integration between guest applications and the host desktop environment, allowing windows from a guest VM to operate as if they are native host applications. While useful in user-centric desktop environments, it is inappropriate for production ESXi deployments:
-          - Unity Interlock enables deep guest-host UI integration, which can weaken security boundaries between isolated systems.
-          - In environments where the host is shared, regulated, or exposed to sensitive workloads, this feature can expose host resources to untrusted guests.
-          - Guest applications may interfere with host UI elements or capture user input unintentionally, violating principles of secure virtualization.
+        - **UI integration:** Unity Interlock allows guest windows to operate as if they were native host applications, weakening boundaries.
+        - **Host resource exposure:** On a shared or sensitive host, the feature can expose host resources to untrusted guests.
+        - **Input capture:** Guest applications may interfere with host UI elements or capture user input.
 
-        If Unity Interlock is enabled, it can lead to:
-          - Unintended access to host system interfaces or user input streams.
-          - Data leakage or manipulation via shared clipboard or window management behavior.
-          - Non-compliance with virtualization hardening standards such as the CIS VMware ESXi Benchmark, DISA STIGs, or NIST security controls.
-          - Breakdown of isolation in multi-tenant, regulated, or security-sensitive deployments.
+        **Risk mitigation**
 
-        **Risk mitigation:**
-          - Prevents guest virtual machines from initiating UI-level integration with the host desktop.
-          - Maintains strict isolation between guest workloads and host operating system resources.
-          - Reduces the attack surface by disabling unnecessary guest-host interaction features.
-          - Aligns with best practices for secure server virtualization by disabling non-essential desktop-oriented functionality.
+        - **No UI integration:** Guest VMs cannot initiate UI-level integration with the host desktop.
+        - **Reduced surface:** Disabling an unneeded desktop feature shrinks the guest-host attack surface.
+      audit: |-
+        ### Audit via the vSphere Client
 
-        Disabling Unity Interlock ensures a clear separation between guest and host systems in VMware ESXi environments, helping to uphold strong isolation policies, prevent UI-level data exposure, and meet compliance requirements in secure deployments.
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. Select the `VM Options` tab and expand `Advanced`.
+        3. Select `EDIT CONFIGURATION`.
+        4. Locate the `isolation.tools.unityInterlockOperation.disable` parameter and read its value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Get-AdvancedSetting -Name 'isolation.tools.unityInterlockOperation.disable'
+        ```
+
+        The check passes only when the parameter is present and set to `TRUE` for every virtual machine. It fails if the parameter is absent or set to any other value.
       remediation: |-
         To set this configuration utilize the vSphere interface as follows:
 
@@ -1247,28 +1476,36 @@ queries:
       vsphere.datacenters.all( vms.all( advancedSettings['isolation.tools.unity.disable'].downcase == "true" ) )
     docs:
       desc: |-
-        This check ensures that the Unity feature is fully disabled on VMware ESXi hosts. Disabling Unity mode prevents guest virtual machines from integrating with the host desktop interface, thereby enforcing strong isolation between guest and host environments and reducing the risk of unauthorized interaction or data leakage.
+        This check ensures that the Unity feature is fully disabled for each virtual machine through the `isolation.tools.unity.disable` parameter. Unity mode lets guest applications appear as native windows on the host desktop, and disabling it enforces a clean separation between guest and host.
 
-        **Rationale:**
+        **Why this matters**
 
-        Unity Mode is a VMware feature primarily used in desktop virtualization products like VMware Workstation and Fusion. It allows applications running inside a virtual machine to appear as native windows on the host desktop, blending the guest and host user experiences. While convenient in personal or development environments, Unity mode introduces serious security concerns in ESXi-based server environments:
-          - It creates a shared interface layer between guest VMs and the host system, violating strict workload isolation principles.
-          - Unity mode may expose host UI components or user input to guest systems, especially when combined with features like shared clipboard or drag-and-drop.
-          - In multi-tenant or compliance-sensitive environments, this integration increases the risk of data leakage, privilege abuse, or unauthorized access.
+        - **Shared interface layer:** Unity creates an interface bridge between guest and host that violates workload isolation.
+        - **Host UI exposure:** Combined with shared clipboard or drag-and-drop, Unity can expose host UI components or input to the guest.
+        - **Leakage risk:** Guest-host UI integration raises the chance of data leakage and unauthorized access.
 
-        If Unity is enabled in ESXi environments, it may result in:
-          - Unauthorized guest-host interaction, including application window sharing or input capturing.
-          - Information disclosure, as guest VMs gain visibility into host-side elements.
-          - Non-compliance with security baselines such as the CIS VMware ESXi Benchmark, DISA STIGs, or NIST 800-53, which emphasize strict isolation and access control.
-          - Increased attack surface, particularly where untrusted or external workloads are hosted.
+        **Risk mitigation**
 
-        **Risk mitigation:**
-          - Fully disables Unity mode, ensuring guest VMs cannot present windows or applications on the host desktop.
-          - Preserves virtualization boundaries by enforcing a clear separation between host and guest environments.
-          - Reduces risk of input redirection, UI spoofing, or data leakage from integrated desktop behavior.
-          - Aligns with hardening best practices for secure ESXi deployments where host system exposure must be minimized.
+        - **No desktop integration:** Guest VMs cannot present windows or applications on the host desktop.
+        - **Spoofing prevention:** Removing the integration eliminates input-redirection and UI-spoofing paths.
+      audit: |-
+        ### Audit via the vSphere Client
 
-        Disabling Unity is critical for securing VMware ESXi environments. It prevents unnecessary and potentially risky guest-host UI integration, helping maintain strong security, privacy, and compliance standards across virtualized infrastructure.
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. Select the `VM Options` tab and expand `Advanced`.
+        3. Select `EDIT CONFIGURATION`.
+        4. Locate the `isolation.tools.unity.disable` parameter and read its value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Get-AdvancedSetting -Name 'isolation.tools.unity.disable'
+        ```
+
+        The check passes only when the parameter is present and set to `TRUE` for every virtual machine. It fails if the parameter is absent or set to any other value.
       remediation: |-
         To set this configuration utilize the vSphere interface as follows:
 
@@ -1294,28 +1531,36 @@ queries:
       vsphere.datacenters.all( vms.all( advancedSettings['isolation.tools.unity.push.update.disable'].downcase == "true" ) )
     docs:
       desc: |-
-        This check ensures that the Unity Push Update feature is disabled on VMware ESXi hosts unless explicitly required. Disabling this feature prevents guest virtual machines from receiving Unity mode configuration updates from the host, thereby preserving system integrity and minimizing unnecessary guest-host communication.
+        This check ensures that the Unity Push Update feature is disabled for each virtual machine through the `isolation.tools.unity.push.update.disable` parameter. The feature lets the host push Unity-related settings to the guest, and disabling it removes an unnecessary host-to-guest channel.
 
-        **Rationale:**
+        **Why this matters**
 
-        Unity Push Update is part of the broader Unity integration functionality, designed for desktop virtualization platforms like VMware Workstation and Fusion. It allows the host to push Unity-related settings or updates—such as window position or integration behavior—to the guest. While helpful for seamless user experience in desktop environments, this capability introduces potential security and operational concerns in production ESXi environments:
-          - It creates an additional communication channel from host to guest that may be exploited or misused if the guest is compromised or untrusted.
-          - In regulated or multi-tenant environments, pushing updates from host to guest without tight controls violates isolation and trust boundaries.
-          - These updates may affect guest behavior or UI unexpectedly, leading to unpredictable user experiences or misconfigurations.
+        - **Extra channel:** Unity Push Update opens a host-to-guest path that could be misused if the guest is compromised.
+        - **Unsolicited changes:** Pushed updates can alter guest behavior or UI unexpectedly, causing misconfiguration.
+        - **Reduced auditability:** Configuration changes arrive outside standard management workflows.
 
-        If Unity Push Update is enabled without a valid use case, it can result in:
-          - Unintended guest configuration changes, potentially affecting performance or stability.
-          - Expanded attack surface, as guest VMs interpret instructions from the host.
-          - Non-compliance with hardening guides like the CIS VMware ESXi Benchmark, DISA STIGs, and NIST 800-53, which emphasize limiting unnecessary guest-host interactions.
-          - Reduced auditability, as configuration changes occur outside of standard management workflows.
+        **Risk mitigation**
 
-        **Risk mitigation:**
-          - Prevents the host from transmitting Unity integration settings to guest VMs.
-          - Maintains strict separation between host and guest systems, especially in security-sensitive environments.
-          - Ensures predictable VM behavior by blocking unsolicited or unnecessary updates from the host.
-          - Aligns with secure virtualization best practices by disabling unused or unnecessary guest-host integration features.
+        - **No remote updates:** The host cannot transmit Unity integration settings to guest VMs.
+        - **Predictable behavior:** Blocking unsolicited updates keeps the guest configuration stable.
+      audit: |-
+        ### Audit via the vSphere Client
 
-        Disabling Unity Push Update strengthens the security posture of VMware ESXi environments by ensuring that guest VMs remain isolated and are not subject to remote configuration updates from the host unless explicitly authorized and required.
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. Select the `VM Options` tab and expand `Advanced`.
+        3. Select `EDIT CONFIGURATION`.
+        4. Locate the `isolation.tools.unity.push.update.disable` parameter and read its value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Get-AdvancedSetting -Name 'isolation.tools.unity.push.update.disable'
+        ```
+
+        The check passes only when the parameter is present and set to `TRUE` for every virtual machine. It fails if the parameter is absent or set to any other value.
       remediation: |-
         To set this configuration utilize the vSphere interface as follows:
 
@@ -1341,28 +1586,36 @@ queries:
       vsphere.datacenters.all( vms.all( advancedSettings['isolation.tools.unity.taskbar.disable'].downcase == "true" ) )
     docs:
       desc: |-
-        This check ensures that the Unity Taskbar feature is disabled on VMware ESXi hosts unless explicitly required. Disabling the Unity Taskbar prevents guest applications from being displayed in the host's taskbar during Unity mode operations, preserving system boundaries and reducing the risk of unauthorized information exposure or interaction.
+        This check ensures that the Unity Taskbar feature is disabled for each virtual machine through the `isolation.tools.unity.taskbar.disable` parameter. The feature surfaces guest applications in the host taskbar, and disabling it keeps guest processes out of the host interface.
 
-        **Rationale:**
+        **Why this matters**
 
-        The Unity Taskbar feature is part of VMware's Unity mode, primarily intended for desktop virtualization environments such as VMware Workstation or Fusion. When enabled, it allows applications running inside a guest VM to appear in the host operating system's taskbar, as if they were native applications. While this improves user experience in desktop scenarios, it presents serious security and operational risks in ESXi environments:
-          - It blurs the separation between guest and host by making guest processes visible and accessible from the host interface.
-          - Unauthorized or untrusted VMs may leak information through taskbar metadata such as application names, icons, or activity.
-          - It may allow user input or control of guest applications via the host taskbar, which can violate isolation policies.
+        - **Blurred separation:** Surfacing guest applications in the host taskbar makes guest processes visible from the host.
+        - **Metadata leakage:** Taskbar entries expose application names, icons, and activity from the guest.
+        - **Cross-boundary control:** The host taskbar may allow input or control of guest applications, breaking isolation.
 
-        If the Unity Taskbar feature is enabled unnecessarily, it can result in:
-          - Data leakage, exposing sensitive guest application details to the host.
-          - Security boundary violations, allowing guest processes to appear or be manipulated from the host interface.
-          - Non-compliance with virtualization hardening standards such as the CIS VMware ESXi Benchmark, DISA STIGs, and ISO 27001.
-          - Reduced accountability and auditability, particularly in environments requiring strict separation of duties or systems.
+        **Risk mitigation**
 
-        **Risk mitigation:**
-          - Prevents guest applications from being surfaced in the host system's taskbar.
-          - Maintains clear and enforceable boundaries between guest virtual machines and the host environment.
-          - Eliminates unnecessary guest-host integration features that may introduce risk.
-          - Aligns with secure virtualization best practices for ESXi, especially in production, regulated, or multi-tenant environments.
+        - **Hidden processes:** Guest applications are not displayed in the host system taskbar.
+        - **Enforced boundary:** Guest application visibility stays within its intended scope.
+      audit: |-
+        ### Audit via the vSphere Client
 
-        Disabling the Unity Taskbar feature is essential for upholding strong isolation in VMware ESXi environments, ensuring that guest application visibility and interaction are limited to their intended scope and do not cross into the host system's user interface.
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. Select the `VM Options` tab and expand `Advanced`.
+        3. Select `EDIT CONFIGURATION`.
+        4. Locate the `isolation.tools.unity.taskbar.disable` parameter and read its value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Get-AdvancedSetting -Name 'isolation.tools.unity.taskbar.disable'
+        ```
+
+        The check passes only when the parameter is present and set to `TRUE` for every virtual machine. It fails if the parameter is absent or set to any other value.
       remediation: |-
         To set this configuration utilize the vSphere interface as follows:
 
@@ -1388,28 +1641,36 @@ queries:
       vsphere.datacenters.all( vms.all( advancedSettings['isolation.tools.unity.windowContents.disable'].downcase == "true" ) )
     docs:
       desc: |-
-        This check ensures that the Unity Window Contents feature is disabled on VMware ESXi hosts. Disabling this feature prevents the host from rendering or displaying the visual content of guest VM application windows in Unity mode, thereby maintaining strong isolation and reducing the risk of unauthorized data exposure.
+        This check ensures that the Unity Window Contents feature is disabled for each virtual machine through the `isolation.tools.unity.windowContents.disable` parameter. The feature lets the host render the visual content of guest application windows, and disabling it keeps guest window data off the host.
 
-        **Rationale:**
+        **Why this matters**
 
-        The Unity Window Contents feature is part of VMware's Unity mode, used primarily in desktop virtualization products like VMware Workstation and Fusion. When enabled, it allows the host system to display the full graphical content of guest application windows, making them appear and behave like native host applications. While beneficial for user experience in desktop environments, this behavior introduces risks in production ESXi settings:
-          - It creates a visual bridge between guest VMs and the host, allowing sensitive application content to be rendered on the host.
-          - In regulated or multi-tenant environments, this can result in data leakage or unauthorized access to guest activity.
-          - Attackers with host access may be able to view or capture guest application data, violating confidentiality and trust boundaries.
+        - **Visual bridge:** Rendering guest windows on the host exposes sensitive application content outside the VM.
+        - **Data leakage:** In multi-tenant environments, host-rendered windows can reveal guest activity to other parties.
+        - **Confidentiality breach:** An attacker with host access could view or capture guest application data.
 
-        If Unity Window Contents is enabled without a justified need, it may result in:
-          - Exposure of guest data through host-rendered application windows.
-          - Security boundary violations, undermining the separation between host and guest systems.
-          - Non-compliance with hardening guides like the CIS VMware ESXi Benchmark, DISA STIGs, or NIST 800-53, which stress the importance of system isolation.
-          - Expanded attack surface, especially if combined with other Unity mode features such as clipboard sharing or drag-and-drop.
+        **Risk mitigation**
 
-        **Risk mitigation:**
-          - Prevents guest application visuals from being drawn on the host system, preserving data confidentiality.
-          - Enforces strict host-guest separation by eliminating shared UI rendering paths.
-          - Reduces the risk of information leakage in sensitive or multi-tenant environments.
-          - Aligns with security best practices for server-class deployments where Unity mode is not required.
+        - **No host rendering:** Guest application visuals are not drawn on the host system.
+        - **Strict separation:** Removing the shared rendering path keeps guest window data confidential.
+      audit: |-
+        ### Audit via the vSphere Client
 
-        Disabling Unity Window Contents is a key control for ensuring VMware ESXi environments remain secure and isolated, helping to prevent the host system from accessing or rendering sensitive guest window data.
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. Select the `VM Options` tab and expand `Advanced`.
+        3. Select `EDIT CONFIGURATION`.
+        4. Locate the `isolation.tools.unity.windowContents.disable` parameter and read its value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Get-AdvancedSetting -Name 'isolation.tools.unity.windowContents.disable'
+        ```
+
+        The check passes only when the parameter is present and set to `TRUE` for every virtual machine. It fails if the parameter is absent or set to any other value.
       remediation: |-
         To set this configuration utilize the vSphere interface as follows:
 
@@ -1436,28 +1697,35 @@ queries:
       vsphere.datacenters.all( vms.all( properties['config']['hardware']['device'].where ( _['deviceInfo']['label'].contains('CD') ).all( _['connectable']['startConnected'] == false ) ) )
     docs:
       desc: |-
-        This check ensures that virtual CD/DVD drives are disconnected from virtual machines unless explicitly required. Disconnecting unused virtual media devices helps reduce the risk of unauthorized data access, malware introduction, and inadvertent configuration changes within VMware ESXi environments.
+        This check ensures that virtual CD/DVD drives on each virtual machine are disconnected and not set to connect at power on. These drives are needed during installation or provisioning but often stay attached afterward, so unused ones should be disconnected.
 
-        **Rationale:**
+        **Why this matters**
 
-        Virtual CD/DVD drives in VMware can be connected to ISO images, physical devices, or remote client drives. While necessary during OS installation or software provisioning, these devices often remain attached long after they are needed. If left connected:
-          - They may provide a persistent attack vector, especially if connected to remote or user-controlled media.
-          - Malicious ISO files or auto-mounted content can be used to compromise the guest operating system.
-          - Connected media may interfere with boot order, allowing for unintended or unauthorized boot scenarios.
+        - **Persistent attack vector:** A connected drive linked to remote or user-controlled media stays exploitable long after its purpose.
+        - **Malicious media:** A tampered or auto-mounted ISO can be used to compromise the guest operating system.
+        - **Boot interference:** Connected bootable media can alter boot order and cause unintended boot scenarios.
 
-        Unnecessary CD/DVD device connections can result in:
-          - Security vulnerabilities, where outdated or tampered media is accessible to the VM.
-          - Data leakage if removable media is mounted with sensitive content.
-          - Operational issues, such as failed backups or unexpected reboots due to bootable ISO presence.
-          - Non-compliance with hardening standards like CIS VMware ESXi Benchmark, DISA STIGs, and NIST 800-53, which recommend minimizing virtual hardware.
+        **Risk mitigation**
 
-        **Risk mitigation:**
-          - Prevents exposure to untrusted or unnecessary media sources.
-          - Reduces the virtual attack surface by eliminating unused device paths.
-          - Ensures VMs boot from expected, validated disks by avoiding attached bootable media.
-          - Aligns with virtualization hardening best practices and compliance requirements.
+        - **Reduced surface:** Disconnecting unused drives removes media-based device paths into the VM.
+        - **Predictable boot:** Without attached bootable media, the VM boots from its intended, validated disk.
+      audit: |-
+        ### Audit via the vSphere Client
 
-        Disconnecting unnecessary CD/DVD devices ensures a cleaner, more secure configuration for each virtual machine, minimizing the risk of media-based threats and supporting operational consistency in VMware ESXi environments.
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. On the `Virtual Hardware` tab, locate each `CD/DVD drive` entry.
+        3. Confirm the `Connected` and `Connect At Power On` checkboxes are cleared.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Get-CDDrive | Select-Object Parent, ConnectionState
+        ```
+
+        The check passes when every CD/DVD drive is disconnected and not set to connect at power on. It fails for any VM with a CD/DVD drive that is connected or configured to connect at power on.
       remediation: |-
         To disconnect all CD/DVD drives from VMs, run the following PowerCLI command:
 
@@ -1475,28 +1743,35 @@ queries:
       vsphere.datacenters.all( vms.all( properties['config']['hardware']['device'].where( _['deviceInfo']['label'].contains('Floppy') ).all( _['connectable']['startConnected'] == false ) ) )
     docs:
       desc: |-
-        This check ensures that virtual floppy drives are disconnected from virtual machines unless explicitly required. Removing unused floppy devices reduces the attack surface, prevents legacy-based threats, and supports a secure, streamlined VMware ESXi environment.
+        This check ensures that virtual floppy drives on each virtual machine are disconnected and not set to connect at power on. Floppy drives are a legacy interface rarely needed by modern workloads, so unused ones should be disconnected.
 
-        **Rationale:**
+        **Why this matters**
 
-        Virtual floppy drives are a legacy hardware feature that remains available in VMware for compatibility purposes. In modern environments, floppy devices are rarely needed, and their continued presence can introduce unnecessary risk:
-          - Floppy drives can be connected to remote or user-supplied images, which may contain outdated or malicious software.
-          - Even when unused, virtual floppy devices create additional virtual hardware that can complicate auditing and increase the system's complexity.
-          - In some cases, connected floppy devices may affect VM boot behavior, especially if boot order is misconfigured.
+        - **Malicious media:** A floppy drive linked to a remote or user-supplied image can carry outdated or malicious software.
+        - **Configuration complexity:** Unused legacy hardware complicates auditing and adds avoidable virtual hardware.
+        - **Boot interference:** Connected floppy devices can affect boot behavior when boot order is misconfigured.
 
-        Leaving virtual floppy drives connected without purpose can lead to:
-          - Malware exposure, particularly if outdated images or user-controlled content is mounted.
-          - Configuration drift that complicates VM management and auditing.
-          - Non-compliance with virtualization hardening standards like the CIS VMware ESXi Benchmark or DISA STIGs, which recommend removing unnecessary virtual hardware.
-          - Operational inconsistencies, such as failed boots or errors during snapshot or backup operations.
+        **Risk mitigation**
 
-        **Risk mitigation:**
-          - Eliminates obsolete hardware interfaces that are no longer required in modern systems.
-          - Reduces potential threat vectors introduced by legacy media devices.
-          - Supports consistent, minimal VM configurations aligned with secure deployment practices.
-          - Helps meet compliance requirements by minimizing unnecessary virtual machine components.
+        - **Reduced surface:** Disconnecting obsolete interfaces removes a legacy media-based threat vector.
+        - **Minimal configuration:** VMs carry only the hardware they need, simplifying management.
+      audit: |-
+        ### Audit via the vSphere Client
 
-        Disconnecting unnecessary floppy devices improves the security and manageability of VMware ESXi environments by reducing reliance on legacy components and ensuring that virtual machines are provisioned with only the hardware they need.
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. On the `Virtual Hardware` tab, locate each `Floppy drive` entry.
+        3. Confirm the `Connected` and `Connect At Power On` checkboxes are cleared.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Get-FloppyDrive | Select-Object Parent, ConnectionState
+        ```
+
+        The check passes when every floppy drive is disconnected and not set to connect at power on. It fails for any VM with a floppy drive that is connected or configured to connect at power on.
       remediation: |-
         To disconnect all floppy drives from VMs, run the following PowerCLI command:
 
@@ -1514,28 +1789,35 @@ queries:
       vsphere.datacenters.all( vms.all( properties['config']['hardware']['device'].where ( _['deviceInfo']['label'].contains('Parallel') ).all( _['connectable']['startConnected'] == false ) ) )
     docs:
       desc: |-
-        This check ensures that parallel ports are not connected to virtual machines unless explicitly needed. If a parallel port is not required, the parallelX.present parameter should either be absent or set to FALSE. Removing unused parallel ports reduces the virtual hardware attack surface and improves overall VM security posture.
+        This check ensures that parallel ports on each virtual machine are disconnected and not set to connect at power on. Parallel ports are a legacy interface rarely needed by modern workloads, so unused ones should be disconnected.
 
-        **Rationale:**
+        **Why this matters**
 
-        Parallel ports are a legacy hardware interface once commonly used for printers and external devices. In virtualized environments, these ports are rarely necessary. Retaining unused parallel ports can:
-          - Expose unnecessary device interfaces that may be exploited by malicious software or users.
-          - Complicate configuration auditing and management, as legacy hardware devices appear in VM definitions.
-          - In some cases, create compatibility or boot issues, particularly if the hardware is misconfigured or improperly mapped.
+        - **Unmonitored interface:** An unused parallel port exposes a device interface that malicious software or users could exploit.
+        - **Configuration complexity:** Legacy hardware in VM definitions complicates auditing and management.
+        - **Boot issues:** A misconfigured or improperly mapped parallel port can create compatibility or boot problems.
 
-        Leaving parallel ports connected without a valid business reason may result in:
-          - Security risks from unmonitored or unprotected interfaces exposed to guest VMs.
-          - Violation of minimal-configuration principles, increasing the potential for misconfiguration or policy drift.
-          - Non-compliance with virtualization hardening benchmarks such as CIS VMware ESXi Benchmark, DISA STIGs, or ISO 27001.
-          - Reduced VM portability and performance, due to inclusion of unnecessary hardware in snapshots or backups.
+        **Risk mitigation**
 
-        **Risk mitigation:**
-          - Ensures that virtual machines only include hardware required for their intended workload.
-          - Reduces the attack surface by eliminating unused and legacy device interfaces.
-          - Simplifies VM configuration, audit, and compliance processes.
-          - Supports secure provisioning practices and enforces least-privilege hardware access.
+        - **Reduced surface:** Disconnecting legacy device interfaces removes an unneeded attack vector.
+        - **Minimal configuration:** VMs include only the hardware required for their workload.
+      audit: |-
+        ### Audit via the vSphere Client
 
-        To maintain a secure and efficient VMware ESXi environment, parallel ports should be disabled unless absolutely required. This is achieved by ensuring that the parallelX.present parameter is either not defined or explicitly set to FALSE in the VM configuration.
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. On the `Virtual Hardware` tab, locate each `Parallel port` entry.
+        3. Confirm the `Connected` and `Connect At Power On` checkboxes are cleared.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | ForEach-Object { $_.ExtensionData.Config.Hardware.Device } | Where-Object { $_ -is [VMware.Vim.VirtualParallelPort] }
+        ```
+
+        The check passes when every parallel port is disconnected and not set to connect at power on, or when no parallel ports are defined. It fails for any VM with a parallel port that is connected or configured to connect at power on.
       remediation: |-
         To disconnect all parallel ports from VMs, run the following PowerCLI command:
 
@@ -1554,28 +1836,35 @@ queries:
       vsphere.datacenters.all( vms.all( properties['config']['hardware']['device'].where ( _['deviceInfo']['label'].contains('Serial') ).all( _['connectable']['startConnected'] == false ) ) )
     docs:
       desc: |-
-        This check ensures that serial ports are not connected to virtual machines unless explicitly required. If a serial port is unnecessary, the serialX.present parameter should either be absent or explicitly set to FALSE. Removing unused serial ports helps minimize potential attack vectors and supports hardened virtual machine configurations in VMware ESXi environments.
+        This check ensures that serial ports on each virtual machine are disconnected and not set to connect at power on. Serial ports are a legacy interface rarely needed by modern workloads, so unused ones should be disconnected.
 
-        **Rationale:**
+        **Why this matters**
 
-        Serial ports are legacy interfaces historically used for console access, modem connections, and specialized hardware. In most modern virtualized environments, they are no longer needed for standard workloads. Retaining active serial ports introduces avoidable risks:
-          - Connected serial ports can expose internal or external interfaces, especially if mapped to files, sockets, or physical devices.
-          - They can be abused by malicious actors inside a guest VM to exfiltrate data or communicate covertly.
-          - Serial ports increase configuration complexity and may be overlooked during audits, leading to drift from secure baselines.
+        - **Exposed interfaces:** A connected serial port mapped to a file, socket, or device can expose internal or external interfaces.
+        - **Covert channels:** An attacker inside the guest could abuse a serial port to exfiltrate data or communicate covertly.
+        - **Configuration complexity:** Legacy serial hardware is easily overlooked in audits, allowing drift from secure baselines.
 
-        If left enabled without justification, serial ports can result in:
-          - Information leakage through unintended data transmission paths.
-          - Unauthorized communication channels between guest VMs and external systems.
-          - Non-compliance with security standards such as CIS VMware ESXi Benchmark, DISA STIGs, NIST 800-53, or ISO 27001, which recommend minimizing virtual hardware.
-          - Potential misconfiguration of backup, snapshot, or migration processes involving virtual hardware mappings.
+        **Risk mitigation**
 
-        **Risk mitigation:**
-          - Enforces minimal hardware exposure by disabling unused serial interfaces.
-          - Prevents VMs from establishing unauthorized connections through mapped serial devices.
-          - Simplifies auditing and ensures alignment with secure configuration baselines.
-          - Supports strong isolation and compliance with industry best practices for virtualization security.
+        - **Reduced surface:** Disconnecting unused serial interfaces removes an unnecessary data path.
+        - **No rogue connections:** VMs cannot establish connections through mapped serial devices.
+      audit: |-
+        ### Audit via the vSphere Client
 
-        To reduce exposure and maintain VM integrity, serial ports should only be enabled when explicitly required for a supported use case. Otherwise, ensure the serialX.present parameter is removed or set to FALSE in the VM's configuration file.
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. On the `Virtual Hardware` tab, locate each `Serial port` entry.
+        3. Confirm the `Connected` and `Connect At Power On` checkboxes are cleared.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | ForEach-Object { $_.ExtensionData.Config.Hardware.Device } | Where-Object { $_ -is [VMware.Vim.VirtualSerialPort] }
+        ```
+
+        The check passes when every serial port is disconnected and not set to connect at power on, or when no serial ports are defined. It fails for any VM with a serial port that is connected or configured to connect at power on.
       remediation: |-
         To disconnect all serial ports from VMs, run the following PowerCLI command:
 
@@ -1594,28 +1883,35 @@ queries:
       vsphere.datacenters.all( vms.all( properties['config']['hardware']['device'].where ( _['deviceInfo']['label'].contains('USB') ).all( _['connectable']['startConnected'] == false || _['connectable']['startConnected'] == null ) ) )
     docs:
       desc: |-
-        This check ensures that USB devices are not connected to virtual machines unless explicitly required. To fully disconnect a USB device, the usb.present parameter should either be absent or set to FALSE. Removing unnecessary USB device access reduces the risk of data exfiltration, malware introduction, and unauthorized communication within VMware ESXi environments.
+        This check ensures that USB devices on each virtual machine are disconnected and not set to connect at power on. USB passthrough connects a VM directly to physical USB hardware and is unnecessary for most server workloads, so unused devices should be disconnected.
 
-        **Rationale:**
+        **Why this matters**
 
-        USB device passthrough allows virtual machines to connect directly to physical USB devices attached to the host or client system. While useful for specific workloads involving peripheral devices, in most server or production environments USB access is unnecessary and introduces security and operational risks:
-          - USB devices can serve as vectors for malware, including ransomware, rootkits, or keyloggers.
-          - A guest VM with USB access may be used to exfiltrate sensitive data or interact with unauthorized external systems.
-          - USB passthrough complicates auditability and access control, especially in shared or multi-tenant environments.
+        - **Malware vector:** USB devices can carry ransomware, rootkits, or keyloggers into the guest.
+        - **Data exfiltration:** A guest with USB access can move sensitive data to removable media or external systems.
+        - **Weak auditability:** USB passthrough complicates access control, especially in shared environments.
 
-        Leaving USB devices connected without a valid requirement can result in:
-          - Unauthorized data transfer between guest VMs and removable media.
-          - Increased attack surface, particularly when USB ports are exposed to end users or external systems.
-          - Non-compliance with security frameworks such as CIS VMware ESXi Benchmark, DISA STIGs, PCI DSS, and NIST 800-53, which discourage unnecessary device passthrough.
-          - Operational unpredictability, especially during VM migration or snapshot operations involving non-standard virtual hardware.
+        **Risk mitigation**
 
-        **Risk mitigation:**
-          - Prevents access to removable media and peripherals that may introduce vulnerabilities.
-          - Enforces minimal and controlled virtual hardware configurations for guest VMs.
-          - Supports data loss prevention strategies and endpoint protection in virtualized environments.
-          - Aligns with best practices for secure ESXi deployment and regulatory compliance.
+        - **No removable media:** Guest VMs cannot reach removable storage or peripherals that could introduce vulnerabilities.
+        - **Controlled hardware:** Disconnecting unused USB devices keeps virtual hardware minimal and predictable.
+      audit: |-
+        ### Audit via the vSphere Client
 
-        To uphold strong isolation and limit exposure, USB devices should only be enabled when explicitly required. All other VMs should ensure the usb.present parameter is either removed or set to FALSE in their configuration files.
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. On the `Virtual Hardware` tab, locate each `USB` device entry.
+        3. Confirm the `Connected` and `Connect At Power On` checkboxes are cleared.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Get-UsbDevice
+        ```
+
+        The check passes when no USB device is connected or set to connect at power on, or when no USB devices are defined. It fails for any VM with a USB device that is connected or configured to connect at power on.
       remediation: |-
         To disconnect all USB devices from VMs, run the following PowerCLI command:
 
@@ -1632,28 +1928,36 @@ queries:
       vsphere.datacenters.all( vms.all( advancedSettings['isolation.tools.diskShrink.disable'].downcase == "true" ) )
     docs:
       desc: |-
-        This check ensures that virtual disk shrinking is disabled on VMware ESXi hosts unless there is a specific operational need. Repeated shrinking operations can degrade virtual disk integrity and availability, potentially leading to denial-of-service (DoS) conditions for affected virtual machines.
+        This check ensures that virtual disk shrinking is disabled for each virtual machine through the `isolation.tools.diskShrink.disable` parameter. Disk shrinking lets a guest reduce the size of a virtual disk, and disabling it protects disk integrity and availability.
 
-        **Rationale:**
+        **Why this matters**
 
-        Virtual disk shrinking is a VMware Tools feature that allows users to reduce the size of a virtual disk by removing unused space. While intended to optimize storage utilization, disk shrinking is generally not required in most enterprise environments and can be highly disruptive when misused:
-          - Repeated shrinking can result in fragmentation, performance degradation, and eventually disk corruption.
-          - In worst-case scenarios, it can render the virtual disk unavailable, effectively taking the VM offline and leading to a denial-of-service.
-          - Allowing guest users or automated scripts to invoke disk shrinking can bypass storage management policies and introduce unpredictable behavior.
+        - **Disk corruption:** Repeated shrink operations cause fragmentation, performance degradation, and eventually corruption.
+        - **Denial-of-service:** A shrink operation can render the virtual disk unavailable and take the VM offline.
+        - **Policy bypass:** Guest users or scripts that invoke shrinking sidestep centralized storage management.
 
-        If virtual disk shrinking remains enabled without proper controls, it may result in:
-          - Loss of availability due to failed or corrupted disk operations.
-          - Security risks, as malicious actors could deliberately trigger shrink operations to disrupt services.
-          - Non-compliance with data protection and availability requirements under frameworks like NIST 800-53, ISO 27001, or PCI DSS.
-          - Storage management inconsistencies, especially in environments with thin-provisioned disks and shared datastores.
+        **Risk mitigation**
 
-        **Risk mitigation:**
-          - Disables guest-initiated disk shrinking to preserve disk integrity and system availability.
-          - Prevents misuse or overuse of a feature that can introduce operational risk.
-          - Reinforces centralized control of storage management through hypervisor-level tools and policies.
-          - Aligns with VMware hardening guidance and best practices for secure infrastructure management.
+        - **Preserved availability:** Disabling guest-initiated shrinking keeps the virtual disk intact and the VM online.
+        - **Centralized control:** Storage management stays with hypervisor-level tools rather than the guest.
+      audit: |-
+        ### Audit via the vSphere Client
 
-        To ensure virtual machine stability and protect against denial-of-service risks, virtual disk shrinking should be disabled unless explicitly required. This can be enforced by configuring VMware Tools settings to block shrink operations from within the guest operating system.
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. Select the `VM Options` tab and expand `Advanced`.
+        3. Select `EDIT CONFIGURATION`.
+        4. Locate the `isolation.tools.diskShrink.disable` parameter and read its value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Get-AdvancedSetting -Name 'isolation.tools.diskShrink.disable'
+        ```
+
+        The check passes only when the parameter is present and set to `TRUE` for every virtual machine. It fails if the parameter is absent or set to any other value.
       remediation: |-
         To set this configuration utilize the vSphere interface as follows:
 
@@ -1679,28 +1983,36 @@ queries:
       vsphere.datacenters.all( vms.all( advancedSettings['isolation.tools.diskWiper.disable'].downcase == "true" ) )
     docs:
       desc: |-
-        This check ensures that virtual disk wiping is disabled on VMware ESXi hosts unless specifically needed for secure data sanitization. Repeated or unnecessary disk wiping operations can negatively impact performance, reduce availability, and potentially lead to denial-of-service (DoS) conditions. In most datacenter environments, this feature is not needed and should be restricted.
+        This check ensures that virtual disk wiping is disabled for each virtual machine through the `isolation.tools.diskWiper.disable` parameter. Disk wiping lets a guest zero out unused disk space, and disabling it prevents I/O-intensive operations that can disrupt availability.
 
-        **Rationale:**
+        **Why this matters**
 
-        Virtual disk wiping is a VMware Tools feature that allows users or processes within a guest VM to zero out unused disk space to reclaim host storage in thin-provisioned disks. While intended for space optimization, it presents risks when invoked frequently or without oversight:
-          - Wiping operations are I/O-intensive and may cause the virtual disk to become temporarily unavailable during execution.
-          - Normal users or automated processes—even without administrative privileges—can initiate disk wipes if the feature is enabled.
-          - In shared or production environments, uncontrolled wiping can degrade host performance or disrupt availability of critical workloads.
+        - **Disk unavailability:** Wiping is I/O-intensive and can make the virtual disk temporarily inaccessible.
+        - **Low-privilege trigger:** Even non-administrative users or processes can start a wipe when the feature is enabled.
+        - **Host impact:** Uncontrolled wiping can degrade host performance and disrupt other workloads.
 
-        Leaving virtual disk wiping enabled by default can result in:
-          - Denial-of-service scenarios, where VMs become unresponsive or inaccessible during prolonged wipe operations.
-          - Unregulated storage operations, bypassing centralized storage management and impacting capacity planning.
-          - Security policy violations, as sensitive operations like disk sanitization are performed without proper authorization or audit controls.
-          - Non-compliance with operational hardening standards such as CIS VMware ESXi Benchmark or NIST SP 800-53, which recommend restricting low-level disk functions.
+        **Risk mitigation**
 
-        **Risk mitigation:**
-          - Prevents guest users or low-privilege processes from initiating disk wipe operations.
-          - Reduces performance and availability risks associated with unnecessary I/O-intensive background tasks.
-          - Ensures that secure data erasure and storage reclamation are centrally managed by authorized administrators.
-          - Aligns with best practices for protecting virtual infrastructure from misuse or disruption.
+        - **No guest-initiated wipes:** Guest users and processes cannot start disk wipe operations.
+        - **Controlled sanitization:** Storage reclamation stays with authorized administrators.
+      audit: |-
+        ### Audit via the vSphere Client
 
-        Disabling virtual disk wiping helps safeguard VMware ESXi environments from unintended service disruption, enforces controlled storage operations, and ensures that disk-level sanitization is reserved for valid, authorized use cases only.
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. Select the `VM Options` tab and expand `Advanced`.
+        3. Select `EDIT CONFIGURATION`.
+        4. Locate the `isolation.tools.diskWiper.disable` parameter and read its value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Get-AdvancedSetting -Name 'isolation.tools.diskWiper.disable'
+        ```
+
+        The check passes only when the parameter is present and set to `TRUE` for every virtual machine. It fails if the parameter is absent or set to any other value.
       remediation: |-
         To set this configuration utilize the vSphere interface as follows:
 
@@ -1722,18 +2034,35 @@ queries:
       vsphere.datacenters.all( vms.all( encrypted == true ) )
     docs:
       desc: |-
-        VM encryption protects virtual machine data at rest. When a virtual machine is encrypted, vSphere encrypts the VM configuration files, the virtual disk files, and the swap and suspend files using keys supplied by a configured key provider.
+        This check ensures that each virtual machine is encrypted. When a VM is encrypted, vSphere encrypts its configuration files, virtual disk files, and swap and suspend files using keys supplied by a configured key provider, protecting guest data at rest.
 
-        Encryption prevents the disclosure of guest data if the underlying datastore, backup media, or VM files are copied or stolen. It also protects against offline tampering with the VM's contents.
+        **Why this matters**
 
-        **VM encryption provides:**
-        - Confidentiality of virtual disks and configuration at rest
-        - Protection of data on shared, replicated, or backed-up storage
-        - A foundation for vTPM, which depends on VM encryption to protect its secrets
+        - **Data confidentiality:** Encryption keeps virtual disks and configuration unreadable if VM files are copied or stolen.
+        - **Storage protection:** Data stays protected on shared, replicated, or backed-up datastores.
+        - **vTPM foundation:** A vTPM depends on VM encryption to protect the secrets it stores.
 
-        **Best Practice:**
-        - Encrypt virtual machines that store sensitive or regulated data.
-        - Use a Native Key Provider or an external KMS, and protect access to the key provider.
+        **Risk mitigation**
+
+        - **Theft resistance:** Copying the datastore or backup media does not expose guest data.
+        - **Tamper resistance:** Encryption protects the VM's contents against offline modification.
+      audit: |-
+        ### Audit via the vSphere Client
+
+        1. Select the virtual machine and choose the `Summary` tab.
+        2. Review the `VM Hardware` panel, or open `Edit Settings` and expand `Encryption` on the `VM Options` tab.
+        3. Confirm the virtual machine is encrypted and assigned an encryption storage policy.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Select-Object Name, @{N='Encrypted';E={$_.ExtensionData.Config.KeyId -ne $null}}
+        ```
+
+        The check passes when every virtual machine reports as encrypted. It fails for any VM that has no encryption key assigned.
       remediation: |-
         Encrypting a virtual machine requires a key provider configured in vCenter Server.
 
@@ -1758,17 +2087,35 @@ queries:
       vsphere.datacenters.all( vms.all( vbsEnabled == true ) )
     docs:
       desc: |-
-        Virtualization-Based Security (VBS) is a Microsoft Windows feature that uses hardware virtualization to create an isolated, hypervisor-protected region of memory. Windows uses this isolated region to run sensitive security functions, such as Credential Guard and Hypervisor-Protected Code Integrity (HVCI).
+        This check ensures that Virtualization-Based Security (VBS) is enabled for each virtual machine. VBS is a Windows feature that uses hardware virtualization to create an isolated, hypervisor-protected region of memory for sensitive security functions, and vSphere must expose the required virtualization extensions for the guest to use it.
 
-        When VBS is enabled for a virtual machine, vSphere exposes the virtualization extensions the guest needs to run these protections, hardening the guest against credential theft and kernel-level malware.
+        **Why this matters**
 
-        **VBS provides:**
-        - Isolation for Windows Credential Guard, protecting domain credentials
-        - Hypervisor-Protected Code Integrity (HVCI) for the guest kernel
-        - A reduced attack surface for pass-the-hash and kernel-mode attacks
+        - **Credential isolation:** VBS isolates Windows Credential Guard, protecting domain credentials from theft.
+        - **Kernel integrity:** It enables Hypervisor-Protected Code Integrity for the guest kernel.
+        - **Attack surface:** It reduces exposure to pass-the-hash and kernel-mode attacks.
 
-        **Best Practice:**
-        - Enable VBS for Windows virtual machines that support it, alongside EFI firmware, Secure Boot, and a vTPM.
+        **Risk mitigation**
+
+        - **Protected secrets:** Sensitive credentials run in a memory region the guest OS itself cannot reach.
+        - **Hardened kernel:** Code integrity enforcement blocks unsigned kernel-mode malware in the guest.
+      audit: |-
+        ### Audit via the vSphere Client
+
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. Select the `VM Options` tab.
+        3. Confirm the `Enable` checkbox next to `Virtualization Based Security` is selected.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Select-Object Name, @{N='VBSEnabled';E={$_.ExtensionData.Config.Flags.VbsEnabled}}
+        ```
+
+        The check passes when every virtual machine reports VBS as enabled. It fails for any VM where Virtualization-Based Security is disabled.
       remediation: |-
         Enabling VBS requires the virtual machine to use EFI firmware with Secure Boot, hardware virtualization exposed to the guest, and a supported Windows guest OS.
 
@@ -1789,28 +2136,36 @@ queries:
       vsphere.datacenters.all( vms.all( advancedSettings['isolation.tools.copy.disable'].downcase == "true" ) )
     docs:
       desc: |-
-        This check ensures that copy operations from the VM console are disabled in VMware ESXi environments. Disabling console-based copy functionality helps prevent unauthorized data exfiltration and enforces strict isolation between guest virtual machines and users accessing them through the vSphere client or other management interfaces.
+        This check ensures that copy operations from the VM console are disabled for each virtual machine through the `isolation.tools.copy.disable` parameter. Console copy lets data move from the guest to the administrator's client clipboard, and disabling it removes a data-exfiltration path.
 
-        **Rationale:**
+        **Why this matters**
 
-        The VM console provides direct access to a virtual machine’s display and input, similar to physical console access. By default, VMware Tools enables copy (and optionally paste) operations between the administrator’s client system and the VM through the console. While convenient for troubleshooting, this feature introduces significant security risks:
-          - It allows data to be copied out of the VM, creating a potential data leakage vector.
-          - In environments with sensitive or regulated data, allowing copy operations may violate data handling policies.
-          - This feature can be exploited by malicious insiders or compromised accounts to exfiltrate information during remote access sessions.
+        - **Data leakage:** Copy operations let data leave the VM through the console clipboard without logging.
+        - **Policy violation:** In regulated environments, console copy can breach data handling rules.
+        - **Insider abuse:** A malicious insider or compromised account can use copy to extract confidential data.
 
-        If VM console copy operations remain enabled, it may result in:
-          - Unauthorized data transfer from guest VMs to external systems without proper logging or oversight.
-          - Insider threats, where privileged users leverage console access to extract confidential data.
-          - Non-compliance with data protection and regulatory requirements such as HIPAA, PCI DSS, ISO 27001, and NIST 800-53.
-          - Weakened isolation between management interfaces and virtualized workloads.
+        **Risk mitigation**
 
-        **Risk mitigation:**
-          - Blocks copy operations from VM consoles, preventing data exfiltration via clipboard interaction.
-          - Enforces strict boundaries between guest systems and administrative clients.
-          - Enhances auditability by requiring approved methods (e.g., secure file transfer) for data movement.
-          - Supports regulatory compliance and aligns with VMware ESXi hardening best practices.
+        - **Blocked exfiltration:** Clipboard copy from the guest console is disabled.
+        - **Auditable transfers:** Data movement must use approved, traceable methods such as secure file transfer.
+      audit: |-
+        ### Audit via the vSphere Client
 
-        Disabling VM console copy operations is a critical control for securing virtual environments, especially in multi-tenant, regulated, or high-sensitivity deployments where data leakage through management interfaces must be strictly prevented.
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. Select the `VM Options` tab and expand `Advanced`.
+        3. Select `EDIT CONFIGURATION`.
+        4. Locate the `isolation.tools.copy.disable` parameter and read its value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Get-AdvancedSetting -Name 'isolation.tools.copy.disable'
+        ```
+
+        The check passes only when the parameter is present and set to `TRUE` for every virtual machine. It fails if the parameter is absent or set to any other value.
       remediation: |-
         To set this configuration utilize the vSphere interface as follows:
 
@@ -1832,28 +2187,36 @@ queries:
       vsphere.datacenters.all( vms.all( advancedSettings['isolation.tools.dnd.disable'].downcase == "true" ) )
     docs:
       desc: |-
-        This check ensures that drag and drop operations via the VM console are disabled in VMware ESXi environments. Disabling this feature helps prevent unauthorized file transfers between the guest virtual machine and the administrative host system, reducing the risk of data exfiltration, malware introduction, and compliance violations.
+        This check ensures that drag and drop operations through the VM console are disabled for each virtual machine through the `isolation.tools.dnd.disable` parameter. Console drag and drop lets files move between the administrator's client and the guest, and disabling it removes an unmanaged file-transfer path.
 
-        **Rationale:**
+        **Why this matters**
 
-        When VMware Tools is installed, administrators accessing a VM through the vSphere client or Workstation interface may be able to drag files to and from the virtual machine console. While this simplifies file transfers for troubleshooting, it poses a serious security concern in production or regulated environments:
-          - Drag and drop enables unaudited file transfers, potentially bypassing established security controls.
-          - It creates a bidirectional data path between the VM and the host, which can be exploited for malware injection or data leakage.
-          - This functionality is not logged or monitored by default, making it difficult to detect or investigate misuse.
+        - **Unaudited transfers:** Drag and drop moves files without logging, bypassing established security controls.
+        - **Bidirectional path:** It creates a two-way data channel that can be used for malware injection or data leakage.
+        - **No monitoring:** The functionality is not tracked by default, making misuse hard to detect.
 
-        If drag and drop is enabled in the VM console, it can lead to:
-          - Unauthorized data movement, including sensitive information leaving the VM environment.
-          - Infection of VMs with unverified or malicious files transferred by users or attackers.
-          - Non-compliance with data handling and access control standards under frameworks such as HIPAA, PCI DSS, NIST 800-53, and CIS VMware ESXi Benchmark.
-          - Erosion of virtualization boundaries, increasing the risk of lateral movement and insider threats.
+        **Risk mitigation**
 
-        **Risk mitigation:**
-          - Prevents direct, unmanaged file transfers between host systems and guest VMs.
-          - Supports strict data access and movement policies by requiring approved, auditable file transfer mechanisms.
-          - Reduces the attack surface by eliminating a potentially invisible ingress/egress path.
-          - Aligns with secure virtualization best practices and regulatory compliance requirements.
+        - **No direct transfers:** Files cannot move directly between the client and the guest console.
+        - **Auditable movement:** Data transfer must use approved, traceable mechanisms.
+      audit: |-
+        ### Audit via the vSphere Client
 
-        Disabling VM console drag and drop operations strengthens isolation between administrative systems and guest workloads, helping to maintain the integrity and confidentiality of virtual machines in VMware ESXi environments.
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. Select the `VM Options` tab and expand `Advanced`.
+        3. Select `EDIT CONFIGURATION`.
+        4. Locate the `isolation.tools.dnd.disable` parameter and read its value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Get-AdvancedSetting -Name 'isolation.tools.dnd.disable'
+        ```
+
+        The check passes only when the parameter is present and set to `TRUE` for every virtual machine. It fails if the parameter is absent or set to any other value.
       remediation: |-
         To set this configuration utilize the vSphere interface as follows:
 
@@ -1875,28 +2238,36 @@ queries:
       vsphere.datacenters.all( vms.all( advancedSettings['isolation.tools.setGUIOptions.enable'].downcase == "false" ) )
     docs:
       desc: |-
-        This check ensures that VM Console GUI options are disabled in VMware ESXi environments to prevent unauthorized access to advanced console features and reduce the risk of system misconfiguration or data leakage through the graphical user interface.
+        This check ensures that VM Console GUI options are disabled for each virtual machine through the `isolation.tools.setGUIOptions.enable` parameter. These options expose console menu actions such as mounting media or toggling devices, and disabling them keeps console interaction tightly controlled.
 
-        **Rationale:**
+        **Why this matters**
 
-        The VM Console GUI options in the vSphere client and other VMware interfaces provide access to various convenience features for interacting with a virtual machine’s graphical display. These may include menu items for mounting media, toggling devices, adjusting display settings, or accessing host-integrated features. While useful for interactive use cases, these GUI options introduce potential risks in secure, production, or regulated environments:
-          - They can enable users to bypass security controls by attaching devices or media without authorization.
-          - Some GUI options may expose host-guest integration points, undermining VM isolation.
-          - Access to these features is often not tightly audited or restricted, increasing the potential for misconfiguration or abuse.
+        - **Control bypass:** GUI options let users attach devices or media without authorization.
+        - **Integration exposure:** Some options surface host-guest integration points that weaken VM isolation.
+        - **Unaudited actions:** These features are rarely restricted or tracked, raising the chance of misconfiguration or abuse.
 
-        If VM Console GUI options remain enabled, it may result in:
-          - Uncontrolled configuration changes, such as device mounting or display behavior alterations.
-          - Security control bypasses, especially when VMs are accessible by multiple administrators or external personnel.
-          - Non-compliance with virtualization hardening benchmarks like CIS VMware ESXi Benchmark, DISA STIGs, or regulatory frameworks such as PCI DSS and HIPAA.
-          - Data leakage or exposure, particularly if GUI actions enable file or clipboard sharing without proper controls.
+        **Risk mitigation**
 
-        **Risk mitigation:**
-          - Removes access to unnecessary console-based GUI options, enforcing stricter control over virtual machine interactions.
-          - Minimizes the risk of accidental or unauthorized VM configuration changes through the graphical interface.
-          - Enhances auditability and policy compliance by requiring approved tools or workflows for VM administration.
-          - Supports secure VM isolation and aligns with ESXi hardening best practices.
+        - **Restricted interaction:** Console-based GUI actions are removed, keeping VM changes intentional.
+        - **Governed administration:** VM operations must go through approved tools and workflows.
+      audit: |-
+        ### Audit via the vSphere Client
 
-        Disabling VM Console GUI options is an important control for maintaining the security, stability, and compliance of VMware ESXi environments—ensuring that access to sensitive VM operations is both intentional and well-governed.
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. Select the `VM Options` tab and expand `Advanced`.
+        3. Select `EDIT CONFIGURATION`.
+        4. Locate the `isolation.tools.setGUIOptions.enable` parameter and read its value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Get-AdvancedSetting -Name 'isolation.tools.setGUIOptions.enable'
+        ```
+
+        The check passes only when the parameter is present and set to `FALSE` for every virtual machine. It fails if the parameter is absent or set to any other value.
       remediation: |-
         To set this configuration utilize the vSphere interface as follows:
 
@@ -1918,28 +2289,36 @@ queries:
       vsphere.datacenters.all( vms.all( advancedSettings['isolation.tools.paste.disable'].downcase == "true" ) )
     docs:
       desc: |-
-        This check ensures that paste operations into virtual machines via the VM console are disabled in VMware ESXi environments. Disabling paste functionality prevents unauthorized data injection into guest systems and enforces strict boundaries between administrative systems and virtual machines.
+        This check ensures that paste operations into the VM console are disabled for each virtual machine through the `isolation.tools.paste.disable` parameter. Console paste lets clipboard contents move from the administrator's client into the guest, and disabling it removes an unmanaged data-injection path.
 
-        **Rationale:**
+        **Why this matters**
 
-        When VMware Tools is installed, users accessing a VM through the console can often paste clipboard contents from their local machine directly into the guest operating system. While useful for tasks like command-line entry or configuration updates, this feature poses a security risk in sensitive or controlled environments:
-          - It creates a data injection path from the administrator’s host system into the VM without audit or access controls.
-          - Malicious or unintended clipboard contents may be pasted into a privileged session, leading to configuration errors, command execution, or data corruption.
-          - Sensitive data copied on the administrator’s system could be inadvertently transferred to the VM, violating data handling or segmentation policies.
+        - **Injection path:** Paste lets data flow from the client into the VM without audit or access controls.
+        - **Privileged sessions:** Malicious or unintended clipboard content pasted into a privileged session can cause command execution or corruption.
+        - **Data spillage:** Sensitive data on the client could be inadvertently transferred into the guest.
 
-        If VM Console Paste operations are left enabled, it can result in:
-          - Unintentional or unauthorized data transfer from host to guest systems.
-          - Security policy violations, particularly in regulated environments where data ingress must be controlled and logged.
-          - Increased risk of insider threats, where privileged users use the console to inject unmonitored content.
-          - Non-compliance with hardening guidance from CIS VMware ESXi Benchmark, DISA STIGs, NIST 800-53, and similar frameworks.
+        **Risk mitigation**
 
-        **Risk mitigation:**
-          - Blocks administrative users from pasting clipboard contents into VMs via the console interface.
-          - Enforces secure and controlled methods for configuration and data entry.
-          - Reduces the risk of accidental or malicious data transfer to guest systems.
-          - Aligns with virtualization security best practices by minimizing unmanaged host-to-guest communication channels.
+        - **Blocked injection:** Clipboard paste into the guest console is disabled.
+        - **Controlled entry:** Configuration and data entry must use secure, deliberate methods.
+      audit: |-
+        ### Audit via the vSphere Client
 
-        Disabling VM Console Paste operations helps ensure that all data interactions with virtual machines are deliberate, controlled, and compliant with security policies—strengthening isolation and reducing the risk of misconfiguration or data leakage in VMware ESXi environments.
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. Select the `VM Options` tab and expand `Advanced`.
+        3. Select `EDIT CONFIGURATION`.
+        4. Locate the `isolation.tools.paste.disable` parameter and read its value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Get-AdvancedSetting -Name 'isolation.tools.paste.disable'
+        ```
+
+        The check passes only when the parameter is present and set to `TRUE` for every virtual machine. It fails if the parameter is absent or set to any other value.
       remediation: |-
         To set this configuration utilize the vSphere interface as follows:
 
@@ -1961,27 +2340,36 @@ queries:
       vsphere.datacenters.all( vms.all( advancedSettings['log.rotateSize'] == 1024000 ) )
     docs:
       desc: |-
-        This check ensures that VM log file size and rotation policies are configured to limit growth and retain recent log data without consuming excessive storage. Configuring log rotation parameters—such as maximum file size and number of retained logs—prevents datastore clutter and ensures that logs remain manageable, auditable, and performance-safe in VMware ESXi environments.
+        This check ensures that each virtual machine caps its log file size through the `log.rotateSize` parameter set to 1024000 bytes. Without a size limit, a log file on a long-running VM grows without bound, so capping it triggers rotation at a manageable size.
 
-        **Rationale:**
+        **Why this matters**
 
-        By default, a new VM log file (vmware.log) is typically created only when a host is rebooted, which can result in large, unwieldy log files on long-running virtual machines. Without rotation or size limits, these logs can consume significant datastore space, degrade performance, and complicate log analysis or retention efforts. To maintain efficient and secure operations, VMware recommends:
-          - Limiting each log file to 1 MB using the log.rotateSize parameter.
-          - Retaining a maximum of 10 log files per VM via the log.keepOld setting.
+        - **Datastore exhaustion:** Unbounded log growth consumes datastore space and can fill shared storage.
+        - **Operational delays:** Oversized logs slow backup, migration, and snapshot operations.
+        - **Manageable analysis:** Bounded log files keep log data practical to review and retain.
 
-        If logging behavior is not properly configured, it can lead to:
-          - Datastore exhaustion from unbounded log growth.
-          - Delayed or failed VM operations, especially during backups, migrations, or snapshots.
-          - Loss of relevant log data, as older logs may be overwritten too quickly or missing entirely.
-          - Non-compliance with operational and security standards such as CIS VMware ESXi Benchmark and NIST 800-92, which recommend proper logging and retention policies.
+        **Risk mitigation**
 
-        **Risk mitigation:**
-          - Limits the size of each log file to prevent performance degradation or uncontrolled growth.
-          - Ensures recent operational logs are preserved through intelligent log rotation.
-          - Prevents excessive use of shared datastore resources by managing cumulative log size.
-          - Supports compliance with audit, incident response, and forensic analysis requirements.
+        - **Bounded growth:** A fixed rotation size keeps each log file from growing uncontrolled.
+        - **Preserved storage:** Capping cumulative log size protects shared datastore resources.
+      audit: |-
+        ### Audit via the vSphere Client
 
-        To implement this control effectively, set log.rotateSize = "1024000" and log.keepOld = "10" in the VM’s configuration. This ensures that logging is both space-efficient and useful for troubleshooting, without compromising datastore health or operational stability in VMware ESXi environments.
+        1. Select the virtual machine and choose `Actions` followed by `Edit Settings`.
+        2. Select the `VM Options` tab and expand `Advanced`.
+        3. Select `EDIT CONFIGURATION`.
+        4. Locate the `log.rotateSize` parameter and read its value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Run the following command:
+
+        ```powershell
+        Get-VM | Get-AdvancedSetting -Name 'log.rotateSize'
+        ```
+
+        The check passes only when the parameter is present and set to `1024000` for every virtual machine. It fails if the parameter is absent or set to any other value.
       remediation: |-
         To set this configuration utilize the vSphere interface as follows:
 

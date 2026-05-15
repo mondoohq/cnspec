@@ -51,15 +51,15 @@ policies:
 
 ## Impact scoring
 
-`impact:` drives prioritization in scan output and dashboards. Pick from the established bands — these match the observed distribution across this repo and avoid drift toward unhelpful precision (`impact: 65` etc.).
+`impact:` drives prioritization in scan output and dashboards. The rows below are **bands** — ranges of values, not single numbers. Pick the band that matches the check's risk, then choose a value within that range; any value inside the band is valid (`75`, for example, sits within the 70–79 band).
 
 | Impact | When to use |
 |--------|-------------|
 | 90–100 | Direct path to data loss, account compromise, or full takeover. Public exposure of customer data, unauthenticated admin endpoints, plaintext secrets in shared storage, disabled audit logging on production. |
-| 80 | High-confidence misconfiguration with realistic exploit chain. Encryption disabled on sensitive resources, overly permissive IAM, network-wide ingress on management ports, missing MFA on privileged identities. |
-| 70 | Important hardening that meaningfully reduces blast radius. CMK encryption instead of vendor-managed keys, private endpoints over public, log retention/aggregation. |
-| 60 | Recommended hardening with moderate risk reduction. Tag/label hygiene that gates other controls, non-default versions of managed services, password complexity above vendor defaults. |
-| 30–50 | Best practices and informational. Defense-in-depth that rarely changes outcomes on its own (resource labeling, optional telemetry, naming conventions). |
+| 80–89 | High-confidence misconfiguration with realistic exploit chain. Encryption disabled on sensitive resources, overly permissive IAM, network-wide ingress on management ports, missing MFA on privileged identities. |
+| 70–79 | Important hardening that meaningfully reduces blast radius. CMK encryption instead of vendor-managed keys, private endpoints over public, log retention/aggregation, disabling remote management shells and consoles left reachable by vendor defaults. |
+| 60–69 | Recommended hardening with moderate risk reduction. Tag/label hygiene that gates other controls, non-default versions of managed services, password complexity above vendor defaults. |
+| 30–59 | Best practices and informational. Defense-in-depth that rarely changes outcomes on its own (resource labeling, optional telemetry, naming conventions). |
 
 Anchor to a sibling check in the same policy whenever possible — if you're adding an encryption-at-rest check next to five others at `impact: 70`, use 70 unless you can justify why this one differs. Cite a sibling UID in the PR description.
 
