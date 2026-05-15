@@ -409,7 +409,7 @@ policies:
 queries:
   - uid: mondoo-gcp-security-instances-are-not-configured-use-default-service-account
     title: Ensure that instances are not configured to use the default service account
-    impact: 95
+    impact: 90
     tags:
       compliance/bsi-grundschutz-sys15: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-04
@@ -923,7 +923,7 @@ queries:
 
         **Why this matters**
 
-        In Google Cloud, the allUsers principal allows anyone on the internet to access a resource without authentication, while allAuthenticatedUsers allows access to any user with a Google account. Assigning these principals to a Cloud Storage bucket—either directly via IAM roles or indirectly through legacy ACLs—exposes data to a much broader audience than intended.
+        In Google Cloud, the allUsers principal allows anyone on the internet to access a resource without authentication, while allAuthenticatedUsers allows access to any user with a Google account. Assigning these principals to a Cloud Storage bucket, either directly via IAM roles or indirectly through legacy ACLs, exposes data to a much broader audience than intended.
 
         This type of access is often misconfigured and can lead to:
           - Public exposure of sensitive data, including personally identifiable information (PII), internal documents, or application configuration files.
@@ -933,7 +933,7 @@ queries:
 
         **Risk mitigation**
           - Audit IAM policies and bucket ACLs to detect any bindings involving allUsers or allAuthenticatedUsers.
-          - Remove these principals from bucket policies and replace them with specific identities (e.g., service accounts, groups, or individual users) that require access.
+          - Remove these principals from bucket policies and replace them with specific identities such as service accounts, groups, or individual users that require access.
           - Enable Public Access Prevention to proactively block public access configuration.
           - Enforce organization policies that restrict or deny the use of these principals across your projects.
 
@@ -1054,7 +1054,7 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        Cloud Storage supports two parallel access-control systems: IAM and object-level ACLs. When both are active, a user only needs permission from one system to access a resource. This creates shadow permissions -- an object-level ACL can grant access that an IAM deny policy explicitly prohibits, allowing an attacker to bypass IAM controls and reach objects they should not be able to read or modify.
+        Cloud Storage supports two parallel access-control systems: IAM and object-level ACLs. When both are active, a user only needs permission from one system to access a resource. This creates shadow permissions. An object-level ACL can grant access that an IAM deny policy explicitly prohibits, allowing an attacker to bypass IAM controls and reach objects they should not be able to read or modify.
 
         Enable uniform bucket-level access to disable ACLs entirely and enforce IAM as the single source of truth. This eliminates inconsistent per-object permissions that are difficult to audit and easy for attackers to exploit.
       remediation:
@@ -1593,7 +1593,9 @@ queries:
     mql: |
       terraform.resources('google_bigquery_dataset').all(
         blocks.where(type == 'access').none(arguments.special_group == 'allAuthenticatedUsers') &&
-        blocks.where(type == 'access').none(arguments.special_group == 'allUsers')
+        blocks.where(type == 'access').none(arguments.special_group == 'allUsers') &&
+        blocks.where(type == 'access').none(arguments.iam_member == 'allAuthenticatedUsers') &&
+        blocks.where(type == 'access').none(arguments.iam_member == 'allUsers')
       )
       if (terraform.resources.where(nameLabel == 'google_bigquery_dataset_iam_binding') != empty) {
         terraform.resources('google_bigquery_dataset_iam_binding').all(
@@ -1612,7 +1614,12 @@ queries:
     mql: |
       terraform.plan.resourceChanges.where(type == 'google_bigquery_dataset').all(
         change.after['access'] == empty ||
-        change.after['access'].none(_['special_group'] == 'allAuthenticatedUsers' || _['special_group'] == 'allUsers')
+        change.after['access'].none(
+          _['special_group'] == 'allAuthenticatedUsers' ||
+          _['special_group'] == 'allUsers' ||
+          _['iam_member'] == 'allAuthenticatedUsers' ||
+          _['iam_member'] == 'allUsers'
+        )
       )
   - uid: mondoo-gcp-security-bigquery-dataset-not-publicly-accessible-terraform-state
     filters: |
@@ -1621,7 +1628,12 @@ queries:
     mql: |
       terraform.state.resources.where(type == 'google_bigquery_dataset').all(
         values['access'] == empty ||
-        values['access'].none(_['special_group'] == 'allAuthenticatedUsers' || _['special_group'] == 'allUsers')
+        values['access'].none(
+          _['special_group'] == 'allAuthenticatedUsers' ||
+          _['special_group'] == 'allUsers' ||
+          _['iam_member'] == 'allAuthenticatedUsers' ||
+          _['iam_member'] == 'allUsers'
+        )
       )
   - uid: mondoo-gcp-security-bigquery-dataset-cmek-encryption
     title: Ensure a default CMEK is specified for all BigQuery datasets
@@ -2226,7 +2238,7 @@ queries:
             1. In the Google Cloud console, go to the **BigQuery** page.
             2. Select the dataset you want to configure.
             3. Select **Sharing** and then **Permissions**.
-            4. Review the list of principals and identify any entries granted to an entire domain (e.g., `example.com`).
+            4. Review the list of principals and identify any entries granted to an entire domain such as `example.com`.
             5. Remove domain-wide entries and replace them with specific Google Groups or individual users.
             6. Select **Done**.
         - id: cli
@@ -2393,6 +2405,7 @@ queries:
   - uid: mondoo-gcp-security-cloud-sql-mysql-instances-not-publicly-exposed-gcp
     filters: asset.platform == 'gcp-sql-mysql'
     mql: |
+      gcp.sql.instance.ipAddresses != empty &&
       gcp.sql.instance.ipAddresses.all(type != "PRIMARY")
   - uid: mondoo-gcp-security-cloud-sql-mysql-instances-not-publicly-exposed-terraform-hcl
     filters: |
@@ -2421,7 +2434,9 @@ queries:
       asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_sql_database_instance' && values.database_version.contains('MYSQL'))
     mql: |
       terraform.state.resources.where(type == 'google_sql_database_instance' && values.database_version.contains('MYSQL')).all(
-        values['ip_address'].none(type == 'PRIMARY')
+        values['settings'].all(
+          _['ip_configuration'].all(_['ipv4_enabled'] == false)
+        )
       )
   - uid: mondoo-gcp-security-cloud-sql-mysql-connections-require-ssl-tls
     title: Ensure Cloud SQL MySQL connections require SSL/TLS
@@ -2638,18 +2653,6 @@ queries:
             gcloud sql instances describe INSTANCE_NAME --format=json | jq '.settings.databaseFlags[] | select(.name=="skip_show_database")|.value'
             ```
             Ensure the output for each MySQL instance is `"on"`.
-
-        **Using cnquery**
-
-        1. Ensure the `gcloud` CLI is configured for your project:
-           ```bash
-           gcloud config set project <project_id>
-           ```
-        2. Run the query:
-           ```mql
-           cnquery run gcp project <project-id> -c "gcp.project.sql.instances.where(databaseInstalledVersion == /^MYSQL_/).all(settings.databaseFlags['skip_show_database'] == 'on')"
-           ```
-           Verify the flag value is `on` for all relevant instances.
       remediation:
         - id: console
           desc: |
@@ -2793,18 +2796,6 @@ queries:
             gcloud sql instances describe INSTANCE_NAME --format=json | jq '.settings.databaseFlags[] | select(.name=="local_infile")|.value'
             ```
             Ensure the output for each MySQL instance is `"off"`.
-
-        **Using cnquery**
-
-        1. Ensure the `gcloud` CLI is configured for your project:
-           ```bash
-           gcloud config set project <project_id>
-           ```
-        2. Run the query:
-           ```mql
-           cnquery run gcp project <project-id> -c "gcp.project.sql.instances.where(databaseInstalledVersion == /^MYSQL_/).all(settings.databaseFlags['local_infile'] == 'off')"
-           ```
-           Verify the flag value is `off` for all relevant instances.
       remediation:
         - id: console
           desc: |
@@ -2951,18 +2942,6 @@ queries:
             gcloud sql instances describe INSTANCE_NAME --format=json | jq '.settings.databaseFlags[] | select(.name=="log_error_verbosity")|.value'
             ```
             Ensure the output for each PostgreSQL instance is `"default"` or `"verbose"`.
-
-        **Using cnquery**
-
-        1. Ensure the `gcloud` CLI is configured for your project:
-           ```bash
-           gcloud config set project <project_id>
-           ```
-        2. Run the query:
-           ```mql
-           cnquery run gcp project <project-id> -c "gcp.project.sql.instances.where(databaseInstalledVersion == /^POSTGRES_/).all(settings { databaseFlags['log_error_verbosity'] == 'verbose' || databaseFlags['log_error_verbosity'] == 'default' })"
-           ```
-           Verify the flag value is `default` or `verbose` for all relevant instances.
       remediation:
         - id: console
           desc: |
@@ -3118,18 +3097,6 @@ queries:
             gcloud sql instances describe INSTANCE_NAME --format=json | jq '.settings.databaseFlags[] | select(.name=="log_connections")|.value'
             ```
             Ensure the output for each PostgreSQL instance is `"on"`.
-
-        **Using cnquery**
-
-        1. Ensure the `gcloud` CLI is configured for your project:
-           ```bash
-           gcloud config set project <project_id>
-           ```
-        2. Run the query:
-           ```mql
-           cnquery run gcp project <project-id> -c "gcp.project.sql.instances.where(databaseInstalledVersion == /^POSTGRES_/).all(settings.databaseFlags['log_connections'] == 'on')"
-           ```
-           Verify the flag value is `on` for all relevant instances.
       remediation:
         - id: console
           desc: |
@@ -3276,18 +3243,6 @@ queries:
             gcloud sql instances describe INSTANCE_NAME --format=json | jq '.settings.databaseFlags[] | select(.name=="log_disconnections")|.value'
             ```
             Ensure the output for each PostgreSQL instance is `"on"`.
-
-        **Using cnquery**
-
-        1. Ensure the `gcloud` CLI is configured for your project:
-           ```bash
-           gcloud config set project <project_id>
-           ```
-        2. Run the query:
-           ```mql
-           cnquery run gcp project <project-id> -c "gcp.project.sql.instances.where(databaseInstalledVersion == /^POSTGRES_/).all(settings.databaseFlags['log_disconnections'] == 'on')"
-           ```
-           Verify the flag value is `on` for all relevant instances.
       remediation:
         - id: console
           desc: |
@@ -3383,7 +3338,7 @@ queries:
       )
   - uid: mondoo-gcp-security-compute-instances-no-public-ip
     title: Ensure public IP addresses are not assigned to VM instances
-    impact: 75
+    impact: 70
     tags:
       compliance/bsi-grundschutz-sys15: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
@@ -3508,7 +3463,7 @@ queries:
             ```bash
             gcloud compute instances describe INSTANCE_NAME --zone=ZONE --format='json(networkInterfaces[].accessConfigs)'
             ```
-            Look for the `name` field within the `accessConfigs` array (e.g., `External NAT`).
+            Look for the `name` field within the `accessConfigs` array, such as `External NAT`.
 
             2. Delete the identified access configuration using its name:
             ```bash
@@ -3671,6 +3626,7 @@ queries:
                 ]
               }
             }
+            ```
         - id: console
           desc: |
             To ensure the default service account is not used on VM instances using the Google Cloud Console:
@@ -3897,7 +3853,7 @@ queries:
       )
   - uid: mondoo-gcp-security-compute-instances-confidential-vm-service-enabled
     title: Ensure Confidential VM Service is enabled for all VM instances
-    impact: 75
+    impact: 70
     tags:
       compliance/bsi-grundschutz-sys15: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
@@ -3957,7 +3913,7 @@ queries:
         ```bash
         gcloud compute instances list --format='json(name,machineType,confidentialInstanceConfig)'
         ```
-        2. For instances using a supported machine type (e.g., containing "n2d-"), verify that the `confidentialInstanceConfig` section exists and the `enableConfidentialCompute` field is set to `true`.
+        2. For instances using a supported machine type such as those containing "n2d-", verify that the `confidentialInstanceConfig` section exists and the `enableConfidentialCompute` field is set to `true`.
 
         Example output for a configured instance:
         ```json
@@ -5491,7 +5447,7 @@ queries:
         1. To confirm that a rotation schedule is configured for each key, including both the ROTATION_PERIOD and NEXT_ROTATION_TIME, use the following command:
 
         ```bash
-        gcloud kms keys list --keyring=<KEY_RING> --location=<LOCATION> --format=json'(rotationPeriod)'
+        gcloud kms keys list --keyring=<KEY_RING> --location=<LOCATION> --format='value(rotationPeriod)'
         ```
 
         Ensure the returned values for rotationPeriod and nextRotationTime adhere to the following criteria:
@@ -5557,7 +5513,8 @@ queries:
         terraform.resources('google_kms_crypto_key') != empty
     mql: |
       terraform.resources('google_kms_crypto_key').all(
-        arguments['rotation_period'] != empty && arguments['rotation_period'] != empty
+        arguments['rotation_period'] != empty &&
+        arguments['rotation_period'] == /^([0-9]{1,6}|[1-6][0-9]{6}|7[0-6][0-9]{5}|77[0-6][0-9]{4}|777[0-5][0-9]{3}|7776000)s$/
       )
   - uid: mondoo-gcp-security-cloud-kms-keys-rotated-90-days-terraform-plan
     filters: |
@@ -5565,7 +5522,8 @@ queries:
       terraform.plan.resourceChanges.contains(type == 'google_kms_crypto_key')
     mql: |
       terraform.plan.resourceChanges.where(type == 'google_kms_crypto_key').all(
-        change.after['rotation_period'] != empty && change.after['rotation_period'] != empty
+        change.after['rotation_period'] != empty &&
+        change.after['rotation_period'] == /^([0-9]{1,6}|[1-6][0-9]{6}|7[0-6][0-9]{5}|77[0-6][0-9]{4}|777[0-5][0-9]{3}|7776000)s$/
       )
   - uid: mondoo-gcp-security-cloud-kms-keys-rotated-90-days-terraform-state
     filters: |
@@ -5573,7 +5531,8 @@ queries:
       terraform.state.resources.contains(type == 'google_kms_crypto_key')
     mql: |
       terraform.state.resources.where(type == 'google_kms_crypto_key').all(
-        values['rotation_period'] != empty && values['rotation_period'] != empty
+        values['rotation_period'] != empty &&
+        values['rotation_period'] == /^([0-9]{1,6}|[1-6][0-9]{6}|7[0-6][0-9]{5}|77[0-6][0-9]{4}|777[0-5][0-9]{3}|7776000)s$/
       )
   - uid: mondoo-gcp-security-cloud-kms-keys-destroy-scheduled-duration
     title: Ensure KMS crypto keys have a destroy scheduled duration of 24h+
@@ -5615,7 +5574,7 @@ queries:
 
         **Why this matters**
 
-        An attacker with brief IAM access can schedule key destruction with a short window, causing irrecoverable data loss before the action is detected. Crypto key destruction is irreversible -- once a key version is permanently destroyed, all data encrypted with it is lost forever:
+        An attacker with brief IAM access can schedule key destruction with a short window, causing irrecoverable data loss before the action is detected. Crypto key destruction is irreversible. Once a key version is permanently destroyed, all data encrypted with it is lost forever:
           - A compromised account can schedule key destruction as a sabotage vector; a longer window gives defenders time to detect and cancel it.
           - Security teams need time to review destruction requests and verify they are legitimate.
           - Automated processes or scripts with overly broad permissions can inadvertently trigger destruction.
@@ -5627,7 +5586,7 @@ queries:
 
         **Risk mitigation**
           - Set the destroy scheduled duration to at least 24 hours (86400 seconds) for all crypto keys.
-          - Consider longer durations (e.g., 30 days) for keys protecting critical or regulated data.
+          - Consider longer durations such as 30 days for keys protecting critical or regulated data.
           - Implement alerting on key destruction events to ensure timely review.
           - Use IAM policies to restrict who can schedule key destruction.
       remediation:
@@ -5775,7 +5734,7 @@ queries:
 
             1. Navigate to **Security** > **Key Management** in the GCP Console.
             2. Select **Create Key Ring**.
-            3. Under **Key ring location**, select a specific region (e.g., us-central1) instead of 'global'.
+            3. Under **Key ring location**, select a specific region such as us-central1 instead of 'global'.
             4. Complete the key ring creation.
             5. For existing global keyrings, create a new regional keyring, create new keys, and re-encrypt data with the new keys.
         - id: cli
@@ -5877,7 +5836,7 @@ queries:
           - Manual rotation processes are error-prone and often neglected, leaving keys static for far longer than intended.
 
         If automatic rotation is not configured for ENCRYPT_DECRYPT keys, it can lead to:
-          - Unlimited exposure window -- an attacker with a compromised key can decrypt all data ever encrypted with it.
+          - Unlimited exposure window: an attacker with a compromised key can decrypt all data ever encrypted with it.
           - Growing blast radius as more data accumulates under a single key version.
           - Non-compliance with security frameworks such as CIS Google Cloud Platform Foundations Benchmark, NIST 800-57, and PCI DSS which require regular key rotation.
 
@@ -5912,7 +5871,7 @@ queries:
             1. Navigate to **Security** > **Key Management** in the GCP Console.
             2. Select the key ring containing the target crypto key.
             3. Click the three-dot menu for the crypto key and select **Edit rotation period**.
-            4. Set a rotation period (e.g., 90 days) and a starting date.
+            4. Set a rotation period such as 90 days and a starting date.
             5. Select **Save**.
         - id: cli
           desc: |
@@ -6230,7 +6189,7 @@ queries:
       gcp.project.dnsService.managedzone.visibility != "private"
     mql: |
       gcp.dns.managedzone.dnssecConfig['state'] == 'on'
-      gcp.dns.managedzone.dnssecConfig.defaultKeySpecs.where(keyType == 'keySigning').all(algorithm != 'RSASHA1')
+      gcp.dns.managedzone.dnssecConfig.defaultKeySpecs.where(keyType == 'keySigning').all(algorithm != 'rsasha1')
   - uid: mondoo-gcp-security-cloud-dns-rsasha1-ksk-not-used-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' &&
@@ -6385,7 +6344,7 @@ queries:
       gcp.project.dnsService.managedzone.visibility != "private"
     mql: |
       gcp.dns.managedzone.dnssecConfig['state'] == 'on'
-      gcp.dns.managedzone.dnssecConfig.defaultKeySpecs.where(keyType == 'zoneSigning').all(algorithm != 'RSASHA1')
+      gcp.dns.managedzone.dnssecConfig.defaultKeySpecs.where(keyType == 'zoneSigning').all(algorithm != 'rsasha1')
   - uid: mondoo-gcp-security-cloud-dns-rsasha1-zsk-not-used-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' &&
@@ -6420,6 +6379,7 @@ queries:
           _['default_key_specs'].where(_['key_type'] == "zoneSigning").all(_['algorithm'] != "rsasha1")
         )
       )
+  # Note: this check enforces NSEC3 specifically; consider revisiting per RFC 9276
   - uid: mondoo-gcp-security-cloud-dns-dnssec-nsec3-enabled
     title: Ensure DNSSEC uses NSEC3 for authenticated denial-of-existence
     impact: 50
@@ -6460,7 +6420,7 @@ queries:
 
         NSEC3 mitigates zone enumeration by replacing plaintext record names with cryptographic hashes. While offline dictionary attacks against NSEC3 hashes are possible, NSEC3 raises the effort required to enumerate zone contents compared to NSEC.
 
-        **Note:** This check verifies DNSSEC is enabled on public zones. Google Cloud DNS defaults to NSEC3 for the denial-of-existence mechanism, though RFC 9276 (BCP 236) recommends NSEC for most zones. NSEC3 was originally designed to prevent zone enumeration and to support opt-out for unsigned delegations in large TLD registries. RFC 9276 has since acknowledged that the zone enumeration protection is negligible with current parameters, leaving opt-out as the only practical reason to use NSEC3, which does not apply to regular GCP managed zones. Additionally, Google's fixed NSEC3 parameters (iterations=1, 64-bit salt) do not conform to the current RFC requirements (iterations MUST be 0 salt SHOULD NOT be used).
+        **Note:** This check verifies DNSSEC is enabled on public zones and configured to use NSEC3, which is Google Cloud DNS's default. NSEC3 raises the effort required to enumerate zone contents compared to NSEC by replacing plaintext record names with cryptographic hashes.
       audit: |
         **Using Google Cloud CLI**
 
@@ -6627,7 +6587,7 @@ queries:
           - Non-compliance with security benchmarks such as CIS Google Cloud Platform Foundations Benchmark (Control 3.6), NIST 800-53, and PCI DSS.
 
         **Risk mitigation**
-          - Restrict source ranges in firewall rules to only known and trusted CIDR blocks (e.g., corporate VPN ranges, bastion host IPs).
+          - Restrict source ranges in firewall rules to only known and trusted CIDR blocks such as corporate VPN ranges or bastion host IPs.
           - Use Identity-Aware Proxy (IAP) for SSH access instead of exposing port 22 directly.
           - Implement OS Login with two-factor authentication for an additional layer of access control.
           - Regularly audit firewall rules for overly permissive source ranges.
@@ -6781,7 +6741,7 @@ queries:
 
         RDP provides full graphical remote desktop access to Windows instances. If a firewall rule allows RDP traffic from any IP address on the internet, it creates a critical exposure:
           - RDP is one of the most commonly targeted protocols in brute-force and credential-stuffing attacks.
-          - Vulnerabilities in RDP implementations (such as BlueKeep) have been actively exploited for remote code execution.
+          - Vulnerabilities in RDP implementations such as BlueKeep have been actively exploited for remote code execution.
           - Automated scanning tools continuously probe for open RDP ports, making exposed instances easy targets.
 
         If RDP access is not restricted to trusted IP ranges, it can lead to:
@@ -6790,7 +6750,7 @@ queries:
           - Non-compliance with security benchmarks such as CIS Google Cloud Platform Foundations Benchmark (Control 3.7), NIST 800-53, and PCI DSS.
 
         **Risk mitigation**
-          - Restrict source ranges in firewall rules to only known and trusted CIDR blocks (e.g., corporate VPN ranges, bastion host IPs).
+          - Restrict source ranges in firewall rules to only known and trusted CIDR blocks such as corporate VPN ranges or bastion host IPs.
           - Use Identity-Aware Proxy (IAP) for remote access instead of exposing port 3389 directly.
           - Deploy a VPN or bastion host architecture to provide a controlled entry point for RDP connections.
           - Regularly audit firewall rules for overly permissive source ranges.
@@ -7129,7 +7089,7 @@ queries:
             2. Navigate to **VPC Network** > **Firewall**.
             3. Identify any firewall rules that allow TCP ports 3306, 5432, 1433, or 27017 with a source range of 0.0.0.0/0 or ::/0.
             4. Select the rule and select **Edit**.
-            5. Under **Source IPv4 ranges**, replace 0.0.0.0/0 with your internal network CIDR ranges (e.g., 10.0.0.0/8).
+            5. Under **Source IPv4 ranges**, replace 0.0.0.0/0 with your internal network CIDR ranges such as 10.0.0.0/8.
             6. Select **Save**.
         - id: cli
           desc: |
@@ -7233,10 +7193,10 @@ queries:
 
         **Why this matters**
 
-        A firewall rule that allows internet traffic on a specific protocol (e.g., TCP) without specifying ports effectively opens all 65,535 ports on that protocol to the internet:
+        A firewall rule that allows internet traffic on a specific protocol such as TCP without specifying ports effectively opens all 65,535 ports on that protocol to the internet:
           - Any service listening on any port becomes reachable, including internal tools, management interfaces, and development services that were never intended to be public.
           - This dramatically increases the attack surface and the likelihood of discovering exploitable services.
-          - Changes to running services (e.g., starting a new process that listens on a port) immediately expose that service to the internet without any additional firewall change.
+          - Changes to running services, such as starting a new process that listens on a port, immediately expose that service to the internet without any additional firewall change.
 
         If firewall rules allow internet ingress without port restrictions, it can lead to:
           - Unintentional exposure of sensitive services that happen to bind to a port.
@@ -7286,7 +7246,7 @@ queries:
             3. Identify any firewall rules that allow traffic from 0.0.0.0/0 or ::/0 without specific port restrictions.
             4. Select the rule and select **Edit**.
             5. Under **Protocols and ports**, change from **Allow all** to **Specified protocols and ports**.
-            6. Enter only the specific ports required (e.g., tcp:80,443).
+            6. Enter only the specific ports required, such as tcp:80,443.
             7. Select **Save**.
         - id: cli
           desc: |
@@ -7909,7 +7869,7 @@ queries:
       )
   - uid: mondoo-gcp-security-gke-workload-identity-enabled
     title: Ensure Workload Identity is enabled on GKE clusters
-    impact: 85
+    impact: 80
     tags:
       compliance/bsi-grundschutz-sys15: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
@@ -8028,7 +7988,7 @@ queries:
       )
   - uid: mondoo-gcp-security-gke-private-cluster-enabled
     title: Ensure private cluster is enabled on GKE clusters
-    impact: 85
+    impact: 80
     tags:
       compliance/bsi-grundschutz-sys15: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
@@ -10014,7 +9974,7 @@ queries:
         **Risk mitigation**
           - Configure at least one log sink to export security-critical logs to long-term storage.
           - Use organization-level sinks for consistent log export across all projects.
-          - Consider multiple sinks for different log types (e.g., audit logs to BigQuery, security logs to SIEM).
+          - Consider multiple sinks for different log types, such as audit logs to BigQuery and security logs to SIEM.
           - Monitor sink health and ensure destinations are accessible and have sufficient capacity.
       remediation:
         - id: terraform
@@ -10290,7 +10250,7 @@ queries:
       )
   - uid: mondoo-gcp-security-pubsub-topic-not-publicly-accessible
     title: Ensure Pub/Sub topics are not anonymously or publicly accessible
-    impact: 85
+    impact: 80
     tags:
       compliance/bsi-grundschutz-sys15: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-04
@@ -10339,7 +10299,7 @@ queries:
         **Risk mitigation**
           - Remove `allUsers` and `allAuthenticatedUsers` from all topic IAM bindings.
           - Use specific service accounts, groups, or users for topic access.
-          - Apply the principle of least privilege by granting only the minimum required roles (e.g., `roles/pubsub.publisher` or `roles/pubsub.subscriber`).
+          - Apply the principle of least privilege by granting only the minimum required roles, such as `roles/pubsub.publisher` or `roles/pubsub.subscriber`.
           - Use VPC Service Controls to restrict topic access to authorized networks.
       remediation:
         - id: terraform
@@ -10413,7 +10373,7 @@ queries:
       )
   - uid: mondoo-gcp-security-pubsub-subscription-not-publicly-accessible
     title: Ensure Pub/Sub subscriptions are not anonymously or publicly accessible
-    impact: 85
+    impact: 80
     tags:
       compliance/bsi-grundschutz-sys15: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-04
@@ -13229,12 +13189,12 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that VPC subnetworks do not use overly broad IP CIDR ranges (/15 or larger, i.e. broader than /16). Excessively large subnets reduce the effectiveness of network segmentation and make it harder to contain the blast radius of security incidents.
+        This check ensures that VPC subnetworks do not use overly broad IP CIDR ranges, meaning /15 or larger (broader than /16). Excessively large subnets reduce the effectiveness of network segmentation and make it harder to contain the blast radius of security incidents.
 
         **Why this matters**
 
         Subnet size directly impacts network segmentation and security:
-          - Overly broad subnets (e.g., /8 or /16) place too many resources in the same network segment.
+          - Overly broad subnets such as /8 or /16 place too many resources in the same network segment.
           - Micro-segmentation becomes difficult when large numbers of resources share a single subnet.
           - Firewall rules based on subnet ranges become less effective when subnets are too large.
           - Smaller, purpose-built subnets improve security isolation and reduce blast radius.
@@ -14731,18 +14691,18 @@ queries:
     filters: |
       asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_compute_forwarding_rule')
     mql: |
-      terraform.plan.resourceChanges.where(type == 'google_compute_forwarding_rule').all(
-        change.after.load_balancing_scheme != "EXTERNAL" &&
-        change.after.load_balancing_scheme != "EXTERNAL_MANAGED" ||
+      terraform.plan.resourceChanges.where(type == 'google_compute_forwarding_rule').where(
+        change.after.load_balancing_scheme == "EXTERNAL" || change.after.load_balancing_scheme == "EXTERNAL_MANAGED"
+      ).all(
         change.after.all_ports != true
       )
   - uid: mondoo-gcp-security-forwarding-rule-not-all-ports-terraform-state
     filters: |
       asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_compute_forwarding_rule')
     mql: |
-      terraform.state.resources.where(type == 'google_compute_forwarding_rule').all(
-        values.load_balancing_scheme != "EXTERNAL" &&
-        values.load_balancing_scheme != "EXTERNAL_MANAGED" ||
+      terraform.state.resources.where(type == 'google_compute_forwarding_rule').where(
+        values.load_balancing_scheme == "EXTERNAL" || values.load_balancing_scheme == "EXTERNAL_MANAGED"
+      ).all(
         values.all_ports != true
       )
   - uid: mondoo-gcp-security-cloud-sql-no-overly-permissive-authorized-networks
@@ -15950,7 +15910,7 @@ queries:
             2. Select the security policy.
             3. Find the default rule (priority 2147483647).
             4. Select **Edit** on the default rule.
-            5. Set the action to **Deny** with an appropriate response code (e.g., 403).
+            5. Set the action to **Deny** with an appropriate response code such as 403.
             6. Select **Update**.
         - id: cli
           desc: |
@@ -16232,7 +16192,7 @@ queries:
           mondoo.com/filter-icon: gcp
     docs:
       desc: |
-        This check ensures that self-managed SSL certificates registered with Google Cloud are not expired or nearing expiration (within 30 days). Expired certificates enable man-in-the-middle attacks -- when users encounter certificate errors, they may accept fraudulent certificates, and automated systems may fall back to insecure connections. This check applies only to self-managed certificates, as Google-managed certificates are automatically renewed.
+        This check ensures that self-managed SSL certificates registered with Google Cloud are not expired or nearing expiration (within 30 days). Expired certificates enable man-in-the-middle attacks. When users encounter certificate errors, they may accept fraudulent certificates, and automated systems may fall back to insecure connections. This check applies only to self-managed certificates, as Google-managed certificates are automatically renewed.
 
         **Why this matters**
 
@@ -17790,7 +17750,7 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that GKE cluster node pools have an upgrade strategy explicitly configured. An upgrade strategy (such as SURGE or BLUE_GREEN) controls how node pool upgrades are performed, ensuring that security patches are applied safely without disrupting security controls.
+        This check ensures that GKE cluster node pools have an upgrade strategy explicitly configured. An upgrade strategy such as SURGE or BLUE_GREEN controls how node pool upgrades are performed, ensuring that security patches are applied safely without disrupting security controls.
 
         **Why this matters**
 
@@ -19277,7 +19237,7 @@ queries:
 
             1. Navigate to **VPC Network** > **Firewall**.
             2. Identify egress rules with destination range `0.0.0.0/0` that allow traffic without port restrictions.
-            3. Edit the rule to specify explicit ports (e.g., TCP 443 for HTTPS).
+            3. Edit the rule to specify explicit ports, such as TCP 443 for HTTPS.
         - id: cli
           desc: |
             To ensure egress firewall rules do not allow all ports using the gcloud CLI, list internet-facing egress rules:
@@ -19756,7 +19716,7 @@ queries:
         **Why this matters**
 
         - **Compromised security controls:** An unhealthy node may have disabled or degraded security mechanisms such as AppArmor profiles, seccomp filters, or security agents, creating an environment where container escapes and privilege escalation are easier to achieve.
-        - **Attacker exploitation:** An attacker can deliberately trigger node instability (e.g., resource exhaustion) to force a node into an unhealthy state where security controls no longer function, then exploit the weakened node for container escape or lateral movement.
+        - **Attacker exploitation:** An attacker can deliberately trigger node instability such as resource exhaustion to force a node into an unhealthy state where security controls no longer function, then exploit the weakened node for container escape or lateral movement.
         - **Patch integrity:** Auto-repair replaces unhealthy nodes with fresh instances from the current node image, ensuring the latest security patches and hardened configurations are restored automatically.
       remediation:
         - id: console
@@ -19874,7 +19834,7 @@ queries:
             To ensure GKE nodes use a dedicated service account using the Google Cloud Console:
 
             1. Create a dedicated service account in **IAM & Admin** > **Service Accounts**.
-            2. Grant the service account only the roles needed for GKE nodes (e.g., `roles/logging.logWriter`, `roles/monitoring.metricWriter`, `roles/artifactregistry.reader`).
+            2. Grant the service account only the roles needed for GKE nodes, such as `roles/logging.logWriter`, `roles/monitoring.metricWriter`, and `roles/artifactregistry.reader`.
             3. When creating a new node pool, specify the dedicated service account under **Security** > **Service account**.
 
             **Note:** Existing node pools cannot have their service account changed. You must create a new node pool with the dedicated service account, migrate workloads to the new pool, and then delete the old node pool.
@@ -20732,7 +20692,7 @@ queries:
 
             1. Navigate to **VPC Network** > **Firewall**.
             2. Identify rules with source range `0.0.0.0/0` or `::/0` that allow large port ranges.
-            3. Edit the rule to restrict to only the specific ports required (e.g., `80`, `443`).
+            3. Edit the rule to restrict to only the specific ports required, such as `80` or `443`.
         - id: cli
           desc: |
             To ensure firewall rules do not allow full port range access using the gcloud CLI, list internet-facing ingress rules:
@@ -20854,7 +20814,7 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that the auto-created default firewall rules in a VPC network are disabled or have been replaced with more restrictive rules. When a default VPC network is created, GCP auto-generates permissive firewall rules (e.g., `default-allow-internal`, `default-allow-ssh`, `default-allow-rdp`, `default-allow-icmp`) that allow broad access patterns.
+        This check ensures that the auto-created default firewall rules in a VPC network are disabled or have been replaced with more restrictive rules. When a default VPC network is created, GCP auto-generates permissive firewall rules such as `default-allow-internal`, `default-allow-ssh`, `default-allow-rdp`, and `default-allow-icmp` that allow broad access patterns.
 
         **Why this matters**
 
@@ -20863,7 +20823,7 @@ queries:
         - **Unintended access:** Default rules apply to all instances in the network unless overridden, potentially allowing access to newly created instances before custom rules are configured.
         - **Best practice:** Delete the default network and its rules, or at minimum disable the default-allow rules and replace them with targeted, least-privilege rules.
 
-        Note: This check flags any firewall rule named `default-allow-*` as non-compliant unless it is disabled. If you have tightened a default rule (e.g., restricted `default-allow-ssh` to a specific source range), the recommended remediation is to disable the original default rule and create a new rule with a descriptive name that reflects its restricted scope.
+        Note: This check flags any firewall rule named `default-allow-*` as non-compliant unless it is disabled. If you have tightened a default rule, for example by restricting `default-allow-ssh` to a specific source range, the recommended remediation is to disable the original default rule and create a new rule with a descriptive name that reflects its restricted scope.
       remediation:
         - id: console
           desc: |
@@ -21722,7 +21682,7 @@ queries:
       gcp.organization.accessPolicies.any(accessLevels.length > 0)
   - uid: mondoo-gcp-security-cloud-storage-bucket-soft-delete-enabled
     title: Ensure Cloud Storage buckets have soft delete retention enabled
-    impact: 75
+    impact: 70
     tags:
       compliance/bsi-grundschutz-sys15: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-bcr-08
@@ -21771,7 +21731,7 @@ queries:
 
         - Provides a time-bounded recovery path for deleted objects.
         - Covers both accidental and malicious deletions with the same control.
-        - Requires minimal operational overhead — no replica infrastructure needed.
+        - Requires minimal operational overhead, with no replica infrastructure needed.
       remediation:
         - id: terraform
           desc: |
@@ -21843,7 +21803,7 @@ queries:
   # mondoo-gcp-security-cloud-storage-bucket-retention-policy-locked.
   - uid: mondoo-gcp-security-cloud-storage-bucket-object-retention-locked
     title: Ensure Cloud Storage buckets with object retention have it locked
-    impact: 75
+    impact: 70
     filters: asset.platform == 'gcp'
     tags:
       compliance/bsi-grundschutz-sys15: false
@@ -21867,7 +21827,7 @@ queries:
       desc: |
         This check verifies that every Cloud Storage bucket with an `objectRetentionMode` set has that mode locked (`Enabled`). An unlocked object-retention configuration can be removed by anyone with bucket-admin permissions, defeating the WORM (write-once-read-many) guarantee the bucket advertises.
 
-        Scope note: buckets that never enable object retention (empty `objectRetentionMode`) pass vacuously — this check validates that *enabled* retention is not left in a mode that allows removal. If you require all backup/archive buckets to enable object retention, pair with a tag-based policy that enforces presence.
+        Scope note: buckets that never enable object retention (empty `objectRetentionMode`) pass vacuously. This check validates that *enabled* retention is not left in a mode that allows removal. If you require all backup/archive buckets to enable object retention, pair with a tag-based policy that enforces presence.
 
         **Why this matters**
 
@@ -21876,7 +21836,7 @@ queries:
         - Ransomware actors routinely escalate to bucket-admin, then delete retention settings before destroying data.
         - A regulatory retention commitment implemented only as "metadata flag" can be edited away by the same principal that can delete objects.
         - Locked retention is enforced by the service and cannot be shortened or removed even with full admin rights.
-        - Unlocked retention provides only procedural, not technical, WORM — useful for soft compliance, useless against active attackers.
+        - Unlocked retention provides only procedural, not technical, WORM. It is useful for soft compliance and useless against active attackers.
 
         **Risk mitigation**
 
@@ -21896,7 +21856,7 @@ queries:
             }
             ```
 
-            Lock retention is configured per-object via the API/CLI after upload — set `retention.mode = "Locked"` on the relevant objects to prevent shortening or removal.
+            Lock retention is configured per-object via the API/CLI after upload. Set `retention.mode = "Locked"` on the relevant objects to prevent shortening or removal.
         - id: console
           desc: |
             Enable and lock object retention at bucket creation time (object retention cannot be added to an existing bucket):
@@ -21917,7 +21877,7 @@ queries:
         title: Cloud Storage - Object retention (Bucket Lock)
   - uid: mondoo-gcp-security-cloud-kms-key-access-justifications-strict
     title: Ensure KMS key access justifications exclude customer-initiated support
-    impact: 65
+    impact: 60
     tags:
       compliance/bsi-grundschutz-sys15: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
@@ -22206,7 +22166,7 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check verifies that every Private Service Connect (PSC) service attachment either requires manual connection approval (`connectionPreference == "ACCEPT_MANUAL"`) or restricts the consumers who can attach via an explicit `consumerAcceptLists`. A service attachment that automatically accepts connections with no consumer allowlist is reachable by any consumer project in the GCP organization — effectively a public-on-GCP endpoint for the backing service.
+        This check verifies that every Private Service Connect (PSC) service attachment either requires manual connection approval (`connectionPreference == "ACCEPT_MANUAL"`) or restricts the consumers who can attach via an explicit `consumerAcceptLists`. A service attachment that automatically accepts connections with no consumer allowlist is reachable by any consumer project in the GCP organization, effectively a public-on-GCP endpoint for the backing service.
 
         **Why this matters**
 
@@ -22341,7 +22301,7 @@ queries:
         - Passwords rarely rotate; once leaked, they remain valid until an operator manually changes them.
         - Built-in users are invisible to IAM audit logs and organization policies like `iam.disableServiceAccountKeyCreation`.
         - Offboarding an employee requires coordinated credential revocation at the Cloud SQL layer, which is routinely missed.
-        - IAM-backed Cloud SQL users inherit IAM short-lived tokens, automatic key rotation, and centralized access review — none of which apply to built-in passwords.
+        - IAM-backed Cloud SQL users inherit IAM short-lived tokens, automatic key rotation, and centralized access review. None of these apply to built-in passwords.
 
         **Risk mitigation**
 
@@ -22460,7 +22420,7 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check verifies that every Target SSL Proxy has an explicit SSL policy attached. Target SSL proxies without an attached SSL policy fall back to GCP's default `COMPATIBLE` profile, which permits TLS 1.0 and 1.1. The existing checks on SSL policies (`ssl-policy-min-tls-1-2`, `ssl-policy-modern-or-restricted-profile`) only inspect *defined* SSL policies — they do not catch proxies that have no policy at all and therefore inherit the weak default.
+        This check verifies that every Target SSL Proxy has an explicit SSL policy attached. Target SSL proxies without an attached SSL policy fall back to GCP's default `COMPATIBLE` profile, which permits TLS 1.0 and 1.1. The existing checks on SSL policies (`ssl-policy-min-tls-1-2`, `ssl-policy-modern-or-restricted-profile`) only inspect *defined* SSL policies, so they do not catch proxies that have no policy at all and therefore inherit the weak default.
 
         **Why this matters**
 
@@ -22573,7 +22533,7 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check verifies that every GKE cluster with network policy enabled also has a concrete network-policy provider specified. The existing `gke-cluster-network-policy-enabled` check confirms that the add-on is not disabled, but a cluster can have `networkPolicy.enabled == true` with `networkPolicy.provider == "PROVIDER_UNSPECIFIED"` — in which case no policy enforcement actually happens. This leaves pod-to-pod traffic unrestricted despite the cluster appearing to have network policy on.
+        This check verifies that every GKE cluster with network policy enabled also has a concrete network-policy provider specified. The existing `gke-cluster-network-policy-enabled` check confirms that the add-on is not disabled, but a cluster can have `networkPolicy.enabled == true` with `networkPolicy.provider == "PROVIDER_UNSPECIFIED"`. In that state no policy enforcement actually happens. This leaves pod-to-pod traffic unrestricted despite the cluster appearing to have network policy on.
 
         **Why this matters**
 
@@ -22702,7 +22662,7 @@ queries:
       gcp.project.gkeService.cluster.notificationConfig.topic.projectId == gcp.project.gkeService.cluster.projectId
     docs:
       desc: |
-        This check verifies that, when GKE cluster notifications are enabled, the Pub/Sub topic receiving them lives in the same GCP project as the cluster. A notification topic pointed at a different project ships cluster events — control-plane upgrades, node pool changes, security bulletins — to a project outside this cluster's administrative boundary, producing a cross-project log leak or an unauthorized data flow.
+        This check verifies that, when GKE cluster notifications are enabled, the Pub/Sub topic receiving them lives in the same GCP project as the cluster. A notification topic pointed at a different project ships cluster events, such as control-plane upgrades, node pool changes, and security bulletins, to a project outside this cluster's administrative boundary, producing a cross-project log leak or an unauthorized data flow.
 
         **Why this matters**
 
@@ -22717,7 +22677,7 @@ queries:
 
         - Keeps cluster event data within the project's administrative boundary.
         - Prevents accidental information leak to less-trusted projects.
-        - Simplifies IAM review — the topic's viewers are the cluster's viewers.
+        - Simplifies IAM review, because the topic's viewers are the cluster's viewers.
       remediation:
         - id: terraform
           desc: |
@@ -22769,7 +22729,7 @@ queries:
   # runtime check before shipping a Terraform variant.
   - uid: mondoo-gcp-security-gke-backup-plan-exists
     title: Ensure every GKE cluster is protected by at least one backup plan
-    impact: 75
+    impact: 70
     filters: asset.platform == 'gcp'
     tags:
       compliance/bsi-grundschutz-sys15: false
@@ -22792,14 +22752,14 @@ queries:
       ).length > 0
     docs:
       desc: |
-        This check verifies that every GKE cluster in the project is referenced by at least one active (`state == "READY"`, not deactivated) GKE Backup plan. Clusters with no backup plan cannot be restored after ransomware, accidental namespace deletion, or cluster compromise — the workloads and etcd state are gone for good.
+        This check verifies that every GKE cluster in the project is referenced by at least one active (`state == "READY"`, not deactivated) GKE Backup plan. Clusters with no backup plan cannot be restored after ransomware, accidental namespace deletion, or cluster compromise, so the workloads and etcd state are gone for good.
 
         **Why this matters**
 
         GKE Backup is the built-in disaster-recovery control for Kubernetes workloads:
 
         - Ransomware operators increasingly target Kubernetes clusters because compromising the control plane compromises every workload at once.
-        - A cluster without a backup plan cannot be rebuilt to a known-good state — the restore path doesn't exist.
+        - A cluster without a backup plan cannot be rebuilt to a known-good state, because the restore path doesn't exist.
         - IaC (Terraform / Helm) gives you back the cluster shape but not the live application state (PVs, config maps, secrets as they existed pre-incident).
         - GKE Backup captures both the API objects and the underlying PVs, producing a restorable snapshot.
 
@@ -22860,7 +22820,7 @@ queries:
         title: Backup for GKE overview
   - uid: mondoo-gcp-security-vertexai-index-endpoint-not-public
     title: Ensure Vertex AI index endpoints are not publicly accessible
-    impact: 85
+    impact: 80
     tags:
       compliance/bsi-grundschutz-sys15: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
@@ -22894,7 +22854,7 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check verifies that every Vertex AI index endpoint has its public endpoint disabled. Vertex AI Matching Engine / Vector Search index endpoints hold the embedding-based search index of whatever text, image, or multimodal content the organization has loaded — exposing one publicly makes that entire embedding space queryable by anyone on the internet.
+        This check verifies that every Vertex AI index endpoint has its public endpoint disabled. Vertex AI Matching Engine / Vector Search index endpoints hold the embedding-based search index of whatever text, image, or multimodal content the organization has loaded. Exposing one publicly makes that entire embedding space queryable by anyone on the internet.
 
         **Why this matters**
 
@@ -23066,7 +23026,7 @@ queries:
         title: Vertex AI - Use a custom service account
   - uid: mondoo-gcp-security-iap-tunnel-dest-group-no-broad-cidr
     title: Ensure IAP tunnel destination groups do not use overly broad CIDR ranges
-    impact: 75
+    impact: 70
     tags:
       compliance/bsi-grundschutz-sys15: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-04
@@ -23208,7 +23168,7 @@ queries:
       )
     docs:
       desc: |
-        This check verifies that every Cloud DLP job trigger is in `HEALTHY` status and has run within the last 30 days. DLP job triggers scan BigQuery tables, Cloud Storage buckets, and Datastore kinds on a schedule to identify PII, credentials, and other sensitive data classes. A paused trigger or a trigger that has silently stopped running means the scan is not happening — sensitive data is accumulating without classification.
+        This check verifies that every Cloud DLP job trigger is in `HEALTHY` status and has run within the last 30 days. DLP job triggers scan BigQuery tables, Cloud Storage buckets, and Datastore kinds on a schedule to identify PII, credentials, and other sensitive data classes. A paused trigger or a trigger that has silently stopped running means the scan is not happening, and sensitive data is accumulating without classification.
 
         **Why this matters**
 
@@ -23322,7 +23282,7 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check verifies that every Cloud DLP inspect template includes the common credential detectors: `AWS_CREDENTIALS`, `GCP_CREDENTIALS`, `JSON_WEB_TOKEN`, and `BASIC_AUTH_HEADER`. DLP templates that scan for PII but omit these credential detectors miss the single highest-impact class of sensitive data — live secrets that grant attackers immediate access.
+        This check verifies that every Cloud DLP inspect template includes the common credential detectors: `AWS_CREDENTIALS`, `GCP_CREDENTIALS`, `JSON_WEB_TOKEN`, and `BASIC_AUTH_HEADER`. DLP templates that scan for PII but omit these credential detectors miss the single highest-impact class of sensitive data: live secrets that grant attackers immediate access.
 
         **Why this matters**
 
@@ -23337,7 +23297,7 @@ queries:
 
         - Ensures leaked credentials are flagged alongside traditional PII.
         - Covers the most common accidental-leak formats.
-        - Adds no performance cost — DLP built-in detectors run in the same pass.
+        - Adds no performance cost, since DLP built-in detectors run in the same pass.
       remediation:
         - id: terraform
           desc: |
@@ -23774,7 +23734,7 @@ queries:
       )
   - uid: mondoo-gcp-security-model-armor-blocking-mode
     title: Ensure Model Armor templates enforce blocking mode
-    impact: 85
+    impact: 80
     tags:
       compliance/bsi-grundschutz-sys15: false
       compliance/csa-cloud-controls-matrix-4: false
@@ -23827,7 +23787,7 @@ queries:
             4. Save the template.
         - id: cli
           desc: |
-            `gcloud model-armor templates update` does not expose an `enforcementType` flag — use the REST API or Terraform (above):
+            `gcloud model-armor templates update` does not expose an `enforcementType` flag, so use the REST API or Terraform (above):
 
             ```bash
             curl -X PATCH \
@@ -24205,7 +24165,7 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check verifies that every AlloyDB instance in the cluster has PostgreSQL audit-logging database flags configured: `log_connections = on`, `log_disconnections = on`, and `log_min_duration_statement` set to a non-empty value. Without these flags, the PostgreSQL engine records only a minimal subset of events — enough for basic server health, but not enough to investigate authentication abuse, long-running queries, or suspicious access patterns.
+        This check verifies that every AlloyDB instance in the cluster has PostgreSQL audit-logging database flags configured: `log_connections = on`, `log_disconnections = on`, and `log_min_duration_statement` set to a non-empty value. Without these flags, the PostgreSQL engine records only a minimal subset of events, enough for basic server health but not enough to investigate authentication abuse, long-running queries, or suspicious access patterns.
 
         **Why this matters**
 
@@ -24219,7 +24179,7 @@ queries:
         **Risk mitigation**
 
         - Enable `log_connections` and `log_disconnections` to establish a per-session audit record.
-        - Set `log_min_duration_statement` to a threshold that balances visibility with log volume (e.g. `1000` ms to capture queries over 1 second).
+        - Set `log_min_duration_statement` to a threshold that balances visibility with log volume, such as `1000` ms to capture queries over 1 second.
         - Ship the resulting logs to a SIEM or Cloud Logging sink with tamper-resistant storage.
       remediation:
         - id: console
@@ -24352,7 +24312,7 @@ queries:
       remediation:
         - id: terraform
           desc: |
-            Cloud SQL backups inherit the instance's disk encryption key. Set `encryption_key_name` on the instance at creation time — CMEK cannot be added to an existing instance:
+            Cloud SQL backups inherit the instance's disk encryption key. Set `encryption_key_name` on the instance at creation time. CMEK cannot be added to an existing instance:
 
             ```hcl
             resource "google_sql_database_instance" "app" {
@@ -24378,7 +24338,7 @@ queries:
 
             1. In the Google Cloud console, open **SQL** and select the affected instance.
             2. Confirm that **Customer-managed encryption key** is configured on the instance.
-            3. If the instance is not CMEK-encrypted but must be, you must re-create the instance with CMEK — CMEK cannot be applied to an existing instance — and migrate data.
+            3. If the instance is not CMEK-encrypted but must be, you must re-create the instance with CMEK, since CMEK cannot be applied to an existing instance, and migrate data.
             4. Delete backup runs that pre-date the CMEK configuration and create a fresh CMEK-encrypted backup from **Backups** → **Create backup**.
         - id: cli
           desc: |
@@ -24440,7 +24400,7 @@ queries:
 
         External-cloud connections issued against static keys live in BigQuery metadata indefinitely, with no automatic expiration and no cryptographic binding to the caller. Any principal able to list connections in the project effectively has those keys. Federated connections replace that static credential with a short-lived token minted per query, verified against the target cloud's IAM system:
 
-        - Revoking access in AWS or Azure IAM immediately invalidates the connection — there is no residual static key to rotate or forget.
+        - Revoking access in AWS or Azure IAM immediately invalidates the connection, since there is no residual static key to rotate or forget.
         - Each query logs an identity in both GCP and the target cloud, enabling cross-cloud audit correlation.
         - Static keys copied out of BigQuery (via an over-privileged principal or an audit export) cannot be replayed.
       remediation:
@@ -24594,11 +24554,11 @@ queries:
       )
     docs:
       desc: |
-        This check verifies that every BigQuery connection of type `CLOUD_SQL` has been modified within the last 90 days. BigQuery Cloud SQL connections hold a stored database username and password — there is no native Secret Manager binding for this connection type — so the connection's `modified` timestamp is used as a proxy for credential rotation.
+        This check verifies that every BigQuery connection of type `CLOUD_SQL` has been modified within the last 90 days. BigQuery Cloud SQL connections hold a stored database username and password, and there is no native Secret Manager binding for this connection type, so the connection's `modified` timestamp is used as a proxy for credential rotation.
 
         **Why this matters**
 
-        A Cloud SQL connection's credentials travel with any query that invokes `EXTERNAL_QUERY()`. Rotation of the underlying database password is mandatory to contain credential exposure, but the BigQuery connection does not rotate automatically — an operator must update it. When the connection has not been modified in months, one of two things is true: either the connection password has not been rotated (which the check is designed to catch), or the password was rotated in Cloud SQL but not updated in the connection (which leaves queries failing or, worse, using a stale long-lived credential).
+        A Cloud SQL connection's credentials travel with any query that invokes `EXTERNAL_QUERY()`. Rotation of the underlying database password is mandatory to contain credential exposure, but the BigQuery connection does not rotate automatically, so an operator must update it. When the connection has not been modified in months, one of two things is true: either the connection password has not been rotated (which the check is designed to catch), or the password was rotated in Cloud SQL but not updated in the connection (which leaves queries failing or, worse, using a stale long-lived credential).
 
         A 90-day ceiling aligns with common credential-management baselines (NIST SP 800-171 3.5.10, SOC 2 CC6.1.9) without being so short that it produces constant noise for active connections.
       remediation:
@@ -24716,7 +24676,7 @@ queries:
           desc: |
             Repoint the connection at a purpose-built service account:
 
-            1. Create a new service account in **IAM & Admin** → **Service Accounts** (e.g. `bq-cloud-resource-<feature>`).
+            1. Create a new service account in **IAM & Admin** → **Service Accounts**, such as `bq-cloud-resource-<feature>`.
             2. Grant the new SA only the roles required for this connection's work — for example, `roles/storage.objectViewer` on a specific bucket or `roles/aiplatform.user` on a specific model.
             3. Open **BigQuery** → **External connections** → select the flagged connection → **Edit**.
             4. Replace the delegated service account with the new one. Save.
@@ -25632,7 +25592,7 @@ queries:
   # attachments configured outside Terraform.
   - uid: mondoo-gcp-security-memorystore-no-public-psc
     title: Ensure Memorystore Private Service Connect endpoints are not public
-    impact: 95
+    impact: 90
     tags:
       compliance/bsi-grundschutz-sys15: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
@@ -25700,7 +25660,7 @@ queries:
       )
   - uid: mondoo-gcp-security-memorystore-engine-config-protected-mode
     title: Ensure Memorystore engineConfigs keep protected-mode enabled
-    impact: 75
+    impact: 70
     tags:
       compliance/bsi-grundschutz-sys15: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ccc-06
@@ -25991,7 +25951,7 @@ queries:
       )
   - uid: mondoo-gcp-security-datastream-no-static-service-ip-connectivity
     title: Ensure Datastream profiles avoid static service IP connectivity
-    impact: 85
+    impact: 80
     tags:
       compliance/bsi-grundschutz-sys15: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
@@ -26209,7 +26169,7 @@ queries:
       )
   - uid: mondoo-gcp-security-datastream-source-uses-secret-manager-password
     title: Ensure Datastream source profiles store credentials in Secret Manager
-    impact: 75
+    impact: 70
     tags:
       compliance/bsi-grundschutz-sys15: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
@@ -26520,7 +26480,7 @@ queries:
   # references that the Terraform asset model does not yet provide.
   - uid: mondoo-gcp-security-datastream-gcs-destination-bucket-hardened
     title: Ensure Datastream GCS destination buckets are hardened
-    impact: 75
+    impact: 70
     tags:
       compliance/bsi-grundschutz-sys15: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-04
@@ -27500,7 +27460,7 @@ queries:
       )
   - uid: mondoo-gcp-security-artifact-registry-repository-cmek-encryption
     title: Ensure Artifact Registry repositories are encrypted with CMEK
-    impact: 75
+    impact: 70
     tags:
       compliance/bsi-grundschutz-sys15: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
@@ -27755,7 +27715,7 @@ queries:
       )
   - uid: mondoo-gcp-security-artifact-registry-repository-vulnerability-scanning-enabled
     title: Ensure container repositories have vulnerability scanning enabled
-    impact: 75
+    impact: 70
     tags:
       compliance/bsi-grundschutz-sys15: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-tvm-07
@@ -28598,7 +28558,7 @@ queries:
       )
   - uid: mondoo-gcp-security-filestore-instance-cmek-encryption
     title: Ensure Filestore instances are encrypted with CMEK
-    impact: 75
+    impact: 70
     tags:
       compliance/bsi-grundschutz-sys15: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
@@ -28929,7 +28889,7 @@ queries:
         title: Vertex AI - Use a custom service account
   - uid: mondoo-gcp-security-essential-contacts-security-category-configured
     title: Ensure Essential Contacts cover the SECURITY notification category
-    impact: 75
+    impact: 70
     tags:
       compliance/bsi-grundschutz-sys15: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-sef-08
@@ -29052,7 +29012,7 @@ queries:
         values['notification_category_subscriptions'].any(_ == "SECURITY" || _ == "ALL")
       )
   - uid: mondoo-gcp-security-appengine-iap-or-vpc-only-ingress
-    title: Ensure App Engine applications are protected by IAP or internal-only ingress
+    title: Ensure App Engine apps require IAP or internal-only ingress
     impact: 30
     tags:
       compliance/bsi-grundschutz-sys15: false
