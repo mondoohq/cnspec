@@ -5,18 +5,23 @@ package bundle
 
 import (
 	"fmt"
+	"unicode/utf8"
 )
 
 // Query Rule ID Constants
 const (
 	QueryUidRuleID                         = "query-uid"
 	QueryTitleRuleID                       = "query-name" // Original ID was query-name
+	QueryTitleTooLongRuleID                = "query-title-too-long"
 	QueryUidUniqueRuleID                   = "query-uid-unique"
 	QueryUnassignedRuleID                  = "query-unassigned"
 	QueryUsedAsDifferentTypesRuleID        = "query-used-as-different-types"
 	QueryMissingMQLRuleID                  = "query-missing-mql"
 	QueryVariantUsesNonDefaultFieldsRuleID = "query-variant-uses-non-default-fields"
 )
+
+// MaxQueryTitleLength is the maximum allowed length, in characters, for a check title.
+const MaxQueryTitleLength = 75
 
 // GetQueryLintRules is the input type for lint checks on queries.
 func GetQueryLintRules() []LintRule {
@@ -33,6 +38,12 @@ func GetQueryLintRules() []LintRule {
 			Description: "Ensures non-variant queries have a `title` field.",
 			Severity:    LevelError,
 			Run:         runRuleQueryTitle,
+		}, {
+			ID:          QueryTitleTooLongRuleID,
+			Name:        "Query Title Length",
+			Description: fmt.Sprintf("Warns when check titles are longer than %d characters.", MaxQueryTitleLength),
+			Severity:    LevelWarning,
+			Run:         runRuleQueryTitleLength,
 		}, {
 			ID:          QueryVariantUsesNonDefaultFieldsRuleID,
 			Name:        "Query Variant Field Restrictions",
@@ -158,6 +169,36 @@ func runRuleQueryTitle(ctx *LintContext, item any) []*Entry {
 		}
 	}
 	return nil
+}
+
+func runRuleQueryTitleLength(ctx *LintContext, item any) []*Entry {
+	input, ok := item.(QueryLintInput)
+	if !ok {
+		return nil
+	}
+	q := input.Query
+
+	// Only checks have a length constraint on their titles.
+	if _, usedAsCheck := ctx.QueryUsageAsCheck[q.Uid]; !usedAsCheck {
+		return nil
+	}
+
+	length := utf8.RuneCountInString(q.Title)
+	if length <= MaxQueryTitleLength {
+		return nil
+	}
+
+	return []*Entry{{
+		RuleID: QueryTitleTooLongRuleID,
+		Message: fmt.Sprintf("%s title is %d characters long, exceeding the maximum of %d",
+			queryIdentifier(q, input.IsGlobal), length, MaxQueryTitleLength),
+		Level: LevelWarning,
+		Location: []Location{{
+			File:   ctx.FilePath,
+			Line:   q.FileContext.Line,
+			Column: q.FileContext.Column,
+		}},
+	}}
 }
 
 func runRuleQueryVariantFields(ctx *LintContext, item any) []*Entry {
