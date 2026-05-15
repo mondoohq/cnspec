@@ -88,7 +88,36 @@ queries:
     mql: |
       vsphere.host.advancedSettings['Security.AccountUnlockTime'] == 900
     docs:
-      desc: An account is automatically locked after the maximum number of failed consecutive login attempts is reached. The account should be automatically unlocked after 15 minutes, otherwise administrators will need to manually unlock accounts on request by authorized users.
+      desc: |-
+        This check ensures that a locked account is automatically released after 15 minutes. ESXi locks an account once it reaches the maximum number of failed consecutive login attempts, and a defined unlock window restores access for legitimate users without leaving the account locked indefinitely.
+
+        **Why this matters**
+
+        - **Reduced administrative burden:** Authorized users regain access automatically instead of waiting for an administrator to unlock the account manually.
+        - **Brute-force resistance:** A timed lockout slows password-guessing attacks by forcing attackers to wait after each round of failures.
+        - **Predictable behavior:** A fixed unlock interval keeps account recovery consistent across every host in the environment.
+
+        **Risk mitigation**
+
+        - **Account availability:** A 15-minute window balances security against the risk of locking out legitimate operators during an incident.
+        - **Throttled attacks:** Repeated guessing is rate-limited because each locked period must elapse before further attempts succeed.
+      audit: |-
+        ### Audit via the vSphere Client
+
+        1. Select the host, then select `Configure` and expand `System`.
+        2. Select `Advanced System Settings`.
+        3. Enter `Security.AccountUnlockTime` in the filter and read the current value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server or the ESXi host with `Connect-VIServer`.
+        2. Read the setting:
+
+           ```powershell
+           Get-VMHost | Get-AdvancedSetting -Name 'Security.AccountUnlockTime'
+           ```
+
+        The host passes when `Security.AccountUnlockTime` is `900`. Any other value, including `0`, is a failing result.
       remediation: |-
         To set the account lockout to 15 minutes, perform the following:
 
@@ -113,9 +142,45 @@ queries:
       vsphere.host.kernelModules.where( loaded == true ).all( signedStatus != "Unsigned" )
     docs:
       desc: |-
-        The VMkernel loads kernel modules (device drivers and other low-level components) to operate the ESXi host. A signed module carries a cryptographic signature that establishes its origin and integrity. An unsigned module has not been verified and may indicate tampering or the presence of untrusted third-party software.
+        This check ensures that every kernel module loaded by the VMkernel carries a valid cryptographic signature. A signed module establishes its origin and integrity, while an unsigned module has not been verified and may indicate tampering or untrusted third-party software running inside the hypervisor.
 
-        Loading only signed kernel modules ensures the integrity of the hypervisor and is a prerequisite for a meaningful UEFI Secure Boot configuration.
+        **Why this matters**
+
+        - **Hypervisor integrity:** Loading only signed modules confirms that low-level drivers and components have not been altered since the vendor built them.
+        - **Tamper detection:** An unsigned module surfaces the presence of code that no trusted party has reviewed or approved.
+        - **Secure Boot prerequisite:** A fully signed module set is required before UEFI Secure Boot can be enabled and trusted.
+
+        **Risk mitigation**
+
+        - **Reduced attack surface:** Rejecting unsigned modules blocks a common path for installing rootkits and malicious drivers.
+        - **Verifiable supply chain:** Signature checks tie each loaded component back to a known vendor or partner.
+      audit: |-
+        ### Audit via the ESXi shell
+
+        1. Connect to the ESXi host with SSH.
+        2. List the loaded modules:
+
+           ```bash
+           esxcli system module list
+           ```
+
+        3. For each module reporting `Is Loaded: true`, check its signed status:
+
+           ```bash
+           esxcli system module get --module=<module-name>
+           ```
+
+        ### Audit via PowerCLI
+
+        1. Connect to the ESXi host with `Connect-VIServer`.
+        2. Inspect the loaded modules through the ESXCLI interface:
+
+           ```powershell
+           $esxcli = Get-EsxCli -VMHost (Get-VMHost)
+           $esxcli.system.module.list.Invoke()
+           ```
+
+        The host passes when every loaded module reports a `Signed Status` other than `Unsigned`. A module reporting `Signed Status: Unsigned` is a failing result.
       remediation: |-
         Identify unsigned modules on the host, then replace or remove them:
 
@@ -146,7 +211,38 @@ queries:
       vsphere.host.properties['config']['storageDevice']['hostBusAdapter'].where( _['driver'] == 'iscsi_vmk' ).all( _['authenticationProperties']['mutualChapName'] != empty )
       vsphere.host.properties['config']['storageDevice']['hostBusAdapter'].where( _['driver'] == 'iscsi_vmk' ).all( _['authenticationProperties']['mutualChapSecret'] != empty )
     docs:
-      desc: vSphere allows for the use of bidirectional authentication of both the iSCSI target and host. Bidirectional Challenge-Handshake Authentication Protocol (CHAP), also known as Mutual CHAP, should be enabled to provide bidirectional authentication.
+      desc: |-
+        This check ensures that iSCSI host bus adapters use bidirectional Challenge-Handshake Authentication Protocol, also known as Mutual CHAP. Bidirectional CHAP requires both the ESXi host and the iSCSI target to prove their identity to each other before storage traffic flows.
+
+        **Why this matters**
+
+        - **Target verification:** The host confirms it is talking to the legitimate storage array rather than a rogue target.
+        - **Initiator verification:** The array confirms that only authorized hosts can connect to its iSCSI volumes.
+        - **Defense against impersonation:** Mutual authentication closes the gap left by one-way CHAP, which leaves the target unverified.
+
+        **Risk mitigation**
+
+        - **Storage data protection:** Mutual authentication blocks unauthorized hosts from mounting or tampering with iSCSI datastores.
+        - **Man-in-the-middle resistance:** Verifying both endpoints reduces the risk of an attacker intercepting or redirecting storage traffic.
+      audit: |-
+        ### Audit via the vSphere Client
+
+        1. Select the host, then select `Configure` and expand `Storage`.
+        2. Select `Storage Adapters` and select the iSCSI adapter.
+        3. Under `Properties`, review the `Authentication` section.
+        4. Confirm the authentication method is `Use bidirectional CHAP` and that both the outgoing and incoming CHAP names and secrets are set.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server or the ESXi host with `Connect-VIServer`.
+        2. Inspect the CHAP configuration of each iSCSI host bus adapter:
+
+           ```powershell
+           Get-VMHost | Get-VMHostHba -Type Iscsi |
+             Select-Object Device, ChapType, AuthenticationProperties
+           ```
+
+        The host passes when every iSCSI adapter has CHAP enabled with `chapPreferred` for both the outgoing and mutual authentication types, and both the CHAP name and secret and the mutual CHAP name and secret are set. An adapter with CHAP disabled, with a non-`chapPreferred` type, or with an empty name or secret is a failing result.
       remediation: |-
         To enable bidirectional CHAP authentication for iSCSI traffic, perform the following:
 
@@ -179,9 +275,36 @@ queries:
       vsphere.host.dnsConfig.servers != empty
     docs:
       desc: |-
-        ESXi hosts rely on DNS to resolve the names of vCenter Server, NTP servers, syslog targets, and other infrastructure services. When DNS settings are obtained from DHCP, an attacker who can influence DHCP responses can redirect name resolution and intercept or disrupt management traffic.
+        This check ensures that the ESXi host uses statically configured, trusted DNS servers rather than DHCP-supplied values. ESXi relies on DNS to resolve vCenter Server, NTP servers, syslog targets, and other infrastructure services, so the name resolution path must come from a controlled source.
 
-        Management interfaces should use statically configured, trusted DNS servers rather than DHCP-supplied values.
+        **Why this matters**
+
+        - **Trusted resolution:** Static DNS guarantees the host queries name servers chosen by administrators rather than whatever DHCP advertises.
+        - **Resistance to DHCP spoofing:** An attacker who influences DHCP responses cannot redirect the host's DNS lookups.
+        - **Stable management connectivity:** Fixed DNS settings keep vCenter, logging, and time services reachable even if the DHCP environment changes.
+
+        **Risk mitigation**
+
+        - **Interception prevention:** Controlled DNS reduces the chance of management traffic being routed to an attacker-controlled endpoint.
+        - **Operational reliability:** Static configuration removes a dependency on DHCP availability for critical host services.
+      audit: |-
+        ### Audit via the vSphere Client
+
+        1. Select the host, then select `Configure` and expand `Networking`.
+        2. Select `TCP/IP configuration` and select the `Default` TCP/IP stack.
+        3. Review the `DNS configuration` and confirm `Enter settings manually` is selected with trusted DNS servers listed.
+
+        ### Audit via the ESXi shell
+
+        1. Connect to the ESXi host with SSH.
+        2. Read the DNS configuration:
+
+           ```bash
+           esxcli network ip dns server list
+           esxcli network ip interface ipv4 get
+           ```
+
+        The host passes when DHCP is disabled for DNS and one or more static DNS servers are configured. A host obtaining DNS settings from DHCP, or with no DNS servers configured, is a failing result.
       remediation: |-
         To configure static DNS, perform the following from the vSphere Web Client:
 
@@ -207,7 +330,36 @@ queries:
     mql: |
       vsphere.host.advancedSettings['Net.DVFilterBindIpAddress'] == empty
     docs:
-      desc: The dvfilter network API is used by some products (e.g., VMSafe). If it is not in use, it should not be configured to send network information to a VM.
+      desc: |-
+        This check ensures that the dvfilter network API is left unconfigured when no security appliance uses it. The dvfilter API allows certain network security products to inspect virtual machine traffic, and an unused binding address needlessly exposes VM network data.
+
+        **Why this matters**
+
+        - **Minimized attack surface:** Leaving the API unconfigured removes a network introspection path that nothing on the host requires.
+        - **No stray traffic redirection:** An empty binding address prevents VM network information from being sent to an unintended destination.
+        - **Clear intent:** Configuring the API only when an appliance needs it keeps host settings aligned with actual deployments.
+
+        **Risk mitigation**
+
+        - **Reduced exposure:** Disabling an unused introspection channel limits the avenues available to an attacker.
+        - **Controlled enablement:** When a dvfilter appliance is deployed, the binding address is set deliberately to the correct endpoint.
+      audit: |-
+        ### Audit via the vSphere Client
+
+        1. Select the host, then select `Configure` and expand `System`.
+        2. Select `Advanced System Settings`.
+        3. Enter `Net.DVFilterBindIpAddress` in the filter and read the current value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server or the ESXi host with `Connect-VIServer`.
+        2. Read the setting:
+
+           ```powershell
+           Get-VMHost | Get-AdvancedSetting -Name 'Net.DVFilterBindIpAddress'
+           ```
+
+        The host passes when `Net.DVFilterBindIpAddress` is empty. A non-empty value on a host that does not run a dvfilter-based security appliance is a failing result.
       remediation: |-
         To remove the configuration for the dvfilter network API, perform the following from the vSphere web client:
 
@@ -239,8 +391,35 @@ queries:
       vsphere.host.advancedSettings['UserVars.ESXiShellInteractiveTimeOut'] != 0
     docs:
       desc: |-
-        The `ESXiShellInteractiveTimeOut`
-        allows you to automatically terminate idle ESXi shell and SSH sessions. The permitted idle time should be 300 seconds or less.
+        This check ensures that idle ESXi shell and SSH sessions are automatically terminated after no more than 300 seconds. An interactive timeout closes sessions that an operator opened but left unattended, so an open prompt does not remain available indefinitely.
+
+        **Why this matters**
+
+        - **Abandoned session cleanup:** Idle sessions are closed before an unattended terminal can be misused.
+        - **Bounded exposure:** A short interactive timeout limits how long a privileged shell stays reachable after the operator walks away.
+        - **Enforced discipline:** Automatic termination removes reliance on operators remembering to log out.
+
+        **Risk mitigation**
+
+        - **Hijack prevention:** A 300-second limit shrinks the window in which an attacker can reuse an open administrative session.
+        - **Consistent enforcement:** A non-zero value keeps the timeout active rather than disabling it entirely.
+      audit: |-
+        ### Audit via the vSphere Client
+
+        1. Select the host, then select `Configure` and expand `System`.
+        2. Select `Advanced System Settings`.
+        3. Enter `UserVars.ESXiShellInteractiveTimeOut` in the filter and read the current value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server or the ESXi host with `Connect-VIServer`.
+        2. Read the setting:
+
+           ```powershell
+           Get-VMHost | Get-AdvancedSetting -Name 'UserVars.ESXiShellInteractiveTimeOut'
+           ```
+
+        The host passes when `UserVars.ESXiShellInteractiveTimeOut` is between `1` and `300` seconds. A value greater than `300`, or `0` (which disables the timeout entirely), is a failing result.
       remediation: |-
         To set the timeout to the desired value, perform the following from the vSphere web client:
 
@@ -268,7 +447,36 @@ queries:
     mql: |
       vsphere.host.advancedSettings['Config.HostAgent.plugins.solo.enableMob'] == false
     docs:
-      desc: The Managed Object Browser (MOB) is a web-based server application that lets you examine objects that exist on the server side, explore the object model used by the VM kernel to manage the host, and change configurations. It is installed and started automatically when vCenter is installed.
+      desc: |-
+        This check ensures that the Managed Object Browser, or MOB, is disabled on the ESXi host. The MOB is a web-based interface that exposes the host's internal object model and allows configuration changes, and it serves no purpose in normal operations.
+
+        **Why this matters**
+
+        - **Reduced attack surface:** Disabling the MOB removes a web endpoint that can be used to enumerate and alter host configuration.
+        - **No debugging interface in production:** The MOB is primarily a development and troubleshooting tool that should not stay reachable on production hosts.
+        - **Tighter management boundary:** Host configuration is changed through vCenter Server and supported APIs rather than an unmonitored browser interface.
+
+        **Risk mitigation**
+
+        - **Information disclosure prevention:** An attacker cannot use the MOB to walk the host object model and gather reconnaissance.
+        - **Unauthorized change prevention:** Removing the MOB closes a path for modifying host settings outside normal management channels.
+      audit: |-
+        ### Audit via the vSphere Client
+
+        1. Select the host, then select `Configure` and expand `System`.
+        2. Select `Advanced System Settings`.
+        3. Enter `Config.HostAgent.plugins.solo.enableMob` in the filter and read the current value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server or the ESXi host with `Connect-VIServer`.
+        2. Read the setting:
+
+           ```powershell
+           Get-VMHost | Get-AdvancedSetting -Name 'Config.HostAgent.plugins.solo.enableMob'
+           ```
+
+        The host passes when `Config.HostAgent.plugins.solo.enableMob` is `false`. A value of `true` is a failing result.
       remediation: |-
         To disable MOB, perform the following from the vSphere Web Client:
 
@@ -294,11 +502,34 @@ queries:
       vsphere.host.properties['config']['lockdownMode'] == "lockdownNormal"
     docs:
       desc: |-
-        Enabling lockdown mode disables direct local access to an ESXi host, requiring the host to be managed remotely from vCenter Server.
+        This check ensures that Normal lockdown mode is enabled, which blocks direct local access to the ESXi host and requires the host to be managed remotely through vCenter Server. Normal mode keeps the Direct Console User Interface available as a fallback while still steering routine administration through vCenter.
 
-        There are some operations, such as backup and troubleshooting, that require direct access to the host. In these cases, lockdown mode can be disabled on a temporary basis for specific hosts as needed and then re-enabled when the task is completed.
+        **Why this matters**
 
-        Note: Lockdown mode does not apply to users who log in using authorized keys. Also, users in the DCUI. Access lists for each host can override lockdown mode and log in to the DCUI. By default, the "root" user is the only user listed in the DCUI. Access list.
+        - **Centralized administration:** Funneling management through vCenter Server provides consistent authentication, role enforcement, and audit logging.
+        - **Reduced direct access:** Disabling local access removes a path that bypasses vCenter controls.
+        - **Console fallback retained:** The Direct Console User Interface remains available for recovery if the host loses contact with vCenter.
+
+        **Risk mitigation**
+
+        - **Bypass prevention:** Lockdown mode stops operators and attackers from making changes directly on the host outside vCenter oversight.
+        - **Recoverability:** Keeping the console reachable avoids a lockout that would otherwise require reinstalling ESXi.
+      audit: |-
+        ### Audit via the vSphere Client
+
+        1. Select the host, then select `Configure` and expand `System`.
+        2. Select `Security Profile` and review the `Lockdown Mode` status.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Read the lockdown state of each host:
+
+           ```powershell
+           Get-VMHost | Select-Object Name, @{N='LockdownMode';E={$_.ExtensionData.Config.LockdownMode}}
+           ```
+
+        The host passes when the lockdown mode is `lockdownNormal`. A value of `lockdownDisabled` or `lockdownStrict` is a failing result for this check.
       remediation: |-
         To enable lockdown mode, perform the following from the vSphere web client:
 
@@ -324,7 +555,37 @@ queries:
       vsphere.host.services.where( key == "ntpd").all( running == true )
       vsphere.host.services.where( key == "ntpd").all( policy == "on" )
     docs:
-      desc: Network Time Protocol (NTP) synchronization should be configured correctly and enabled on each VMware ESXi host to ensure accurate time for system event logs. The time sources used by the ESXi hosts should be in sync with an agreed-upon time standard such as Coordinated Universal Time (UTC). There should be at minimum two NTP sources in place, and they should sync whenever possible.
+      desc: |-
+        This check ensures that the Network Time Protocol service is running and configured to start with the host. Accurate, synchronized time keeps system event logs consistent and aligned with an agreed-upon standard such as Coordinated Universal Time.
+
+        **Why this matters**
+
+        - **Reliable forensics:** Synchronized clocks let log events from multiple hosts be correlated accurately during an investigation.
+        - **Authentication integrity:** Many security protocols depend on clock accuracy to validate tickets and certificates.
+        - **Persistent enablement:** A startup policy of on ensures time synchronization resumes automatically after every reboot.
+
+        **Risk mitigation**
+
+        - **Tamper detection:** Trustworthy timestamps make it harder for an attacker to obscure the timeline of an intrusion.
+        - **Operational consistency:** Continuous synchronization prevents clock drift that would otherwise degrade logging and scheduled tasks.
+      audit: |-
+        ### Audit via the vSphere Client
+
+        1. Select the host, then select `Configure` and expand `System`.
+        2. Select `Time Configuration` and review the Network Time Protocol section.
+        3. Confirm the `ntpd` service is running and that its startup policy is `Start and stop with host`.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server or the ESXi host with `Connect-VIServer`.
+        2. Inspect the NTP service state and startup policy:
+
+           ```powershell
+           Get-VMHost | Get-VMHostService | Where-Object { $_.Key -eq 'ntpd' } |
+             Select-Object VMHost, Key, Running, Policy
+           ```
+
+        The host passes when the `ntpd` service is `Running` and its `Policy` is `on`. A stopped service or a policy other than `on` is a failing result.
       remediation: |-
         To enable and properly configure NTP synchronization, perform the following from the vSphere web client:
 
@@ -352,9 +613,35 @@ queries:
       vsphere.host.advancedSettings['Syslog.global.logDir'] != /scratch/
     docs:
       desc: |-
-        ESXi can be configured to store log files on an in-memory file system. This occurs when the host's `Syslog.global.LogDir`
-        property is set to a non-persistent location, such as `/scratch.`
-        When this is done, only a single day's worth of logs are stored at any time. Additionally, log files will be reinitialized upon each reboot.
+        This check ensures that the ESXi host writes its log files to a persistent datastore location rather than an in-memory file system. When the log directory points at a non-persistent location such as `/scratch`, only a single day of logs is retained and all log files are reinitialized on every reboot.
+
+        **Why this matters**
+
+        - **Log retention:** A persistent location preserves historical log data instead of discarding it after a day or a reboot.
+        - **Incident investigation:** Durable logs remain available to reconstruct events long after they occur.
+        - **Reboot survivability:** Logs stored on a datastore are not lost when the host restarts.
+
+        **Risk mitigation**
+
+        - **Evidence preservation:** Persistent logging prevents an attacker from erasing activity simply by triggering a reboot.
+        - **Audit continuity:** Retained logs support compliance reviews that require a longer record of host activity.
+      audit: |-
+        ### Audit via the vSphere Client
+
+        1. Select the host, then select `Configure` and expand `System`.
+        2. Select `Advanced System Settings`.
+        3. Enter `Syslog.global.logDir` in the filter and read the current value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server or the ESXi host with `Connect-VIServer`.
+        2. Read the setting:
+
+           ```powershell
+           Get-VMHost | Get-AdvancedSetting -Name 'Syslog.global.logDir'
+           ```
+
+        The host passes when `Syslog.global.logDir` points to a persistent datastore location. An empty value or a non-persistent location under `/scratch` is a failing result.
       remediation: |-
         To configure persistent logging properly, perform the following from the vSphere web client:
 
@@ -380,7 +667,36 @@ queries:
       vsphere.host.properties['config']['network']['portgroup'].all( _['spec']['vlanId'] >= 2 )
       vsphere.host.properties['config']['network']['portgroup'].all( _['spec']['vlanId'] <= 4094 )
     docs:
-      desc: ESXi does not use the concept of native VLAN, so do not configure port groups to use the native VLAN ID. If the default value of 1 for the native VLAN is being used, the ESXi Server virtual switch port groups should be configured with any value between 2 and 4094. Otherwise, ensure that the port group is not configured to use whatever value is set for the native VLAN.
+      desc: |-
+        This check ensures that virtual switch port groups use a VLAN ID between 2 and 4094 and avoid the native VLAN. ESXi has no concept of a native VLAN, so placing a port group on the upstream native VLAN ID, commonly 1, mixes virtual machine traffic with untagged switch traffic.
+
+        **Why this matters**
+
+        - **Traffic isolation:** A dedicated VLAN keeps virtual machine traffic separate from the physical switch's native VLAN.
+        - **Predictable tagging:** Using a non-native VLAN ID ensures frames are tagged consistently end to end.
+        - **Reduced misconfiguration:** Avoiding VLAN 1 removes ambiguity about which traffic belongs to which segment.
+
+        **Risk mitigation**
+
+        - **VLAN hopping resistance:** Keeping port groups off the native VLAN reduces exposure to attacks that exploit untagged traffic.
+        - **Containment:** Proper segmentation limits the blast radius if one segment is compromised.
+      audit: |-
+        ### Audit via the vSphere Client
+
+        1. Select the host, then select `Configure` and expand `Networking`.
+        2. Select `Virtual switches` and expand each standard vSwitch.
+        3. In the topology diagram, review the VLAN ID of every port group.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server or the ESXi host with `Connect-VIServer`.
+        2. List the VLAN ID of every port group:
+
+           ```powershell
+           Get-VMHost | Get-VirtualPortGroup | Select-Object VirtualSwitch, Name, VLanId
+           ```
+
+        The host passes when every port group uses a VLAN ID between `2` and `4094`. A port group set to VLAN `0`, `1`, or any value above `4094` is a failing result.
       remediation: |-
         To stop using the native VLAN ID for port groups, perform the following:
 
@@ -399,13 +715,42 @@ queries:
       - url: https://docs.vmware.com/en/VMware-vSphere/8.0/vsphere-security/GUID-E9B71B85-FBA3-447C-8A60-DEA2FE111F4F.html
         title: Securing ESXi Hosts
   - uid: mondoo-vmware-vsphere-esxi-security-baseline-ensure-port-groups-are-not-configured-to-vlan-4095-and-0-except-for-virtual-
-    title: Ensure port groups are not configured to VLAN 4095 and 0 except for Virtual Guest Tagging (VGT)
+    title: Ensure port groups avoid VLAN 4095 and 0 except for VGT
     impact: 60
     mql: |
       vsphere.host.properties['config']['network']['portgroup'].all( _['spec']['vlanId'] != 0 )
       vsphere.host.properties['config']['network']['portgroup'].all( _['spec']['vlanId'] != 4095 )
     docs:
-      desc: Port groups should not be configured to VLAN 4095 or 0 except for Virtual Guest Tagging (VGT). When a port group is set to VLAN 4095, this activates VGT mode. In this mode, the vSwitch passes all network frames to the guest virtual machine without modifying the VLAN tags, leaving it up to the guest to deal with them. VLAN 4095 should be used only if the guest has been specifically configured to manage VLAN tags itself.
+      desc: |-
+        This check ensures that virtual switch port groups avoid VLAN IDs 0 and 4095. VLAN 4095 activates Virtual Guest Tagging, which passes every frame to the guest with its VLAN tags intact, and should be used only when a guest is explicitly built to manage VLAN tags itself.
+
+        **Why this matters**
+
+        - **Intentional VGT use:** Reserving VLAN 4095 for guests configured for Virtual Guest Tagging prevents accidental exposure of trunked traffic.
+        - **Defined segmentation:** Avoiding VLAN 0 ensures every port group sits on an explicitly assigned segment.
+        - **Reduced misconfiguration:** Excluding these special values keeps port group tagging behavior predictable.
+
+        **Risk mitigation**
+
+        - **Traffic exposure prevention:** Limiting VGT mode stops a guest from seeing VLAN traffic it was never meant to receive.
+        - **Containment:** Correct VLAN assignment limits the spread of an attack between network segments.
+      audit: |-
+        ### Audit via the vSphere Client
+
+        1. Select the host, then select `Configure` and expand `Networking`.
+        2. Select `Virtual switches` and expand each standard vSwitch.
+        3. In the topology diagram, review the VLAN ID of every port group.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server or the ESXi host with `Connect-VIServer`.
+        2. List the VLAN ID of every port group:
+
+           ```powershell
+           Get-VMHost | Get-VirtualPortGroup | Select-Object VirtualSwitch, Name, VLanId
+           ```
+
+        The host passes when no port group uses VLAN ID `0` or `4095`. A port group set to VLAN `0`, or set to VLAN `4095` without a guest explicitly configured for Virtual Guest Tagging, is a failing result.
       remediation: |-
         To set port groups to values other than 4095 and 0 unless VGT is required, perform the following:
 
@@ -426,7 +771,36 @@ queries:
     mql: |
       vsphere.host.advancedSettings['Syslog.global.logHost'] != ""
     docs:
-      desc: By default, ESXI logs are stored on a local scratch volume or ramdisk. To preserve logs, also configure remote logging to a central log host for the ESXI hosts.
+      desc: |-
+        This check ensures that the ESXi host forwards its logs to a central syslog server. By default ESXi stores logs only on a local scratch volume or ramdisk, so a remote log host is needed to preserve a copy off the host.
+
+        **Why this matters**
+
+        - **Off-host retention:** A central log server keeps log data even if the host's local storage is wiped or fails.
+        - **Centralized analysis:** Aggregated logs let events from many hosts be searched and correlated in one place.
+        - **Tamper resistance:** Logs shipped off the host are harder for an attacker to alter or delete.
+
+        **Risk mitigation**
+
+        - **Evidence preservation:** Remote logging ensures investigators retain host activity even after a compromise or crash.
+        - **Faster detection:** A central log pipeline supports alerting and monitoring across the environment.
+      audit: |-
+        ### Audit via the vSphere Client
+
+        1. Select the host, then select `Configure` and expand `System`.
+        2. Select `Advanced System Settings`.
+        3. Enter `Syslog.global.logHost` in the filter and read the current value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server or the ESXi host with `Connect-VIServer`.
+        2. Read the setting:
+
+           ```powershell
+           Get-VMHost | Get-AdvancedSetting -Name 'Syslog.global.logHost'
+           ```
+
+        The host passes when `Syslog.global.logHost` is set to the hostname or IP address of a central log server. An empty value is a failing result.
       remediation: |-
         To configure remote logging properly, perform the following from the vSphere web client:
 
@@ -452,7 +826,37 @@ queries:
       vsphere.host.services.where( key == "TSM-SSH").all( running == false )
       vsphere.host.services.where( key == "TSM-SSH").all( policy == "off" )
     docs:
-      desc: The ESXi shell, when enabled, can be accessed directly from the host console through the DCUI or remotely using SSH. Disable Secure Shell (SSH) for each ESXi host to prevent remote access to the ESXi shell, and only enable SSH when needed for troubleshooting or diagnostics.
+      desc: |-
+        This check ensures that the Secure Shell service is stopped and set to start manually on the ESXi host. SSH provides remote access to the ESXi shell, which should be enabled only when troubleshooting or diagnostics require it.
+
+        **Why this matters**
+
+        - **Reduced remote access:** A stopped SSH service removes a network path into the privileged ESXi shell.
+        - **vCenter-centered management:** Routine administration flows through vCenter Server rather than direct shell sessions.
+        - **No automatic restart:** A manual startup policy prevents SSH from coming back on after a reboot.
+
+        **Risk mitigation**
+
+        - **Brute-force exposure:** Disabling SSH removes an interface attackers commonly target for credential guessing.
+        - **Controlled enablement:** SSH is turned on deliberately for a specific task and stopped again afterward.
+      audit: |-
+        ### Audit via the vSphere Client
+
+        1. Select the host, then select `Configure` and expand `System`.
+        2. Select `Services` and locate the `SSH` service.
+        3. Confirm the service is `Stopped` and its startup policy is `Start and stop manually`.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server or the ESXi host with `Connect-VIServer`.
+        2. Inspect the SSH service state and startup policy:
+
+           ```powershell
+           Get-VMHost | Get-VMHostService | Where-Object { $_.Key -eq 'TSM-SSH' } |
+             Select-Object VMHost, Key, Running, Policy
+           ```
+
+        The host passes when the `TSM-SSH` service is not running and its `Policy` is `off`. A running service or a policy of `on` is a failing result.
       remediation: |-
         To disable SSH, perform the following:
 
@@ -480,11 +884,34 @@ queries:
       vsphere.host.properties['config']['lockdownMode'] == "lockdownStrict"
     docs:
       desc: |-
-        Enabling lockdown mode disables direct local access to an ESXi host, requiring the host to be managed remotely from the vCenter Server.
+        This check ensures that Strict lockdown mode is enabled, which disables direct local access to the ESXi host and also disables the Direct Console User Interface. Strict mode requires the host to be managed exclusively through vCenter Server.
 
-        There are some operations, such as backup and troubleshooting, that require direct access to the host. In these cases, lockdown mode can be disabled on a temporary basis for specific hosts as needed and then re-enabled when the task is completed.
+        **Why this matters**
 
-        Note: Lockdown mode does not apply to users who log in using authorized keys. Also, users in the DCUI. Access lists for each host can override lockdown mode and log in to the DCUI. By default, the "root" user is the only user listed in the DCUI. Access list.
+        - **Strongest access restriction:** Strict mode removes both local shell and console paths, leaving vCenter as the only management surface.
+        - **Centralized control:** All administration is subject to vCenter authentication, role enforcement, and audit logging.
+        - **Reduced attack surface:** Disabling the console eliminates an interface that bypasses vCenter entirely.
+
+        **Risk mitigation**
+
+        - **Bypass prevention:** Strict lockdown stops any change being made directly on the host outside vCenter oversight.
+        - **Lockout planning required:** Because the console is disabled, a loss of vCenter connectivity can require reinstalling ESXi, so recovery procedures must be in place.
+      audit: |-
+        ### Audit via the vSphere Client
+
+        1. Select the host, then select `Configure` and expand `System`.
+        2. Select `Security Profile` and review the `Lockdown Mode` status.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Read the lockdown state of each host:
+
+           ```powershell
+           Get-VMHost | Select-Object Name, @{N='LockdownMode';E={$_.ExtensionData.Config.LockdownMode}}
+           ```
+
+        The host passes when the lockdown mode is `lockdownStrict`. A value of `lockdownDisabled` or `lockdownNormal` is a failing result for this check.
       remediation: |-
         To enable lockdown mode, perform the following from the vSphere web client:
 
@@ -511,7 +938,36 @@ queries:
       vsphere.host.advancedSettings['UserVars.DcuiTimeOut'] <= 600
       vsphere.host.advancedSettings['UserVars.DcuiTimeOut'] != 0
     docs:
-      desc: The Direct Console User Interface (DCUI) is used for directly logging into an ESXi host and carrying out host management tasks. This setting terminates an idle DCUI session after the specified number of seconds has elapsed.
+      desc: |-
+        This check ensures that an idle Direct Console User Interface session is terminated after no more than 600 seconds. The Direct Console User Interface allows local login and host management, and an idle timeout closes sessions an operator opened but left unattended.
+
+        **Why this matters**
+
+        - **Abandoned session cleanup:** Idle console sessions are closed before an unattended terminal can be misused.
+        - **Bounded exposure:** A short timeout limits how long a privileged local session stays open after the operator steps away.
+        - **Enforced discipline:** Automatic termination removes reliance on operators logging out manually.
+
+        **Risk mitigation**
+
+        - **Physical access risk reduction:** A 600-second limit shrinks the window for someone with console access to reuse an open session.
+        - **Consistent enforcement:** A non-zero value keeps the timeout active rather than disabling it entirely.
+      audit: |-
+        ### Audit via the vSphere Client
+
+        1. Select the host, then select `Configure` and expand `System`.
+        2. Select `Advanced System Settings`.
+        3. Enter `UserVars.DcuiTimeOut` in the filter and read the current value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server or the ESXi host with `Connect-VIServer`.
+        2. Read the setting:
+
+           ```powershell
+           Get-VMHost | Get-AdvancedSetting -Name 'UserVars.DcuiTimeOut'
+           ```
+
+        The host passes when `UserVars.DcuiTimeOut` is between `1` and `600` seconds. A value greater than `600`, or `0` (which disables the timeout entirely), is a failing result.
       remediation: |-
         To correct the DCUI timeout setting, perform the following steps:
 
@@ -531,9 +987,35 @@ queries:
     mql: vsphere.host.advancedSettings['Mem.ShareForceSalting'] == 2
     docs:
       desc: |-
-        The concept of salting has been introduced to help address concerns system administrators may have over the security implications of Transparent Page Sharing, otherwise known as TPS. As per the original TPS implementation, multiple virtual machines could share pages when the contents of the pages were the same. With the new salting settings, the virtual machines can share pages only if the salt value and contents of the pages are identical. A new host config option Mem.ShareForceSalting is introduced to enable or disable salting.
+        This check ensures that per-virtual-machine salting for Transparent Page Sharing is set to its default of 2. With this setting each virtual machine receives a distinct salt, so memory pages are shared only within a single virtual machine and never across virtual machines.
 
-        By default, salting is enabled (Mem.ShareForceSalting=2), and each virtual machine has a different salt. This means page sharing does not occur across the virtual machines (inter-VM TPS) and only happens inside a virtual machine (intra VM).
+        **Why this matters**
+
+        - **Inter-VM isolation:** Distinct salts prevent memory pages from being deduplicated across separate virtual machines.
+        - **Side-channel defense:** Cross-VM page sharing has been shown to leak information through timing-based memory disclosure attacks.
+        - **Safe default preserved:** A value of 2 keeps salting enabled as the vendor intends rather than relaxing it.
+
+        **Risk mitigation**
+
+        - **Information leakage prevention:** Restricting sharing to intra-VM pages removes a channel for one tenant to infer another's data.
+        - **Tenant separation:** Per-VM salting reinforces the boundary between workloads sharing the same host.
+      audit: |-
+        ### Audit via the vSphere Client
+
+        1. Select the host, then select `Configure` and expand `System`.
+        2. Select `Advanced System Settings`.
+        3. Enter `Mem.ShareForceSalting` in the filter and read the current value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server or the ESXi host with `Connect-VIServer`.
+        2. Read the setting:
+
+           ```powershell
+           Get-VMHost | Get-AdvancedSetting -Name 'Mem.ShareForceSalting'
+           ```
+
+        The host passes when `Mem.ShareForceSalting` is `2`. Any other value is a failing result.
       remediation: |-
         From the vSphere Web Client:
 
@@ -556,14 +1038,44 @@ queries:
       - url: https://docs.vmware.com/en/VMware-vSphere/8.0/vsphere-security/GUID-E9B71B85-FBA3-447C-8A60-DEA2FE111F4F.html
         title: Securing ESXi Hosts
   - uid: mondoo-vmware-vsphere-esxi-security-baseline-ensure-the-esxi-host-firewall-is-configured-to-restrict-access-to-services-r
-    title: Ensure the ESXi host firewall is configured to restrict access to services running on the host
+    title: Ensure the ESXi host firewall restricts access to running services
     impact: 60
     mql: |
       vsphere.host.services.where( running == true ).all( ruleset != [] )
       vsphere.host.properties['config']['firewall']['ruleset'].all( _['allowedHosts']['allIp'] == false )
       vsphere.host.properties['config']['firewall']['ruleset'].all( _['allowedHosts']['ipNetwork'] != null )
     docs:
-      desc: The ESXi firewall is enabled by default and allows ping (ICMP) and communication with DHCP/DNS clients. Access to services should only be allowed by authorized IP addresses/networks.
+      desc: |-
+        This check ensures that the ESXi host firewall restricts each running service to specific authorized networks. The firewall is enabled by default, but a ruleset that allows all IP addresses leaves a service reachable from anywhere.
+
+        **Why this matters**
+
+        - **Scoped access:** Limiting each ruleset to defined networks ensures only intended clients can reach a service.
+        - **No open services:** Disabling the allow-all setting prevents a service from being exposed to the entire network.
+        - **Defined boundaries:** Every running service is tied to an explicit allowed network rather than an implicit default.
+
+        **Risk mitigation**
+
+        - **Exposure reduction:** Restricting source addresses shrinks the population of hosts that can attack a management service.
+        - **Lateral movement containment:** Network-scoped rulesets make it harder for a compromised host to pivot to ESXi services.
+      audit: |-
+        ### Audit via the vSphere Client
+
+        1. Select the host, then select `Configure` and expand `System`.
+        2. Select `Firewall` and review the enabled services.
+        3. For each enabled service, confirm `Allowed IP Addresses` lists specific networks rather than allowing all IP addresses.
+
+        ### Audit via the ESXi shell
+
+        1. Connect to the ESXi host with SSH.
+        2. List the firewall rulesets and their allowed IP ranges:
+
+           ```bash
+           esxcli network firewall ruleset list
+           esxcli network firewall ruleset allowedip list
+           ```
+
+        The host passes when every running service is associated with a firewall ruleset, no ruleset allows all IP addresses, and each ruleset defines a specific allowed network. A ruleset with `Allow All IP` enabled or with no allowed network is a failing result.
       remediation: |-
         To properly restrict access to services running on an ESXi host, perform the following from the vSphere web client:
 
@@ -583,9 +1095,36 @@ queries:
       vsphere.host.certificate.notAfter - time.now > 90 * time.day
     docs:
       desc: |-
-        Each ESXi host presents an SSL/TLS certificate to secure management connections from vCenter Server and API clients. When this certificate expires, the trust relationship with vCenter breaks: host management can be interrupted, and operators may be tempted into insecure workarounds such as disabling certificate validation.
+        This check ensures that the ESXi host machine certificate remains valid for at least 90 more days. Each host presents an SSL/TLS certificate to secure management connections from vCenter Server and API clients, and an expired certificate breaks the trust relationship with vCenter.
 
-        This check verifies that the host machine certificate remains valid for at least 90 more days, providing a window to renew it before an outage occurs.
+        **Why this matters**
+
+        - **Uninterrupted management:** A valid certificate keeps vCenter and API clients able to connect to the host.
+        - **Renewal lead time:** A 90-day window gives operators time to renew or replace the certificate before it expires.
+        - **No insecure workarounds:** Avoiding expiration removes the temptation to disable certificate validation during an outage.
+
+        **Risk mitigation**
+
+        - **Trust preservation:** A current certificate maintains an authenticated, encrypted channel between the host and vCenter.
+        - **Outage prevention:** Renewing ahead of expiration avoids an interruption to host management.
+      audit: |-
+        ### Audit via the vSphere Client
+
+        1. Select the host, then select `Configure` and expand `System`.
+        2. Select `Certificate` and review the `Valid To` date of the host machine certificate.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Read the certificate expiration of each host:
+
+           ```powershell
+           Get-VMHost | ForEach-Object {
+             (Get-View $_.ExtensionData.ConfigManager.CertificateManager).CertificateInfo
+           }
+           ```
+
+        The host passes when the certificate's expiration date is more than 90 days in the future. A certificate that is expired or expires within 90 days is a failing result.
       remediation: |-
         To renew or replace an expiring ESXi host certificate, perform the following from the vSphere Web Client:
 
@@ -605,7 +1144,37 @@ queries:
       vsphere.host.services.where( key == "TSM").all( running == false )
       vsphere.host.services.where( key == "TSM").all( policy == "off" )
     docs:
-      desc: The ESXi shell is an interactive command line environment available from the Direct Console User Interface (DCUI) or remotely via SSH. The ESXi shell should only be enabled on a host when running diagnostics or troubleshooting.
+      desc: |-
+        This check ensures that the ESXi shell service is stopped and set to start manually. The ESXi shell is an interactive command line environment reachable from the Direct Console User Interface or over SSH, and it should be enabled only while running diagnostics or troubleshooting.
+
+        **Why this matters**
+
+        - **Reduced privileged access:** A stopped shell service removes a powerful command line interface from everyday availability.
+        - **vCenter-centered management:** Routine administration flows through vCenter Server rather than direct shell sessions.
+        - **No automatic restart:** A manual startup policy prevents the shell from re-enabling after a reboot.
+
+        **Risk mitigation**
+
+        - **Attack surface reduction:** Disabling the shell removes an interface that grants direct control over the host.
+        - **Controlled enablement:** The shell is turned on deliberately for a specific task and stopped again afterward.
+      audit: |-
+        ### Audit via the vSphere Client
+
+        1. Select the host, then select `Configure` and expand `System`.
+        2. Select `Services` and locate the `ESXi Shell` service.
+        3. Confirm the service is `Stopped` and its startup policy is `Start and stop manually`.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server or the ESXi host with `Connect-VIServer`.
+        2. Inspect the ESXi shell service state and startup policy:
+
+           ```powershell
+           Get-VMHost | Get-VMHostService | Where-Object { $_.Key -eq 'TSM' } |
+             Select-Object VMHost, Key, Running, Policy
+           ```
+
+        The host passes when the `TSM` service is not running and its `Policy` is `off`. A running service or a policy of `on` is a failing result.
       remediation: |-
         To disable the ESXi shell, perform the following:
 
@@ -627,12 +1196,34 @@ queries:
     mql: vsphere.host.acceptanceLevel == /VMwareCertified|VMwareAccepted|PartnerSupported/
     docs:
       desc: |-
-        A VIB (vSphere Installation Bundle) is a collection of files that are packaged into an archive. The VIB contains a signature file that is used to verify the level of trust. The ESXi Image Profile supports four VIB acceptance levels:
+        This check ensures that the ESXi image profile acceptance level is set to VMware Certified, VMware Accepted, or Partner Supported. The acceptance level controls which vSphere Installation Bundles may be installed, and the Community Supported level allows bundles that no trusted party has tested.
 
-        1. VMware Certified - VIBs created, tested, and signed by VMware
-        2. VMware Accepted - VIBs created by a VMware partner but tested and signed by VMware
-        3. Partner Supported - VIBs created, tested, and signed by a certified VMware partner
-        4. Community Supported - VIBs that have not been tested by VMware or a VMware partner
+        **Why this matters**
+
+        - **Verified software origin:** The accepted levels only admit bundles created, tested, or signed by VMware or a certified partner.
+        - **Untrusted code blocked:** Excluding the Community Supported level keeps unvetted bundles off the host.
+        - **Consistent trust baseline:** A defined acceptance level applies the same standard to every installed component.
+
+        **Risk mitigation**
+
+        - **Supply chain protection:** Requiring a trusted acceptance level reduces the risk of installing malicious or unstable software.
+        - **Hypervisor integrity:** Restricting installable bundles supports a fully signed and verifiable host image.
+      audit: |-
+        ### Audit via the vSphere Client
+
+        1. Select the host, then select `Configure` and expand `System`.
+        2. Select `Security Profile` and review the `Host Image Profile Acceptance Level`.
+
+        ### Audit via the ESXi shell
+
+        1. Connect to the ESXi host with SSH.
+        2. Read the software acceptance level:
+
+           ```bash
+           esxcli software acceptance get
+           ```
+
+        The host passes when the acceptance level is `VMwareCertified`, `VMwareAccepted`, or `PartnerSupported`. An acceptance level of `CommunitySupported` is a failing result.
       remediation: |-
         To verify the host image profile acceptance level, perform the following:
 
@@ -660,7 +1251,36 @@ queries:
     mql: |
       vsphere.host.advancedSettings['Security.AccountLockFailures'] == 5
     docs:
-      desc: Authentication should be configured so there is a maximum number of consecutive failed login attempts for each account, at which point the account at risk will be locked out.
+      desc: |-
+        This check ensures that an account is locked after 5 consecutive failed login attempts. A bounded failure count locks an account that is under attack before an attacker can work through a large set of password guesses.
+
+        **Why this matters**
+
+        - **Brute-force resistance:** A low failure threshold stops password-guessing attacks after only a few attempts.
+        - **Early lockout:** The account is protected well before an attacker can exhaust common password lists.
+        - **Consistent enforcement:** A fixed limit applies the same protection to every account on the host.
+
+        **Risk mitigation**
+
+        - **Credential compromise prevention:** Locking the account at 5 failures sharply reduces the chance of a successful guess.
+        - **Attack visibility:** Repeated lockouts surface accounts that are actively being targeted.
+      audit: |-
+        ### Audit via the vSphere Client
+
+        1. Select the host, then select `Configure` and expand `System`.
+        2. Select `Advanced System Settings`.
+        3. Enter `Security.AccountLockFailures` in the filter and read the current value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server or the ESXi host with `Connect-VIServer`.
+        2. Read the setting:
+
+           ```powershell
+           Get-VMHost | Get-AdvancedSetting -Name 'Security.AccountLockFailures'
+           ```
+
+        The host passes when `Security.AccountLockFailures` is `5`. Any other value is a failing result.
       remediation: |-
         To set the maximum failed login attempts correctly, perform the following steps:
 
@@ -687,9 +1307,35 @@ queries:
       vsphere.host.advancedSettings['UserVars.ESXiShellTimeOut'] != 0
     docs:
       desc: |-
-        When the ESXi shell or SSH services are enabled on a host, they will run indefinitely. To avoid this, set the `ESXiShellTimeOut`, which defines a window of time after which the ESXi shell and SSH services will automatically be terminated.
+        This check ensures that the ESXi shell and SSH services automatically stop after no more than 1 hour. Without this timeout the services run indefinitely once enabled, leaving remote access available long after the work that required it is finished.
 
-        It is recommended to set the `ESXiShellInteractiveTimeOut` together with `ESXiShellTimeOut`.
+        **Why this matters**
+
+        - **Automatic shutdown:** The shell and SSH services stop on their own rather than staying enabled until someone remembers them.
+        - **Bounded availability:** A 1-hour limit keeps these services reachable only for the duration of a typical task.
+        - **Defense in depth:** This timeout complements the idle session timeout to cover both unattended and forgotten access.
+
+        **Risk mitigation**
+
+        - **Exposure reduction:** Limiting service uptime shrinks the window during which remote shell access can be attacked.
+        - **Consistent enforcement:** A non-zero value keeps the timeout active rather than disabling it entirely.
+      audit: |-
+        ### Audit via the vSphere Client
+
+        1. Select the host, then select `Configure` and expand `System`.
+        2. Select `Advanced System Settings`.
+        3. Enter `UserVars.ESXiShellTimeOut` in the filter and read the current value.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server or the ESXi host with `Connect-VIServer`.
+        2. Read the setting:
+
+           ```powershell
+           Get-VMHost | Get-AdvancedSetting -Name 'UserVars.ESXiShellTimeOut'
+           ```
+
+        The host passes when `UserVars.ESXiShellTimeOut` is between `1` and `3600` seconds. A value greater than `3600`, or `0` (which disables the timeout entirely), is a failing result.
       remediation: |-
         To set the timeout to the desired value, perform the following from the vSphere web client:
 
@@ -716,9 +1362,36 @@ queries:
       vsphere.host.services.where( key == "slpd" ).all( policy == "off" )
     docs:
       desc: |-
-        The Service Location Protocol (SLP) daemon (`slpd`) allows ESXi to advertise and discover services such as CIM-based hardware monitoring. SLP has been the target of multiple critical ESXi vulnerabilities — most notably CVE-2021-21974, which was exploited at scale by ransomware campaigns targeting unpatched ESXi hosts.
+        This check ensures that the Service Location Protocol daemon, `slpd`, is stopped and set to start manually. SLP lets ESXi advertise and discover services such as CIM-based hardware monitoring, and it should be disabled on hosts that do not require it.
 
-        VMware recommends disabling the SLP service on hosts that do not require CIM-based hardware monitoring over SLP.
+        **Why this matters**
+
+        - **Known vulnerability target:** SLP has been the subject of multiple critical ESXi flaws, including CVE-2021-21974, which ransomware campaigns exploited at scale.
+        - **Reduced attack surface:** A stopped service removes a network-facing component that attackers actively scan for.
+        - **Rarely needed:** Most hosts do not depend on CIM-based hardware monitoring over SLP, so the daemon serves no purpose.
+
+        **Risk mitigation**
+
+        - **Exploit prevention:** Disabling `slpd` removes the service that ransomware campaigns have used to compromise ESXi hosts.
+        - **No automatic restart:** A manual startup policy keeps the daemon from re-enabling after a reboot.
+      audit: |-
+        ### Audit via the vSphere Client
+
+        1. Select the host, then select `Configure` and expand `System`.
+        2. Select `Services` and locate the `slpd` service.
+        3. Confirm the service is `Stopped` and its startup policy is `Start and stop manually`.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server or the ESXi host with `Connect-VIServer`.
+        2. Inspect the SLP service state and startup policy:
+
+           ```powershell
+           Get-VMHost | Get-VMHostService | Where-Object { $_.Key -eq 'slpd' } |
+             Select-Object VMHost, Key, Running, Policy
+           ```
+
+        The host passes when the `slpd` service is not running and its `Policy` is `off`. A running service or a policy of `on` is a failing result.
       remediation: |-
         To disable the SLP service, perform the following:
 
@@ -747,9 +1420,36 @@ queries:
       vsphere.host.services.where( key == "snmpd" ).all( policy == "off" )
     docs:
       desc: |-
-        The SNMP daemon (`snmpd`) exposes host monitoring data over the network. SNMP v1 and v2c rely on community strings transmitted in clear text, which can be sniffed and replayed to disclose host information or, depending on configuration, modify settings.
+        This check ensures that the SNMP daemon, `snmpd`, is stopped and set to start manually unless monitoring explicitly requires it. SNMP v1 and v2c rely on community strings sent in clear text, which can be sniffed and replayed to read host data or change settings.
 
-        Disable the SNMP service on ESXi hosts unless it is explicitly required for monitoring. When SNMP is required, configure SNMPv3 with authentication and privacy rather than community-based v1/v2c.
+        **Why this matters**
+
+        - **Clear-text exposure:** Community-based SNMP transmits credentials without encryption, making them trivial to capture.
+        - **Reduced attack surface:** A stopped daemon removes a network service that can leak host information.
+        - **Rarely needed by default:** Many hosts do not require SNMP polling, so the service serves no purpose when left running.
+
+        **Risk mitigation**
+
+        - **Information disclosure prevention:** Disabling SNMP stops an attacker from sniffing community strings to enumerate the host.
+        - **Stronger alternative:** When monitoring is required, SNMPv3 with authentication and privacy replaces the insecure v1 and v2c protocols.
+      audit: |-
+        ### Audit via the vSphere Client
+
+        1. Select the host, then select `Configure` and expand `System`.
+        2. Select `Services` and locate the `snmpd` service.
+        3. Confirm the service is `Stopped` and its startup policy is `Start and stop manually`.
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server or the ESXi host with `Connect-VIServer`.
+        2. Inspect the SNMP service state and startup policy:
+
+           ```powershell
+           Get-VMHost | Get-VMHostService | Where-Object { $_.Key -eq 'snmpd' } |
+             Select-Object VMHost, Key, Running, Policy
+           ```
+
+        The host passes when the `snmpd` service is not running and its `Policy` is `off`. A running service or a policy of `on` is a failing result.
       remediation: |-
         To disable the SNMP service, perform the following:
 
@@ -778,7 +1478,36 @@ queries:
       vsphere.host.properties['config']['network']['portgroup'].all( _['computedPolicy']['security']['forgedTransmits'] == false )
       vsphere.host.properties['config']['network']['portgroup'].all( _['spec']['policy']['security']['forgedTransmits'] == false )
     docs:
-      desc: Set the vSwitch Forged Transmits policy to reject for each vSwitch. Reject Forged Transmit can be set at the vSwitch and/or the Portgroup level. You can override switch-level settings at the Portgroup level.
+      desc: |-
+        This check ensures that the Forged Transmits security policy is set to reject on every standard vSwitch and port group. Forged Transmits controls whether a virtual machine may send traffic using a source MAC address other than the one assigned to its virtual adapter.
+
+        **Why this matters**
+
+        - **Source MAC integrity:** Rejecting forged transmits ensures outbound frames carry the adapter's assigned MAC address.
+        - **Consistent enforcement:** Applying the policy at both the vSwitch and port group levels prevents an override from weakening it.
+        - **Predictable network behavior:** Genuine source addresses keep switching and monitoring accurate.
+
+        **Risk mitigation**
+
+        - **Spoofing prevention:** Blocking forged source MACs stops a virtual machine from impersonating another system on the network.
+        - **Attack containment:** Enforced MAC integrity limits traffic injection and interception between virtual machines.
+      audit: |-
+        ### Audit via the vSphere Client
+
+        1. Select the host, then select `Configure` and expand `Networking`.
+        2. Select `Virtual switches` and select `Edit` on each standard vSwitch.
+        3. Under `Security`, confirm `Forged transmits` is set to `Reject`, and review the same setting on each port group.
+
+        ### Audit via the ESXi shell
+
+        1. Connect to the ESXi host with SSH.
+        2. Read the security policy of each standard vSwitch:
+
+           ```bash
+           esxcli network vswitch standard policy security get -v <vSwitch-name>
+           ```
+
+        The host passes when `Allow Forged Transmits` is `false` on every standard vSwitch and on every port group. A value of `true` at either level is a failing result.
       remediation: |-
         To set the policy to reject forged transmissions, perform the following:
 
@@ -804,7 +1533,36 @@ queries:
     mql: |
       vsphere.host.standardSwitch.all( securityPolicySettings.allowMacChanges == false )
     docs:
-      desc: Ensure the MAC Address Change policy within the vSwitch is set to reject. Reject MAC Changes can be set at the vSwitch and/or the Portgroup level. You can override switch-level settings at the Portgroup level.
+      desc: |-
+        This check ensures that the MAC Address Change security policy is set to reject on every standard vSwitch. This policy controls whether a guest may change the effective MAC address of its virtual adapter to a value different from the one configured by ESXi.
+
+        **Why this matters**
+
+        - **Adapter identity integrity:** Rejecting MAC changes keeps a virtual machine bound to the MAC address ESXi assigned it.
+        - **Reduced impersonation:** A guest cannot reconfigure its adapter to receive traffic destined for another system.
+        - **Predictable switching:** Stable MAC addresses keep the virtual switch's forwarding decisions accurate.
+
+        **Risk mitigation**
+
+        - **Traffic interception prevention:** Blocking MAC changes stops a virtual machine from capturing frames meant for another address.
+        - **Spoofing resistance:** Enforced MAC identity limits a compromised guest's ability to masquerade on the network.
+      audit: |-
+        ### Audit via the vSphere Client
+
+        1. Select the host, then select `Configure` and expand `Networking`.
+        2. Select `Virtual switches` and select `Edit` on each standard vSwitch.
+        3. Under `Security`, confirm `MAC address changes` is set to `Reject`.
+
+        ### Audit via the ESXi shell
+
+        1. Connect to the ESXi host with SSH.
+        2. Read the security policy of each standard vSwitch:
+
+           ```bash
+           esxcli network vswitch standard policy security get -v <vSwitch-name>
+           ```
+
+        The host passes when `Allow MAC Address Change` is `false` on every standard vSwitch. A value of `true` is a failing result.
       remediation: |-
         To set the policy to reject, perform the following:
 
@@ -830,7 +1588,36 @@ queries:
     mql: |
       vsphere.host.standardSwitch.all( securityPolicySettings.allowPromiscuous == false )
     docs:
-      desc: Ensure the Promiscuous Mode Policy within the vSwitch is set to reject. Promiscuous mode can be set at the vSwitch and/or the Portgroup level. You can override switch-level settings at the Portgroup level.
+      desc: |-
+        This check ensures that the Promiscuous Mode security policy is set to reject on every standard vSwitch. Promiscuous mode lets a virtual machine adapter receive all frames passing through the vSwitch, not only those addressed to it.
+
+        **Why this matters**
+
+        - **Traffic confinement:** Rejecting promiscuous mode ensures each adapter sees only the frames intended for it.
+        - **Reduced sniffing capability:** A guest cannot passively capture traffic belonging to other virtual machines on the switch.
+        - **Consistent enforcement:** Applying the policy at the vSwitch level prevents broad packet visibility by default.
+
+        **Risk mitigation**
+
+        - **Eavesdropping prevention:** Blocking promiscuous mode stops a compromised guest from monitoring its neighbors' traffic.
+        - **Data exposure containment:** Limiting frame visibility reduces the blast radius if one virtual machine is breached.
+      audit: |-
+        ### Audit via the vSphere Client
+
+        1. Select the host, then select `Configure` and expand `Networking`.
+        2. Select `Virtual switches` and select `Edit` on each standard vSwitch.
+        3. Under `Security`, confirm `Promiscuous mode` is set to `Reject`.
+
+        ### Audit via the ESXi shell
+
+        1. Connect to the ESXi host with SSH.
+        2. Read the security policy of each standard vSwitch:
+
+           ```bash
+           esxcli network vswitch standard policy security get -v <vSwitch-name>
+           ```
+
+        The host passes when `Allow Promiscuous` is `false` on every standard vSwitch. A value of `true` is a failing result.
       remediation: |-
         To set the policy to reject, perform the following:
 
@@ -857,9 +1644,38 @@ queries:
       vsphere.host.secureBootEnabled == true
     docs:
       desc: |-
-        UEFI Secure Boot establishes a chain of trust from the platform firmware through the ESXi bootloader, the VMkernel, and all installed VIBs. At each stage, the cryptographic signature of the next component is validated before it is allowed to run.
+        This check ensures that UEFI Secure Boot is enabled on the ESXi host. Secure Boot establishes a chain of trust from the platform firmware through the bootloader, the VMkernel, and every installed bundle, validating the cryptographic signature of each component before it is allowed to run.
 
-        With Secure Boot enabled, tampered or unsigned code cannot be executed during boot, protecting the host against boot-time tampering and unauthorized modifications to the hypervisor.
+        **Why this matters**
+
+        - **Verified boot chain:** Each stage of startup confirms the next component is signed before executing it.
+        - **Boot-time tamper protection:** Modified or unsigned code is rejected before the hypervisor loads.
+        - **Hardware-rooted trust:** Anchoring the chain in firmware makes the integrity check difficult for software to bypass.
+
+        **Risk mitigation**
+
+        - **Rootkit prevention:** Secure Boot blocks persistent boot-level malware from executing during startup.
+        - **Hypervisor integrity:** Validated signatures ensure the running hypervisor matches trusted, signed software.
+      audit: |-
+        ### Audit via the ESXi shell
+
+        1. Connect to the ESXi host with SSH.
+        2. Check whether Secure Boot is active:
+
+           ```bash
+           /usr/lib/vmware/secureboot/bin/secureBoot.py -s
+           ```
+
+        ### Audit via PowerCLI
+
+        1. Connect to vCenter Server with `Connect-VIServer`.
+        2. Read the Secure Boot state of each host:
+
+           ```powershell
+           Get-VMHost | Select-Object Name, @{N='SecureBoot';E={(Get-View $_.ExtensionData.ConfigManager.BootDeviceSystem -ErrorAction SilentlyContinue)}}
+           ```
+
+        The host passes when UEFI Secure Boot reports as enabled. A host booting in legacy BIOS mode, or with Secure Boot disabled, is a failing result.
       remediation: |-
         Enabling UEFI Secure Boot requires the host to boot in UEFI mode and all installed VIBs to be properly signed.
 
