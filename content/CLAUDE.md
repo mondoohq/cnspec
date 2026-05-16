@@ -185,7 +185,7 @@ The `# No Terraform variants:` comment goes on the line before `- uid:`:
 - uid: mondoo-<cloud>-security-...
 ```
 
-The `# No Terraform remediation:` comment goes **inside the `remediation:` list**, as its last line — where an `- id: terraform` entry would otherwise sit:
+The `# No Terraform remediation:` comment goes **inside the `remediation:` list**, as its last line, indented at the same level as the `- id:` entries — where an `- id: terraform` entry would otherwise sit:
 
 ```yaml
 remediation:
