@@ -178,19 +178,23 @@ If the runtime check has no Terraform analog, **leave a YAML comment above the p
 - The runtime check depends on cross-resource correlation (e.g., "every cluster has a backup plan that points at it") that the runtime check itself does not yet implement correctly — in which case fix the runtime first.
 - The runtime check inspects a field whose Terraform analog is a different feature (don't paper over the mismatch with a vacuous variant).
 
-Comment formats (inserted on the line before `- uid:`):
+The `# No Terraform variants:` comment goes on the line before `- uid:`:
 
 ```yaml
 # No Terraform variants: <one-sentence reason>. <Optional: when this could be revisited>.
 - uid: mondoo-<cloud>-security-...
 ```
 
+The `# No Terraform remediation:` comment goes **inside the `remediation:` list**, as its last line, indented at the same level as the `- id:` entries — where an `- id: terraform` entry would otherwise sit:
+
 ```yaml
-# No Terraform remediation: <one-sentence reason>. <Optional: when this could be revisited>.
-- uid: mondoo-<cloud>-security-...
+remediation:
+  - id: console
+    desc: ...
+  # No Terraform remediation: <one-sentence reason>. <Optional: when this could be revisited>.
 ```
 
-When neither variants nor remediation are possible (the usual case — if you can't write a variant, you usually can't write Terraform remediation either), include both comments. The comment must explain the technical limitation, not just say "skip".
+When neither variants nor remediation are possible (the usual case — if you can't write a variant, you usually can't write Terraform remediation either), include both comments. Each comment must explain the technical limitation, not just say "skip".
 
 ### MQL parser quirk for Terraform variants
 
