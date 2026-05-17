@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-proxmox-security
     name: Mondoo Proxmox VE Security
-    version: 1.1.0
+    version: 1.1.1
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -171,7 +171,7 @@ queries:
     impact: 90
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-14
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
       compliance/iso-27001-2022: iso-27001-2022-a-8-5
@@ -180,9 +180,9 @@ queries:
       compliance/nist-csf-2: nist-csf-2-pr-aa-03
       compliance/nist-sp-800-171: nist-sp-800-171--3-5-3
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
-      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/pci-dss-4: pcidss-requirement-8-4-1
       compliance/soc2-2017: soc2-control-cc6-1-4
-      compliance/vda-isa-5: vda-isa-5-4-1-3
+      compliance/vda-isa-5: vda-isa-5-4-1-2
     refs:
       - title: CWE-308 Use of Single-factor Authentication
         url: https://cwe.mitre.org/data/definitions/308.html
@@ -195,11 +195,37 @@ queries:
       }
     docs:
       desc: |
-        Two-factor authentication (TOTP, WebAuthn, YubiKey) should be configured
-        for all administrative users. Proxmox stores TFA data in
-        `/etc/pve/priv/tfa.cfg`.
+        This check ensures that two-factor authentication is configured for administrative access to the Proxmox VE cluster. A fresh Proxmox install enforces only a single password factor, leaving accounts exposed if credentials are guessed or stolen.
 
-        Expected: file exists and size > 10 bytes
+        **Why this matters**
+
+        - **Credential theft:** A second factor blocks an attacker who has obtained a valid password from phishing, reuse, or a breach.
+        - **Hypervisor blast radius:** Compromising a Proxmox login exposes every guest VM and container running on the cluster.
+        - **Compliance:** Multiple frameworks require multi-factor authentication for access to systems holding sensitive workloads.
+
+        **Risk mitigation**
+
+        - **Brute-force resistance:** TOTP, WebAuthn, or YubiKey factors defeat automated password-guessing campaigns.
+        - **Account assurance:** Enforcing a second factor at the realm level guarantees every user must enroll a token before they can authenticate.
+      audit: |
+        ### Audit via Web UI
+
+        1. Log in to the Proxmox VE web interface.
+        2. Go to Datacenter, then Permissions, then Two Factor.
+        3. Confirm that administrative users have an enrolled TOTP, WebAuthn, or YubiKey factor.
+        4. Go to Datacenter, then Permissions, then Realms, open each realm, and confirm a required TFA type is set.
+
+        A passing result shows enrolled second factors for administrators and a TFA requirement on the realm; a failing result shows no enrolled factors and no realm-level TFA enforcement.
+
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        test -s /etc/pve/priv/tfa.cfg && wc -c /etc/pve/priv/tfa.cfg
+        ```
+
+        A passing result shows the file exists with more than 10 bytes of content; an empty or missing file means no two-factor authentication is configured.
       remediation:
         - id: cli
           desc: |
@@ -266,18 +292,18 @@ queries:
     impact: 70
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
-      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
       compliance/nis-2: nis-2-21-2-i
       compliance/nist-csf-1: nist-csf-1-pr-ac-4
       compliance/nist-csf-2: nist-csf-2-pr-aa-05
       compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
-      compliance/pci-dss-4: pcidss-requirement-7-2-1
-      compliance/soc2-2017: soc2-control-cc6-1-3
-      compliance/vda-isa-5: vda-isa-5-4-1-1
+      compliance/pci-dss-4: pcidss-requirement-7-2-2
+      compliance/soc2-2017: soc2-control-cc6-3-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
     refs:
       - title: CWE-269 Improper Privilege Management
         url: https://cwe.mitre.org/data/definitions/269.html
@@ -287,10 +313,36 @@ queries:
       file("/etc/pve/user.cfg").content.lines.where(_ == /Administrator/).length <= 3
     docs:
       desc: |
-        The `Administrator` role grants unrestricted access. Use least-privilege
-        roles such as `PVEAdmin`, `PVEVMAdmin`, `PVEAuditor`.
+        This check ensures that the built-in Administrator role is granted to as few principals as possible across the cluster access control list. The Administrator role conveys unrestricted control of the datacenter, so widespread assignment erodes least-privilege boundaries.
 
-        Expected: <= 3 Administrator role assignments in /etc/pve/user.cfg
+        **Why this matters**
+
+        - **Unrestricted access:** The Administrator role bypasses every scoped permission and grants full control of all nodes, storage, and guests.
+        - **Expanded attack surface:** Each Administrator account is a path to total cluster compromise if its credentials are stolen.
+        - **Accountability:** Broad use of one all-powerful role makes it hard to attribute changes or contain a misused account.
+
+        **Risk mitigation**
+
+        - **Least privilege:** Scoped roles such as PVEVMAdmin, PVEDatastoreAdmin, and PVEAuditor limit each operator to the resources they actually manage.
+        - **Containment:** Fewer Administrator holders means a single compromised account cannot reach the entire cluster.
+      audit: |
+        ### Audit via Web UI
+
+        1. Log in to the Proxmox VE web interface.
+        2. Go to Datacenter, then Permissions.
+        3. Review each access control entry and note which principals hold the Administrator role.
+
+        A passing result shows the Administrator role assigned to a small number of trusted principals; a failing result shows the role granted broadly where scoped roles would suffice.
+
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        pveum acl list
+        ```
+
+        A passing result lists at most a few entries that grant the Administrator role; a failing result shows many subjects holding it instead of least-privilege roles.
       remediation:
         - id: cli
           desc: |
@@ -365,18 +417,18 @@ queries:
     impact: 70
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-16
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
       compliance/iso-27001-2022: iso-27001-2022-a-8-3
       compliance/nis-2: nis-2-21-2-i
       compliance/nist-csf-1: nist-csf-1-pr-ac-4
       compliance/nist-csf-2: nist-csf-2-pr-aa-05
-      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
-      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-2
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/pci-dss-4: pcidss-requirement-2-2-6
       compliance/soc2-2017: soc2-control-cc6-1-3
-      compliance/vda-isa-5: vda-isa-5-4-1-1
+      compliance/vda-isa-5: vda-isa-5-4-1-3
     refs:
       - title: CWE-732 Incorrect Permission Assignment for Critical Resource
         url: https://cwe.mitre.org/data/definitions/732.html
@@ -386,8 +438,28 @@ queries:
       }
     docs:
       desc: |
-        `/etc/pve/user.cfg` enumerates every user, group, and ACL on the cluster.
-        It must not be readable by unprivileged accounts.
+        This check ensures that the cluster user database at /etc/pve/user.cfg is not readable by unprivileged accounts. This file enumerates every user, group, and access control entry, so exposing it to all local accounts hands attackers a map of the cluster's identity model.
+
+        **Why this matters**
+
+        - **Reconnaissance:** A world-readable user database tells any local account which principals and roles exist and which are worth targeting.
+        - **Privilege escalation:** Knowing the full ACL layout helps an attacker plan a path toward Administrator-level access.
+        - **Sensitive metadata:** The file may include token identifiers and group memberships that should stay confidential.
+
+        **Risk mitigation**
+
+        - **Access control:** Mode 0640 with root and www-data ownership restricts reads to root and the Proxmox API service.
+        - **Reduced exposure:** Removing world-read access prevents low-privilege users from enumerating the cluster identity model.
+      audit: |
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        stat -c '%U:%G %a' /etc/pve/user.cfg
+        ```
+
+        A passing result shows ownership root:www-data and a mode such as 640 with no read bit for other; a failing result shows a mode whose final digit grants read access, for example 644.
       remediation:
         - id: cli
           desc: |
@@ -440,18 +512,18 @@ queries:
     impact: 90
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-14
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
       compliance/iso-27001-2022: iso-27001-2022-a-8-5
-      compliance/nis-2: nis-2-21-2-j
-      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-3
       compliance/nist-csf-2: nist-csf-2-pr-aa-03
       compliance/nist-sp-800-171: nist-sp-800-171--3-5-3
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
-      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/pci-dss-4: pcidss-requirement-2-2-6
       compliance/soc2-2017: soc2-control-cc6-1-4
-      compliance/vda-isa-5: vda-isa-5-4-1-3
+      compliance/vda-isa-5: vda-isa-5-4-1-2
     refs:
       - title: CWE-522 Insufficiently Protected Credentials
         url: https://cwe.mitre.org/data/definitions/522.html
@@ -463,13 +535,28 @@ queries:
       sshd.config.params["PermitRootLogin"] == "forced-commands-only"
     docs:
       desc: |
-        Proxmox VE requires root SSH access for cluster operations and live
-        migration. The Linux baseline check `ssh-root-login-is-disabled`
-        requires `PermitRootLogin no` which BREAKS PVE clusters.
+        This check ensures that SSH root login on Proxmox nodes is permitted only with a key and never with a password. Proxmox VE relies on root SSH access for cluster operations and live migration, so the standard Linux baseline value of PermitRootLogin no would break the cluster, while prohibit-password keeps key-based access working safely.
 
-        This PVE-adapted check accepts `prohibit-password` as the correct value.
+        **Why this matters**
 
-        Expected value: `prohibit-password`
+        - **Cluster operation:** Proxmox needs working root SSH for corosync, live migration, and node management, so root login cannot simply be disabled.
+        - **Password attacks:** Allowing password-based root login exposes the hypervisor to brute-force and credential-stuffing attempts.
+        - **Strong authentication:** Key-only root login requires possession of a private key that cannot be guessed.
+
+        **Risk mitigation**
+
+        - **Brute-force resistance:** Setting prohibit-password, without-password, or forced-commands-only refuses every password-based root login attempt.
+        - **Operational compatibility:** Key-only root access preserves the cluster functions Proxmox depends on while closing the password attack path.
+      audit: |
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        sshd -T | grep -i permitrootlogin
+        ```
+
+        A passing result shows permitrootlogin set to prohibit-password, without-password, or forced-commands-only; a failing result shows yes, which allows password-based root login.
       remediation:
         - id: cli
           desc: |
@@ -540,18 +627,18 @@ queries:
     impact: 80
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-14
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
       compliance/iso-27001-2022: iso-27001-2022-a-8-5
-      compliance/nis-2: nis-2-21-2-j
-      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-3
       compliance/nist-csf-2: nist-csf-2-pr-aa-03
       compliance/nist-sp-800-171: nist-sp-800-171--3-5-3
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
-      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/pci-dss-4: pcidss-requirement-2-2-6
       compliance/soc2-2017: soc2-control-cc6-1-4
-      compliance/vda-isa-5: vda-isa-5-4-1-3
+      compliance/vda-isa-5: vda-isa-5-4-1-2
     refs:
       - title: CWE-521 Weak Password Requirements
         url: https://cwe.mitre.org/data/definitions/521.html
@@ -559,9 +646,28 @@ queries:
       sshd.config.params["PasswordAuthentication"] == "no"
     docs:
       desc: |
-        Disabling SSH password authentication eliminates brute-force credential
-        attacks against the hypervisor. Public-key authentication must already
-        be in place for every administrator before disabling passwords.
+        This check ensures that SSH password authentication is disabled on Proxmox nodes so that only key-based logins are accepted. Password authentication is enabled by default on Debian-based systems, leaving the hypervisor's SSH service open to brute-force credential attacks.
+
+        **Why this matters**
+
+        - **Brute-force exposure:** A password-accepting SSH service can be attacked with automated guessing against any known account.
+        - **Credential reuse:** Stolen or reused passwords let an attacker log in directly without a key.
+        - **Hypervisor compromise:** SSH access to a Proxmox node grants control of every guest it hosts.
+
+        **Risk mitigation**
+
+        - **Key-only access:** Setting PasswordAuthentication no rejects all password logins and requires a private key.
+        - **Attack surface reduction:** Removing the password path eliminates brute-force and credential-stuffing as a route into the hypervisor.
+      audit: |
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        sshd -T | grep -i passwordauthentication
+        ```
+
+        A passing result shows passwordauthentication no; a failing result shows passwordauthentication yes.
       remediation:
         - id: cli
           desc: |
@@ -633,18 +739,18 @@ queries:
     impact: 100
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
-      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/hipaa: hipaa-security-ss164-312-a-2-i-access-control-unique-user-identification
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
       compliance/nis-2: nis-2-21-2-i
       compliance/nist-csf-1: nist-csf-1-pr-ac-4
       compliance/nist-csf-2: nist-csf-2-pr-aa-05
       compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
-      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/pci-dss-4: pcidss-requirement-7-2-2
       compliance/soc2-2017: soc2-control-cc6-1-3
-      compliance/vda-isa-5: vda-isa-5-4-1-1
+      compliance/vda-isa-5: vda-isa-5-4-2-1
     refs:
       - title: CWE-250 Execution with Unnecessary Privileges
         url: https://cwe.mitre.org/data/definitions/250.html
@@ -652,9 +758,28 @@ queries:
       users.where(uid == 0).list.all(name == "root")
     docs:
       desc: |
-        Any account other than `root` with UID 0 effectively bypasses every
-        access control on the system. Reassign each non-root UID 0 account to
-        a unique, unused UID or remove it.
+        This check ensures that root is the only account on a Proxmox node with UID 0. Any additional UID 0 account holds full superuser authority, so a clean system should expose exactly one such account.
+
+        **Why this matters**
+
+        - **Hidden superusers:** A second UID 0 account silently grants complete root authority and is a common backdoor technique.
+        - **Bypassed controls:** A UID 0 account ignores file permissions and every other access restriction on the host.
+        - **Auditing gaps:** Multiple root-equivalent accounts make it hard to attribute privileged actions to a single identity.
+
+        **Risk mitigation**
+
+        - **Single superuser:** Keeping root as the only UID 0 account gives one well-known, well-monitored privileged identity.
+        - **Backdoor removal:** Reassigning or deleting extra UID 0 accounts closes a stealthy persistence path.
+      audit: |
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        awk -F: '($3 == 0) {print $1}' /etc/passwd
+        ```
+
+        A passing result lists only root; a failing result lists any additional account name with UID 0.
       remediation:
         - id: cli
           desc: |
@@ -726,15 +851,15 @@ queries:
     impact: 100
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-15
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
       compliance/iso-27001-2022: iso-27001-2022-a-8-5
-      compliance/nis-2: nis-2-21-2-j
+      compliance/nis-2: nis-2-21-2-i
       compliance/nist-csf-1: nist-csf-1-pr-ac-7
       compliance/nist-csf-2: nist-csf-2-pr-aa-03
-      compliance/nist-sp-800-171: nist-sp-800-171--3-5-3
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-2
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
       compliance/pci-dss-4: pcidss-requirement-8-3-1
       compliance/soc2-2017: soc2-control-cc6-1-4
       compliance/vda-isa-5: vda-isa-5-4-1-3
@@ -745,8 +870,28 @@ queries:
       file("/etc/shadow").content.lines.where(_ == /^[^:]+::/).length == 0
     docs:
       desc: |
-        Accounts with an empty password hash can authenticate without any
-        credentials. Lock or set a strong password for every affected account.
+        This check ensures that no account in /etc/shadow has an empty password field on a Proxmox node. An empty hash lets the account authenticate with no credential at all, which is one of the most direct routes onto a host.
+
+        **Why this matters**
+
+        - **Credential-free login:** An account with an empty password field can be accessed without supplying any secret.
+        - **Lateral movement:** An attacker who reaches the host can use such an account to gain an interactive session immediately.
+        - **Hypervisor exposure:** Any foothold on a Proxmox node threatens every guest VM and container it runs.
+
+        **Risk mitigation**
+
+        - **Account lockdown:** Locking or assigning a strong password to each affected account closes the credential-free login path.
+        - **Authentication assurance:** Requiring a valid secret for every account restores a baseline of access control on the host.
+      audit: |
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        awk -F: '($2 == "") {print $1}' /etc/shadow
+        ```
+
+        A passing result prints nothing; a failing result prints the name of any account whose password field is empty.
       remediation:
         - id: cli
           desc: |
@@ -823,15 +968,15 @@ queries:
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
-      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
       compliance/nis-2: nis-2-21-2-e
       compliance/nist-csf-1: nist-csf-1-pr-ac-5
       compliance/nist-csf-2: nist-csf-2-pr-ir-01
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
-      compliance/pci-dss-4: pcidss-requirement-1-3-1
-      compliance/soc2-2017: soc2-control-cc6-6-1
-      compliance/vda-isa-5: vda-isa-5-5-2-6
+      compliance/pci-dss-4: pcidss-requirement-1-4-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: vda-isa-5-5-2-7
     refs:
       - title: CWE-693 Protection Mechanism Failure
         url: https://cwe.mitre.org/data/definitions/693.html
@@ -844,9 +989,36 @@ queries:
       }
     docs:
       desc: |
-        The cluster-wide firewall must be enabled before per-node, per-VM, or
-        per-container rules take effect. The setting is stored in
-        `/etc/pve/firewall/cluster.fw` under the `[OPTIONS]` section.
+        This check ensures that the cluster-wide Proxmox firewall is enabled. The cluster firewall is off by default, and until it is enabled no per-node, per-VM, or per-container rule takes effect.
+
+        **Why this matters**
+
+        - **Master switch:** The cluster firewall is the top-level toggle that activates all lower-level firewall rules.
+        - **Default exposure:** With the firewall disabled, management interfaces and guest networks accept traffic without filtering.
+        - **Defense in depth:** A disabled cluster firewall leaves the hypervisor reliant on external network controls alone.
+
+        **Risk mitigation**
+
+        - **Policy enforcement:** Enabling the cluster firewall lets node, VM, and container rules actually filter traffic.
+        - **Network segmentation:** An active firewall allows inbound services to be restricted to trusted sources.
+      audit: |
+        ### Audit via Web UI
+
+        1. Log in to the Proxmox VE web interface.
+        2. Go to Datacenter, then Firewall, then Options.
+        3. Confirm that Firewall is set to Yes.
+
+        A passing result shows the cluster firewall enabled; a failing result shows it disabled.
+
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        pvesh get /cluster/firewall/options --output-format json
+        ```
+
+        A passing result shows enable set to 1; a failing result shows enable set to 0 or absent.
       remediation:
         - id: cli
           desc: |
@@ -897,15 +1069,15 @@ queries:
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
-      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
       compliance/nis-2: nis-2-21-2-e
       compliance/nist-csf-1: nist-csf-1-pr-ac-5
       compliance/nist-csf-2: nist-csf-2-pr-ir-01
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
       compliance/pci-dss-4: pcidss-requirement-1-3-1
-      compliance/soc2-2017: soc2-control-cc6-6-1
-      compliance/vda-isa-5: vda-isa-5-5-2-6
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: vda-isa-5-5-2-7
     refs:
       - title: CWE-284 Improper Access Control
         url: https://cwe.mitre.org/data/definitions/284.html
@@ -916,10 +1088,36 @@ queries:
       }
     docs:
       desc: |
-        The cluster firewall must deny inbound traffic by default. Explicit
-        allow rules can be added afterwards. Make sure SSH and the PVE web UI
-        (TCP 22 and 8006) are allowed from your management network before
-        flipping the default policy or you will lock yourself out.
+        This check ensures that the cluster firewall denies inbound traffic by default. A default-deny input policy means only explicitly allowed services are reachable, rather than everything that is not explicitly blocked.
+
+        **Why this matters**
+
+        - **Default-allow risk:** An ACCEPT input policy exposes every listening service on the hypervisor unless a rule blocks it.
+        - **Forgotten services:** Default-deny ensures a newly opened or overlooked port is not reachable until a rule is added on purpose.
+        - **Predictable posture:** An explicit deny baseline makes the firewall's effective behavior easy to reason about.
+
+        **Risk mitigation**
+
+        - **Allowlist model:** Setting policy_in to DROP forces every inbound service to be opened deliberately with a rule.
+        - **Attack surface reduction:** Unrequested inbound connections are dropped before they reach any service.
+      audit: |
+        ### Audit via Web UI
+
+        1. Log in to the Proxmox VE web interface.
+        2. Go to Datacenter, then Firewall, then Options.
+        3. Confirm that Input Policy is set to DROP.
+
+        A passing result shows the input policy set to DROP; a failing result shows ACCEPT.
+
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        pvesh get /cluster/firewall/options --output-format json
+        ```
+
+        A passing result shows policy_in set to DROP; a failing result shows policy_in set to ACCEPT or absent.
       remediation:
         - id: cli
           desc: |
@@ -1002,23 +1200,51 @@ queries:
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
-      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
       compliance/nis-2: nis-2-21-2-e
       compliance/nist-csf-1: nist-csf-1-pr-ac-5
       compliance/nist-csf-2: nist-csf-2-pr-ir-01
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
-      compliance/pci-dss-4: pcidss-requirement-1-3-1
-      compliance/soc2-2017: soc2-control-cc6-6-1
-      compliance/vda-isa-5: vda-isa-5-5-2-6
+      compliance/pci-dss-4: pcidss-requirement-1-4-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: vda-isa-5-5-2-7
     mql: |
       files.find(from: "/etc/pve/nodes", regex: "host.fw$", type: "file").list.all(
         file(_.path).content.lines.where(_ == /^enable:\s*1/).length > 0
       )
     docs:
       desc: |
-        Every node in the cluster must have its host firewall enabled. The
-        per-node setting is stored in `/etc/pve/nodes/<node>/host.fw`.
+        This check ensures that the host firewall is enabled on every node in the Proxmox cluster. The per-node firewall is configured independently of the cluster firewall, so a single node left unprotected becomes the weak link.
+
+        **Why this matters**
+
+        - **Per-node scope:** Each node carries its own host firewall setting, and enabling it on one node does not cover the others.
+        - **Inconsistent posture:** A node with its firewall off accepts traffic that peer nodes correctly filter.
+        - **Lateral movement:** An unprotected node gives an attacker an easier pivot point into the rest of the cluster.
+
+        **Risk mitigation**
+
+        - **Uniform enforcement:** Enabling the host firewall on every node applies consistent inbound filtering across the cluster.
+        - **Reduced exposure:** Each protected node drops unrequested traffic to its management and service ports.
+      audit: |
+        ### Audit via Web UI
+
+        1. Log in to the Proxmox VE web interface.
+        2. For each node, select it, then go to Firewall, then Options.
+        3. Confirm that Firewall is set to Yes.
+
+        A passing result shows the firewall enabled on every node; a failing result shows it disabled on one or more nodes.
+
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        for node in $(pvesh get /nodes --output-format json | jq -r '.[].node'); do echo -n "$node: "; pvesh get /nodes/$node/firewall/options --output-format json | jq '.enable'; done
+        ```
+
+        A passing result shows enable set to 1 for every node; a failing result shows 0 or null for any node.
       remediation:
         - id: cli
           desc: |
@@ -1074,15 +1300,15 @@ queries:
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
-      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
       compliance/nis-2: nis-2-21-2-e
       compliance/nist-csf-1: nist-csf-1-pr-ac-5
       compliance/nist-csf-2: nist-csf-2-pr-ir-01
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
       compliance/pci-dss-4: pcidss-requirement-1-3-1
-      compliance/soc2-2017: soc2-control-cc6-6-1
-      compliance/vda-isa-5: vda-isa-5-5-2-6
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: vda-isa-5-5-2-7
     mql: |
       file("/etc/pve/firewall/cluster.fw") {
         exists
@@ -1090,10 +1316,36 @@ queries:
       }
     docs:
       desc: |
-        A cluster firewall with no `IN`, `OUT`, or `GROUP` rules either has no
-        meaningful policy in place or is relying entirely on defaults. Define
-        explicit allow rules for the inbound services you operate (management,
-        cluster traffic, application traffic).
+        This check ensures that the cluster firewall has at least one explicit IN, OUT, or GROUP rule defined. A firewall with no rules has no meaningful policy of its own and falls back entirely on default behavior.
+
+        **Why this matters**
+
+        - **Empty policy:** A firewall without rules neither permits nor restricts services on purpose, so its behavior is undefined by intent.
+        - **Default reliance:** With no rules, traffic handling depends solely on default policies that may not match the environment.
+        - **Operational intent:** Explicit rules document which services are meant to be reachable and from where.
+
+        **Risk mitigation**
+
+        - **Deliberate access:** Defining IN, OUT, or GROUP rules makes allowed traffic an explicit, reviewable decision.
+        - **Coverage:** A populated rule set ensures management, cluster, and application traffic are each handled intentionally.
+      audit: |
+        ### Audit via Web UI
+
+        1. Log in to the Proxmox VE web interface.
+        2. Go to Datacenter, then Firewall.
+        3. Confirm that the Rules and Security Group lists contain at least one defined rule.
+
+        A passing result shows one or more configured rules; a failing result shows an empty rule set.
+
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        pvesh get /cluster/firewall/rules --output-format json | jq 'length'
+        ```
+
+        A passing result shows a count greater than 0; a failing result shows 0.
       remediation:
         - id: cli
           desc: |
@@ -1182,7 +1434,7 @@ queries:
     impact: 70
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
@@ -1203,16 +1455,36 @@ queries:
       command("openssl x509 -in /etc/pve/local/pve-ssl.pem -noout -issuer").stdout.contains("Proxmox Virtual Environment") == false
     docs:
       desc: |
-        Default Proxmox installations ship a certificate issued by the
-        cluster-internal Proxmox CA (`CN=Proxmox Virtual Environment`).
-        While technically not a pure self-signed certificate (issuer and
-        subject differ), browsers and external clients do not trust the
-        cluster-internal CA.
+        This check ensures that the Proxmox web interface presents a TLS certificate issued by a trusted authority rather than the cluster-internal Proxmox CA. A default install ships a certificate signed by the internal CA named Proxmox Virtual Environment, which no browser or external client trusts.
 
-        This check verifies that the PVE TLS certificate is NOT issued by
-        the default Proxmox CA. Replace with a certificate from a trusted
-        public CA (for example via ACME/Let's Encrypt) for production
-        environments.
+        **Why this matters**
+
+        - **Trust failure:** Browsers warn on the cluster-internal CA, training operators to click through certificate errors.
+        - **Interception risk:** Users conditioned to ignore TLS warnings cannot distinguish a real warning from a man-in-the-middle attack.
+        - **Integration friction:** External tooling and API clients reject the untrusted certificate or require trust to be disabled.
+
+        **Risk mitigation**
+
+        - **Verified identity:** A certificate from a public CA, for example via ACME, lets clients confirm they are connecting to the genuine node.
+        - **Clean trust chain:** Replacing the internal-CA certificate removes routine TLS warnings so genuine ones stand out.
+      audit: |
+        ### Audit via Web UI
+
+        1. Log in to the Proxmox VE web interface.
+        2. For a node, go to System, then Certificates.
+        3. Inspect the certificate used for the API/web service and review its issuer.
+
+        A passing result shows an issuer from a trusted public CA; a failing result shows an issuer of Proxmox Virtual Environment.
+
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        openssl x509 -in /etc/pve/local/pve-ssl.pem -noout -issuer
+        ```
+
+        A passing result shows an issuer that does not contain Proxmox Virtual Environment; a failing result shows that string in the issuer.
       remediation:
         - id: cli
           desc: |
@@ -1285,7 +1557,7 @@ queries:
     impact: 90
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-12
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
@@ -1304,8 +1576,36 @@ queries:
       command("openssl x509 -in /etc/pve/local/pve-ssl.pem -checkend 2592000 -noout >/dev/null 2>&1 && echo valid || echo expiring").stdout.trim == "valid"
     docs:
       desc: |
-        Renew the PVE TLS certificate well before it expires. ACME-issued
-        certificates can be renewed automatically.
+        This check ensures that the Proxmox node TLS certificate is not within 30 days of expiry. An expired certificate breaks the web interface and API for clients and can interrupt cluster management.
+
+        **Why this matters**
+
+        - **Service disruption:** An expired certificate causes hard TLS failures that block access to the web UI and API.
+        - **Short notice:** Without monitoring, expiry is often discovered only when connections start failing.
+        - **Warning fatigue:** A near-expired or expired certificate pushes operators toward bypassing TLS validation.
+
+        **Risk mitigation**
+
+        - **Renewal lead time:** A 30-day buffer gives operators time to renew before any outage occurs.
+        - **Automated renewal:** ACME-issued certificates can be renewed automatically so expiry never reaches the warning window.
+      audit: |
+        ### Audit via Web UI
+
+        1. Log in to the Proxmox VE web interface.
+        2. For a node, go to System, then Certificates.
+        3. Review the valid-until date of the active API/web certificate.
+
+        A passing result shows an expiry date more than 30 days away; a failing result shows expiry within 30 days or already passed.
+
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        openssl x509 -in /etc/pve/local/pve-ssl.pem -checkend 2592000 -noout && echo valid || echo expiring
+        ```
+
+        A passing result prints valid; a failing result prints expiring.
       remediation:
         - id: cli
           desc: |
@@ -1379,18 +1679,18 @@ queries:
     impact: 90
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
-      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
       compliance/nis-2: nis-2-21-2-i
       compliance/nist-csf-1: nist-csf-1-pr-ac-4
-      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-csf-2: nist-csf-2-pr-ps-01
       compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
-      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/pci-dss-4: pcidss-requirement-2-2-3
       compliance/soc2-2017: soc2-control-cc6-1-3
-      compliance/vda-isa-5: vda-isa-5-4-1-1
+      compliance/vda-isa-5: vda-isa-5-5-2-3
     refs:
       - title: CWE-250 Execution with Unnecessary Privileges
         url: https://cwe.mitre.org/data/definitions/250.html
@@ -1404,13 +1704,36 @@ queries:
       )
     docs:
       desc: |
-        In Proxmox VE, LXC containers are **privileged by default** when the
-        `unprivileged:` directive is missing from the configuration file. This
-        check requires the explicit presence of `unprivileged: 1` in every
-        container config under `/etc/pve/lxc/`.
+        This check ensures that every LXC container on a Proxmox node is unprivileged. Containers are privileged whenever the unprivileged directive is missing, so each container config must explicitly set unprivileged: 1.
 
-        Privileged containers run with host-level root capabilities. The LXC
-        project considers privileged containers unsafe.
+        **Why this matters**
+
+        - **Default privilege:** Without an explicit unprivileged setting, a Proxmox container runs privileged by default.
+        - **Host root mapping:** A privileged container maps its root user to host root, so a container escape becomes host compromise.
+        - **Project guidance:** The LXC project itself considers privileged containers unsafe for untrusted workloads.
+
+        **Risk mitigation**
+
+        - **UID isolation:** An unprivileged container maps container root to an unprivileged host UID, containing an escape attempt.
+        - **Reduced impact:** Setting unprivileged: 1 ensures a compromised container cannot wield host root capabilities.
+      audit: |
+        ### Audit via Web UI
+
+        1. Log in to the Proxmox VE web interface.
+        2. For each container, select it, then go to Options.
+        3. Confirm that Unprivileged container is set to Yes.
+
+        A passing result shows every container marked unprivileged; a failing result shows one or more privileged containers.
+
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        for conf in /etc/pve/lxc/[0-9]*.conf; do grep -q '^unprivileged: 1' "$conf" || echo "privileged: $conf"; done
+        ```
+
+        A passing result prints nothing; a failing result names each container config that lacks unprivileged: 1.
       remediation:
         - id: cli
           desc: |
@@ -1488,7 +1811,7 @@ queries:
     impact: 70
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ccc-06
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-04
       compliance/dora: dora-art-9
       compliance/hipaa: false
       compliance/iso-27001-2022: iso-27001-2022-a-8-9
@@ -1497,9 +1820,9 @@ queries:
       compliance/nist-csf-2: nist-csf-2-pr-ps-01
       compliance/nist-sp-800-171: nist-sp-800-171--3-4-6
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-7
-      compliance/pci-dss-4: pcidss-requirement-2-2-1
+      compliance/pci-dss-4: pcidss-requirement-2-2-4
       compliance/soc2-2017: soc2-control-cc7-1-1
-      compliance/vda-isa-5: vda-isa-5-5-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-3
     refs:
       - title: CWE-653 Improper Isolation or Compartmentalization
         url: https://cwe.mitre.org/data/definitions/653.html
@@ -1509,9 +1832,36 @@ queries:
       )
     docs:
       desc: |
-        Container nesting allows running additional containers (or Docker)
-        inside an LXC container. It exposes additional kernel surfaces to the
-        guest and should remain disabled unless explicitly required.
+        This check ensures that LXC container nesting is disabled across all containers on a Proxmox node. Nesting lets a container run further containers or Docker inside itself, which widens the kernel surface exposed to the guest.
+
+        **Why this matters**
+
+        - **Expanded surface:** The nesting feature exposes additional kernel interfaces and mount capabilities to the guest.
+        - **Weaker isolation:** Running nested containers inside a guest complicates the isolation model and its security boundaries.
+        - **Unneeded capability:** Most workloads do not require nesting, so leaving it on grants capability for no benefit.
+
+        **Risk mitigation**
+
+        - **Minimal surface:** Removing nesting=1 keeps the container restricted to the minimum kernel interfaces it needs.
+        - **Stronger boundary:** Disabling nesting preserves a simpler, more defensible isolation model for each guest.
+      audit: |
+        ### Audit via Web UI
+
+        1. Log in to the Proxmox VE web interface.
+        2. For each container, select it, then go to Options, then Features.
+        3. Confirm that Nesting is not enabled.
+
+        A passing result shows nesting disabled on every container; a failing result shows it enabled on one or more.
+
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        grep -l 'nesting=1' /etc/pve/lxc/[0-9]*.conf
+        ```
+
+        A passing result prints nothing; a failing result names each container config whose features line includes nesting=1.
       remediation:
         - id: cli
           desc: |
@@ -1598,18 +1948,18 @@ queries:
     impact: 80
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ccc-06
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-04
       compliance/dora: dora-art-9
       compliance/hipaa: false
       compliance/iso-27001-2022: iso-27001-2022-a-8-9
       compliance/nis-2: nis-2-21-2-e
       compliance/nist-csf-1: nist-csf-1-pr-pt-3
       compliance/nist-csf-2: nist-csf-2-pr-ps-01
-      compliance/nist-sp-800-171: nist-sp-800-171--3-4-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-2
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-7
-      compliance/pci-dss-4: pcidss-requirement-2-2-1
+      compliance/pci-dss-4: pcidss-requirement-2-2-6
       compliance/soc2-2017: soc2-control-cc7-1-1
-      compliance/vda-isa-5: vda-isa-5-5-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-3
     refs:
       - title: CWE-653 Improper Isolation or Compartmentalization
         url: https://cwe.mitre.org/data/definitions/653.html
@@ -1619,9 +1969,28 @@ queries:
       )
     docs:
       desc: |
-        `lxc.apparmor.profile: unconfined` removes the LXC AppArmor profile and
-        therefore the in-kernel sandbox the container relies on. Remove the
-        directive from every container config.
+        This check ensures that no LXC container on a Proxmox node disables its AppArmor profile. Setting lxc.apparmor.profile to unconfined removes the in-kernel mandatory access control sandbox that the container relies on.
+
+        **Why this matters**
+
+        - **Lost sandbox:** An unconfined profile removes the AppArmor confinement that restricts a container's syscalls and file access.
+        - **Escape risk:** Without AppArmor, a process inside the container has a far wider path to attack the host kernel.
+        - **Silent weakening:** The directive lives in a config file and can disable a key control without obvious signs.
+
+        **Risk mitigation**
+
+        - **Mandatory access control:** Keeping the default LXC AppArmor profile constrains container processes to a vetted set of operations.
+        - **Defense in depth:** Removing the unconfined directive restores a kernel-enforced isolation layer around each container.
+      audit: |
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        grep -l '^lxc.apparmor.profile:[[:space:]]*unconfined' /etc/pve/lxc/[0-9]*.conf
+        ```
+
+        A passing result prints nothing; a failing result names each container config that sets the AppArmor profile to unconfined.
       remediation:
         - id: cli
           desc: |
@@ -1693,24 +2062,51 @@ queries:
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
-      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
       compliance/nis-2: nis-2-21-2-e
       compliance/nist-csf-1: nist-csf-1-pr-ac-5
       compliance/nist-csf-2: nist-csf-2-pr-ir-01
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
-      compliance/pci-dss-4: pcidss-requirement-1-3-1
-      compliance/soc2-2017: soc2-control-cc6-6-1
-      compliance/vda-isa-5: vda-isa-5-5-2-6
+      compliance/pci-dss-4: pcidss-requirement-1-4-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: vda-isa-5-5-2-7
     mql: |
       files.find(from: "/etc/pve/lxc", regex: "[0-9]+.conf$", type: "file").list.all(
         file(_.path).content.lines.where(_ == /^net[0-9]+:/).all(_.contains("firewall=1"))
       )
     docs:
       desc: |
-        Each `netN` interface on an LXC container must include `firewall=1` so
-        the per-interface Proxmox firewall is enforced. Without it, traffic to
-        and from that interface bypasses cluster and per-VM rules.
+        This check ensures that every `netN` interface on an LXC container is configured to enforce the per-interface Proxmox firewall through the `firewall=1` flag. Proxmox does not enable the firewall on a guest interface unless the flag is set, so traffic to and from that interface bypasses cluster and per-VM rules.
+
+        **Why this matters**
+
+        - **Rule enforcement:** Without `firewall=1` the cluster, node, and per-guest firewall rules never apply to the container's traffic.
+        - **Lateral movement:** An unfiltered interface lets a compromised container reach other guests and host services unimpeded.
+        - **Inconsistent posture:** Mixed firewall states across containers make the overall security stance hard to reason about and audit.
+
+        **Risk mitigation**
+
+        - **Defense in depth:** Per-interface filtering adds an enforcement point close to the workload, independent of upstream network controls.
+        - **Containment:** Enforced rules confine a breached container and limit the blast radius of an incident.
+      audit: |
+        ### Audit via Web UI
+
+        1. Sign in to the Proxmox VE web interface.
+        2. Select a container in the resource tree, then open its **Network** panel.
+        3. Inspect each network device and confirm the **Firewall** column or device dialog shows the firewall enabled.
+
+        A passing result shows every container network device with the firewall enabled; a failing result shows one or more devices with the firewall disabled.
+
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        for c in /etc/pve/lxc/[0-9]*.conf; do echo "== $c =="; grep '^net[0-9]*:' "$c"; done
+        ```
+
+        A passing result shows `firewall=1` on every `netN` line; a failing result shows a `netN` line without `firewall=1` or with `firewall=0`.
       remediation:
         - id: cli
           desc: |
@@ -1793,7 +2189,7 @@ queries:
     impact: 60
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ccc-06
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-04
       compliance/dora: dora-art-9
       compliance/hipaa: false
       compliance/iso-27001-2022: iso-27001-2022-a-8-9
@@ -1802,18 +2198,45 @@ queries:
       compliance/nist-csf-2: nist-csf-2-pr-ps-01
       compliance/nist-sp-800-171: nist-sp-800-171--3-4-6
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-7
-      compliance/pci-dss-4: pcidss-requirement-2-2-1
+      compliance/pci-dss-4: pcidss-requirement-2-2-4
       compliance/soc2-2017: soc2-control-cc7-1-1
-      compliance/vda-isa-5: vda-isa-5-5-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-3
     mql: |
       files.find(from: "/etc/pve/lxc", regex: "[0-9]+.conf$", type: "file").list.all(
         file(_.path).content.contains("mknod=1") == false
       )
     docs:
       desc: |
-        The `mknod=1` feature lets a container create device nodes, which can
-        be used to escape unprivileged confinement. Disable it unless
-        absolutely required.
+        This check ensures that LXC containers are configured without the `mknod=1` feature so they cannot create device nodes. Proxmox leaves the `mknod` feature off by default, and enabling it gives a container a primitive that can be used to escape unprivileged confinement.
+
+        **Why this matters**
+
+        - **Container escape:** The ability to create device nodes is a known path for breaking out of unprivileged container isolation.
+        - **Host device exposure:** A container that can craft device nodes may reach host block, character, or kernel devices it should never touch.
+        - **Excess privilege:** Most workloads never need `mknod`, so leaving it enabled grants capability with no operational benefit.
+
+        **Risk mitigation**
+
+        - **Reduced attack surface:** Removing the feature eliminates a device-node escape vector from the container.
+        - **Least privilege:** Containers run with only the capabilities their workload actually requires.
+      audit: |
+        ### Audit via Web UI
+
+        1. Sign in to the Proxmox VE web interface.
+        2. Select a container in the resource tree, then open its **Options** panel.
+        3. Review the **Features** row and confirm `mknod` is not listed.
+
+        A passing result shows the **Features** value without `mknod`; a failing result shows `mknod=1` among the enabled features.
+
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        grep -l 'mknod=1' /etc/pve/lxc/[0-9]*.conf
+        ```
+
+        A passing result returns no output; a failing result lists container config files that enable `mknod=1`.
       remediation:
         - id: cli
           desc: |
@@ -1899,7 +2322,7 @@ queries:
     impact: 60
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ccc-06
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-04
       compliance/dora: dora-art-9
       compliance/hipaa: false
       compliance/iso-27001-2022: iso-27001-2022-a-8-9
@@ -1908,18 +2331,45 @@ queries:
       compliance/nist-csf-2: nist-csf-2-pr-ps-01
       compliance/nist-sp-800-171: nist-sp-800-171--3-4-6
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-7
-      compliance/pci-dss-4: pcidss-requirement-2-2-1
+      compliance/pci-dss-4: pcidss-requirement-2-2-4
       compliance/soc2-2017: soc2-control-cc7-1-1
-      compliance/vda-isa-5: vda-isa-5-5-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-3
     mql: |
       files.find(from: "/etc/pve/lxc", regex: "[0-9]+.conf$", type: "file").list.all(
         file(_.path).content.contains("fuse=1") == false
       )
     docs:
       desc: |
-        The `fuse=1` feature lets a container load FUSE filesystems, which can
-        weaken isolation boundaries. Disable it unless an application strictly
-        requires FUSE.
+        This check ensures that LXC containers are configured without the `fuse=1` feature so they cannot load FUSE filesystems. Proxmox leaves the `fuse` feature off by default because mounting userspace filesystems inside a container weakens the isolation boundary between guest and host.
+
+        **Why this matters**
+
+        - **Weakened isolation:** FUSE mounts expand the kernel and filesystem surface a container can interact with, eroding confinement guarantees.
+        - **Privilege paths:** FUSE-related operations have been associated with container escape and privilege escalation techniques.
+        - **Unneeded capability:** Few workloads genuinely require FUSE, so enabling it adds risk without value.
+
+        **Risk mitigation**
+
+        - **Reduced attack surface:** Disabling FUSE removes a class of filesystem-based escape and abuse vectors.
+        - **Stronger boundaries:** Containers stay confined to the filesystem semantics Proxmox provides by default.
+      audit: |
+        ### Audit via Web UI
+
+        1. Sign in to the Proxmox VE web interface.
+        2. Select a container in the resource tree, then open its **Options** panel.
+        3. Review the **Features** row and confirm `fuse` is not listed.
+
+        A passing result shows the **Features** value without `fuse`; a failing result shows `fuse=1` among the enabled features.
+
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        grep -l 'fuse=1' /etc/pve/lxc/[0-9]*.conf
+        ```
+
+        A passing result returns no output; a failing result lists container config files that enable `fuse=1`.
       remediation:
         - id: cli
           desc: |
@@ -2005,18 +2455,18 @@ queries:
     impact: 60
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ccc-06
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-02
       compliance/dora: dora-art-9
       compliance/hipaa: false
-      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/iso-27001-2022: iso-27001-2022-a-8-6
       compliance/nis-2: nis-2-21-2-e
-      compliance/nist-csf-1: nist-csf-1-pr-pt-3
-      compliance/nist-csf-2: nist-csf-2-pr-ps-01
-      compliance/nist-sp-800-171: nist-sp-800-171--3-4-6
+      compliance/nist-csf-1: nist-csf-1-pr-ds-4
+      compliance/nist-csf-2: nist-csf-2-pr-ir-04
+      compliance/nist-sp-800-171: false
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-7
-      compliance/pci-dss-4: pcidss-requirement-2-2-1
+      compliance/pci-dss-4: false
       compliance/soc2-2017: soc2-control-cc7-1-1
-      compliance/vda-isa-5: vda-isa-5-5-2-1
+      compliance/vda-isa-5: false
     refs:
       - title: CWE-400 Uncontrolled Resource Consumption
         url: https://cwe.mitre.org/data/definitions/400.html
@@ -2026,9 +2476,36 @@ queries:
       )
     docs:
       desc: |
-        Every LXC container must have a `memory:` directive. Without one, a
-        runaway process inside the container can starve the host or other
-        guests. The default unit is megabytes.
+        This check ensures that every LXC container is configured with a `memory:` directive that caps how much host memory it can consume. A container without an explicit limit can let a runaway process starve the host and neighboring guests of memory.
+
+        **Why this matters**
+
+        - **Resource exhaustion:** An unbounded container can consume all host memory and trigger the kernel out-of-memory killer against unrelated workloads.
+        - **Noisy neighbor:** One uncapped guest degrades the performance and stability of every other guest on the node.
+        - **Availability impact:** Memory starvation on the host can disrupt cluster services and management functions.
+
+        **Risk mitigation**
+
+        - **Fault containment:** A memory cap confines a runaway process to its own container rather than the whole node.
+        - **Predictable capacity:** Explicit limits make node capacity planning and density decisions reliable.
+      audit: |
+        ### Audit via Web UI
+
+        1. Sign in to the Proxmox VE web interface.
+        2. Select a container in the resource tree, then open its **Resources** panel.
+        3. Confirm the **Memory** entry shows a defined value rather than being unset.
+
+        A passing result shows a configured memory value for every container; a failing result shows a container with no memory limit assigned.
+
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        for c in /etc/pve/lxc/[0-9]*.conf; do grep -q '^memory:' "$c" || echo "no memory limit: $c"; done
+        ```
+
+        A passing result returns no output; a failing result lists container config files that lack a `memory:` directive.
       remediation:
         - id: cli
           desc: |
@@ -2105,18 +2582,18 @@ queries:
     impact: 80
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-04
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
-      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-8
       compliance/nis-2: nis-2-21-2-e
-      compliance/nist-csf-1: nist-csf-1-pr-ac-5
-      compliance/nist-csf-2: nist-csf-2-pr-ir-01
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
-      compliance/pci-dss-4: pcidss-requirement-1-3-1
-      compliance/soc2-2017: soc2-control-cc6-6-1
-      compliance/vda-isa-5: vda-isa-5-5-2-6
+      compliance/nist-csf-1: nist-csf-1-pr-pt-3
+      compliance/nist-csf-2: nist-csf-2-pr-ps-01
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-1
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-16
+      compliance/pci-dss-4: pcidss-requirement-2-2-1
+      compliance/soc2-2017: soc2-control-cc7-1-1
+      compliance/vda-isa-5: vda-isa-5-5-2-5
     refs:
       - title: CVE-2017-5753 Spectre Variant 1
         url: https://nvd.nist.gov/vuln/detail/CVE-2017-5753
@@ -2132,9 +2609,36 @@ queries:
       )
     docs:
       desc: |
-        Each VM's CPU type must expose Spectre/Meltdown mitigations to the
-        guest via the `+spec-ctrl` or `+ssbd` CPU flags. Without them, the
-        guest kernel cannot apply the corresponding software mitigations.
+        This check ensures that each QEMU VM is configured to expose Spectre and Meltdown CPU mitigations to the guest through the `+spec-ctrl` or `+ssbd` CPU flags. Unless these flags are present on the `cpu:` line, the guest kernel cannot detect the mitigation capability and cannot apply the matching software defenses.
+
+        **Why this matters**
+
+        - **Speculative execution attacks:** Spectre and Meltdown class flaws allow code in one context to read memory it should not, including across guest boundaries.
+        - **Guest blindness:** Without the CPU flags the guest kernel believes the hardware lacks mitigation support and leaves itself unprotected.
+        - **Cross-tenant exposure:** On shared hosts, an unmitigated guest increases the risk of information leakage between tenants.
+
+        **Risk mitigation**
+
+        - **Defense activation:** Exposing the flags lets the guest enable kernel-level mitigations for known speculative side channels.
+        - **Tenant isolation:** Consistent mitigation reduces the chance of memory disclosure across VMs on the same processor.
+      audit: |
+        ### Audit via Web UI
+
+        1. Sign in to the Proxmox VE web interface.
+        2. Select a VM in the resource tree, then open its **Hardware** panel.
+        3. Open the **Processors** entry and review the configured CPU type and extra flags for `+spec-ctrl` or `+ssbd`.
+
+        A passing result shows the CPU configuration including `+spec-ctrl` or `+ssbd`; a failing result shows a CPU configuration without either mitigation flag.
+
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        for c in /etc/pve/qemu-server/[0-9]*.conf; do echo "== $c =="; grep '^cpu:' "$c"; done
+        ```
+
+        A passing result shows every `cpu:` line containing `+spec-ctrl` or `+ssbd`; a failing result shows a `cpu:` line missing both flags.
       remediation:
         - id: cli
           desc: |
@@ -2211,24 +2715,51 @@ queries:
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
-      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
       compliance/nis-2: nis-2-21-2-e
       compliance/nist-csf-1: nist-csf-1-pr-ac-5
       compliance/nist-csf-2: nist-csf-2-pr-ir-01
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
-      compliance/pci-dss-4: pcidss-requirement-1-3-1
-      compliance/soc2-2017: soc2-control-cc6-6-1
-      compliance/vda-isa-5: vda-isa-5-5-2-6
+      compliance/pci-dss-4: pcidss-requirement-1-4-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: vda-isa-5-5-2-7
     mql: |
       files.find(from: "/etc/pve/qemu-server", regex: "[0-9]+.conf$", type: "file").list.all(
         file(_.path).content.lines.where(_ == /^net[0-9]+:/).all(_.contains("firewall=1"))
       )
     docs:
       desc: |
-        Every QEMU VM `netN` interface must include `firewall=1` so the
-        per-interface Proxmox firewall enforces cluster, node, and VM rules
-        for that interface.
+        This check ensures that every `netN` interface on a QEMU VM is configured to enforce the per-interface Proxmox firewall through the `firewall=1` flag. Proxmox does not filter a VM interface unless the flag is set, so traffic on that interface bypasses cluster, node, and per-VM rules.
+
+        **Why this matters**
+
+        - **Rule enforcement:** Without `firewall=1` the cluster, node, and per-guest firewall rules never apply to the VM's traffic.
+        - **Lateral movement:** An unfiltered interface lets a compromised VM reach other guests and host services unimpeded.
+        - **Inconsistent posture:** Mixed firewall states across VMs make the overall security stance hard to reason about and audit.
+
+        **Risk mitigation**
+
+        - **Defense in depth:** Per-interface filtering adds an enforcement point close to the workload, independent of upstream network controls.
+        - **Containment:** Enforced rules confine a breached VM and limit the blast radius of an incident.
+      audit: |
+        ### Audit via Web UI
+
+        1. Sign in to the Proxmox VE web interface.
+        2. Select a VM in the resource tree, then open its **Hardware** panel.
+        3. Open each **Network Device** entry and confirm the **Firewall** checkbox is selected.
+
+        A passing result shows every VM network device with the firewall enabled; a failing result shows one or more devices with the firewall disabled.
+
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        for c in /etc/pve/qemu-server/[0-9]*.conf; do echo "== $c =="; grep '^net[0-9]*:' "$c"; done
+        ```
+
+        A passing result shows `firewall=1` on every `netN` line; a failing result shows a `netN` line without `firewall=1` or with `firewall=0`.
       remediation:
         - id: cli
           desc: |
@@ -2309,7 +2840,7 @@ queries:
     impact: 70
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ccc-06
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-04
       compliance/dora: dora-art-9
       compliance/hipaa: false
       compliance/iso-27001-2022: iso-27001-2022-a-8-9
@@ -2318,9 +2849,9 @@ queries:
       compliance/nist-csf-2: nist-csf-2-pr-ps-01
       compliance/nist-sp-800-171: nist-sp-800-171--3-4-6
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-7
-      compliance/pci-dss-4: pcidss-requirement-2-2-1
+      compliance/pci-dss-4: pcidss-requirement-2-2-4
       compliance/soc2-2017: soc2-control-cc7-1-1
-      compliance/vda-isa-5: vda-isa-5-5-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-3
     refs:
       - title: CWE-94 Improper Control of Generation of Code
         url: https://cwe.mitre.org/data/definitions/94.html
@@ -2330,10 +2861,36 @@ queries:
       )
     docs:
       desc: |
-        The `args:` directive in a VM config injects raw command-line flags
-        into the QEMU process. They bypass Proxmox validation and can disable
-        security features. Remove the directive unless you have a vetted
-        operational reason to keep it.
+        This check ensures that QEMU VMs are configured without the `args:` directive, which injects raw command-line flags directly into the QEMU process. Proxmox does not validate the contents of `args:`, so it bypasses the platform's configuration controls and can quietly disable security features.
+
+        **Why this matters**
+
+        - **Validation bypass:** Raw arguments skip the checks Proxmox normally applies to VM configuration.
+        - **Security regression:** Hand-passed flags can turn off hardening QEMU options or expose unsafe devices.
+        - **Hidden behavior:** Settings in `args:` are easy to overlook during review and drift from the documented configuration.
+
+        **Risk mitigation**
+
+        - **Managed configuration:** Keeping all settings in supported Proxmox options preserves validation and auditability.
+        - **Predictable VMs:** Removing raw arguments eliminates undocumented runtime behavior that can undermine isolation.
+      audit: |
+        ### Audit via Web UI
+
+        1. Sign in to the Proxmox VE web interface.
+        2. Select a VM in the resource tree, then open its **Options** panel.
+        3. Confirm there is no value set under the raw QEMU arguments entry, since the web UI exposes `args:` only as a manual override.
+
+        A passing result shows no raw QEMU arguments configured; a failing result shows an `args:` value present in the VM configuration.
+
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        grep -l '^args:' /etc/pve/qemu-server/[0-9]*.conf
+        ```
+
+        A passing result returns no output; a failing result lists VM config files that contain an `args:` directive.
       remediation:
         - id: cli
           desc: |
@@ -2405,7 +2962,7 @@ queries:
     impact: 80
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
@@ -2414,7 +2971,7 @@ queries:
       compliance/nist-csf-2: nist-csf-2-pr-ds-02
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
-      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/pci-dss-4: pcidss-requirement-2-2-6
       compliance/soc2-2017: soc2-control-cc6-7-2
       compliance/vda-isa-5: vda-isa-5-5-1-2
     refs:
@@ -2425,13 +2982,28 @@ queries:
       file("/etc/pve/corosync.conf").content.contains("secauth: on")
     docs:
       desc: |
-        Corosync carries cluster membership and quorum traffic. It must use
-        encrypted transport (`transport: knet`, the default since PVE 6) or
-        legacy authenticated multicast (`secauth: on`).
+        This check ensures that Corosync cluster communication is configured to use encrypted transport, either the `transport: knet` setting or legacy authenticated multicast via `secauth: on`. Corosync carries cluster membership and quorum traffic, and since Proxmox VE 6 the encrypted knet transport is the default.
 
-        Editing `corosync.conf` is a cluster-critical operation - bump
-        `config_version` in the `totem { }` block before reloading or the
-        cluster will reject the change.
+        **Why this matters**
+
+        - **Cleartext exposure:** Unencrypted cluster traffic lets a network observer read membership and quorum messages.
+        - **Spoofing risk:** Without authenticated transport, an attacker on the cluster network can inject or forge corosync messages.
+        - **Cluster integrity:** Tampered quorum traffic can disrupt fencing decisions and split-brain protection.
+
+        **Risk mitigation**
+
+        - **Confidentiality:** Encrypted transport keeps cluster control traffic unreadable on the wire.
+        - **Authenticity:** Cryptographic protection blocks injection and replay of forged corosync messages.
+      audit: |
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        grep -E 'transport:|secauth:|crypto_' /etc/pve/corosync.conf
+        ```
+
+        A passing result shows `transport: knet` or `secauth: on` within the `totem` block; a failing result shows neither, indicating unencrypted cluster communication.
       remediation:
         - id: cli
           desc: |
@@ -2533,7 +3105,7 @@ queries:
     impact: 80
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
@@ -2542,7 +3114,7 @@ queries:
       compliance/nist-csf-2: nist-csf-2-pr-ds-02
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
-      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/pci-dss-4: pcidss-requirement-2-2-6
       compliance/soc2-2017: soc2-control-cc6-7-2
       compliance/vda-isa-5: vda-isa-5-5-1-2
     refs:
@@ -2553,13 +3125,36 @@ queries:
       file("/etc/pve/datacenter.cfg").content.contains("migration: secure")
     docs:
       desc: |
-        Live migration sends VM memory contents over the network. It must be
-        transmitted via an encrypted SSH tunnel (`migration: type=secure`).
+        This check ensures that live migration is configured to send VM memory over an encrypted SSH tunnel by setting `migration: type=secure` in the datacenter configuration. Proxmox VE 8 and later use secure migration when the setting is absent, but earlier releases do not, so the value should be set explicitly for consistent behavior across versions.
 
-        This check requires explicit configuration of `migration: type=secure`
-        in `/etc/pve/datacenter.cfg`. While PVE 8+ uses secure migration by
-        default when the setting is absent, PVE 7.x does not. Require explicit
-        configuration for consistency across versions.
+        **Why this matters**
+
+        - **Memory in transit:** Live migration streams the full contents of guest RAM, which can include secrets and credentials.
+        - **Cleartext interception:** Insecure migration exposes that memory stream to anyone monitoring the migration network.
+        - **Version drift:** Relying on defaults leaves older nodes transmitting migration data unencrypted without obvious indication.
+
+        **Risk mitigation**
+
+        - **Confidentiality:** Secure migration tunnels guest memory through SSH so it cannot be read on the wire.
+        - **Consistent enforcement:** An explicit setting guarantees the same protection regardless of the Proxmox VE version.
+      audit: |
+        ### Audit via Web UI
+
+        1. Sign in to the Proxmox VE web interface.
+        2. Open **Datacenter**, then select the **Options** panel.
+        3. Review the **Migration Settings** entry and confirm the type is set to **secure**.
+
+        A passing result shows the migration type set to secure; a failing result shows it set to insecure or left unset.
+
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        pvesh get /cluster/options --output-format json | grep -i migration
+        ```
+
+        A passing result shows the migration type reported as `secure`; a failing result shows `insecure` or no explicit migration type.
       remediation:
         - id: cli
           desc: |
@@ -2611,18 +3206,18 @@ queries:
     impact: 70
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-06
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
       compliance/iso-27001-2022: iso-27001-2022-a-8-22
-      compliance/nis-2: nis-2-21-2-e
+      compliance/nis-2: nis-2-21-2-i
       compliance/nist-csf-1: nist-csf-1-pr-ac-5
       compliance/nist-csf-2: nist-csf-2-pr-ir-01
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
-      compliance/pci-dss-4: pcidss-requirement-1-3-1
-      compliance/soc2-2017: soc2-control-cc6-6-1
-      compliance/vda-isa-5: vda-isa-5-5-2-6
+      compliance/pci-dss-4: pcidss-requirement-1-4-1
+      compliance/soc2-2017: soc2-control-cc6-1-5
+      compliance/vda-isa-5: vda-isa-5-5-2-7
     refs:
       - title: CWE-923 Improper Restriction of Communication Channel
         url: https://cwe.mitre.org/data/definitions/923.html
@@ -2637,9 +3232,36 @@ queries:
       )
     docs:
       desc: |
-        At least some VMs or containers should be tagged with a VLAN ID so the
-        underlying bridge enforces L2 segmentation. Flat networks expose every
-        guest to every other guest at layer 2.
+        This check ensures that guest network interfaces are configured with VLAN tags so the underlying bridge enforces layer 2 segmentation. Proxmox places untagged guests on a flat network by default, which exposes every guest to every other guest at the link layer.
+
+        **Why this matters**
+
+        - **Flat network exposure:** Without VLAN tags all guests share a single broadcast domain and can reach one another directly.
+        - **Lateral movement:** A flat layer 2 network gives a compromised guest unrestricted reach to neighboring workloads.
+        - **Weak tenancy boundaries:** Workloads of differing trust levels are not separated when no segmentation is applied.
+
+        **Risk mitigation**
+
+        - **Segmentation:** VLAN tags isolate guests into separate broadcast domains enforced by the bridge.
+        - **Containment:** Layer 2 separation limits how far an attacker can pivot from a breached guest.
+      audit: |
+        ### Audit via Web UI
+
+        1. Sign in to the Proxmox VE web interface.
+        2. Select a VM or container in the resource tree, then open its **Hardware** or **Network** panel.
+        3. Review each network device and confirm a **VLAN Tag** is assigned where segmentation is intended.
+
+        A passing result shows guest network devices carrying VLAN tags; a failing result shows guests with no VLAN tags applied.
+
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        grep -lE 'tag=[0-9]+' /etc/pve/qemu-server/[0-9]*.conf /etc/pve/lxc/[0-9]*.conf
+        ```
+
+        A passing result lists guest config files that include a `tag=` value; a failing result returns no output, indicating no VLAN segmentation is in use.
       remediation:
         - id: cli
           desc: |
@@ -2725,13 +3347,13 @@ queries:
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
-      compliance/dora: dora-art-9
+      compliance/dora: dora-art-12
       compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
       compliance/nist-csf-1: nist-csf-1-pr-ds-1
-      compliance/nist-csf-2: nist-csf-2-pr-ds-01
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/nist-csf-2: nist-csf-2-pr-ds-11
+      compliance/nist-sp-800-171: nist-sp-800-171--3-8-9
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
       compliance/pci-dss-4: pcidss-requirement-3-5-1
       compliance/soc2-2017: soc2-control-cc6-1-10
@@ -2746,9 +3368,36 @@ queries:
       files.find(from: "/etc/pve/priv/storage", regex: ".enc$", type: "file").list.length > 0
     docs:
       desc: |
-        When a Proxmox Backup Server datastore is attached, every backup
-        written to it must be encrypted with a client-side key. The key is
-        stored at `/etc/pve/priv/storage/<storage-id>.enc`.
+        This check ensures that when a Proxmox Backup Server datastore is attached, it is configured with a client-side encryption key so every backup written to it is encrypted. The key is held at `/etc/pve/priv/storage/<storage-id>.enc`, and Proxmox does not encrypt PBS backups unless such a key is assigned.
+
+        **Why this matters**
+
+        - **Data at rest:** Unencrypted backups expose guest disk and memory contents to anyone who can read the backup store.
+        - **Offsite risk:** PBS datastores are often remote or offsite, widening the set of parties who could access raw backup data.
+        - **Compliance exposure:** Backups frequently contain regulated data that must be protected with encryption.
+
+        **Risk mitigation**
+
+        - **Confidentiality:** Client-side encryption renders backup contents unreadable without the key.
+        - **Reduced blast radius:** A compromised or stolen datastore yields only ciphertext, not usable data.
+      audit: |
+        ### Audit via Web UI
+
+        1. Sign in to the Proxmox VE web interface.
+        2. Open **Datacenter**, then select **Storage** and choose the Proxmox Backup Server entry.
+        3. Confirm an encryption key is configured for the storage in its **Encryption** settings.
+
+        A passing result shows an encryption key assigned to every PBS storage; a failing result shows a PBS storage with no encryption key.
+
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        for s in $(awk '/^pbs:/ {print $2}' /etc/pve/storage.cfg); do test -s "/etc/pve/priv/storage/$s.enc" && echo "$s: encrypted" || echo "$s: NO KEY"; done
+        ```
+
+        A passing result reports an existing `.enc` key file for every PBS storage; a failing result reports a PBS storage with no key file.
       remediation:
         - id: cli
           desc: |
@@ -2825,26 +3474,53 @@ queries:
     impact: 60
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
-      compliance/dora: dora-art-9
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-20
+      compliance/dora: dora-art-12
       compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
       compliance/nist-csf-1: nist-csf-1-pr-ds-1
-      compliance/nist-csf-2: nist-csf-2-pr-ds-01
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-csf-2: nist-csf-2-pr-ds-11
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-10
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-12
       compliance/pci-dss-4: pcidss-requirement-3-5-1
-      compliance/soc2-2017: soc2-control-cc6-1-10
+      compliance/soc2-2017: soc2-control-cc6-1-11
       compliance/vda-isa-5: vda-isa-5-5-1-1
     mql: |
       file("/etc/pve/storage.cfg").content.contains("pbs:") == false ||
       files.find(from: "/etc/pve/priv/storage", regex: ".master.pem$", type: "file").list.length > 0
     docs:
       desc: |
-        A PBS master key (RSA) lets a backup operator decrypt restored backups
-        without the original encryption key. Generate one and attach it to the
-        PBS storage entry. Store the master key offline.
+        This check ensures that when a Proxmox Backup Server datastore is attached, an RSA master key is configured so a backup operator can decrypt restored backups without the original client encryption key. The master public key is stored at `/etc/pve/priv/storage/<storage-id>.master.pem` and the private half belongs in offline storage.
+
+        **Why this matters**
+
+        - **Recovery dependency:** Without a master key, losing the client encryption key makes every encrypted backup permanently unrecoverable.
+        - **Operational continuity:** Restores must remain possible even when the original key holder is unavailable.
+        - **Key custody:** A master key separates day-to-day backup encryption from a safeguarded recovery path.
+
+        **Risk mitigation**
+
+        - **Disaster recovery:** A master key provides an independent route to decrypt backups during incident response.
+        - **Resilience:** Backups stay restorable despite loss or corruption of the primary encryption key.
+      audit: |
+        ### Audit via Web UI
+
+        1. Sign in to the Proxmox VE web interface.
+        2. Open **Datacenter**, then select **Storage** and choose the Proxmox Backup Server entry.
+        3. Review the **Encryption** settings and confirm a master public key is configured.
+
+        A passing result shows a master key assigned to every PBS storage; a failing result shows a PBS storage with no master key.
+
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        for s in $(awk '/^pbs:/ {print $2}' /etc/pve/storage.cfg); do test -s "/etc/pve/priv/storage/$s.master.pem" && echo "$s: master key set" || echo "$s: NO MASTER KEY"; done
+        ```
+
+        A passing result reports an existing `.master.pem` file for every PBS storage; a failing result reports a PBS storage with no master key file.
       remediation:
         - id: cli
           desc: |
@@ -2937,16 +3613,16 @@ queries:
     impact: 60
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ccc-06
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-04
       compliance/dora: dora-art-9
       compliance/hipaa: false
       compliance/iso-27001-2022: iso-27001-2022-a-8-9
       compliance/nis-2: nis-2-21-2-e
       compliance/nist-csf-1: nist-csf-1-pr-pt-3
-      compliance/nist-csf-2: nist-csf-2-pr-ps-01
+      compliance/nist-csf-2: nist-csf-2-pr-ds-10
       compliance/nist-sp-800-171: nist-sp-800-171--3-4-6
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-7
-      compliance/pci-dss-4: pcidss-requirement-2-2-1
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-4
+      compliance/pci-dss-4: pcidss-requirement-2-2-4
       compliance/soc2-2017: soc2-control-cc7-1-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
     refs:
@@ -2958,8 +3634,29 @@ queries:
       file("/sys/kernel/mm/ksm/run").content.trim == "0"
     docs:
       desc: |
-        KSM enables memory deduplication across VMs, which exposes a
-        side-channel attack surface in multi-tenant hypervisor environments.
+        This check ensures that Kernel Samepage Merging is disabled on the hypervisor by confirming `/sys/kernel/mm/ksm/run` holds `0`. KSM deduplicates identical memory pages across VMs to save RAM, but that shared-page behavior creates a timing side channel that an attacker can use to infer the memory contents of other tenants.
+
+        **Why this matters**
+
+        - **Side-channel leakage:** Page-merge timing differences let one VM probe whether another VM holds specific data.
+        - **Cross-tenant exposure:** On multi-tenant hosts, KSM weakens the memory isolation between unrelated workloads.
+        - **Marginal benefit:** The memory savings rarely justify the information-disclosure risk on security-sensitive hosts.
+
+        **Risk mitigation**
+
+        - **Closed side channel:** Disabling KSM removes the memory deduplication timing channel between VMs.
+        - **Stronger isolation:** Each VM keeps its own memory pages, preserving tenant separation.
+      audit: |
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        cat /sys/kernel/mm/ksm/run
+        systemctl is-enabled ksmtuned ksm 2>/dev/null
+        ```
+
+        A passing result shows `/sys/kernel/mm/ksm/run` reporting `0`; a failing result shows a non-zero value or the `ksmtuned` or `ksm` units enabled to re-activate it on boot.
       remediation:
         - id: cli
           desc: |
@@ -3029,18 +3726,18 @@ queries:
     impact: 90
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-04
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
-      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
       compliance/nis-2: nis-2-21-2-e
-      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-1: nist-csf-1-pr-pt-3
       compliance/nist-csf-2: nist-csf-2-pr-ir-01
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
-      compliance/pci-dss-4: pcidss-requirement-1-3-1
-      compliance/soc2-2017: soc2-control-cc6-6-1
-      compliance/vda-isa-5: vda-isa-5-5-2-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-4
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-4
+      compliance/pci-dss-4: pcidss-requirement-2-2-3
+      compliance/soc2-2017: soc2-control-cc7-1-1
+      compliance/vda-isa-5: vda-isa-5-5-2-1
     refs:
       - title: CWE-284 Improper Access Control
         url: https://cwe.mitre.org/data/definitions/284.html
@@ -3050,8 +3747,28 @@ queries:
       file("/proc/cmdline").content.contains("pcie_acs_override") == false
     docs:
       desc: |
-        `pcie_acs_override` breaks IOMMU group isolation, allowing cross-VM
-        memory access via DMA. Never use in production.
+        This check ensures that the kernel command line is configured without the `pcie_acs_override` parameter. That option forces the kernel to treat PCI devices as isolated when the hardware does not actually support Access Control Services, breaking the IOMMU group boundaries that confine passthrough devices.
+
+        **Why this matters**
+
+        - **Broken isolation:** The override splits IOMMU groups that the hardware cannot truly separate, defeating PCI passthrough isolation.
+        - **Cross-VM DMA:** A passthrough device in a falsely isolated group can perform DMA into memory belonging to other VMs or the host.
+        - **Silent risk:** The override is often added for convenience and then forgotten, leaving a serious gap in production.
+
+        **Risk mitigation**
+
+        - **Hardware-enforced isolation:** Removing the override keeps IOMMU groups aligned with real hardware boundaries.
+        - **Memory protection:** Passthrough devices stay confined to their assigned VM, preventing cross-tenant DMA access.
+      audit: |
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        grep -o 'pcie_acs_override[^ ]*' /proc/cmdline /etc/default/grub /etc/kernel/cmdline 2>/dev/null
+        ```
+
+        A passing result returns no output, confirming the override is absent from the running kernel command line and the persisted boot configuration; a failing result shows a `pcie_acs_override` entry.
       remediation:
         - id: cli
           desc: |
@@ -3141,27 +3858,46 @@ queries:
     impact: 70
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-04
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
-      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
       compliance/nis-2: nis-2-21-2-e
-      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-1: nist-csf-1-pr-pt-3
       compliance/nist-csf-2: nist-csf-2-pr-ir-01
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
-      compliance/pci-dss-4: pcidss-requirement-1-3-1
-      compliance/soc2-2017: soc2-control-cc6-6-1
-      compliance/vda-isa-5: vda-isa-5-5-2-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-4
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-4
+      compliance/pci-dss-4: pcidss-requirement-2-2-3
+      compliance/soc2-2017: soc2-control-cc7-1-1
+      compliance/vda-isa-5: vda-isa-5-5-2-1
     mql: |
       file("/proc/cmdline").content.contains("intel_iommu=on") ||
       file("/proc/cmdline").content.contains("amd_iommu=on") ||
       file("/proc/cmdline").content.contains("iommu=pt")
     docs:
       desc: |
-        IOMMU isolates PCI passthrough devices into independent DMA groups.
-        Enable it via `intel_iommu=on` (Intel) or `amd_iommu=on` (AMD), and
-        consider also setting `iommu=pt` for pass-through mode.
+        This check ensures that the kernel command line is configured to enable IOMMU through `intel_iommu=on`, `amd_iommu=on`, or `iommu=pt`. IOMMU places PCI passthrough devices into independent DMA groups, and without it a passthrough device can perform unrestricted direct memory access across VM and host memory.
+
+        **Why this matters**
+
+        - **DMA isolation:** IOMMU restricts a passthrough device to the memory of its assigned VM rather than the whole system.
+        - **Passthrough safety:** Without IOMMU, assigning a device to a guest exposes host and other-guest memory to that device.
+        - **Group integrity:** IOMMU groups are the foundation Proxmox relies on to validate safe passthrough configurations.
+
+        **Risk mitigation**
+
+        - **Memory protection:** Hardware DMA remapping confines passthrough devices to their owning VM.
+        - **Tenant isolation:** Enabled IOMMU preserves the boundary between guests that share the same host hardware.
+      audit: |
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        grep -oE '(intel_iommu=on|amd_iommu=on|iommu=pt)' /proc/cmdline
+        ```
+
+        A passing result shows at least one IOMMU flag on the running kernel command line; a failing result returns no output, indicating IOMMU is not enabled.
       remediation:
         - id: cli
           desc: |
@@ -3263,7 +3999,7 @@ queries:
       compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-2
       compliance/pci-dss-4: pcidss-requirement-10-2-1
-      compliance/soc2-2017: soc2-control-cc7-2-1
+      compliance/soc2-2017: soc2-control-cc7-1-3
       compliance/vda-isa-5: vda-isa-5-5-2-4
     props:
       - uid: mondooProxmoxSecurityAuditFiles
@@ -3275,9 +4011,28 @@ queries:
       props.mondooProxmoxSecurityAuditFiles.any(_.any(_ == /^\s*-w\s+\/etc\/pve/))
     docs:
       desc: |
-        `/etc/pve/` is the central configuration tree for the cluster. Audit
-        rules must record any modification to it so unexpected changes can be
-        investigated.
+        This check ensures that the audit subsystem is configured with a watch rule that records every write and attribute change to `/etc/pve/`. This directory is the central configuration tree for the cluster, and without a watch rule any tampering with it goes unrecorded.
+
+        **Why this matters**
+
+        - **Cluster integrity:** `/etc/pve/` defines storage, firewall, user, and virtual machine configuration for the entire cluster, so unauthorized edits can compromise every node.
+        - **Tamper evidence:** An audit watch produces a durable record of who changed cluster configuration and when, which is essential for investigating incidents.
+        - **Change accountability:** Recording configuration changes ties them to a user and process, deterring unsanctioned modification.
+
+        **Risk mitigation**
+
+        - **Detection of unauthorized changes:** Audit events let operators spot configuration drift or malicious edits that would otherwise pass silently.
+        - **Forensic support:** Retained audit logs give incident responders a timeline of cluster configuration activity.
+      audit: |
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        auditctl -l | grep '/etc/pve'
+        ```
+
+        The check passes when a watch rule covering `/etc/pve/` is listed; it fails when no matching rule is returned.
       remediation:
         - id: cli
           desc: |
@@ -3365,17 +4120,35 @@ queries:
       compliance/nist-sp-800-171: nist-sp-800-171--3-14-1
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-2
       compliance/pci-dss-4: pcidss-requirement-6-3-3
-      compliance/soc2-2017: soc2-control-cc7-1-1
-      compliance/vda-isa-5: vda-isa-5-5-2-1
+      compliance/soc2-2017: soc2-control-cc7-1-5
+      compliance/vda-isa-5: vda-isa-5-5-2-5
     mql: |
       file("/etc/apt/sources.list.d/pve-enterprise.list").exists ||
       file("/etc/apt/sources.list.d/pve-no-subscription.list").exists
     docs:
       desc: |
-        Without a PVE-specific apt source, security updates for the Proxmox
-        VE packages cannot be installed. Use the enterprise repository if you
-        have an active subscription; otherwise use the no-subscription
-        repository.
+        This check ensures that the node has a Proxmox VE apt source configured so that security updates for PVE packages can be installed. Without a PVE-specific repository the host cannot receive fixes for the hypervisor stack, and the enterprise repository is used with an active subscription while the no-subscription repository is used otherwise.
+
+        **Why this matters**
+
+        - **Patch availability:** PVE packages are not part of the standard Debian repositories, so a dedicated source is required to obtain them.
+        - **Vulnerability exposure:** A node with no PVE repository stays on the installed package versions indefinitely, including any known vulnerabilities.
+        - **Operational consistency:** A configured repository keeps every cluster node on the same supported package stream.
+
+        **Risk mitigation**
+
+        - **Timely remediation:** A working repository lets administrators apply security fixes as soon as they are released.
+        - **Reduced attack surface:** Keeping the hypervisor packages current closes publicly disclosed flaws before they can be exploited.
+      audit: |
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        cat /etc/apt/sources.list.d/pve-enterprise.list /etc/apt/sources.list.d/pve-no-subscription.list 2>/dev/null
+        ```
+
+        The check passes when either file exists with a `deb` line for the PVE repository; it fails when neither file is present.
       remediation:
         - id: cli
           desc: |
@@ -3501,14 +4274,40 @@ queries:
       compliance/nist-sp-800-171: nist-sp-800-171--3-14-1
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-2
       compliance/pci-dss-4: pcidss-requirement-6-3-3
-      compliance/soc2-2017: soc2-control-cc7-1-1
-      compliance/vda-isa-5: vda-isa-5-5-2-1
+      compliance/soc2-2017: soc2-control-cc7-1-5
+      compliance/vda-isa-5: vda-isa-5-5-2-5
     mql: |
       package("unattended-upgrades").installed
     docs:
       desc: |
-        `unattended-upgrades` automatically applies Debian security updates,
-        which limits the time the host stays exposed to known vulnerabilities.
+        This check ensures that the `unattended-upgrades` package is installed so the node can apply Debian security updates without manual intervention. Automatic application of security updates limits how long the host remains exposed to known vulnerabilities.
+
+        **Why this matters**
+
+        - **Reduced exposure window:** Automated updates shorten the time between a fix being published and it being applied.
+        - **Consistent patching:** Unattended upgrades apply security fixes even when an administrator is unavailable to do so manually.
+        - **Operational reliability:** Routine, automated patching prevents nodes from drifting onto unsupported package versions.
+
+        **Risk mitigation**
+
+        - **Faster vulnerability remediation:** Security updates are installed promptly rather than waiting for a maintenance window.
+        - **Lower human error:** Removing the manual step avoids missed or forgotten patch cycles.
+      audit: |
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        dpkg-query -W -f='${Status}\n' unattended-upgrades
+        ```
+
+        The check passes when the status reports `install ok installed`; it fails when the package is not installed.
+
+        To confirm the service is active, also run:
+
+        ```bash
+        systemctl is-enabled unattended-upgrades
+        ```
       remediation:
         - id: cli
           desc: |
@@ -3588,18 +4387,18 @@ queries:
     impact: 70
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-04
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
-      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
       compliance/nis-2: nis-2-21-2-i
-      compliance/nist-csf-1: nist-csf-1-pr-ac-4
-      compliance/nist-csf-2: nist-csf-2-pr-aa-05
-      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
-      compliance/pci-dss-4: pcidss-requirement-7-2-1
-      compliance/soc2-2017: soc2-control-cc6-1-3
-      compliance/vda-isa-5: vda-isa-5-4-1-1
+      compliance/nist-csf-1: nist-csf-1-pr-pt-3
+      compliance/nist-csf-2: nist-csf-2-pr-ps-01
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-6
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-7
+      compliance/pci-dss-4: pcidss-requirement-2-2-6
+      compliance/soc2-2017: soc2-control-cc7-1-1
+      compliance/vda-isa-5: vda-isa-5-5-2-1
     refs:
       - title: ANSSI-BP-028 R9 Linux Hardening
         url: https://cyber.gouv.fr/sites/default/files/document/linux_configuration-en-v2.0.pdf
@@ -3612,9 +4411,28 @@ queries:
       kernel.parameters["kernel.unprivileged_bpf_disabled"] == 2
     docs:
       desc: |
-        Disabling unprivileged BPF closes a recurring privilege-escalation
-        path. Set `kernel.unprivileged_bpf_disabled=1` (or `2` to make the
-        setting itself immutable until reboot).
+        This check ensures that the kernel is configured to disable BPF for unprivileged users by setting `kernel.unprivileged_bpf_disabled` to `1` or `2`. Unprivileged BPF has been a recurring source of privilege-escalation flaws, and a value of `2` also makes the setting itself immutable until reboot.
+
+        **Why this matters**
+
+        - **Privilege escalation:** The unprivileged BPF interface has been exploited by CVE-2021-4204 and CVE-2022-23222 to gain root from a normal account.
+        - **Attack surface reduction:** Disabling the feature removes a complex kernel code path from reach of unprivileged callers.
+        - **Tenant isolation:** On a hypervisor hosting multiple workloads, blocking unprivileged BPF helps keep a compromised guest or user from escalating on the host.
+
+        **Risk mitigation**
+
+        - **Closes a known exploit class:** Unprivileged users can no longer load BPF programs that target kernel verifier bugs.
+        - **Hardens the host kernel:** A value of `2` prevents the protection from being weakened at runtime.
+      audit: |
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        sysctl kernel.unprivileged_bpf_disabled
+        ```
+
+        The check passes when the value is `1` or `2`; it fails when the value is `0`.
       remediation:
         - id: cli
           desc: |
@@ -3671,7 +4489,7 @@ queries:
     impact: 70
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ccc-06
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-04
       compliance/dora: dora-art-9
       compliance/hipaa: false
       compliance/iso-27001-2022: iso-27001-2022-a-8-9
@@ -3680,7 +4498,7 @@ queries:
       compliance/nist-csf-2: nist-csf-2-pr-ps-01
       compliance/nist-sp-800-171: nist-sp-800-171--3-4-6
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-7
-      compliance/pci-dss-4: pcidss-requirement-2-2-1
+      compliance/pci-dss-4: pcidss-requirement-2-2-6
       compliance/soc2-2017: soc2-control-cc7-1-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
     refs:
@@ -3690,10 +4508,28 @@ queries:
       kernel.parameters["kernel.kexec_load_disabled"] == 1
     docs:
       desc: |
-        `kexec_load_disabled=1` blocks loading a new kernel image at runtime,
-        preventing an attacker from booting an unsigned kernel without going
-        through the normal boot process. The setting is one-way and resets on
-        reboot.
+        This check ensures that the kernel is configured to block loading a new kernel image at runtime by setting `kernel.kexec_load_disabled` to `1`. This setting prevents an attacker from booting an unsigned kernel without going through the normal boot process, and it is one-way and resets on reboot.
+
+        **Why this matters**
+
+        - **Boot integrity:** Allowing kexec lets a privileged attacker replace the running kernel and bypass Secure Boot or signed-kernel controls.
+        - **Persistence prevention:** Blocking kexec removes a path for loading a malicious kernel that survives normal protections.
+        - **Defense in depth:** The restriction limits what an attacker can do even after gaining elevated access.
+
+        **Risk mitigation**
+
+        - **Prevents unsigned kernel loading:** No new kernel image can be staged through the kexec interface once the setting is applied.
+        - **Reduces post-compromise impact:** An attacker cannot pivot to a custom kernel to evade detection or controls.
+      audit: |
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        sysctl kernel.kexec_load_disabled
+        ```
+
+        The check passes when the value is `1`; it fails when the value is `0`.
       remediation:
         - id: cli
           desc: |
@@ -3750,7 +4586,7 @@ queries:
     impact: 60
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ccc-06
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-04
       compliance/dora: dora-art-9
       compliance/hipaa: false
       compliance/iso-27001-2022: iso-27001-2022-a-8-9
@@ -3759,7 +4595,7 @@ queries:
       compliance/nist-csf-2: nist-csf-2-pr-ps-01
       compliance/nist-sp-800-171: nist-sp-800-171--3-4-6
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-7
-      compliance/pci-dss-4: pcidss-requirement-2-2-1
+      compliance/pci-dss-4: pcidss-requirement-2-2-6
       compliance/soc2-2017: soc2-control-cc7-1-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
     refs:
@@ -3769,9 +4605,28 @@ queries:
       kernel.parameters["kernel.perf_event_paranoid"] >= 2
     docs:
       desc: |
-        `kernel.perf_event_paranoid >= 2` prevents unprivileged users from
-        accessing CPU performance counters, which have been used to mount
-        side-channel attacks against co-located workloads.
+        This check ensures that the kernel is configured to restrict access to performance monitoring by setting `kernel.perf_event_paranoid` to `2` or higher. Performance counters have been used to mount side-channel attacks, and a value of at least `2` keeps unprivileged users from accessing CPU performance data.
+
+        **Why this matters**
+
+        - **Side-channel exposure:** CPU performance counters can leak timing information that aids cache and speculative-execution attacks against co-located workloads.
+        - **Tenant isolation:** On a hypervisor running multiple guests, restricting `perf` reduces what one workload can infer about another.
+        - **Least privilege:** Performance monitoring is rarely needed by unprivileged users, so access should be limited by default.
+
+        **Risk mitigation**
+
+        - **Limits information leakage:** Unprivileged users can no longer read CPU performance counters usable for side-channel inference.
+        - **Hardens shared hosts:** The restriction reduces cross-workload observation on busy hypervisor nodes.
+      audit: |
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        sysctl kernel.perf_event_paranoid
+        ```
+
+        The check passes when the value is `2` or higher; it fails when the value is below `2`.
       remediation:
         - id: cli
           desc: |
@@ -3828,7 +4683,7 @@ queries:
     impact: 50
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ccc-06
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-04
       compliance/dora: dora-art-9
       compliance/hipaa: false
       compliance/iso-27001-2022: iso-27001-2022-a-8-9
@@ -3837,7 +4692,7 @@ queries:
       compliance/nist-csf-2: nist-csf-2-pr-ps-01
       compliance/nist-sp-800-171: nist-sp-800-171--3-4-6
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-7
-      compliance/pci-dss-4: pcidss-requirement-2-2-1
+      compliance/pci-dss-4: pcidss-requirement-2-2-6
       compliance/soc2-2017: soc2-control-cc7-1-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
     refs:
@@ -3847,9 +4702,28 @@ queries:
       kernel.parameters["dev.tty.ldisc_autoload"] == 0
     docs:
       desc: |
-        `dev.tty.ldisc_autoload=0` prevents unprivileged users from triggering
-        autoload of arbitrary line-discipline modules, a vector that has led
-        to LPE bugs in the past.
+        This check ensures that the kernel is configured to block on-demand loading of TTY line-discipline modules by setting `dev.tty.ldisc_autoload` to `0`. Autoloading line-discipline modules has led to local privilege-escalation bugs, so unprivileged users should not be able to trigger it.
+
+        **Why this matters**
+
+        - **Privilege escalation:** Line-discipline modules loaded on demand have exposed local privilege-escalation flaws in the past.
+        - **Attack surface reduction:** Disabling autoload keeps rarely used kernel modules out of reach of unprivileged callers.
+        - **Module exposure:** Autoload lets any user pull additional kernel code into a running system without administrator intent.
+
+        **Risk mitigation**
+
+        - **Closes a known LPE vector:** Unprivileged users can no longer cause line-discipline modules to load automatically.
+        - **Reduces loadable code paths:** Only modules an administrator explicitly loads become reachable.
+      audit: |
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        sysctl dev.tty.ldisc_autoload
+        ```
+
+        The check passes when the value is `0`; it fails when the value is `1`.
       remediation:
         - id: cli
           desc: |
@@ -3906,23 +4780,44 @@ queries:
     impact: 50
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-04
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
-      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
       compliance/nis-2: nis-2-21-2-e
-      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-1: nist-csf-1-pr-pt-4
       compliance/nist-csf-2: nist-csf-2-pr-ir-01
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
-      compliance/pci-dss-4: pcidss-requirement-1-3-1
-      compliance/soc2-2017: soc2-control-cc6-6-1
-      compliance/vda-isa-5: vda-isa-5-5-2-6
+      compliance/pci-dss-4: pcidss-requirement-2-2-6
+      compliance/soc2-2017: soc2-control-cc7-1-1
+      compliance/vda-isa-5: vda-isa-5-5-2-1
     mql: |
       kernel.parameters["net.ipv4.tcp_rfc1337"] == 1
     docs:
       desc: |
-        Protects against TIME-WAIT assassination hazards.
+        This check ensures that the kernel is configured to enable RFC 1337 protection by setting `net.ipv4.tcp_rfc1337` to `1`. This setting protects against TIME-WAIT assassination hazards, where old duplicate TCP segments can disrupt or corrupt new connections.
+
+        **Why this matters**
+
+        - **Connection integrity:** TIME-WAIT assassination can let stale segments interfere with freshly established TCP connections.
+        - **Network reliability:** The protection prevents old packets from prematurely tearing down or corrupting sockets.
+        - **Standards compliance:** Enabling the behavior aligns the TCP stack with the guidance in RFC 1337.
+
+        **Risk mitigation**
+
+        - **Prevents connection disruption:** Old duplicate segments are dropped instead of assassinating an active connection.
+        - **Hardens the network stack:** The node becomes more resilient to crafted or stray TCP traffic.
+      audit: |
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        sysctl net.ipv4.tcp_rfc1337
+        ```
+
+        The check passes when the value is `1`; it fails when the value is `0`.
       remediation:
         - id: cli
           desc: |
@@ -3979,7 +4874,7 @@ queries:
     impact: 40
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ccc-06
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-04
       compliance/dora: dora-art-9
       compliance/hipaa: false
       compliance/iso-27001-2022: iso-27001-2022-a-8-9
@@ -3988,18 +4883,35 @@ queries:
       compliance/nist-csf-2: nist-csf-2-pr-ps-01
       compliance/nist-sp-800-171: nist-sp-800-171--3-4-6
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-7
-      compliance/pci-dss-4: pcidss-requirement-2-2-1
+      compliance/pci-dss-4: pcidss-requirement-2-2-6
       compliance/soc2-2017: soc2-control-cc7-1-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
     mql: |
       kernel.parameters["kernel.unprivileged_userns_clone"] != null
     docs:
       desc: |
-        Make the policy decision around `kernel.unprivileged_userns_clone`
-        explicit. Set it to `1` if unprivileged LXC containers must be able to
-        create user namespaces (the Proxmox default), or `0` to disable user
-        namespaces entirely. Either way, persist the value so it cannot
-        silently change.
+        This check ensures that the policy decision around `kernel.unprivileged_userns_clone` is made explicit and persisted on the node. The value should be set to `1` when unprivileged LXC containers must create user namespaces, which is the Proxmox default, or `0` to disable user namespaces entirely, and persisting it stops the setting from silently changing.
+
+        **Why this matters**
+
+        - **Container functionality:** Unprivileged LXC containers rely on user namespaces, so an unset value risks breaking them or leaving the behavior undefined.
+        - **Attack surface control:** User namespaces broaden what unprivileged users can do, so the decision to allow or deny them should be deliberate.
+        - **Configuration drift:** An unpersisted value can change between kernels or boots, leaving the host in an unintended state.
+
+        **Risk mitigation**
+
+        - **Predictable behavior:** A persisted, explicit value ensures the host behaves the same across reboots and upgrades.
+        - **Documented intent:** Setting the parameter records whether unprivileged user namespaces are an accepted risk on the node.
+      audit: |
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        sysctl kernel.unprivileged_userns_clone
+        ```
+
+        The check passes when the parameter returns a value of `0` or `1`; it fails when the parameter is unset and reports an error.
       remediation:
         - id: cli
           desc: |
@@ -4069,12 +4981,12 @@ queries:
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
       compliance/iso-27001-2022: iso-27001-2022-a-8-5
-      compliance/nis-2: nis-2-21-2-j
-      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
       compliance/nist-csf-2: nist-csf-2-pr-aa-03
-      compliance/nist-sp-800-171: nist-sp-800-171--3-5-3
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
-      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-7
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/pci-dss-4: pcidss-requirement-8-3-9
       compliance/soc2-2017: soc2-control-cc6-1-4
       compliance/vda-isa-5: vda-isa-5-4-1-3
     refs:
@@ -4084,11 +4996,28 @@ queries:
       logindefs.params["PASS_MAX_DAYS"].trim == /^([1-9][0-9]?|[1-2][0-9]{2}|3[0-5][0-9]|36[0-5])$/
     docs:
       desc: |
-        The `PASS_MAX_DAYS` setting in `/etc/login.defs` defines the maximum
-        age of a password. Values over 365 days (Debian default is 99999,
-        meaning never expire) allow stale credentials to persist indefinitely.
+        This check ensures that `/etc/login.defs` is configured with a `PASS_MAX_DAYS` value between 1 and 365 so that passwords expire at least once a year. The Debian default of 99999 means passwords never expire, which lets stale credentials persist indefinitely.
 
-        Expected: 1-365 days.
+        **Why this matters**
+
+        - **Credential staleness:** A password that never expires can remain valid for years after it should have been rotated.
+        - **Compromise window:** Bounded password lifetimes limit how long a leaked or guessed credential stays usable.
+        - **Account hygiene:** Periodic expiration prompts review of accounts that are still in use.
+
+        **Risk mitigation**
+
+        - **Limits exposure of leaked credentials:** Expired passwords stop working even if the holder is unaware of a breach.
+        - **Enforces rotation:** A maximum age guarantees credentials are refreshed on a predictable schedule.
+      audit: |
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        grep -E '^\s*PASS_MAX_DAYS' /etc/login.defs
+        ```
+
+        The check passes when `PASS_MAX_DAYS` is set to a value between 1 and 365; it fails when the value exceeds 365 or is missing.
       remediation:
         - id: cli
           desc: |
@@ -4171,21 +5100,40 @@ queries:
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
       compliance/iso-27001-2022: iso-27001-2022-a-8-5
-      compliance/nis-2: nis-2-21-2-j
-      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
       compliance/nist-csf-2: nist-csf-2-pr-aa-03
-      compliance/nist-sp-800-171: nist-sp-800-171--3-5-3
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
-      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-7
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/pci-dss-4: pcidss-requirement-8-3-9
       compliance/soc2-2017: soc2-control-cc6-1-4
       compliance/vda-isa-5: vda-isa-5-4-1-3
     mql: |
       logindefs.params["PASS_MIN_DAYS"].trim == /^[1-9][0-9]*$/
     docs:
       desc: |
-        Setting `PASS_MIN_DAYS` >= 1 prevents users from cycling through their
-        password history within minutes to bypass the change frequency
-        requirement.
+        This check ensures that `/etc/login.defs` is configured with a `PASS_MIN_DAYS` value of 1 or more so that a password cannot be changed again immediately after a change. Without a minimum age, a user can cycle through several password changes within minutes to defeat password history requirements.
+
+        **Why this matters**
+
+        - **History bypass:** A minimum age stops users from rapidly rotating passwords to return to a previous favorite.
+        - **Policy enforcement:** It backs up reuse and history controls that would otherwise be trivial to circumvent.
+        - **Predictable rotation:** A floor on change frequency keeps password changes meaningful rather than cosmetic.
+
+        **Risk mitigation**
+
+        - **Preserves password history:** Users can no longer churn through changes to revert to an old password.
+        - **Strengthens reuse controls:** The minimum age makes history-based reuse prevention effective.
+      audit: |
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        grep -E '^\s*PASS_MIN_DAYS' /etc/login.defs
+        ```
+
+        The check passes when `PASS_MIN_DAYS` is set to 1 or more; it fails when the value is 0 or missing.
       remediation:
         - id: cli
           desc: |
@@ -4259,18 +5207,18 @@ queries:
     impact: 80
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-15
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
       compliance/iso-27001-2022: iso-27001-2022-a-8-5
-      compliance/nis-2: nis-2-21-2-j
-      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
       compliance/nist-csf-2: nist-csf-2-pr-aa-03
-      compliance/nist-sp-800-171: nist-sp-800-171--3-5-3
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
-      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-10
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/pci-dss-4: pcidss-requirement-8-3-2
       compliance/soc2-2017: soc2-control-cc6-1-4
-      compliance/vda-isa-5: vda-isa-5-4-1-3
+      compliance/vda-isa-5: vda-isa-5-5-1-1
     refs:
       - title: CWE-916 Use of Password Hash With Insufficient Computational Effort
         url: https://cwe.mitre.org/data/definitions/916.html
@@ -4279,10 +5227,28 @@ queries:
       logindefs.params["ENCRYPT_METHOD"].trim == "YESCRYPT"
     docs:
       desc: |
-        `ENCRYPT_METHOD` in `/etc/login.defs` selects the hashing algorithm
-        used by `chpasswd` and `passwd`. Set it to `SHA512` or `YESCRYPT`;
-        weaker algorithms (DES, MD5) must not be used. Existing user hashes
-        are not rewritten until the user changes their password.
+        This check ensures that `/etc/login.defs` is configured with an `ENCRYPT_METHOD` of `SHA512` or `YESCRYPT` so that new password hashes use a strong algorithm. This setting controls the algorithm used by `passwd` and `chpasswd`, and weaker choices such as DES or MD5 must not be used. Existing hashes are not rewritten until each user changes their password.
+
+        **Why this matters**
+
+        - **Hash strength:** DES and MD5 hashes are fast to compute and can be cracked quickly once obtained.
+        - **Offline attack resistance:** SHA-512 and yescrypt impose far more work per guess, slowing brute-force and dictionary attacks.
+        - **Credential protection:** A strong algorithm limits the damage if `/etc/shadow` is ever exposed.
+
+        **Risk mitigation**
+
+        - **Resists offline cracking:** Stolen password hashes are far harder to reverse with a modern algorithm.
+        - **Protects new credentials:** Every password set or changed after the update is hashed with a strong scheme.
+      audit: |
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        grep -E '^\s*ENCRYPT_METHOD' /etc/login.defs
+        ```
+
+        The check passes when `ENCRYPT_METHOD` is set to `SHA512` or `YESCRYPT`; it fails when it is set to a weaker algorithm or is missing.
       remediation:
         - id: cli
           desc: |
@@ -4355,7 +5321,7 @@ queries:
     impact: 60
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
       compliance/iso-27001-2022: iso-27001-2022-a-8-3
@@ -4364,9 +5330,9 @@ queries:
       compliance/nist-csf-2: nist-csf-2-pr-aa-05
       compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
-      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/pci-dss-4: pcidss-requirement-2-2-6
       compliance/soc2-2017: soc2-control-cc6-1-3
-      compliance/vda-isa-5: vda-isa-5-4-1-1
+      compliance/vda-isa-5: vda-isa-5-4-2-1
     refs:
       - title: CWE-732 Incorrect Permission Assignment for Critical Resource
         url: https://cwe.mitre.org/data/definitions/732.html
@@ -4383,9 +5349,28 @@ queries:
       }
     docs:
       desc: |
-        `/etc/crontab` schedules privileged jobs. It must be owned by
-        `root:root` with mode `0600` so unprivileged users cannot read or
-        modify it.
+        This check ensures that `/etc/crontab` is owned by `root:root` and set to mode `0600` so that only the root account can read or modify it. This file schedules privileged jobs, and any user able to write to it can run commands as root.
+
+        **Why this matters**
+
+        - **Privileged execution:** Entries in `/etc/crontab` run with root privileges on a fixed schedule.
+        - **Tampering risk:** A user with write access can insert a malicious job and escalate to root.
+        - **Information disclosure:** Read access reveals scheduled tasks and the commands they run, which aids reconnaissance.
+
+        **Risk mitigation**
+
+        - **Prevents unauthorized job injection:** Only root can add or alter scheduled commands.
+        - **Limits reconnaissance:** Unprivileged users cannot read the cron schedule to plan an attack.
+      audit: |
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        stat -c '%a %U %G' /etc/crontab
+        ```
+
+        The check passes when the output is `600 root root`; it fails when the mode grants any access to group or other, or the owner or group is not root.
       remediation:
         - id: cli
           desc: |
@@ -4438,7 +5423,7 @@ queries:
     impact: 60
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
       compliance/iso-27001-2022: iso-27001-2022-a-8-3
@@ -4447,9 +5432,9 @@ queries:
       compliance/nist-csf-2: nist-csf-2-pr-aa-05
       compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
-      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/pci-dss-4: pcidss-requirement-2-2-6
       compliance/soc2-2017: soc2-control-cc6-1-3
-      compliance/vda-isa-5: vda-isa-5-4-1-1
+      compliance/vda-isa-5: vda-isa-5-4-2-1
     mql: |
       file("/etc/cron.d") {
         permissions.group_writeable == false
@@ -4459,9 +5444,28 @@ queries:
       }
     docs:
       desc: |
-        `/etc/cron.d` holds crontab fragments that run as `root`. The
-        directory must not be writable by `group` and must not be readable,
-        writable, or traversable by `other`.
+        This check ensures that `/etc/cron.d` is configured so the directory is not writable by group and is not readable, writable, or traversable by other. This directory holds crontab fragments that run as root, so loose permissions let an unprivileged user schedule privileged jobs.
+
+        **Why this matters**
+
+        - **Privileged execution:** Fragments placed in `/etc/cron.d` are executed with root privileges.
+        - **Tampering risk:** Group or other write access lets an unprivileged user drop a malicious crontab fragment.
+        - **Information disclosure:** Other read or traverse access exposes the scheduled tasks defined on the host.
+
+        **Risk mitigation**
+
+        - **Prevents unauthorized job injection:** Only root can place crontab fragments in the directory.
+        - **Limits reconnaissance:** Unprivileged users cannot enumerate the cron fragments to plan an attack.
+      audit: |
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        stat -c '%a %U %G' /etc/cron.d
+        ```
+
+        The check passes when the directory is owned by root with no group-write bit and no access for other, such as `700 root root`; it fails when group can write or other has any access.
       remediation:
         - id: cli
           desc: |
@@ -4515,7 +5519,7 @@ queries:
     impact: 60
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
       compliance/iso-27001-2022: iso-27001-2022-a-8-3
@@ -4524,9 +5528,9 @@ queries:
       compliance/nist-csf-2: nist-csf-2-pr-aa-05
       compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
-      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/pci-dss-4: pcidss-requirement-2-2-6
       compliance/soc2-2017: soc2-control-cc6-1-3
-      compliance/vda-isa-5: vda-isa-5-4-1-1
+      compliance/vda-isa-5: vda-isa-5-4-2-1
     mql: |
       file("/etc/cron.hourly") {
         permissions.group_writeable == false
@@ -4536,9 +5540,28 @@ queries:
       }
     docs:
       desc: |
-        `/etc/cron.hourly` runs scripts every hour as `root`. The directory
-        must not be writable by `group` and must not be readable, writable,
-        or traversable by `other`.
+        This check ensures that `/etc/cron.hourly` is configured so the directory is not writable by group and is not readable, writable, or traversable by other. This directory holds scripts that run every hour as root, so loose permissions let an unprivileged user schedule privileged execution.
+
+        **Why this matters**
+
+        - **Privileged execution:** Scripts in `/etc/cron.hourly` run with root privileges every hour.
+        - **Tampering risk:** Group or other write access lets an unprivileged user drop a malicious script.
+        - **Information disclosure:** Other read or traverse access exposes the hourly tasks defined on the host.
+
+        **Risk mitigation**
+
+        - **Prevents unauthorized job injection:** Only root can place scripts in the directory.
+        - **Limits reconnaissance:** Unprivileged users cannot enumerate the hourly scripts to plan an attack.
+      audit: |
+        ### Audit via CLI
+
+        Run the command on a cluster node:
+
+        ```bash
+        stat -c '%a %U %G' /etc/cron.hourly
+        ```
+
+        The check passes when the directory is owned by root with no group-write bit and no access for other, such as `700 root root`; it fails when group can write or other has any access.
       remediation:
         - id: cli
           desc: |
