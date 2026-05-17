@@ -200,9 +200,19 @@ def main():
     # slow (~0.5s per command), so we only do it for commands that appear in
     # the policy files we validate against. For all other commands, the API
     # flags plus global flags are sufficient for existence checking.
+    #
+    # Both the Azure policy and the M365 policy use `az` in their cli
+    # remediations, so both must be scanned here — otherwise M365-only
+    # commands fall back to dest-name flags (e.g. --resource-group-name).
     policy_dir = SCRIPT_DIR / ".."
+    policy_files = [
+        policy_dir / "mondoo-azure-security.mql.yaml",
+        policy_dir / "mondoo-m365-security.mql.yaml",
+    ]
     policy_commands = set()
-    for policy_file in policy_dir.glob("*azure*.mql.yaml"):
+    for policy_file in policy_files:
+        if not policy_file.exists():
+            continue
         content = policy_file.read_text()
         # Extract az commands from bash blocks in cli remediation sections
         for match in re.finditer(
