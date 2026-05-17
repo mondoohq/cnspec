@@ -86,13 +86,22 @@ queries:
       }
     docs:
       desc: |
-        The /etc/chef directory contains sensitive files that configure the Chef Infra Client, including the client.rb configuration file and the client.pem private key. These files contain information that could allow an attacker to:
+        This check verifies that the `/etc/chef` directory is owned by `root` and restricted to mode `750`, so that only `root` can write to it and only `root` and the root group can list its contents. The directory holds the `client.rb` configuration file and the `client.pem` private key that authenticate the node to Chef Infra Server.
 
-        - Impersonate the node when communicating with Chef Infra Server
-        - Access sensitive configuration data such as server URLs and node names
-        - Modify the client configuration to exfiltrate data or disable security controls
+        **Why this matters**
 
-        This directory should only be writeable by root and readable by root and the root group (mode 750) to prevent unauthorized access.
+        - **Node impersonation:** A readable `client.pem` lets an attacker authenticate to Chef Infra Server as this node.
+        - **Configuration disclosure:** `client.rb` reveals server URLs, organization names, and node identifiers useful for reconnaissance.
+        - **Tampering:** Write access lets an attacker alter the client configuration to exfiltrate data or disable security controls.
+        - **Least privilege:** Mode `750` keeps unprivileged local users and processes away from credential material.
+      audit: |
+        Run the following command to inspect the directory ownership and permissions:
+
+        ```bash
+        stat -c '%a %U:%G %n' /etc/chef
+        ```
+
+        If the output is `750 root:root /etc/chef`, the directory is correctly restricted and the check passes. Any other owner, group, or mode (for example a group- or world-writable directory) means the check fails.
       remediation:
         - id: cli
           desc: |
@@ -162,13 +171,22 @@ queries:
       }
     docs:
       desc: |
-        The /var/chef directory is the default location for Chef Infra Client's cache and backup files. This directory may contain:
+        This check verifies that the `/var/chef` directory is owned by `root` and restricted to mode `750`. This directory is the default location for Chef Infra Client cache and backup files, and its contents frequently include sensitive data.
 
-        - Backup copies of files modified by Chef recipes, which could contain sensitive configuration data
-        - Cached downloads from remote_file resources, potentially including secrets or proprietary software
-        - Cached cookbook files that may contain embedded credentials or sensitive business logic
+        **Why this matters**
 
-        If an attacker gains access to this directory, they could extract sensitive data or analyze your infrastructure configuration. This directory should only be writeable by root and readable by root and the root group (mode 750).
+        - **Backup exposure:** Backup copies of files modified by recipes can contain sensitive configuration data.
+        - **Cached secrets:** `remote_file` downloads and cached cookbook content may include embedded credentials or proprietary software.
+        - **Reconnaissance:** Cached cookbook files reveal infrastructure logic an attacker can study to plan further attacks.
+        - **Least privilege:** Mode `750` keeps unprivileged local users and processes away from cached sensitive material.
+      audit: |
+        Run the following command to inspect the directory ownership and permissions:
+
+        ```bash
+        stat -c '%a %U:%G %n' /var/chef
+        ```
+
+        If the output is `750 root:root /var/chef`, the directory is correctly restricted and the check passes. Any other owner, group, or mode (for example a group- or world-readable directory) means the check fails.
       remediation:
         - id: cli
           desc: |
@@ -238,14 +256,22 @@ queries:
       }
     docs:
       desc: |
-        The /var/log/chef directory contains Chef Infra Client log files that may expose sensitive information including:
+        This check verifies that the `/var/log/chef` directory is owned by `root` and restricted to mode `750`. This directory holds Chef Infra Client log files that can expose sensitive operational detail to anyone able to read them.
 
-        - Node attributes that could reveal infrastructure details, IP addresses, and hostnames
-        - Resource parameters that may include secrets if verbose or debug logging is enabled
-        - Stack traces that could expose internal paths and software versions
-        - Compliance scan results that could reveal security weaknesses
+        **Why this matters**
 
-        An attacker with access to these logs could gather reconnaissance information about your infrastructure or identify security vulnerabilities to exploit. This directory should only be writeable by root and readable by root and the root group (mode 750).
+        - **Infrastructure detail:** Logged node attributes can reveal IP addresses, hostnames, and topology.
+        - **Secret leakage:** Resource parameters can include secrets when verbose or debug logging is enabled.
+        - **Internal exposure:** Stack traces expose internal paths and software versions an attacker can target.
+        - **Weakness disclosure:** Compliance scan results in the logs can point an attacker at exploitable misconfigurations.
+      audit: |
+        Run the following command to inspect the directory ownership and permissions:
+
+        ```bash
+        stat -c '%a %U:%G %n' /var/log/chef
+        ```
+
+        If the output is `750 root:root /var/log/chef`, the directory is correctly restricted and the check passes. Any other owner, group, or mode (for example a world-readable directory) means the check fails.
       remediation:
         - id: cli
           desc: |
@@ -315,15 +341,22 @@ queries:
       }
     docs:
       desc: |
-        The /etc/chef/client.rb configuration file is the primary configuration file for Chef Infra Client. This file may contain sensitive information including:
+        This check verifies that the `/etc/chef/client.rb` configuration file is owned by `root` and restricted to mode `640`, so that only `root` can write to it and only `root` and the root group can read it. This is the primary configuration file for Chef Infra Client and frequently holds sensitive settings.
 
-        - Chef Infra Server URL and organization details
-        - Node name and environment configuration
-        - Data collector tokens for Chef Automate (if not properly configured)
-        - Custom Ruby code that executes during client runs
-        - Paths to SSL certificates and private keys
+        **Why this matters**
 
-        An attacker with read access to this file could identify your Chef infrastructure topology, potentially access your Chef Infra Server if combined with the client.pem key, or modify the configuration to execute malicious code during Chef runs. This file should be owned by root with permissions set to 640.
+        - **Topology disclosure:** The file exposes the Chef Infra Server URL, organization, node name, and environment.
+        - **Token leakage:** It can contain Chef Automate data collector tokens when reporting is configured directly.
+        - **Code execution:** Write access lets an attacker inject custom Ruby that runs during every Chef Infra Client run.
+        - **Key chaining:** Combined with a readable `client.pem`, the disclosed configuration eases access to Chef Infra Server.
+      audit: |
+        Run the following command to inspect the file ownership and permissions:
+
+        ```bash
+        stat -c '%a %U:%G %n' /etc/chef/client.rb
+        ```
+
+        If the output is `640 root:root /etc/chef/client.rb`, the file is correctly restricted and the check passes. Any other owner, group, or mode (for example a group-writable or world-readable file) means the check fails.
       remediation:
         - id: cli
           desc: |
@@ -393,20 +426,22 @@ queries:
       }
     docs:
       desc: |
-        The /etc/chef/client.pem file is the RSA private key that uniquely identifies this node to the Chef Infra Server. This key is used to:
+        This check verifies that the `/etc/chef/client.pem` private key is owned by `root` and restricted to mode `640`. This RSA key uniquely identifies the node to Chef Infra Server and signs every API request it makes.
 
-        - Authenticate all API requests to the Chef Infra Server
-        - Sign requests that modify node data, including run lists and attributes
-        - Access any data bags or secrets the node is authorized to read
+        **Why this matters**
 
-        If an attacker obtains this key, they can fully impersonate the node and:
+        - **Full impersonation:** Anyone who reads this key can authenticate to Chef Infra Server as the node.
+        - **Secret access:** The key grants access to any data bags the node is authorized to read, including passwords and certificates.
+        - **Run list tampering:** An attacker can modify the node's run list to execute malicious cookbooks.
+        - **Lateral movement:** If the node has admin privileges, the key opens a path to other nodes and harvested credentials.
+      audit: |
+        Run the following command to inspect the file ownership and permissions:
 
-        - Read sensitive data bags containing passwords, API keys, or certificates
-        - Modify the node's run list to execute malicious cookbooks
-        - Access other nodes' data if the compromised node has admin privileges
-        - Pivot to attack other systems using harvested credentials
+        ```bash
+        stat -c '%a %U:%G %n' /etc/chef/client.pem
+        ```
 
-        This file should be owned by root with permissions set to 640 to prevent unauthorized access.
+        If the output is `640 root:root /etc/chef/client.pem`, the key is correctly restricted and the check passes. Any other owner, group, or mode (for example a group-writable or world-readable key) means the check fails.
       remediation:
         - id: cli
           desc: |
@@ -463,16 +498,22 @@ queries:
       file("/etc/chef/validation.pem").exists == false
     docs:
       desc: |
-        The validation.pem file (also known as the organization validator key) is used during the initial bootstrap process to register new nodes with the Chef Infra Server. Once a node is successfully registered and receives its own client.pem key, the validation.pem file is no longer needed and poses a significant security risk if left on the system.
+        This check verifies that the `/etc/chef/validation.pem` file has been removed from the node. The organization validator key is needed only during the initial bootstrap; once the node receives its own `client.pem`, leaving the validator key on disk is a significant risk.
 
-        An attacker who obtains this file can:
+        **Why this matters**
 
-        - Register unlimited rogue nodes in your Chef organization
-        - Create nodes with arbitrary names, potentially impersonating existing infrastructure
-        - Gain a foothold in your Chef-managed environment to pivot attacks
-        - Access any data bags or policies available to newly registered nodes
+        - **Rogue node registration:** The validator key lets an attacker register unlimited new nodes in the Chef organization.
+        - **Impersonation:** Attacker-created nodes can use arbitrary names, mimicking existing infrastructure.
+        - **Persistent foothold:** A rogue registered node provides a durable base for pivoting attacks.
+        - **Unintended access:** Newly registered nodes inherit access to any data bags and policies available by default.
+      audit: |
+        Run the following command to check whether the validator key is still present:
 
-        The validation.pem file should be deleted immediately after a node is successfully bootstrapped. Modern bootstrap methods like `knife bootstrap` with the `--node-ssl-verify-mode` option or using Chef Infra Server's ACLs can eliminate the need for validation keys entirely.
+        ```bash
+        ls -la /etc/chef/validation.pem
+        ```
+
+        If the command reports `No such file or directory`, the validator key has been removed and the check passes. If the file is listed, it remains on the node and the check fails.
       remediation:
         - id: cli
           desc: |
@@ -532,16 +573,22 @@ queries:
       }
     docs:
       desc: |
-        Chef Infra Client (and its community fork, Cinc Client) follows an annual release cadence with new major versions released each April. Chef supports the current major version plus one previous version (N and N-1), meaning only two major versions receive security updates at any given time.
+        This check verifies that the installed Chef Infra Client (or its community fork, Cinc Client) is a release that still receives security maintenance. Chef supports the current major version plus one previous version, so only two major versions receive updates at any time.
 
-        Running an end-of-life (EOL) Chef Infra Client or Cinc Client version poses significant security risks:
+        **Why this matters**
 
-        - **No security patches**: Vulnerabilities discovered after EOL will not be fixed
-        - **No bug fixes**: Critical bugs that could cause configuration drift go unresolved
-        - **Compatibility issues**: Newer cookbooks and Chef Infra Server versions may not be compatible
-        - **Compliance violations**: Many security frameworks require running supported software
+        - **No security patches:** Vulnerabilities discovered after end of life are never fixed on the affected release.
+        - **No bug fixes:** Critical bugs that cause configuration drift go unresolved on unsupported versions.
+        - **Compatibility breakage:** Newer cookbooks and Chef Infra Server versions may not work with an end-of-life client.
+        - **Compliance failure:** Many security frameworks explicitly require running vendor-supported software.
+      audit: |
+        Run the following command to display the installed client version:
 
-        Check the [Chef Supported Versions documentation](https://docs.chef.io/versions/) for the current list of supported releases. As of the policy update, versions 17 and later are checked, but you should verify against the official documentation.
+        ```bash
+        chef-client -v
+        ```
+
+        Compare the reported major version against the [Chef Supported Versions documentation](https://docs.chef.io/versions/). If the output reports a currently supported major version (for example `Chef Infra Client: 18.x.x`), the check passes. If it reports an end-of-life major version, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -627,16 +674,22 @@ queries:
       }
     docs:
       desc: |
-        Chef Encrypted Data Bags have evolved through multiple versions, each improving security:
+        This check verifies that `client.rb` sets `data_bag_decrypt_minimum_version 3`, so that Chef Infra Client refuses to decrypt encrypted data bags stored in the legacy versions 0, 1, and 2 formats. Only version 3 uses authenticated AES-256-GCM encryption.
 
-        - **Version 0**: Uses AES-256-CBC with a predictable IV, making it vulnerable to certain cryptographic attacks
-        - **Version 1**: Adds Base64 encoding but still uses predictable IVs
-        - **Version 2**: Introduces random IVs but lacks authentication (vulnerable to padding oracle attacks)
-        - **Version 3**: Uses AES-256-GCM with authenticated encryption, providing both confidentiality and integrity
+        **Why this matters**
 
-        Versions 0-2 are vulnerable to various cryptographic attacks that could allow an attacker with access to your Chef Infra Server or data bag files to decrypt sensitive secrets like passwords, API keys, and certificates.
+        - **Predictable IVs:** Versions 0 and 1 use predictable initialization vectors that weaken the ciphertext.
+        - **No authentication:** Version 2 lacks message authentication and is exposed to padding oracle attacks.
+        - **Secret disclosure:** A successful attack on a legacy data bag reveals passwords, API keys, and certificates.
+        - **Forced upgrade:** Requiring version 3 drives any remaining legacy data bags onto the secure format.
+      audit: |
+        Run the following command to check the configured minimum data bag version:
 
-        Setting `data_bag_decrypt_minimum_version 3` ensures that only data bags encrypted with the secure v3 format can be decrypted, forcing an upgrade of any legacy encrypted data bags. See the [Chef Encrypted Data Bag documentation](https://docs.chef.io/data_bags/#encryption-versions) for more details.
+        ```bash
+        grep data_bag_decrypt_minimum_version /etc/chef/client.rb
+        ```
+
+        If the output shows `data_bag_decrypt_minimum_version 3`, legacy formats are rejected and the check passes. If the line is absent or set to a lower number, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -700,19 +753,22 @@ queries:
       }
     docs:
       desc: |
-        When Chef Infra Client sends compliance and converge data directly to Chef Automate, an Automate API token must be configured in the client.rb file using `data_collector.token`. This practice has several security concerns:
+        This check verifies that `client.rb` does not contain a `data_collector.token` entry. Storing a Chef Automate API token on every managed node spreads a shared credential far wider than necessary; reporting data should instead be proxied through Chef Infra Server.
 
-        - The token is stored in plaintext on every managed node
-        - Any user or process with read access to client.rb can extract the token
-        - The same token is often shared across all nodes, creating a single point of compromise
-        - Token rotation requires updating every managed node's configuration
+        **Why this matters**
 
-        A more secure approach is to proxy reporting data through the Chef Infra Server. With this configuration:
+        - **Plaintext credential sprawl:** The token sits in cleartext on every managed node that reports directly to Automate.
+        - **Broad read access:** Any local user or process that can read `client.rb` can extract the token.
+        - **Single point of compromise:** The same token is typically shared fleet-wide, so one node leak exposes all of them.
+        - **Rotation friction:** Rotating a node-stored token means updating every managed node instead of one server.
+      audit: |
+        Run the following command to check whether an Automate token is configured on the node:
 
-        - The Automate token is stored only on the Infra Server (a single, well-secured location)
-        - Nodes authenticate to the Infra Server using their individual client.pem keys
-        - Token rotation only requires updating the Infra Server configuration
-        - The attack surface for token theft is significantly reduced
+        ```bash
+        grep data_collector.token /etc/chef/client.rb
+        ```
+
+        If the command returns no output, no token is stored on the node and the check passes. If a `data_collector.token` line is printed, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -783,7 +839,22 @@ queries:
       }
     docs:
       desc: |
-        Disabling SSL verification (ssl_verify_mode :verify_none) allows man-in-the-middle attacks against Chef Infra Server communications. SSL verification should always be enabled in production environments to ensure the authenticity of the Chef Infra Server and protect credentials in transit.
+        This check verifies that `client.rb` does not set `ssl_verify_mode :verify_none`, which would turn off certificate validation for connections to Chef Infra Server. SSL verification must stay enabled so the client can confirm it is talking to the genuine server.
+
+        **Why this matters**
+
+        - **Man-in-the-middle exposure:** Without verification, an attacker can intercept and alter traffic to and from Chef Infra Server.
+        - **Credential theft:** Node authentication keys and API tokens can be captured over an unverified connection.
+        - **Cookbook tampering:** An interceptor can substitute malicious cookbook content for the client to apply.
+        - **Trust integrity:** Certificate validation is the only assurance the client has of the server's identity.
+      audit: |
+        Run the following command to check whether SSL verification has been disabled:
+
+        ```bash
+        grep ssl_verify_mode /etc/chef/client.rb
+        ```
+
+        If the command returns no output, or shows `ssl_verify_mode :verify_peer`, verification is enabled and the check passes. If it shows `ssl_verify_mode :verify_none`, verification is disabled and the check fails.
       remediation:
         - id: cli
           desc: |
