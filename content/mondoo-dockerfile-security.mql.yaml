@@ -98,23 +98,37 @@ queries:
       docker.file.stages.all(expose.all(port != 6443))
     docs:
       desc: |
-        This check ensures that management ports such as SSH (port 22), Docker Remote API (port 2375), Consul (port 8500), and Kubernetes API (port 6443) are not exposed in Docker container configurations.
+        Dockerfiles should not declare `EXPOSE` instructions for management ports such as SSH (22), the Docker Remote API (2375), Consul (8500), or the Kubernetes API (6443).
 
         **Why this matters**
 
-        Exposing management ports in Docker containers can lead to significant security risks:
+        - **Unauthorized access:** These ports are commonly targeted by attackers to gain access to containerized environments.
+        - **Increased attack surface:** Exposing management ports unnecessarily expands the attack surface and makes vulnerabilities easier to reach.
+        - **Operational risks:** Misconfigured or exposed management ports can lead to unintended access, service disruptions, or data breaches.
+        - **Compliance risks:** Many security standards require restricting access to management ports to reduce potential threats.
+      audit: |
+        Inspect the Dockerfile to confirm management ports are not exposed:
 
-        - **Unauthorized access**: These ports are commonly targeted by attackers to gain unauthorized access to containerized environments.
-        - **Increased attack surface**: Exposing these ports unnecessarily expands the attack surface, making it easier for attackers to exploit vulnerabilities.
-        - **Compliance risks**: Many security standards and best practices recommend restricting access to management ports to reduce potential threats.
-        - **Operational risks**: Misconfigured or exposed management ports can lead to unintended access, service disruptions, or data breaches.
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Locate every `EXPOSE` instruction: `grep -nE '^EXPOSE' Dockerfile`.
+        3. Confirm none of the exposed ports are 22, 2375, 8500, or 6443.
 
-        By ensuring these ports are not exposed, this check helps to minimize security vulnerabilities, align with best practices, and enhance the overall security posture of Docker container configurations.
-      remediation: |
-        Review and update your Dockerfile to ensure that management ports (22 for SSH, 2375 for Docker Remote API, 8500 for Consul HTTP API, 6443 for Kubernetes API) are not exposed.
-        - Remove or restrict the exposure of these ports using the `EXPOSE` instruction in your Dockerfile.
-        - Use Docker's port mapping options (`-p` or `--publish`) cautiously to avoid exposing these ports.
-        - Ensure that any required management access is secured and appropriately managed.
+        If no management ports are exposed, the check passes. If any of these ports appears in an `EXPOSE` instruction, the check fails.
+      remediation:
+        - id: dockerfile
+          desc: |
+            Remove `EXPOSE` instructions for management ports (22 for SSH, 2375 for the Docker Remote API, 8500 for the Consul HTTP API, 6443 for the Kubernetes API). Expose only the application ports the container needs:
+
+            ```dockerfile
+            # Instead of:
+            EXPOSE 22
+            EXPOSE 8080
+
+            # Use:
+            EXPOSE 8080
+            ```
+
+            Provide management access through secured, runtime-managed channels rather than ports baked into the image.
     refs:
       - url: https://docs.docker.com/reference/dockerfile/#expose
         title: Dockerfile Reference - EXPOSE
@@ -141,21 +155,35 @@ queries:
       docker.file.stages.all(run.none(script.contains("--allow-insecure-repositories")))
     docs:
       desc: |
-        This check ensures that the `--allow-insecure-repositories` option is not used with the APT package manager in Dockerfile `RUN` instructions.
+        Dockerfile `RUN` instructions should not pass the `--allow-insecure-repositories` option to the APT package manager.
 
         **Why this matters**
 
-        Disabling certificate validation by using the `--allow-insecure-repositories` option can lead to significant security risks:
+        - **Man-in-the-middle attacks:** Without repository validation, attackers can intercept and modify package data during download, potentially injecting malicious code.
+        - **Integrity issues:** Using insecure repositories undermines the integrity of the software being installed, as there is no guarantee that packages come from trusted sources.
+        - **Operational risks:** Installing packages from insecure repositories can pull in compromised or outdated software, increasing the risk of vulnerabilities in the container.
+        - **Compliance risks:** Many security standards require repository and certificate validation to ensure secure communication and package integrity.
+      audit: |
+        Inspect the Dockerfile to confirm APT does not skip repository validation:
 
-        - **Man-in-the-middle attacks**: Without proper certificate validation, attackers can intercept and modify package data during download, potentially injecting malicious code.
-        - **Integrity issues**: Using insecure repositories undermines the integrity of the software being installed, as there is no guarantee that the packages come from trusted sources.
-        - **Compliance risks**: Many security standards and best practices require SSL certificate validation to ensure secure communication and package integrity.
-        - **Operational risks**: Installing packages from insecure repositories can lead to the inclusion of compromised or outdated software, increasing the risk of vulnerabilities in the container.
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Search every `RUN` instruction for the insecure option: `grep -n -- '--allow-insecure-repositories' Dockerfile`.
+        3. Confirm no `RUN` instruction passes `--allow-insecure-repositories` to APT.
 
-        By ensuring that the `--allow-insecure-repositories` option is not used, this check helps maintain the integrity and security of the container's software environment, aligning with best practices and reducing potential risks.
-      remediation: |
-        - Review the Dockerfile `RUN` instructions to ensure that APT commands do not use the `--allow-insecure-repositories` option.
-        - Configure APT to use secure repositories and avoid options that bypass certificate validation.
+        If the option is absent, the check passes. If any `RUN` instruction uses it, the check fails.
+      remediation:
+        - id: dockerfile
+          desc: |
+            Remove the `--allow-insecure-repositories` option from APT commands and configure APT to use signed, secure repositories:
+
+            ```dockerfile
+            # Instead of:
+            RUN apt-get update --allow-insecure-repositories && apt-get install -y package
+
+            # Use:
+            RUN apt-get update && apt-get install -y --no-install-recommends package && \
+                rm -rf /var/lib/apt/lists/*
+            ```
     refs:
       - url: https://docs.docker.com/build/building/best-practices/
         title: Dockerfile Best Practices
@@ -183,22 +211,34 @@ queries:
       docker.file.stages.all(run.where(script.contains("curl")).none(script.contains(" -k")))
     docs:
       desc: |
-        This check ensures that the `--insecure` or `-k` options are not used with `curl` in Docker containers.
+        Dockerfile `RUN` instructions should not pass the `--insecure` or `-k` options to `curl`.
 
         **Why this matters**
 
-        Disabling SSL certificate validation with the `--insecure` or `-k` options can lead to significant security risks:
+        - **Man-in-the-middle attacks:** Without TLS certificate validation, attackers can intercept and modify data during transmission, potentially injecting malicious content.
+        - **Integrity issues:** Disabling certificate checks undermines the integrity of the data being transferred, as there is no guarantee that it comes from trusted sources.
+        - **Operational risks:** Fetching content over unvalidated connections can pull in compromised or outdated data, increasing the risk of vulnerabilities in the container.
+        - **Compliance risks:** Many security standards require TLS certificate validation to ensure secure communication.
+      audit: |
+        Inspect the Dockerfile to confirm `curl` validates certificates:
 
-        - **Man-in-the-middle attacks**: Without SSL validation, attackers can intercept and modify data during transmission, potentially injecting malicious content.
-        - **Integrity issues**: Disabling certificate checks undermines the integrity of the data being transferred, as there is no guarantee that it comes from trusted sources.
-        - **Compliance risks**: Many security standards and best practices require SSL certificate validation to ensure secure communication.
-        - **Operational risks**: Using insecure options can lead to the inclusion of compromised or outdated data, increasing the risk of vulnerabilities in the container.
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Locate every `RUN` instruction containing `curl`: `grep -nE 'RUN.*curl' Dockerfile`.
+        3. Confirm none of the matched instructions pass `--insecure` or `-k`.
 
-        By ensuring SSL certificate validation is enabled, this check helps maintain the integrity and security of the container's operations, aligning with best practices and reducing potential risks.
-      remediation: |
-        - Review the `CMD` or `ENTRYPOINT` commands in your Dockerfile and any scripts executed within the container.
-        - Avoid using `curl` with `--insecure` or `-k` options.
-        - Ensure that proper SSL certificate validation is enabled for all `curl` operations.
+        If no `curl` command disables certificate validation, the check passes. If any uses `--insecure` or `-k`, the check fails.
+      remediation:
+        - id: dockerfile
+          desc: |
+            Remove the `--insecure` and `-k` options from `curl` commands so certificate validation stays enabled:
+
+            ```dockerfile
+            # Instead of:
+            RUN curl -k -o app.tar.gz https://example.com/app.tar.gz
+
+            # Use:
+            RUN curl -fsSL -o app.tar.gz https://example.com/app.tar.gz
+            ```
     refs:
       - url: https://docs.docker.com/build/building/best-practices/
         title: Dockerfile Best Practices
@@ -225,21 +265,34 @@ queries:
       docker.file.stages.all(run.none(script.contains("--no-check-certificate")))
     docs:
       desc: |
-        This check ensures that the `--no-check-certificate` option is not used with `wget` in Dockerfile `RUN` instructions.
+        Dockerfile `RUN` instructions should not pass the `--no-check-certificate` option to `wget`.
 
         **Why this matters**
 
-        Disabling SSL certificate validation with the `--no-check-certificate` option can lead to significant security risks:
+        - **Man-in-the-middle attacks:** Without TLS certificate validation, attackers can intercept and modify data during transmission, potentially injecting malicious content.
+        - **Integrity issues:** Disabling certificate checks undermines the integrity of the data being transferred, as there is no guarantee that it comes from trusted sources.
+        - **Operational risks:** Fetching content over unvalidated connections can pull in compromised or outdated data, increasing the risk of vulnerabilities in the container.
+        - **Compliance risks:** Many security standards require TLS certificate validation to ensure secure communication.
+      audit: |
+        Inspect the Dockerfile to confirm `wget` validates certificates:
 
-        - **Man-in-the-middle attacks**: Without SSL validation, attackers can intercept and modify data during transmission, potentially injecting malicious content.
-        - **Integrity issues**: Disabling certificate checks undermines the integrity of the data being transferred, as there is no guarantee that it comes from trusted sources.
-        - **Compliance risks**: Many security standards and best practices require SSL certificate validation to ensure secure communication.
-        - **Operational risks**: Using insecure options can lead to the inclusion of compromised or outdated data, increasing the risk of vulnerabilities in the container.
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Search every `RUN` instruction for the insecure option: `grep -n -- '--no-check-certificate' Dockerfile`.
+        3. Confirm no `RUN` instruction passes `--no-check-certificate` to `wget`.
 
-        By ensuring SSL certificate validation is enabled, this check helps maintain the integrity and security of the container's operations, aligning with best practices and reducing potential risks.
-      remediation: |
-        - Review the Dockerfile `RUN` instructions to ensure that `wget` commands do not use the `--no-check-certificate` option.
-        - Configure Wget to use certificate validation to enhance the security of your container configurations.
+        If the option is absent, the check passes. If any `RUN` instruction uses it, the check fails.
+      remediation:
+        - id: dockerfile
+          desc: |
+            Remove the `--no-check-certificate` option from `wget` commands so certificate validation stays enabled:
+
+            ```dockerfile
+            # Instead of:
+            RUN wget --no-check-certificate -O app.tar.gz https://example.com/app.tar.gz
+
+            # Use:
+            RUN wget -O app.tar.gz https://example.com/app.tar.gz
+            ```
     refs:
       - url: https://docs.docker.com/build/building/best-practices/
         title: Dockerfile Best Practices
@@ -266,22 +319,35 @@ queries:
       docker.file.stages.all(run.none(script.contains("sudo ")))
     docs:
       desc: |
-        This check ensures that `sudo` is not used in Dockerfiles to run commands.
+        Dockerfile `RUN` instructions should not use `sudo` to run commands.
 
         **Why this matters**
 
-        Using `sudo` within a Dockerfile can lead to significant security risks:
+        - **Privilege escalation:** `sudo` grants elevated permissions that can be exploited if not handled properly.
+        - **Inconsistent behavior:** Commands requiring `sudo` may fail in environments where `sudo` is not configured or available.
+        - **Least privilege:** Docker containers are designed to run with the least privileges necessary, and using `sudo` contradicts this principle and increases the attack surface.
+        - **Operational risks:** Overuse of `sudo` can lead to misconfigurations or unintended privilege escalations, compromising container security.
+      audit: |
+        Inspect the Dockerfile to confirm `sudo` is not used:
 
-        - **Privilege escalation**: `sudo` grants elevated permissions that can be exploited if not handled properly.
-        - **Inconsistent behavior**: Commands requiring `sudo` may fail in environments where `sudo` is not configured or available.
-        - **Security best practices**: Docker containers are designed to run with the least privileges necessary. Using `sudo` contradicts this principle and increases the attack surface.
-        - **Operational risks**: Overuse of `sudo` can lead to misconfigurations or unintended privilege escalations, compromising the container's security.
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Search every `RUN` instruction for `sudo`: `grep -nE 'RUN.*\bsudo\b' Dockerfile`.
+        3. Confirm no `RUN` instruction invokes `sudo`.
 
-        By avoiding `sudo`, this check ensures that all commands run with the default user privileges, enhancing the security and reliability of the container configuration.
-      remediation: |
-        - Review the Dockerfile and remove any instances of `sudo`.
-        - Ensure that all commands are executed with the least privileges required.
-        - Configure containers to operate with non-root users where possible, and avoid privilege escalation techniques.
+        If `sudo` is absent, the check passes. If any `RUN` instruction uses it, the check fails.
+      remediation:
+        - id: dockerfile
+          desc: |
+            Remove `sudo` from `RUN` instructions. If a step needs elevated permissions, run it while the build is still root and switch to a non-root user afterward with the `USER` instruction:
+
+            ```dockerfile
+            # Instead of:
+            RUN sudo apt-get install -y package
+
+            # Use:
+            RUN apt-get install -y --no-install-recommends package
+            USER appuser
+            ```
     refs:
       - url: https://docs.docker.com/build/building/best-practices/#user
         title: Dockerfile Best Practices - USER Instruction
@@ -309,21 +375,34 @@ queries:
       docker.file.stages.all(run.none(script.contains("--no-gpg-check")))
     docs:
       desc: |
-        This check ensures that GPG signature verification bypass options (`--nogpgcheck` for YUM/DNF, `--no-gpg-check` for zypper) are not used in Dockerfile `RUN` instructions.
+        Dockerfile `RUN` instructions should not pass GPG signature verification bypass options (`--nogpgcheck` for YUM/DNF, `--no-gpg-check` for zypper) to package managers.
 
         **Why this matters**
 
-        Skipping GPG validation with the `--nogpgcheck` option can lead to significant security risks:
+        - **Integrity issues:** Without GPG validation, there is no guarantee that installed packages come from trusted sources, increasing the risk of installing compromised or malicious software.
+        - **Man-in-the-middle attacks:** Disabling GPG checks makes it easier for attackers to intercept and modify package data during download.
+        - **Operational risks:** Skipping signature checks can pull in outdated or tampered packages, increasing the risk of vulnerabilities in the container.
+        - **Compliance risks:** Many security standards require GPG validation to ensure the integrity and authenticity of software packages.
+      audit: |
+        Inspect the Dockerfile to confirm GPG validation is not bypassed:
 
-        - **Integrity issues**: Without GPG validation, there is no guarantee that the packages being installed come from trusted sources, increasing the risk of installing compromised or malicious software.
-        - **Man-in-the-middle attacks**: Disabling GPG checks makes it easier for attackers to intercept and modify package data during download.
-        - **Compliance risks**: Many security standards and best practices require GPG validation to ensure the integrity and authenticity of software packages.
-        - **Operational risks**: Using insecure options can lead to the installation of outdated or tampered packages, increasing the risk of vulnerabilities in the container.
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Search every `RUN` instruction for the bypass options: `grep -nE -- '--nogpgcheck|--no-gpg-check' Dockerfile`.
+        3. Confirm no `RUN` instruction passes either option to YUM, DNF, or zypper.
 
-        By ensuring GPG validation is enabled, this check helps maintain the integrity and security of the container's software environment, aligning with best practices and reducing potential risks.
-      remediation: |
-        - Review the Dockerfile `RUN` instructions to ensure that YUM, DNF, or zypper commands do not use GPG bypass options (`--nogpgcheck` or `--no-gpg-check`).
-        - Configure package managers to perform GPG validation to enhance the security of your container configurations.
+        If neither option is present, the check passes. If any `RUN` instruction uses one, the check fails.
+      remediation:
+        - id: dockerfile
+          desc: |
+            Remove GPG bypass options from package manager commands so signature verification stays enabled:
+
+            ```dockerfile
+            # Instead of:
+            RUN dnf install -y --nogpgcheck package
+
+            # Use:
+            RUN dnf install -y package && dnf clean all
+            ```
     refs:
       - url: https://docs.docker.com/build/building/best-practices/
         title: Dockerfile Best Practices
@@ -352,26 +431,31 @@ queries:
       docker.file.stages.where(from.image != firstStageIdentifier).all(user.user != "root")
     docs:
       desc: |
-        This check ensures that containers do not run as the root user for security reasons.
+        Dockerfile stages after the initial build stage should set a `USER` instruction that specifies a non-root user, so container processes do not run as root.
 
         **Why this matters**
 
-        Running containers as the root user can lead to significant security risks:
+        - **Privilege escalation:** If an attacker gains access to a container running as root, they may exploit it to gain elevated privileges on the host system.
+        - **Increased attack surface:** Containers running as root have access to more system resources, increasing the potential impact of a security breach.
+        - **Least privilege:** Security standards recommend running containers with the least privileges necessary to perform their tasks.
+        - **Operational risks:** Misconfigurations or vulnerabilities in containers running as root can lead to unintended access, data breaches, or service disruptions.
+      audit: |
+        Inspect the Dockerfile to confirm runtime stages run as a non-root user:
 
-        - **Privilege escalation**: If an attacker gains access to a container running as root, they may exploit this to gain elevated privileges on the host system.
-        - **Increased attack surface**: Containers running as root have access to more system resources, increasing the potential impact of a security breach.
-        - **Non-compliance with best practices**: Security standards and best practices recommend running containers with the least privileges necessary to perform their tasks.
-        - **Operational risks**: Misconfigurations or vulnerabilities in containers running as root can lead to unintended access, data breaches, or service disruptions.
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Locate every `USER` instruction: `grep -nE '^USER' Dockerfile`.
+        3. Confirm each stage after the initial build stage declares a `USER` instruction and that none specify `root`.
 
-        By ensuring containers do not run as the root user, this check helps to minimize security vulnerabilities, align with best practices, and enhance the overall security posture of containerized environments.
-      remediation: |
-        Update your Dockerfile to use the `USER` directive in all stages after the initial build stage. Specify a non-root user to run container processes, which enhances the security posture of your containers.
-        For example, you can add the following directive in Dockerfile stages where it is appropriate:
+        If every runtime stage sets a non-root `USER`, the check passes. If a stage omits `USER` or sets it to `root`, the check fails.
+      remediation:
+        - id: dockerfile
+          desc: |
+            Add a `USER` instruction that specifies a non-root user in every stage after the initial build stage. Make sure the user exists and has the permissions needed for the processes in that stage:
 
-        ```dockerfile
-        USER appuser
-        ```
-        Make sure that `appuser` is created and has the necessary permissions for the processes in that stage.
+            ```dockerfile
+            RUN groupadd -r appgroup && useradd -r -g appgroup appuser
+            USER appuser
+            ```
     refs:
       - url: https://docs.docker.com/build/building/best-practices/#user
         title: Dockerfile Best Practices - USER Instruction
@@ -398,24 +482,33 @@ queries:
       docker.file.stages.all(add == empty)
     docs:
       desc: |
-        This check ensures that Dockerfiles use the `COPY` instruction instead of `ADD`, unless `ADD`'s specific features are required.
+        Dockerfiles should use the `COPY` instruction instead of `ADD`, unless `ADD`'s specific features are genuinely required.
 
         **Why this matters**
 
-        The `COPY` instruction is simpler and more predictable, as it only copies files from the source to the destination. In contrast, `ADD` has additional functionalities, such as fetching files from remote URLs and extracting tar archives, which can introduce security risks if misused.
+        - **Security risks:** `ADD` can fetch files from remote URLs and automatically extract tar archives, which can expose the container to malicious files or unintended behavior if misused.
+        - **Predictability:** `COPY` only copies files from source to destination, providing straightforward and consistent behavior and reducing the risk of unexpected outcomes during the build.
+        - **Best practices:** Security standards and Dockerfile best practices recommend `COPY` for file copying tasks to minimize potential vulnerabilities.
+      audit: |
+        Inspect the Dockerfile to confirm `ADD` is not used:
 
-        - **Security risks**: Using `ADD` for remote URL fetching or automatic extraction can expose the container to malicious files or unintended behavior.
-        - **Predictability**: `COPY` provides a straightforward and consistent behavior, reducing the risk of unexpected outcomes during the build process.
-        - **Best practices**: Security standards and Dockerfile best practices recommend using `COPY` for file copying tasks to minimize potential vulnerabilities.
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Search for `ADD` instructions: `grep -nE '^ADD' Dockerfile`.
+        3. Confirm no stage uses `ADD` for tasks that `COPY` could perform.
 
-        By ensuring the use of `COPY` instead of `ADD`, this check helps maintain a secure and predictable Dockerfile configuration, aligning with best practices and reducing potential risks.
-      remediation: |
-        Review the Dockerfile and replace `ADD` instructions with `COPY` where possible. Use `ADD` only when its additional functionalities (e.g., fetching files from a remote URL or extracting tar files) are specifically needed and cannot be achieved using `COPY`.
-        Consider the following actions:
-        - Replace `ADD` with `COPY` for file copying tasks.
-        - Use `ADD` only for remote file fetching or unpacking archives if absolutely necessary.
-        - Verify the necessity of each `ADD` instruction and ensure it is used correctly.
-        - Perform a security review to ensure that any use of `ADD` does not introduce vulnerabilities or expose sensitive information.
+        If no `ADD` instruction is present, the check passes. If any stage uses `ADD`, the check fails.
+      remediation:
+        - id: dockerfile
+          desc: |
+            Replace `ADD` instructions with `COPY` for file copying tasks. Reserve `ADD` for cases where its remote-fetch or archive-extraction behavior is genuinely needed and cannot be achieved with `COPY`:
+
+            ```dockerfile
+            # Instead of:
+            ADD app/ /opt/app/
+
+            # Use:
+            COPY app/ /opt/app/
+            ```
     refs:
       - url: https://docs.docker.com/build/building/best-practices/#add-or-copy
         title: Dockerfile Best Practices - ADD or COPY
@@ -442,21 +535,34 @@ queries:
       docker.file.stages.all(from.tag != "latest")
     docs:
       desc: |
-        This check ensures that Dockerfiles do not use the `latest` tag for base images in the `FROM` instructions.
+        Dockerfile `FROM` instructions should not use the `latest` tag for base images.
 
         **Why this matters**
 
-        Using the `latest` tag for base images can lead to several issues:
+        - **Unpredictable builds:** The `latest` tag may point to different versions of the base image over time, leading to inconsistent and unreliable builds.
+        - **Security risks:** Newer versions of the base image may introduce vulnerabilities or breaking changes that affect the container's functionality.
+        - **Lack of control:** Specifying an explicit version tag ensures the container is built with a known and tested base image.
+        - **Compliance risks:** Many security standards recommend fixed version tags to ensure predictable and secure builds.
+      audit: |
+        Inspect the Dockerfile to confirm base images do not use the `latest` tag:
 
-        - **Unpredictable builds**: The `latest` tag may point to different versions of the base image over time, leading to inconsistent and unreliable builds.
-        - **Security risks**: Newer versions of the base image may introduce vulnerabilities or breaking changes that can affect the container's functionality.
-        - **Lack of control**: Explicitly specifying a version tag ensures that the container is built with a known and tested base image, providing greater control over the build process.
-        - **Compliance risks**: Many security standards and best practices recommend using fixed version tags to ensure predictable and secure builds.
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Locate every `FROM` instruction: `grep -nE '^FROM' Dockerfile`.
+        3. Confirm no image reference ends with `:latest`.
 
-        By avoiding the `latest` tag and specifying explicit version tags, this check helps maintain consistent, secure, and reliable container builds, aligning with best practices and reducing potential risks.
-      remediation: |
-        Review the Dockerfile to ensure that explicit version tags are used for base images instead of `latest`.
-        For example, use `python:3.9` instead of `python:latest` to ensure consistent and predictable builds.
+        If no `FROM` instruction uses the `latest` tag, the check passes. If any does, the check fails.
+      remediation:
+        - id: dockerfile
+          desc: |
+            Replace the `latest` tag with an explicit version tag so builds are consistent and predictable:
+
+            ```dockerfile
+            # Instead of:
+            FROM python:latest
+
+            # Use:
+            FROM python:3.12-slim
+            ```
     refs:
       - url: https://docs.docker.com/build/building/best-practices/
         title: Dockerfile Best Practices
@@ -484,25 +590,36 @@ queries:
       docker.file.stages.where(from.image != firstStageIdentifier).all(user.user != "0")
     docs:
       desc: |
-        This check ensures that the USER instruction in non-build Dockerfile stages does not specify UID 0, which is the root user's numeric identifier. This complements the existing non-root user check by catching cases where `USER 0` is used instead of `USER root`.
+        The `USER` instruction in Dockerfile stages after the initial build stage should not specify UID 0, the root user's numeric identifier. This complements the non-root user check by catching cases where `USER 0` is used instead of `USER root`.
 
         **Why this matters**
 
-        Setting the container user to UID 0 runs the container as root, regardless of the username:
+        - **Bypasses name-based checks:** Security scanners and policies checking for the string "root" miss `USER 0`, even though it grants identical privileges.
+        - **Privilege escalation:** UID 0 has unrestricted access to all files and system calls within the container, and potentially the host if container isolation is compromised.
+        - **Container escape risk:** Running as UID 0 increases the impact of container escape vulnerabilities, potentially granting root access on the host.
+        - **Kubernetes restrictions:** Many Kubernetes clusters enforce `runAsNonRoot` security contexts, which check the numeric UID, not the username.
+      audit: |
+        Inspect the Dockerfile to confirm runtime stages do not run as UID 0:
 
-        - **Bypasses name-based checks**: Security scanners and policies checking for the string "root" will miss `USER 0`, even though it grants identical privileges.
-        - **Privilege escalation**: UID 0 has unrestricted access to all files and system calls within the container, and potentially the host if container isolation is compromised.
-        - **Container escape risk**: Running as UID 0 increases the impact of container escape vulnerabilities, potentially granting root access on the host.
-        - **Kubernetes restrictions**: Many Kubernetes clusters enforce `runAsNonRoot` security contexts, which check the numeric UID, not the username.
-      remediation: |
-        Update your Dockerfile to use a non-root user with a non-zero UID:
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Locate every `USER` instruction: `grep -nE '^USER' Dockerfile`.
+        3. Confirm no stage after the initial build stage sets `USER 0` or any form that resolves to UID 0.
 
-        ```dockerfile
-        RUN groupadd -r appgroup && useradd -r -g appgroup -u 1001 appuser
-        USER 1001
-        ```
+        If no runtime stage uses UID 0, the check passes. If any stage sets `USER 0`, the check fails.
+      remediation:
+        - id: dockerfile
+          desc: |
+            Create a user with a non-zero UID and set the `USER` instruction to that UID. Avoid `USER 0` or any form that resolves to UID 0:
 
-        Avoid using `USER 0` or any form that resolves to UID 0. Ensure that the specified user has the minimum permissions needed for the application to function.
+            ```dockerfile
+            RUN groupadd -r appgroup && useradd -r -g appgroup -u 1001 appuser
+            USER 1001
+            ```
+    refs:
+      - url: https://docs.docker.com/build/building/best-practices/#user
+        title: Dockerfile Best Practices - USER Instruction
+      - url: https://docs.docker.com/reference/dockerfile/#user
+        title: Dockerfile Reference - USER
   - uid: mondoo-docker-best-practice-from-tag-specified
     title: Ensure FROM base images specify a version tag
     impact: 80
@@ -524,36 +641,47 @@ queries:
       docker.file.stages.all(from.tag != empty)
     docs:
       desc: |
-        This check ensures that all FROM instructions in the Dockerfile specify an explicit image tag. When no tag is provided (e.g., `FROM python` instead of `FROM python:3.12`), Docker implicitly uses the `:latest` tag, which defeats the purpose of version pinning.
+        Every `FROM` instruction in the Dockerfile should specify an explicit image tag. When no tag is provided, Docker implicitly uses the `:latest` tag, which defeats the purpose of version pinning.
 
         **Why this matters**
 
-        Omitting the image tag is functionally identical to using `:latest`, but is harder to detect during code review:
+        - **Silent version drift:** Builds silently pull whatever version is currently tagged as `latest`, leading to unpredictable behavior across environments.
+        - **Supply chain risk:** An attacker who compromises an image registry can push a malicious image as the default tag, affecting all untagged `FROM` references.
+        - **Harder to audit:** Without an explicit tag, it is difficult to determine which version of the base image was used, complicating incident response and vulnerability tracking.
+        - **Reproducibility:** Builds are not reproducible over time since the underlying image changes without any change to the Dockerfile.
 
-        - **Silent version drift**: Builds silently pull whatever version is currently tagged as `latest`, leading to unpredictable behavior across environments.
-        - **Supply chain risk**: An attacker who compromises an image registry can push a malicious image as the default tag, affecting all untagged FROM references.
-        - **Harder to audit**: Without an explicit tag, it is difficult to determine which version of the base image was used to build a container, complicating incident response and vulnerability tracking.
-        - **Reproducibility**: Builds are not reproducible over time since the underlying image changes without any change to the Dockerfile.
+        This check differs from the `latest` tag check: that check catches explicit use of `FROM image:latest`, while this check catches the implicit case where no tag is specified at all.
+      audit: |
+        Inspect the Dockerfile to confirm every base image specifies a tag:
 
-        This check differs from the `:latest` tag check: that check catches explicit use of `FROM image:latest`, while this check catches the implicit case where no tag is specified at all.
-      remediation: |
-        Update all FROM instructions to specify an explicit version tag:
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Locate every `FROM` instruction: `grep -nE '^FROM' Dockerfile`.
+        3. Confirm each image reference includes an explicit tag or digest.
 
-        ```dockerfile
-        # Instead of:
-        FROM python
-        FROM node
+        If every `FROM` instruction specifies a tag, the check passes. If any omits the tag, the check fails.
+      remediation:
+        - id: dockerfile
+          desc: |
+            Add an explicit version tag to every `FROM` instruction:
 
-        # Use:
-        FROM python:3.12-slim
-        FROM node:20-alpine
-        ```
+            ```dockerfile
+            # Instead of:
+            FROM python
 
-        For maximum reproducibility, consider pinning by digest:
+            # Use:
+            FROM python:3.12-slim
+            ```
 
-        ```dockerfile
-        FROM python:3.12-slim@sha256:abc123...
-        ```
+            For maximum reproducibility, consider pinning by digest:
+
+            ```dockerfile
+            FROM python:3.12-slim@sha256:abc123...
+            ```
+    refs:
+      - url: https://docs.docker.com/build/building/best-practices/
+        title: Dockerfile Best Practices
+      - url: https://docs.docker.com/reference/dockerfile/#from
+        title: Dockerfile Reference - FROM
   - uid: mondoo-docker-security-no-secrets-in-env
     title: Don't store secrets in Dockerfile ENV instructions
     impact: 100
@@ -575,39 +703,43 @@ queries:
       docker.file.stages.all(env.none(name == /(?i)(password|passwd|secret|token|private[_.\-]key|access[_.\-]key|api[_.\-]key|apikey|credential)/))
     docs:
       desc: |
-        This check ensures that Dockerfile `ENV` instructions do not define environment variables with names that suggest they contain secrets, such as passwords, API keys, or credentials.
+        Dockerfile `ENV` instructions should not define environment variables with names that suggest they contain secrets, such as passwords, API keys, tokens, or credentials.
 
         **Why this matters**
 
-        Secrets stored in `ENV` instructions are baked into the image and exposed in multiple ways:
+        - **Image inspection:** Anyone with access to the image can run `docker inspect` or `docker history` to view all environment variables, including their values.
+        - **Container leakage:** Environment variables are inherited by all processes in the container and may appear in logs, error reports, or debug output.
+        - **Registry exposure:** Images pushed to registries, even private ones, carry all `ENV` values, expanding the blast radius of a registry compromise.
+        - **Layer persistence:** Even if a subsequent layer unsets the variable, the value remains in the earlier image layer and can be extracted.
+      audit: |
+        Inspect the Dockerfile to confirm `ENV` instructions do not declare secrets:
 
-        - **Image inspection**: Anyone with access to the image can run `docker inspect` or `docker history` to view all environment variables, including their values.
-        - **Container leakage**: Environment variables are inherited by all processes in the container and may appear in logs, error reports, or debug output.
-        - **Registry exposure**: Images pushed to registries (even private ones) carry all `ENV` values, expanding the blast radius of a registry compromise.
-        - **Layer persistence**: Even if a subsequent layer unsets the variable, the value remains in the earlier image layer and can be extracted.
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Locate every `ENV` instruction: `grep -nE '^ENV' Dockerfile`.
+        3. Confirm no variable name suggests a secret, such as `password`, `secret`, `token`, `api_key`, `access_key`, or `credential`.
 
-        This aligns with CIS Docker Benchmark check CIS-DI-0010.
-      remediation: |
-        Remove secrets from Dockerfile `ENV` instructions and use runtime secret injection instead:
+        If no `ENV` instruction declares a secret-like variable, the check passes. If any does, the check fails.
+      remediation:
+        - id: dockerfile
+          desc: |
+            Remove secrets from `ENV` instructions and inject them at runtime instead:
 
-        ```dockerfile
-        # Instead of:
-        ENV API_KEY=sk-1234567890
-        ENV DATABASE_PASSWORD=changeme123
+            ```dockerfile
+            # Instead of:
+            ENV API_KEY=sk-1234567890
+            ENV DATABASE_PASSWORD=changeme123
 
-        # Use runtime injection:
-        # docker run -e API_KEY="$API_KEY" myimage
-        # docker run --env-file .env myimage
-        ```
+            # Inject at runtime:
+            # docker run -e API_KEY="$API_KEY" myimage
+            # docker run --env-file .env myimage
+            ```
 
-        For build-time secrets, use Docker BuildKit secret mounts:
+            For build-time secrets, use Docker BuildKit secret mounts so the value is never persisted in image layers:
 
-        ```dockerfile
-        # syntax=docker/dockerfile:1
-        RUN --mount=type=secret,id=api_key cat /run/secrets/api_key
-        ```
-
-        This ensures secrets are never persisted in image layers.
+            ```dockerfile
+            # syntax=docker/dockerfile:1
+            RUN --mount=type=secret,id=api_key cat /run/secrets/api_key
+            ```
     refs:
       - url: https://docs.docker.com/build/building/best-practices/#run---mounttypesecret
         title: Dockerfile Best Practices - Secret Mounts
@@ -640,34 +772,40 @@ queries:
       docker.file.stages.all(volumes.none(path == "/root"))
     docs:
       desc: |
-        This check ensures that Dockerfiles do not declare VOLUME instructions for sensitive host directories such as `/`, `/etc`, `/proc`, `/sys`, `/dev`, `/boot`, or `/root`.
+        Dockerfiles should not declare `VOLUME` instructions for sensitive host directories such as `/`, `/etc`, `/proc`, `/sys`, `/dev`, `/boot`, or `/root`. The `VOLUME` instruction declares a mount point within the image, and declaring sensitive paths creates a persistent risk when containers are later launched with host bind mounts.
 
         **Why this matters**
 
-        The Dockerfile `VOLUME` instruction declares a mount point within the container image. It does not directly mount host directories -- actual host bind mounts are configured at runtime (e.g., via `docker run -v`). However, declaring sensitive paths as volumes in a Dockerfile creates a persistent risk: when containers are launched with host mount configurations, these declared volumes can expose critical host data and system interfaces to the container.
+        - **Host filesystem exposure:** If `/` or `/etc` is declared as a volume and later bound to the host, it can expose host configuration files, credentials, and system secrets to the container.
+        - **Kernel interface access:** Declaring `/proc` or `/sys` as volumes creates mount points that, when bound at runtime, provide access to kernel parameters and system information usable for container escapes.
+        - **Device access:** A `/dev` volume declaration, combined with host bind mounts, can expose host devices and enable direct hardware access from within the container.
+        - **Privilege escalation:** Sensitive directory mount points can be chained with other vulnerabilities to escalate privileges and escape the container.
+        - **Data integrity:** Write access to host system directories through runtime-bound volumes can corrupt the host operating system.
+      audit: |
+        Inspect the Dockerfile to confirm no sensitive directories are declared as volumes:
 
-        - **Host filesystem exposure**: If `/` or `/etc` is declared as a volume and later bound to the host, it can expose host configuration files, credentials, and system secrets to the container.
-        - **Kernel interface access**: Declaring `/proc` or `/sys` as volumes creates mount points that, when bound at runtime, provide access to kernel parameters and system information that can be used for container escapes.
-        - **Device access**: A `/dev` volume declaration, when combined with host bind mounts, can expose host devices and enable direct hardware access from within the container.
-        - **Privilege escalation**: Sensitive directory mount points can be chained with other vulnerabilities and runtime configurations to escalate privileges and escape the container.
-        - **Data integrity**: Write access to host system directories through runtime-bound volumes can corrupt the host operating system.
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Locate every `VOLUME` instruction: `grep -nE '^VOLUME' Dockerfile`.
+        3. Confirm none reference `/`, `/etc`, `/proc`, `/sys`, `/dev`, `/boot`, or `/root`.
 
-        Only declare volumes for application-specific data directories that need to persist beyond the container lifecycle.
-      remediation: |
-        Review your Dockerfile and remove any VOLUME instructions that reference sensitive directories:
+        If only application data directories are declared as volumes, the check passes. If any sensitive directory is declared, the check fails.
+      remediation:
+        - id: dockerfile
+          desc: |
+            Remove `VOLUME` instructions that reference sensitive directories and declare only application data directories:
 
-        ```dockerfile
-        # Don't do this:
-        VOLUME /etc
-        VOLUME /proc
-        VOLUME /
+            ```dockerfile
+            # Instead of:
+            VOLUME /etc
+            VOLUME /proc
+            VOLUME /
 
-        # Instead, only mount application data directories:
-        VOLUME /app/data
-        VOLUME /var/lib/myapp
-        ```
+            # Use:
+            VOLUME /app/data
+            VOLUME /var/lib/myapp
+            ```
 
-        If your application needs access to host system information, use read-only bind mounts at runtime instead of declaring volumes in the Dockerfile.
+            If the application needs host system information, use read-only bind mounts at runtime instead of declaring volumes in the Dockerfile.
     refs:
       - url: https://docs.docker.com/reference/dockerfile/#volume
         title: Dockerfile Reference - VOLUME
@@ -694,31 +832,33 @@ queries:
       docker.file.stages.all(expose.all(port > 0 && port <= 65535))
     docs:
       desc: |
-        This check ensures that all ports exposed in the Dockerfile are within the valid TCP/UDP port range (1-65535). An exposed port outside this range indicates a misconfiguration that will cause unexpected behavior at runtime.
+        Every port exposed in the Dockerfile should fall within the valid TCP/UDP port range of 1 to 65535. An exposed port outside this range indicates a misconfiguration that causes unexpected behavior at runtime.
 
         **Why this matters**
 
         - **Silent failures:** Docker may silently ignore or misinterpret out-of-range port values, leading to containers that appear to start correctly but are not accessible on the expected port.
         - **Configuration errors:** Out-of-range ports typically indicate a typo or copy-paste error in the Dockerfile.
         - **Orchestration failures:** Container orchestration platforms and service meshes may silently ignore or reject containers with invalid port mappings, leading to deployment failures.
+      audit: |
+        Inspect the Dockerfile to confirm exposed ports are within the valid range:
 
-        **Risk mitigation**
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Locate every `EXPOSE` instruction: `grep -nE '^EXPOSE' Dockerfile`.
+        3. Confirm each port number is between 1 and 65535.
 
-        - Validate all `EXPOSE` port values are between 1 and 65535 before building images.
-        - Use a Dockerfile linter in CI to catch out-of-range ports early.
-        - Review port configurations when copying Dockerfiles across projects to prevent copy-paste errors.
+        If every exposed port is within range, the check passes. If any port is 0 or greater than 65535, the check fails.
       remediation:
-        - id: console
+        - id: dockerfile
           desc: |
-            Review the `EXPOSE` instructions in your Dockerfile and ensure all port numbers are between 1 and 65535:
+            Correct `EXPOSE` instructions so every port number is between 1 and 65535:
 
             ```dockerfile
-            # Correct
+            # Instead of:
+            EXPOSE 99999
+
+            # Use:
             EXPOSE 8080
             EXPOSE 443/tcp
-
-            # Incorrect
-            EXPOSE 99999
             ```
     refs:
       - url: https://docs.docker.com/reference/dockerfile/#expose
@@ -744,30 +884,32 @@ queries:
       docker.file.stages.all(run.where(script.contains("apt-get")).none(script.contains("dist-upgrade")))
     docs:
       desc: |
-        This check ensures that `apt-get dist-upgrade` is not used in Dockerfile RUN instructions. Unlike `apt-get upgrade`, `dist-upgrade` can remove existing packages, install new dependencies, and make major changes to the package configuration, leading to unpredictable and unreproducible builds.
+        Dockerfile `RUN` instructions should not use `apt-get dist-upgrade`. Unlike `apt-get upgrade`, `dist-upgrade` can remove existing packages, install new dependencies, and make major changes to the package configuration, leading to unpredictable and unreproducible builds.
 
         **Why this matters**
 
-        - **Unpredictable builds:** `dist-upgrade` may remove or replace packages that your application depends on, causing builds to break non-deterministically.
+        - **Unpredictable builds:** `dist-upgrade` may remove or replace packages the application depends on, causing builds to break non-deterministically.
         - **Reproducibility impact:** Non-deterministic package changes undermine the ability to audit and verify container contents, weakening supply chain security.
         - **Image bloat:** Distribution upgrades pull in many unnecessary packages, increasing image size and attack surface.
-        - **Reproducibility:** Container images should be deterministic. Pin specific package versions instead of running broad upgrades.
+        - **Maintainability:** Container images should be deterministic; pinning specific package versions is preferable to running broad upgrades.
+      audit: |
+        Inspect the Dockerfile to confirm `apt-get dist-upgrade` is not used:
 
-        **Risk mitigation**
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Search every `RUN` instruction for the command: `grep -nE 'RUN.*dist-upgrade' Dockerfile`.
+        3. Confirm no `RUN` instruction calls `apt-get dist-upgrade`.
 
-        - Replace `apt-get dist-upgrade` with targeted `apt-get install` commands specifying pinned package versions.
-        - Use minimal base images that include only required packages, reducing the need for broad upgrades.
-        - Rebuild images regularly from updated base images rather than upgrading packages inside the Dockerfile.
+        If `dist-upgrade` is absent, the check passes. If any `RUN` instruction uses it, the check fails.
       remediation:
-        - id: console
+        - id: dockerfile
           desc: |
-            Replace `apt-get dist-upgrade` with targeted package installs:
+            Replace `apt-get dist-upgrade` with targeted `apt-get install` commands that specify pinned package versions:
 
             ```dockerfile
-            # Bad
+            # Instead of:
             RUN apt-get update && apt-get dist-upgrade -y
 
-            # Good - install specific packages with pinned versions
+            # Use:
             RUN apt-get update && apt-get install -y --no-install-recommends \
                 package1=1.2.3 \
                 package2=4.5.6 \
@@ -797,40 +939,46 @@ queries:
       docker.file.stages.last.labels["org.opencontainers.image.source"] != empty
     docs:
       desc: |
-        This check ensures that the final stage of the Dockerfile sets the `org.opencontainers.image.source` label. This [OCI image annotation](https://github.com/opencontainers/image-spec/blob/main/annotations.md) records the URL of the source code repository that produced the image, so any running container can be traced back to the repository it was built from.
+        The final stage of the Dockerfile should set the `org.opencontainers.image.source` label. This [OCI image annotation](https://github.com/opencontainers/image-spec/blob/main/annotations.md) records the URL of the source code repository that produced the image, so any running container can be traced back to the repository it was built from.
 
         **Why this matters**
 
-        Without a source label, a running container is an opaque artifact: there is no reliable way to map a deployed image back to the repository that built it, and therefore no fast path to update the image in response to a security finding.
+        - **Vulnerability response:** When a CVE is published, the source label is the canonical machine-readable link from a deployed digest back to a git repo, so the right repository can be found and rebuilt.
+        - **Incident response:** Responders inspecting a running pod can read the source URL directly from image metadata instead of correlating image names with an internal service catalog.
+        - **Asset inventory:** Compliance frameworks require maintaining an inventory of software components in production, and the source label makes that inventory self-describing.
+        - **Supply chain integrity:** Combined with a SLSA provenance attestation pointing to the same repo, the source label provides defense in depth.
+      audit: |
+        Inspect the Dockerfile to confirm the source label is set:
 
-        - **Vulnerability response:** When a CVE is published, you need to find every repository that builds an affected image and rebuild it. The source label is the canonical machine-readable link from a deployed digest back to a git repo.
-        - **Incident response:** Responders inspecting a running pod can read the source URL directly from the image metadata (`docker inspect`, `crane config`) instead of correlating image names with an internal service catalog.
-        - **Asset inventory:** Compliance frameworks require maintaining an inventory of software components in production. The source label makes that inventory self-describing rather than dependent on out-of-band tracking.
-        - **Supply chain integrity:** Combined with a SLSA provenance attestation that points to the same repo, the source label provides defense in depth: the metadata claim and the signed claim corroborate each other.
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Search the final build stage for the label: `grep -nE 'org.opencontainers.image.source' Dockerfile`.
+        3. Confirm the final stage sets a non-empty `org.opencontainers.image.source` value.
 
-        GitHub's container registry uses this label to [automatically link images to their source repository](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry); other registries surface it in their UIs.
-      remediation: |
-        Add a `LABEL` instruction in the final stage of your Dockerfile:
+        If the final stage sets the source label, the check passes. If the label is missing or empty, the check fails.
+      remediation:
+        - id: dockerfile
+          desc: |
+            Add a `LABEL` instruction setting `org.opencontainers.image.source` in the final stage of your Dockerfile:
 
-        ```dockerfile
-        LABEL org.opencontainers.image.source="https://github.com/your-org/your-repo"
-        ```
+            ```dockerfile
+            LABEL org.opencontainers.image.source="https://github.com/your-org/your-repo"
+            ```
 
-        For automation, source the value from a build argument so the label always matches the building repository:
+            For automation, source the value from a build argument so the label always matches the building repository:
 
-        ```dockerfile
-        ARG SOURCE_URL
-        LABEL org.opencontainers.image.source="${SOURCE_URL}"
-        ```
+            ```dockerfile
+            ARG SOURCE_URL
+            LABEL org.opencontainers.image.source="${SOURCE_URL}"
+            ```
 
-        Then set it from CI. For GitHub Actions:
+            Then set the build argument from CI, for example with GitHub Actions:
 
-        ```yaml
-        - uses: docker/build-push-action@v6
-          with:
-            build-args: |
-              SOURCE_URL=https://github.com/${{ github.repository }}
-        ```
+            ```yaml
+            - uses: docker/build-push-action@v6
+              with:
+                build-args: |
+                  SOURCE_URL=https://github.com/${{ github.repository }}
+            ```
     refs:
       - url: https://github.com/opencontainers/image-spec/blob/main/annotations.md
         title: OCI Image Annotations
@@ -857,31 +1005,37 @@ queries:
       docker.file.stages.last.labels["org.opencontainers.image.authors"] != empty
     docs:
       desc: |
-        This check ensures that the final stage of the Dockerfile sets the `org.opencontainers.image.authors` label. This [OCI image annotation](https://github.com/opencontainers/image-spec/blob/main/annotations.md) records the contact information for the people or team responsible for the image, so any running container can be traced back to a clear owner.
+        The final stage of the Dockerfile should set the `org.opencontainers.image.authors` label. This [OCI image annotation](https://github.com/opencontainers/image-spec/blob/main/annotations.md) records the contact information for the people or team responsible for the image, so any running container can be traced back to a clear owner.
 
         **Why this matters**
 
-        When a running container needs attention for a CVE in a dependency, a misconfiguration, or an outage triggered by its behavior, the responder's first question is "who owns this?". Without an authors label, the answer requires correlating image names with internal service catalogs, scanning git histories, or asking around in chat. None of that scales as the number of images grows.
-
-        - **Faster remediation:** An owner contact embedded in image metadata lets vulnerability tooling auto-route findings to the right team without a separate catalog lookup, so the team that owns the source can rebuild and redeploy.
+        - **Faster remediation:** An owner contact embedded in image metadata lets vulnerability tooling auto-route findings to the right team without a separate catalog lookup.
         - **Incident routing:** Pages, alerts, and dashboards can surface the owner directly from image metadata, cutting time-to-acknowledge.
-        - **Asset accountability:** NIST 800-171 3.4.1 explicitly calls out "component owners" as required inventory metadata; this label is exactly that, attached to the artifact itself.
-        - **Lifecycle management:** Orphaned images whose owners have left the organization or moved teams are a long-tail security risk. Mandating an authors label forces ownership decisions at build time rather than after an incident.
+        - **Asset accountability:** NIST 800-171 3.4.1 explicitly calls out component owners as required inventory metadata, and this label attaches that information to the artifact itself.
+        - **Lifecycle management:** Mandating an authors label forces ownership decisions at build time rather than after an incident, reducing the long-tail risk of orphaned images.
+      audit: |
+        Inspect the Dockerfile to confirm the authors label is set:
 
-        Use a team mailbox, distribution list, or shared inbox rather than an individual so the contact remains valid as people change roles.
-      remediation: |
-        Add a `LABEL` instruction in the final stage of your Dockerfile:
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Search the final build stage for the label: `grep -nE 'org.opencontainers.image.authors' Dockerfile`.
+        3. Confirm the final stage sets a non-empty `org.opencontainers.image.authors` value, preferably a team contact.
 
-        ```dockerfile
-        LABEL org.opencontainers.image.authors="platform-team@example.com"
-        ```
+        If the final stage sets the authors label, the check passes. If the label is missing or empty, the check fails.
+      remediation:
+        - id: dockerfile
+          desc: |
+            Add a `LABEL` instruction setting `org.opencontainers.image.authors` in the final stage of your Dockerfile. Prefer team-owned contacts such as mailing lists or shared inboxes over individual addresses so the contact stays valid as people change roles:
 
-        Prefer team-owned contacts (mailing lists, group emails, or Slack channel addresses) over individual addresses. Pair the label with `org.opencontainers.image.source` so that responders can reach both the code and the team in a single `docker inspect`:
+            ```dockerfile
+            LABEL org.opencontainers.image.authors="platform-team@example.com"
+            ```
 
-        ```dockerfile
-        LABEL org.opencontainers.image.source="https://github.com/example/myapp" \
-              org.opencontainers.image.authors="platform-team@example.com"
-        ```
+            Pair the label with `org.opencontainers.image.source` so responders can reach both the code and the team in a single `docker inspect`:
+
+            ```dockerfile
+            LABEL org.opencontainers.image.source="https://github.com/example/myapp" \
+                  org.opencontainers.image.authors="platform-team@example.com"
+            ```
     refs:
       - url: https://github.com/opencontainers/image-spec/blob/main/annotations.md
         title: OCI Image Annotations
@@ -908,33 +1062,33 @@ queries:
       docker.file.stages.all(workdir.none(path == /^\/(proc|sys|dev|sbin|boot)(\/|$)/ || path == "/"))
     docs:
       desc: |
-        This check ensures that WORKDIR is not set to the filesystem root (`/`) or sensitive system directories such as `/proc`, `/sys`, `/dev`, `/sbin`, or `/boot` (including subpaths). Other system directories like `/etc` and `/var` are also sensitive and should be avoided as WORKDIR, even though this check focuses on the most critical system paths. Setting the working directory to a system path can cause build or runtime commands to inadvertently modify critical system files or interfere with kernel interfaces.
+        WORKDIR should not be set to the filesystem root (`/`) or sensitive system directories such as `/proc`, `/sys`, `/dev`, `/sbin`, or `/boot`, including their subpaths. Setting the working directory to a system path can cause build or runtime commands to inadvertently modify critical system files or interfere with kernel interfaces.
 
         **Why this matters**
 
         - **System corruption:** Commands that create temporary files, write logs, or extract archives into the working directory could corrupt system paths.
-        - **Security exposure:** `/proc` and `/sys` expose kernel parameters and process information. Using them as a working directory increases the risk of accidental information disclosure or privilege escalation.
+        - **Security exposure:** `/proc` and `/sys` expose kernel parameters and process information, so using them as a working directory increases the risk of accidental information disclosure or privilege escalation.
         - **Unexpected behavior:** Build tools and package managers may create files in the working directory, leading to unpredictable results when that directory is a system path.
+      audit: |
+        Inspect the Dockerfile to confirm WORKDIR is not a system directory:
 
-        **Risk mitigation**
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Locate every WORKDIR instruction: `grep -nE '^WORKDIR' Dockerfile`.
+        3. Confirm no path is `/` or begins with `/proc`, `/sys`, `/dev`, `/sbin`, or `/boot`.
 
-        - Use application-specific directories such as `/app` or `/opt/myapp` for WORKDIR.
-        - Enforce WORKDIR restrictions in CI using a Dockerfile linter.
-        - Review inherited WORKDIR values in multi-stage builds to ensure child stages do not inadvertently use system paths.
+        If every WORKDIR uses an application-specific directory, the check passes. If any uses a system path, the check fails.
       remediation:
-        - id: console
+        - id: dockerfile
           desc: |
-            Use application-specific directories for WORKDIR:
+            Set WORKDIR to an application-specific directory rather than a system path:
 
             ```dockerfile
-            # Bad
+            # Instead of:
             WORKDIR /
             WORKDIR /proc
-            WORKDIR /sys
             WORKDIR /boot/efi
-            WORKDIR /dev/shm
 
-            # Good
+            # Use:
             WORKDIR /app
             WORKDIR /opt/myservice
             ```
