@@ -42,6 +42,7 @@ policies:
 queries:
   - uid: mondoo-mcp-pii-detection
     title: Detect personally identifiable information in MCP content
+    impact: 80
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ais-04
@@ -68,37 +69,65 @@ queries:
       )
     docs:
       desc: |
-        This check scans MCP tools and prompts for personally identifiable information (PII):
-        - Tool names and descriptions must not contain PII
-        - Prompt names, titles, and descriptions must not contain PII
-        - Detected categories: person names, locations, credit cards
+        Tool and prompt metadata advertised by an MCP server is copied verbatim into the model's context window and into client and server logs. Person names, physical locations, and payment card numbers embedded in `name`, `title`, or `description` fields therefore leak into systems that were never scoped to hold personal data.
 
-        PII detection prevents privacy violations and data exposure risks in MCP implementations.
-        Tools and prompts should not request or contain sensitive personal information.
-      remediation: |
-        Update the offending tool or prompt definitions in your MCP server to remove personally identifiable information from `name`, `title`, and `description` fields. Use generic placeholders instead of real names, addresses, or payment data.
+        **Why this matters**
 
-        Example: replace illustrative PII with neutral language.
+        - **Privacy exposure:** Metadata strings reach the model context and audit logs, placing personal data in stores with weaker access controls than a customer database.
+        - **Regulatory scope creep:** Credit card numbers and identifiable personal data pull MCP servers and their logs into PCI DSS and data-protection audit scope.
+        - **Uncontrolled disclosure:** Tool definitions are returned to any connected client, so personal data in metadata is disclosed to every consumer of the server.
 
-        ```json
-        {
-          "name": "lookup_customer",
-          "description": "Look up a customer record by ID. Provide the customer identifier as input; do not include real names, addresses, or payment card numbers in tool metadata."
-        }
-        ```
+        **Risk mitigation**
 
-        Guidelines:
+        - **Synthetic placeholders:** Replacing real values with synthetic identifiers keeps metadata useful for the model while removing the personal data.
+        - **Schema-bound inputs:** Documenting personal data as runtime arguments in the input schema keeps it out of static, broadly readable metadata.
+      audit: |-
+        ### Audit via the MCP client
 
-        - Treat tool and prompt metadata as public-facing strings that flow into model context and logs.
-        - Use synthetic identifiers such as `<customer-id>` or `example@example.com` in any sample text.
-        - If PII must appear in runtime arguments, document it in the input schema rather than in the description.
+        1. Connect an MCP client to the server and invoke `tools/list` and `prompts/list`.
+        2. Inspect the `name`, `title`, and `description` fields of every returned tool and prompt.
+        3. Look for real person names, street or city addresses, and credit card numbers.
 
-        After updating the server, restart the MCP process so registered tools and prompts are re-emitted with the corrected metadata.
+        The server passes when no tool or prompt metadata contains personal data. It fails when any field carries an identifiable name, location, or payment card number.
+
+        ### Audit via the JSON-RPC interface
+
+        1. Send a `tools/list` request to the server endpoint:
+
+           ```bash
+           curl -s -X POST http://localhost:3000/mcp \
+             -H 'Content-Type: application/json' \
+             -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+           ```
+
+        2. Repeat the request with `"method":"prompts/list"`.
+        3. Review the `name`, `title`, and `description` values in the JSON response.
+
+        The server passes when the response contains no personal data. It fails when any metadata field includes a name, location, or credit card number.
+      remediation:
+        - id: cli
+          desc: |
+            **Edit the tool and prompt definitions**
+
+            Update the offending tool or prompt definitions in your MCP server source to remove personally identifiable information from `name`, `title`, and `description` fields. Use generic placeholders instead of real names, addresses, or payment data.
+
+            1. Identify the failing tool or prompt registrations.
+            2. Replace illustrative personal data with neutral language and synthetic identifiers such as `<customer-id>` or `example@example.com`.
+            3. If personal data must appear at runtime, document it in the input schema rather than in the description.
+            4. Restart the MCP server so the registry re-emits the corrected metadata.
+
+            ```json
+            {
+              "name": "lookup_customer",
+              "description": "Look up a customer record by ID. Provide the customer identifier as input; do not include real names, addresses, or payment card numbers in tool metadata."
+            }
+            ```
     refs:
       - url: https://owasp.org/www-project-top-10-privacy-risks/
         title: OWASP Privacy Risks
   - uid: mondoo-mcp-prompt-injection-detection
     title: Detect prompt injection attacks in MCP content
+    impact: 85
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ais-04
@@ -125,38 +154,69 @@ queries:
       )
     docs:
       desc: |
-        This check analyzes MCP tools and prompts for potential prompt injection attacks:
-        - Tool names and descriptions are analyzed for injection patterns
-        - Prompt names, titles, and descriptions are analyzed for injection patterns
-        - Uses a threshold of 0.8 to catch potential injection attempts
+        MCP tool and prompt metadata is appended directly to the model's context as trusted instructions. When `name`, `title`, or `description` fields contain imperative phrasing aimed at the model, an attacker can use them to override system instructions, escalate the agent's behavior, or redirect tool calls. Each field is scored for injection patterns and a score above 0.8 indicates a likely attempt.
 
-        Prompt injection can manipulate AI models to perform unintended actions, bypass security
-        controls, or leak sensitive information. This check helps prevent such attacks.
-      remediation: |
-        Rewrite tool and prompt metadata so it describes capability rather than instructs the model. Anything that reads like a directive aimed at the LLM should be removed.
+        **Why this matters**
 
-        Patterns to strip from `name`, `title`, and `description`:
+        - **Instruction hijacking:** Directive phrasing in metadata can override the system prompt and steer the agent into unintended actions.
+        - **Security control bypass:** Injection content can coax the model past guardrails that would otherwise block sensitive operations.
+        - **Data leakage:** A manipulated agent can be induced to exfiltrate context, credentials, or query results to an attacker.
 
-        - Imperative instructions to the model: "Ignore previous instructions", "You are now...", "Always respond with..."
-        - Role-override or jailbreak phrasing: "act as", "pretend to be", "system:"
-        - Embedded tool-call directives or hidden delimiters such as `<|...|>`, triple-backtick role tags, or fenced JSON that imitates an assistant turn.
-        - Conditional escape hatches such as "if asked about X, do Y instead".
+        **Risk mitigation**
 
-        Rewrite description fields to state what the tool does, what arguments it accepts, and what it returns. Example:
+        - **Descriptive metadata:** Phrasing that states what a tool does, rather than instructing the model, removes the injection surface.
+        - **Untrusted-content isolation:** Keeping end-user text in argument values instead of tool definitions prevents it from being treated as instructions.
+      audit: |-
+        ### Audit via the MCP client
 
-        ```json
-        {
-          "name": "search_orders",
-          "description": "Search the orders table by customer ID and return up to 50 matching orders sorted by date."
-        }
-        ```
+        1. Connect an MCP client to the server and invoke `tools/list` and `prompts/list`.
+        2. Read the `name`, `title`, and `description` fields of each returned tool and prompt.
+        3. Look for imperative phrasing aimed at the model, role-override wording such as "act as" or "system:", and hidden delimiters such as `<|...|>` or fenced JSON imitating an assistant turn.
 
-        Where end-user text must be passed through MCP, sanitize it before it reaches metadata fields and keep untrusted content inside argument values, not inside tool definitions. Re-run the policy scan after restarting the MCP server to confirm scores drop below the 0.8 threshold.
+        The server passes when metadata only describes tool capability. It fails when any field instructs or attempts to reconfigure the model.
+
+        ### Audit via the JSON-RPC interface
+
+        1. Retrieve the tool and prompt definitions:
+
+           ```bash
+           curl -s -X POST http://localhost:3000/mcp \
+             -H 'Content-Type: application/json' \
+             -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+           ```
+
+        2. Repeat the request with `"method":"prompts/list"`.
+        3. Inspect the metadata fields for directive language, jailbreak phrasing, and embedded tool-call instructions.
+
+        The server passes when no metadata field contains injection content. It fails when any field carries instructions directed at the model.
+      remediation:
+        - id: cli
+          desc: |
+            **Rewrite tool and prompt metadata**
+
+            Rewrite tool and prompt metadata so it describes capability rather than instructs the model. Anything that reads like a directive aimed at the LLM must be removed.
+
+            Strip the following patterns from `name`, `title`, and `description`:
+
+            - Imperative instructions to the model: "Ignore previous instructions", "You are now...", "Always respond with..."
+            - Role-override or jailbreak phrasing: "act as", "pretend to be", "system:"
+            - Embedded tool-call directives or hidden delimiters such as `<|...|>`, triple-backtick role tags, or fenced JSON that imitates an assistant turn.
+            - Conditional escape hatches such as "if asked about X, do Y instead".
+
+            Rewrite description fields to state what the tool does, what arguments it accepts, and what it returns. Where end-user text must pass through MCP, sanitize it before it reaches metadata fields and keep untrusted content inside argument values. Restart the MCP server after editing the definitions.
+
+            ```json
+            {
+              "name": "search_orders",
+              "description": "Search the orders table by customer ID and return up to 50 matching orders sorted by date."
+            }
+            ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/LLM_Prompt_Injection_Prevention_Cheat_Sheet.html
         title: OWASP LLM Prompt Injection
   - uid: mondoo-mcp-link-detection
     title: Detect embedded URLs in MCP content
+    impact: 60
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ais-04
@@ -179,39 +239,64 @@ queries:
       mcp.prompts.none(regex.url == title)
     docs:
       desc: |
-        This check detects embedded URLs in MCP tools and prompts:
-        - Tool names and descriptions must not contain HTTP/HTTPS URLs
-        - Prompt names, titles, and descriptions must not contain HTTP/HTTPS URLs
+        HTTP and HTTPS links placed in the `name`, `title`, or `description` fields of MCP tools and prompts flow into the model context window on every invocation. An agent may follow such a link or surface it to a user, turning static metadata into a delivery channel for phishing pages and attacker-controlled endpoints.
 
-        Embedded URLs could be used for phishing attacks, malicious redirects, or data exfiltration.
-        MCP content should focus on functionality rather than including external links.
-      remediation: |
-        Remove HTTP and HTTPS URLs from tool and prompt `name`, `title`, and `description` fields. Documentation links belong in your project README or a dedicated resource entry, not in tool metadata that flows into the model context window.
+        **Why this matters**
 
-        Before:
+        - **Phishing delivery:** A link in tool metadata can be presented to users as if it were trusted guidance from the application.
+        - **Malicious redirects:** Agents that act on embedded URLs can be steered to attacker-controlled destinations.
+        - **Data exfiltration:** A crafted URL in metadata can become an endpoint to which an agent sends context or query results.
 
-        ```json
-        {
-          "name": "fetch_report",
-          "description": "Fetch a report. See https://internal.example.com/docs/report-api for details."
-        }
-        ```
+        **Risk mitigation**
 
-        After:
+        - **Functional metadata:** Keeping tool and prompt descriptions focused on behavior removes the link as an attack vector.
+        - **Structured resources:** Exposing documentation as an MCP resource with a defined URI gives clients a controlled discovery path instead of free-text links.
+      audit: |-
+        ### Audit via the MCP client
 
-        ```json
-        {
-          "name": "fetch_report",
-          "description": "Fetch a report by ID from the analytics service."
-        }
-        ```
+        1. Connect an MCP client to the server and invoke `tools/list` and `prompts/list`.
+        2. Inspect the `name`, `title`, and `description` fields of every returned tool and prompt.
+        3. Look for `http://` or `https://` URLs in any field.
 
-        If clients genuinely need to discover documentation, expose it as an MCP resource with a structured URI rather than as free text in a tool description. Restart the MCP server after editing the definitions so the registry is refreshed.
+        The server passes when no tool or prompt metadata contains a URL. It fails when any field includes an HTTP or HTTPS link.
+
+        ### Audit via the JSON-RPC interface
+
+        1. Retrieve the tool definitions and search for links:
+
+           ```bash
+           curl -s -X POST http://localhost:3000/mcp \
+             -H 'Content-Type: application/json' \
+             -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | grep -Eo 'https?://[^"]+'
+           ```
+
+        2. Repeat the request with `"method":"prompts/list"`.
+
+        The server passes when the search returns no matches. It fails when a URL appears in any metadata field.
+      remediation:
+        - id: cli
+          desc: |
+            **Remove URLs from tool and prompt metadata**
+
+            Remove HTTP and HTTPS URLs from tool and prompt `name`, `title`, and `description` fields. Documentation links belong in your project README or a dedicated resource entry, not in tool metadata that flows into the model context window.
+
+            1. Locate the failing tool or prompt registrations.
+            2. Rewrite each description so it states behavior without an embedded link.
+            3. If clients need documentation discovery, expose it as an MCP resource with a structured URI instead of free text.
+            4. Restart the MCP server so the registry is refreshed.
+
+            ```json
+            {
+              "name": "fetch_report",
+              "description": "Fetch a report by ID from the analytics service."
+            }
+            ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Unvalidated_Redirects_and_Forwards_Cheat_Sheet.html
         title: OWASP Unvalidated Redirects and Forwards Prevention
   - uid: mondoo-mcp-tool-parameters
     title: Ensure tool parameters have proper validation constraints
+    impact: 75
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ais-04
@@ -235,48 +320,79 @@ queries:
       )
     docs:
       desc: |
-        This check ensures that MCP tool parameters have appropriate validation constraints:
-        - All parameters must have defined types
-        - String parameters should have maximum length limits
+        Every MCP tool must declare a non-empty `name` and `description` and an `inputSchema` whose JSON Schema `type` is `object`. A tool that ships with a missing or empty schema accepts arbitrary arguments, so the server has no structural contract to validate calls against before invoking the underlying capability.
 
-        Proper parameter validation prevents buffer overflow attacks, injection attacks,
-        and ensures input validation at the tool level.
-      remediation: |
-        Every MCP tool must declare a `name`, a `description`, and an `inputSchema` of JSON Schema type `object`. Tools that ship with an empty or missing schema accept arbitrary arguments and bypass server-side validation.
+        **Why this matters**
 
-        Minimum acceptable shape:
+        - **Input validation gap:** Without an `object` schema, the server cannot reject malformed or unexpected arguments before they reach tool logic.
+        - **Injection surface:** Unconstrained arguments flow straight into downstream systems, widening the path for injection and overflow attacks.
+        - **Ambiguous contracts:** A missing `name` or `description` leaves clients and the model guessing what the tool does and what it expects.
 
-        ```json
-        {
-          "name": "create_ticket",
-          "description": "Create a support ticket for a customer.",
-          "inputSchema": {
-            "type": "object",
-            "properties": {
-              "customer_id": { "type": "string", "maxLength": 64 },
-              "subject":     { "type": "string", "maxLength": 200 },
-              "body":        { "type": "string", "maxLength": 4000 },
-              "priority":    { "type": "string", "enum": ["low", "normal", "high"] }
-            },
-            "required": ["customer_id", "subject"],
-            "additionalProperties": false
-          }
-        }
-        ```
+        **Risk mitigation**
 
-        Hardening recommendations:
+        - **Schema-enforced contracts:** A declared `object` schema gives the server a definition to validate every call against.
+        - **Bounded arguments:** Constraints such as `maxLength`, `enum`, and `additionalProperties: false` reject unexpected input before it is processed.
+      audit: |-
+        ### Audit via the MCP client
 
-        - Set `additionalProperties: false` so unknown fields are rejected.
-        - Constrain strings with `maxLength` and, where applicable, `pattern` or `enum`.
-        - Constrain numbers with `minimum` / `maximum`.
-        - Mark required arguments explicitly so missing fields fail validation rather than being silently defaulted.
+        1. Connect an MCP client to the server and invoke `tools/list`.
+        2. For each returned tool, confirm `name` and `description` are non-empty.
+        3. Confirm `inputSchema` is present and its `type` is `object`.
 
-        Most MCP SDKs derive the schema from a typed model. Verify the generated schema in the SDK output before shipping changes.
+        The server passes when every tool declares a name, a description, and an object input schema. It fails when any tool is missing one of these or ships an empty schema.
+
+        ### Audit via the JSON-RPC interface
+
+        1. Retrieve the tool definitions:
+
+           ```bash
+           curl -s -X POST http://localhost:3000/mcp \
+             -H 'Content-Type: application/json' \
+             -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+           ```
+
+        2. For each tool in the response, check the `name`, `description`, and `inputSchema.type` values.
+
+        The server passes when every tool has a name, a description, and `inputSchema.type` of `object`. It fails when any tool omits these fields or has a non-object schema.
+      remediation:
+        - id: cli
+          desc: |
+            **Define a complete input schema for every tool**
+
+            Update each MCP tool registration so it declares a `name`, a `description`, and an `inputSchema` of JSON Schema type `object`. Tools with an empty or missing schema accept arbitrary arguments and bypass server-side validation.
+
+            Apply the following hardening when defining the schema:
+
+            - Set `additionalProperties: false` so unknown fields are rejected.
+            - Constrain strings with `maxLength` and, where applicable, `pattern` or `enum`.
+            - Constrain numbers with `minimum` and `maximum`.
+            - Mark required arguments explicitly so missing fields fail validation rather than being silently defaulted.
+
+            Most MCP SDKs derive the schema from a typed model. Verify the generated schema in the SDK output before shipping changes, then restart the MCP server.
+
+            ```json
+            {
+              "name": "create_ticket",
+              "description": "Create a support ticket for a customer.",
+              "inputSchema": {
+                "type": "object",
+                "properties": {
+                  "customer_id": { "type": "string", "maxLength": 64 },
+                  "subject":     { "type": "string", "maxLength": 200 },
+                  "body":        { "type": "string", "maxLength": 4000 },
+                  "priority":    { "type": "string", "enum": ["low", "normal", "high"] }
+                },
+                "required": ["customer_id", "subject"],
+                "additionalProperties": false
+              }
+            }
+            ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html
         title: Input Validation Guidelines
   - uid: mondoo-mcp-content-filtering
     title: Filter inappropriate and explicit content in tool definitions
+    impact: 60
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ais-04
@@ -302,25 +418,54 @@ queries:
       )
     docs:
       desc: |
-        This check scans MCP tool definitions for inappropriate content including:
-        - Explicit or adult content
-        - Hate speech or discriminatory language
-        - Violence or harmful content
-        - Spam or promotional content
+        The `name`, `title`, and `description` fields of MCP tools and prompts are part of every model invocation that uses the server. Explicit, hateful, violent, or promotional language in those fields becomes a recurring exposure that influences model output and is visible to every connected client.
 
-        All tool definitions should maintain professional standards and comply
-        with content policies to ensure a safe and appropriate environment.
-      remediation: |
-        Audit `name`, `title`, and `description` fields for tools and prompts and rewrite any that contain explicit, hateful, violent, or promotional language. Tool metadata is part of every model invocation, so anything inappropriate here becomes a recurring exposure.
+        **Why this matters**
 
-        Recommended workflow:
+        - **Recurring exposure:** Tool metadata is replayed into the model context on each invocation, so inappropriate content is not a one-time event.
+        - **Reputational and policy risk:** Offensive metadata can surface in agent responses and breach organizational content and acceptable-use policies.
+        - **Output contamination:** Adult, hateful, or violent phrasing in definitions can steer model output toward the same content.
 
-        1. Run the failing scan with verbose output to get the specific tool or prompt UIDs that triggered the check.
-        2. Edit the corresponding tool or prompt registration in the MCP server source so the description focuses on technical behavior, allowed inputs, and outputs.
-        3. Add a pre-commit lint step that runs an inappropriate-content scan against your tool definitions to keep regressions out of the codebase.
-        4. Restart the MCP server and re-run `cnspec scan` to confirm the check passes.
+        **Risk mitigation**
 
-        For shared MCP servers, route changes through code review so a second author confirms metadata reads professionally before it ships.
+        - **Professional metadata:** Descriptions focused on technical behavior, allowed inputs, and outputs keep content within policy.
+        - **Review gates:** Routing definition changes through code review and pre-commit content scanning keeps regressions out of the codebase.
+      audit: |-
+        ### Audit via the MCP client
+
+        1. Connect an MCP client to the server and invoke `tools/list` and `prompts/list`.
+        2. Read the `name`, `title`, and `description` fields of each returned tool and prompt.
+        3. Look for explicit or adult content, hateful or discriminatory language, violent content, and promotional or spam text.
+
+        The server passes when all metadata reads as professional, technical description. It fails when any field contains explicit, hateful, violent, or promotional content.
+
+        ### Audit via the JSON-RPC interface
+
+        1. Retrieve the tool and prompt definitions:
+
+           ```bash
+           curl -s -X POST http://localhost:3000/mcp \
+             -H 'Content-Type: application/json' \
+             -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+           ```
+
+        2. Repeat the request with `"method":"prompts/list"`.
+        3. Review the metadata fields in the JSON response for inappropriate language.
+
+        The server passes when no metadata field contains inappropriate content. It fails when any field carries explicit, hateful, violent, or promotional language.
+      remediation:
+        - id: cli
+          desc: |
+            **Rewrite inappropriate tool and prompt metadata**
+
+            Audit the `name`, `title`, and `description` fields of tools and prompts and rewrite any that contain explicit, hateful, violent, or promotional language.
+
+            1. Identify the failing tool or prompt registrations from the scan output.
+            2. Edit the corresponding registration in the MCP server source so the description focuses on technical behavior, allowed inputs, and outputs.
+            3. Add a pre-commit lint step that runs an inappropriate-content scan against your tool definitions to keep regressions out of the codebase.
+            4. Restart the MCP server so the registry re-emits the corrected metadata.
+
+            For shared MCP servers, route changes through code review so a second author confirms metadata reads professionally before it ships.
     refs:
       - url: https://blog.google/technology/ai/ai-principles/
         title: Content Moderation Best Practices
@@ -328,6 +473,7 @@ queries:
         title: Responsible AI Guidelines
   - uid: mondoo-mcp-unicode-validation
     title: Validate Unicode character usage for security
+    impact: 65
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ais-04
@@ -355,50 +501,81 @@ queries:
       )
     docs:
       desc: |
-        This check validates Unicode character usage in tool definitions to prevent:
-        - Homograph attacks using similar-looking characters
-        - Hidden or control characters that could cause rendering issues
-        - Bidirectional text attacks
-        - Private use or unassigned characters
+        The `name` and `description` fields of MCP tools are evaluated against the Unicode general category of every character. Symbol, surrogate, private-use, and unassigned code points almost never appear in legitimate metadata and are the building blocks of homograph, bidirectional-text, and hidden-character attacks against the model and the user.
 
-        Only safe, printable Unicode characters should be used in tool definitions
-        to prevent confusion and potential security issues.
-      remediation: |
-        Restrict tool `name` and `description` to printable ASCII and a small set of well-known Unicode letters. The check fails on four categories that almost never appear in legitimate metadata:
+        **Why this matters**
 
-        - **Symbol (S)**: math, currency, and dingbat symbols often used to smuggle invisible instructions.
-        - **Surrogate (Cs)**: lone surrogate code points that indicate malformed UTF-16.
-        - **Private use (Co)**: vendor-defined code points with no standard meaning.
-        - **Unassigned (Cn)**: code points not assigned in the current Unicode standard.
+        - **Homograph deception:** Visually similar characters from outside the basic Latin set let an attacker disguise a tool as a trusted one.
+        - **Hidden instructions:** Symbol and control-class code points can smuggle invisible content into the model context.
+        - **Malformed and ambiguous text:** Surrogate, private-use, and unassigned code points have no standard meaning and can break rendering or parsing.
 
-        Steps to remediate:
+        **Risk mitigation**
 
-        1. Normalize all metadata strings to Unicode Normalization Form C before registering tools.
-        2. Strip or reject characters in the four categories above. Most languages provide a category lookup, for example Python's `unicodedata.category(ch)`.
-        3. For non-English tool names, prefer ASCII identifiers and place localized text in a dedicated `title` field after auditing it for homograph risk.
-        4. Add a unit test that round-trips each registered tool's metadata through your sanitizer so the constraint is enforced at build time.
+        - **Restricted character set:** Limiting metadata to printable ASCII and well-known Unicode letters removes the deceptive and hidden-character surface.
+        - **Normalization and screening:** Normalizing to Unicode Form C and rejecting the four risky categories enforces the constraint at registration time.
+      audit: |-
+        ### Audit via the MCP client
 
-        Example sanitizer in Python:
+        1. Connect an MCP client to the server and invoke `tools/list`.
+        2. Inspect the `name` and `description` fields of each returned tool.
+        3. Look for characters outside printable ASCII, in particular symbols, invisible or control characters, and lookalike letters.
 
-        ```python
-        import unicodedata
+        The server passes when tool metadata uses only safe, printable characters. It fails when any field contains symbol, surrogate, private-use, or unassigned code points.
 
-        BAD_CATEGORIES = {"Cs", "Co", "Cn"}
-        BAD_MAJOR = {"S"}
+        ### Audit via the JSON-RPC interface
 
-        def safe(text: str) -> str:
-            text = unicodedata.normalize("NFC", text)
-            return "".join(
-                ch for ch in text
-                if unicodedata.category(ch) not in BAD_CATEGORIES
-                and unicodedata.category(ch)[0] not in BAD_MAJOR
-            )
-        ```
+        1. Retrieve the tool definitions and screen for non-ASCII characters:
+
+           ```bash
+           curl -s -X POST http://localhost:3000/mcp \
+             -H 'Content-Type: application/json' \
+             -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | grep -P '[^\x00-\x7F]'
+           ```
+
+        2. Review any matched lines and classify the flagged characters by Unicode category.
+
+        The server passes when no tool metadata contains a risky code point. It fails when a symbol, surrogate, private-use, or unassigned character appears in any field.
+      remediation:
+        - id: cli
+          desc: |
+            **Sanitize tool metadata to a safe character set**
+
+            Restrict tool `name` and `description` to printable ASCII and a small set of well-known Unicode letters. The check fails on four categories that almost never appear in legitimate metadata:
+
+            - **Symbol (S)**: math, currency, and dingbat symbols often used to smuggle invisible instructions.
+            - **Surrogate (Cs)**: lone surrogate code points that indicate malformed UTF-16.
+            - **Private use (Co)**: vendor-defined code points with no standard meaning.
+            - **Unassigned (Cn)**: code points not assigned in the current Unicode standard.
+
+            Steps to remediate:
+
+            1. Normalize all metadata strings to Unicode Normalization Form C before registering tools.
+            2. Strip or reject characters in the four categories above. Most languages provide a category lookup, for example Python's `unicodedata.category(ch)`.
+            3. For non-English tool names, prefer ASCII identifiers and place localized text in a dedicated `title` field after auditing it for homograph risk.
+            4. Add a unit test that round-trips each registered tool's metadata through your sanitizer so the constraint is enforced at build time. Restart the MCP server once the sanitizer is in place.
+
+            Example sanitizer in Python:
+
+            ```python
+            import unicodedata
+
+            BAD_CATEGORIES = {"Cs", "Co", "Cn"}
+            BAD_MAJOR = {"S"}
+
+            def safe(text: str) -> str:
+                text = unicodedata.normalize("NFC", text)
+                return "".join(
+                    ch for ch in text
+                    if unicodedata.category(ch) not in BAD_CATEGORIES
+                    and unicodedata.category(ch)[0] not in BAD_MAJOR
+                )
+            ```
     refs:
       - url: https://en.wikipedia.org/wiki/IDN_homograph_attack
         title: Homograph Attack Prevention
   - uid: mondoo-mcp-resource-validation
     title: Validate MCP resource and resource template security
+    impact: 75
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ais-04
@@ -428,35 +605,61 @@ queries:
       )
     docs:
       desc: |
-        This check ensures MCP resources and resource templates are secure:
-        - Resources must have non-empty names and descriptions
-        - Resource descriptions must not contain explicit content
-        - Resource descriptions must not request PII information
-        - Resource templates follow the same security requirements
+        MCP resources and resource templates must each declare a non-empty `name` and `description`, and those descriptions must contain neither explicit content nor personally identifiable information. Resource metadata is returned to every connected client and flows into the model context, so an empty or unsafe definition both starves the agent of context and leaks unsafe content.
 
-        Secure resource definitions prevent data exposure and ensure that resources
-        do not violate content policies or privacy requirements.
-      remediation: |
-        For every entry returned by `resources/list` and `resources/templates/list`, ensure the registration sets a non-empty `name` and `description`, and that the description contains neither explicit content nor personally identifiable information.
+        **Why this matters**
 
-        Minimum acceptable shape:
+        - **Ambiguous resources:** A missing `name` or `description` leaves clients and the model unable to determine what a resource provides.
+        - **Privacy exposure:** Personal data in a resource description flows into model context and logs that are not scoped to hold it.
+        - **Content policy breach:** Explicit content in resource metadata is replayed to every client and can surface in agent output.
 
-        ```json
-        {
-          "uri": "file:///var/data/reports/{report_id}.json",
-          "name": "report",
-          "description": "JSON report payload for a given report ID."
-        }
-        ```
+        **Risk mitigation**
 
-        Steps to remediate:
+        - **Complete definitions:** Requiring a name and description for every resource and template gives the agent reliable context.
+        - **Screened descriptions:** Validating descriptions for explicit content and personal data at registration time keeps unsafe content out of the catalog.
+      audit: |-
+        ### Audit via the MCP client
 
-        1. Walk the resource and resource-template registrations in your MCP server and fill in any missing `name` or `description` values.
-        2. Rewrite descriptions that contain real names, addresses, payment data, or explicit language. Use synthetic placeholders such as `<report-id>` or `example@example.com` in any sample text.
-        3. Treat resource URIs and descriptions as values that flow into model context. Do not embed credentials, internal hostnames, or customer identifiers in either field.
-        4. Restart the MCP server and re-scan to confirm both `mcp.resources` and `mcp.resourceTemplates` pass.
+        1. Connect an MCP client to the server and invoke `resources/list` and `resources/templates/list`.
+        2. Confirm every returned resource and template has a non-empty `name` and `description`.
+        3. Inspect each description for explicit content and for personal data such as person names, locations, or credit card numbers.
 
-        If you list resources from a dynamic backend, validate `name` and `description` at registration time and skip resources that fail validation rather than emitting an empty placeholder.
+        The server passes when every resource and template has a name and a description free of explicit content and personal data. It fails when any entry is missing a field or carries unsafe content.
+
+        ### Audit via the JSON-RPC interface
+
+        1. Retrieve the resource definitions:
+
+           ```bash
+           curl -s -X POST http://localhost:3000/mcp \
+             -H 'Content-Type: application/json' \
+             -d '{"jsonrpc":"2.0","id":1,"method":"resources/list"}'
+           ```
+
+        2. Repeat the request with `"method":"resources/templates/list"`.
+        3. Review the `name` and `description` values for completeness, explicit content, and personal data.
+
+        The server passes when every entry has a name and a safe description. It fails when any resource or template omits a field or contains explicit or personal content.
+      remediation:
+        - id: cli
+          desc: |
+            **Complete and sanitize resource definitions**
+
+            For every entry returned by `resources/list` and `resources/templates/list`, set a non-empty `name` and `description`, and ensure the description contains neither explicit content nor personally identifiable information.
+
+            1. Walk the resource and resource-template registrations in your MCP server and fill in any missing `name` or `description` values.
+            2. Rewrite descriptions that contain real names, addresses, payment data, or explicit language. Use synthetic placeholders such as `<report-id>` or `example@example.com` in any sample text.
+            3. Treat resource URIs and descriptions as values that flow into model context. Do not embed credentials, internal hostnames, or customer identifiers in either field.
+            4. If you list resources from a dynamic backend, validate `name` and `description` at registration time and skip resources that fail validation rather than emitting an empty placeholder.
+            5. Restart the MCP server so the registry re-emits the corrected resources.
+
+            ```json
+            {
+              "uri": "file:///var/data/reports/{report_id}.json",
+              "name": "report",
+              "description": "JSON report payload for a given report ID."
+            }
+            ```
     refs:
       - url: https://owasp.org/www-project-top-10-privacy-risks/
         title: OWASP Privacy Risks
