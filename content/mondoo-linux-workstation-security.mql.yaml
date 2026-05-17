@@ -166,9 +166,26 @@ queries:
       }
     docs:
       desc: |-
-        The grub files contain information on boot settings and passwords for unlocking boot options.
+        This check verifies that bootloader configuration files such as `grub.cfg`, `menu.lst`, `user.cfg`, and `loader.conf` are owned by `root` and are not readable or writable by group or other users. On UEFI systems, it also verifies that the `/boot/efi` vfat filesystem is mounted with `fmask=0077`.
 
-        If the system uses UEFI, /boot/efi is a vfat filesystem. The vfat filesystem itself doesn't have the concept of permissions but can be mounted under Linux with whatever permissions desired.
+        **Why this matters**
+
+        Bootloader configuration files hold boot parameters and, in some cases, the hashed password that protects boot-time menu entries. If these files are exposed to unprivileged users, an attacker with local access can extract sensitive boot settings or alter how the system starts.
+
+        - **Protects boot-time passwords:** Restricting access prevents disclosure of the GRUB password hash that gates editing of boot entries.
+        - **Prevents boot tampering:** Read-only access for non-root users keeps attackers from injecting kernel parameters that disable security controls.
+        - **Reduces local attack surface:** Hardened permissions ensure only privileged users can inspect or modify the boot path.
+
+        The vfat filesystem used for `/boot/efi` has no native permission model, so the `fmask` mount option is used to enforce equivalent restrictions.
+      audit: |
+        Run these commands to inspect the ownership and permissions of the bootloader configuration files present on the system:
+
+        ```bash
+        stat -c '%n %U %G %A' /boot/grub/grub.cfg /boot/grub2/grub.cfg /boot/grub/menu.lst /boot/grub/user.cfg /boot/grub2/user.cfg /boot/loader/loader.conf 2>/dev/null
+        mount | grep '/boot/efi'
+        ```
+
+        A passing result shows each existing file owned by `root:root` with no group or other access, and the `/boot/efi` mount including `fmask=0077`. A failing result shows group or other access on a configuration file, or a `/boot/efi` mount without the restrictive mask.
       remediation:
         - id: cli
           desc: |
@@ -210,7 +227,7 @@ queries:
             ```
 
             _Note: This may require a re-boot to enable the change_
-        - id: bash
+        - id: script
           desc: |
             **Using a Bash Script**
 
@@ -291,9 +308,23 @@ queries:
       machine.secureboot.enabled
     docs:
       desc: |
-        Secure Boot is required in order to ensure that the booting kernel hasn't been modified. It needs to be enabled in your computer's firmware and be supported by your Linux distribution.
+        This check verifies that UEFI Secure Boot is enabled so the firmware validates the signature of the kernel and boot components before executing them.
+
+        **Why this matters**
+
+        Secure Boot establishes a chain of trust from the firmware through the bootloader and kernel. Without it, an attacker who can write to the boot path can load a tampered or malicious kernel that runs before any operating-system protections take effect.
+
+        - **Prevents bootkits:** Signature verification blocks unsigned or modified boot code from running.
+        - **Protects the kernel:** Only kernels signed by a trusted key are allowed to boot.
+        - **Anchors platform integrity:** A verified boot path is the foundation for measured boot and full-disk encryption protections.
       audit: |
-        Run the `mokutil --sb-state` command and check whether it prints `SecureBoot enabled`
+        Run this command to inspect the Secure Boot state:
+
+        ```bash
+        mokutil --sb-state
+        ```
+
+        A passing result prints `SecureBoot enabled`. A failing result prints `SecureBoot disabled` or reports that the platform does not support Secure Boot.
       remediation:
         - id: manual
           desc: |
@@ -334,8 +365,25 @@ queries:
       }
     docs:
       desc: |
-        It is mandatory to encrypt the / and /home partitions in case of theft
-      audit: Get the device names serving `/` and `/home` by running `df`, check the device status using `dmsetup status`
+        This check verifies that the `/` and `/home` filesystems reside on encrypted block devices, confirmed by a `crypt` device type in the `lsblk` device tree.
+
+        **Why this matters**
+
+        Workstations are frequently lost or stolen. Without full-disk encryption, anyone with physical possession of the drive can read every file on it by attaching it to another system.
+
+        - **Protects data at rest:** Encryption renders the contents of `/` and `/home` unreadable without the unlock key.
+        - **Mitigates device theft:** A stolen laptop yields no usable data when its system and home partitions are encrypted.
+        - **Supports compliance:** Encrypting endpoint storage satisfies data-protection requirements for systems that handle sensitive information.
+      audit: |
+        Run these commands to identify the devices serving `/` and `/home` and confirm they are encrypted:
+
+        ```bash
+        df /  /home
+        lsblk -o NAME,TYPE,MOUNTPOINT
+        dmsetup status
+        ```
+
+        A passing result shows the devices backing `/` and `/home` mapped through a `crypt` device. A failing result shows either filesystem on a plain, unencrypted device.
       remediation:
         - id: cli
           desc: |
@@ -375,9 +423,23 @@ queries:
       )
     docs:
       desc: |
-        It is mandatory to encrypt the / and /home with the aes-xts-plain64 or aes-xts-benbi algorithm.
+        This check verifies that every LUKS-encrypted volume uses an AES cipher in XTS mode, such as `aes-xts-plain64` or `aes-xts-benbi`.
+
+        **Why this matters**
+
+        The strength of full-disk encryption depends on the cipher protecting the data. A weak or non-standard cipher can leave encrypted volumes vulnerable to cryptographic attack even when encryption appears to be enabled.
+
+        - **Ensures strong confidentiality:** AES in XTS mode is the established standard for block-device encryption and resists known attacks.
+        - **Avoids weak ciphers:** Confirming the cipher prevents volumes from being protected by deprecated or insecure algorithms.
+        - **Maintains consistent protection:** Verifying every encrypted volume ensures no partition relies on a substandard cipher.
       audit: |
-        Run the `cryptsetup --dump-json-metadata luksDump /dev/disk/by-uuid/<device uuid>` command and check whether encryption is used.
+        Run this command for each encrypted device to inspect the cipher in use:
+
+        ```bash
+        cryptsetup luksDump /dev/disk/by-uuid/<device-uuid>
+        ```
+
+        A passing result shows the `Cipher` field set to an `aes-xts` variant. A failing result shows a non-AES cipher or a mode other than XTS.
       remediation:
         - id: cli
           desc: |
@@ -409,10 +471,23 @@ queries:
       parse.json(content: command('fwupdmgr get-updates -y --json').stdout).params["Devices"].length == 0
     docs:
       desc: |
-        The system BIOS should be on the latest available version. This check depends on fwupdmgr to be available on the system.
-        Warning: The fwupd daemon will try to connect to the Internet automatically to receive the latest updates.
+        This check verifies that no firmware updates are pending for the system, using `fwupdmgr` to confirm the BIOS is running the latest available version. The `fwupd` daemon contacts the Internet to retrieve the latest firmware metadata.
+
+        **Why this matters**
+
+        Firmware sits below the operating system and is a high-value target. Outdated BIOS firmware can carry unpatched vulnerabilities that allow persistent, OS-independent compromise.
+
+        - **Closes firmware vulnerabilities:** Applying vendor updates remediates known flaws in the BIOS.
+        - **Maintains platform trust:** Current firmware keeps Secure Boot and other platform protections effective.
+        - **Reduces persistent-threat risk:** Patched firmware limits an attacker's ability to establish footholds that survive a reinstall.
       audit: |
-        Run the `fwupdmgr get-updates -y --json` command to find if the BIOS is already running the latest version.
+        Run this command to check for pending firmware updates:
+
+        ```bash
+        fwupdmgr get-updates --json
+        ```
+
+        A passing result reports no devices with available updates. A failing result lists one or more devices, including the system BIOS, with a newer firmware version available.
       remediation:
         - id: cli
           desc: |
