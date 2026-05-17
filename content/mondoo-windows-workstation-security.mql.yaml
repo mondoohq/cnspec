@@ -64,14 +64,55 @@ queries:
     mql: windows.bitlocker.volumes.all( protectionStatus["text"] == "Protected" )
     docs:
       desc: |
-        Encryption processes encode data in a manner that makes it unusable to unauthorized users who do not have the decryption key. The main advantage of encryption is that it turns data into an unreadable form that cannot be used when the notebook is stolen. Windows offers BitLocker, which enables you to encrypt entire drives and prevent unauthorized system changes.
-        Microsoft designed BitLocker to provide encryption for disk volumes. It is a free and built-in feature in many Windows versions, including Windows Vista and Windows 10. BitLocker asks users for a password, generates a recovery key, and encrypts the entire hard drive.
-      remediation:
-        - id: cli
-          desc: |
-            **Using the CLI**
+        This check ensures that every disk volume is protected by BitLocker drive encryption. BitLocker encodes data so it is unreadable to anyone who does not hold the decryption key, which keeps information confidential if a workstation is lost or stolen.
 
-            Enable BitLocker on the operating system drive using PowerShell:
+        **Why this matters**
+
+        - **Data theft protection:** An encrypted drive cannot be read by attaching it to another system or booting an alternate operating system.
+        - **Loss and theft resilience:** Laptops are frequently lost or stolen; encryption renders the data on them useless to whoever ends up with the device.
+        - **Tamper resistance:** Pairing BitLocker with a TPM detects offline modification of boot components and blocks unauthorized changes.
+        - **Compliance:** Many regulatory frameworks require encryption of data at rest on end-user devices.
+      audit: |
+        ### Audit via Settings
+
+        1. Open **Settings** and go to **Privacy & security** > **Device encryption**, or open **Control Panel** > **System and Security** > **BitLocker Drive Encryption**.
+        2. Review the protection status listed for each drive.
+
+        The workstation passes when every volume reports BitLocker as on. It fails if any volume reports BitLocker as off.
+
+        ### Audit via PowerShell
+
+        1. Open an elevated PowerShell session.
+        2. Display the encryption status of all volumes:
+
+           ```powershell
+           Get-BitLockerVolume
+           ```
+
+        The workstation passes when every volume reports a `ProtectionStatus` of `On`. It fails if any volume reports `Off`.
+      remediation:
+        - id: gui
+          desc: |
+            **Using the Windows interface**
+
+            Turn on device encryption:
+
+            1. Sign in to Windows with an administrator account.
+            2. Select **Start** > **Settings** > **Update & Security** > **Device encryption**.
+            3. If device encryption is turned off, select **Turn on**.
+
+            If Device encryption is not available, use standard BitLocker encryption:
+
+            1. Sign in to your Windows device with an administrator account.
+            2. In the search box on the taskbar, type **Manage BitLocker** and select it from the list of results.
+            3. Select **Turn on BitLocker** and follow the instructions.
+
+            Note: BitLocker is not available on Windows 10/11 Home edition.
+        - id: powershell
+          desc: |
+            **Using PowerShell**
+
+            Enable BitLocker on the operating system drive:
 
             ```powershell
             Enable-BitLocker -MountPoint "C:" -EncryptionMethod XtsAes256 -UsedSpaceOnly -TpmProtector
@@ -88,23 +129,25 @@ queries:
             ```powershell
             Get-BitLockerVolume
             ```
-        - id: manual
+        - id: ansible
           desc: |
-            **Using the GUI**
+            **Using Ansible**
 
-            Turn on device encryption:
+            Enable BitLocker on the operating system drive using the following Ansible playbook:
 
-            1. Sign in to Windows with an administrator account.
-            2. Select **Start** > **Settings** > **Update & Security** > **Device encryption**.
-            3. If device encryption is turned off, select **Turn on**.
+            ```yaml
+            ---
+            - name: Enable BitLocker on the operating system drive
+              hosts: all
 
-            If Device encryption is not available, use standard BitLocker encryption:
-
-            1. Sign in to your Windows device with an administrator account.
-            2. In the search box on the taskbar, type **Manage BitLocker** and select it from the list of results.
-            3. Select **Turn on BitLocker** and follow the instructions.
-
-            Note: BitLocker is not available on Windows 10/11 Home edition.
+              tasks:
+                - name: Enable BitLocker with a TPM protector
+                  community.windows.win_bitlocker:
+                    drive: C
+                    state: present
+                    encryption_method: xts_aes256
+                    used_space_only: true
+            ```
     refs:
       - url: https://support.microsoft.com/en-us/windows/turn-on-device-encryption-0c453637-bc88-5f74-5105-741561aae838#:~:text=Turn%20on%20standard%20BitLocker%20encryption,-Sign%20in%20to&text=In%20the%20search%20box%20on,is%20available%20for%20your%20device.
         title: Turn on device encryption
@@ -129,15 +172,42 @@ queries:
       powershell("Confirm-SecureBootUEFI").stdout.trim.downcase == 'true'
     docs:
       desc: |
-        Secure Boot is a boot integrity feature that is part of the Unified Extensible Firmware Interface (UEFI) industry standard. Most modern computer systems are delivered to customers with a standard Secure Boot policy installed.
-      remediation:
-        - id: manual
-          desc: |
-            To enable Secure Boot, you need to access the UEFI firmware settings on your computer. The steps may vary depending on the manufacturer of your computer, but generally, you can follow these steps:
+        This check ensures that Secure Boot is active. Secure Boot is a boot-integrity feature of the Unified Extensible Firmware Interface (UEFI) standard that allows the system to start only with firmware and boot loaders signed by trusted keys.
 
-            1. Restart your computer and enter the UEFI firmware settings. This is usually done by pressing a specific key during startup (e.g., F2, F10, DEL, ESC).
-            2. Look for the "Secure Boot" option in the UEFI settings. It may be located under the "Boot" or "Security" tab.
-            3. Change the Secure Boot setting to "Enabled."
+        **Why this matters**
+
+        - **Bootkit defense:** Secure Boot blocks unsigned or tampered boot code, preventing malware from loading before the operating system starts.
+        - **Boot chain integrity:** Only software trusted by the firmware can run during startup, establishing a verified foundation for the rest of the system.
+        - **Persistence resistance:** Firmware-level malware that survives operating system reinstalls is far harder to install when Secure Boot is enforced.
+        - **Compliance:** Secure Boot is a baseline configuration requirement in common Windows hardening benchmarks.
+      audit: |
+        ### Audit via System Information
+
+        1. Press **Windows + R**, type `msinfo32`, and press **Enter**.
+        2. In **System Summary**, locate the **Secure Boot State** value.
+
+        The workstation passes when Secure Boot State reports **On**. It fails if the value reports **Off** or **Unsupported**.
+
+        ### Audit via PowerShell
+
+        1. Open an elevated PowerShell session.
+        2. Query the Secure Boot status:
+
+           ```powershell
+           Confirm-SecureBootUEFI
+           ```
+
+        The workstation passes when the command returns `True`. It fails if the command returns `False` or reports that the platform does not support Secure Boot.
+      remediation:
+        - id: gui
+          desc: |
+            **Using the UEFI firmware interface**
+
+            To enable Secure Boot, access the UEFI firmware settings on your computer. The steps vary by manufacturer, but generally:
+
+            1. Restart your computer and enter the UEFI firmware settings. This is usually done by pressing a specific key during startup (for example F2, F10, DEL, or ESC).
+            2. Look for the **Secure Boot** option in the UEFI settings. It is usually located under the **Boot** or **Security** tab.
+            3. Change the Secure Boot setting to **Enabled**.
             4. Save the changes and exit the UEFI settings.
     refs:
       - url: https://media.defense.gov/2020/Sep/15/2002497594/-1/-1/0/CTR-UEFI-Secure-Boot-Customization-UOO168873-20.PDF
@@ -160,7 +230,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc7-1-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
     mql: |
-      registrykey.property(path: 'HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Windows\WindowsUpdate\AU', name: 'NoAutoUpdate') {
+      registrykey.property(path: 'HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Windows\WindowsUpdate\AU', name: 'AUOptions') {
         data >= 4
       }
       registrykey.property(path: 'HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Windows\WindowsUpdate\AU', name: 'ScheduledInstallDay') {
@@ -168,19 +238,36 @@ queries:
       }
     docs:
       desc: |
-        Auto updates are important for Windows because they help to ensure the security and stability of the operating system. Here are some of the key reasons why auto updates are important:
+        This check ensures that the workstation is configured to download and install Windows updates automatically on a daily schedule. Automatic updates close the gap between the release of a security fix and its application to the device.
 
-        Security: Updates often contain security patches that help protect your computer from vulnerabilities that could be exploited by hackers or malware. By keeping your system up to date, you reduce the risk of being hacked or having your personal data compromised.
+        **Why this matters**
 
-        Bug fixes: Updates can also fix bugs and other issues that can cause crashes or other problems. By keeping your system up to date, you ensure that you have access to the latest fixes and improvements, which can help improve performance and reliability.
+        - **Vulnerability remediation:** Security patches close flaws that attackers actively exploit; applying them promptly removes those entry points.
+        - **Reduced exposure window:** Automatic installation shrinks the time a device runs with a known, unpatched vulnerability.
+        - **Consistent posture:** Removing the dependency on users to apply updates keeps the whole fleet at a known patch level.
+        - **Stability:** Updates also resolve defects that cause crashes and data loss, improving reliability alongside security.
+      audit: |
+        ### Audit via Settings
 
-        New features: Updates can also introduce new features and improvements to the Windows operating system. By keeping your system up to date, you ensure that you have access to these new features and can take advantage of the latest advancements in technology.
+        1. Open **Settings** and go to **Update & Security** > **Windows Update** > **Advanced options**.
+        2. Confirm that updates are configured to install automatically and that no pause is in effect.
 
-        Overall, auto updates are important for Windows because they help keep your system secure, stable, and up to date with the latest features and improvements.
+        The workstation passes when automatic updates are enabled. It fails if updates are paused or set to notify only.
+
+        ### Audit via PowerShell
+
+        1. Open an elevated PowerShell session.
+        2. Read the configured automatic-update policy values:
+
+           ```powershell
+           Get-ItemProperty -Path 'HKLM:\Software\Policies\Microsoft\Windows\WindowsUpdate\AU' -Name AUOptions, ScheduledInstallDay
+           ```
+
+        The workstation passes when `AUOptions` is `4` or greater and `ScheduledInstallDay` is `0`. It fails if either value is missing or set differently.
       remediation:
-        - id: cli
+        - id: gui
           desc: |
-            **Using the CLI**
+            **Using Group Policy**
 
             Under `Computer Configuration\Administrative Templates\Windows Components\Windows update\Configure Automatic Updates`, you must select one of the following options:
 
@@ -196,7 +283,7 @@ queries:
 
             ```powershell
             $keypath = "Registry::HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Windows\WindowsUpdate\AU"
-            $keyname = "NoAutoUpdate"
+            $keyname = "AUOptions"
             New-Item -Path $keypath -Name $keyname -Force
             Set-ItemProperty -Path $keypath -Name $keyname -Value "4"
             ```
@@ -232,10 +319,10 @@ queries:
                     path: HKLM:\Software\Policies\Microsoft\Windows\WindowsUpdate\AU
                     state: present
 
-                - name: Set NoAutoUpdate to 4 (auto download and schedule)
+                - name: Set AUOptions to 4 (auto download and schedule)
                   ansible.windows.win_regedit:
                     path: HKLM:\Software\Policies\Microsoft\Windows\WindowsUpdate\AU
-                    name: NoAutoUpdate
+                    name: AUOptions
                     data: 4
                     type: dword
 
@@ -277,19 +364,36 @@ queries:
       )
     docs:
       desc: |
-        Antivirus software is essential for protecting Windows workstations from malware, ransomware, and other security threats. Here are the key reasons why antivirus protection is critical:
+        This check ensures that an antivirus product is installed, actively running, and using threat signatures updated within the last 25 hours. Current signatures and active scanning are what allow the product to recognize and block recent malware.
 
-        Real-time protection: Antivirus software continuously monitors your system for malicious activity, detecting and blocking threats before they can cause damage. This includes scanning files as they are accessed, downloaded, or executed.
+        **Why this matters**
 
-        Malware defense: Modern antivirus solutions protect against a wide range of threats including viruses, trojans, worms, spyware, and ransomware. Without active protection, your system is vulnerable to attacks that could compromise sensitive data or render the system unusable.
+        - **Real-time protection:** Active antivirus scans files as they are accessed, downloaded, or executed, blocking threats before they can run.
+        - **Malware defense:** Antivirus products detect viruses, trojans, worms, spyware, and ransomware that would otherwise compromise data or disable the system.
+        - **Fresh detection:** Up-to-date signatures are required to recognize newly released malware variants; stale signatures leave the device blind to current threats.
+        - **Baseline control:** Endpoint malware protection is a fundamental security control expected by every major hardening benchmark.
+      audit: |
+        ### Audit via Windows Security
 
-        Signature updates: Antivirus software relies on up-to-date threat signatures to identify the latest malware variants. Keeping signatures current ensures protection against newly discovered threats.
+        1. Open **Windows Security** and select **Virus & threat protection**.
+        2. Confirm that real-time protection is on and review the **Protection updates** date.
 
-        Overall, having antivirus software installed, enabled, and up-to-date is a fundamental security control that helps protect your workstation from compromise and data theft.
+        The workstation passes when an antivirus product is enabled and its definitions are current. It fails if protection is off or the definitions are out of date.
+
+        ### Audit via PowerShell
+
+        1. Open an elevated PowerShell session.
+        2. Display the antivirus product status:
+
+           ```powershell
+           Get-MpComputerStatus | Select-Object AMServiceEnabled, RealTimeProtectionEnabled, AntivirusSignatureLastUpdated
+           ```
+
+        The workstation passes when the antivirus service and real-time protection are enabled and the signatures were updated within the last 25 hours. It fails if protection is disabled or the signatures are older than 25 hours.
       remediation:
-        - id: cli
+        - id: gui
           desc: |
-            **Using the CLI**
+            **Using the Windows interface**
 
             Complete the following steps to turn on Microsoft Defender Antivirus on your device.
 
