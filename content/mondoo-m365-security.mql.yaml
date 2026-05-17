@@ -298,8 +298,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-10-2-1
       compliance/soc2-2017: soc2-control-cc7-2-1
       compliance/vda-isa-5: vda-isa-5-5-2-4
-    mql: |
-      microsoft.security.latestSecureScores.controlScores.where(controlName == 'UserRiskPolicy').all(_['score'] == 7)
+    variants:
+      - uid: mondoo-m365-security-enable-azure-ad-identity-protection-user-risk-policies-microsoft365
+        tags:
+          mondoo.com/filter-title: Microsoft 365
+          mondoo.com/filter-icon: microsoft
+      - uid: mondoo-m365-security-enable-azure-ad-identity-protection-user-risk-policies-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-m365-security-enable-azure-ad-identity-protection-user-risk-policies-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-m365-security-enable-azure-ad-identity-protection-user-risk-policies-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that policies are in place to detect risky sign-ins in real-time and offline. Risky sign-ins refer to attempts that may be performed by unauthorized individuals trying to access user accounts.
@@ -316,6 +331,26 @@ queries:
           - CIS Controls (CIS Control 16: Account Monitoring and Control)
 
         Ensuring these policies are in place strengthens account security and contributes to an organization's overall defense-in-depth strategy for protecting user identities and access to critical resources.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the Microsoft Entra admin center at `https://entra.microsoft.com`.
+        2. Go to **Protection** > **Conditional Access** > **Policies**.
+        3. Look for a policy that, under **Conditions**, sets **User risk** to one or more levels and, under **Grant**, requires multifactor authentication.
+
+        A passing tenant has at least one enabled policy that targets user risk and requires MFA. A failing tenant has no such policy, or the policy is in **Report-only** or **Off** state.
+
+        ### Audit via PowerShell
+
+        1. Connect to Microsoft Graph and list Conditional Access policies:
+
+        ```powershell
+        Connect-MgGraph -Scopes "Policy.Read.All"
+        Get-MgIdentityConditionalAccessPolicy |
+          Where-Object { $_.State -eq "enabled" -and $_.Conditions.UserRiskLevels }
+        ```
+
+        A passing tenant returns at least one policy. A failing tenant returns nothing.
       remediation:
         - id: console
           desc: |
@@ -410,6 +445,38 @@ queries:
         title: Microsoft Entra Conditional Access
       - url: https://learn.microsoft.com/en-us/entra/id-protection/overview-identity-protection
         title: Microsoft Entra ID Protection Overview
+  - uid: mondoo-m365-security-enable-azure-ad-identity-protection-user-risk-policies-microsoft365
+    filters: |
+      asset.platform == "microsoft365"
+    mql: |
+      microsoft.security.latestSecureScores.controlScores.where(controlName == 'UserRiskPolicy').all(_['score'] == 7)
+  - uid: mondoo-m365-security-enable-azure-ad-identity-protection-user-risk-policies-terraform-hcl
+    filters: |
+      asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == 'azuread_conditional_access_policy')
+    mql: |
+      terraform.resources('azuread_conditional_access_policy').any(
+        arguments['state'] == 'enabled' &&
+        blocks.where(type == 'conditions').any(arguments['user_risk_levels'] != empty) &&
+        blocks.where(type == 'grant_controls').any(arguments['built_in_controls'].contains('mfa'))
+      )
+  - uid: mondoo-m365-security-enable-azure-ad-identity-protection-user-risk-policies-terraform-plan
+    filters: |
+      asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == 'azuread_conditional_access_policy')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'azuread_conditional_access_policy').any(
+        change.after['state'] == 'enabled' &&
+        change.after['conditions'].any(_['user_risk_levels'] != empty) &&
+        change.after['grant_controls'].any(_['built_in_controls'].contains('mfa'))
+      )
+  - uid: mondoo-m365-security-enable-azure-ad-identity-protection-user-risk-policies-terraform-state
+    filters: |
+      asset.platform == "terraform-state" && terraform.state.resources.contains(type == 'azuread_conditional_access_policy')
+    mql: |
+      terraform.state.resources.where(type == 'azuread_conditional_access_policy').any(
+        values['state'] == 'enabled' &&
+        values['conditions'].any(_['user_risk_levels'] != empty) &&
+        values['grant_controls'].any(_['built_in_controls'].contains('mfa'))
+      )
   - uid: mondoo-m365-security-enable-conditional-access-policies-to-block-legacy-authentication
     title: Enable Conditional Access policies to block legacy authentication
     impact: 80
