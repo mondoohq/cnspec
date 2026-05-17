@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-openstack-security
     name: Mondoo OpenStack Security
-    version: 1.0.0
+    version: 1.0.1
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -67,16 +67,16 @@ queries:
     impact: 80
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-09
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
       compliance/iso-27001-2022: iso-27001-2022-a-5-17
       compliance/nis-2: nis-2-21-2-i
-      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
       compliance/nist-csf-2: nist-csf-2-pr-aa-01
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
-      compliance/nist-sp-800-171: nist-sp-800-171--3-5-2
-      compliance/pci-dss-4: pcidss-requirement-8-2-1
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/pci-dss-4: pcidss-requirement-7-2-2
       compliance/soc2-2017: soc2-control-cc6-1-9
       compliance/vda-isa-5: vda-isa-5-4-1-2
     variants:
@@ -98,11 +98,36 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that Keystone application credentials are created with `unrestricted = false`.
+        This check ensures that Keystone application credentials are created with `unrestricted = false`. By default an unrestricted application credential can create further application credentials and trusts, which lets a single leaked secret spawn additional long-lived access.
 
         **Why this matters**
 
-        Application credentials are long-lived bearer secrets that automation, CI runners, and service principals use to call OpenStack APIs. An *unrestricted* application credential can in turn create other application credentials and trusts — anyone who steals one can mint additional long-lived credentials for the same project, defeating rotation. Restricted credentials cannot create further credentials, which keeps the blast radius of a leak bounded to the access the credential itself was issued for.
+        - **Bounded blast radius:** A restricted credential cannot mint new credentials, so a leak is limited to the access the credential was originally issued for.
+        - **Rotation is enforceable:** Unrestricted credentials defeat rotation because anyone holding one can quietly re-issue replacements before the original is revoked.
+        - **Automation safety:** CI runners and service principals use these long-lived bearer secrets, and restricting them keeps a compromised pipeline from escalating across the project.
+
+        **Risk mitigation**
+
+        - **Privilege escalation:** Prevents a stolen credential from being used to create additional credentials and trusts that survive remediation.
+        - **Persistence:** Removes an attacker's ability to establish durable footholds by chaining credential creation.
+      audit: |
+        ### Audit via Horizon
+
+        1. Sign in to the OpenStack Horizon dashboard as a project member.
+        2. Open **Identity** then **Application Credentials**.
+        3. Select each application credential and review its details.
+
+        A passing result shows every application credential with the **Unrestricted** attribute set to **False**; a failing result shows one or more credentials marked **Unrestricted: True**.
+
+        ### Audit via CLI
+
+        Run the OpenStack CLI and inspect the result:
+
+        ```bash
+        openstack application credential list --long
+        ```
+
+        A passing result lists every credential with `Unrestricted` set to `False`; a failing result shows a credential with `Unrestricted` set to `True`.
       remediation:
         - id: console
           desc: |
@@ -162,7 +187,7 @@ queries:
     impact: 70
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-09
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-10
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
       compliance/iso-27001-2022: iso-27001-2022-a-5-17
@@ -171,9 +196,9 @@ queries:
       compliance/nist-csf-2: nist-csf-2-pr-aa-01
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
       compliance/nist-sp-800-171: nist-sp-800-171--3-5-2
-      compliance/pci-dss-4: pcidss-requirement-8-2-1
+      compliance/pci-dss-4: pcidss-requirement-8-2-6
       compliance/soc2-2017: soc2-control-cc6-1-9
-      compliance/vda-isa-5: vda-isa-5-4-1-2
+      compliance/vda-isa-5: vda-isa-5-4-1-1
     variants:
       - uid: mondoo-openstack-security-app-credentials-have-expiry-openstack
         tags:
@@ -193,11 +218,36 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every Keystone application credential has an `expires_at` timestamp set.
+        This check ensures that every Keystone application credential has an `expires_at` timestamp set. Application credentials are created without an expiration unless one is supplied, leaving them valid indefinitely.
 
         **Why this matters**
 
-        Application credentials without an expiration live forever. They survive employee offboarding, project handoffs, and any future credential-rotation policy. A leaked non-expiring credential is functionally a permanent backdoor into the project until somebody notices and deletes it. Setting an expiration forces credentials through a renewal cycle, where stale or unowned credentials naturally fall off.
+        - **Forced renewal cycle:** An expiration date pushes credentials through a renewal process where stale or unowned secrets naturally fall off.
+        - **Offboarding hygiene:** Non-expiring credentials survive employee departures and project handoffs, leaving access nobody owns.
+        - **Rotation alignment:** A fixed lifetime keeps credentials consistent with any future credential-rotation policy instead of living forever.
+
+        **Risk mitigation**
+
+        - **Persistent backdoor:** Prevents a leaked credential from acting as a permanent entry point into the project until someone notices and deletes it.
+        - **Credential sprawl:** Limits the accumulation of forgotten, untracked secrets across the project over time.
+      audit: |
+        ### Audit via Horizon
+
+        1. Sign in to the OpenStack Horizon dashboard as a project member.
+        2. Open **Identity** then **Application Credentials**.
+        3. Select each application credential and review its **Expires At** value.
+
+        A passing result shows every credential with a future **Expires At** timestamp; a failing result shows a credential with no expiration set.
+
+        ### Audit via CLI
+
+        Run the OpenStack CLI and inspect the result:
+
+        ```bash
+        openstack application credential list --long
+        ```
+
+        A passing result shows a populated `Expires At` value for every credential; a failing result shows an empty `Expires At` field.
       remediation:
         - id: console
           desc: |
@@ -256,7 +306,7 @@ queries:
     impact: 80
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-09
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-14
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
       compliance/iso-27001-2022: iso-27001-2022-a-8-5
@@ -264,7 +314,7 @@ queries:
       compliance/nist-csf-1: nist-csf-1-pr-ac-1
       compliance/nist-csf-2: nist-csf-2-pr-aa-03
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
-      compliance/nist-sp-800-171: nist-sp-800-171--3-5-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-2
       compliance/pci-dss-4: pcidss-requirement-8-3-1
       compliance/soc2-2017: soc2-control-cc6-1-4
       compliance/vda-isa-5: vda-isa-5-4-1-3
@@ -287,11 +337,36 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every Nova compute server was launched with an SSH keypair (`key_name`).
+        This check ensures that every Nova compute server was launched with an SSH keypair through the `key_name` attribute. A server booted without an injected keypair falls back on whatever credentials are baked into the source image.
 
         **Why this matters**
 
-        A server booted without an injected keypair falls back on whatever credentials are baked into the source image. In practice that means either a well-known default password, no SSH access at all, or a backdoor account that an operator added once and forgot about. Requiring a keypair at launch ensures the server's initial login is bound to a per-user public key the project administrator controls, which is the foundation that any further SSH hardening (disabled password auth, jump host, MFA) builds on.
+        - **Controlled initial access:** Injecting a keypair binds the server's first login to a per-user public key the project administrator controls.
+        - **No reliance on image defaults:** Servers launched without a keypair depend on baked-in passwords, disabled access, or forgotten operator accounts.
+        - **Foundation for hardening:** A known keypair is the starting point for further SSH hardening such as disabled password authentication, bastion hosts, and MFA.
+
+        **Risk mitigation**
+
+        - **Default credentials:** Prevents reliance on well-known image passwords that attackers routinely try.
+        - **Unmanaged accounts:** Eliminates dependence on backdoor accounts an operator added once and never removed.
+      audit: |
+        ### Audit via Horizon
+
+        1. Sign in to the OpenStack Horizon dashboard as a project member.
+        2. Open **Compute** then **Instances**.
+        3. Select each instance and review the **Key Pair** field on its overview tab.
+
+        A passing result shows a key pair name assigned to every instance; a failing result shows an instance with no key pair.
+
+        ### Audit via CLI
+
+        Run the OpenStack CLI and inspect the result:
+
+        ```bash
+        openstack server show <id>
+        ```
+
+        A passing result shows a populated `key_name` value; a failing result shows `key_name` as empty or `None`.
       remediation:
         - id: console
           desc: |
@@ -366,7 +441,7 @@ queries:
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
       compliance/pci-dss-4: pcidss-requirement-1-3-1
       compliance/soc2-2017: soc2-control-cc6-6-1
-      compliance/vda-isa-5: vda-isa-5-5-2-6
+      compliance/vda-isa-5: vda-isa-5-5-2-7
     variants:
       - uid: mondoo-openstack-security-server-has-security-group-openstack
         tags:
@@ -386,11 +461,36 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every Nova compute server has at least one Neutron security group applied.
+        This check ensures that every Nova compute server has at least one Neutron security group applied. A server with no security group inherits whatever default policy the underlying network applies, which on many OpenStack clouds is fully open.
 
         **Why this matters**
 
-        A server with no security group inherits whatever default policy the underlying network applies — on many OpenStack clouds the default policy is fully open, especially when port security is disabled. Without an explicit security group the instance has no per-VM firewall, and every service it exposes is reachable from any peer the network plane connects it to. Attaching a least-privilege security group is the minimum bar for tenant-side network isolation.
+        - **Per-VM firewall:** A security group gives the instance an enforceable firewall instead of leaving its exposure to the network plane.
+        - **Tenant network isolation:** An explicit least-privilege group is the minimum bar for keeping instances isolated from untrusted peers.
+        - **Predictable exposure:** Without a group, every service the instance exposes is reachable from any host the network connects it to.
+
+        **Risk mitigation**
+
+        - **Unintended exposure:** Prevents services from being reachable simply because no firewall policy was applied.
+        - **Lateral movement:** Limits the network paths an attacker can use to reach the instance from other hosts on the network.
+      audit: |
+        ### Audit via Horizon
+
+        1. Sign in to the OpenStack Horizon dashboard as a project member.
+        2. Open **Compute** then **Instances**.
+        3. Select each instance and review the **Security Groups** section on its overview tab.
+
+        A passing result shows at least one security group attached to every instance; a failing result shows an instance with no security groups.
+
+        ### Audit via CLI
+
+        Run the OpenStack CLI and inspect the result:
+
+        ```bash
+        openstack server show <id>
+        ```
+
+        A passing result shows one or more entries under `security_groups`; a failing result shows an empty `security_groups` list.
       remediation:
         - id: console
           desc: |
@@ -462,7 +562,7 @@ queries:
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
       compliance/pci-dss-4: pcidss-requirement-1-3-1
       compliance/soc2-2017: soc2-control-cc6-6-1
-      compliance/vda-isa-5: vda-isa-5-5-2-6
+      compliance/vda-isa-5: vda-isa-5-5-2-7
     variants:
       - uid: mondoo-openstack-security-no-unrestricted-ssh-openstack
         tags:
@@ -482,11 +582,36 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no Neutron security group has an ingress rule that allows TCP traffic on port 22 from the public internet (`0.0.0.0/0` or `::/0`).
+        This check ensures that no Neutron security group has an ingress rule that allows TCP traffic on port 22 from the public internet at `0.0.0.0/0` or `::/0`. SSH exposed to the entire internet is a primary target for automated attacks against the SSH daemon.
 
         **Why this matters**
 
-        SSH exposed to the entire internet is a primary target for credential stuffing, brute-force login attempts, and exploitation of any future SSH server CVE. Even with key-based authentication, open SSH exposes the SSH daemon itself as an attack surface. SSH access should be restricted to a known trusted CIDR range, a bastion host, or a VPN.
+        - **Reduced attack surface:** Restricting SSH keeps the daemon from being a globally reachable target for credential stuffing and brute-force attempts.
+        - **CVE containment:** Limiting reachable SSH listeners reduces exposure to any future SSH server vulnerability.
+        - **Defense beyond keys:** Even with key-based authentication, an open SSH port still exposes the daemon itself as an attack surface.
+
+        **Risk mitigation**
+
+        - **Brute-force compromise:** Confines SSH access to trusted CIDRs, a bastion host, or a VPN so login attempts come only from known sources.
+        - **Internet-wide scanning:** Removes the listener from mass-scanning campaigns that probe every reachable SSH port.
+      audit: |
+        ### Audit via Horizon
+
+        1. Sign in to the OpenStack Horizon dashboard as a project member.
+        2. Open **Network** then **Security Groups**.
+        3. For each security group, open **Manage Rules** and review the ingress rules.
+
+        A passing result shows no ingress rule allowing TCP port 22 from `0.0.0.0/0` or `::/0`; a failing result shows such a rule.
+
+        ### Audit via CLI
+
+        Run the OpenStack CLI and inspect the result:
+
+        ```bash
+        openstack security group rule list <group>
+        ```
+
+        A passing result shows no ingress TCP rule covering port 22 with a remote IP prefix of `0.0.0.0/0` or `::/0`; a failing result shows one.
       remediation:
         - id: console
           desc: |
@@ -562,7 +687,7 @@ queries:
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
       compliance/pci-dss-4: pcidss-requirement-1-3-1
       compliance/soc2-2017: soc2-control-cc6-6-1
-      compliance/vda-isa-5: vda-isa-5-5-2-6
+      compliance/vda-isa-5: vda-isa-5-5-2-7
     variants:
       - uid: mondoo-openstack-security-no-unrestricted-rdp-openstack
         tags:
@@ -582,11 +707,36 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no Neutron security group has an ingress rule that allows TCP traffic on port 3389 from the public internet (`0.0.0.0/0` or `::/0`).
+        This check ensures that no Neutron security group has an ingress rule that allows TCP traffic on port 3389 from the public internet at `0.0.0.0/0` or `::/0`. RDP exposed to the entire internet is one of the most actively exploited remote-management surfaces.
 
         **Why this matters**
 
-        RDP exposed to the entire internet is one of the most actively exploited remote-management surfaces. Mass-scanning campaigns spray known credentials against any reachable RDP listener and pivot to ransomware deployment within minutes. RDP access should be restricted to trusted CIDRs, a bastion host, or a VPN — never the open internet.
+        - **High-value target:** Mass-scanning campaigns spray known credentials against any reachable RDP listener.
+        - **Rapid escalation:** Attackers pivot from a compromised RDP session to ransomware deployment within minutes.
+        - **Reduced attack surface:** Keeping RDP off the open internet removes it from automated exploitation entirely.
+
+        **Risk mitigation**
+
+        - **Credential attacks:** Confines RDP access to trusted CIDRs, a bastion host, or a VPN so connections come only from known sources.
+        - **Ransomware entry:** Removes a common initial-access vector that leads directly to data encryption and extortion.
+      audit: |
+        ### Audit via Horizon
+
+        1. Sign in to the OpenStack Horizon dashboard as a project member.
+        2. Open **Network** then **Security Groups**.
+        3. For each security group, open **Manage Rules** and review the ingress rules.
+
+        A passing result shows no ingress rule allowing TCP port 3389 from `0.0.0.0/0` or `::/0`; a failing result shows such a rule.
+
+        ### Audit via CLI
+
+        Run the OpenStack CLI and inspect the result:
+
+        ```bash
+        openstack security group rule list <group>
+        ```
+
+        A passing result shows no ingress TCP rule covering port 3389 with a remote IP prefix of `0.0.0.0/0` or `::/0`; a failing result shows one.
       remediation:
         - id: console
           desc: |
@@ -662,7 +812,7 @@ queries:
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
       compliance/pci-dss-4: pcidss-requirement-1-3-1
       compliance/soc2-2017: soc2-control-cc6-6-1
-      compliance/vda-isa-5: vda-isa-5-5-2-6
+      compliance/vda-isa-5: vda-isa-5-5-2-7
     variants:
       - uid: mondoo-openstack-security-no-unrestricted-db-ports-openstack
         tags:
@@ -682,11 +832,36 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no Neutron security group has an ingress rule that allows traffic from the public internet (`0.0.0.0/0` or `::/0`) to common database ports: MySQL/MariaDB (3306), PostgreSQL (5432), MongoDB (27017), Redis (6379), Memcached (11211), Elasticsearch (9200), Microsoft SQL Server (1433), and Oracle (1521).
+        This check ensures that no Neutron security group has an ingress rule that allows traffic from the public internet at `0.0.0.0/0` or `::/0` to common database ports, covering MySQL and MariaDB on 3306, PostgreSQL on 5432, MongoDB on 27017, Redis on 6379, Memcached on 11211, Elasticsearch on 9200, Microsoft SQL Server on 1433, and Oracle on 1521. Database services assume a private network for their authentication, encryption defaults, and patching cadence.
 
         **Why this matters**
 
-        Database servers are rarely designed for direct internet exposure: their authentication mechanisms, encryption defaults, and patching cadence assume a private network. A security group rule that publishes a database port to the world turns it into a high-value target for credential-stuffing, version-specific exploits, and accidental data leaks via misconfigured authentication. Database tiers should sit behind an application tier and accept connections only from that tier's security group or trusted internal CIDRs.
+        - **Designed for private networks:** Database authentication and encryption defaults are not built for direct internet exposure.
+        - **High-value target:** A publicly reachable database port invites credential-stuffing and version-specific exploits.
+        - **Tiered architecture:** Database tiers belong behind an application tier, accepting connections only from that tier or trusted internal CIDRs.
+
+        **Risk mitigation**
+
+        - **Data exfiltration:** Prevents accidental data leaks from databases reachable over the internet with weak authentication.
+        - **Targeted exploitation:** Removes database ports from internet-wide scanning that probes for known vulnerable versions.
+      audit: |
+        ### Audit via Horizon
+
+        1. Sign in to the OpenStack Horizon dashboard as a project member.
+        2. Open **Network** then **Security Groups**.
+        3. For each security group, open **Manage Rules** and review the ingress rules.
+
+        A passing result shows no ingress rule allowing a database port such as 3306, 5432, 27017, 6379, 11211, 9200, 1433, or 1521 from `0.0.0.0/0` or `::/0`; a failing result shows such a rule.
+
+        ### Audit via CLI
+
+        Run the OpenStack CLI and inspect the result:
+
+        ```bash
+        openstack security group rule list <group>
+        ```
+
+        A passing result shows no ingress rule covering a common database port with a remote IP prefix of `0.0.0.0/0` or `::/0`; a failing result shows one.
       remediation:
         - id: console
           desc: |
@@ -787,10 +962,10 @@ queries:
       compliance/nist-csf-1: nist-csf-1-pr-ac-5
       compliance/nist-csf-2: nist-csf-2-pr-ir-01
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
       compliance/pci-dss-4: pcidss-requirement-1-3-1
       compliance/soc2-2017: soc2-control-cc6-6-1
-      compliance/vda-isa-5: vda-isa-5-5-2-6
+      compliance/vda-isa-5: vda-isa-5-5-2-7
     variants:
       - uid: mondoo-openstack-security-no-all-ports-open-openstack
         tags:
@@ -810,11 +985,36 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no Neutron security group has an ingress rule that allows the full port range from the public internet (`0.0.0.0/0` or `::/0`). In Neutron, leaving `port_range_min` and `port_range_max` unset (both `0`) means the rule matches every port.
+        This check ensures that no Neutron security group has an ingress rule that allows the full port range from the public internet at `0.0.0.0/0` or `::/0`. In Neutron, leaving `port_range_min` and `port_range_max` unset means the rule matches every port.
 
         **Why this matters**
 
-        An "allow all ports from anywhere" rule is functionally equivalent to having no security group. It exposes every service running on the instance — intended or unintended, known or forgotten — to every host on the internet. This is the highest-severity network misconfiguration.
+        - **Equivalent to no firewall:** An allow-all-ports rule is functionally the same as having no security group at all.
+        - **Total service exposure:** Every service on the instance, intended or forgotten, becomes reachable from every host on the internet.
+        - **Highest-severity misconfiguration:** This pattern offers no network isolation and undermines every other control on the instance.
+
+        **Risk mitigation**
+
+        - **Broad attack surface:** Prevents exposure of services the operator never intended to publish.
+        - **Forgotten listeners:** Removes internet reach to legacy or debugging services left running on unexpected ports.
+      audit: |
+        ### Audit via Horizon
+
+        1. Sign in to the OpenStack Horizon dashboard as a project member.
+        2. Open **Network** then **Security Groups**.
+        3. For each security group, open **Manage Rules** and review the ingress rules.
+
+        A passing result shows no ingress rule covering all ports from `0.0.0.0/0` or `::/0`; a failing result shows an all-ports rule open to the internet.
+
+        ### Audit via CLI
+
+        Run the OpenStack CLI and inspect the result:
+
+        ```bash
+        openstack security group rule list <group>
+        ```
+
+        A passing result shows no ingress rule with an empty port range and a remote IP prefix of `0.0.0.0/0` or `::/0`; a failing result shows one.
       remediation:
         - id: console
           desc: |
@@ -893,7 +1093,7 @@ queries:
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
       compliance/pci-dss-4: pcidss-requirement-1-3-1
       compliance/soc2-2017: soc2-control-cc6-6-1
-      compliance/vda-isa-5: vda-isa-5-5-2-6
+      compliance/vda-isa-5: vda-isa-5-5-2-7
     variants:
       - uid: mondoo-openstack-security-port-security-enabled-openstack
         tags:
@@ -913,11 +1113,36 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that Neutron ports owned by compute instances have port security enabled. Compute ports are identified by a `device_owner` value beginning with `compute:`.
+        This check ensures that Neutron ports owned by compute instances have port security enabled, identified by a `device_owner` value beginning with `compute:`. Port security is what makes security groups and anti-spoofing filters enforceable on a port.
 
         **Why this matters**
 
-        Neutron's port security feature is what makes security groups, anti-spoofing filters, and the allowed-address-pairs allow-list actually enforceable on a port. With port security disabled, the attached instance can source traffic from any MAC or IP, bypass its security group, and impersonate other tenants on the same network. Port security is the foundation that the rest of Neutron's tenant-side network isolation relies on — disabling it should be reserved for specialized SDN or service-VM use cases, not standard workloads.
+        - **Security groups depend on it:** With port security disabled, the attached instance can bypass its security group entirely.
+        - **Anti-spoofing enforcement:** Port security blocks an instance from sourcing traffic with arbitrary MAC or IP addresses.
+        - **Tenant isolation foundation:** The allowed-address-pairs allow-list and the rest of Neutron's isolation rely on port security being on.
+
+        **Risk mitigation**
+
+        - **Tenant impersonation:** Prevents an instance from impersonating other tenants on the same network.
+        - **Firewall bypass:** Stops an instance from evading its assigned security group rules.
+      audit: |
+        ### Audit via Horizon
+
+        1. Sign in to the OpenStack Horizon dashboard as a project member.
+        2. Open **Network** then **Networks**, select a network, and open the **Ports** tab.
+        3. Select each compute port and review the **Port Security Enabled** attribute.
+
+        A passing result shows **Port Security Enabled** set to **True** for every compute port; a failing result shows a compute port with port security disabled.
+
+        ### Audit via CLI
+
+        Run the OpenStack CLI and inspect the result:
+
+        ```bash
+        openstack port show <id>
+        ```
+
+        A passing result shows `port_security_enabled` set to `True` for ports with a `device_owner` beginning with `compute:`; a failing result shows `port_security_enabled` set to `False`.
       remediation:
         - id: console
           desc: |
@@ -992,11 +1217,36 @@ queries:
       openstack.volumes.all(encrypted == true)
     docs:
       desc: |
-        This check ensures that every Cinder block-storage volume reports `encrypted = true`.
+        This check ensures that every Cinder block-storage volume reports `encrypted = true`. An unencrypted volume's blocks sit in plaintext on the storage backend and on any media that backend rotates through.
 
         **Why this matters**
 
-        Cinder volumes back compute instances, databases, and persistent application state. An unencrypted volume's blocks sit in plaintext on the storage backend and on any media that backend rotates through (LUKS-less SAN LUNs, replicated copies, backup media). If the storage path is ever compromised — a lost disk, a misrouted snapshot, an under-secured backup — the data leaks without anyone touching the workload. Volume-level encryption defends against that whole class of out-of-band exposure.
+        - **Protects data at rest:** Encryption keeps volume contents unreadable on the underlying SAN LUNs and replicated copies.
+        - **Backups and snapshots:** Encrypted volumes carry their protection into snapshots and backup media derived from them.
+        - **Out-of-band exposure:** Volumes back instances, databases, and persistent state, so plaintext storage leaks data without anyone touching the workload.
+
+        **Risk mitigation**
+
+        - **Lost or stolen media:** Prevents data disclosure if a physical disk leaves the data center unsecured.
+        - **Misrouted copies:** Keeps a misrouted snapshot or under-secured backup from exposing readable data.
+      audit: |
+        ### Audit via Horizon
+
+        1. Sign in to the OpenStack Horizon dashboard as a project member.
+        2. Open **Volumes** then **Volumes**.
+        3. Select each volume and review the **Encrypted** attribute on its overview tab.
+
+        A passing result shows **Encrypted** set to **Yes** for every volume; a failing result shows a volume with **Encrypted** set to **No**.
+
+        ### Audit via CLI
+
+        Run the OpenStack CLI and inspect the result:
+
+        ```bash
+        openstack volume show <id>
+        ```
+
+        A passing result shows `encrypted` set to `True`; a failing result shows `encrypted` set to `False`. Volume types backed by encryption can be confirmed with `openstack volume type list --long`.
       remediation:
         - id: console
           desc: |
@@ -1021,18 +1271,18 @@ queries:
     impact: 75
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-16
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
-      compliance/iso-27001-2022: iso-27001-2022-a-8-20
-      compliance/nis-2: nis-2-21-2-e
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
       compliance/nist-csf-1: nist-csf-1-pr-ac-4
       compliance/nist-csf-2: nist-csf-2-pr-aa-05
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
-      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-22
       compliance/pci-dss-4: pcidss-requirement-7-2-1
       compliance/soc2-2017: soc2-control-cc6-1-3
-      compliance/vda-isa-5: vda-isa-5-4-1-1
+      compliance/vda-isa-5: vda-isa-5-4-2-1
     variants:
       - uid: mondoo-openstack-security-image-not-public-openstack
         tags:
@@ -1052,11 +1302,36 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that Glance images owned by the scoped project do not have `visibility = "public"`. Vendor cloud images that the operator publishes are excluded because they are owned by the cloud admin project, not the scanned tenant.
+        This check ensures that Glance images owned by the scoped project do not have `visibility = "public"`. Vendor cloud images published by the operator are excluded because they belong to the cloud admin project rather than the scanned tenant.
 
         **Why this matters**
 
-        Tenant-uploaded images often embed sensitive data: baked-in credentials, internal CA bundles, license keys, customer datasets used for golden-image testing, or proprietary software. Setting `visibility = "public"` makes that image — and any data carried in it — discoverable and downloadable by every project on the cloud. Tenant-published images should default to `private` and be promoted to `shared` only with explicit members, never to `public`.
+        - **Images carry sensitive data:** Tenant-uploaded images often embed credentials, internal CA bundles, license keys, and proprietary software.
+        - **Public visibility is broad:** A public image is discoverable and downloadable by every project on the cloud.
+        - **Safe defaults:** Tenant-published images should default to `private` and move to `shared` only with explicit members.
+
+        **Risk mitigation**
+
+        - **Data disclosure:** Prevents secrets and datasets baked into images from leaking to other tenants.
+        - **Intellectual property loss:** Keeps proprietary software and golden-image content from being copied cloud-wide.
+      audit: |
+        ### Audit via Horizon
+
+        1. Sign in to the OpenStack Horizon dashboard as a project member.
+        2. Open **Compute** then **Images**.
+        3. Select each project-owned image and review its **Visibility** attribute.
+
+        A passing result shows project-owned images set to **Private** or **Shared**; a failing result shows a project-owned image set to **Public**.
+
+        ### Audit via CLI
+
+        Run the OpenStack CLI and inspect the result:
+
+        ```bash
+        openstack image show <id>
+        ```
+
+        A passing result shows `visibility` as `private` or `shared` for project-owned images; a failing result shows `visibility` as `public`.
       remediation:
         - id: console
           desc: |
@@ -1124,9 +1399,9 @@ queries:
       compliance/nist-csf-1: nist-csf-1-pr-ds-6
       compliance/nist-csf-2: nist-csf-2-pr-ds-01
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-7
-      compliance/nist-sp-800-171: nist-sp-800-171--3-14-1
-      compliance/pci-dss-4: pcidss-requirement-6-3-3
-      compliance/soc2-2017: soc2-control-cc7-1-1
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc6-8-2
       compliance/vda-isa-5: vda-isa-5-5-1-1
     variants:
       - uid: mondoo-openstack-security-image-signed-openstack
@@ -1147,11 +1422,36 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every active Glance image owned by the scoped project carries the `img_signature` property — the Glance image signing field that Nova verifies at boot when image signature verification is enabled.
+        This check ensures that every active Glance image owned by the scoped project carries the `img_signature` property, the field Nova verifies at boot when image signature verification is enabled. A Glance image is the code that compute instances run.
 
         **Why this matters**
 
-        A Glance image is the code that compute instances run. If the image data can be tampered with between upload and boot — by a compromised registry mirror, an unauthorized admin, or a malicious upload — the workload starts compromised. Glance image signing (the `img_signature*` properties plus a Barbican-stored certificate) lets Nova reject any image whose data does not match the operator-issued signature. The signature must be present on the image record for Nova to be able to verify it.
+        - **Boot-time integrity:** A signature lets Nova reject any image whose data does not match the operator-issued signature.
+        - **Tamper detection:** Signing detects modification between image upload and instance boot.
+        - **Verification prerequisite:** The signature must be present on the image record before Nova can verify it at all.
+
+        **Risk mitigation**
+
+        - **Malicious images:** Prevents a compromised registry mirror or unauthorized upload from booting tampered workloads.
+        - **Supply-chain compromise:** Confirms the image data matches a trusted signature backed by a Barbican-stored certificate.
+      audit: |
+        ### Audit via Horizon
+
+        1. Sign in to the OpenStack Horizon dashboard as a project member.
+        2. Open **Compute** then **Images**.
+        3. Select each active project-owned image and review its custom properties for `img_signature`.
+
+        A passing result shows the `img_signature` property present on every active project-owned image; a failing result shows an active image missing it.
+
+        ### Audit via CLI
+
+        Run the OpenStack CLI and inspect the result:
+
+        ```bash
+        openstack image show <id>
+        ```
+
+        A passing result shows an `img_signature` property in the image properties; a failing result shows no `img_signature` property.
       remediation:
         - id: console
           desc: |
@@ -1222,18 +1522,18 @@ queries:
     impact: 90
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-16
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
-      compliance/iso-27001-2022: iso-27001-2022-a-8-20
-      compliance/nis-2: nis-2-21-2-e
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
       compliance/nist-csf-1: nist-csf-1-pr-ac-4
       compliance/nist-csf-2: nist-csf-2-pr-aa-05
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
-      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-22
       compliance/pci-dss-4: pcidss-requirement-7-2-1
       compliance/soc2-2017: soc2-control-cc6-1-3
-      compliance/vda-isa-5: vda-isa-5-4-1-1
+      compliance/vda-isa-5: vda-isa-5-4-2-1
     variants:
       - uid: mondoo-openstack-security-container-not-public-openstack
         tags:
@@ -1253,11 +1553,36 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no Swift object-storage container has an `X-Container-Read` ACL containing `.r:*`, which grants unauthenticated read access to every object in the container.
+        This check ensures that no Swift object-storage container has an `X-Container-Read` ACL containing `.r:*`, which grants unauthenticated read access to every object in the container. Swift containers commonly hold backups, logs, build artifacts, and user uploads.
 
         **Why this matters**
 
-        Swift containers are a popular destination for backups, logs, build artifacts, and user uploads — all asset classes that frequently carry sensitive material. A read ACL of `.r:*` makes every object in the container directly downloadable from the public internet by anyone who can guess (or scrape) the object URL. Cloud-storage exposure of this shape is a routine source of high-impact data breaches and should be treated as a misconfiguration unless the container is genuinely intended for public distribution.
+        - **Sensitive asset classes:** Backups, logs, and uploads frequently carry material that should never be public.
+        - **Direct download exposure:** An ACL of `.r:*` makes every object downloadable by anyone who can guess or scrape the URL.
+        - **Common breach pattern:** Cloud-storage exposure of this shape is a routine source of high-impact data breaches.
+
+        **Risk mitigation**
+
+        - **Unauthenticated access:** Prevents anonymous users on the public internet from reading container contents.
+        - **Data leakage:** Keeps logs, artifacts, and uploads from being exposed unless the container is genuinely meant for public distribution.
+      audit: |
+        ### Audit via Horizon
+
+        1. Sign in to the OpenStack Horizon dashboard as a project member.
+        2. Open **Object Store** then **Containers**.
+        3. Select each container and review whether **Public Access** is enabled.
+
+        A passing result shows **Public Access** disabled for every container; a failing result shows a container with public read access enabled.
+
+        ### Audit via CLI
+
+        Run the OpenStack CLI and inspect the result:
+
+        ```bash
+        openstack container show <name>
+        ```
+
+        A passing result shows no `.r:*` entry in the container read ACL; a failing result shows `.r:*` in the read ACL, which can also be confirmed with `swift stat <container>`.
       remediation:
         - id: console
           desc: |
@@ -1315,7 +1640,7 @@ queries:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
       compliance/nist-csf-1: nist-csf-1-pr-ds-2
@@ -1344,11 +1669,36 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that Octavia listeners that terminate TLS (`protocol = "TERMINATED_HTTPS"`) do not include SSLv2, SSLv3, TLSv1.0, or TLSv1.1 in their `tls_versions` allow-list.
+        This check ensures that Octavia listeners terminating TLS with `protocol = "TERMINATED_HTTPS"` do not include SSLv2, SSLv3, TLSv1.0, or TLSv1.1 in their `tls_versions` allow-list. A listener that still negotiates these versions exposes clients to downgrade attacks even when modern versions are available.
 
         **Why this matters**
 
-        TLSv1.0 and TLSv1.1 are deprecated by all major standards bodies (PCI DSS, NIST, IETF) because of known cryptographic weaknesses — BEAST, POODLE, weak MAC algorithms, lack of modern AEAD support. SSLv2 and SSLv3 are wholly broken. An Octavia listener that still negotiates these versions exposes its clients to downgrade attacks even when modern versions are also available. Restricting `tls_versions` to TLSv1.2 and TLSv1.3 closes that downgrade path.
+        - **Deprecated protocols:** TLSv1.0 and TLSv1.1 are retired by PCI DSS, NIST, and the IETF because of known cryptographic weaknesses.
+        - **Broken protocols:** SSLv2 and SSLv3 are wholly broken and offer no meaningful protection.
+        - **Modern ciphers only:** Restricting `tls_versions` to TLSv1.2 and TLSv1.3 ensures connections use AEAD ciphers and strong MAC algorithms.
+
+        **Risk mitigation**
+
+        - **Downgrade attacks:** Removes the legacy versions an attacker would force a client onto.
+        - **Known exploits:** Closes exposure to attacks such as BEAST and POODLE that target the deprecated protocols.
+      audit: |
+        ### Audit via Horizon
+
+        1. Sign in to the OpenStack Horizon dashboard as a project member.
+        2. Open **Network** then **Load Balancers**.
+        3. Select each load balancer, open its **Listeners** tab, and review the TLS settings of every `TERMINATED_HTTPS` listener.
+
+        A passing result shows only TLSv1.2 and TLSv1.3 permitted; a failing result shows SSLv2, SSLv3, TLSv1.0, or TLSv1.1 still allowed.
+
+        ### Audit via CLI
+
+        Run the OpenStack CLI and inspect the result:
+
+        ```bash
+        openstack loadbalancer listener show <id>
+        ```
+
+        A passing result shows `tls_versions` limited to TLSv1.2 and TLSv1.3; a failing result shows SSLv2, SSLv3, TLSv1.0, or TLSv1.1 in `tls_versions`.
       remediation:
         - id: console
           desc: |
