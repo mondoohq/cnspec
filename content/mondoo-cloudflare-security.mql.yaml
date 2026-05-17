@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-cloudflare-security
     name: Mondoo Cloudflare Security
-    version: 1.0.0
+    version: 1.0.1
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -65,9 +65,9 @@ queries:
     impact: 100
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
       compliance/nist-csf-1: nist-csf-1-pr-ds-2
@@ -81,17 +81,38 @@ queries:
       cloudflare.zone.settings.ssl != "off"
     docs:
       desc: |
-        This check ensures that SSL/TLS encryption is not disabled on any Cloudflare zone.
+        This check ensures that the Cloudflare zone is configured to use SSL/TLS encryption rather than leaving it disabled. By default, newly created zones may inherit settings that leave SSL/TLS turned off, transmitting all traffic between visitors and the origin in plaintext.
 
         **Why this matters**
 
-        When SSL/TLS is set to "off", all traffic between visitors and your origin server is transmitted in plaintext. This exposes sensitive data such as credentials, session tokens, and personal information to interception via man-in-the-middle attacks.
+        - **Data exposure:** Plaintext HTTP traffic exposes credentials, session tokens, and personal information to anyone on the network path.
+        - **Man-in-the-middle risk:** Without encryption, on-path attackers can intercept and modify both requests and responses without detection.
+        - **Session hijacking:** Cookies and authentication tokens sent over unencrypted connections can be stolen and replayed by adversaries.
+        - **Regulatory exposure:** Most security and privacy frameworks require encryption in transit; disabled SSL/TLS is a direct violation of those controls.
 
-        By ensuring SSL/TLS is enabled, the system achieves:
-          - Protection of data in transit between visitors and your infrastructure
-          - Prevention of credential theft and session hijacking
-          - Compliance with modern security standards that require encryption
-          - Trust from visitors who expect secure connections
+        **Risk mitigation**
+
+        - **Credential theft prevention:** Enabling any SSL/TLS mode encrypts the visitor-to-Cloudflare path, preventing passive interception of authentication material.
+        - **Trust signal:** Browsers display security warnings for non-HTTPS pages, harming user trust and flagging the site as unsafe before any attack occurs.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Log in to the Cloudflare dashboard and select the zone.
+        2. Navigate to **SSL/TLS** > **Overview**.
+        3. Inspect the **Your SSL/TLS encryption mode** panel.
+
+        A passing zone shows any mode other than **Off** (e.g., Flexible, Full, or Full (Strict)). A failing zone shows **Off**.
+
+        ### Audit via API
+
+        1. Retrieve the `ssl` zone setting:
+
+        ```bash
+        curl -s -X GET "https://api.cloudflare.com/client/v4/zones/<zone-id>/settings/ssl" \
+          -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+        ```
+
+        A passing zone returns `"value": "flexible"`, `"value": "full"`, or `"value": "strict"`. A failing zone returns `"value": "off"`.
       remediation:
         - id: console
           desc: |
@@ -119,9 +140,9 @@ queries:
     impact: 80
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
       compliance/nist-csf-1: nist-csf-1-pr-ds-2
@@ -135,19 +156,38 @@ queries:
       cloudflare.zone.settings.ssl == "strict"
     docs:
       desc: |
-        This check ensures that the SSL/TLS encryption mode is set to "Full (Strict)" on all Cloudflare zones.
+        This check ensures that the Cloudflare zone's SSL/TLS encryption mode is set to Full (Strict), which requires a valid, trusted certificate on the origin server for all connections. Lower modes such as Flexible or Full leave part of the connection chain either unencrypted or unauthenticated, creating exploitable gaps even when the visitor-facing connection appears secure.
 
         **Why this matters**
 
-        The "Full (Strict)" mode enforces end-to-end encryption and validates the origin server's SSL certificate against a trusted certificate authority. Lower modes such as "Flexible" or "Full" leave gaps:
+        - **End-to-end certificate validation:** Full (Strict) is the only mode that verifies the origin certificate against a trusted authority, preventing origin-level impersonation.
+        - **Flexible mode gap:** In Flexible mode, traffic between Cloudflare and the origin travels in plaintext, making the origin connection as vulnerable as if no encryption existed.
+        - **Full mode gap:** Full mode encrypts the origin connection but accepts self-signed certificates, leaving the channel open to man-in-the-middle attacks at the origin hop.
+        - **Architectural hygiene:** Requiring a valid origin certificate ensures the certificate lifecycle is actively managed, reducing the risk of undetected certificate expiry on the origin.
 
-          - **Flexible**: Encrypts traffic between the visitor and Cloudflare only, leaving traffic between Cloudflare and your origin unencrypted.
-          - **Full**: Encrypts all traffic but does not validate the origin certificate, making it vulnerable to man-in-the-middle attacks at the origin.
+        **Risk mitigation**
 
-        By using "Full (Strict)" mode, the system ensures:
-          - End-to-end encryption with certificate validation
-          - Protection against origin-level man-in-the-middle attacks
-          - Compliance with security best practices for TLS configuration
+        - **Origin impersonation prevention:** Certificate validation stops an attacker from substituting their own server at the origin without detection.
+        - **Compliance alignment:** Full (Strict) satisfies the end-to-end encryption requirements that Flexible and Full mode alone do not meet.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Log in to the Cloudflare dashboard and select the zone.
+        2. Navigate to **SSL/TLS** > **Overview**.
+        3. Inspect the **Your SSL/TLS encryption mode** panel.
+
+        A passing zone shows **Full (Strict)**. A failing zone shows any mode other than Full (Strict) (e.g., Off, Flexible, or Full).
+
+        ### Audit via API
+
+        1. Retrieve the `ssl` zone setting:
+
+        ```bash
+        curl -s -X GET "https://api.cloudflare.com/client/v4/zones/<zone-id>/settings/ssl" \
+          -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+        ```
+
+        A passing zone returns `"value": "strict"`. A failing zone returns any value other than `strict`, such as `off`, `flexible`, or `full`.
       remediation:
         - id: console
           desc: |
@@ -176,9 +216,9 @@ queries:
     impact: 80
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
       compliance/nist-csf-1: nist-csf-1-pr-ds-2
@@ -192,18 +232,38 @@ queries:
       cloudflare.zone.settings.alwaysUseHttps == "on"
     docs:
       desc: |
-        This check ensures that the "Always Use HTTPS" setting is enabled on all Cloudflare zones.
+        This check ensures that the Cloudflare zone is configured to redirect all plaintext HTTP requests to HTTPS automatically. By default, Cloudflare zones do not redirect HTTP traffic unless this setting is explicitly enabled, meaning visitors who type a bare domain name or follow an HTTP bookmark reach the site over an unencrypted connection.
 
         **Why this matters**
 
-        When "Always Use HTTPS" is disabled, visitors can access your site over plaintext HTTP. This exposes them to:
+        - **Encryption enforcement:** Automatic redirection ensures no visitor session begins over plaintext, regardless of how the user or client initiated the connection.
+        - **Downgrade attack prevention:** Without forced HTTPS, on-path attackers can intercept the initial HTTP request before any redirect is served and keep the session in plaintext for its duration.
+        - **Cookie and session protection:** Session cookies transmitted over HTTP can be read by any observer on the network; HTTPS redirection prevents that window from opening.
+        - **Mixed-origin risk reduction:** Forcing HTTPS at the zone level is the foundation on which other HTTPS controls such as HSTS and HSTS preload operate effectively.
 
-          - **Data interception**: Unencrypted traffic can be read by anyone on the network path.
-          - **Session hijacking**: Cookies and tokens transmitted over HTTP can be stolen.
-          - **Content injection**: Attackers can modify unencrypted responses to inject malicious scripts or content.
-          - **Downgrade attacks**: Users may be tricked into staying on HTTP instead of being redirected to HTTPS.
+        **Risk mitigation**
 
-        By enabling "Always Use HTTPS", all HTTP requests are automatically redirected to HTTPS, ensuring encrypted connections for all visitors.
+        - **First-request interception:** Redirecting at the Cloudflare edge closes the window between the client's initial HTTP request and the server's redirect response, eliminating the data visible in that exchange.
+        - **Browser security indicator:** HTTPS pages display the expected secure indicator; HTTP pages display warnings that erode user confidence and can deter legitimate traffic.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Log in to the Cloudflare dashboard and select the zone.
+        2. Navigate to **SSL/TLS** > **Edge Certificates**.
+        3. Locate the **Always Use HTTPS** toggle.
+
+        A passing zone shows the toggle **On**. A failing zone shows the toggle **Off**.
+
+        ### Audit via API
+
+        1. Retrieve the `always_use_https` zone setting:
+
+        ```bash
+        curl -s -X GET "https://api.cloudflare.com/client/v4/zones/<zone-id>/settings/always_use_https" \
+          -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+        ```
+
+        A passing zone returns `"value": "on"`. A failing zone returns `"value": "off"`.
       remediation:
         - id: console
           desc: |
@@ -233,7 +293,7 @@ queries:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
       compliance/nist-csf-1: nist-csf-1-pr-ds-2
@@ -242,22 +302,43 @@ queries:
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
       compliance/pci-dss-4: pcidss-requirement-4-2-1
       compliance/soc2-2017: soc2-control-cc6-7-2
-      compliance/vda-isa-5: vda-isa-5-5-1-2
+      compliance/vda-isa-5: vda-isa-5-5-1-1
     mql: |
       cloudflare.zone.settings.minTlsVersion == "1.2" || cloudflare.zone.settings.minTlsVersion == "1.3"
     docs:
       desc: |
-        This check ensures that the minimum TLS version is set to 1.2 or higher on all Cloudflare zones.
+        This check ensures that the Cloudflare zone accepts no TLS connections below version 1.2. Cloudflare's default minimum allows TLS 1.0 and 1.1 for compatibility with older clients, but both versions contain well-documented cryptographic vulnerabilities that render connections negotiated with them untrustworthy.
 
         **Why this matters**
 
-        TLS 1.0 and 1.1 have known security vulnerabilities including susceptibility to BEAST, POODLE, and other cryptographic attacks. These older protocol versions are deprecated by major browsers and standards bodies including IETF, PCI DSS, and NIST.
+        - **Known protocol weaknesses:** TLS 1.0 and 1.1 are vulnerable to attacks such as BEAST, POODLE, and SWEET32 that allow an attacker to decrypt or tamper with encrypted traffic.
+        - **Industry deprecation:** The IETF formally deprecated TLS 1.0 and 1.1 in RFC 8996, and major browsers, PCI DSS, and NIST all prohibit their use in environments handling sensitive data.
+        - **Cipher suite hygiene:** TLS 1.0 and 1.1 support cipher suites that are no longer considered secure; raising the minimum version eliminates those suites from negotiation without requiring per-cipher configuration.
+        - **Forward secrecy:** TLS 1.2 with modern cipher suites supports ephemeral key exchange, ensuring past sessions cannot be decrypted if a long-term key is later compromised.
 
-        By enforcing TLS 1.2 or higher:
-          - Known cryptographic weaknesses in older TLS versions are mitigated
-          - Compliance with PCI DSS 3.2+ and other security frameworks is maintained
-          - Modern cipher suites with forward secrecy are guaranteed
-          - Connections from outdated and potentially vulnerable clients are blocked
+        **Risk mitigation**
+
+        - **Downgrade negotiation prevention:** Setting a floor of TLS 1.2 prevents clients and servers from negotiating a weaker version even if both sides claim to support it.
+        - **Scope reduction:** Removing support for deprecated protocol versions reduces the attack surface an adversary can target during the TLS handshake.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Log in to the Cloudflare dashboard and select the zone.
+        2. Navigate to **SSL/TLS** > **Edge Certificates**.
+        3. Locate the **Minimum TLS Version** dropdown.
+
+        A passing zone shows **TLS 1.2** or **TLS 1.3**. A failing zone shows **TLS 1.0** or **TLS 1.1**.
+
+        ### Audit via API
+
+        1. Retrieve the `min_tls_version` zone setting:
+
+        ```bash
+        curl -s -X GET "https://api.cloudflare.com/client/v4/zones/<zone-id>/settings/min_tls_version" \
+          -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+        ```
+
+        A passing zone returns `"value": "1.2"` or `"value": "1.3"`. A failing zone returns `"value": "1.0"` or `"value": "1.1"`.
       remediation:
         - id: console
           desc: |
@@ -289,7 +370,7 @@ queries:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
       compliance/nist-csf-1: nist-csf-1-pr-ds-2
@@ -298,22 +379,43 @@ queries:
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
       compliance/pci-dss-4: pcidss-requirement-4-2-1
       compliance/soc2-2017: soc2-control-cc6-7-2
-      compliance/vda-isa-5: vda-isa-5-5-1-2
+      compliance/vda-isa-5: vda-isa-5-5-1-1
     mql: |
       cloudflare.zone.settings.tls13 != "off"
     docs:
       desc: |
-        This check ensures that TLS 1.3 support is not disabled on any Cloudflare zone.
+        This check ensures that TLS 1.3 support is not disabled on the Cloudflare zone. Cloudflare enables TLS 1.3 by default, but it can be explicitly turned off; doing so forces all connections to TLS 1.2 and denies clients the security and performance improvements the newer protocol provides.
 
         **Why this matters**
 
-        TLS 1.3 is the latest version of the TLS protocol, offering significant improvements over TLS 1.2:
+        - **Stronger cryptography:** TLS 1.3 removes all cipher suites that lack forward secrecy and eliminates legacy algorithms such as RSA key exchange, SHA-1, and RC4 that remain negotiable in TLS 1.2.
+        - **Reduced handshake latency:** TLS 1.3 completes the handshake in one round trip rather than two, improving page-load times and reducing the window during which handshake data is exposed.
+        - **Zero Round Trip resumption:** The optional 0-RTT mode allows returning clients to resume sessions without any additional round trips, improving performance on mobile and high-latency networks.
+        - **Simpler attack surface:** TLS 1.3 eliminates renegotiation, compression, and other protocol features that were sources of past vulnerabilities, making the handshake harder to attack.
 
-          - **Faster handshakes**: TLS 1.3 reduces the handshake from two round trips to one, improving connection latency.
-          - **Stronger security**: Removes support for legacy cryptographic algorithms and mandates forward secrecy.
-          - **Simplified protocol**: Eliminates vulnerable features like renegotiation and compression.
+        **Risk mitigation**
 
-        Disabling TLS 1.3 denies clients the most secure protocol version available and may impact performance.
+        - **Legacy algorithm exclusion:** Enabling TLS 1.3 alongside TLS 1.2 ensures that clients capable of the newer protocol never fall back to weaker cipher suites unless TLS 1.2 is genuinely their maximum.
+        - **Future readiness:** Keeping TLS 1.3 enabled positions the zone to benefit from browser and client improvements without requiring additional configuration changes.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Log in to the Cloudflare dashboard and select the zone.
+        2. Navigate to **SSL/TLS** > **Edge Certificates**.
+        3. Locate the **TLS 1.3** toggle.
+
+        A passing zone shows the toggle **On** (or **ZRT** for Zero Round Trip Time). A failing zone shows the toggle **Off**.
+
+        ### Audit via API
+
+        1. Retrieve the `tls_1_3` zone setting:
+
+        ```bash
+        curl -s -X GET "https://api.cloudflare.com/client/v4/zones/<zone-id>/settings/tls_1_3" \
+          -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+        ```
+
+        A passing zone returns `"value": "on"` or `"value": "zrt"`. A failing zone returns `"value": "off"`.
       remediation:
         - id: console
           desc: |
@@ -340,9 +442,9 @@ queries:
     impact: 60
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
       compliance/nist-csf-1: nist-csf-1-pr-ds-2
@@ -356,17 +458,38 @@ queries:
       cloudflare.zone.settings.automaticHttpsRewrites == "on"
     docs:
       desc: |
-        This check ensures that Automatic HTTPS Rewrites is enabled on all Cloudflare zones.
+        This check ensures that the Cloudflare zone is configured to automatically rewrite HTTP sub-resource URLs to HTTPS in HTML responses. Mixed content occurs when an HTTPS page loads images, scripts, or stylesheets over HTTP; Automatic HTTPS Rewrites resolves this at the Cloudflare edge without requiring changes to origin server code.
 
         **Why this matters**
 
-        Mixed content occurs when an HTTPS page loads sub-resources (images, scripts, stylesheets) over HTTP. This weakens the security of the page because:
+        - **Mixed-content elimination:** Plaintext sub-resources loaded by an HTTPS page can be intercepted and replaced by an on-path attacker, injecting malicious scripts or altered images into otherwise secure pages.
+        - **Browser blocking prevention:** Modern browsers block or warn on mixed active content, breaking page functionality when JavaScript or CSS loads over HTTP even though the parent page is HTTPS.
+        - **No origin changes required:** Rewrites happen at the edge, so legacy applications and CMSs that hard-code HTTP asset URLs benefit immediately without a code deployment.
+        - **Defense-in-depth:** This feature works alongside Always Use HTTPS and HSTS to ensure that encryption is consistently applied at every layer of content delivery.
 
-          - Unencrypted sub-resources can be intercepted and modified by attackers
-          - Browsers may block mixed content, breaking page functionality
-          - Users see security warnings that erode trust
+        **Risk mitigation**
 
-        Automatic HTTPS Rewrites fixes mixed content by changing HTTP URLs to HTTPS in HTML responses before they reach the visitor, without requiring changes to your origin server code.
+        - **Script injection prevention:** Rewriting script and stylesheet URLs to HTTPS removes the on-path injection vector for the most dangerous class of mixed content.
+        - **User trust preservation:** Eliminating browser mixed-content warnings prevents users from seeing security indicators that suggest the page is unsafe.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Log in to the Cloudflare dashboard and select the zone.
+        2. Navigate to **SSL/TLS** > **Edge Certificates**.
+        3. Locate the **Automatic HTTPS Rewrites** toggle.
+
+        A passing zone shows the toggle **On**. A failing zone shows the toggle **Off**.
+
+        ### Audit via API
+
+        1. Retrieve the `automatic_https_rewrites` zone setting:
+
+        ```bash
+        curl -s -X GET "https://api.cloudflare.com/client/v4/zones/<zone-id>/settings/automatic_https_rewrites" \
+          -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+        ```
+
+        A passing zone returns `"value": "on"`. A failing zone returns `"value": "off"`.
       remediation:
         - id: console
           desc: |
@@ -394,34 +517,54 @@ queries:
     impact: 85
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-09
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
       compliance/iso-27001-2022: iso-27001-2022-a-8-23
       compliance/nis-2: nis-2-21-2-e
       compliance/nist-csf-1: nist-csf-1-pr-ac-5
       compliance/nist-csf-2: nist-csf-2-pr-ir-01
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
-      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/pci-dss-4: pcidss-requirement-6-4-2
       compliance/soc2-2017: soc2-control-cc6-6-4
-      compliance/vda-isa-5: vda-isa-5-5-2-6
+      compliance/vda-isa-5: vda-isa-5-5-2-3
     mql: |
       cloudflare.zone.settings.waf == "on"
     docs:
       desc: |
-        This check ensures that the Web Application Firewall (WAF) is enabled on all Cloudflare zones.
+        This check ensures that the Cloudflare Web Application Firewall is enabled on the zone. The WAF is disabled by default on some plan tiers and can be turned off on others; without it, Cloudflare's managed rule sets that block common web attacks are not evaluated against incoming requests.
 
         **Why this matters**
 
-        The WAF protects web applications by inspecting incoming HTTP traffic and blocking malicious requests. Without the WAF enabled, your application is exposed to:
+        - **OWASP Top 10 coverage:** The WAF's managed rule sets detect and block SQL injection, cross-site scripting, and remote code execution attempts that application code may not handle correctly.
+        - **Zero-day mitigation speed:** Cloudflare deploys WAF rule updates centrally; zones with the WAF enabled receive protection against newly disclosed vulnerabilities before patches can be applied to origin servers.
+        - **Bot and scanner blocking:** The WAF filters automated reconnaissance traffic that probes for known vulnerabilities, reducing the data available to attackers about the application's attack surface.
+        - **Defense-in-depth:** The WAF operates independently of application code, providing a layer of protection that remains effective even when application-level input validation has gaps.
 
-          - **SQL injection**: Attackers can manipulate database queries through user input
-          - **Cross-site scripting (XSS)**: Malicious scripts can be injected into pages viewed by other users
-          - **Remote code execution**: Attackers may exploit application vulnerabilities to execute arbitrary code
-          - **OWASP Top 10 threats**: The WAF provides managed rule sets targeting common web application attacks
+        **Risk mitigation**
 
-        Enabling the WAF provides an additional layer of defense that operates independently of your application code.
+        - **Exploit chain disruption:** Blocking common attack payloads at the edge prevents the initial exploitation step that would give an attacker a foothold in the application.
+        - **Incident response time:** WAF logs provide immediate visibility into attack attempts, giving security teams evidence to act on before a successful exploitation occurs.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Log in to the Cloudflare dashboard and select the zone.
+        2. Navigate to **Security** > **WAF**.
+        3. Verify that the WAF is active and managed rule sets are shown as enabled.
+
+        A passing zone shows the WAF as **Enabled** with at least one managed rule set active. A failing zone shows the WAF as **Disabled**.
+
+        ### Audit via API
+
+        1. Retrieve the `waf` zone setting:
+
+        ```bash
+        curl -s -X GET "https://api.cloudflare.com/client/v4/zones/<zone-id>/settings/waf" \
+          -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+        ```
+
+        A passing zone returns `"value": "on"`. A failing zone returns `"value": "off"`.
       remediation:
         - id: console
           desc: |
@@ -450,9 +593,9 @@ queries:
     impact: 70
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-09
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
       compliance/iso-27001-2022: iso-27001-2022-a-8-20
       compliance/nis-2: nis-2-21-2-e
       compliance/nist-csf-1: nist-csf-1-pr-ac-5
@@ -461,23 +604,43 @@ queries:
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
       compliance/pci-dss-4: pcidss-requirement-1-3-1
       compliance/soc2-2017: soc2-control-cc6-6-4
-      compliance/vda-isa-5: vda-isa-5-5-2-6
+      compliance/vda-isa-5: vda-isa-5-5-2-3
     mql: |
       cloudflare.zone.settings.securityLevel != "essentially_off"
     docs:
       desc: |
-        This check ensures that the Cloudflare security level is not set to "Essentially Off" on any zone.
+        This check ensures that the Cloudflare zone's security level is not set to Essentially Off, which disables challenge-based protections for visitors with poor IP reputation. The security level controls whether Cloudflare presents a challenge page to requests originating from IP addresses known to be associated with malicious activity.
 
         **Why this matters**
 
-        The security level controls how aggressively Cloudflare challenges visitors based on their IP reputation. Setting it to "Essentially Off" disables most challenge-based protections, meaning:
+        - **Bot and scanner exposure:** At Essentially Off, automated tools and scanners that operate from blocklisted IP ranges reach the application without any friction or delay.
+        - **Credential stuffing risk:** Brute-force and credential stuffing attacks rely on high request volumes from known-bad IP ranges; removing challenges makes these attacks faster and cheaper to run.
+        - **Reduced DDoS friction:** Challenge pages impose a computational cost on automated traffic that slows volumetric attacks; disabling them removes that cost entirely.
+        - **Threat intelligence bypass:** Cloudflare continuously updates its IP reputation database; setting the security level to Essentially Off ignores that intelligence for inbound requests.
 
-          - Visitors with known malicious IP addresses are not challenged
-          - Bot traffic and automated attacks face no friction
-          - DDoS mitigation effectiveness is reduced
-          - Your site is more vulnerable to credential stuffing and brute-force attacks
+        **Risk mitigation**
 
-        The recommended setting is "Medium" or higher for most sites. Even "Low" provides basic protection against the most threatening visitors.
+        - **IP reputation enforcement:** Even a Low security level presents challenges to the most threatening IP addresses, creating meaningful friction for automated attacks at minimal cost to legitimate traffic.
+        - **Attack surface narrowing:** Blocking or slowing known-bad actors at the edge reduces the request volume that application-level rate limiting and authentication controls must absorb.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Log in to the Cloudflare dashboard and select the zone.
+        2. Navigate to **Security** > **Settings**.
+        3. Locate the **Security Level** dropdown.
+
+        A passing zone shows any level other than **Essentially Off** (e.g., Low, Medium, High, or I'm Under Attack!). A failing zone shows **Essentially Off**.
+
+        ### Audit via API
+
+        1. Retrieve the `security_level` zone setting:
+
+        ```bash
+        curl -s -X GET "https://api.cloudflare.com/client/v4/zones/<zone-id>/settings/security_level" \
+          -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+        ```
+
+        A passing zone returns any value except `"essentially_off"`, such as `"low"`, `"medium"`, or `"high"`. A failing zone returns `"value": "essentially_off"`.
       remediation:
         - id: console
           desc: |
@@ -505,9 +668,9 @@ queries:
     impact: 50
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-09
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
       compliance/iso-27001-2022: iso-27001-2022-a-8-20
       compliance/nis-2: nis-2-21-2-e
       compliance/nist-csf-1: nist-csf-1-pr-ac-5
@@ -516,21 +679,43 @@ queries:
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
       compliance/pci-dss-4: pcidss-requirement-1-3-1
       compliance/soc2-2017: soc2-control-cc6-6-4
-      compliance/vda-isa-5: vda-isa-5-5-2-6
+      compliance/vda-isa-5: vda-isa-5-5-2-3
     mql: |
       cloudflare.zone.settings.browserCheck == "on"
     docs:
       desc: |
-        This check ensures that Browser Integrity Check is enabled on all Cloudflare zones.
+        This check ensures that Browser Integrity Check is enabled on the Cloudflare zone. Browser Integrity Check evaluates HTTP request headers against patterns associated with known spam tools, scrapers, and malicious bots, and presents a challenge to requests that match those patterns before allowing them to reach the origin.
 
         **Why this matters**
 
-        Browser Integrity Check evaluates incoming HTTP headers for common characteristics of abusive traffic. It checks for headers commonly associated with spammers, bots, and crawlers, and presents a challenge page to visitors that fail the check.
+        - **Bot friction:** Automated clients that lack normal browser headers are challenged before they can interact with the application, slowing scraping, form-spam, and vulnerability-scanning workflows.
+        - **Spam reduction:** Contact forms, registration endpoints, and comment sections are common bot targets; Browser Integrity Check adds a layer of filtering that reduces spam volume without requiring application-side CAPTCHAs.
+        - **Credential stuffing deterrence:** Many credential stuffing tools send simplified headers that Browser Integrity Check identifies and challenges, reducing the success rate of automated login attacks.
+        - **Defense-in-depth with WAF:** Browser Integrity Check operates independently of the WAF and blocks a different class of traffic, providing complementary coverage against automated abuse.
 
-        Disabling this feature allows:
-          - Automated bots to access your site without friction
-          - Spammers to more easily scrape content or submit forms
-          - Malicious crawlers to probe your application for vulnerabilities
+        **Risk mitigation**
+
+        - **Automated reconnaissance reduction:** Bots probing for application vulnerabilities are slowed or blocked before they can complete a scan, reducing attacker intelligence about the application's structure.
+        - **Resource consumption control:** Challenging bot traffic at the edge reduces unnecessary load on origin servers from requests that would otherwise be discarded after consuming compute.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Log in to the Cloudflare dashboard and select the zone.
+        2. Navigate to **Security** > **Settings**.
+        3. Locate the **Browser Integrity Check** toggle.
+
+        A passing zone shows the toggle **On**. A failing zone shows the toggle **Off**.
+
+        ### Audit via API
+
+        1. Retrieve the `browser_check` zone setting:
+
+        ```bash
+        curl -s -X GET "https://api.cloudflare.com/client/v4/zones/<zone-id>/settings/browser_check" \
+          -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+        ```
+
+        A passing zone returns `"value": "on"`. A failing zone returns `"value": "off"`.
       remediation:
         - id: console
           desc: |
@@ -557,32 +742,54 @@ queries:
     impact: 40
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/csa-cloud-controls-matrix-4: false
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
-      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-12
       compliance/nis-2: nis-2-21-2-e
-      compliance/nist-csf-1: nist-csf-1-pr-ac-5
-      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-csf-1: nist-csf-1-pr-ds-5
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
-      compliance/pci-dss-4: pcidss-requirement-1-3-1
-      compliance/soc2-2017: soc2-control-cc6-6-4
-      compliance/vda-isa-5: vda-isa-5-5-2-6
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
     mql: |
       cloudflare.zone.settings.emailObfuscation == "on"
     docs:
       desc: |
-        This check ensures that Email Address Obfuscation is enabled on all Cloudflare zones.
+        This check ensures that Email Address Obfuscation is enabled on the Cloudflare zone. When enabled, Cloudflare rewrites email addresses in HTML page content before delivery so that they are invisible to automated harvesting tools while remaining functional for human visitors.
 
         **Why this matters**
 
-        Email Address Obfuscation prevents email harvesters and bots from collecting email addresses displayed on your website. When enabled, Cloudflare modifies email addresses in HTML before serving them to visitors, making them invisible to bots while remaining functional for human visitors.
+        - **Harvest prevention:** Email addresses published on websites are a primary source of contact lists used in spam and phishing campaigns; obfuscation removes them from the plaintext visible to crawlers.
+        - **Phishing risk reduction:** Harvested addresses belonging to employees and partners become targets for spear-phishing; reducing the harvestable pool lowers that exposure.
+        - **No user impact:** Cloudflare's obfuscation approach preserves mailto links and display text for human visitors while replacing the raw address in the DOM seen by bots.
+        - **Transparent deployment:** Obfuscation is applied at the Cloudflare edge without any changes to origin server code or templates, making it zero-cost to implement for existing sites.
 
-        Without this feature:
-          - Email addresses on your site are easily scraped by automated tools
-          - Harvested addresses are used for spam campaigns and phishing attacks
-          - Employees and contacts receive increased volumes of unwanted email
+        **Risk mitigation**
+
+        - **Spam volume reduction:** Fewer harvested addresses means fewer inbound spam messages to employees and support channels, reducing the chance that a malicious email reaches an end user.
+        - **Phishing infrastructure cost:** Attackers who cannot harvest addresses must purchase or generate target lists by other means, increasing the cost and reducing the precision of targeted email attacks.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Log in to the Cloudflare dashboard and select the zone.
+        2. Navigate to **Scrape Shield** > **Email Address Obfuscation**.
+        3. Inspect the toggle state.
+
+        A passing zone shows the toggle **On**. A failing zone shows the toggle **Off**.
+
+        ### Audit via API
+
+        1. Retrieve the `email_obfuscation` zone setting:
+
+        ```bash
+        curl -s -X GET "https://api.cloudflare.com/client/v4/zones/<zone-id>/settings/email_obfuscation" \
+          -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+        ```
+
+        A passing zone returns `"value": "on"`. A failing zone returns `"value": "off"`.
       remediation:
         - id: console
           desc: |
@@ -609,34 +816,54 @@ queries:
     impact: 30
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/csa-cloud-controls-matrix-4: false
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
-      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
       compliance/nis-2: nis-2-21-2-e
-      compliance/nist-csf-1: nist-csf-1-pr-ac-5
-      compliance/nist-csf-2: nist-csf-2-pr-ir-01
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
-      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/nist-csf-1: nist-csf-1-pr-ds-5
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-4
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
       compliance/soc2-2017: soc2-control-cc6-6-1
-      compliance/vda-isa-5: vda-isa-5-5-2-6
+      compliance/vda-isa-5: false
     mql: |
       cloudflare.zone.settings.hotlinkProtection == "on"
     docs:
       desc: |
-        This check ensures that Hotlink Protection is enabled on all Cloudflare zones.
+        This check ensures that Hotlink Protection is enabled on the Cloudflare zone. Hotlink Protection inspects the HTTP Referer header on requests for images and media files, blocking requests that originate from unauthorized external sites embedding those assets directly.
 
         **Why this matters**
 
-        Hotlink protection prevents other websites from embedding your images and media directly, which can:
+        - **Bandwidth protection:** External sites that embed images and media directly consume the zone's bandwidth and CDN capacity without authorization, increasing infrastructure costs.
+        - **Content ownership:** Hotlinking allows third-party pages to serve content they do not own, creating the appearance that assets belong to the embedding site rather than the originating zone.
+        - **Scraper deterrence:** Image scrapers that build derivative sites or product databases rely on direct asset embedding; Hotlink Protection raises the barrier to that abuse.
+        - **CDN cost control:** Uncontrolled hotlinking can cause significant unexpected bandwidth charges, particularly during traffic spikes driven by viral embedding on high-traffic external sites.
 
-          - Consume your bandwidth without authorization
-          - Allow third-party sites to appear as if they own your content
-          - Increase your infrastructure costs from unauthorized traffic
-          - Enable abuse of your content delivery resources
+        **Risk mitigation**
 
-        When enabled, Cloudflare checks the HTTP Referer header and blocks requests from unauthorized origins.
+        - **Unauthorized distribution prevention:** Blocking Referer-mismatched requests stops third-party sites from distributing the zone's assets without consent or attribution.
+        - **Cost predictability:** Limiting asset delivery to authorized origins makes CDN bandwidth consumption predictable and attributable to legitimate users of the zone.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Log in to the Cloudflare dashboard and select the zone.
+        2. Navigate to **Scrape Shield** > **Hotlink Protection**.
+        3. Inspect the toggle state.
+
+        A passing zone shows the toggle **On**. A failing zone shows the toggle **Off**.
+
+        ### Audit via API
+
+        1. Retrieve the `hotlink_protection` zone setting:
+
+        ```bash
+        curl -s -X GET "https://api.cloudflare.com/client/v4/zones/<zone-id>/settings/hotlink_protection" \
+          -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+        ```
+
+        A passing zone returns `"value": "on"`. A failing zone returns `"value": "off"`.
       remediation:
         - id: console
           desc: |
@@ -664,9 +891,9 @@ queries:
     impact: 50
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
       compliance/nist-csf-1: nist-csf-1-pr-ds-2
@@ -680,18 +907,38 @@ queries:
       cloudflare.zone.settings.opportunisticEncryption == "on"
     docs:
       desc: |
-        This check ensures that Opportunistic Encryption is enabled on all Cloudflare zones.
+        This check ensures that Opportunistic Encryption is enabled on the Cloudflare zone. Opportunistic Encryption advertises HTTP/2 and TLS support for plain HTTP URLs via an Alt-Svc header, allowing supporting browsers to transparently upgrade those connections to an encrypted channel without changing the URL.
 
         **Why this matters**
 
-        Opportunistic Encryption allows browsers to access HTTP URLs over an encrypted TLS channel using the HTTP/2 protocol. This provides an additional encryption layer for resources that have not yet migrated to HTTPS:
+        - **Encryption without URL changes:** Resources that have not yet been migrated to HTTPS benefit from encryption in transit without requiring changes to links, redirects, or origin configuration.
+        - **Defense-in-depth for legacy content:** Sites with a long tail of HTTP URLs gain an additional encryption layer that reduces the risk of passive interception even before a full HTTPS migration is complete.
+        - **Complementary to HTTPS rewrites:** Opportunistic Encryption and Automatic HTTPS Rewrites address different failure modes; enabling both provides broader coverage against mixed-content and plaintext exposure.
+        - **Transparent to users:** The upgrade happens at the protocol layer and is invisible to users; no redirects, warnings, or URL changes occur for supported browsers.
 
-          - Encrypts traffic that would otherwise be transmitted in plaintext
-          - Works transparently without requiring changes to existing HTTP URLs
-          - Provides defense-in-depth alongside "Always Use HTTPS" and "Automatic HTTPS Rewrites"
-          - Protects users on networks where traffic interception is a risk
+        **Risk mitigation**
 
-        While not a substitute for full HTTPS migration, Opportunistic Encryption strengthens the overall encryption posture of the zone.
+        - **Passive interception reduction:** Encrypting connections that would otherwise be plaintext reduces the data visible to network observers even when full HTTPS enforcement is not yet in place.
+        - **Incremental migration support:** Opportunistic Encryption provides a security improvement while a full transition to HTTPS is being planned and executed, avoiding a gap in protection during the migration period.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Log in to the Cloudflare dashboard and select the zone.
+        2. Navigate to **SSL/TLS** > **Edge Certificates**.
+        3. Locate the **Opportunistic Encryption** toggle.
+
+        A passing zone shows the toggle **On**. A failing zone shows the toggle **Off**.
+
+        ### Audit via API
+
+        1. Retrieve the `opportunistic_encryption` zone setting:
+
+        ```bash
+        curl -s -X GET "https://api.cloudflare.com/client/v4/zones/<zone-id>/settings/opportunistic_encryption" \
+          -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+        ```
+
+        A passing zone returns `"value": "on"`. A failing zone returns `"value": "off"`.
       remediation:
         - id: console
           desc: |
@@ -718,7 +965,7 @@ queries:
     impact: 90
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-14
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
       compliance/iso-27001-2022: iso-27001-2022-a-8-5
@@ -727,26 +974,46 @@ queries:
       compliance/nist-csf-2: nist-csf-2-pr-aa-03
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
       compliance/nist-sp-800-171: nist-sp-800-171--3-5-3
-      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/pci-dss-4: pcidss-requirement-8-4-2
       compliance/soc2-2017: soc2-control-cc6-1-4
-      compliance/vda-isa-5: vda-isa-5-4-1-3
+      compliance/vda-isa-5: vda-isa-5-4-1-2
     mql: |
       cloudflare.account.settings.enforceTwoFactor == true
     docs:
       desc: |
-        This check ensures that two-factor authentication (2FA) is enforced for all members of the Cloudflare account.
+        This check ensures that two-factor authentication is enforced for all members of the Cloudflare account. Without enforcement, individual account members can access the account using a password alone, creating a single point of failure for credentials that control DNS records, SSL/TLS configuration, WAF rules, and access policies for every zone.
 
         **Why this matters**
 
-        Cloudflare accounts control critical infrastructure including DNS, SSL/TLS, WAF, and access policies. A compromised account can lead to:
+        - **Credential compromise scope:** A single compromised Cloudflare account password gives an attacker administrative control over every zone in the account, including the ability to modify DNS, disable security features, and redirect traffic.
+        - **Phishing and credential stuffing:** Cloudflare account passwords are targeted by phishing campaigns and credential stuffing attacks; a second factor stops these attacks even when the password is successfully obtained.
+        - **Insider and ex-employee risk:** Enforcing 2FA at the account level ensures that access controls are consistently applied to all members, including those added by others or who have not updated their security settings.
+        - **Privileged access baseline:** Cloudflare account members typically have broad permissions; MFA on privileged access is a foundational control required by nearly every security framework.
 
-          - **Domain hijacking**: Attackers can modify DNS records to redirect traffic
-          - **SSL certificate manipulation**: Malicious certificates can be issued or existing ones revoked
-          - **Security policy bypass**: WAF rules, access policies, and rate limits can be disabled
-          - **Data exfiltration**: Access to analytics, logs, and configuration data
-          - **Service disruption**: Zones can be paused, deleted, or misconfigured
+        **Risk mitigation**
 
-        Enforcing two-factor authentication ensures that even if a password is compromised through phishing, credential stuffing, or data breaches, attackers cannot access the account without the second factor.
+        - **Account takeover prevention:** Two-factor authentication ensures that knowing a password is insufficient to gain access, stopping the most common class of account compromise attack.
+        - **Blast radius containment:** Enforced 2FA reduces the likelihood that a single leaked credential results in unauthorized changes to DNS, routing, or security configuration across all zones.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Log in to the Cloudflare dashboard.
+        2. Navigate to **Manage Account** > **Members**.
+        3. Open the **Authentication** settings.
+        4. Locate the **Enforce two-factor authentication** toggle.
+
+        A passing account shows the toggle **Enabled**. A failing account shows the toggle **Disabled**.
+
+        ### Audit via API
+
+        1. Retrieve the account settings:
+
+        ```bash
+        curl -s -X GET "https://api.cloudflare.com/client/v4/accounts/<account-id>" \
+          -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+        ```
+
+        A passing account returns `"settings": { "enforce_twofactor": true }`. A failing account returns `"settings": { "enforce_twofactor": false }`.
       remediation:
         - id: console
           desc: |
@@ -775,15 +1042,15 @@ queries:
     impact: 70
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/hipaa: hipaa-security-ss164-312-e-2-i-transmission-security-integrity-controls
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
       compliance/nist-csf-1: nist-csf-1-pr-ds-2
       compliance/nist-csf-2: nist-csf-2-pr-ds-02
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-20
-      compliance/nist-sp-800-171: false
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-15
       compliance/pci-dss-4: pcidss-requirement-4-2-1
       compliance/soc2-2017: soc2-control-cc6-7-2
       compliance/vda-isa-5: vda-isa-5-5-1-2
@@ -791,18 +1058,38 @@ queries:
       cloudflare.zone.dnssec.status == "active"
     docs:
       desc: |
-        This check ensures that DNSSEC is active on every Cloudflare zone. DNSSEC adds cryptographic signatures to DNS responses so resolvers can verify that the records they receive came from the authoritative source and were not tampered with in transit.
+        This check ensures that DNSSEC is active on the Cloudflare zone. DNSSEC adds cryptographic signatures to DNS responses, allowing resolvers to verify that records they receive are authentic and have not been altered in transit or by a compromised upstream resolver. Activation requires publishing a DS record at the registrar to chain trust from the parent zone.
 
         **Why this matters**
 
-        Without DNSSEC, DNS responses for the zone can be forged by any attacker who can poison a recursive resolver, intercept on-path traffic, or compromise an upstream resolver:
+        - **DNS forgery prevention:** Without DNSSEC, any attacker who can poison a recursive resolver or intercept DNS traffic can return forged records that redirect users to attacker-controlled infrastructure.
+        - **Pre-TLS interception window:** DNS responses are evaluated before TLS starts; a forged A or AAAA record redirects users to an attacker-controlled server before HTTPS can be established, bypassing certificate pinning on a first visit.
+        - **Email infrastructure protection:** MX, SPF, DKIM, and DMARC records are all served via DNS; forged DNS responses can silently redirect mail delivery and undermine anti-spoofing controls.
+        - **HSTS preload bypass:** An attacker with control over DNS can redirect a new user's first request before the browser has received an HSTS header, neutralizing HTTPS enforcement on that visit.
 
-          - Forged `A` / `AAAA` responses redirect users to attacker-controlled infrastructure for the entire connection lifecycle, before TLS even starts.
-          - The forgery happens *before* HSTS applies on a first visit, giving the attacker a clean SSL-strip window.
-          - Email infrastructure (`MX`, SPF, DKIM, DMARC TXT records) is equally forgeable, undermining anti-spoofing controls that depend on DNS as the source of truth.
-          - Compromise of a single recursive resolver can poison thousands of clients simultaneously; DNSSEC turns that into a detected forgery instead of a successful one.
+        **Risk mitigation**
 
-        Activating DNSSEC requires publishing the DS record at the registrar so the parent zone can chain trust to Cloudflare's signed responses.
+        - **Resolver compromise mitigation:** DNSSEC converts a successful resolver compromise from a silent traffic redirect into a detectable signature failure that resolvers and clients can identify and reject.
+        - **Broad client protection:** A single DNSSEC deployment at the zone level protects all users regardless of the resolver they use, turning resolver-level attacks into detected failures for every impacted client.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Log in to the Cloudflare dashboard and select the zone.
+        2. Navigate to **DNS** > **Settings**.
+        3. Locate the **DNSSEC** section and inspect its status.
+
+        A passing zone shows a status of **Active**. A failing zone shows a status of **Disabled** or **Pending**.
+
+        ### Audit via API
+
+        1. Retrieve the DNSSEC status for the zone:
+
+        ```bash
+        curl -s -X GET "https://api.cloudflare.com/client/v4/zones/<zone-id>/dnssec" \
+          -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+        ```
+
+        A passing zone returns `"status": "active"`. A failing zone returns `"status": "disabled"` or `"status": "pending"`.
       remediation:
         - id: console
           desc: |
@@ -831,9 +1118,9 @@ queries:
     impact: 80
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
       compliance/nist-csf-1: nist-csf-1-pr-ds-2
@@ -847,17 +1134,38 @@ queries:
       cloudflare.zone.settings.hstsEnabled == true
     docs:
       desc: |
-        This check ensures that HTTP Strict Transport Security (HSTS) is enabled on every Cloudflare zone. HSTS instructs browsers to refuse plaintext HTTP connections to the zone for a configured duration, eliminating the SSL-strip window that exists on every first visit when only `https://` redirects are configured.
+        This check ensures that HTTP Strict Transport Security is enabled on the Cloudflare zone. HSTS instructs browsers that have previously visited the zone to refuse plaintext HTTP connections for the duration of the configured max-age, eliminating the downgrade window that exists on every first visit when only redirect-to-HTTPS is configured.
 
         **Why this matters**
 
-        Without HSTS, the first request a browser makes to the zone is typically `http://` — and that single plaintext request is enough for an on-path attacker to:
+        - **First-request downgrade prevention:** Without HSTS, a user's first HTTP request to the zone is sent in plaintext before any redirect occurs, giving an on-path attacker an opportunity to intercept it and strip the HTTPS upgrade.
+        - **SSL stripping defense:** HSTS makes browsers enforce HTTPS client-side rather than relying on a server-sent redirect, preventing SSL-strip tools from intercepting the redirect and keeping the session in plaintext.
+        - **Cookie leakage prevention:** Session cookies transmitted in the plaintext first request can be harvested by network observers; HSTS closes this window for returning visitors.
+        - **Redirect chain shortening:** Returning browsers that enforce HSTS connect directly to HTTPS without an initial HTTP request, reducing latency and eliminating the exposed round trip.
 
-          - Intercept the request before the redirect to HTTPS happens, downgrade the entire session, and harvest credentials, session cookies, and form data.
-          - Inject malicious responses that the browser treats as legitimate from the zone, including JavaScript that compromises every authenticated session.
-          - Manipulate the `Set-Cookie` headers so future cookies are sent over HTTP and leak via the same channel.
+        **Risk mitigation**
 
-        Browsers that have already received an HSTS response refuse to make plaintext requests for the configured `max-age`, eliminating the downgrade path entirely.
+        - **On-path attack mitigation:** Browsers that have cached the HSTS header refuse to connect over HTTP regardless of what DNS or network-level redirection says, blocking the most common SSL-strip attack pattern.
+        - **Foundation for advanced HTTPS controls:** HSTS is a prerequisite for the includeSubDomains directive and preload list enrollment, both of which extend protection to first-time visitors and subdomains.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Log in to the Cloudflare dashboard and select the zone.
+        2. Navigate to **SSL/TLS** > **Edge Certificates**.
+        3. Scroll to **HTTP Strict Transport Security (HSTS)** and inspect the **Status** indicator.
+
+        A passing zone shows HSTS as **Enabled** with a non-zero max-age. A failing zone shows HSTS as **Disabled**.
+
+        ### Audit via API
+
+        1. Retrieve the `security_header` zone setting:
+
+        ```bash
+        curl -s -X GET "https://api.cloudflare.com/client/v4/zones/<zone-id>/settings/security_header" \
+          -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+        ```
+
+        A passing zone returns `"strict_transport_security": { "enabled": true, ... }`. A failing zone returns `"strict_transport_security": { "enabled": false, ... }` or an absent `enabled` key.
       remediation:
         - id: console
           desc: |
@@ -886,9 +1194,9 @@ queries:
     impact: 70
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
       compliance/nist-csf-1: nist-csf-1-pr-ds-2
@@ -902,17 +1210,38 @@ queries:
       cloudflare.zone.settings.hstsEnabled != true || cloudflare.zone.settings.hstsMaxAge >= 31536000
     docs:
       desc: |
-        This check ensures that the HSTS `max-age` directive is set to at least 31,536,000 seconds (one year) on zones where HSTS is enabled. The `max-age` value is the duration browsers commit to refusing plaintext HTTP connections after seeing the header.
+        This check ensures that the HSTS max-age directive is set to at least 31,536,000 seconds (one year) on zones where HSTS is enabled. The max-age value is the duration a browser commits to refusing plaintext HTTP connections to the zone after receiving the header; short values provide only temporary protection.
 
         **Why this matters**
 
-        Short `max-age` values undermine HSTS in three ways:
+        - **Protection window length:** A max-age of 60 seconds protects a returning visitor for 60 seconds; once the header expires from the browser cache, the zone is downgrade-able again until the next successful HTTPS visit.
+        - **Preload list eligibility:** The HSTS preload list, which protects first-time visitors, requires a minimum max-age of one year as a submission prerequisite; shorter values disqualify the zone.
+        - **Intermittent attacker resistance:** Attackers with occasional on-path access can wait out a short max-age window between visits and deliver an SSL-strip attack once the directive expires; a one-year window makes this impractical.
+        - **Operational stability signal:** A long max-age communicates that the zone is committed to serving only HTTPS, reducing the likelihood that future configuration errors inadvertently re-enable plaintext access.
 
-          - The protection window is exactly the configured duration; a 60-second `max-age` provides 60 seconds of HSTS coverage and then the zone is downgrade-able again.
-          - The HSTS preload list explicitly requires `max-age` of at least one year. Zones that want preload eligibility cannot use shorter values.
-          - Attackers with intermittent on-path access can wait out a short `max-age` window and then deliver an SSL-strip downgrade once the directive expires from the browser cache.
+        **Risk mitigation**
 
-        One year is the conventional baseline; values longer than that are common and reasonable.
+        - **Cache expiry attack prevention:** One year of HSTS coverage ensures that the gap between a user's visits does not create a downgrade window, even for infrequent visitors.
+        - **Preload path enablement:** Setting max-age to at least one year satisfies the preload submission requirement, allowing the zone to pursue browser preload list enrollment for first-visit protection.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Log in to the Cloudflare dashboard and select the zone.
+        2. Navigate to **SSL/TLS** > **Edge Certificates** > **HTTP Strict Transport Security (HSTS)**.
+        3. Inspect the **Max Age Header** value.
+
+        A passing zone shows **12 months** (31,536,000 seconds) or longer. A failing zone shows a value below 12 months, or HSTS is disabled.
+
+        ### Audit via API
+
+        1. Retrieve the `security_header` zone setting:
+
+        ```bash
+        curl -s -X GET "https://api.cloudflare.com/client/v4/zones/<zone-id>/settings/security_header" \
+          -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+        ```
+
+        A passing zone returns `"strict_transport_security": { "enabled": true, "max_age": 31536000, ... }` where `max_age` is 31536000 or greater. A failing zone returns a `max_age` value below 31536000 or `"enabled": false`.
       remediation:
         - id: console
           desc: |
@@ -942,9 +1271,9 @@ queries:
     impact: 60
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
       compliance/nist-csf-1: nist-csf-1-pr-ds-2
@@ -958,17 +1287,38 @@ queries:
       cloudflare.zone.settings.hstsEnabled != true || cloudflare.zone.settings.hstsIncludeSubdomains == true
     docs:
       desc: |
-        This check ensures that HSTS applies to subdomains on zones where HSTS is enabled. Without `includeSubDomains`, HSTS only protects the apex hostname; every subdomain remains independently downgrade-able on first visit.
+        This check ensures that the HSTS includeSubDomains directive is set on zones where HSTS is enabled. Without includeSubDomains, HSTS protects only the apex domain; every subdomain remains independently downgrade-able on first visit and is not covered by the cached HSTS policy.
 
         **Why this matters**
 
-        Most production traffic for a zone is served from subdomains: `www.example.com`, `api.example.com`, `auth.example.com`, `cdn.example.com`. Without `includeSubDomains`:
+        - **Subdomain downgrade exposure:** Most application traffic is served from subdomains; apex-only HSTS leaves every subdomain unprotected until it has separately delivered its own HSTS header.
+        - **Cookie scope leakage:** Cookies scoped to the parent domain are sent to all subdomains; a subdomain visited over plaintext HTTP leaks those cookies to network observers even though the apex enforces HTTPS.
+        - **Preload list requirement:** The HSTS preload list requires includeSubDomains as a mandatory field; zones that omit it cannot be submitted and cannot protect first-time visitors at the zone level.
+        - **Consistent policy application:** includeSubDomains ensures that short-lived staging, development, or feature subdomains that lack their own HSTS configuration inherit the zone's HTTPS commitment automatically.
 
-          - An attacker on the user's network can SSL-strip the first visit to any subdomain and harvest the same credentials and session cookies they would have at the apex.
-          - A subdomain that does not enforce HTTPS becomes a credential-theft staging ground: cookies scoped to `.example.com` leak whenever any subdomain is visited over plaintext.
-          - The HSTS preload list rejects entries that do not include subdomains, so opting out also blocks preload eligibility.
+        **Risk mitigation**
 
-        Enabling `includeSubDomains` is safe only when every subdomain (including any short-lived staging or development ones) supports HTTPS — verify before enabling.
+        - **Subdomain SSL-strip prevention:** Browsers that have received the includeSubDomains directive refuse plaintext connections to all subdomains, closing the attack vector that apex-only HSTS leaves open.
+        - **Session cookie protection:** Extending HSTS to subdomains prevents cookie leakage on subdomains that would otherwise be reachable over HTTP, protecting sessions that span multiple subdomains.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Log in to the Cloudflare dashboard and select the zone.
+        2. Navigate to **SSL/TLS** > **Edge Certificates** > **HTTP Strict Transport Security (HSTS)**.
+        3. Inspect the **Apply HSTS policy to subdomains** toggle.
+
+        A passing zone shows the subdomain toggle **Enabled** (or HSTS is not enabled on the zone). A failing zone shows HSTS enabled but the subdomain toggle **Disabled**.
+
+        ### Audit via API
+
+        1. Retrieve the `security_header` zone setting:
+
+        ```bash
+        curl -s -X GET "https://api.cloudflare.com/client/v4/zones/<zone-id>/settings/security_header" \
+          -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+        ```
+
+        A passing zone returns `"strict_transport_security": { "enabled": true, "include_subdomains": true, ... }` or `"enabled": false`. A failing zone returns `"enabled": true` with `"include_subdomains": false`.
       remediation:
         - id: console
           desc: |
@@ -997,9 +1347,9 @@ queries:
     impact: 50
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
       compliance/nist-csf-1: nist-csf-1-pr-ds-2
@@ -1013,17 +1363,38 @@ queries:
       cloudflare.zone.settings.hstsEnabled != true || cloudflare.zone.settings.hstsPreload == true
     docs:
       desc: |
-        This check ensures that the `preload` directive is set on the HSTS header for zones where HSTS is enabled. The `preload` directive is the application's signal that the zone wants to be added to the public HSTS preload list shipped in browsers.
+        This check ensures that the HSTS preload directive is present on zones where HSTS is enabled. The preload directive is the zone's signal that it wants to be included in the browser preload list, which hardcodes HTTPS enforcement for the zone in browser releases so that first-time visitors are protected before they have ever received an HSTS header.
 
         **Why this matters**
 
-        HSTS as configured at the server only protects users *after* they have made one successful HTTPS connection that returned the HSTS header. The preload list closes that gap:
+        - **First-visit protection:** Server-side HSTS only protects users after their first successful HTTPS visit; the preload list extends that protection to users who have never previously visited the zone.
+        - **Pre-DNS attack resistance:** Browsers that have the zone in the preload list refuse to make plaintext connections regardless of what DNS or network-level redirection instructs, closing the window before TLS even starts.
+        - **Automated client coverage:** Mobile WebViews, headless browsers, and other automated clients that honor the preload list benefit from the same first-visit protection as desktop browsers.
+        - **Persistent protection:** Preload list entries persist across browser reinstalls and profile resets, unlike the per-browser-instance HSTS cache that standard HSTS relies on.
 
-          - Browsers that ship the preload list refuse plaintext HTTP to the zone before the user has ever visited it — eliminating the first-visit SSL-strip window entirely.
-          - Mobile browsers, embedded WebViews, and headless browsers used by automated systems all benefit from the preload list with no per-user state required.
-          - Attackers who control the user's first DNS lookup can no longer downgrade the connection because the browser has hard-coded refusal of plaintext for the zone.
+        **Risk mitigation**
 
-        Adding `preload` to the header is necessary but not sufficient — the zone must additionally be submitted to [hstspreload.org](https://hstspreload.org/) and accepted by the maintainers before browsers actually enforce the policy. Treat the header directive as the policy commitment and the submission as the deployment step.
+        - **Cold-start downgrade prevention:** Including the zone in the preload list eliminates the first-visit SSL-strip window that exists for all users who have not previously received an HSTS header from the zone.
+        - **DNS compromise mitigation:** Preloaded zones are protected even when DNS is compromised or poisoned, because the browser enforces HTTPS independently of the DNS response.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Log in to the Cloudflare dashboard and select the zone.
+        2. Navigate to **SSL/TLS** > **Edge Certificates** > **HTTP Strict Transport Security (HSTS)**.
+        3. Inspect the **Preload** toggle.
+
+        A passing zone shows the preload toggle **Enabled** (or HSTS is not enabled on the zone). A failing zone shows HSTS enabled but the preload toggle **Disabled**.
+
+        ### Audit via API
+
+        1. Retrieve the `security_header` zone setting:
+
+        ```bash
+        curl -s -X GET "https://api.cloudflare.com/client/v4/zones/<zone-id>/settings/security_header" \
+          -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+        ```
+
+        A passing zone returns `"strict_transport_security": { "enabled": true, "preload": true, ... }` or `"enabled": false`. A failing zone returns `"enabled": true` with `"preload": false`.
       remediation:
         - id: console
           desc: |
@@ -1054,7 +1425,7 @@ queries:
     impact: 90
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
       compliance/iso-27001-2022: iso-27001-2022-a-8-3
@@ -1065,23 +1436,50 @@ queries:
       compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
       compliance/pci-dss-4: pcidss-requirement-7-2-1
       compliance/soc2-2017: soc2-control-cc6-1-3
-      compliance/vda-isa-5: vda-isa-5-4-1-1
+      compliance/vda-isa-5: vda-isa-5-4-2-1
     mql: |
       cloudflare.r2.buckets.all(publicAccessEnabled == false)
     docs:
       desc: |
-        This check ensures that no Cloudflare R2 bucket is exposed via the managed `r2.dev` public subdomain. When public access is enabled, every object in the bucket is reachable over the internet at `https://<hash>.r2.dev/<key>` with no authentication.
+        This check ensures that no Cloudflare R2 bucket has the managed public access path enabled. When public access is turned on, every object in the bucket is reachable at an unauthenticated r2.dev URL with no access controls applied, making the bucket functionally equivalent to an open S3 bucket.
 
         **Why this matters**
 
-        Public R2 buckets are the Cloudflare equivalent of public S3 buckets and carry the same data-exposure risk profile:
+        - **Unrestricted data exposure:** All objects in a publicly accessible R2 bucket are world-readable; buckets accumulate logs, backups, user uploads, and temporary data that were never intended for public distribution.
+        - **Enumerable URL pattern:** The r2.dev URL scheme is predictable; once one object URL is known, other objects in the bucket can be discovered through filename guessing, search-engine indexing, or referrer header leakage.
+        - **Development-to-production drift:** Public access is commonly enabled for a single asset during development and never disabled when the bucket is repurposed or promoted to production use.
+        - **Missing access controls:** The managed r2.dev public path does not support rate limiting, audit logging, or signed URL patterns that are available when a Worker or custom domain fronts the bucket.
 
-          - Every object becomes world-readable. Buckets often accumulate logs, backups, customer files, and temporary data that the original use case did not anticipate becoming public.
-          - The `r2.dev` URL pattern is enumerable; once one object is leaked, others are typically findable through filename guessing, search-engine indexing, or referer leakage from internal documents.
-          - Public access is frequently enabled during development for a single asset and forgotten when the bucket is repurposed for production data.
-          - For internet-served content, the recommended pattern is a custom domain with a Cloudflare Worker or signed URL — that path lets you apply access control, rate limiting, and audit logging that the managed `r2.dev` domain does not support.
+        **Risk mitigation**
 
-        Disable the managed public access path; if internet-facing distribution is required, front the bucket with a Worker or custom domain that enforces access control.
+        - **Accidental data exposure prevention:** Disabling the public access path ensures that objects stored in the bucket cannot be read by unauthenticated parties, regardless of what the bucket contains.
+        - **Access control enforcement:** Routing public content through a Cloudflare Worker or custom domain enables authentication, rate limiting, and audit logging that the managed public access path cannot provide.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Log in to the Cloudflare dashboard and select the account.
+        2. Navigate to **R2**.
+        3. For each bucket, select the bucket, open **Settings** > **Public access**, and inspect the **r2.dev subdomain** row.
+
+        A passing bucket shows **Access Disallowed** under r2.dev subdomain. A failing bucket shows **Access Allowed**.
+
+        ### Audit via API
+
+        1. List all R2 buckets for the account:
+
+        ```bash
+        curl -s -X GET "https://api.cloudflare.com/client/v4/accounts/<account-id>/r2/buckets" \
+          -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+        ```
+
+        2. For each bucket, retrieve its managed domain configuration:
+
+        ```bash
+        curl -s -X GET "https://api.cloudflare.com/client/v4/accounts/<account-id>/r2/buckets/<bucket-name>/domains/managed" \
+          -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+        ```
+
+        A passing bucket returns `"enabled": false`. A failing bucket returns `"enabled": true`.
       remediation:
         - id: console
           desc: |
@@ -1110,7 +1508,7 @@ queries:
     impact: 75
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-10
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
       compliance/iso-27001-2022: iso-27001-2022-a-5-17
@@ -1118,26 +1516,46 @@ queries:
       compliance/nist-csf-1: nist-csf-1-pr-ac-1
       compliance/nist-csf-2: nist-csf-2-pr-aa-01
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
-      compliance/nist-sp-800-171: false
-      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-6
+      compliance/pci-dss-4: pcidss-requirement-8-6-3
       compliance/soc2-2017: soc2-control-cc6-1-9
-      compliance/vda-isa-5: vda-isa-5-4-1-3
+      compliance/vda-isa-5: vda-isa-5-4-1-1
     mql: |
       cloudflare.apiTokens.where(status == "active").all(expiresOn != null)
     docs:
       desc: |
-        This check ensures that every active Cloudflare API token has an `expiresOn` value set. Tokens without an expiration remain valid until manually revoked, which in practice means they outlive the original issuer, the original use case, and often the secrets-management hygiene that protected them.
+        This check ensures that every active Cloudflare API token has an expiration date set. Tokens without an expiration remain valid indefinitely unless manually revoked, meaning that credentials leaked in configuration files, CI logs, or operator terminals retain their full access permissions forever without any automatic remediation.
 
         **Why this matters**
 
-        Non-expiring API tokens are the most common cloud-credential persistence vehicle for attackers post-leak:
+        - **Persistent credential exposure:** A non-expiring token that is leaked once remains a valid attack vector until it is discovered and manually revoked; detection and revocation are rarely prompt enough to prevent abuse.
+        - **Scope accumulation:** Tokens are often issued for a specific task and then retained; over time, the token holder's role changes, but the token's permissions do not, leaving stale entitlements in place.
+        - **Secrets sprawl:** Tokens that never expire appear in more places over time as they are copied into new automation, documentation, and secret stores, increasing the leak surface with each copy.
+        - **Audit simplification:** Tokens with a known expiration have a defined lifecycle that can be tracked and reported; non-expiring tokens require continuous manual auditing to confirm they are still in authorized use.
 
-          - A token leaked once — in a config file committed to a public repo, a CI log, a screenshot in a ticket, a former employee's laptop — remains valid forever unless someone notices and revokes it.
-          - Token rotation discipline tends to slip when there is no forcing function; tokens accumulate access entitlements over time as their holders take on new responsibilities.
-          - An expiration even a year out caps the useful lifetime of any leaked token, turning "credential leak" from "permanent access" into "access until rotation."
-          - Audit and incident response are dramatically simpler when every active token has a known retirement date.
+        **Risk mitigation**
 
-        Setting `expiresOn` does not change the token's permissions — it only commits to a future date by which the token will stop working unless explicitly renewed.
+        - **Leaked credential lifetime cap:** An expiration date converts a leaked token from a permanent access grant into a time-limited one, bounding the damage from any single credential disclosure.
+        - **Forced review cadence:** Expiration requires intentional renewal, creating a regular opportunity to verify that the token's scope is still appropriate for its current use.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Log in to the Cloudflare dashboard.
+        2. Navigate to **My Profile** > **API Tokens**.
+        3. For each active token, inspect the **Expiration** column.
+
+        A passing token shows a specific expiration date in the **Expiration** column. A failing token shows **No Expiration** or a blank expiration field.
+
+        ### Audit via API
+
+        1. List all API tokens for the user:
+
+        ```bash
+        curl -s -X GET "https://api.cloudflare.com/client/v4/user/tokens" \
+          -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+        ```
+
+        A passing result shows every token with `"status": "active"` also has a non-null `"expires_on"` value. A failing result contains at least one active token where `"expires_on"` is `null` or absent.
       remediation:
         - id: console
           desc: |
@@ -1174,7 +1592,7 @@ queries:
     impact: 60
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-16
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
       compliance/iso-27001-2022: iso-27001-2022-a-8-3
@@ -1183,25 +1601,45 @@ queries:
       compliance/nist-csf-2: nist-csf-2-pr-aa-05
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-17
       compliance/nist-sp-800-171: nist-sp-800-171--3-1-12
-      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/pci-dss-4: pcidss-requirement-7-2-5
       compliance/soc2-2017: soc2-control-cc6-1-3
-      compliance/vda-isa-5: vda-isa-5-4-1-1
+      compliance/vda-isa-5: vda-isa-5-4-2-1
     mql: |
       cloudflare.apiTokens.where(status == "active").all(ipIn != null && ipIn.length > 0)
     docs:
       desc: |
-        This check ensures that every active Cloudflare API token defines an `ipIn` allowlist. The allowlist constrains which source IPs or CIDRs can present the token to the Cloudflare API; requests from any other source are rejected before the token's permissions are evaluated.
+        This check ensures that every active Cloudflare API token has an IP allowlist configured. An IP allowlist constrains which source addresses can authenticate with the token; requests from any address outside the configured CIDRs are rejected before the token's permissions are evaluated.
 
         **Why this matters**
 
-        IP allowlisting turns a leaked token into a "leaked token from one of these networks" problem, which is dramatically harder to operationalize for an attacker:
+        - **Leaked token usability reduction:** A token with an IP allowlist can only be used from the specified source ranges; an attacker who obtains the token from a different network cannot authenticate with it.
+        - **Automation scope enforcement:** API tokens used by CI systems, Kubernetes operators, and other automation have predictable source IPs; binding the token to those ranges ensures it cannot be abused from unexpected locations.
+        - **Defense-in-depth with expiration:** IP allowlisting and token expiration address different threat models; combining them ensures that a leaked token is constrained by both origin and time.
+        - **Incident response signal:** Attempts to use a token from an address outside its allowlist generate authentication failures that can be detected and alerted on, providing early warning of credential theft.
 
-          - A token stolen from a CI runner is useless to an attacker on a residential IP.
-          - A token committed to a public repo cannot be replayed from anywhere on the internet — only from the explicitly listed networks.
-          - The allowlist is a compensating control while detection-and-response catches up; tokens with neither expiration nor IP scoping have no compensating boundary at all.
-          - For automation tokens, the calling-system IP range is typically known and stable (Kubernetes egress NAT, fixed VPN IPs, dedicated CI runners); production tokens rarely need to work from arbitrary sources.
+        **Risk mitigation**
 
-        Pair the allowlist with a short `expiresOn` window for defense in depth.
+        - **Exfiltration prevention:** Tokens stolen from CI logs or configuration files cannot be replayed by attackers operating from arbitrary internet addresses when an IP allowlist is in place.
+        - **Lateral movement containment:** An IP allowlist ensures that a compromised automation credential cannot be used from an attacker's staging environment, limiting the ability to pivot using stolen tokens.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Log in to the Cloudflare dashboard.
+        2. Navigate to **My Profile** > **API Tokens**.
+        3. Select each active token and expand its settings to inspect **Client IP Address Filtering**.
+
+        A passing token shows at least one CIDR or IP address under **Is in** for Client IP Address Filtering. A failing token shows no IP address filtering configured.
+
+        ### Audit via API
+
+        1. List all API tokens for the user:
+
+        ```bash
+        curl -s -X GET "https://api.cloudflare.com/client/v4/user/tokens" \
+          -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+        ```
+
+        A passing result shows every active token with a non-empty `"condition": { "request_ip": { "in": [...] } }` array. A failing result contains at least one active token where `condition.request_ip.in` is absent, null, or an empty array.
       remediation:
         - id: console
           desc: |
@@ -1229,7 +1667,7 @@ queries:
     impact: 60
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-12
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
       compliance/iso-27001-2022: iso-27001-2022-a-5-17
@@ -1237,26 +1675,46 @@ queries:
       compliance/nist-csf-1: nist-csf-1-pr-ac-1
       compliance/nist-csf-2: nist-csf-2-pr-aa-01
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
-      compliance/nist-sp-800-171: false
-      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-6
+      compliance/pci-dss-4: pcidss-requirement-8-6-3
       compliance/soc2-2017: soc2-control-cc6-1-9
-      compliance/vda-isa-5: vda-isa-5-4-1-3
+      compliance/vda-isa-5: vda-isa-5-4-1-1
     mql: |
       cloudflare.apiTokens.where(status == "active").all(time.now - modifiedOn < 365 * time.day)
     docs:
       desc: |
-        This check ensures that no active Cloudflare API token has gone more than 365 days without being rotated. Rotation is measured against `modifiedOn`, which Cloudflare updates whenever the token's secret is rolled or its policies are changed. Long-lived unrotated tokens accumulate exposure: every CI run that read the token, every laptop the token sat on, every screenshot of a config file, and every tool that ever cached the value compounds the leak surface over time.
+        This check ensures that every active Cloudflare API token has been rotated within the last 365 days, measured against the token's modifiedOn timestamp. Tokens that have not been rotated for more than a year have typically been copied into multiple systems and pipelines, compounding the potential leak surface over time.
 
         **Why this matters**
 
-        Even tokens with an expiration set can drift past acceptable rotation windows if the expiration was a multi-year value:
+        - **Accumulated exposure:** The longer a token's current secret is in service, the more places its plaintext value has been read, cached, or logged; a token issued two years ago has typically passed through pipelines and terminals that are no longer auditable.
+        - **Role and scope drift:** Token holders change roles or leave the organization; a token issued for a specific project is often inherited by successors without a fresh review of whether the original scope is still appropriate.
+        - **Log retention limits:** Security log retention windows rarely span the original issuance of a long-lived token, making it impossible to compare current usage against a historical baseline when investigating anomalous activity.
+        - **Forcing function for hygiene:** Regular rotation requires consumers to update credentials on a defined cadence, reinforcing secrets management discipline and ensuring that token access is actively maintained rather than passively inherited.
 
-          - The longer a token's current secret is in service, the more places its plaintext has been read or cached. A token rolled two years ago has typically passed through more pipelines, secret stores, and operator terminals than anyone is tracking.
-          - Token holders change roles. A token issued for a project is often inherited by a successor without a fresh authorization review of its scope.
-          - Detection-and-response is harder for old credentials: log retention windows usually do not span the original issuance, so any anomalous use today cannot be compared against the historical baseline.
-          - A 365-day rotation cadence is the conventional baseline; some industries such as PCI DSS and FedRAMP require shorter intervals.
+        **Risk mitigation**
 
-        Enforcing rotation by failing this check forces issuance of fresh secrets with current scope and current operator ownership.
+        - **Historic leak surface reduction:** Rotating a token invalidates every copy of the previous secret, rendering any credential that was silently leaked over the past year immediately useless.
+        - **Ownership revalidation:** The rotation process requires the current token owner to actively claim the credential and review its permissions, catching scope drift and orphaned tokens before they become a persistent risk.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Log in to the Cloudflare dashboard.
+        2. Navigate to **My Profile** > **API Tokens**.
+        3. For each active token, inspect the **Last Modified** date.
+
+        A passing token shows a **Last Modified** date within the past 365 days. A failing token shows a **Last Modified** date older than 365 days.
+
+        ### Audit via API
+
+        1. List all API tokens for the user:
+
+        ```bash
+        curl -s -X GET "https://api.cloudflare.com/client/v4/user/tokens" \
+          -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+        ```
+
+        A passing result shows every active token with a `"modified_on"` timestamp within the past 365 days. A failing result contains at least one active token where `"modified_on"` is older than 365 days from today.
       remediation:
         - id: console
           desc: |
