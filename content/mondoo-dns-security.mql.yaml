@@ -61,22 +61,21 @@ queries:
       dns.records.where(type == "CNAME") == empty
     docs:
       desc: |
-        This check ensures that the root domain (often called the apex domain) does not have a CNAME (Canonical Name) record in its DNS settings.
+        This check verifies that the root domain has no CNAME record in its DNS settings. The DNS standard prohibits a CNAME at the apex domain because a CNAME cannot coexist with the SOA and NS records that every zone apex must carry.
 
         **Why this matters**
 
-        Using CNAME records at the root domain is prohibited because it can lead to conflicts with other important DNS records, such as SOA (Start of Authority) and NS (Name Server) records.
+        - **Reliable resolution:** A CNAME at the apex conflicts with mandatory SOA and NS records, which can break resolution for the entire domain and cause service interruptions.
+        - **Standards compliance:** Avoiding apex CNAME records keeps the zone compliant with DNS standards and DNS provider rules.
+        - **Service functionality:** Essential domain-related services such as email and subdomains depend on the apex carrying valid SOA and NS records rather than a CNAME.
+      audit: |
+        Run the `dig <domain>` command and inspect the answer section for the root domain.
 
-        By avoiding CNAME records at the root domain, the system ensures:
-          - Reliable DNS resolution, preventing service interruptions
-          - Compliance with DNS standards and provider rules
-          - Proper functionality of essential domain-related services, such as email or subdomains
-
-        Without these protections, implementing a CNAME at the root domain could result in DNS resolution issues, service unavailability, and non-compliance with DNS provider policies.
+        A passing result shows the root domain resolving through A or AAAA records with no CNAME present. A failing result shows a CNAME record returned for the root domain.
       remediation: |
-        1. Replace the CNAME record at the root domain with an A or ALIAS record (if supported by your DNS provider) to point to the appropriate IP address or hostname.
+        1. Replace the CNAME record at the root domain with an A or ALIAS record, if your DNS provider supports ALIAS records, pointing to the appropriate IP address or hostname.
         2. Ensure the A or ALIAS record is correctly configured to maintain DNS compatibility and avoid resolution failures.
-        3. Verify the updated DNS configuration using DNS validation tools to confirm proper resolution and functionality.
+        3. Verify the updated DNS configuration with `dig <domain>` to confirm proper resolution and functionality.
     refs:
       - url: https://www.cisa.gov/dns-security
         title: CISA DNS Security
@@ -104,18 +103,18 @@ queries:
       dns.records.where(type == "NS").all( rdata != regex.ipv4 && rdata != regex.ipv6 )
     docs:
       desc: |
-        This check ensures that DNS Name Server (NS) and Mail Exchange (MX) records do not point directly to IP addresses.
+        This check verifies that DNS Name Server (NS) and Mail Exchange (MX) records resolve to fully qualified domain names rather than pointing directly to IP addresses. The DNS standard requires both record types to reference hostnames.
 
         **Why this matters**
 
-        NS and MX records should point to fully qualified domain names (FQDNs) rather than IP addresses. Using IP addresses in these records can lead to several issues:
+        - **Operational flexibility:** Pointing a record at a hostname rather than a literal IP keeps server migrations and load balancing transparent to clients, which only ever see the name.
+        - **Downtime risk:** When a server IP changes, an IP-based record must be updated everywhere it appears, and any missed update silently breaks email or domain resolution.
+        - **Standards compliance:** DNS resolvers expect NS and MX records to reference hostnames, so literal IP addresses can cause unpredictable behavior or resolution failures.
+        - **Reduced exposure:** Hiding server IP addresses behind hostnames limits the reconnaissance and direct-targeting information available to attackers.
+      audit: |
+        Run the `dig NS <domain>` and `dig MX <domain>` commands and inspect the answer sections.
 
-        - **Lack of flexibility**: Pointing to an IP address directly ties your DNS or mail configuration to a specific server, making it difficult to manage changes such as server migrations or load balancing.
-        - **Potential downtime**: If the server IP address changes and DNS records are not updated promptly, services dependent on these records (e.g., email or domain resolution) can experience downtime.
-        - **Non-compliance with DNS standards**: DNS resolvers expect NS and MX records to point to hostnames. Using IPs can lead to unpredictable behavior or DNS resolution failures.
-        - **Security risks**: Directly exposing IP addresses can make your infrastructure more vulnerable to attacks, such as DDoS or reconnaissance efforts.
-
-        By ensuring NS and MX records point to FQDNs, the system enhances flexibility, reduces downtime risks, and aligns with DNS standards, contributing to a more secure and reliable DNS configuration.
+        A passing result shows every NS and MX record pointing to a hostname such as `ns1.example.com` or `mail.example.com`. A failing result shows any NS or MX record whose target is a literal IPv4 or IPv6 address.
       remediation: |
         For NS records:
           1. Identify the authoritative DNS servers for your domain.
@@ -155,32 +154,27 @@ queries:
       dns.mx.all( domainName.downcase != "mail.global.bigfish.com." )
     docs:
       desc: |
-        This check ensures that legacy MX records, often associated with outdated email hosting configurations, are not used in domains configured for Microsoft 365 email services.
+        This check verifies that a domain's MX records do not reference legacy Microsoft hosting endpoints such as `mail.outlook.com`, `mail.messaging.microsoft.com`, `mail.global.frontbridge.com`, or `mail.global.bigfish.com`. Current Microsoft 365 mail flow uses endpoints under `*.mail.protection.outlook.com`.
 
         **Why this matters**
 
-        Legacy MX records can lead to several issues, including:
+        - **Email delivery:** Legacy endpoints may route mail to obsolete servers, causing delivery failures or delays.
+        - **Security exposure:** Routing mail through outdated or untrusted servers can expose traffic to spoofing, phishing, and interception.
+        - **Microsoft 365 compatibility:** Microsoft 365 expects MX records under `*.mail.protection.outlook.com` so spam filtering and transport encryption work as designed.
+        - **Operational simplicity:** Removing stale records reduces the surface for misconfiguration during troubleshooting and migrations.
+      audit: |
+        Run the `dig MX <domain>` command and inspect the answer section.
 
-        - **Email delivery problems**: Outdated MX records may route email to obsolete or incorrect mail servers, causing delivery failures or delays.
-        - **Security vulnerabilities**: Misconfigured MX records can expose email traffic to spoofing, phishing, or interception attacks if routed through untrusted servers.
-        - **Incompatibility with Microsoft 365**: Microsoft 365 requires specific MX record configurations (e.g., *.mail.protection.outlook.com) to ensure proper email routing and security features like spam filtering and encryption.
-        - **Increased administrative complexity**: Retaining legacy MX records adds unnecessary complexity, increasing the risk of mismanagement during troubleshooting or migrations.
-
-        By removing legacy MX records, the system ensures:
-          - Reliable email delivery through Microsoft 365
-          - Enhanced security by preventing exposure to outdated or untrusted mail servers
-          - Compliance with Microsoft 365 requirements and best practices
-
-        Without these protections, legacy MX records could undermine email reliability and security, exposing the organization to unnecessary risks.
+        A passing result shows MX records pointing to current Microsoft 365 endpoints under `*.mail.protection.outlook.com`. A failing result shows an MX record pointing to a legacy host such as `mail.outlook.com` or `mail.global.frontbridge.com`.
       remediation: |
-        Replace all legacy MX records with the correct Microsoft 365 MX records provided in the Microsoft 365 Admin Center.
+        Replace all legacy MX records with the current Microsoft 365 MX records shown in the Microsoft 365 admin center.
 
         Steps to remediate:
-          1. Log in to your DNS hosting provider's control panel.
+          1. Sign in to your DNS hosting provider's control panel.
           2. Locate the DNS settings for your domain.
-          3. Add or update the MX records to match the provided Microsoft 365 configuration, ensuring the correct priorities are set.
+          3. Add or update the MX records to match the Microsoft 365 configuration, setting the correct priorities.
           4. Remove any legacy or non-Microsoft MX records to avoid misrouting or security vulnerabilities.
-          5. Save the changes and verify the configuration using DNS checking tools or websites.
+          5. Save the changes and verify the configuration with `dig MX <domain>`.
     refs:
       - url: https://learn.microsoft.com/en-us/microsoft-365/admin/get-help-with-domains/create-dns-records-at-any-dns-hosting-provider?view=o365-worldwide
         title: Add DNS records to connect your domain
@@ -207,19 +201,18 @@ queries:
         containsOnly(["aspmx.l.google.com.", "alt1.aspmx.l.google.com.", "alt2.aspmx.l.google.com.", "alt3.aspmx.l.google.com.", "alt4.aspmx.l.google.com."])
     docs:
       desc: |
-        This check ensures that the domain's MX (Mail Exchange) records are correctly configured to use the Google Workspace (formerly G Suite) email servers.
+        This check verifies that a domain routing mail through Google sends it only to the canonical Google Workspace endpoints — `aspmx.l.google.com` and the `alt1` through `alt4` variants. Records under `l.google.com` that point anywhere else indicate a stale or incorrect configuration.
 
         **Why this matters**
 
-        Properly configured MX records are essential for ensuring reliable email delivery and leveraging Google's advanced email security and management features.
+        - **Reliable delivery:** Routing mail to the canonical Google Workspace servers ensures messages reach their intended recipients without delay.
+        - **Reduced exposure:** Keeping mail flow on Google's published endpoints prevents email from traversing untrusted or incorrect servers.
+        - **Feature availability:** Google Workspace spam protection, transport encryption, and account-based mail management depend on the correct MX endpoints.
+        - **Standards compliance:** Matching Google's published DNS configuration minimizes the risk of service disruption.
+      audit: |
+        Run the `dig MX <domain>` command and inspect the answer section.
 
-        By ensuring the correct MX records are used, the system achieves:
-          - Reliable email delivery by routing messages to the appropriate Google Workspace servers
-          - Enhanced security by preventing email from being routed through untrusted or incorrect servers
-          - Full functionality of Google Workspace features, including spam protection, encryption, and account-based email management
-          - Compliance with Google Workspace's DNS configuration guidelines, minimizing the risk of service disruptions
-
-        Without these protections, misconfigured MX records could lead to undelivered emails, security vulnerabilities, and reduced functionality of Google Workspace services.
+        A passing result shows MX records pointing only to `aspmx.l.google.com` and its `alt1` through `alt4` variants. A failing result shows a record under `l.google.com` that points to any other host.
       remediation: |
         To ensure proper email routing and security, configure the domain's MX records to point to Google's designated email servers:
 
@@ -234,7 +227,7 @@ queries:
           2. Locate the DNS settings for your domain.
           3. Add or update the MX records to match the above configuration, ensuring the correct priorities are set.
           4. Remove any legacy or non-Google MX records to avoid misrouting or security vulnerabilities.
-          5. Save the changes and verify the configuration using Google's MX record validation tools or online DNS checkers.
+          5. Save the changes and verify the configuration with `dig MX <domain>`.
     refs:
       - url: https://support.google.com/a/answer/140034?hl=en
         title: Set up MX records for Google Workspace email
@@ -260,24 +253,23 @@ queries:
       dns.records.where(type == "DNSKEY").all(name.contains(domainName.fqdn))
     docs:
       desc: |
-        This check ensures that DNSSEC (Domain Name System Security Extensions) is enabled for your domain to enhance security and protect against DNS-related attacks.
+        This check verifies that DNSSEC (Domain Name System Security Extensions) is enabled for a domain by confirming that DNSKEY records are published for the zone. DNSSEC adds cryptographic signatures that let resolvers authenticate DNS responses.
 
         **Why this matters**
 
-        DNSSEC is a critical security feature that provides authentication for DNS responses. It protects against common threats such as DNS spoofing, cache poisoning, and man-in-the-middle attacks.
+        - **Spoofing prevention:** Signed responses let resolvers detect forged answers, blocking DNS spoofing.
+        - **Cache poisoning resistance:** Cryptographic validation stops poisoned records from being accepted into resolver caches.
+        - **Data integrity:** Digital signatures on DNS records prove the data was not altered in transit.
+        - **Standards compliance:** Many security frameworks recommend or require DNSSEC for internet-facing domains.
+      audit: |
+        Run the `dig DNSKEY <domain>` command and inspect the answer section.
 
-        By enabling DNSSEC, the system achieves:
-          - Prevention of DNS spoofing by ensuring DNS responses are authentic and unaltered
-          - Protection of data integrity through digital signatures on DNS records
-          - Enhanced trust by ensuring users reliably connect to legitimate services
-          - Compliance with security frameworks and best practices that recommend or require DNSSEC implementation
-
-        Without these protections, DNSSEC misconfigurations or lack of implementation could expose the domain to security vulnerabilities, undermining the reliability and security of DNS operations.
+        A passing result shows one or more DNSKEY records published for the domain. A failing result shows an empty answer section, indicating DNSSEC is not enabled.
       remediation: |
-        * Enable DNSSEC for your domain by accessing your DNS hosting provider or domain registrar's control panel and following their specific instructions for enabling DNSSEC.
-        * Regularly monitor DNSSEC configurations to ensure that DNSSEC signatures remain valid and do not expire. Set up alerts or reminders for signature expiration dates.
-        * Use DNSSEC testing tools or online validators to verify proper configuration and functionality. Address any issues or warnings promptly to maintain DNSSEC integrity.
-        * Educate your team on the importance of DNSSEC and establish a process for periodic reviews to ensure ongoing compliance and security.
+        * Enable DNSSEC for your domain through your DNS hosting provider or domain registrar's control panel, following their instructions for signing the zone.
+        * Monitor DNSSEC signatures so they remain valid and do not expire. Set up alerts or reminders for signature expiration dates.
+        * Verify proper configuration with `dig DNSKEY <domain>` and `dig +dnssec <domain>`, and address any validation warnings promptly.
+        * Establish a process for periodic DNSSEC reviews to ensure ongoing compliance and security.
     refs:
       - url: https://www.icann.org/resources/pages/dnssec-what-is-it-why-is-it-important-2019-03-05-en
         title: ICANN DNSSEC Overview
@@ -301,23 +293,22 @@ queries:
     mql: dns.records.none(name == /\*/)
     docs:
       desc: |
-        This check ensures that no wildcard DNS records (e.g., *.example.com) are configured for your domain to enhance security and maintain control over DNS resolution.
+        This check verifies that a domain has no wildcard DNS records, such as a record whose name begins with `*`. A wildcard makes every undefined subdomain resolve to a single target, including names the operator never intended to publish.
 
         **Why this matters**
 
-        Wildcard DNS records allow all subdomains, including those not explicitly defined, to resolve to a specified IP address or hostname. While this can be convenient, it introduces significant security risks and operational challenges.
+        - **Reduced attack surface:** Without a wildcard, an attacker cannot summon arbitrary subdomains that resolve to your infrastructure.
+        - **Abuse resistance:** Explicit records prevent attacker-chosen subdomains from being used for phishing, malware distribution, or impersonation.
+        - **Resolution control:** Defining each subdomain explicitly keeps traffic routed only to names the operator deliberately published.
+        - **Standards compliance:** Security best practices discourage wildcard DNS records on production domains.
+      audit: |
+        Run the `dig '*.<domain>'` command and inspect the answer section.
 
-        By avoiding wildcard DNS records, the system achieves:
-          - Reduced attack surface by preventing the creation of arbitrary subdomains that could be exploited for malicious purposes
-          - Enhanced security by mitigating risks such as phishing, malware distribution, and impersonation attacks
-          - Improved control over DNS resolution, ensuring traffic is routed only to explicitly defined subdomains
-          - Compliance with security best practices that discourage the use of wildcard DNS records
-
-        Without these protections, wildcard DNS records could expose the domain to abuse, compromise security, and lead to unexpected or insecure behavior.
+        A passing result shows no answer for the wildcard query, indicating no wildcard record is configured. A failing result shows the wildcard query resolving to an IP address or hostname.
       remediation: |
-        * Avoid using wildcard DNS records (*.example.com) unless absolutely necessary for a specific and well-documented use case.
+        * Avoid wildcard DNS records, such as `*.example.com`, unless a specific and well-documented use case requires one.
         * Replace wildcard records with explicit DNS records for each required subdomain to maintain precise control over DNS resolution.
-        * If wildcard records are required, ensure they are monitored and secured to prevent misuse or exploitation.
+        * If a wildcard record is genuinely required, monitor and secure it to prevent misuse or exploitation.
     refs:
       - url: https://www.cisa.gov/dns-security
         title: CISA DNS Security
@@ -343,19 +334,18 @@ queries:
       dns.records.where(type == "NS").first.rdata.length >= 2
     docs:
       desc: |
-        This check ensures that the domain's DNS configuration includes at least two authoritative nameservers to provide redundancy and resilience.
+        This check verifies that a domain publishes at least two authoritative nameservers in its NS records. A single nameserver is a single point of failure for the entire domain.
 
         **Why this matters**
 
-        Authoritative nameservers are listed in the NS record's response data (rdata). Having only a single nameserver creates a single point of failure that can make the entire domain unreachable if that server experiences an outage, network disruption, or attack.
+        - **High availability:** Redundant nameservers keep the domain resolvable even if one server suffers an outage or network disruption.
+        - **Attack resilience:** Spreading authority across multiple nameservers makes the domain harder to take offline with a targeted DDoS.
+        - **Standards compliance:** RFC 1034 recommends multiple nameservers for every domain.
+        - **Query performance:** Geographically distributed nameservers reduce resolution latency for end users.
+      audit: |
+        Run the `dig NS <domain>` command and inspect the answer section.
 
-        By maintaining at least two nameservers, the system achieves:
-          - High availability through redundant name resolution, ensuring the domain remains reachable even if one nameserver fails
-          - Resilience against targeted attacks such as DDoS, since traffic can be distributed across multiple servers
-          - Compliance with DNS best practices and RFC 1034, which recommends multiple nameservers
-          - Improved query performance through geographic distribution of DNS resolution
-
-        Without these protections, a single nameserver failure could render the entire domain and all associated services (web, email, APIs) unreachable.
+        A passing result shows two or more NS records returned for the domain. A failing result shows a single NS record or none, indicating no nameserver redundancy.
       remediation: |
         Configure at least two authoritative nameservers for your domain, ideally hosted on separate networks or with different DNS providers for maximum resilience.
 
@@ -387,21 +377,18 @@ queries:
     mql: dns.records.where(type == "A" || type == "AAAA").all(ttl == null || ttl >= 60)
     docs:
       desc: |
-        This check ensures that A and AAAA record TTLs (Time-To-Live) are not set to suspiciously low values (below 60 seconds).
+        This check verifies that A and AAAA records do not carry suspiciously low TTL (Time-To-Live) values below 60 seconds. The TTL controls how long resolvers cache a record before querying the authoritative server again.
 
         **Why this matters**
 
-        TTL values control how long DNS resolvers cache a record before querying the authoritative server again. While low TTLs have legitimate uses during migrations, excessively low values can indicate security concerns or misconfigurations:
+        - **Fast-flux resistance:** Malware and botnets use very low TTLs to rotate IP addresses rapidly; a sensible floor makes that pattern stand out.
+        - **Reduced attack surface:** Higher TTLs mean fewer DNS queries, lowering exposure to spoofing and cache poisoning.
+        - **Performance:** Reasonable TTLs improve caching and reduce load on authoritative nameservers.
+        - **Configuration hygiene:** A TTL left very low after a migration or troubleshooting session often signals an incomplete change.
+      audit: |
+        Run the `dig <domain>` command and inspect the TTL column of the A and AAAA records in the answer section.
 
-          - **Fast-flux DNS attacks**: Malware and botnets use very low TTLs (often under 60 seconds) to rapidly rotate IP addresses, making malicious infrastructure harder to block
-          - **Increased attack surface**: Low TTLs cause more frequent DNS queries, increasing exposure to DNS spoofing and cache poisoning attacks
-          - **Performance degradation**: Excessive DNS queries slow down resolution and increase load on authoritative nameservers
-          - **Potential misconfiguration**: TTLs left at very low values after a migration or troubleshooting session may indicate an incomplete change
-
-        By maintaining reasonable TTL values, the system ensures:
-          - Reduced exposure to fast-flux and DNS rebinding attacks
-          - Better caching performance and faster resolution for end users
-          - Lower load on authoritative DNS servers
+        A passing result shows every A and AAAA record with a TTL of 60 seconds or greater. A failing result shows an A or AAAA record with a TTL below 60 seconds.
       remediation: |
         Review and increase TTL values for A and AAAA records that have been set below 60 seconds.
 
