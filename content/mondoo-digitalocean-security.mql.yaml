@@ -112,11 +112,36 @@ queries:
       digitalocean.account.emailVerified == true
     docs:
       desc: |
-        This check ensures that the DigitalOcean account has a verified email address.
+        This check ensures that the DigitalOcean account has a verified email address. By default, accounts can operate without email verification, but DigitalOcean uses the account email for password resets and other account recovery workflows.
 
         **Why this matters**
 
-        DigitalOcean uses the account email for password resets and other recovery workflows. If the email is unverified, an attacker who plants or coerces an unverified address into the account can take over the account through the self-service recovery flow. Verification binds the identity on the account to a mailbox the legitimate owner demonstrably controls.
+        - **Account recovery integrity:** An unverified email cannot be trusted as the true owner's address, so the self-service recovery flow can be exploited by whoever controls an unverified address.
+        - **Identity binding:** Verification demonstrates that the account holder demonstrably controls the mailbox, binding the account identity to a real owner.
+        - **Credential reset protection:** Password reset links sent to an unverified address could reach an attacker who planted that address, enabling full account takeover.
+
+        **Risk mitigation**
+
+        - **Takeover prevention:** Without a verified email, an attacker who inserts an unverified address gains access to the account recovery flow without detection.
+        - **Audit trail:** A verified email establishes a confirmed point of contact that supports incident response and ownership disputes.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+        2. Navigate to **Settings** > **Profile**.
+        3. Check whether the email address shows a verification status badge.
+
+        A passing account shows the email address as verified. A failing account shows the email address as unverified or displays a prompt to resend the verification email.
+
+        ### Audit via CLI
+
+        1. Retrieve the account details:
+
+        ```bash
+        doctl account get
+        ```
+
+        A passing account returns an `email_verified` value of `true`. A failing account returns `email_verified` as `false`.
       remediation:
         - id: console
           desc: |
@@ -151,11 +176,36 @@ queries:
       digitalocean.droplets.all(vpc != null)
     docs:
       desc: |
-        This check ensures that every Droplet is attached to a Virtual Private Cloud (VPC).
+        This check ensures that every Droplet is deployed inside a Virtual Private Cloud (VPC). By default, DigitalOcean places Droplets outside a named VPC unless one is selected at creation time, leaving them with only public-facing network interfaces.
 
         **Why this matters**
 
-        A Droplet not attached to a VPC cannot use private networking to reach other resources. Without VPC-level segmentation, an attacker who compromises one Droplet has broader reach across the account and lateral movement is harder to contain. VPCs also reduce unnecessary internet exposure by allowing private-only traffic between resources in the same VPC.
+        - **Network segmentation:** VPCs provide a private layer-2 network boundary that contains traffic between resources and prevents it from traversing the public internet.
+        - **Lateral movement containment:** A compromised Droplet outside a VPC has broader network reach across the account because there is no segmentation to limit its blast radius.
+        - **Private connectivity:** VPC membership enables private-IP communication between Droplets, databases, and load balancers without routing through public addresses.
+
+        **Risk mitigation**
+
+        - **Reduced attack surface:** Keeping inter-resource traffic on private networks eliminates the exposure window that arises when every connection must traverse a public interface.
+        - **Defense in depth:** VPC-level isolation supplements Cloud Firewalls and host-based firewall rules, so a misconfiguration in one layer does not immediately expose the resource.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+        2. Navigate to **Droplets** and open each Droplet.
+        3. Select the **Networking** tab and check the **VPC** field.
+
+        A passing Droplet shows a named VPC under the Networking tab. A failing Droplet shows no VPC or lists only the legacy default network.
+
+        ### Audit via CLI
+
+        1. List all Droplets and note any that lack a VPC UUID:
+
+        ```bash
+        doctl compute droplet list --format ID,Name,VpcUUID,Region
+        ```
+
+        A passing Droplet returns a non-empty `VpcUUID`. A failing Droplet returns an empty `VpcUUID` field.
       remediation:
         - id: console
           desc: |
@@ -208,11 +258,43 @@ queries:
       digitalocean.droplets.all(missingFirewall == false)
     docs:
       desc: |
-        This check ensures that every Droplet is referenced by at least one Cloud Firewall, either directly by Droplet ID or through a matching tag.
+        This check ensures that every Droplet is covered by at least one DigitalOcean Cloud Firewall, either attached directly by Droplet ID or through a matching tag. Without firewall coverage, all network traffic is filtered only by the host operating system's own firewall rules.
 
         **Why this matters**
 
-        A Droplet with no firewall attached exposes every listening service directly to the network reachable from its IPs. Defaults like SSH on port 22 are continuously scanned, and any application port left bound to `0.0.0.0` is reachable from anywhere. Cloud Firewalls are DigitalOcean's primary network-layer control. Without one attached, security relies entirely on the host's own iptables/nftables rules, which are easy to misconfigure and trivial to disable.
+        - **Default-open exposure:** A Droplet with no Cloud Firewall exposes every listening service directly to the network reachable from its IP addresses, including services bound to all interfaces by default.
+        - **Continuous scanning:** Common default ports such as SSH on port 22 are continuously scanned by automated tools; uncovered Droplets are targeted within minutes of provisioning.
+        - **Host firewall fragility:** Relying solely on iptables or nftables rules means a single misconfiguration or software install that opens a port bypasses all network-layer controls.
+        - **Centralized policy enforcement:** Cloud Firewalls apply rules consistently across all covered Droplets, unlike per-host rules that drift independently.
+
+        **Risk mitigation**
+
+        - **Network-layer control:** Cloud Firewalls block unwanted traffic before it reaches the Droplet's network stack, providing a platform-enforced boundary that cannot be disabled by a compromised workload.
+        - **Tag-based coverage:** Applying firewall rules through tags ensures new Droplets inherit the correct policy at creation time, preventing coverage gaps during scaling events.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+        2. Navigate to **Droplets** and open each Droplet.
+        3. Select the **Networking** tab and look at the **Firewalls** section.
+
+        A passing Droplet lists at least one Cloud Firewall in the Firewalls section. A failing Droplet shows no firewalls attached.
+
+        ### Audit via CLI
+
+        1. List all Cloud Firewalls and their associated Droplets and tags:
+
+        ```bash
+        doctl compute firewall list --format ID,Name,DropletIDs,Tags
+        ```
+
+        2. Cross-reference with the full list of Droplets:
+
+        ```bash
+        doctl compute droplet list --format ID,Name,Tags
+        ```
+
+        A passing Droplet appears in the `DropletIDs` field of at least one firewall, or carries a tag that at least one firewall targets. A failing Droplet is absent from every firewall's Droplet list and shares no tag with any firewall.
       remediation:
         - id: console
           desc: |
@@ -269,11 +351,38 @@ queries:
       )
     docs:
       desc: |
-        This check ensures that no Cloud Firewall has an inbound rule that allows TCP traffic on port 22 from the public internet (`0.0.0.0/0` or `::/0`).
+        This check ensures that no Cloud Firewall has an inbound rule permitting TCP traffic on port 22 from the entire public internet (`0.0.0.0/0` or `::/0`). SSH should be restricted to a known trusted CIDR range, a bastion host, or a VPN endpoint.
 
         **Why this matters**
 
-        SSH exposed to the entire internet is a primary target for credential stuffing, brute-force login attempts, and exploitation of any future SSH server CVE. Even with key-based authentication, open SSH exposes the SSH daemon itself as an attack surface. SSH access should be restricted to a known trusted CIDR range, a bastion host, or a VPN.
+        - **Brute-force exposure:** SSH open to the internet is subjected to continuous automated credential-stuffing and brute-force login attempts from global scanning infrastructure.
+        - **CVE attack surface:** Public SSH exposure means the SSH daemon itself is reachable by any host; any pre-authentication vulnerability in the SSH implementation becomes immediately exploitable.
+        - **Key compromise amplification:** Even environments using key-based authentication can be compromised if a private key is exfiltrated; restricting source IPs limits where that key can be used from.
+
+        **Risk mitigation**
+
+        - **Source restriction:** Scoping SSH access to a specific CIDR or bastion host eliminates the vast majority of opportunistic automated attacks without affecting legitimate operator access.
+        - **Breach containment:** If a credential or key is compromised, a source IP restriction prevents an attacker outside the trusted range from using it directly against the Droplet.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+        2. Navigate to **Networking** > **Firewalls**.
+        3. Open each firewall and review the **Inbound Rules** table.
+        4. Look for any rule that allows TCP port 22 with a source of `All IPv4` (`0.0.0.0/0`) or `All IPv6` (`::/0`).
+
+        A passing firewall has no inbound SSH rule with an unrestricted source. A failing firewall contains an inbound rule for TCP port 22 sourced from `0.0.0.0/0` or `::/0`.
+
+        ### Audit via CLI
+
+        1. List all firewalls and retrieve their inbound rules:
+
+        ```bash
+        doctl compute firewall list --format ID,Name
+        doctl compute firewall get <firewall-id> --format InboundRules
+        ```
+
+        A passing firewall returns no inbound rule for port 22 with `address:0.0.0.0/0` or `address:::/0`. A failing firewall returns an inbound rule for `protocol:tcp,ports:22` with a source of `0.0.0.0/0` or `::/0`.
       remediation:
         - id: console
           desc: |
@@ -326,11 +435,38 @@ queries:
       )
     docs:
       desc: |
-        This check ensures that no Cloud Firewall has an inbound rule that allows TCP traffic on port 3389 from the public internet (`0.0.0.0/0` or `::/0`).
+        This check ensures that no Cloud Firewall has an inbound rule permitting TCP traffic on port 3389 from the entire public internet (`0.0.0.0/0` or `::/0`). RDP should never be reachable from untrusted networks.
 
         **Why this matters**
 
-        RDP is a long-standing target of ransomware deployment and has been involved in repeated high-impact breaches. The RDP protocol itself has had multiple critical pre-authentication RCE CVEs (for example BlueKeep). Exposing RDP to the internet should be treated as an immediate security incident.
+        - **Ransomware vector:** Internet-exposed RDP is one of the most common ransomware delivery channels; attackers acquire credentials from broker markets and connect directly to exposed endpoints.
+        - **Protocol vulnerabilities:** RDP has a documented history of critical pre-authentication remote code execution vulnerabilities that are routinely weaponized within days of disclosure.
+        - **Credential exposure:** RDP endpoints on the internet are targeted by continuous credential-stuffing tools that replay breached username and password pairs at scale.
+
+        **Risk mitigation**
+
+        - **Attack surface elimination:** Blocking RDP from public sources removes the endpoint from the attack surface entirely; legitimate users should connect through a VPN or bastion host instead.
+        - **Incident prevention:** Removing public RDP access is one of the highest-return single controls for preventing ransomware incidents in cloud environments.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+        2. Navigate to **Networking** > **Firewalls**.
+        3. Open each firewall and review the **Inbound Rules** table.
+        4. Look for any rule that allows TCP port 3389 with a source of `All IPv4` (`0.0.0.0/0`) or `All IPv6` (`::/0`).
+
+        A passing firewall has no inbound RDP rule with an unrestricted source. A failing firewall contains an inbound rule for TCP port 3389 sourced from `0.0.0.0/0` or `::/0`.
+
+        ### Audit via CLI
+
+        1. List all firewalls and retrieve their inbound rules:
+
+        ```bash
+        doctl compute firewall list --format ID,Name
+        doctl compute firewall get <firewall-id> --format InboundRules
+        ```
+
+        A passing firewall returns no inbound rule for port 3389 with `address:0.0.0.0/0` or `address:::/0`. A failing firewall returns an inbound rule for `protocol:tcp,ports:3389` with a source of `0.0.0.0/0` or `::/0`.
       remediation:
         - id: console
           desc: |
@@ -383,11 +519,39 @@ queries:
       digitalocean.firewalls.all(inboundRules.none(_["protocol"] == "tcp" && _["ports"] == "9200" && _["sourceAddresses"].contains("::/0")))
     docs:
       desc: |
-        This check ensures that no Cloud Firewall allows inbound traffic from the public internet to common database ports: MySQL (3306), PostgreSQL (5432), MongoDB (27017), Redis (6379), Kafka (9092), and Elasticsearch/OpenSearch (9200).
+        This check ensures that no Cloud Firewall allows inbound traffic from the public internet to common database ports: MySQL (3306), PostgreSQL (5432), MongoDB (27017), Redis (6379), Kafka (9092), and Elasticsearch/OpenSearch (9200). Database connectivity should be confined to private networks.
 
         **Why this matters**
 
-        Databases exposed directly to the internet are routinely scanned and compromised — credential brute force, unauthenticated misconfiguration exploitation, and ransom-style data extortion are all well-documented outcomes. Database traffic should only traverse private networks; applications needing external access should reach the database through a bastion or through the application tier, not directly.
+        - **Credential-based attacks:** Databases exposed to the internet are targeted by automated tools that guess weak passwords or replay known credentials obtained from breaches.
+        - **Unauthenticated exploitation:** Several database engines have had critical unauthenticated vulnerabilities; network exposure provides direct access to these attack paths without requiring valid credentials.
+        - **Data exfiltration risk:** A database reachable from the internet can be fully exfiltrated or ransomed by an attacker in a single session once initial access is achieved.
+        - **Application tier bypass:** Exposing the database port publicly bypasses the application layer that should be the only authorized client, widening the attack surface significantly.
+
+        **Risk mitigation**
+
+        - **Private-network confinement:** Database traffic should only traverse internal networks; applications that need external access should connect through the application tier, not directly to the database.
+        - **Defense in depth:** Firewalling database ports at the network layer supplements database-level authentication, so a weak password or stolen credential cannot be used from an arbitrary internet host.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+        2. Navigate to **Networking** > **Firewalls**.
+        3. Open each firewall and review the **Inbound Rules** table.
+        4. Check for rules that allow TCP traffic on ports 3306 (MySQL), 5432 (PostgreSQL), 27017 (MongoDB), 6379 (Redis), 9092 (Kafka), or 9200 (Elasticsearch/OpenSearch) with a source of `All IPv4` or `All IPv6`.
+
+        A passing firewall has no inbound rule for these database ports sourced from `0.0.0.0/0` or `::/0`. A failing firewall has at least one such rule with an unrestricted source.
+
+        ### Audit via CLI
+
+        1. List all firewalls and retrieve their inbound rules:
+
+        ```bash
+        doctl compute firewall list --format ID,Name
+        doctl compute firewall get <firewall-id> --format InboundRules
+        ```
+
+        A passing firewall returns no inbound rule for ports 3306, 5432, 27017, 6379, 9092, or 9200 with `address:0.0.0.0/0` or `address:::/0`. A failing firewall returns at least one such rule with an unrestricted source address.
       remediation:
         - id: console
           desc: |
@@ -438,11 +602,38 @@ queries:
       digitalocean.firewalls.all(inboundRules.none(_["ports"] == "0-65535" && _["sourceAddresses"].contains("::/0")))
     docs:
       desc: |
-        This check ensures that no Cloud Firewall has an inbound rule that allows the full port range (`0`, `all`, `1-65535`, or `0-65535`) from the public internet.
+        This check ensures that no Cloud Firewall has an inbound rule opening the full port range (`0`, `all`, `1-65535`, or `0-65535`) from the public internet. Firewalls must only expose specific ports required by the workload.
 
         **Why this matters**
 
-        An "allow all ports from anywhere" rule is functionally equivalent to having no firewall. It exposes every service running on the Droplet — intended or unintended, known or forgotten — to every host on the internet. This is the highest-severity network misconfiguration.
+        - **Complete exposure:** An allow-all-ports-from-anywhere rule is functionally equivalent to having no firewall; every service on the Droplet is reachable from every host on the internet.
+        - **Unknown service exposure:** Droplets often have services bound to non-standard ports during development or installed by packages; an all-ports rule exposes those unintended listeners alongside the intended ones.
+        - **Firewall intent violation:** A firewall configured to allow everything provides zero protection and creates false confidence that traffic is being filtered.
+
+        **Risk mitigation**
+
+        - **Mandatory specificity:** Replacing all-ports rules with explicit per-port rules forces an explicit decision about each service that should be exposed, surfacing forgotten or unintended listeners.
+        - **Blast radius reduction:** Even if one exposed service is compromised, specific port rules limit how an attacker can pivot to other services on the same host or adjacent hosts.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+        2. Navigate to **Networking** > **Firewalls**.
+        3. Open each firewall and review the **Inbound Rules** table.
+        4. Look for any rule that specifies **All ports** or the full port range (`0`, `1-65535`, `0-65535`) with a source of `All IPv4` or `All IPv6`.
+
+        A passing firewall has no inbound rule allowing all ports from an unrestricted source. A failing firewall contains a catch-all inbound rule sourced from `0.0.0.0/0` or `::/0`.
+
+        ### Audit via CLI
+
+        1. List all firewalls and retrieve their inbound rules:
+
+        ```bash
+        doctl compute firewall list --format ID,Name
+        doctl compute firewall get <firewall-id> --format InboundRules
+        ```
+
+        A passing firewall returns no inbound rule with `ports:0`, `ports:all`, `ports:1-65535`, or `ports:0-65535` paired with `address:0.0.0.0/0` or `address:::/0`. A failing firewall returns such a rule.
       remediation:
         - id: console
           desc: |
@@ -485,11 +676,38 @@ queries:
       digitalocean.databases.all(firewallRules != empty)
     docs:
       desc: |
-        This check ensures that every managed database cluster has at least one Trusted Sources entry (firewall rule), restricting inbound connections to specific Droplets, tags, Kubernetes clusters, apps, or IP addresses.
+        This check ensures that every managed database cluster has at least one Trusted Sources entry, restricting inbound connections to specific Droplets, tags, Kubernetes clusters, applications, or IP addresses. By default, a newly created managed database cluster accepts connections from any source that presents valid credentials.
 
         **Why this matters**
 
-        A managed database with no Trusted Sources accepts connections from any source that knows a valid credential. That makes the database reachable by anyone who obtains or guesses a password — credential leaks from application logs, developer laptops, or source control become full database compromise. Restricting to Trusted Sources cuts off that lateral path even if credentials leak.
+        - **Credential leak containment:** Without Trusted Sources, a database password that leaks from application logs, source control, or developer laptops can be used from any internet host to connect directly.
+        - **Lateral movement prevention:** Trusted Sources ensure that even a fully compromised application server cannot be used as a pivot to reach databases that the compromised host was never authorized to access.
+        - **Defense in depth:** Network-level restrictions complement database-level authentication; both layers must be defeated for an attacker to access database contents.
+
+        **Risk mitigation**
+
+        - **Credential compromise isolation:** Scoping access to specific Droplets, tags, or CIDRs means a leaked credential is only usable from the authorized infrastructure, not from arbitrary internet hosts.
+        - **Audit clarity:** A Trusted Sources list provides an explicit inventory of every authorized client, making it straightforward to identify unauthorized access attempts in database logs.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+        2. Navigate to **Databases** and open each cluster.
+        3. Go to **Settings** > **Trusted Sources**.
+        4. Verify that at least one Trusted Sources entry is listed.
+
+        A passing database cluster has one or more Trusted Sources entries. A failing database cluster shows an empty Trusted Sources list, meaning any source can attempt a connection.
+
+        ### Audit via CLI
+
+        1. List all database clusters, then retrieve the firewall rules for each:
+
+        ```bash
+        doctl databases list --format ID,Name,Engine,Region
+        doctl databases firewalls list <database-id>
+        ```
+
+        A passing database returns one or more firewall rules. A failing database returns an empty list of firewall rules.
       remediation:
         - id: console
           desc: |
@@ -533,11 +751,36 @@ queries:
       digitalocean.databases.all(privateNetworkUuid != "")
     docs:
       desc: |
-        This check ensures that every managed database cluster is attached to a VPC (private network).
+        This check ensures that every managed database cluster is attached to a VPC private network. By default, managed databases receive a public connection string and must be connected over the internet unless a private network is configured at creation time.
 
         **Why this matters**
 
-        A managed database outside any VPC must be reached over the public internet, even from applications in the same DigitalOcean account. That requires TLS termination on the client, a public DNS record for the database, and — crucially — a failure-open posture if an application misconfigures its connection. A VPC-attached database can be reached on a private endpoint, keeping all traffic on internal networks.
+        - **Traffic confidentiality:** Without a private network, database traffic between applications and the cluster traverses public-facing endpoints, increasing the path length and number of hops where traffic can be observed.
+        - **Reduced attack surface:** A database reachable only on private IPs is not directly accessible from the internet even if Trusted Sources are misconfigured, providing a second layer of protection.
+        - **Application simplicity:** VPC-attached databases provide a private hostname that applications use without requiring per-connection TLS certificate pinning or public DNS.
+
+        **Risk mitigation**
+
+        - **Network isolation:** Private network attachment keeps all database traffic inside DigitalOcean's infrastructure, removing it from internet-facing routing paths entirely.
+        - **Misconfiguration resilience:** A VPC-only database cannot be reached from the internet even if a firewall rule is accidentally opened, limiting the consequence of a separate misconfiguration.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+        2. Navigate to **Databases** and open each cluster.
+        3. Go to **Overview** and check the **Network** section for a private network (VPC) assignment.
+
+        A passing database cluster shows a VPC name under the Network section. A failing database cluster shows no private network or only a public endpoint.
+
+        ### Audit via CLI
+
+        1. List all database clusters and inspect the `PrivateNetworkUUID` field:
+
+        ```bash
+        doctl databases list --format ID,Name,Engine,PrivateNetworkUUID,Region
+        ```
+
+        A passing database cluster returns a non-empty `PrivateNetworkUUID`. A failing database cluster returns an empty `PrivateNetworkUUID`.
       remediation:
         - id: console
           desc: |
@@ -586,20 +829,43 @@ queries:
       digitalocean.databases.where(engine == "opensearch").all(version != "1.0" && version != "1.1" && version != "1.2" && version != "1.3")
     docs:
       desc: |
-        This check ensures that managed database clusters are not running a database engine version that has reached end of life or is no longer receiving security patches.
+        This check ensures that managed database clusters are not running a database engine version that has reached end of life or is no longer receiving security patches from its upstream maintainer or from DigitalOcean.
 
         **Why this matters**
 
-        Databases running EOL engine versions do not receive patches for newly disclosed vulnerabilities. Known-exploited database CVEs are routinely weaponized — including unauthenticated RCE chains in older PostgreSQL, Redis, and MongoDB releases. Upgrading the engine ensures security fixes continue to land on the cluster.
+        - **No security patches:** Databases on end-of-life versions do not receive patches for newly disclosed CVEs, meaning known vulnerabilities accumulate without remediation.
+        - **Active exploitation:** Known-exploited CVEs in older PostgreSQL, MySQL, Redis, MongoDB, and other database releases are routinely weaponized in targeted and opportunistic attacks.
+        - **Compliance exposure:** Most security frameworks require that software components receive vendor security support; end-of-life engines fail this requirement regardless of other controls in place.
+        - **Feature gaps:** Supported versions include protocol-level security improvements such as stronger TLS defaults and authentication mechanisms that older versions lack.
 
-        The check flags these versions as EOL or near-EOL:
+        **Risk mitigation**
 
-        - PostgreSQL: 9.x through 13
-        - MySQL: 5.6, 5.7
-        - Redis: 4, 5, 6
-        - MongoDB: 3.6, 4.0, 4.2, 4.4, 5.0
-        - Kafka: 2.8, 3.0 through 3.4
-        - OpenSearch: 1.x
+        - **Patch coverage restoration:** Migrating to a supported major version restores the flow of security patches, closing accumulating CVE exposure without requiring other configuration changes.
+        - **Supported upgrade path:** DigitalOcean provides upgrade tooling for supported engine transitions; acting before a version reaches EOL avoids more disruptive cold-migration paths.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+        2. Navigate to **Databases** and review the **Engine Version** column for each cluster.
+        3. Compare each engine and version against the list of EOL versions: PostgreSQL 9.x through 13, MySQL 5.6 and 5.7, Redis 4 through 6, MongoDB 3.6 through 5.0, Kafka 2.8 through 3.4, and OpenSearch 1.x.
+
+        A passing database cluster runs a currently supported engine version. A failing database cluster runs a version listed as EOL or end-of-support.
+
+        ### Audit via CLI
+
+        1. List all clusters with their engine and version, then check available supported versions for comparison:
+
+        ```bash
+        doctl databases list --format ID,Name,Engine,EngineVersion,Region
+        doctl databases options versions --engine pg
+        doctl databases options versions --engine mysql
+        doctl databases options versions --engine redis
+        doctl databases options versions --engine mongodb
+        doctl databases options versions --engine kafka
+        doctl databases options versions --engine opensearch
+        ```
+
+        A passing cluster shows a version in the current supported list for its engine. A failing cluster shows a version absent from that list.
       remediation:
         - id: console
           desc: |
@@ -674,11 +940,37 @@ queries:
       )
     docs:
       desc: |
-        This check ensures that any load balancer accepting HTTP traffic also has `redirectHttpToHttps` enabled, so HTTP requests are 301-redirected to HTTPS.
+        This check ensures that any load balancer accepting inbound HTTP traffic has `redirectHttpToHttps` enabled, so clients are issued a 301 redirect to the HTTPS equivalent of their request. A load balancer that forwards HTTP without redirecting it allows plaintext sessions end-to-end.
 
         **Why this matters**
 
-        A load balancer that accepts plaintext HTTP and serves the response in plaintext exposes every request to interception and modification — credentials, session cookies, API keys, and response content are all readable by any host on the network path. Redirecting HTTP to HTTPS forces subsequent requests over TLS, closing the window where a downgrade or sidejacking attack can succeed.
+        - **Credential and session protection:** Plaintext HTTP exposes authentication tokens, session cookies, API keys, and form submissions to any host on the network path between the client and the load balancer.
+        - **Downgrade attack prevention:** Without an enforced redirect, a passive attacker can strip HTTPS by intercepting the initial HTTP request before the client has a chance to use HTTPS.
+        - **Client guidance:** A 301 redirect updates bookmarks and caches so clients use HTTPS for all future requests, not only when they happen to type the HTTPS URL.
+
+        **Risk mitigation**
+
+        - **Transport encryption enforcement:** Redirecting HTTP to HTTPS ensures all active sessions use TLS, so network-level interception cannot yield plaintext traffic.
+        - **Consistent TLS posture:** Enabling the redirect at the load balancer enforces HTTPS for every backend regardless of whether individual application components handle the redirect themselves.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+        2. Navigate to **Networking** > **Load Balancers** and open each load balancer.
+        3. Go to **Settings** > **Forwarding Rules**.
+        4. Check whether **Redirect HTTP to HTTPS** is enabled.
+
+        A passing load balancer either has no HTTP forwarding rule or has HTTP-to-HTTPS redirect enabled. A failing load balancer has an HTTP forwarding rule without the redirect enabled.
+
+        ### Audit via CLI
+
+        1. List all load balancers and inspect the `HttpRedirect` field:
+
+        ```bash
+        doctl compute load-balancer list --format ID,Name,HttpRedirect,ForwardingRules
+        ```
+
+        A passing load balancer returns `true` for `HttpRedirect` or has no HTTP forwarding rule. A failing load balancer returns `false` for `HttpRedirect` while an HTTP forwarding rule is present.
       remediation:
         - id: console
           desc: |
@@ -735,11 +1027,36 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every load balancer is attached to a Virtual Private Cloud (VPC).
+        This check ensures that every load balancer is attached to a Virtual Private Cloud (VPC). By default, load balancers can be created without VPC association, which forces backend communication through public-facing addresses.
 
         **Why this matters**
 
-        A load balancer not attached to a VPC must reach its backends over the public internet, which routes traffic outside DigitalOcean's private network and removes a layer of network isolation between the LB and the backend Droplets. VPC-attached load balancers can reach backends on private IPs, keeping intra-application traffic off the public internet.
+        - **Private backend connectivity:** A VPC-attached load balancer reaches its backend Droplets on private IPs, keeping intra-application traffic entirely within DigitalOcean's internal network.
+        - **Reduced public attack surface:** Without VPC attachment, the load balancer must communicate with backends using public endpoints, adding unnecessary internet-reachable addresses to the infrastructure.
+        - **Network segmentation:** Placing the load balancer and its backends in the same VPC enables other network controls such as private firewall rules and internal DNS resolution to function correctly.
+
+        **Risk mitigation**
+
+        - **Traffic isolation:** VPC-internal load balancer to backend traffic cannot be intercepted by hosts outside the VPC, eliminating the risk of man-in-the-middle attacks on the internal forwarding path.
+        - **Segmentation enforcement:** VPC membership allows firewall rules to reference the VPC as a trusted source, making it straightforward to allow only load-balancer-originated traffic to backend ports.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+        2. Navigate to **Networking** > **Load Balancers** and open each load balancer.
+        3. Check the **Network** section for a VPC assignment.
+
+        A passing load balancer shows a named VPC in the Network section. A failing load balancer shows no VPC or only a public network assignment.
+
+        ### Audit via CLI
+
+        1. List all load balancers and inspect the `VPCUUID` field:
+
+        ```bash
+        doctl compute load-balancer list --format ID,Name,VPCUUID,Region
+        ```
+
+        A passing load balancer returns a non-empty `VPCUUID`. A failing load balancer returns an empty `VPCUUID`.
       remediation:
         - id: console
           desc: |
@@ -824,11 +1141,36 @@ queries:
       digitalocean.kubernetesClusters.all(autoUpgrade == true)
     docs:
       desc: |
-        This check ensures that every DigitalOcean Kubernetes (DOKS) cluster has auto-upgrade enabled.
+        This check ensures that every DigitalOcean Kubernetes Service (DOKS) cluster has automatic patch upgrades enabled. By default, auto-upgrade is not enabled on new clusters, leaving patch application as a manual operator responsibility.
 
         **Why this matters**
 
-        Kubernetes control-plane and node components receive regular security patches. Clusters without auto-upgrade depend on an operator remembering to apply each patch release; that window is where known-exploited CVEs land on production. Enabling auto-upgrade ensures patches are applied within the configured maintenance window without manual intervention.
+        - **Patch gap closure:** Kubernetes control-plane and node components receive regular patch releases that fix security vulnerabilities; clusters without auto-upgrade accumulate unpatched CVEs during the window between disclosure and manual action.
+        - **Reduced operational burden:** Enabling auto-upgrade within a configured maintenance window removes the need for operators to track and manually apply each patch release, lowering the likelihood of a missed update.
+        - **Consistent security posture:** Auto-upgrade ensures all clusters in the account receive patches on a predictable schedule rather than depending on per-cluster manual follow-through.
+
+        **Risk mitigation**
+
+        - **Exploit window reduction:** Automated patching closes known-exploited vulnerabilities within the maintenance window rather than leaving them open until an operator notices the available update.
+        - **Human error elimination:** Automating patch application removes the operational step most likely to be delayed or skipped during periods of high workload.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+        2. Navigate to **Kubernetes** and open each cluster.
+        3. Go to **Settings** > **Maintenance** and check whether **Automatically upgrade my cluster to patch releases** is enabled.
+
+        A passing cluster shows auto-upgrade as enabled. A failing cluster shows auto-upgrade as disabled or unconfigured.
+
+        ### Audit via CLI
+
+        1. List all Kubernetes clusters and inspect the `AutoUpgrade` field:
+
+        ```bash
+        doctl kubernetes cluster list --format ID,Name,AutoUpgrade,Version,Region
+        ```
+
+        A passing cluster returns `true` for `AutoUpgrade`. A failing cluster returns `false`.
       remediation:
         - id: console
           desc: |
@@ -871,11 +1213,37 @@ queries:
       )
     docs:
       desc: |
-        This check ensures that DOKS clusters run Kubernetes 1.30 or newer, matching DigitalOcean's supported-version window.
+        This check ensures that every DOKS cluster runs Kubernetes version 1.30 or newer, staying within the three-minor-version support window that DigitalOcean maintains. Clusters on older minor versions no longer receive security patches from either the upstream Kubernetes community or DigitalOcean.
 
         **Why this matters**
 
-        DigitalOcean supports only the latest three Kubernetes minor versions. Clusters on older minors no longer receive security patches from the provider, and upstream Kubernetes itself drops support for minors older than roughly one year. Running an unsupported minor means known CVEs accumulate without remediation.
+        - **Security patch availability:** Upstream Kubernetes supports only the latest three minor versions; clusters on older minors do not receive fixes for newly disclosed CVEs in cluster components.
+        - **Provider support boundary:** DigitalOcean aligns its support window with upstream; clusters outside that window may also lose access to critical managed-node updates and operational tooling.
+        - **CVE accumulation:** Running an unsupported minor means a growing list of publicly known vulnerabilities exists in the cluster with no patch available, increasing the exploitability of the environment over time.
+
+        **Risk mitigation**
+
+        - **Restored patch coverage:** Upgrading to a supported minor version immediately restores the flow of security fixes from both the upstream community and DigitalOcean's managed node images.
+        - **Reduced exposure window:** Supported clusters can apply patch releases promptly, closing CVEs within days rather than leaving them permanently unaddressed.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+        2. Navigate to **Kubernetes** and review the **Version** column for each cluster.
+        3. Compare the version against the currently supported minor versions (1.30 and newer). A banner or badge indicating **Upgrade Available** confirms the cluster is on an unsupported minor.
+
+        A passing cluster shows a version of 1.30 or newer with no upgrade warning. A failing cluster shows a version older than 1.30 or displays an unsupported-version warning.
+
+        ### Audit via CLI
+
+        1. List all clusters and compare their versions against the available supported versions:
+
+        ```bash
+        doctl kubernetes cluster list --format ID,Name,Version,Region
+        doctl kubernetes options versions
+        ```
+
+        A passing cluster returns a version string that matches an entry in the supported versions list. A failing cluster returns a version not present in that list.
       remediation:
         - id: console
           desc: |
@@ -922,11 +1290,37 @@ queries:
       digitalocean.kubernetesClusters.all(ssoEnabled == true)
     docs:
       desc: |
-        This check ensures that every DOKS cluster has Single Sign-On (SSO) configured against an OIDC identity provider, even if SSO is not strictly required yet.
+        This check ensures that every DOKS cluster has Single Sign-On (SSO) configured against an OIDC identity provider. Without SSO configured, cluster authentication relies entirely on static kubeconfig tokens with no identity-provider integration.
 
         **Why this matters**
 
-        Configuring SSO is a prerequisite for requiring it. A cluster without SSO configured has no identity-provider integration at all. Every user is on a static token issued at cluster creation, with no central IdP visibility into who has access. This check is the staging control before the stricter requirement that SSO be enforced for cluster authentication; both should pass for fully managed cluster identity.
+        - **Centralized identity management:** SSO configuration connects the cluster to an authoritative identity provider, enabling user lifecycle events such as offboarding to propagate to cluster access automatically.
+        - **MFA enablement:** Once SSO is configured, MFA policies defined in the identity provider apply to cluster authentication, raising the bar for credential-based attacks.
+        - **Access visibility:** IdP-integrated authentication creates an audit trail in the identity provider that shows who authenticated to the cluster and when, which static tokens do not provide.
+
+        **Risk mitigation**
+
+        - **Stale access prevention:** Identity-provider integration enables revoking a user's cluster access by deprovisioning their IdP account, without requiring separate kubeconfig rotation for each cluster.
+        - **Prerequisite for enforcement:** SSO must be configured before it can be required; establishing the integration is the necessary first step toward fully enforced IdP-based cluster authentication.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+        2. Navigate to **Kubernetes** and open each cluster.
+        3. Go to **Settings** > **Single Sign-On** and check whether an OIDC identity provider is configured.
+
+        A passing cluster shows an SSO configuration with an issuer URL and client ID. A failing cluster shows the SSO section as unconfigured.
+
+        ### Audit via CLI
+
+        1. Query the DOKS SSO configuration for each cluster using the DigitalOcean API:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $DIGITALOCEAN_TOKEN" \
+          https://api.digitalocean.com/v2/kubernetes/clusters/<cluster-id>/sso
+        ```
+
+        A passing cluster returns a response with `"enabled": true`. A failing cluster returns `"enabled": false` or an empty SSO configuration.
       remediation:
         - id: console
           desc: |
@@ -977,11 +1371,37 @@ queries:
       digitalocean.kubernetesClusters.all(ssoRequired == true)
     docs:
       desc: |
-        This check ensures that every DOKS cluster has Single Sign-On (SSO) configured **and** required, so that all kubectl access is authenticated through the configured OIDC identity provider.
+        This check ensures that every DOKS cluster has SSO both configured and required for all cluster authentication, so that kubectl access is authenticated through the OIDC identity provider rather than through static tokens. Enabling SSO without requiring it leaves static-token paths active.
 
         **Why this matters**
 
-        Without SSO required, anyone holding a static `kubeconfig` token issued at cluster creation can reach the API server regardless of what happens in the IdP. That defeats centralized identity controls such as joiner/mover/leaver lifecycle, MFA enforcement, conditional access, and session revocation. With SSO required, kubectl users must authenticate through the IdP for every session, so revoking a user in the IdP immediately revokes their cluster access.
+        - **Static token elimination:** Requiring SSO disables static kubeconfig tokens as a valid authentication path, ensuring every user session is backed by a live IdP session that can be revoked.
+        - **Joiner/mover/leaver enforcement:** With SSO required, deprovisioning a user in the identity provider immediately revokes their cluster access without requiring separate kubeconfig rotation.
+        - **MFA coverage:** Required SSO ensures MFA policies in the IdP apply to every cluster authentication attempt, not only to users who happen to use the SSO flow voluntarily.
+
+        **Risk mitigation**
+
+        - **Revocation immediacy:** Revoking a user at the IdP takes effect at the next kubectl session, eliminating the window where a former employee or compromised account retains access via a pre-issued token.
+        - **Credential theft impact reduction:** Even if a static kubeconfig token is exfiltrated, required SSO prevents its use because the API server will not accept non-IdP-issued credentials.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+        2. Navigate to **Kubernetes** and open each cluster.
+        3. Go to **Settings** > **Single Sign-On** and check whether **Require SSO for cluster access** is enabled.
+
+        A passing cluster shows **Require SSO for cluster access** as enabled. A failing cluster has SSO configured but the require toggle disabled, or has no SSO configured at all.
+
+        ### Audit via CLI
+
+        1. Query the DOKS SSO configuration for each cluster using the DigitalOcean API:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $DIGITALOCEAN_TOKEN" \
+          https://api.digitalocean.com/v2/kubernetes/clusters/<cluster-id>/sso
+        ```
+
+        A passing cluster returns a response with both `"enabled": true` and `"required": true`. A failing cluster returns `"required": false` or has no SSO configured.
       remediation:
         - id: console
           desc: |
@@ -1027,11 +1447,36 @@ queries:
       digitalocean.certificates.all(notAfter > time.now)
     docs:
       desc: |
-        This check ensures that no TLS certificate managed in DigitalOcean has passed its `notAfter` expiration date.
+        This check ensures that no TLS certificate stored in DigitalOcean has passed its `notAfter` expiration date. Expired certificates break the chain of trust that clients use to verify server identity.
 
         **Why this matters**
 
-        An expired TLS certificate breaks the trust chain clients rely on. Users see certificate warnings and are trained to click through — which normalizes certificate bypass and gives real man-in-the-middle attempts cover. API clients often fail closed and take down dependent services, so an expired certificate is both a security failure and an availability incident.
+        - **Trust chain breakage:** An expired certificate causes browsers and API clients to reject the TLS handshake, generating certificate warnings or hard failures that directly affect application availability.
+        - **Security warning fatigue:** Users trained to click through certificate warnings when an app expires may extend that behavior to legitimate man-in-the-middle attempts, where the same warning is the only defense signal.
+        - **API client failures:** Many API clients fail closed on expired certificates and abort the connection, causing cascading failures in dependent services and making an expired certificate both a security failure and an availability incident.
+
+        **Risk mitigation**
+
+        - **Continuous trust:** Keeping certificates valid ensures clients can establish authenticated, encrypted connections without operator intervention and without warning users to bypass security checks.
+        - **Monitoring prompt:** Catching expiration proactively via this check provides a remediation window before the certificate expires, avoiding both the security degradation and the availability incident.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+        2. Navigate to **Networking** > **Certificates**.
+        3. Review the **Expiration** column for each certificate and check whether any date is in the past.
+
+        A passing certificate shows an expiration date in the future. A failing certificate shows an expiration date that has already passed.
+
+        ### Audit via CLI
+
+        1. List all certificates and inspect their expiration dates:
+
+        ```bash
+        doctl compute certificate list --format ID,Name,NotAfter,State
+        ```
+
+        A passing certificate returns a `NotAfter` date that is later than today and a `State` of `verified`. A failing certificate returns a `NotAfter` date in the past or a `State` of `expired`.
       remediation:
         - id: console
           desc: |
@@ -1075,11 +1520,36 @@ queries:
       digitalocean.cdnEndpoints.where(customDomain != "").all(certificateId != "")
     docs:
       desc: |
-        This check ensures that every CDN endpoint configured with a custom domain has a TLS certificate attached.
+        This check ensures that every CDN endpoint configured with a custom domain has a TLS certificate attached. A CDN endpoint on a custom domain without a certificate cannot terminate HTTPS for that domain, forcing clients to use HTTP or encounter certificate errors.
 
         **Why this matters**
 
-        A CDN endpoint on a custom domain without a TLS certificate cannot terminate HTTPS for that domain — clients either fall back to HTTP or hit certificate warnings. Either outcome exposes user traffic to interception, content injection, and credential theft. The CDN is typically the first hop users reach, so protecting it with TLS is load-bearing for the whole request path.
+        - **HTTPS capability:** Without a certificate, the CDN endpoint cannot serve the custom domain over HTTPS; clients either receive certificate errors or fall back to unencrypted HTTP.
+        - **Content injection risk:** HTTP-served CDN responses can be modified by any host on the network path between the user and the CDN, enabling content injection attacks against end users.
+        - **Credential and cookie exposure:** Users authenticating through a custom-domain CDN endpoint over HTTP expose their credentials and session cookies to anyone who can observe the traffic path.
+
+        **Risk mitigation**
+
+        - **Transport encryption:** Attaching a valid TLS certificate enables HTTPS termination at the CDN edge, ensuring all user traffic to the custom domain is encrypted from client to CDN.
+        - **Trust signal:** A valid certificate allows clients to verify the CDN endpoint's identity, preventing impersonation attacks that would otherwise succeed silently over HTTP.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+        2. Navigate to **Networking** > **CDN** and open each endpoint.
+        3. Under **Custom subdomain**, check whether a TLS certificate is selected for any endpoint that has a custom domain configured.
+
+        A passing CDN endpoint either has no custom domain or has a custom domain with a certificate assigned. A failing CDN endpoint has a custom domain configured but no certificate selected.
+
+        ### Audit via CLI
+
+        1. List all CDN endpoints and inspect the `CertificateID` and `CustomDomain` fields:
+
+        ```bash
+        doctl compute cdn list --format ID,Origin,CustomDomain,CertificateID
+        ```
+
+        A passing endpoint returns a non-empty `CertificateID` when `CustomDomain` is set, or has an empty `CustomDomain`. A failing endpoint returns a non-empty `CustomDomain` paired with an empty `CertificateID`.
       remediation:
         - id: console
           desc: |
@@ -1120,11 +1590,36 @@ queries:
       digitalocean.spacesKeys.all(grants != empty)
     docs:
       desc: |
-        This check ensures that every Spaces access key has at least one bucket grant defined, restricting the key to specific buckets and permissions. A key with no grants has full account-level access to every bucket.
+        This check ensures that every Spaces access key has at least one bucket grant defined, scoping the key to specific buckets and operations. A key with no grants has unrestricted account-level access to every Spaces bucket in the account.
 
         **Why this matters**
 
-        A Spaces access key with no grants is effectively a root credential for object storage. If that key leaks — committed to source control, logged by an application, embedded in a client binary — the blast radius is every bucket in the account. Grant-scoped keys limit an exposed credential to exactly the bucket and operations the application needs.
+        - **Blast radius minimization:** An unscoped Spaces key that leaks provides full read and write access to every bucket in the account; grant-scoped keys limit the damage to exactly the bucket and permissions the key was issued for.
+        - **Least-privilege enforcement:** Each application or service that accesses Spaces should hold a key restricted to only the buckets and operations it requires, not an account-wide credential.
+        - **Credential compromise containment:** A scoped key accidentally committed to source control, logged by an application, or embedded in a binary exposes only the designated bucket, not the entire object storage environment.
+
+        **Risk mitigation**
+
+        - **Exfiltration scope limitation:** An attacker who obtains a scoped key can access only the granted buckets and operations, preventing full account data exfiltration through a single credential.
+        - **Audit and rotation granularity:** Scoped keys can be individually rotated or revoked for a specific integration without disrupting other services, enabling precise incident response.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+        2. Navigate to **API** > **Spaces Keys**.
+        3. Review each access key and check whether it has bucket grants listed under its permissions.
+
+        A passing Spaces key shows one or more bucket-level grants. A failing Spaces key shows no grants, indicating full account-level access to all buckets.
+
+        ### Audit via CLI
+
+        1. List all Spaces keys and inspect their grants:
+
+        ```bash
+        doctl spaces keys list
+        ```
+
+        A passing key returns one or more entries in its `Grants` field. A failing key returns an empty `Grants` field.
       remediation:
         - id: console
           desc: |
@@ -1167,11 +1662,36 @@ queries:
       digitalocean.apps.where(liveUrl != "").all(liveUrl == /^https:\/\//)
     docs:
       desc: |
-        This check ensures that every DigitalOcean App Platform application with a public live URL serves that URL over HTTPS.
+        This check ensures that every DigitalOcean App Platform application with a public live URL serves requests over HTTPS. App Platform automatically provisions managed TLS certificates for app URLs, so an HTTP live URL indicates a misconfigured custom domain or an incorrectly deployed application.
 
         **Why this matters**
 
-        An app served over plaintext HTTP exposes every request and response to interception and tampering. App Platform serves managed TLS certificates automatically, so there is no technical reason for an app to be HTTP-only — an HTTP `liveUrl` typically indicates a misconfigured custom domain or a development app promoted to production without a TLS setup.
+        - **Request and response protection:** An app served over HTTP exposes every request and response to interception and modification, including authentication flows, session tokens, and API payloads.
+        - **Managed TLS availability:** App Platform provides managed TLS certificates for all `ondigitalocean.app` URLs at no additional cost, so there is no technical barrier to serving apps over HTTPS.
+        - **Misconfiguration signal:** An HTTP live URL is a reliable indicator of a custom domain configuration error that, if uncorrected, will also prevent certificate issuance for that domain.
+
+        **Risk mitigation**
+
+        - **Eavesdropping prevention:** HTTPS ensures all traffic between end users and the App Platform edge is encrypted, removing the ability for passive network observers to read application data.
+        - **Session hijacking prevention:** Serving session cookies and authentication tokens only over HTTPS prevents them from being captured by network-level attackers and reused to impersonate authenticated users.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+        2. Navigate to **App Platform** and review the **Live URL** column for each app.
+        3. Confirm that every live URL begins with `https://`.
+
+        A passing app shows a live URL that starts with `https://`. A failing app shows a live URL that starts with `http://`.
+
+        ### Audit via CLI
+
+        1. List all apps and inspect their live URLs:
+
+        ```bash
+        doctl apps list --format ID,DefaultIngress,LiveURL
+        ```
+
+        A passing app returns a `LiveURL` that begins with `https://`. A failing app returns a `LiveURL` that begins with `http://`.
       remediation:
         - id: console
           desc: |
