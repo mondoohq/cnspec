@@ -45,6 +45,10 @@ policies:
   - **Windows / macOS**: `gui`, `cli`, `ansible`, and `script` (PowerShell on Windows, bash on macOS)
   - **Linux**: `cli`, `script` (bash), `ansible`
   - **Kubernetes**: `kubectl`, `manifest` (YAML), and where applicable `helm`
+  - **Microsoft 365** (`mondoo-m365-security`): `console`, `powershell`, and `terraform` where a real resource exists.
+    - `console` — the relevant Microsoft admin center (Microsoft Entra, Microsoft 365, Microsoft Defender, Exchange, SharePoint, or Intune). Always applies.
+    - `powershell` — Microsoft Graph PowerShell for Entra/identity checks, Exchange Online PowerShell for Exchange checks, SharePoint Online Management Shell for SharePoint checks. Always applies, except where the control is a DNS record (SPF), which uses `cli` (`az network dns …`) instead.
+    - `terraform` — **only** where the `azuread` provider (or, for DNS-record checks, a DNS provider such as `azurerm`) exposes a genuine resource for the setting. The Conditional Access checks (`azuread_conditional_access_policy`) and role assignments (`azuread_directory_role_assignment`) qualify. Exchange Online, SharePoint Online, Intune device configuration, the tenant authorization policy, the security-defaults toggle, and per-domain password validity have **no** Terraform resource — use a `# No Terraform remediation:` comment, never a `null_resource` + `local-exec` shell-out or an `azapi` block faking one.
 
   Omit a method only when it genuinely doesn't apply, and leave a YAML comment above the check explaining why (same pattern as the "No Terraform variants" comment above).
 - Verify CLI commands in remediation steps with the validator (see below) before committing.
@@ -251,6 +255,8 @@ python3 content/validation/validate_remediation_commands.py cloudflare
 ```
 
 The validator scans each `aws`/`az`/`oci`/`gcloud`/`doctl` CLI command — and `curl` calls against `api.cloudflare.com` — in ```` ```bash ```` code blocks within `id: cli` remediation sections. Output shows `[PASS]` or `[FAIL]` with the check UID and the offending command.
+
+The `azure` target validates **both** `mondoo-azure-security.mql.yaml` and `mondoo-m365-security.mql.yaml`, because the M365 policy's `id: cli` remediations also use the Azure CLI (`az`).
 
 **How the validator sources command data:**
 

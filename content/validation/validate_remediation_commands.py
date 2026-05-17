@@ -436,7 +436,12 @@ def validate_aws() -> tuple[int, int]:
 # ---------------------------------------------------------------------------
 
 AZURE_POLICY_FILE = SCRIPT_DIR / ".." / "mondoo-azure-security.mql.yaml"
+M365_POLICY_FILE = SCRIPT_DIR / ".." / "mondoo-m365-security.mql.yaml"
 AZURE_COMMANDS_FILE = CMD_DATA_DIR / "azure_commands.json"
+
+# Policy files whose `id: cli` remediations use the Azure CLI (`az`). The M365
+# policy is included here because its CLI remediations also target `az`.
+AZURE_CLI_POLICY_FILES = [AZURE_POLICY_FILE, M365_POLICY_FILE]
 
 
 def parse_az_command(cmd: str, commands_db: dict[str, list[str]]) -> tuple[str, list[str]]:
@@ -503,11 +508,11 @@ def validate_az_command(
 
 
 def validate_azure() -> tuple[int, int]:
-    """Validate Azure CLI commands. Returns (pass_count, fail_count)."""
-    if not AZURE_POLICY_FILE.exists():
-        print(f"Error: Policy file not found: {AZURE_POLICY_FILE}", file=sys.stderr)
-        sys.exit(1)
+    """Validate Azure CLI commands. Returns (pass_count, fail_count).
 
+    Scans both the Azure security policy and the M365 security policy, since
+    M365 `id: cli` remediations also use the Azure CLI (`az`).
+    """
     if not AZURE_COMMANDS_FILE.exists():
         print(
             f"Error: Commands database not found: {AZURE_COMMANDS_FILE}\n"
@@ -517,44 +522,49 @@ def validate_azure() -> tuple[int, int]:
         sys.exit(1)
 
     commands_db = json.loads(AZURE_COMMANDS_FILE.read_text())
-    content = AZURE_POLICY_FILE.read_text()
-    blocks = extract_bash_blocks(content)
 
     pass_count = 0
     fail_count = 0
 
-    policy_relpath = str(AZURE_POLICY_FILE.resolve().relative_to(Path.cwd()))
+    for policy_file in AZURE_CLI_POLICY_FILES:
+        if not policy_file.exists():
+            print(f"Error: Policy file not found: {policy_file}", file=sys.stderr)
+            sys.exit(1)
 
-    for block_text, block_line, uid in blocks:
-        commands = split_commands(block_text, "az", block_line)
-        for cmd, line_num in commands:
-            command_path, flags = parse_az_command(cmd, commands_db)
+        content = policy_file.read_text()
+        blocks = extract_bash_blocks(content)
+        policy_relpath = str(policy_file.resolve().relative_to(Path.cwd()))
 
-            if not command_path:
-                continue
+        for block_text, block_line, uid in blocks:
+            commands = split_commands(block_text, "az", block_line)
+            for cmd, line_num in commands:
+                command_path, flags = parse_az_command(cmd, commands_db)
 
-            is_valid, errors = validate_az_command(
-                command_path, flags, commands_db
-            )
+                if not command_path:
+                    continue
 
-            if is_valid:
-                print(f"[PASS] {uid}")
-                print(f"       {truncate_cmd(cmd)}")
-                pass_count += 1
-            else:
-                print(f"[FAIL] {uid}")
-                print(f"       {truncate_cmd(cmd)}")
-                for error in errors:
-                    print(f"       {error}")
-                fail_count += 1
-                FAILURES.append({
-                    "file": policy_relpath,
-                    "line": line_num,
-                    "uid": uid,
-                    "command": truncate_cmd(cmd),
-                    "errors": errors,
-                    "cloud": "azure",
-                })
+                is_valid, errors = validate_az_command(
+                    command_path, flags, commands_db
+                )
+
+                if is_valid:
+                    print(f"[PASS] {uid}")
+                    print(f"       {truncate_cmd(cmd)}")
+                    pass_count += 1
+                else:
+                    print(f"[FAIL] {uid}")
+                    print(f"       {truncate_cmd(cmd)}")
+                    for error in errors:
+                        print(f"       {error}")
+                    fail_count += 1
+                    FAILURES.append({
+                        "file": policy_relpath,
+                        "line": line_num,
+                        "uid": uid,
+                        "command": truncate_cmd(cmd),
+                        "errors": errors,
+                        "cloud": "azure",
+                    })
 
     return pass_count, fail_count
 
