@@ -35,8 +35,11 @@ Our comprehensive collection of security policies covers major platforms and ser
 
 - **AWS** - `mondoo-aws-security.mql.yaml` - Comprehensive AWS security baseline and best practices
 - **Azure** - `mondoo-azure-security.mql.yaml` - Microsoft Azure security configuration and compliance checks
+- **DigitalOcean** - `mondoo-digitalocean-security.mql.yaml` - DigitalOcean Droplets, Databases, Load Balancers, DOKS, Spaces, and App Platform security
 - **GCP** - `mondoo-gcp-security.mql.yaml` - Google Cloud Platform security assessment and hardening
+- **Hetzner Cloud** - `mondoo-hetzner-security.mql.yaml` - Hetzner Cloud servers, firewalls, load balancers, certificates, and IP address security
 - **OCI** - `mondoo-oci-security.mql.yaml` - Oracle Cloud Infrastructure security assessment
+- **OpenStack** - `mondoo-openstack-security.mql.yaml` - OpenStack security across Keystone, Nova, Neutron, Cinder, Glance, Swift, and Octavia
 
 ### Operating Systems
 
@@ -57,6 +60,8 @@ Our comprehensive collection of security policies covers major platforms and ser
 - **Kubernetes Security** - `mondoo-kubernetes-security.mql.yaml` - Container orchestration security and RBAC validation
 - **Kubernetes Best Practices** - `mondoo-kubernetes-best-practices.mql.yaml` - Kubernetes operational best practices
 - **Proxmox VE Security** - `mondoo-proxmox-security.mql.yaml` - Proxmox Virtual Environment hypervisor, VM, and container security
+- **VMware vSphere** - `mondoo-vmware-vsphere.mql.yaml` - Security baseline for virtual machines running on VMware vSphere
+- **VMware ESXi** - `mondoo-vmware-vsphere-esxi.mql.yaml` - VMware ESXi host hardening and configuration
 - **Terraform Deprecations** - `terraform-deprecations.mql.yaml` - Detect deprecated Terraform constructs
 
 ### Network Devices
@@ -66,6 +71,7 @@ Our comprehensive collection of security policies covers major platforms and ser
 - **Cisco IOS-XR** - `mondoo-cisco-iosxr-security.mql.yaml` - Cisco IOS-XR security configuration and hardening
 - **Cisco NX-OS** - `mondoo-cisco-nxos-security.mql.yaml` - Cisco NX-OS security configuration and hardening
 - **F5 BIG-IP** - `mondoo-bigip-security.mql.yaml` - F5 BIG-IP security configuration assessment
+- **Fortinet FortiOS** - `mondoo-fortios-security.mql.yaml` - Fortinet FortiOS firewall and FortiGate appliance security
 - **Juniper JunOS** - `mondoo-junos-security.mql.yaml` - Juniper JunOS network device security hardening
 - **Palo Alto PAN-OS** - `mondoo-panos-security.mql.yaml` - Palo Alto Networks PAN-OS security assessment
 - **Ubiquiti UniFi** - `mondoo-unifi-security.mql.yaml` - Ubiquiti UniFi network security assessment
@@ -77,6 +83,7 @@ Our comprehensive collection of security policies covers major platforms and ser
 - **GitLab** - `mondoo-gitlab-security.mql.yaml` - GitLab security configuration assessment
 - **Microsoft 365** - `mondoo-m365-security.mql.yaml` - Microsoft 365 security and compliance checks
 - **Google Workspace** - `mondoo-google-workspace-security.mql.yaml` - Google Workspace security validation
+- **Grafana** - `mondoo-grafana-security.mql.yaml` - Grafana observability platform security configuration
 - **Okta** - `mondoo-okta-security.mql.yaml` - Identity provider security assessment
 - **Slack** - `mondoo-slack-security.mql.yaml` - Slack workspace security configuration
 - **Snowflake** - `mondoo-snowflake-security.mql.yaml` - Snowflake data platform security assessment
@@ -92,12 +99,14 @@ Our comprehensive collection of security policies covers major platforms and ser
 
 ### Specialized Systems
 
+- **AI Security** - `mondoo-ai-security.mql.yaml` - Enforce approved AI coding agents, IDE extensions, MCP servers, and local LLM runtimes
 - **Chef Infra Client** - `mondoo-chef-infra-client.mql.yaml` - Chef Infra Client security configuration
 - **Chef Infra Server** - `mondoo-chef-infra-server.mql.yaml` - Chef Infra Server security configuration
 - **MCP** - `mondoo-mcp-security.mql.yaml` - Model Context Protocol server security assessment
 - **vLLM** - `mondoo-vllm-security.mql.yaml` - vLLM inference server HTTP exposure and endpoint hardening
 - **Phoenix PLCnext** - `mondoo-phoenix-plcnext-security.mql.yaml` - Industrial automation security
 - **EDR** - `mondoo-edr-policy.mql.yaml` - Endpoint Detection and Response validation
+- **Shodan** - `mondoo-shodan.mql.yaml` - Shodan exposure assessment for hosts, networks, and IP addresses
 
 > The latest version of the policies in this repository requires cnspec v8+
 
