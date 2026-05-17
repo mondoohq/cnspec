@@ -1079,6 +1079,7 @@ queries:
         values['conditions'].any(_['users'].any(_['included_users'].contains('All'))) &&
         values['grant_controls'].any(_['built_in_controls'].contains('mfa'))
       )
+  # No Terraform variants: the security defaults toggle has no azuread Terraform resource and can only be changed through the Graph API or portal.
   - uid: mondoo-m365-security-ensure-security-defaults-is-disabled-on-azure-active-directory
     title: Ensure Security Defaults is disabled on Azure Active Directory
     impact: 80
@@ -1116,6 +1117,25 @@ queries:
         Disabling security defaults and implementing custom Conditional Access policies strengthens the organization's security posture and provides greater flexibility in managing access to critical resources.
 
         Note: Using security defaults prohibits custom settings. Many best security practices require custom settings.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the Microsoft Entra admin center at `https://entra.microsoft.com`.
+        2. Go to **Identity** > **Overview** > **Properties**.
+        3. Select **Manage security defaults** and review the **Security defaults** setting.
+
+        A passing tenant has security defaults set to **Disabled**, with Conditional Access policies providing equivalent or stronger controls. A failing tenant has security defaults **Enabled**.
+
+        ### Audit via PowerShell
+
+        1. Connect to Microsoft Graph and read the security defaults policy:
+
+        ```powershell
+        Connect-MgGraph -Scopes "Policy.Read.All"
+        Get-MgPolicyIdentitySecurityDefaultEnforcementPolicy | Select-Object IsEnabled
+        ```
+
+        A passing tenant returns `IsEnabled : False`. A failing tenant returns `IsEnabled : True`.
       remediation:
         - id: console
           desc: |
@@ -1179,6 +1199,7 @@ queries:
         title: Microsoft Entra Conditional Access
       - url: https://learn.microsoft.com/en-us/entra/fundamentals/security-defaults
         title: Microsoft Entra Security Defaults
+  # No Terraform variants: this check counts live Global Administrator assignments, which Terraform source cannot enumerate because portal-created assignments are invisible to it.
   - uid: mondoo-m365-security-ensure-that-between-two-and-four-global-admins-are-designated
     title: Ensure that between two and four global admins are designated
     impact: 80
@@ -1209,6 +1230,26 @@ queries:
         At the same time, having too many global admins can lead to confusion and inefficiency, as multiple people may be making decisions or taking actions without proper coordination. Therefore, it's recommended to keep the number of global admins to no more than four, unless the organization is particularly large or complex and requires more administrators to properly manage its operations.
 
         Ensuring the appropriate number of global admins strengthens the organization's ability to manage its operations effectively while maintaining security and operational efficiency.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the Microsoft Entra admin center at `https://entra.microsoft.com`.
+        2. Go to **Identity** > **Roles & admins** > **Roles**.
+        3. Select the **Global Administrator** role and review its **Assignments**.
+
+        A passing tenant has between two and four accounts assigned the Global Administrator role. A failing tenant has fewer than two or more than four.
+
+        ### Audit via PowerShell
+
+        1. Connect to Microsoft Graph and list the Global Administrator role members:
+
+        ```powershell
+        Connect-MgGraph -Scopes "RoleManagement.Read.Directory"
+        $role = Get-MgDirectoryRole -Filter "displayName eq 'Global Administrator'"
+        Get-MgDirectoryRoleMember -DirectoryRoleId $role.Id
+        ```
+
+        A passing tenant returns between two and four members. A failing tenant returns fewer than two or more than four.
       remediation:
         - id: console
           desc: |
@@ -1269,6 +1310,28 @@ queries:
             $user = Get-MgUser -Filter "userPrincipalName eq 'user@domain.com'"
             Remove-MgDirectoryRoleMemberByRef -DirectoryRoleId $globalAdminRole.Id -DirectoryObjectId $user.Id
             ```
+        - id: terraform
+          desc: |
+            **Using Terraform (azuread provider)**
+
+            Declare each Global Administrator assignment explicitly so the count is reviewable in source control:
+
+            ```hcl
+            locals {
+              global_admin_template_id = "62e90394-69f5-4237-9190-012177145e10"
+            }
+
+            resource "azuread_directory_role_assignment" "global_admins" {
+              for_each = toset([
+                azuread_user.admin_one.object_id,
+                azuread_user.admin_two.object_id,
+              ])
+              role_id             = local.global_admin_template_id
+              principal_object_id = each.value
+            }
+            ```
+
+            For more details, see [azuread_directory_role_assignment](https://registry.terraform.io/providers/hashicorp/azuread/latest/docs/resources/directory_role_assignment) in the Terraform Registry.
     refs:
       - url: https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/permissions-reference
         title: Microsoft Entra Built-in Roles
@@ -1461,6 +1524,7 @@ queries:
         title: Microsoft Entra Password Protection
       - url: https://learn.microsoft.com/en-us/mem/intune/configuration/device-restrictions-configure
         title: Configure Device Restriction Settings in Microsoft Intune
+  # No Terraform variants: per-domain password validity has no azuread Terraform resource and is set only through the Graph API.
   - uid: mondoo-m365-security-ensure-that-ms-365-passwords-are-not-set-to-expire
     title: Ensure password expiration policy is set to never expire
     impact: 60
@@ -1494,6 +1558,25 @@ queries:
           - CIS Controls (CIS Control 16: Account Monitoring and Control)
 
         Ensuring that passwords do not expire unnecessarily strengthens the organization's security posture while reducing the burden on users.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the Microsoft 365 admin center at `https://admin.microsoft.com`.
+        2. Go to **Settings** > **Org settings** > **Security & privacy**.
+        3. Select **Password expiration policy** and review the setting.
+
+        A passing tenant has **Set passwords to never expire** selected. A failing tenant has a finite password expiration period configured.
+
+        ### Audit via PowerShell
+
+        1. Connect to Microsoft Graph and read the password validity period for every domain:
+
+        ```powershell
+        Connect-MgGraph -Scopes "Domain.Read.All"
+        Get-MgDomain | Select-Object Id, PasswordValidityPeriodInDays
+        ```
+
+        A passing tenant returns `PasswordValidityPeriodInDays : 2147483647` for every domain. A failing tenant returns a smaller value.
       remediation:
         - id: console
           desc: |
@@ -1699,6 +1782,7 @@ queries:
         title: Email Authentication in Microsoft 365
       - url: https://learn.microsoft.com/en-us/exchange/security-and-compliance/security-and-compliance
         title: Exchange Online Security and Compliance
+  # No Terraform variants: the tenant authorization policy has no resource in the azuread Terraform provider.
   - uid: mondoo-m365-security-ensure-third-party-integrated-applications-are-not-allowed
     title: Ensure that no third party integrated applications are allowed
     impact: 80
@@ -1731,6 +1815,25 @@ queries:
           - CIS Controls (CIS Control 14: Controlled Access Based on the Need to Know)
 
         Ensuring that third-party integrated applications are not allowed strengthens the organization's security posture and minimizes the risk of unauthorized access or data breaches.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the Microsoft Entra admin center at `https://entra.microsoft.com`.
+        2. Go to **Identity** > **Users** > **User settings**.
+        3. Review the **Users can register applications** setting.
+
+        A passing tenant has **Users can register applications** set to **No**. A failing tenant has it set to **Yes**.
+
+        ### Audit via PowerShell
+
+        1. Connect to Microsoft Graph and read the tenant authorization policy:
+
+        ```powershell
+        Connect-MgGraph -Scopes "Policy.Read.All"
+        (Get-MgPolicyAuthorizationPolicy).DefaultUserRolePermissions | Select-Object AllowedToCreateApps
+        ```
+
+        A passing tenant returns `AllowedToCreateApps : False`. A failing tenant returns `AllowedToCreateApps : True`.
       remediation:
         - id: console
           desc: |
