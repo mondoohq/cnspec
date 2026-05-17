@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-tls-security
     name: Mondoo TLS/SSL Security
-    version: 1.7.0
+    version: 1.7.1
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -66,15 +66,15 @@ queries:
     impact: 90
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
       compliance/nist-csf-1: nist-csf-1-pr-ds-2
       compliance/nist-csf-2: nist-csf-2-pr-ds-02
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-17
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-15
       compliance/pci-dss-4: pcidss-requirement-4-2-1
       compliance/soc2-2017: soc2-control-cc6-7-2
       compliance/vda-isa-5: vda-isa-5-5-1-2
@@ -93,19 +93,29 @@ queries:
       checkA1 || checkA2 || checkA3
     docs:
       desc: |
-        This check verifies that the SSL/TLS certificate's domain name matches the hostname being secured, either through the Common Name (CN) or Subject Alternative Name (SAN) fields.
+        This check ensures that the SSL/TLS certificate presented by the server is configured to match the hostname being secured, through either the Common Name or a Subject Alternative Name entry. A mismatch breaks the identity guarantee that TLS depends on and leaves clients unable to confirm they reached the legitimate server.
 
         **Why this matters**
 
-        Certificate domain mismatches undermine the authentication foundation of TLS, creating both security and operational risks:
+        - **Man-in-the-middle exposure:** When domain validation fails, clients cannot confirm they are connecting to the legitimate server, which opens the door to interception attacks.
+        - **Browser security warnings:** Users encounter alarming warnings that damage brand trust and train them to dismiss legitimate security alerts.
+        - **Service disruptions:** API clients, mobile apps, and automated systems reject mismatched certificates, causing integration failures.
+        - **Compliance violations:** Standards such as PCI DSS and HIPAA require valid TLS certificates for protecting data in transit.
 
-          - **Man-in-the-middle exposure**: When domain validation fails, clients cannot confirm they are connecting to the legitimate server, enabling interception attacks.
-          - **Browser security warnings**: Users encounter alarming security warnings that damage brand trust and may train them to ignore legitimate security alerts.
-          - **Service disruptions**: API clients, mobile apps, and automated systems typically reject mismatched certificates, causing integration failures.
-          - **Compliance violations**: PCI DSS, HIPAA, and other standards require valid TLS certificates for data protection.
-          - **Configuration errors undetected**: A mismatch often indicates a deployment mistake that should be identified and corrected.
+        **Risk mitigation**
 
-        Ensure certificates include all required domain names in the SAN field, as modern browsers prefer SAN over Common Name for validation.
+        - **List every hostname:** Include all required domain names in the Subject Alternative Name field, since modern browsers validate against SAN rather than the Common Name.
+        - **Catch deployment errors early:** A mismatch often signals a deployment mistake, so correcting it removes a misconfiguration before it disrupts production.
+      audit: |
+        ### Audit via openssl
+
+        Inspect the certificate the server returns for a given hostname with the OpenSSL client:
+
+        ```bash
+        openssl s_client -connect example.com:443 -servername example.com 2>/dev/null | openssl x509 -noout -subject -ext subjectAltName
+        ```
+
+        A passing result shows the requested hostname in the Common Name or in the Subject Alternative Name list, while a failing result shows a certificate whose names do not cover the hostname.
       remediation:
         - id: apache
           desc: |
@@ -223,15 +233,15 @@ queries:
     impact: 95
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-15
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
       compliance/nist-csf-1: nist-csf-1-pr-ds-2
       compliance/nist-csf-2: nist-csf-2-pr-ds-02
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-17
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-15
       compliance/pci-dss-4: pcidss-requirement-4-2-1
       compliance/soc2-2017: soc2-control-cc6-7-2
       compliance/vda-isa-5: vda-isa-5-5-1-2
@@ -243,19 +253,29 @@ queries:
       }
     docs:
       desc: |
-        This check verifies that the SSL/TLS certificate is currently within its validity period and that the certificate validity does not exceed 398 days (per browser policy requirements since September 2020).
+        This check ensures that the SSL/TLS certificate is configured to be currently within its validity window and to have a total lifetime no longer than 398 days. Certificates that are not yet valid, already expired, or issued for an excessive duration are rejected by clients and break service availability.
 
         **Why this matters**
 
-        Invalid or non-compliant certificates expose services to security risks and operational disruptions:
+        - **Immediate connection failures:** Clients reject certificates that are not yet valid or have expired, causing service outages with no graceful degradation.
+        - **Browser rejection:** Certificates with validity periods longer than 398 days are rejected by major browsers even when otherwise correct.
+        - **Trust chain failures:** Certificates not signed by a trusted authority cannot be verified, which enables man-in-the-middle attacks.
+        - **Incident response delays:** An invalid certificate can indicate compromise or misconfiguration that requires immediate investigation.
 
-          - **Immediate connection failures**: Clients reject certificates that are not yet valid or have expired, causing service outages.
-          - **Browser rejection**: Certificates with validity periods exceeding 398 days are rejected by major browsers, even if otherwise valid.
-          - **Trust chain failures**: Certificates not signed by a trusted CA cannot be verified, enabling man-in-the-middle attacks.
-          - **Compliance requirements**: Industry standards require valid certificates from trusted authorities for handling sensitive data.
-          - **Incident response delays**: Invalid certificates may indicate compromise or misconfiguration requiring immediate investigation.
+        **Risk mitigation**
 
-        Use automated certificate management to ensure certificates are renewed before expiration and comply with current validity period requirements.
+        - **Automate renewal:** Use automated certificate management so certificates are renewed before they expire and stay within current validity limits.
+        - **Issue from trusted CAs:** Obtain certificates from a recognized Certificate Authority so clients can complete trust chain verification.
+      audit: |
+        ### Audit via openssl
+
+        Inspect the certificate's validity dates with the OpenSSL client:
+
+        ```bash
+        openssl s_client -connect example.com:443 -servername example.com 2>/dev/null | openssl x509 -noout -dates
+        ```
+
+        A passing result shows a notBefore date in the past, a notAfter date in the future, and a span between them under 398 days, while a failing result shows a window that is not yet open, already closed, or longer than 398 days.
       remediation:
         - id: apache
           desc: |
@@ -362,18 +382,18 @@ queries:
     impact: 95
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-17
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
-      compliance/nist-csf-1: nist-csf-1-pr-ds-1
-      compliance/nist-csf-2: nist-csf-2-pr-ds-01
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-12
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-10
-      compliance/pci-dss-4: pcidss-requirement-3-5-1
-      compliance/soc2-2017: soc2-control-cc6-1-11
-      compliance/vda-isa-5: vda-isa-5-5-1-1
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-17
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-15
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
     mql: |
       tls.certificates.first.subject.commonName
       switch {
@@ -385,19 +405,29 @@ queries:
       }
     docs:
       desc: |
-        This check monitors the certificate's remaining validity period and provides graduated scoring based on proximity to expiration (full score above 30 days, decreasing as expiration approaches).
+        This check ensures that the leaf certificate is configured with enough remaining validity that it is not at risk of expiring soon. Scoring degrades as the expiration date approaches so teams can act before an outage occurs.
 
         **Why this matters**
 
-        Certificate expiration creates a time-sensitive security and operational risk that worsens as the deadline approaches:
+        - **Service outages:** Expired certificates cause immediate connection failures across all clients with no graceful degradation.
+        - **Emergency renewals:** Last-minute replacements are error-prone and often happen during off-hours when the problem is finally noticed.
+        - **Trust degradation:** Users who encounter certificate warnings lose confidence in the service's security practices.
+        - **Attack window:** During the confusion of an expired certificate, users are more likely to bypass warnings or fall for phishing.
 
-          - **Service outages**: Expired certificates cause immediate connection failures across all clients, with no graceful degradation.
-          - **Emergency renewals**: Last-minute certificate replacements are error-prone and often occur during off-hours when the issue is discovered.
-          - **Trust degradation**: Users encountering certificate warnings lose confidence in the service's security practices.
-          - **Compliance gaps**: Many security frameworks require proactive certificate lifecycle management with documented renewal processes.
-          - **Attack window**: During the confusion of an expired certificate, users may be more susceptible to phishing or bypass security warnings.
+        **Risk mitigation**
 
-        Implement certificate monitoring with alerts at 30, 14, and 7 days before expiration, and use automated renewal tools like cert-manager or Certbot.
+        - **Monitor with lead time:** Configure expiration alerts at 30, 14, and 7 days before expiry so renewal happens on a planned schedule.
+        - **Automate renewal:** Use tools such as cert-manager or Certbot to renew certificates without manual intervention.
+      audit: |
+        ### Audit via openssl
+
+        Check how much validity remains on the leaf certificate with the OpenSSL client:
+
+        ```bash
+        openssl s_client -connect example.com:443 -servername example.com 2>/dev/null | openssl x509 -noout -enddate
+        ```
+
+        A passing result shows a notAfter date comfortably more than 30 days in the future, while a failing result shows a date that is near or already past.
       remediation:
         - id: apache
           desc: |
@@ -507,18 +537,18 @@ queries:
     impact: 90
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-17
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
-      compliance/nist-csf-1: nist-csf-1-pr-ds-1
-      compliance/nist-csf-2: nist-csf-2-pr-ds-01
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-12
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-10
-      compliance/pci-dss-4: pcidss-requirement-3-5-1
-      compliance/soc2-2017: soc2-control-cc6-1-11
-      compliance/vda-isa-5: vda-isa-5-5-1-1
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-17
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-15
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
     mql: |
       tls.certificates {
         subject.commonName
@@ -526,19 +556,29 @@ queries:
       }
     docs:
       desc: |
-        This check verifies that all certificates in the trust chain (including intermediate and root certificates) have not expired.
+        This check ensures that every certificate in the trust chain, including intermediate and root certificates, is configured to remain within its validity period. An expired intermediate or root breaks verification for all services that rely on that chain.
 
         **Why this matters**
 
-        Expired intermediate or root certificates break the entire trust chain, creating widespread service disruption:
+        - **Cascading failures:** A single expired intermediate can simultaneously affect every service that uses that trust chain.
+        - **Silent trust failures:** Intermediate expiration may not trigger renewal automation, catching teams off-guard.
+        - **Client verification failures:** Even a valid leaf certificate cannot be verified if an intermediate in its chain has expired.
+        - **Delayed diagnosis:** Trust chain problems are harder to identify than a simple expired leaf certificate.
 
-          - **Cascading failures**: A single expired intermediate certificate can simultaneously affect all services using that trust chain.
-          - **Silent trust failures**: Unlike leaf certificates, intermediate expiration may not trigger renewal automation, catching teams off-guard.
-          - **Client verification failures**: Even with a valid leaf certificate, clients cannot complete chain validation if intermediates are expired.
-          - **Cross-signed complexity**: Root and intermediate certificate expirations may have complex cross-signing relationships that require careful management.
-          - **Delayed diagnosis**: Trust chain issues are often harder to diagnose than simple leaf certificate problems.
+        **Risk mitigation**
 
-        Regularly audit the complete certificate chain and monitor all certificates for expiration, not just the leaf certificate.
+        - **Audit the full chain:** Regularly review every certificate in the chain rather than monitoring only the leaf.
+        - **Track cross-signed paths:** Account for cross-signing relationships between roots and intermediates so renewals cover every validation path.
+      audit: |
+        ### Audit via openssl
+
+        Inspect every certificate the server presents in its chain with the OpenSSL client:
+
+        ```bash
+        openssl s_client -connect example.com:443 -servername example.com -showcerts 2>/dev/null | openssl crl2pkcs7 -nocrl -certfile /dev/stdin | openssl pkcs7 -print_certs -noout
+        ```
+
+        A passing result shows valid date ranges for the leaf and every intermediate and root certificate, while a failing result shows any certificate in the chain whose notAfter date has passed.
       remediation:
         - id: apache
           desc: |
@@ -664,15 +704,15 @@ queries:
     impact: 85
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
       compliance/nist-csf-1: nist-csf-1-pr-ds-2
       compliance/nist-csf-2: nist-csf-2-pr-ds-02
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-17
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-15
       compliance/pci-dss-4: pcidss-requirement-4-2-1
       compliance/soc2-2017: soc2-control-cc6-7-2
       compliance/vda-isa-5: vda-isa-5-5-1-2
@@ -680,19 +720,29 @@ queries:
       tls.certificates.last.isCA
     docs:
       desc: |
-        This check verifies that the certificate chain terminates at a trusted Certificate Authority root certificate, rather than being self-signed.
+        This check ensures that the certificate chain is configured to terminate at a trusted Certificate Authority root rather than at a self-signed certificate. Self-signed certificates bypass the third-party trust model that TLS authentication relies on.
 
         **Why this matters**
 
-        Self-signed certificates bypass the trust model that TLS depends on, creating significant security and usability risks:
+        - **No third-party verification:** Self-signed certificates provide no external validation of server identity, which enables impersonation attacks.
+        - **User warning fatigue:** Clients display warnings that users must bypass, training them to ignore legitimate security alerts.
+        - **Integration failures:** APIs, automated systems, and mobile apps reject self-signed certificates without a manual override.
+        - **Man-in-the-middle vulnerability:** An attacker can present another self-signed certificate that users may accept as normal.
 
-          - **No third-party verification**: Self-signed certificates provide no external validation of server identity, enabling impersonation attacks.
-          - **User warning fatigue**: Clients display security warnings that users must bypass, training them to ignore legitimate security alerts.
-          - **Integration failures**: APIs, automated systems, and mobile apps typically reject self-signed certificates without manual override.
-          - **Man-in-the-middle vulnerability**: Attackers can present their own self-signed certificate and users may accept it as "normal."
-          - **Compliance failures**: Security standards and audits require certificates from trusted CAs for production systems.
+        **Risk mitigation**
 
-        Use certificates from recognized Certificate Authorities. Free options like Let's Encrypt provide trusted certificates with automated renewal.
+        - **Use a recognized CA:** Obtain certificates from a publicly trusted Certificate Authority so clients can verify server identity automatically.
+        - **Adopt automated issuance:** Free options such as Let's Encrypt provide trusted certificates with automated renewal at no cost.
+      audit: |
+        ### Audit via openssl
+
+        Inspect the issuer and subject of the certificate the server presents with the OpenSSL client:
+
+        ```bash
+        openssl s_client -connect example.com:443 -servername example.com -showcerts 2>/dev/null | openssl x509 -noout -issuer -subject
+        ```
+
+        A passing result shows an issuer that differs from the subject and resolves to a recognized Certificate Authority, while a failing result shows an issuer identical to the subject, which indicates a self-signed certificate.
       remediation:
         - id: apache
           desc: |
@@ -829,15 +879,15 @@ queries:
     impact: 100
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-13
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
       compliance/nist-csf-1: nist-csf-1-pr-ds-2
       compliance/nist-csf-2: nist-csf-2-pr-ds-02
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-17
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-15
       compliance/pci-dss-4: pcidss-requirement-4-2-1
       compliance/soc2-2017: soc2-control-cc6-7-2
       compliance/vda-isa-5: vda-isa-5-5-1-2
@@ -848,19 +898,29 @@ queries:
       }
     docs:
       desc: |
-        This check verifies that none of the certificates in the chain have been revoked by their issuing Certificate Authority.
+        This check ensures that no certificate in the chain is configured with a revoked status from its issuing Certificate Authority. Revocation indicates that a certificate should no longer be trusted, frequently because of a key compromise.
 
         **Why this matters**
 
-        Certificate revocation indicates that a certificate should no longer be trusted, often due to security compromise:
+        - **Active security incident:** Revocation typically follows private key compromise, meaning attackers may be able to impersonate the service.
+        - **Continued vulnerability:** Using a revoked certificate keeps the security exposure that triggered the revocation in place.
+        - **Client rejection:** Modern clients check revocation status through OCSP or CRL and refuse connections to revoked certificates.
+        - **Reputation damage:** Security-conscious users and partners lose trust when they encounter a revoked certificate.
 
-          - **Active security incident**: Revocation typically occurs after private key compromise, meaning attackers may have the ability to impersonate your service.
-          - **Continued vulnerability**: Using a revoked certificate maintains the security exposure that triggered the revocation.
-          - **Client rejection**: Modern clients check revocation status via OCSP or CRL and will reject connections to revoked certificates.
-          - **Compliance violations**: Using revoked certificates violates virtually all security frameworks and may trigger audit findings.
-          - **Reputation damage**: Security-conscious users and partners will lose trust when encountering revoked certificates.
+        **Risk mitigation**
 
-        Replace revoked certificates immediately with newly-generated key pairs, and investigate the cause of revocation to prevent recurrence.
+        - **Replace with a fresh key pair:** Reissue any revoked certificate immediately using a newly generated key pair rather than reusing the old key.
+        - **Investigate the root cause:** Determine why the certificate was revoked so the underlying compromise or error does not recur.
+      audit: |
+        ### Audit via openssl
+
+        Check the revocation status of the server's certificate using the OCSP responder named in the certificate:
+
+        ```bash
+        openssl s_client -connect example.com:443 -servername example.com -status 2>/dev/null | openssl x509 -noout -text | grep -A1 "OCSP"
+        ```
+
+        A passing result shows an OCSP response with a status of good, while a failing result shows a status of revoked or a certificate whose chain a client refuses to verify.
       remediation:
         - id: apache
           desc: |
@@ -1019,11 +1079,11 @@ queries:
       compliance/nis-2: nis-2-21-2-h
       compliance/nist-csf-1: nist-csf-1-pr-ds-2
       compliance/nist-csf-2: nist-csf-2-pr-ds-02
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-13
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-15
       compliance/pci-dss-4: pcidss-requirement-4-2-1
       compliance/soc2-2017: soc2-control-cc6-7-2
-      compliance/vda-isa-5: vda-isa-5-5-1-2
+      compliance/vda-isa-5: vda-isa-5-5-1-1
     mql: |
       tls.certificates {
         subject.commonName
@@ -1031,19 +1091,29 @@ queries:
       }
     docs:
       desc: |
-        This check verifies that certificates do not use weak signature algorithms such as MD2, MD5, or SHA-1.
+        This check ensures that every certificate in the chain is configured to use a strong signature algorithm and not MD2, MD5, or SHA-1. Weak signature algorithms can be exploited to forge certificates that appear legitimately signed.
 
         **Why this matters**
 
-        Weak signature algorithms can be exploited to forge certificates, completely undermining TLS security:
+        - **Certificate forgery:** MD5 and SHA-1 collision attacks allow creation of fraudulent certificates that pass signature verification.
+        - **Historical attacks:** The Flame malware used MD5 weaknesses to forge Windows Update certificates in a real-world attack.
+        - **Browser deprecation:** Major browsers reject certificates signed with SHA-1 and weaker algorithms.
+        - **Future vulnerability:** As computing power grows, even SHA-1 becomes more exposed to practical collision attacks.
 
-          - **Certificate forgery**: MD5 and SHA-1 collision attacks allow creation of fraudulent certificates that appear legitimately signed.
-          - **Historical attacks**: Real-world attacks like Flame malware used MD5 weaknesses to forge Windows Update certificates.
-          - **Browser deprecation**: Major browsers reject certificates signed with SHA-1 and weaker algorithms.
-          - **Compliance requirements**: PCI DSS, NIST, and other frameworks prohibit weak signature algorithms.
-          - **Future vulnerability**: As computing power increases, even SHA-1 becomes more vulnerable to practical attacks.
+        **Risk mitigation**
 
-        Ensure all certificates use SHA-256 or stronger (SHA-384, SHA-512) signature algorithms, and verify the complete chain uses strong signatures.
+        - **Require SHA-256 or stronger:** Issue and reissue all certificates with SHA-256, SHA-384, or SHA-512 signature algorithms.
+        - **Verify the whole chain:** Confirm that intermediate and root certificates also use strong signatures, not just the leaf.
+      audit: |
+        ### Audit via openssl
+
+        Inspect the signature algorithm of each certificate the server presents with the OpenSSL client:
+
+        ```bash
+        openssl s_client -connect example.com:443 -servername example.com -showcerts 2>/dev/null | openssl x509 -noout -text | grep "Signature Algorithm"
+        ```
+
+        A passing result shows SHA-256 or stronger for every certificate, while a failing result shows md2, md5, or sha1 in any signature algorithm field.
       remediation:
         - id: apache
           desc: |
@@ -1179,7 +1249,7 @@ queries:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
       compliance/nist-csf-1: nist-csf-1-pr-ds-2
@@ -1193,19 +1263,39 @@ queries:
       tls.versions.containsOnly(["tls1.2", "tls1.3"])
     docs:
       desc: |
-        This check verifies that only TLS 1.2 and TLS 1.3 are enabled, and that older, vulnerable protocol versions (SSL 2.0, SSL 3.0, TLS 1.0, TLS 1.1) are disabled.
+        This check ensures that the server is configured to offer only TLS 1.2 and TLS 1.3 and to disable SSL 2.0, SSL 3.0, TLS 1.0, and TLS 1.1. The older protocols carry cryptographic weaknesses that configuration alone cannot fix.
 
         **Why this matters**
 
-        Older SSL/TLS versions have fundamental cryptographic weaknesses that cannot be mitigated through configuration:
+        - **POODLE attack:** SSL 3.0 can be exploited through a padding oracle attack to decrypt sensitive data.
+        - **BEAST attack:** The CBC implementation in TLS 1.0 allows chosen-plaintext attacks against session cookies.
+        - **Downgrade attacks:** Attackers can force connections onto weaker protocols whenever those protocols remain enabled.
+        - **Browser deprecation:** Major browsers have removed support for TLS 1.0 and TLS 1.1 entirely.
 
-          - **POODLE attack**: SSL 3.0 can be exploited to decrypt sensitive data through padding oracle attacks.
-          - **BEAST attack**: TLS 1.0's CBC implementation allows chosen-plaintext attacks against session cookies.
-          - **Downgrade attacks**: Attackers can force connections to use weaker protocols if they remain enabled.
-          - **Compliance requirements**: PCI DSS 3.2+ requires TLS 1.2 minimum; many frameworks now mandate TLS 1.2 or 1.3 exclusively.
-          - **Browser deprecation**: Major browsers have removed support for TLS 1.0 and 1.1 entirely.
+        **Risk mitigation**
 
-        Enable only TLS 1.2 and TLS 1.3, which provide modern cryptographic protections and are required by current security standards.
+        - **Enable only modern protocols:** Restrict the server to TLS 1.2 and TLS 1.3, which provide current cryptographic protections.
+        - **Meet baseline standards:** Disabling legacy protocols satisfies the TLS 1.2 minimum required by PCI DSS and other frameworks.
+      audit: |
+        ### Audit via nmap
+
+        Enumerate the protocol versions the server accepts:
+
+        ```bash
+        nmap --script ssl-enum-ciphers -p 443 example.com
+        ```
+
+        A passing result lists only TLSv1.2 and TLSv1.3 sections, while a failing result shows SSLv2, SSLv3, TLSv1.0, or TLSv1.1 sections in the output.
+
+        ### Audit via openssl
+
+        Test whether the server accepts a specific weak protocol version with the OpenSSL client:
+
+        ```bash
+        openssl s_client -connect example.com:443 -tls1_1
+        ```
+
+        A passing result is a failed handshake, while a failing result completes the handshake, which confirms TLS 1.1 is still accepted.
       remediation:
         - id: apache
           desc: |
@@ -1343,33 +1433,43 @@ queries:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
       compliance/nist-csf-1: nist-csf-1-pr-ds-2
       compliance/nist-csf-2: nist-csf-2-pr-ds-02
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-13
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
       compliance/pci-dss-4: pcidss-requirement-4-2-1
       compliance/soc2-2017: soc2-control-cc6-7-2
-      compliance/vda-isa-5: vda-isa-5-5-1-2
+      compliance/vda-isa-5: vda-isa-5-5-1-1
     mql: |
       tls.ciphers.none( /rc4/i )
     docs:
       desc: |
-        This check verifies that RC4 cipher suites are not enabled, as RC4 has known cryptographic weaknesses that compromise data confidentiality.
+        This check ensures that the server is configured to reject all RC4 cipher suites. RC4 has known cryptographic flaws that allow practical recovery of plaintext from encrypted traffic.
 
         **Why this matters**
 
-        RC4 has fundamental cryptographic flaws that enable practical attacks against encrypted traffic:
+        - **Statistical biases:** The RC4 keystream has detectable biases that permit plaintext recovery once enough traffic is captured.
+        - **Bar Mitzvah attack:** Weak keys in RC4 produce exploitable patterns in the first bytes of ciphertext.
+        - **RFC 7465 prohibition:** The IETF has officially prohibited RC4 in all TLS versions because of these weaknesses.
+        - **Browser removal:** All major browsers have removed RC4 support, so leaving it enabled serves no legitimate clients.
 
-          - **Statistical biases**: RC4's keystream has detectable biases that allow plaintext recovery with sufficient captured traffic.
-          - **Bar mitzvah attack**: Weak keys in RC4 create exploitable patterns in the first bytes of ciphertext.
-          - **RFC 7465 prohibition**: The IETF has officially prohibited RC4 in all TLS versions due to its weaknesses.
-          - **Browser removal**: All major browsers have removed RC4 support entirely, causing connection failures.
-          - **Real-world exploitation**: Attacks against RC4 are practical with modern computing resources, not just theoretical.
+        **Risk mitigation**
 
-        Remove all RC4 cipher suites and use only modern AEAD ciphers like AES-GCM or ChaCha20-Poly1305.
+        - **Remove RC4 suites:** Drop every RC4 cipher suite from the server's allowed cipher list.
+        - **Use modern AEAD ciphers:** Replace RC4 with AES-GCM or ChaCha20-Poly1305, which have no known practical attacks.
+      audit: |
+        ### Audit via nmap
+
+        Enumerate the cipher suites the server offers:
+
+        ```bash
+        nmap --script ssl-enum-ciphers -p 443 example.com
+        ```
+
+        A passing result shows no cipher names containing RC4, while a failing result lists one or more RC4 cipher suites, often flagged with a low letter grade.
       remediation:
         - id: apache
           desc: |
@@ -1455,7 +1555,7 @@ queries:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
       compliance/nist-csf-1: nist-csf-1-pr-ds-2
@@ -1469,19 +1569,29 @@ queries:
       tls.ciphers.none( /null/i )
     docs:
       desc: |
-        This check verifies that NULL cipher suites are not enabled, as these provide no encryption whatsoever despite using TLS.
+        This check ensures that the server is configured to reject all NULL cipher suites. NULL ciphers transmit data with no encryption at all despite negotiating a TLS session.
 
         **Why this matters**
 
-        NULL ciphers transmit data in plaintext, completely defeating the purpose of TLS:
+        - **No confidentiality:** All data travels in cleartext and is fully visible to anyone monitoring the network.
+        - **False security:** Applications believe they hold a secure TLS connection while the data is actually unprotected.
+        - **Credential exposure:** Passwords, session tokens, and other sensitive data are transmitted without any encryption.
+        - **Downgrade attacks:** Attackers may try to negotiate a NULL cipher whenever one remains enabled.
 
-          - **No confidentiality**: All data is transmitted in cleartext, fully visible to anyone monitoring the network.
-          - **False security**: Applications believe they have a "secure" TLS connection while data is actually unprotected.
-          - **Credential exposure**: Passwords, session tokens, and sensitive data are transmitted without any encryption.
-          - **Compliance violations**: NULL ciphers violate every security standard requiring encrypted data transmission.
-          - **Downgrade attacks**: Attackers may attempt to negotiate NULL ciphers if they remain enabled.
+        **Risk mitigation**
 
-        Ensure NULL ciphers (including aNULL and eNULL variants) are explicitly disabled in your TLS configuration.
+        - **Disable NULL ciphers explicitly:** Exclude the aNULL and eNULL cipher groups from the server's cipher configuration.
+        - **Require encrypting ciphers:** Allow only cipher suites that provide genuine confidentiality, such as AES-GCM or ChaCha20-Poly1305.
+      audit: |
+        ### Audit via nmap
+
+        Enumerate the cipher suites the server offers:
+
+        ```bash
+        nmap --script ssl-enum-ciphers -p 443 example.com
+        ```
+
+        A passing result shows only cipher suites that provide encryption, while a failing result lists cipher names containing NULL, which indicates unencrypted suites are accepted.
       remediation:
         - id: apache
           desc: |
@@ -1570,33 +1680,43 @@ queries:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
       compliance/nist-csf-1: nist-csf-1-pr-ds-2
       compliance/nist-csf-2: nist-csf-2-pr-ds-02
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-13
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
       compliance/pci-dss-4: pcidss-requirement-4-2-1
       compliance/soc2-2017: soc2-control-cc6-7-2
-      compliance/vda-isa-5: vda-isa-5-5-1-2
+      compliance/vda-isa-5: vda-isa-5-5-1-1
     mql: |
       tls.ciphers.none( /export/i )
     docs:
       desc: |
-        This check verifies that export-grade cipher suites are not enabled, as these use intentionally weakened encryption that can be easily broken.
+        This check ensures that the server is configured to reject all export-grade cipher suites. Export ciphers were deliberately weakened to satisfy 1990s-era US export rules and provide almost no real security.
 
         **Why this matters**
 
-        Export ciphers were deliberately weakened to comply with 1990s-era US export restrictions and provide minimal security:
+        - **Tiny key sizes:** Export ciphers use 40-bit or 56-bit keys that modern hardware can brute-force in minutes to hours.
+        - **FREAK attack:** Attackers can force a server to use an export-grade RSA key, which enables decryption of captured traffic.
+        - **Logjam attack:** Export-grade Diffie-Hellman parameters allow a downgrade attack against connections that should be secure.
+        - **Active exploitation:** These attacks are practical and have been demonstrated against real-world servers.
 
-          - **40/56-bit keys**: Export ciphers use key sizes that can be brute-forced in minutes to hours on modern hardware.
-          - **FREAK attack**: Attackers can force servers to use export-grade RSA keys, enabling decryption of captured traffic.
-          - **Logjam attack**: Export-grade Diffie-Hellman parameters allow downgrade attacks against supposedly secure connections.
-          - **Historical artifact**: Export restrictions were lifted decades ago, making these ciphers serve no legitimate purpose.
-          - **Active exploitation**: These attacks are practical and have been demonstrated against real-world servers.
+        **Risk mitigation**
 
-        Remove all export cipher suites and ensure only ciphers with adequate key sizes (128-bit or higher) are enabled.
+        - **Remove export suites:** Drop every export-grade cipher suite from the server's allowed cipher list.
+        - **Require adequate key sizes:** Allow only ciphers with 128-bit keys or stronger so brute-force attacks are infeasible.
+      audit: |
+        ### Audit via nmap
+
+        Enumerate the cipher suites the server offers:
+
+        ```bash
+        nmap --script ssl-enum-ciphers -p 443 example.com
+        ```
+
+        A passing result shows no cipher names containing EXPORT, while a failing result lists export-grade cipher suites, typically flagged with a failing letter grade.
       remediation:
         - id: apache
           desc: |
@@ -1682,7 +1802,7 @@ queries:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
       compliance/nist-csf-1: nist-csf-1-pr-ds-2
@@ -1691,24 +1811,34 @@ queries:
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
       compliance/pci-dss-4: pcidss-requirement-4-2-1
       compliance/soc2-2017: soc2-control-cc6-7-2
-      compliance/vda-isa-5: vda-isa-5-5-1-2
+      compliance/vda-isa-5: vda-isa-5-5-1-1
     mql: |
       tls.ciphers.none( /dh_anon/i )
     docs:
       desc: |
-        This check verifies that anonymous Diffie-Hellman cipher suites are not enabled, as these provide no server authentication.
+        This check ensures that the server is configured to reject all anonymous Diffie-Hellman cipher suites. Anonymous Diffie-Hellman performs key exchange without authenticating the server, which makes interception straightforward.
 
         **Why this matters**
 
-        Anonymous Diffie-Hellman performs key exchange without verifying server identity, enabling trivial man-in-the-middle attacks:
+        - **No authentication:** The server cannot prove its identity, so any attacker can intercept and relay traffic.
+        - **Trivial man-in-the-middle:** Unlike attacks that require forging a certificate, anonymous Diffie-Hellman makes interception simple.
+        - **Full traffic visibility:** An attacker can decrypt, inspect, and modify all traffic in both directions.
+        - **Certificate bypass:** Skipping authentication circumvents the entire PKI trust model.
 
-          - **No authentication**: The server cannot prove its identity, allowing any attacker to intercept and relay traffic.
-          - **Trivial MITM**: Unlike attacks requiring certificate forgery, anonymous DH makes interception straightforward.
-          - **Full traffic visibility**: Attackers can decrypt, inspect, and modify all traffic in both directions.
-          - **Credential theft**: Session tokens, passwords, and sensitive data can be captured without detection.
-          - **Certificate bypass**: The entire PKI trust model is circumvented when authentication is skipped.
+        **Risk mitigation**
 
-        Disable all ADH (anonymous Diffie-Hellman) cipher suites and use only authenticated key exchange mechanisms like ECDHE with certificate verification.
+        - **Disable anonymous suites:** Remove all ADH cipher suites from the server's cipher configuration.
+        - **Require authenticated key exchange:** Allow only mechanisms such as ECDHE that pair key exchange with certificate verification.
+      audit: |
+        ### Audit via nmap
+
+        Enumerate the cipher suites the server offers:
+
+        ```bash
+        nmap --script ssl-enum-ciphers -p 443 example.com
+        ```
+
+        A passing result shows no anonymous cipher names containing DH_anon or ADH, while a failing result lists anonymous Diffie-Hellman suites, which indicates unauthenticated key exchange is accepted.
       remediation:
         - id: apache
           desc: |
@@ -1794,32 +1924,53 @@ queries:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
       compliance/nist-csf-1: nist-csf-1-pr-ds-2
       compliance/nist-csf-2: nist-csf-2-pr-ds-02
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-13
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
       compliance/pci-dss-4: pcidss-requirement-4-2-1
       compliance/soc2-2017: soc2-control-cc6-7-2
-      compliance/vda-isa-5: vda-isa-5-5-1-2
+      compliance/vda-isa-5: vda-isa-5-5-1-1
     mql: tls.ciphers.none( /des|rc2|idea/i )
     docs:
       desc: |
-        This check verifies that weak block ciphers (DES, 3DES, RC2, IDEA) are not enabled, as these have insufficient security for modern threats.
+        This check ensures that the server is configured to reject cipher suites built on weak block ciphers such as DES, 3DES, RC2, and IDEA. These legacy algorithms no longer offer enough security margin to protect data in transit against modern attackers.
 
         **Why this matters**
 
-        Legacy block ciphers have fundamental weaknesses that make them unsuitable for protecting sensitive data:
+        - **DES brute-force:** A 56-bit DES key can be recovered in hours with dedicated hardware or rented cloud computing.
+        - **Sweet32 collisions:** 3DES and other 64-bit block ciphers are vulnerable to birthday attacks that recover plaintext once enough traffic is captured.
+        - **RC2 weaknesses:** RC2 has known related-key attacks and an inadequate security margin for current threats.
+        - **IDEA obsolescence:** IDEA is outdated and lacks the strength of modern algorithms even though it is not formally broken.
+        - **Standards alignment:** Current security baselines require AES-strength encryption and reject these legacy ciphers outright.
 
-          - **DES brute-force**: 56-bit DES keys can be cracked in hours using dedicated hardware or cloud computing.
-          - **Sweet32 attack**: 3DES and other 64-bit block ciphers are vulnerable to birthday attacks that recover plaintext after capturing enough traffic.
-          - **RC2 weaknesses**: RC2 has known related-key attacks and provides inadequate security margins.
-          - **IDEA obsolescence**: While not broken, IDEA is obsolete and lacks the security margin of modern algorithms.
-          - **Compliance failures**: Current security standards require AES or equivalent strength ciphers.
+        **Risk mitigation**
 
-        Replace weak block ciphers with AES-GCM or ChaCha20-Poly1305, which provide both strong encryption and authenticated data integrity.
+        - **Modern algorithms:** Replace weak block ciphers with AES-GCM or ChaCha20-Poly1305 to gain strong encryption with authenticated integrity.
+        - **Reduced attack surface:** Removing DES, 3DES, RC2, and IDEA eliminates the brute-force and Sweet32 exposure they introduce.
+      audit: |
+        ### Audit via openssl
+
+        Inspect the server's TLS configuration with the OpenSSL client:
+
+        ```bash
+        openssl s_client -connect example.com:443 -cipher DES-CBC3-SHA
+        ```
+
+        A handshake failure means the weak block cipher is rejected and the check passes, while a successful handshake means it is still accepted and the check fails.
+
+        ### Audit via nmap
+
+        Enumerate the server's supported ciphers:
+
+        ```bash
+        nmap --script ssl-enum-ciphers -p 443 example.com
+        ```
+
+        The check passes when no cipher containing DES, RC2, or IDEA appears in the output, and fails if any such cipher is listed.
       remediation:
         - id: apache
           desc: |
@@ -1909,32 +2060,53 @@ queries:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
       compliance/nist-csf-1: nist-csf-1-pr-ds-2
       compliance/nist-csf-2: nist-csf-2-pr-ds-02
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-13
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
       compliance/pci-dss-4: pcidss-requirement-4-2-1
       compliance/soc2-2017: soc2-control-cc6-7-2
-      compliance/vda-isa-5: vda-isa-5-5-1-2
+      compliance/vda-isa-5: vda-isa-5-5-1-1
     mql: tls.ciphers.none( /cbc/i )
     docs:
       desc: |
-        This check verifies that CBC (Cipher Block Chaining) mode cipher suites are not enabled, as CBC is vulnerable to multiple well-documented attacks.
+        This check ensures that the server is configured to reject cipher suites using CBC (Cipher Block Chaining) mode. CBC mode has a long history of exploitable flaws that authenticated encryption modes were designed to eliminate.
 
         **Why this matters**
 
-        CBC mode has fundamental vulnerabilities that authenticated encryption modes like GCM address:
+        - **BEAST attack:** Predictable IV selection in TLS 1.0 CBC mode enables chosen-plaintext attacks against encrypted traffic.
+        - **POODLE attack:** Padding oracle vulnerabilities in CBC allow byte-by-byte recovery of plaintext.
+        - **Lucky13 timing leaks:** Timing side channels in CBC padding verification leak information about the underlying plaintext.
+        - **Weak integrity guarantees:** CBC delivers only confidentiality, leaving room for undetected ciphertext manipulation in some scenarios.
+        - **Implementation complexity:** CBC padding rules create frequent opportunities for implementation errors.
 
-          - **BEAST attack**: TLS 1.0's predictable IV selection in CBC mode enables chosen-plaintext attacks.
-          - **POODLE attack**: Padding oracle vulnerabilities in CBC allow byte-by-byte plaintext recovery.
-          - **Lucky Thirteen**: Timing side-channels in CBC padding verification leak information about plaintext.
-          - **No integrity protection**: CBC provides only confidentiality; attackers can modify ciphertext without detection in some scenarios.
-          - **Implementation complexity**: CBC's padding requirements create opportunities for implementation errors.
+        **Risk mitigation**
 
-        Use AEAD (Authenticated Encryption with Associated Data) modes like AES-GCM or ChaCha20-Poly1305, which provide both confidentiality and integrity protection by design.
+        - **Authenticated encryption:** Use AEAD modes such as AES-GCM or ChaCha20-Poly1305, which provide confidentiality and integrity by design.
+        - **Protocol enforcement:** Enabling TLS 1.3 removes CBC suites entirely and forces authenticated encryption for every connection.
+      audit: |
+        ### Audit via openssl
+
+        Inspect the server's TLS configuration with the OpenSSL client:
+
+        ```bash
+        openssl s_client -connect example.com:443 -cipher ECDHE-RSA-AES128-SHA
+        ```
+
+        A handshake failure means the CBC cipher suite is rejected and the check passes, while a successful handshake means it is still accepted and the check fails.
+
+        ### Audit via nmap
+
+        Enumerate the server's supported ciphers:
+
+        ```bash
+        nmap --script ssl-enum-ciphers -p 443 example.com
+        ```
+
+        The check passes when no CBC cipher suite appears in the output, and fails if any CBC suite is listed.
       remediation:
         - id: apache
           desc: |
@@ -2026,32 +2198,53 @@ queries:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
       compliance/nist-csf-1: nist-csf-1-pr-ds-2
       compliance/nist-csf-2: nist-csf-2-pr-ds-02
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-12
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
       compliance/pci-dss-4: pcidss-requirement-4-2-1
       compliance/soc2-2017: soc2-control-cc6-7-2
-      compliance/vda-isa-5: vda-isa-5-5-1-2
+      compliance/vda-isa-5: vda-isa-5-5-1-1
     mql: tls.ciphers.none( /^tls_rsa/i )
     docs:
       desc: |
-        This check verifies that cipher suites using RSA key exchange (TLS_RSA_*) are not enabled, as these lack forward secrecy.
+        This check ensures that the server is configured to reject cipher suites that use static RSA key exchange. RSA key exchange ties the confidentiality of every session to a single long-term private key, creating lasting cryptographic risk.
 
         **Why this matters**
 
-        RSA key exchange creates long-term cryptographic risk because past traffic can be decrypted if the private key is ever compromised:
+        - **No forward secrecy:** Captured traffic can be decrypted retroactively if the server's private key is ever obtained.
+        - **Store now, decrypt later:** Adversaries can record encrypted traffic today and decrypt it years later once the key becomes available.
+        - **Broad key-compromise impact:** A single key compromise exposes all historical communications, not only future ones.
+        - **Quantum exposure:** Future quantum computers may break RSA and expose all traffic protected with RSA key exchange.
+        - **Protocol deprecation:** RSA key exchange was intentionally removed from TLS 1.3 because of these limitations.
 
-          - **No forward secrecy**: Captured traffic can be decrypted retroactively if the server's private key is later obtained.
-          - **"Store now, decrypt later"**: Adversaries may capture encrypted traffic today and decrypt it years later when the key becomes available.
-          - **Key compromise impact**: A single key compromise exposes all historical communications, not just future ones.
-          - **Quantum computing threat**: Future quantum computers may break RSA, exposing all traffic encrypted with RSA key exchange.
-          - **TLS 1.3 exclusion**: RSA key exchange was intentionally removed from TLS 1.3 due to its security limitations.
+        **Risk mitigation**
 
-        Use cipher suites with ECDHE or DHE key exchange, which generate ephemeral keys for each session and provide forward secrecy.
+        - **Ephemeral key exchange:** Use ECDHE or DHE cipher suites, which generate per-session keys and provide forward secrecy.
+        - **Contained breaches:** Forward secrecy limits a private-key compromise to a single session rather than the entire traffic history.
+      audit: |
+        ### Audit via openssl
+
+        Inspect the server's TLS configuration with the OpenSSL client:
+
+        ```bash
+        openssl s_client -connect example.com:443 -cipher AES128-GCM-SHA256
+        ```
+
+        A handshake failure means the RSA key exchange suite is rejected and the check passes, while a successful handshake means it is still accepted and the check fails.
+
+        ### Audit via nmap
+
+        Enumerate the server's supported ciphers:
+
+        ```bash
+        nmap --script ssl-enum-ciphers -p 443 example.com
+        ```
+
+        The check passes when no TLS_RSA cipher suite appears in the output, and fails if any RSA key exchange suite is listed.
       remediation:
         - id: apache
           desc: |
@@ -2141,32 +2334,53 @@ queries:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
       compliance/nist-csf-1: nist-csf-1-pr-ds-2
       compliance/nist-csf-2: nist-csf-2-pr-ds-02
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-13
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
       compliance/pci-dss-4: pcidss-requirement-4-2-1
       compliance/soc2-2017: soc2-control-cc6-7-2
-      compliance/vda-isa-5: vda-isa-5-5-1-2
+      compliance/vda-isa-5: vda-isa-5-5-1-1
     mql: tls.ciphers.none( /^old/i )
     docs:
       desc: |
-        This check verifies that legacy cipher suites from older TLS/SSL versions are not enabled, as these use outdated algorithms with known vulnerabilities.
+        This check ensures that the server is configured to reject legacy cipher suites carried over from older TLS and SSL versions. These suites combine outdated algorithms whose weaknesses compound into serious risk.
 
         **Why this matters**
 
-        Legacy cipher suites accumulate multiple security weaknesses that make them unsuitable for modern use:
+        - **Weak hash functions:** Older suites rely on MD5 or SHA-1, both of which have known collision vulnerabilities.
+        - **Weak encryption:** Algorithms such as RC4, DES, and 3DES no longer provide adequate protection against current threats.
+        - **Vulnerable modes:** CBC implementations in legacy suites are susceptible to padding oracle and timing attacks.
+        - **No forward secrecy:** Many legacy suites use static RSA key exchange and discard ephemeral keys entirely.
+        - **Cumulative risk:** The overlapping weaknesses in old suites compound into a much larger overall exposure.
 
-          - **Weak hash functions**: Older suites use MD5 or SHA-1, which have known collision vulnerabilities.
-          - **Weak encryption**: Algorithms like RC4, DES, and 3DES provide insufficient protection against current threats.
-          - **Vulnerable modes**: CBC mode implementations are susceptible to padding oracle and timing attacks.
-          - **No forward secrecy**: Many legacy suites use static RSA key exchange without ephemeral keys.
-          - **Cumulative risk**: The combination of weaknesses in old cipher suites compounds overall vulnerability.
+        **Risk mitigation**
 
-        Configure your server to use only modern cipher suites with AEAD encryption, forward secrecy, and SHA-256 or stronger hash functions.
+        - **Modern cipher selection:** Configure only current suites with AEAD encryption, forward secrecy, and SHA-256 or stronger hashing.
+        - **Tested baselines:** Adopt a vetted configuration so legacy suites are removed without breaking interoperability.
+      audit: |
+        ### Audit via openssl
+
+        Inspect the server's TLS configuration with the OpenSSL client:
+
+        ```bash
+        openssl s_client -connect example.com:443 -cipher RC4-SHA
+        ```
+
+        A handshake failure means the legacy cipher suite is rejected and the check passes, while a successful handshake means it is still accepted and the check fails.
+
+        ### Audit via nmap
+
+        Enumerate the server's supported ciphers:
+
+        ```bash
+        nmap --script ssl-enum-ciphers -p 443 example.com
+        ```
+
+        The check passes when only modern cipher suites appear and none are flagged as weak, and fails if any legacy suite is listed.
       remediation:
         - id: apache
           desc: |
@@ -2257,32 +2471,53 @@ queries:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
       compliance/nist-csf-1: nist-csf-1-pr-ds-2
       compliance/nist-csf-2: nist-csf-2-pr-ds-02
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-13
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
       compliance/pci-dss-4: pcidss-requirement-4-2-1
       compliance/soc2-2017: soc2-control-cc6-7-2
-      compliance/vda-isa-5: vda-isa-5-5-1-2
+      compliance/vda-isa-5: vda-isa-5-5-1-1
     mql: tls.ciphers.any( /chacha20_poly1305|gcm|ccm/i )
     docs:
       desc: |
-        This check verifies that the server's preferred cipher suites include AEAD ciphers such as AES-GCM, ChaCha20-Poly1305, or AES-CCM.
+        This check ensures that the server is configured to offer AEAD cipher suites such as AES-GCM, ChaCha20-Poly1305, or AES-CCM among its preferred options. AEAD ciphers combine encryption and authentication in one operation, which is the security baseline for modern TLS.
 
         **Why this matters**
 
-        AEAD ciphers provide superior security by combining encryption and authentication in a single operation:
+        - **Built-in integrity:** AEAD ciphers detect any tampering with ciphertext and block manipulation attacks.
+        - **No padding oracles:** Unlike CBC mode, AEAD ciphers are not exposed to padding-based timing attacks.
+        - **Strong performance:** AES-GCM uses hardware acceleration on modern CPUs to deliver high throughput.
+        - **Protocol direction:** TLS 1.3 uses AEAD ciphers exclusively, making them the standard for secure communication.
+        - **Fewer implementation errors:** Combining encryption and authentication reduces the chance of flawed implementations.
 
-          - **Built-in integrity**: AEAD ciphers detect any tampering with ciphertext, preventing manipulation attacks.
-          - **No padding oracle attacks**: Unlike CBC mode, AEAD ciphers are not vulnerable to padding-based timing attacks.
-          - **Performance benefits**: AES-GCM leverages hardware acceleration on modern CPUs for high throughput.
-          - **TLS 1.3 standard**: TLS 1.3 exclusively uses AEAD ciphers, making them the direction of secure communication.
-          - **Simpler implementation**: Combining encryption and authentication reduces the risk of implementation errors.
+        **Risk mitigation**
 
-        Prioritize AES-GCM and ChaCha20-Poly1305 cipher suites, which are widely supported and provide excellent security and performance.
+        - **Prioritized AEAD suites:** Place AES-GCM and ChaCha20-Poly1305 at the top of the cipher list for broad support and strong protection.
+        - **Hardware-aware coverage:** Offering both AES-GCM and ChaCha20-Poly1305 keeps performance high across devices with and without AES acceleration.
+      audit: |
+        ### Audit via openssl
+
+        Inspect the server's TLS configuration with the OpenSSL client:
+
+        ```bash
+        openssl s_client -connect example.com:443 -cipher ECDHE-RSA-AES128-GCM-SHA256
+        ```
+
+        A successful handshake means an AEAD cipher suite is accepted and the check passes, while a handshake failure means no AEAD suite is offered and the check fails.
+
+        ### Audit via nmap
+
+        Enumerate the server's supported ciphers:
+
+        ```bash
+        nmap --script ssl-enum-ciphers -p 443 example.com
+        ```
+
+        The check passes when at least one cipher containing GCM, CCM, or ChaCha20-Poly1305 appears in the output, and fails if none are listed.
       remediation:
         - id: apache
           desc: |
@@ -2376,32 +2611,53 @@ queries:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
       compliance/nist-csf-1: nist-csf-1-pr-ds-2
       compliance/nist-csf-2: nist-csf-2-pr-ds-02
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-12
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
       compliance/pci-dss-4: pcidss-requirement-4-2-1
       compliance/soc2-2017: soc2-control-cc6-7-2
-      compliance/vda-isa-5: vda-isa-5-5-1-2
+      compliance/vda-isa-5: vda-isa-5-5-1-1
     mql: tls.ciphers.any( /ecdhe_(rsa|ecdsa)|dhe_(rsa|dss)|cecpq/i )
     docs:
       desc: |
-        This check verifies that the server's cipher suites include options providing Perfect Forward Secrecy (PFS) through ECDHE or DHE key exchange.
+        This check ensures that the server is configured to offer cipher suites that provide Perfect Forward Secrecy through ECDHE or DHE key exchange. Forward secrecy keeps past sessions protected even if the server's private key is later compromised.
 
         **Why this matters**
 
-        Perfect Forward Secrecy protects past communications even if the server's private key is compromised in the future:
+        - **Ephemeral keys:** Each session negotiates unique key exchange parameters that are discarded once the session ends.
+        - **Retroactive protection:** Previously captured traffic stays confidential even if the server's long-term private key is obtained.
+        - **Quantum resilience:** Forward secrecy limits the damage future quantum attacks can do to historical traffic.
+        - **Regulatory expectations:** Many security frameworks now require forward secrecy for the protection of sensitive data.
+        - **Defense in depth:** Forward secrecy adds a protective layer that holds even when other controls fail.
 
-          - **Ephemeral keys**: Each session uses unique key exchange parameters that are discarded after use.
-          - **Retroactive protection**: Previously captured traffic cannot be decrypted even with the server's long-term private key.
-          - **Quantum resistance**: PFS limits the impact of future quantum computing attacks on historical data.
-          - **Regulatory compliance**: Many security frameworks now require forward secrecy for sensitive data protection.
-          - **Defense in depth**: PFS provides an additional layer of protection if other security controls fail.
+        **Risk mitigation**
 
-        Enable ECDHE-based cipher suites for optimal forward secrecy with good performance. TLS 1.3 provides forward secrecy by design for all connections.
+        - **ECDHE-based suites:** Enable ECDHE cipher suites for forward secrecy with strong performance, and back them with well-sized DHE parameters where DHE is used.
+        - **Protocol enforcement:** Enabling TLS 1.3 guarantees forward secrecy on every connection by design.
+      audit: |
+        ### Audit via openssl
+
+        Inspect the server's TLS configuration with the OpenSSL client:
+
+        ```bash
+        openssl s_client -connect example.com:443 -cipher ECDHE-RSA-AES128-GCM-SHA256
+        ```
+
+        A successful handshake means a forward-secret cipher suite is accepted and the check passes, while a handshake failure means no ECDHE or DHE suite is offered and the check fails.
+
+        ### Audit via nmap
+
+        Enumerate the server's supported ciphers:
+
+        ```bash
+        nmap --script ssl-enum-ciphers -p 443 example.com
+        ```
+
+        The check passes when at least one ECDHE or DHE cipher suite appears in the output, and fails if no forward-secret suite is listed.
       remediation:
         - id: apache
           desc: |
@@ -2497,7 +2753,7 @@ queries:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
       compliance/nist-csf-1: nist-csf-1-pr-ds-2
@@ -2520,19 +2776,40 @@ queries:
       }
     docs:
       desc: |
-        This check evaluates the server's mitigation of BEAST (Browser Exploit Against SSL/TLS) attacks by verifying protocol versions and cipher configuration.
+        This check ensures that the server is configured to negotiate only TLS 1.2 and TLS 1.3, or otherwise avoids the CBC cipher conditions that make the BEAST attack possible. BEAST (Browser Exploit Against SSL/TLS) abuses a flaw in the way TLS 1.0 chains cipher blocks and can be used to decrypt sensitive data such as session cookies.
 
         **Why this matters**
 
-        BEAST exploits a vulnerability in TLS 1.0's CBC implementation to decrypt sensitive data like session cookies:
+        - **Predictable initialization vector:** TLS 1.0 reuses the last ciphertext block as the initialization vector for the next record, enabling a chosen-plaintext attack against CBC ciphers.
+        - **Session hijacking:** A successful BEAST attack can recover authentication cookies, letting an attacker impersonate a legitimate user.
+        - **Client-side execution:** The attack requires malicious code running in the victim's browser to inject chosen plaintext alongside the target data.
+        - **Protocol-level flaw:** BEAST cannot be fully resolved within TLS 1.0 itself; it requires moving to a newer protocol or non-CBC ciphers.
+        - **Demonstrated weakness:** BEAST showed that TLS 1.0 has fundamental design weaknesses that justify retiring it entirely.
 
-          - **Predictable IV**: TLS 1.0 uses the last ciphertext block as the IV for the next record, enabling chosen-plaintext attacks.
-          - **Session hijacking**: Attackers can recover authentication cookies to impersonate users.
-          - **Client-side targeting**: The attack requires malicious code running in the victim's browser to inject chosen plaintext.
-          - **Protocol-level flaw**: BEAST cannot be fully mitigated without disabling TLS 1.0 or using non-CBC ciphers.
-          - **Historical significance**: BEAST demonstrated that TLS 1.0 has fundamental security weaknesses requiring protocol upgrades.
+        **Risk mitigation**
 
-        The recommended mitigation is to disable TLS 1.0 and TLS 1.1 entirely, using only TLS 1.2 and TLS 1.3 with AEAD cipher suites.
+        - **Disable legacy protocols:** Negotiate only TLS 1.2 and TLS 1.3 so the vulnerable TLS 1.0 CBC behavior is never reachable.
+        - **Use AEAD cipher suites:** Prefer authenticated encryption ciphers such as AES-GCM, which are immune to the BEAST chosen-plaintext technique, and never substitute RC4 as a workaround.
+      audit: |
+        ### Audit via nmap
+
+        Enumerate the server's supported protocols and ciphers:
+
+        ```bash
+        nmap --script ssl-enum-ciphers -p 443 example.com
+        ```
+
+        The check passes when the output lists only TLSv1.2 and TLSv1.3 sections, and fails when a TLSv1.0 section with CBC ciphers appears.
+
+        ### Audit via openssl
+
+        Inspect the server's TLS configuration with the OpenSSL client:
+
+        ```bash
+        openssl s_client -connect example.com:443 -tls1
+        ```
+
+        The check passes when this TLS 1.0 handshake is refused, and fails when the connection completes successfully.
       remediation:
         - id: apache
           desc: |
@@ -2634,15 +2911,15 @@ queries:
     impact: 95
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
       compliance/nist-csf-1: nist-csf-1-pr-ds-2
       compliance/nist-csf-2: nist-csf-2-pr-ds-02
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-17
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-15
       compliance/pci-dss-4: pcidss-requirement-4-2-1
       compliance/soc2-2017: soc2-control-cc6-7-2
       compliance/vda-isa-5: vda-isa-5-5-1-2
@@ -2650,18 +2927,30 @@ queries:
       tls.certificates.first.isVerified == true
     docs:
       desc: |
-        This check verifies that the server's certificate chain is fully validated and trusted by a recognized Certificate Authority. While individual checks for expiration, revocation, and self-signed certificates catch specific issues, this check holistically validates the entire trust chain.
+        This check ensures that the server is configured to present a certificate chain that validates fully against a recognized Certificate Authority. A chain that fails verification represents a fundamental trust failure that prevents clients from confirming the server's identity.
 
         **Why this matters**
 
-        A certificate chain that fails verification indicates a fundamental trust failure:
-          •  Clients cannot confirm they are communicating with the legitimate server.
-          •  Missing or incorrect intermediate certificates break the chain even if the leaf certificate is valid.
-          •  Chain ordering errors can cause validation failures in strict TLS implementations.
-          •  Cross-signed certificate transitions may leave gaps if the chain is not properly updated.
-          •  Some clients silently fall back to insecure connections when chain verification fails.
+        - **Unconfirmed identity:** When the chain does not verify, clients cannot establish that they are communicating with the legitimate server rather than an impostor.
+        - **Missing intermediates:** An absent or incorrect intermediate certificate breaks the chain even when the leaf certificate itself is valid.
+        - **Chain ordering errors:** Certificates presented out of order can cause validation failures in strict TLS implementations.
+        - **Cross-signing gaps:** Transitions between cross-signed certificates can leave the chain incomplete if it is not updated correctly.
+        - **Insecure fallback:** Some clients silently downgrade to an insecure connection when chain verification fails, masking the underlying problem.
 
-        Ensure your server presents the complete and correct certificate chain, including all required intermediate certificates in the proper order.
+        **Risk mitigation**
+
+        - **Serve the full chain:** Configure the server to present the leaf certificate followed by every required intermediate in the correct order.
+        - **Validate after changes:** Verify the chain against a current trust store whenever certificates are renewed or rotated to catch breaks before clients do.
+      audit: |
+        ### Audit via openssl
+
+        Inspect the server's TLS configuration with the OpenSSL client:
+
+        ```bash
+        openssl s_client -connect example.com:443 -showcerts
+        ```
+
+        The check passes when the output reports `Verify return code: 0 (ok)` with a complete certificate list, and fails when the verify return code is non-zero or intermediates are missing.
       remediation:
         - id: apache
           desc: |
@@ -2808,7 +3097,7 @@ queries:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
       compliance/nist-csf-1: nist-csf-1-pr-ds-2
@@ -2822,18 +3111,40 @@ queries:
       tls.versions.contains("tls1.3")
     docs:
       desc: |
-        This check verifies that the server supports TLS 1.3, the latest version of the TLS protocol. While TLS 1.2 remains acceptable, TLS 1.3 provides significant security and performance improvements.
+        This check ensures that the server is configured to support TLS 1.3, the latest version of the TLS protocol. Offering TLS 1.3 lets clients negotiate the strongest available protocol and benefit from its security and performance improvements over earlier versions.
 
         **Why this matters**
 
-        TLS 1.3 addresses many weaknesses present in earlier TLS versions:
-          •  Mandatory forward secrecy: All cipher suites in TLS 1.3 provide forward secrecy by design, eliminating the risk of retroactive decryption.
-          •  Reduced handshake: TLS 1.3 completes in one round-trip (vs two in TLS 1.2), reducing latency and attack surface during negotiation.
-          •  Simplified cipher suites: Only AEAD ciphers are supported, removing weak algorithm options entirely.
-          •  Encrypted handshake: More of the handshake is encrypted, reducing information leakage to passive observers.
-          •  No renegotiation: TLS 1.3 removes the insecure renegotiation mechanism that has been exploited in past attacks.
+        - **Mandatory forward secrecy:** Every TLS 1.3 cipher suite provides forward secrecy by design, eliminating the risk of retroactive decryption if a key is later compromised.
+        - **Reduced handshake:** The TLS 1.3 handshake completes in a single round trip, lowering latency and shrinking the attack surface during negotiation.
+        - **Simplified cipher suites:** TLS 1.3 supports only AEAD ciphers, removing weak and legacy algorithm options entirely.
+        - **Encrypted handshake:** More of the TLS 1.3 handshake is encrypted, reducing the information available to passive observers.
+        - **No renegotiation:** TLS 1.3 removes the insecure renegotiation mechanism that has been exploited in past attacks.
 
-        Enable TLS 1.3 alongside TLS 1.2 for maximum compatibility and security.
+        **Risk mitigation**
+
+        - **Enable TLS 1.3:** Configure the server to offer TLS 1.3 so clients negotiate the most secure protocol available.
+        - **Keep TLS 1.2 alongside it:** Retain TLS 1.2 support for compatibility with older clients while disabling TLS 1.0 and TLS 1.1.
+      audit: |
+        ### Audit via nmap
+
+        Enumerate the server's supported protocols and ciphers:
+
+        ```bash
+        nmap --script ssl-enum-ciphers -p 443 example.com
+        ```
+
+        The check passes when the output includes a TLSv1.3 section, and fails when no TLSv1.3 section is listed.
+
+        ### Audit via openssl
+
+        Inspect the server's TLS configuration with the OpenSSL client:
+
+        ```bash
+        openssl s_client -connect example.com:443 -tls1_3
+        ```
+
+        The check passes when the TLS 1.3 handshake completes and reports `Protocol: TLSv1.3`, and fails when the connection is refused.
       remediation:
         - id: apache
           desc: |
@@ -2914,15 +3225,15 @@ queries:
     impact: 60
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-13
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
       compliance/nist-csf-1: nist-csf-1-pr-ds-2
       compliance/nist-csf-2: nist-csf-2-pr-ds-02
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-17
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-15
       compliance/pci-dss-4: pcidss-requirement-4-2-1
       compliance/soc2-2017: soc2-control-cc6-7-2
       compliance/vda-isa-5: vda-isa-5-5-1-2
@@ -2930,18 +3241,30 @@ queries:
       tls.certificates.first.ocspServer.length > 0
     docs:
       desc: |
-        This check verifies that the server's leaf certificate includes at least one OCSP (Online Certificate Status Protocol) responder URL in its Authority Information Access (AIA) extension. OCSP enables clients to check the real-time revocation status of certificates.
+        This check ensures that the server's leaf certificate is issued with at least one OCSP responder URL in its Authority Information Access extension. An OCSP responder lets clients confirm the real-time revocation status of the certificate.
 
         **Why this matters**
 
-        Without an OCSP responder, clients have limited ability to verify certificate revocation status:
-          •  Revoked certificates may continue to be trusted because clients cannot check their status.
-          •  CRL-only revocation checking requires downloading potentially large lists, causing performance issues.
-          •  OCSP stapling (a performance optimization) requires an OCSP responder URL in the certificate.
-          •  Browser behavior varies when revocation checking is unavailable: some fail open (accept the certificate), creating a security gap.
-          •  Compliance frameworks increasingly require functional revocation checking mechanisms.
+        - **Undetected revocation:** Without an OCSP responder, clients cannot determine that a certificate has been revoked and may continue to trust it.
+        - **Costly CRL fallback:** Relying solely on certificate revocation lists forces clients to download large files, degrading connection performance.
+        - **Stapling prerequisite:** OCSP stapling, which improves both privacy and performance, requires an OCSP responder URL in the certificate.
+        - **Inconsistent client behavior:** When revocation checking is unavailable, some clients fail open and accept the certificate anyway, creating a security gap.
+        - **Compliance expectations:** Many security frameworks expect a functional revocation checking mechanism to be in place.
 
-        Ensure your Certificate Authority includes OCSP responder URLs in issued certificates. Most reputable CAs include this by default.
+        **Risk mitigation**
+
+        - **Use a CA that publishes OCSP:** Obtain certificates from a Certificate Authority that includes OCSP responder URLs, which most reputable CAs do by default.
+        - **Enable OCSP stapling:** Have the server staple a fresh OCSP response so clients receive revocation status without contacting the responder directly.
+      audit: |
+        ### Audit via openssl
+
+        Inspect the server's TLS configuration with the OpenSSL client:
+
+        ```bash
+        openssl s_client -connect example.com:443 -status
+        ```
+
+        The check passes when the output reports `OCSP Response Status: successful`, and fails when no OCSP response is returned or the certificate advertises no responder URL.
       remediation:
         - id: apache
           desc: |
@@ -3063,15 +3386,15 @@ queries:
     impact: 50
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
       compliance/nist-csf-1: nist-csf-1-pr-ds-2
       compliance/nist-csf-2: nist-csf-2-pr-ds-02
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-17
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-15
       compliance/pci-dss-4: pcidss-requirement-4-2-1
       compliance/soc2-2017: soc2-control-cc6-7-2
       compliance/vda-isa-5: vda-isa-5-5-1-2
@@ -3081,18 +3404,32 @@ queries:
       }
     docs:
       desc: |
-        This check verifies that when a client connects without Server Name Indication (SNI), the server does not expose a different certificate that could reveal internal hostnames, other hosted services, or infrastructure details.
+        This check ensures that the server is configured to avoid presenting a different default certificate when a client connects without Server Name Indication. A divergent default certificate can disclose internal hostnames, other hosted services, or infrastructure details to anyone who connects.
 
         **Why this matters**
 
-        Exposing a different certificate on non-SNI connections can leak sensitive information:
-          •  Internal hostnames or service names may be revealed through the default certificate's Common Name or SAN fields.
-          •  Attackers can enumerate other services hosted on the same server or IP address.
-          •  The default certificate may belong to a different organization or service, revealing shared hosting relationships.
-          •  Information gathered from certificate leakage aids reconnaissance for targeted attacks.
-          •  Legacy or outdated certificates served as defaults may have weaker security properties.
+        - **Hostname disclosure:** Internal hostnames or service names can be revealed through the default certificate's Common Name or Subject Alternative Name fields.
+        - **Service enumeration:** A distinct default certificate lets an attacker discover other services hosted on the same server or IP address.
+        - **Hosting relationships:** A default certificate belonging to another organization exposes shared hosting arrangements that should remain private.
+        - **Reconnaissance value:** Information gathered from leaked certificates aids attackers in planning targeted attacks.
+        - **Weaker defaults:** Legacy or outdated certificates served as the default may carry weaker security properties than the intended certificate.
 
-        Configure your server to either require SNI or serve the same certificate regardless of whether SNI is present.
+        **Risk mitigation**
+
+        - **Serve a consistent certificate:** Configure the server to present the same certificate whether or not SNI is supplied, so non-SNI connections reveal nothing extra.
+        - **Restrict the default:** Where possible, require SNI or set the default virtual host to a benign certificate that exposes no internal detail.
+      audit: |
+        ### Audit via openssl
+
+        Inspect the server's TLS configuration with the OpenSSL client:
+
+        ```bash
+        openssl s_client -connect example.com:443 -showcerts
+        ```
+
+        First connect without `-servername` to capture the default certificate, then connect again with `-servername example.com` to capture the SNI certificate.
+
+        The check passes when both connections return a certificate with the same Common Name, and fails when the non-SNI connection returns a different certificate.
       remediation:
         - id: apache
           desc: |
