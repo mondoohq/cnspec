@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-vllm-security
     name: Mondoo vLLM Security
-    version: 1.0.0
+    version: 1.0.1
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -66,10 +66,10 @@ queries:
     title: Ensure CORS does not allow arbitrary origins
     impact: 70
     tags:
-      compliance/bsi-sys-1-5: "false"
+      compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
       compliance/dora: dora-art-9
-      compliance/hipaa: "false"
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
       compliance/iso-27001-2022: iso-27001-2022-a-8-20
       compliance/nis-2: nis-2-21-2-i
       compliance/nist-csf-1: nist-csf-1-pr-ac-5
@@ -78,16 +78,42 @@ queries:
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
       compliance/pci-dss-4: pcidss-requirement-1-3-1
       compliance/soc2-2017: soc2-control-cc6-6-1
-      compliance/vda-isa-5: "false"
+      compliance/vda-isa-5: vda-isa-5-5-2-7
     mql: |
       vllm.server.corsConfigured == false || vllm.server.corsAllowsAnyOrigin == false
     docs:
       desc: |
-        This check verifies that the vLLM endpoint does not accept arbitrary browser origins during CORS preflight probing.
+        This check ensures that the vLLM server is configured to reject arbitrary browser origins during cross-origin resource sharing preflight negotiation. vLLM applies no CORS middleware by default, so a wildcard origin is only present when an operator explicitly enables it, and that setting should be scoped to a known list of trusted applications.
 
         **Why this matters**
 
-        Wide-open CORS allows browser-based applications from untrusted origins to interact with the vLLM API from a user's browser context. When combined with permissive network access or weak authentication controls, this expands the attack surface for prompt abuse, data exposure, and unintended model consumption.
+        - **Browser attack surface:** A wildcard origin lets any website a user visits issue authenticated requests to the inference API from the victim's browser session.
+        - **Prompt and data abuse:** Untrusted web pages can submit prompts and read completions, exposing proprietary inputs and model responses to third parties.
+        - **Capacity consumption:** Unrestricted origins make it easy to drive model traffic from arbitrary client-side code, consuming GPU capacity that should be reserved for sanctioned applications.
+
+        **Risk mitigation**
+
+        - **Origin allowlisting:** Limiting CORS to the exact origins that need access blocks cross-origin requests from every other site.
+        - **Boundary enforcement:** Applying CORS policy at a reverse proxy or API gateway keeps the rule consistent even when vLLM is reachable through multiple paths.
+      audit: |
+        ### Audit via HTTP request
+
+        Probe the running vLLM server and inspect the response:
+
+        ```bash
+        curl -s -i -X OPTIONS https://vllm.example.com:8000/v1/completions \
+          -H 'Origin: https://attacker.example' \
+          -H 'Access-Control-Request-Method: POST'
+        ```
+
+        A passing result omits the `Access-Control-Allow-Origin` header or echoes only an approved origin; a failing result returns `Access-Control-Allow-Origin: *` or reflects the arbitrary attacker origin.
+
+        ### Audit via server configuration
+
+        1. Inspect the `vllm serve` or `python -m vllm.entrypoints.openai.api_server` launch command for `--allowed-origins` or a custom `--middleware` that installs CORS handling.
+        2. If vLLM runs behind a reverse proxy or API gateway, review that component's CORS configuration for wildcard origin rules.
+
+        A passing result shows CORS limited to a fixed list of trusted origins; a failing result shows a wildcard origin or reflected request origins.
       remediation: |
         Restrict CORS to the exact origins that are allowed to call the vLLM API. When vLLM is exposed through a reverse proxy or API gateway, enforce CORS policy there and avoid wildcard origins.
     refs:
@@ -99,28 +125,52 @@ queries:
     title: Ensure non-v1 inference routes are not anonymously accessible
     impact: 100
     tags:
-      compliance/bsi-sys-1-5: "false"
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-04
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-16
       compliance/dora: dora-art-9
-      compliance/hipaa: "false"
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
       compliance/iso-27001-2022: iso-27001-2022-a-8-3
       compliance/nis-2: nis-2-21-2-i
-      compliance/nist-csf-1: nist-csf-1-pr-ac-4
-      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
       compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
-      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/pci-dss-4: pcidss-requirement-8-3-1
       compliance/soc2-2017: soc2-control-cc6-1-3
-      compliance/vda-isa-5: "false"
+      compliance/vda-isa-5: vda-isa-5-4-1-2
     mql: |
       vllm.endpoints.where(category == "custom-inference").none(anonymousAccessible == true)
     docs:
       desc: |
-        This check verifies that non-`/v1` inference routes such as `/invocations`, `/inference/v1/generate`, `/pooling`, `/classify`, `/score`, and `/rerank` are not anonymously accessible.
+        This check ensures that non-`/v1` inference routes such as `/invocations`, `/inference/v1/generate`, `/pooling`, `/classify`, `/score`, and `/rerank` are configured to reject anonymous requests. vLLM API-key authentication is scoped to the OpenAI-compatible `/v1/*` routes, so these additional inference endpoints stay reachable unless an upstream control protects them.
 
         **Why this matters**
 
-        vLLM API-key authentication is scoped to OpenAI-compatible `/v1/*` routes. Non-`/v1` inference endpoints can remain reachable unless protected by an upstream control. Leaving these routes anonymous can bypass the intended API authentication boundary and allow unauthorized model use.
+        - **Authentication bypass:** Non-`/v1` routes sit outside the built-in API-key boundary, so anonymous access defeats the intended authentication model.
+        - **Unauthorized model use:** Open inference routes let anyone who can reach the endpoint generate completions, embeddings, or rankings without credentials.
+        - **Capacity abuse:** Unauthenticated inference traffic consumes GPU and memory capacity reserved for sanctioned workloads.
+
+        **Risk mitigation**
+
+        - **Edge enforcement:** Requiring authentication at a reverse proxy, API gateway, or ingress controller closes the gap left by route-scoped API keys.
+        - **Surface reduction:** Denying unused inference routes entirely removes them as an attack and abuse path.
+      audit: |
+        ### Audit via HTTP request
+
+        Probe the running vLLM server and inspect the response:
+
+        ```bash
+        curl -s -i -X POST https://vllm.example.com:8000/invocations -d '{}'
+        ```
+
+        A passing result returns 401, 403, or 404 for an unauthenticated request; a failing result returns 200 or another success status that processes the inference payload without credentials.
+
+        ### Audit via server configuration
+
+        1. Inspect the `vllm serve` launch command and confirm `--api-key` is set, while noting that this key only protects `/v1/*` routes.
+        2. Review the reverse proxy, API gateway, ingress, or firewall configuration that fronts vLLM for an authentication or deny rule covering non-`/v1` inference paths.
+
+        A passing result shows an upstream rule that authenticates or blocks these routes; a failing result shows the routes forwarded to vLLM with no authentication.
       remediation: |
         Restrict non-`/v1` inference routes at a reverse proxy, API gateway, ingress controller, or firewall. If these routes are not required, deny them entirely. If they are required, enforce authentication and authorization before forwarding requests to vLLM.
     refs:
@@ -132,28 +182,52 @@ queries:
     title: Ensure development routes are not exposed
     impact: 90
     tags:
-      compliance/bsi-sys-1-5: "false"
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-05
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-04
       compliance/dora: dora-art-9
-      compliance/hipaa: "false"
+      compliance/hipaa: false
       compliance/iso-27001-2022: iso-27001-2022-a-8-31
       compliance/nis-2: nis-2-21-2-e
       compliance/nist-csf-1: nist-csf-1-pr-ds-7
       compliance/nist-csf-2: nist-csf-2-pr-ps-01
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-7
       compliance/nist-sp-800-171: nist-sp-800-171--3-4-6
-      compliance/pci-dss-4: pcidss-requirement-2-2-6
+      compliance/pci-dss-4: pcidss-requirement-2-2-4
       compliance/soc2-2017: soc2-control-cc6-1-7
-      compliance/vda-isa-5: "false"
+      compliance/vda-isa-5: vda-isa-5-5-2-2
     mql: |
       vllm.server.devEndpointsExposed == false
     docs:
       desc: |
-        This check verifies that development-oriented routes such as `/server_info`, cache reset routes, sleep and wake routes, and collective RPC routes are not anonymously exposed.
+        This check ensures that development-oriented routes such as `/server_info`, cache reset routes, sleep and wake routes, and collective RPC routes are configured to be unreachable by anonymous clients. These routes exist for debugging and internal coordination and are not required by normal inference clients.
 
         **Why this matters**
 
-        Development endpoints can expose sensitive runtime details or alter server behavior. These routes are not needed for normal inference clients and should not be reachable from untrusted networks.
+        - **Runtime disclosure:** Development routes can reveal internal configuration and runtime state that aid an attacker's reconnaissance.
+        - **Behavior manipulation:** Cache reset, sleep, and wake routes let a caller alter how the server behaves outside the supported administration path.
+        - **Unintended control surface:** Collective RPC and server-info routes broaden the attack surface well beyond ordinary completion traffic.
+
+        **Risk mitigation**
+
+        - **Route disablement:** Turning off development routes when they are not needed removes the exposure entirely.
+        - **Network restriction:** Blocking these routes at the proxy, gateway, ingress, or firewall keeps any required debug access on trusted internal networks.
+      audit: |
+        ### Audit via HTTP request
+
+        Probe the running vLLM server and inspect the response:
+
+        ```bash
+        curl -s -i https://vllm.example.com:8000/server_info
+        ```
+
+        A passing result returns 401, 403, or 404; a failing result returns 200 with server runtime details or accepts a state-changing development request.
+
+        ### Audit via server configuration
+
+        1. Inspect the `vllm serve` launch command and environment for flags that enable development or debug endpoints.
+        2. Review the reverse proxy, API gateway, ingress, or firewall rules for entries that block development and server-info paths.
+
+        A passing result shows development routes disabled or blocked before they reach untrusted clients; a failing result shows them reachable anonymously.
       remediation: |
         Disable development routes when possible and block them at the reverse proxy, API gateway, ingress controller, or firewall. Expose administrative or debug routes only on trusted internal networks.
     refs:
@@ -163,28 +237,52 @@ queries:
     title: Ensure FastAPI documentation is not exposed
     impact: 60
     tags:
-      compliance/bsi-sys-1-5: "false"
+      compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-04
       compliance/dora: dora-art-9
-      compliance/hipaa: "false"
+      compliance/hipaa: false
       compliance/iso-27001-2022: iso-27001-2022-a-8-9
       compliance/nis-2: nis-2-21-2-e
       compliance/nist-csf-1: nist-csf-1-pr-ip-1
       compliance/nist-csf-2: nist-csf-2-pr-ps-01
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-7
       compliance/nist-sp-800-171: nist-sp-800-171--3-4-6
-      compliance/pci-dss-4: pcidss-requirement-2-2-6
+      compliance/pci-dss-4: pcidss-requirement-2-2-4
       compliance/soc2-2017: soc2-control-cc6-1-7
-      compliance/vda-isa-5: "false"
+      compliance/vda-isa-5: vda-isa-5-5-2-7
     mql: |
       vllm.server.docsExposed == false
     docs:
       desc: |
-        This check verifies that the FastAPI `/docs` interface is not anonymously exposed.
+        This check ensures that the FastAPI `/docs` interactive documentation interface is configured to be unreachable by anonymous clients. vLLM serves the FastAPI documentation pages by default unless `--disable-fastapi-docs` is set, so an exposed `/docs` page is common in unhardened deployments.
 
         **Why this matters**
 
-        Interactive API documentation makes endpoint discovery easier for attackers. It can reveal available routes, request shapes, and operational surfaces that help an attacker plan unauthorized access or abuse.
+        - **Endpoint discovery:** The interactive documentation enumerates available routes, making it easy for an attacker to map the API.
+        - **Request blueprinting:** It reveals request shapes and parameters that help an attacker craft valid calls against sensitive routes.
+        - **Operational disclosure:** It can surface optional or operational endpoints that an attacker would otherwise have to guess.
+
+        **Risk mitigation**
+
+        - **Documentation disablement:** Starting vLLM with `--disable-fastapi-docs` removes the `/docs`, `/redoc`, and `/openapi.json` pages.
+        - **Access restriction:** When documentation must remain available, limiting it to trusted networks or authenticated administrators keeps it out of reach of anonymous users.
+      audit: |
+        ### Audit via HTTP request
+
+        Probe the running vLLM server and inspect the response:
+
+        ```bash
+        curl -s -i https://vllm.example.com:8000/docs
+        ```
+
+        A passing result returns 401, 403, or 404; a failing result returns 200 with the interactive Swagger UI documentation page.
+
+        ### Audit via server configuration
+
+        1. Inspect the `vllm serve` launch command for the `--disable-fastapi-docs` flag.
+        2. If documentation is intentionally served, review the reverse proxy or gateway for an authentication or network restriction on `/docs`, `/redoc`, and `/openapi.json`.
+
+        A passing result shows `--disable-fastapi-docs` set or the documentation paths restricted; a failing result shows the documentation served openly.
       remediation: |
         Disable FastAPI documentation in vLLM when it is not explicitly required. If documentation must remain available, restrict it to trusted networks or authenticated administrative users through a proxy or gateway.
     refs:
@@ -194,28 +292,52 @@ queries:
     title: Ensure load tracking is not anonymously exposed
     impact: 60
     tags:
-      compliance/bsi-sys-1-5: "false"
+      compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-04
       compliance/dora: dora-art-9
-      compliance/hipaa: "false"
+      compliance/hipaa: false
       compliance/iso-27001-2022: iso-27001-2022-a-8-9
       compliance/nis-2: nis-2-21-2-e
       compliance/nist-csf-1: nist-csf-1-pr-ip-1
       compliance/nist-csf-2: nist-csf-2-pr-ps-01
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-7
       compliance/nist-sp-800-171: nist-sp-800-171--3-4-6
-      compliance/pci-dss-4: pcidss-requirement-2-2-6
+      compliance/pci-dss-4: pcidss-requirement-2-2-4
       compliance/soc2-2017: soc2-control-cc6-1-7
-      compliance/vda-isa-5: "false"
+      compliance/vda-isa-5: vda-isa-5-5-2-7
     mql: |
       vllm.metrics.loadEndpointExposed == false
     docs:
       desc: |
-        This check verifies that `/load` is not anonymously exposed.
+        This check ensures that the `/load` endpoint is configured to be unreachable by anonymous clients. The load endpoint reports current server utilization, and that operational signal should only be available to trusted monitoring or autoscaling infrastructure.
 
         **Why this matters**
 
-        Load data can reveal operational state and utilization patterns. Attackers can use this information to time abuse, infer tenant activity, or identify periods when denial-of-service attempts are more likely to succeed.
+        - **Operational intelligence:** Load data reveals utilization patterns that help an attacker understand how the deployment behaves.
+        - **Attack timing:** Visible capacity figures let an attacker time denial-of-service attempts for periods when the server is already under pressure.
+        - **Tenant inference:** Activity patterns in load data can expose when and how heavily tenants are using the service.
+
+        **Risk mitigation**
+
+        - **Client blocking:** Denying `/load` to untrusted clients keeps utilization data private.
+        - **Trusted exposure:** When load data is needed for autoscaling or monitoring, serving it only to trusted infrastructure over an authenticated or private path limits who can see it.
+      audit: |
+        ### Audit via HTTP request
+
+        Probe the running vLLM server and inspect the response:
+
+        ```bash
+        curl -s -i https://vllm.example.com:8000/load
+        ```
+
+        A passing result returns 401, 403, or 404; a failing result returns 200 with current server load and utilization data.
+
+        ### Audit via server configuration
+
+        1. Inspect the `vllm serve` launch command and environment for settings that enable load tracking endpoints.
+        2. Review the reverse proxy, API gateway, ingress, or firewall configuration for a rule that restricts `/load` to trusted monitoring or autoscaling components.
+
+        A passing result shows `/load` blocked or limited to trusted infrastructure; a failing result shows it reachable by anonymous clients.
       remediation: |
         Block `/load` for untrusted clients. If load data is required for autoscaling or monitoring, expose it only to trusted infrastructure components over an authenticated or private path.
     refs:
@@ -225,28 +347,52 @@ queries:
     title: Ensure Prometheus metrics are not anonymously exposed
     impact: 70
     tags:
-      compliance/bsi-sys-1-5: "false"
+      compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-04
       compliance/dora: dora-art-9
-      compliance/hipaa: "false"
+      compliance/hipaa: false
       compliance/iso-27001-2022: iso-27001-2022-a-8-9
       compliance/nis-2: nis-2-21-2-e
       compliance/nist-csf-1: nist-csf-1-pr-ip-1
       compliance/nist-csf-2: nist-csf-2-pr-ps-01
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-7
       compliance/nist-sp-800-171: nist-sp-800-171--3-4-6
-      compliance/pci-dss-4: pcidss-requirement-2-2-6
+      compliance/pci-dss-4: pcidss-requirement-2-2-4
       compliance/soc2-2017: soc2-control-cc6-1-7
-      compliance/vda-isa-5: "false"
+      compliance/vda-isa-5: vda-isa-5-5-2-7
     mql: |
       vllm.metrics.prometheusExposed == false
     docs:
       desc: |
-        This check verifies that `/metrics` is not anonymously exposed.
+        This check ensures that the `/metrics` Prometheus endpoint is configured to be unreachable by anonymous clients. vLLM exposes a Prometheus metrics endpoint for observability, and that detailed operational data should only be scraped by the monitoring system.
 
         **Why this matters**
 
-        Metrics can reveal model activity, request pressure, cache behavior, deployment capacity, and runtime characteristics. Anonymous access gives attackers operational intelligence that can support denial-of-service timing, capacity abuse, or targeted exploitation.
+        - **Operational intelligence:** Metrics expose model activity, request pressure, cache behavior, and deployment capacity to anyone who can read them.
+        - **Attack timing:** Runtime characteristics in the metrics help an attacker time denial-of-service attempts and capacity abuse.
+        - **Targeted exploitation:** Detailed serving statistics give an attacker context for tuning a more precise attack against the deployment.
+
+        **Risk mitigation**
+
+        - **Monitoring-only access:** Restricting `/metrics` to the monitoring system keeps operational data away from untrusted clients.
+        - **Transport controls:** Enforcing network allowlists, mTLS, authentication, or a private scrape path before requests reach vLLM prevents anonymous collection.
+      audit: |
+        ### Audit via HTTP request
+
+        Probe the running vLLM server and inspect the response:
+
+        ```bash
+        curl -s -i https://vllm.example.com:8000/metrics
+        ```
+
+        A passing result returns 401, 403, or 404; a failing result returns 200 with Prometheus-formatted metrics data.
+
+        ### Audit via server configuration
+
+        1. Inspect the `vllm serve` launch command and environment for any metrics-related settings.
+        2. Review the reverse proxy, API gateway, ingress, or firewall rules for a network allowlist, mTLS, or authentication requirement that limits `/metrics` to the monitoring system.
+
+        A passing result shows `/metrics` restricted to trusted monitoring infrastructure; a failing result shows it scrapeable by anonymous clients.
       remediation: |
         Restrict `/metrics` to the monitoring system only. Enforce network allow-lists, mTLS, authentication, or a private monitoring path before forwarding metrics requests to vLLM.
     refs:
@@ -256,10 +402,10 @@ queries:
     title: Ensure OpenAI-compatible routes require authentication
     impact: 100
     tags:
-      compliance/bsi-sys-1-5: "false"
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-14
       compliance/dora: dora-art-9
-      compliance/hipaa: "false"
+      compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
       compliance/iso-27001-2022: iso-27001-2022-a-8-5
       compliance/nis-2: nis-2-21-2-i
       compliance/nist-csf-1: nist-csf-1-pr-ac-7
@@ -268,16 +414,43 @@ queries:
       compliance/nist-sp-800-171: nist-sp-800-171--3-5-2
       compliance/pci-dss-4: pcidss-requirement-8-3-1
       compliance/soc2-2017: soc2-control-cc6-1-4
-      compliance/vda-isa-5: "false"
+      compliance/vda-isa-5: vda-isa-5-4-1-2
     mql: |
       vllm.endpoints.where(category == "openai" && present == true).all(requiresAuth == true)
     docs:
       desc: |
-        This check verifies that observed OpenAI-compatible vLLM routes reject anonymous requests with an authentication-like response.
+        This check ensures that the OpenAI-compatible routes such as `/v1/completions` and `/v1/chat/completions` are configured to reject anonymous requests with an authentication-style response. vLLM serves these routes without authentication unless `--api-key` is set, so an unhardened deployment exposes its primary inference surface to anyone who can reach it.
 
         **Why this matters**
 
-        OpenAI-compatible routes expose the primary model inference surface. Anonymous access allows anyone who can reach the endpoint to submit prompts, generate completions, consume GPU capacity, and potentially extract sensitive model behavior or data returned by connected application workflows.
+        - **Primary inference exposure:** The OpenAI-compatible routes are the main model surface, and anonymous access lets anyone submit prompts and read completions.
+        - **GPU capacity abuse:** Unauthenticated callers can consume expensive GPU capacity that should be reserved for paying or sanctioned clients.
+        - **Data and behavior extraction:** Open inference access can expose sensitive model behavior and data returned by connected application workflows.
+
+        **Risk mitigation**
+
+        - **API-key enforcement:** Setting `--api-key` makes vLLM require an `Authorization: Bearer` token on `/v1/*` routes and reject requests without it.
+        - **Gateway authentication:** Placing the server behind an authenticated gateway or reverse proxy adds a second layer that blocks anonymous traffic.
+        - **Token control:** Distributing the token only to trusted clients keeps the authentication boundary meaningful.
+      audit: |
+        ### Audit via HTTP request
+
+        Probe the running vLLM server and inspect the response:
+
+        ```bash
+        curl -s -i -X POST https://vllm.example.com:8000/v1/completions \
+          -H 'Content-Type: application/json' \
+          -d '{"model":"test","prompt":"hello"}'
+        ```
+
+        A passing result returns 401 or 403 for a request with no `Authorization` header; a failing result returns 200 and generates a completion without any credential.
+
+        ### Audit via server configuration
+
+        1. Inspect the `vllm serve` or `python -m vllm.entrypoints.openai.api_server` launch command for the `--api-key` flag, or confirm an equivalent authentication layer in the fronting proxy.
+        2. Repeat the HTTP probe with `-H 'Authorization: Bearer <key>'` and confirm the request now succeeds, showing that authentication is what gates access.
+
+        A passing result shows `--api-key` set or gateway authentication enforced on every `/v1/*` route; a failing result shows the routes answering anonymous requests.
       remediation: |
         Configure vLLM API-key authentication and place the server behind an authenticated gateway or reverse proxy. Verify that all externally reachable `/v1/*` routes reject anonymous requests and that the token is only distributed to trusted clients.
     refs:
@@ -289,28 +462,52 @@ queries:
     title: Ensure the OpenAPI specification is not exposed
     impact: 60
     tags:
-      compliance/bsi-sys-1-5: "false"
+      compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-04
       compliance/dora: dora-art-9
-      compliance/hipaa: "false"
+      compliance/hipaa: false
       compliance/iso-27001-2022: iso-27001-2022-a-8-9
       compliance/nis-2: nis-2-21-2-e
       compliance/nist-csf-1: nist-csf-1-pr-ip-1
       compliance/nist-csf-2: nist-csf-2-pr-ps-01
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-7
       compliance/nist-sp-800-171: nist-sp-800-171--3-4-6
-      compliance/pci-dss-4: pcidss-requirement-2-2-6
+      compliance/pci-dss-4: pcidss-requirement-2-2-4
       compliance/soc2-2017: soc2-control-cc6-1-7
-      compliance/vda-isa-5: "false"
+      compliance/vda-isa-5: vda-isa-5-5-2-7
     mql: |
       vllm.server.openapiExposed == false
     docs:
       desc: |
-        This check verifies that `/openapi.json` is not anonymously exposed.
+        This check ensures that the `/openapi.json` specification document is configured to be unreachable by anonymous clients. vLLM serves the OpenAPI document by default unless `--disable-fastapi-docs` is set, so a machine-readable map of the API is often available without hardening.
 
         **Why this matters**
 
-        OpenAPI documents provide machine-readable route details that speed up reconnaissance and automated attack tooling. Exposing the specification can reveal optional endpoints or operational capabilities that are otherwise harder to enumerate.
+        - **Automated reconnaissance:** The OpenAPI document gives attack tooling a machine-readable list of every route and parameter.
+        - **Hidden route disclosure:** It can reveal optional endpoints and operational capabilities that are otherwise hard to enumerate.
+        - **Faster attack development:** A complete specification removes the guesswork an attacker would otherwise need to craft valid requests.
+
+        **Risk mitigation**
+
+        - **Specification disablement:** Starting vLLM with `--disable-fastapi-docs` removes `/openapi.json` along with the documentation pages.
+        - **Internal-only delivery:** Serving the specification from an authenticated internal documentation system keeps it available to developers without exposing it publicly.
+      audit: |
+        ### Audit via HTTP request
+
+        Probe the running vLLM server and inspect the response:
+
+        ```bash
+        curl -s -i https://vllm.example.com:8000/openapi.json
+        ```
+
+        A passing result returns 401, 403, or 404; a failing result returns 200 with the JSON OpenAPI specification document.
+
+        ### Audit via server configuration
+
+        1. Inspect the `vllm serve` launch command for the `--disable-fastapi-docs` flag.
+        2. If the specification is intentionally served, review the reverse proxy or gateway for an authentication or network restriction on `/openapi.json`.
+
+        A passing result shows `--disable-fastapi-docs` set or `/openapi.json` restricted; a failing result shows the specification served openly.
       remediation: |
         Disable or block `/openapi.json` for untrusted clients. Serve API specifications only from an authenticated internal documentation system if they are needed by developers or operators.
     refs:
@@ -320,28 +517,52 @@ queries:
     title: Ensure operational control routes are not anonymously accessible
     impact: 90
     tags:
-      compliance/bsi-sys-1-5: "false"
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-04
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-16
       compliance/dora: dora-art-9
-      compliance/hipaa: "false"
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
       compliance/iso-27001-2022: iso-27001-2022-a-8-2
       compliance/nis-2: nis-2-21-2-i
       compliance/nist-csf-1: nist-csf-1-pr-ac-4
-      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
       compliance/nist-sp-800-171: nist-sp-800-171--3-1-15
-      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/pci-dss-4: pcidss-requirement-8-3-1
       compliance/soc2-2017: soc2-control-cc6-1-3
-      compliance/vda-isa-5: "false"
+      compliance/vda-isa-5: vda-isa-5-4-1-2
     mql: |
       vllm.endpoints.where(category == "operational-control").none(anonymousAccessible == true)
     docs:
       desc: |
-        This check verifies that operational control routes such as `/pause`, `/resume`, and `/scale_elastic_ep` are not anonymously accessible.
+        This check ensures that operational control routes such as `/pause`, `/resume`, and `/scale_elastic_ep` are configured to reject anonymous requests. These routes change server availability and runtime behavior and belong only to an authenticated administration path.
 
         **Why this matters**
 
-        Operational control endpoints can affect availability and runtime behavior. Anonymous access could let an attacker disrupt service, manipulate serving capacity, or trigger state changes outside the normal administration path.
+        - **Availability impact:** Anonymous access to pause and resume routes lets an attacker stop or disrupt the inference service.
+        - **Capacity manipulation:** Scaling routes let an unauthenticated caller alter serving capacity outside the supported administration flow.
+        - **Unauthorized state changes:** Operational routes trigger runtime changes that should never originate from untrusted callers.
+
+        **Risk mitigation**
+
+        - **Network blocking:** Blocking operational control routes from untrusted networks removes the ability to invoke them anonymously.
+        - **Administrative plane:** Exposing required operational routes only through an authenticated administrative plane limits use to trusted operators and automation.
+      audit: |
+        ### Audit via HTTP request
+
+        Probe the running vLLM server and inspect the response:
+
+        ```bash
+        curl -s -i -X POST https://vllm.example.com:8000/pause
+        ```
+
+        A passing result returns 401, 403, or 404; a failing result returns 200 or another success status that accepts the control action without credentials.
+
+        ### Audit via server configuration
+
+        1. Inspect the `vllm serve` launch command and environment for settings that enable operational control endpoints.
+        2. Review the reverse proxy, API gateway, ingress, or firewall configuration for an authentication or deny rule covering `/pause`, `/resume`, and `/scale_elastic_ep`.
+
+        A passing result shows operational control routes blocked or limited to an authenticated administrative plane; a failing result shows them reachable by anonymous clients.
       remediation: |
         Block operational control routes from untrusted networks. If operational routes are required, expose them only through an authenticated administrative plane and restrict access to trusted operators or automation.
     refs:
@@ -351,28 +572,52 @@ queries:
     title: Ensure profiler routes are not exposed
     impact: 90
     tags:
-      compliance/bsi-sys-1-5: "false"
+      compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-04
       compliance/dora: dora-art-9
-      compliance/hipaa: "false"
+      compliance/hipaa: false
       compliance/iso-27001-2022: iso-27001-2022-a-8-9
       compliance/nis-2: nis-2-21-2-e
       compliance/nist-csf-1: nist-csf-1-pr-ip-1
       compliance/nist-csf-2: nist-csf-2-pr-ps-01
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-7
       compliance/nist-sp-800-171: nist-sp-800-171--3-4-6
-      compliance/pci-dss-4: pcidss-requirement-2-2-6
+      compliance/pci-dss-4: pcidss-requirement-2-2-4
       compliance/soc2-2017: soc2-control-cc6-1-7
-      compliance/vda-isa-5: "false"
+      compliance/vda-isa-5: vda-isa-5-5-2-7
     mql: |
       vllm.server.profilerEndpointsExposed == false
     docs:
       desc: |
-        This check verifies that profiler routes such as `/start_profile` and `/stop_profile` are not anonymously exposed.
+        This check ensures that profiler routes such as `/start_profile` and `/stop_profile` are configured to be unreachable by anonymous clients. Profiling is a diagnostic feature that should never be available to ordinary inference clients.
 
         **Why this matters**
 
-        Profiling endpoints can expose runtime internals, degrade service performance, and create an administrative control surface for attackers. They should never be available to ordinary inference clients.
+        - **Runtime disclosure:** Profiling output can expose internal runtime details and serving internals to an attacker.
+        - **Performance degradation:** Starting a profile consumes resources and slows the server, which can be used to degrade service.
+        - **Administrative control surface:** Profiler routes give an attacker a control surface for triggering diagnostic actions outside the administration path.
+
+        **Risk mitigation**
+
+        - **Route disablement:** Keeping profiler routes disabled outside controlled diagnostics windows removes the exposure.
+        - **Operator-only access:** Restricting any required profiling to authenticated operators on trusted administrative networks limits who can invoke it.
+      audit: |
+        ### Audit via HTTP request
+
+        Probe the running vLLM server and inspect the response:
+
+        ```bash
+        curl -s -i -X POST https://vllm.example.com:8000/start_profile
+        ```
+
+        A passing result returns 401, 403, or 404; a failing result returns 200 or another success status that starts a profiling session without credentials.
+
+        ### Audit via server configuration
+
+        1. Inspect the `vllm serve` launch command and environment for the `VLLM_TORCH_PROFILER_DIR` setting that enables the profiler endpoints.
+        2. Review the reverse proxy, API gateway, ingress, or firewall rules for entries that block `/start_profile` and `/stop_profile`.
+
+        A passing result shows profiler routes disabled or blocked from untrusted clients; a failing result shows them reachable anonymously.
       remediation: |
         Disable profiler routes outside controlled diagnostics windows. Restrict any required profiling access to authenticated operators on trusted administrative networks.
     refs:
@@ -382,28 +627,54 @@ queries:
     title: Ensure tokenization routes are not anonymously accessible
     impact: 70
     tags:
-      compliance/bsi-sys-1-5: "false"
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-04
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-16
       compliance/dora: dora-art-9
-      compliance/hipaa: "false"
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
       compliance/iso-27001-2022: iso-27001-2022-a-8-3
       compliance/nis-2: nis-2-21-2-i
-      compliance/nist-csf-1: nist-csf-1-pr-ac-4
-      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
       compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
-      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/pci-dss-4: pcidss-requirement-8-3-1
       compliance/soc2-2017: soc2-control-cc6-1-3
-      compliance/vda-isa-5: "false"
+      compliance/vda-isa-5: vda-isa-5-4-1-2
     mql: |
       vllm.endpoints.where(path == "/tokenize" || path == "/detokenize").none(anonymousAccessible == true)
     docs:
       desc: |
-        This check verifies that `/tokenize` and `/detokenize` are not anonymously accessible.
+        This check ensures that the `/tokenize` and `/detokenize` routes are configured to reject anonymous requests. These helper routes expose tokenizer behavior and consume server resources without invoking the primary completion API.
 
         **Why this matters**
 
-        Tokenization endpoints can reveal tokenizer behavior and consume service resources without invoking the primary completion API. In exposed deployments, anonymous tokenization access broadens the unauthenticated API surface and can support reconnaissance or abuse workflows.
+        - **Reconnaissance value:** Tokenization responses reveal tokenizer behavior that helps an attacker understand the deployed model.
+        - **Resource consumption:** Anonymous callers can drive tokenization traffic that consumes server resources outside the metered inference path.
+        - **Expanded surface:** Open tokenization routes broaden the unauthenticated API surface and support abuse workflows.
+
+        **Risk mitigation**
+
+        - **Edge restriction:** Restricting `/tokenize` and `/detokenize` at the reverse proxy, gateway, ingress, or firewall removes anonymous access.
+        - **Authentication requirement:** Requiring authentication before these requests reach vLLM ensures only known clients can use them.
+      audit: |
+        ### Audit via HTTP request
+
+        Probe the running vLLM server and inspect the response:
+
+        ```bash
+        curl -s -i -X POST https://vllm.example.com:8000/tokenize \
+          -H 'Content-Type: application/json' \
+          -d '{"model":"test","prompt":"hello"}'
+        ```
+
+        A passing result returns 401, 403, or 404; a failing result returns 200 with token output for the unauthenticated request.
+
+        ### Audit via server configuration
+
+        1. Inspect the `vllm serve` launch command and confirm that `--api-key` alone does not protect `/tokenize` and `/detokenize`, which sit outside the `/v1/*` scope.
+        2. Review the reverse proxy, API gateway, ingress, or firewall configuration for an authentication or deny rule covering these tokenization paths.
+
+        A passing result shows the tokenization routes authenticated or blocked upstream; a failing result shows them forwarded to vLLM without authentication.
       remediation: |
         Restrict `/tokenize` and `/detokenize` at the reverse proxy, gateway, ingress, or firewall. If client applications need these routes, require authentication before forwarding requests to vLLM.
     refs:
@@ -413,28 +684,52 @@ queries:
     title: Ensure tokenizer information is not exposed
     impact: 50
     tags:
-      compliance/bsi-sys-1-5: "false"
+      compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-04
       compliance/dora: dora-art-9
-      compliance/hipaa: "false"
+      compliance/hipaa: false
       compliance/iso-27001-2022: iso-27001-2022-a-8-9
       compliance/nis-2: nis-2-21-2-e
       compliance/nist-csf-1: nist-csf-1-pr-ip-1
       compliance/nist-csf-2: nist-csf-2-pr-ps-01
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-7
       compliance/nist-sp-800-171: nist-sp-800-171--3-4-6
-      compliance/pci-dss-4: pcidss-requirement-2-2-6
+      compliance/pci-dss-4: pcidss-requirement-2-2-4
       compliance/soc2-2017: soc2-control-cc6-1-7
-      compliance/vda-isa-5: "false"
+      compliance/vda-isa-5: vda-isa-5-5-2-7
     mql: |
       vllm.server.tokenizerInfoExposed == false
     docs:
       desc: |
-        This check verifies that `/tokenizer_info` is not anonymously exposed.
+        This check ensures that the `/get_tokenizer_info` route is configured to be unreachable by anonymous clients. The endpoint returns tokenizer metadata that describes the deployed model family and serving configuration.
 
         **Why this matters**
 
-        Tokenizer metadata can reveal details about the deployed model family and serving configuration. This information supports reconnaissance and can help attackers tune prompts or payloads for the target model.
+        - **Model fingerprinting:** Tokenizer metadata reveals the model family in use, narrowing what an attacker needs to research.
+        - **Configuration disclosure:** It exposes serving configuration details that aid reconnaissance against the deployment.
+        - **Payload tuning:** Knowing the tokenizer lets an attacker tune prompts and payloads more precisely for the target model.
+
+        **Risk mitigation**
+
+        - **Endpoint disablement:** Keeping tokenizer information disabled unless a trusted client needs it removes the disclosure.
+        - **Access controls:** When the endpoint is required, protecting it with authentication and network controls keeps the metadata private.
+      audit: |
+        ### Audit via HTTP request
+
+        Probe the running vLLM server and inspect the response:
+
+        ```bash
+        curl -s -i https://vllm.example.com:8000/get_tokenizer_info
+        ```
+
+        A passing result returns 401, 403, or 404; a failing result returns 200 with tokenizer metadata describing the deployed model.
+
+        ### Audit via server configuration
+
+        1. Inspect the `vllm serve` launch command and environment for settings that enable the tokenizer information endpoint.
+        2. Review the reverse proxy, API gateway, ingress, or firewall configuration for an authentication or deny rule covering `/get_tokenizer_info`.
+
+        A passing result shows the endpoint disabled or restricted; a failing result shows tokenizer metadata returned to anonymous clients.
       remediation: |
         Disable tokenizer information exposure unless a trusted client explicitly requires it. If the endpoint is required, restrict it with authentication and network controls.
     refs:
@@ -444,10 +739,10 @@ queries:
     title: Ensure the vLLM API is served over TLS
     impact: 80
     tags:
-      compliance/bsi-sys-1-5: "false"
+      compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
       compliance/dora: dora-art-9
-      compliance/hipaa: "false"
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
       compliance/nist-csf-1: nist-csf-1-pr-ds-2
@@ -456,16 +751,40 @@ queries:
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
       compliance/pci-dss-4: pcidss-requirement-4-2-1
       compliance/soc2-2017: soc2-control-cc6-7-2
-      compliance/vda-isa-5: "false"
+      compliance/vda-isa-5: vda-isa-5-5-1-2
     mql: |
       vllm.server.usesTls == true
     docs:
       desc: |
-        This check verifies that the scanned vLLM endpoint uses HTTPS.
+        This check ensures that the vLLM API is configured to be served over HTTPS rather than plaintext HTTP. vLLM listens on plain HTTP unless `--ssl-keyfile` and `--ssl-certfile` are supplied or a TLS-terminating proxy sits in front of it.
 
         **Why this matters**
 
-        vLLM APIs process prompts, completions, embeddings, and operational metadata. Plain HTTP allows network observers or intermediate systems to read or modify requests and responses, including prompts that may contain proprietary source code, customer data, credentials, or other sensitive context.
+        - **Prompt confidentiality:** Prompts can contain proprietary source code, customer data, and credentials, and plaintext HTTP exposes them to anyone on the network path.
+        - **Response integrity:** Without TLS, intermediate systems can modify completions, embeddings, and operational metadata in transit.
+        - **Credential protection:** API-key bearer tokens sent over plain HTTP are visible to network observers and can be stolen.
+
+        **Risk mitigation**
+
+        - **TLS termination:** Terminating TLS with a reverse proxy, load balancer, gateway, or service mesh encrypts all client traffic.
+        - **Backend isolation:** Exposing only the HTTPS endpoint and restricting direct access to the backend HTTP listener prevents plaintext connections.
+      audit: |
+        ### Audit via HTTP request
+
+        Probe the running vLLM server and inspect the response:
+
+        ```bash
+        curl -s -i https://vllm.example.com:8000/version
+        ```
+
+        A passing result completes the HTTPS handshake and returns a response; a failing result is one where the same endpoint is reachable over plain `http://` or the HTTPS request fails because no TLS listener exists.
+
+        ### Audit via server configuration
+
+        1. Inspect the `vllm serve` launch command for the `--ssl-keyfile` and `--ssl-certfile` flags.
+        2. If TLS is terminated upstream, review the reverse proxy, load balancer, gateway, or service mesh configuration and confirm the backend HTTP listener is not directly reachable.
+
+        A passing result shows TLS configured on vLLM or on a fronting proxy with the plaintext listener isolated; a failing result shows the API answering over plain HTTP.
       remediation: |
         Terminate TLS in front of the vLLM server with a reverse proxy, load balancer, API gateway, or service mesh. Expose only the HTTPS endpoint to clients and restrict direct access to the backend vLLM HTTP listener.
     refs:
@@ -477,28 +796,52 @@ queries:
     title: Ensure the vLLM version endpoint is not exposed
     impact: 50
     tags:
-      compliance/bsi-sys-1-5: "false"
+      compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-04
       compliance/dora: dora-art-9
-      compliance/hipaa: "false"
+      compliance/hipaa: false
       compliance/iso-27001-2022: iso-27001-2022-a-8-9
       compliance/nis-2: nis-2-21-2-e
       compliance/nist-csf-1: nist-csf-1-pr-ip-1
       compliance/nist-csf-2: nist-csf-2-pr-ps-01
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-7
       compliance/nist-sp-800-171: nist-sp-800-171--3-4-6
-      compliance/pci-dss-4: pcidss-requirement-2-2-6
+      compliance/pci-dss-4: pcidss-requirement-2-2-4
       compliance/soc2-2017: soc2-control-cc6-1-7
-      compliance/vda-isa-5: "false"
+      compliance/vda-isa-5: vda-isa-5-5-2-7
     mql: |
       vllm.server.version == empty
     docs:
       desc: |
-        This check verifies that the `/version` endpoint does not disclose the vLLM software version to anonymous clients.
+        This check ensures that the `/version` endpoint is configured so that it does not disclose the vLLM software version to anonymous clients. The version endpoint returns the exact running release, which is precisely the detail an attacker needs to match a deployment to known vulnerabilities.
 
         **Why this matters**
 
-        Version disclosure helps attackers fingerprint deployments and quickly match them to known vulnerabilities. vLLM has had high-impact vulnerabilities in its serving and model-loading surfaces, so exposing exact version data increases targeting precision.
+        - **Deployment fingerprinting:** An exposed version string lets an attacker identify the exact release in use.
+        - **Vulnerability matching:** vLLM has had high-impact vulnerabilities in its serving and model-loading surfaces, and a precise version lets an attacker map straight to a known exploit.
+        - **Targeting precision:** Version data increases the accuracy of automated scanning against the deployment.
+
+        **Risk mitigation**
+
+        - **Endpoint blocking:** Blocking `/version` at the reverse proxy, gateway, ingress, or firewall keeps the release private.
+        - **Internal inventory:** Tracking version information in internal asset management rather than the public API removes the need to expose it.
+      audit: |
+        ### Audit via HTTP request
+
+        Probe the running vLLM server and inspect the response:
+
+        ```bash
+        curl -s -i https://vllm.example.com:8000/version
+        ```
+
+        A passing result returns 401, 403, or 404; a failing result returns 200 with a JSON body that includes the vLLM software version string.
+
+        ### Audit via server configuration
+
+        1. Inspect the `vllm serve` launch command and environment for any settings that enable the version endpoint.
+        2. Review the reverse proxy, API gateway, ingress, or firewall configuration for a rule that blocks `/version` from untrusted clients.
+
+        A passing result shows `/version` blocked before it reaches anonymous clients; a failing result shows the version string returned openly.
       remediation: |
         Block `/version` from untrusted clients at the reverse proxy, gateway, ingress, or firewall. Keep version inventory in internal asset management rather than exposing it through the public serving API.
     refs:
