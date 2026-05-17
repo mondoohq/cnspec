@@ -4,7 +4,7 @@ policies:
   - summary: Secure Grafana organizations across service accounts, user roles, datasources, and alerting
     uid: mondoo-grafana-security
     name: Mondoo Grafana Security
-    version: 1.0.0
+    version: 1.0.1
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -58,27 +58,53 @@ queries:
     impact: 80
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
-      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
       compliance/nis-2: nis-2-21-2-i
       compliance/nist-csf-1: nist-csf-1-pr-ac-4
       compliance/nist-csf-2: nist-csf-2-pr-aa-05
       compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
-      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/pci-dss-4: pcidss-requirement-7-2-5
       compliance/soc2-2017: soc2-control-cc6-1-3
-      compliance/vda-isa-5: vda-isa-5-4-1-1
+      compliance/vda-isa-5: vda-isa-5-4-2-1
     filters: asset.platform == "grafana-org"
     mql: grafana.serviceAccounts.none(role == "Admin")
     docs:
       desc: |
-        Service accounts should follow the principle of least privilege and not be granted the Admin role. Admin service accounts can modify organization settings, manage users, and install plugins, creating a broad attack surface if the token is compromised.
+        This check ensures that service accounts are configured to use a least-privilege role rather than the Admin role. Admin service accounts can modify organization settings, manage users, and install plugins, creating a broad attack surface if a token is compromised.
 
-        ## Rationale
+        **Why this matters**
 
-        A compromised Admin-level service account token grants full control over the Grafana organization: user management, datasource credentials, plugin installation, and configuration changes. Restricting service accounts to Viewer or Editor roles limits the blast radius of a credential leak.
+        - **Least privilege:** Restricting service accounts to Viewer or Editor roles aligns automation credentials with the minimum access they need to function.
+        - **Reduced blast radius:** A compromised non-Admin token cannot manage users, alter datasource credentials, or install plugins.
+        - **Auditability:** Limiting Admin assignments to human-reviewed accounts keeps privileged access decisions deliberate and traceable.
+
+        **Risk mitigation**
+
+        - **Credential leak containment:** If an automation token is leaked, the attacker inherits only the scoped role rather than full organizational control.
+        - **Configuration integrity:** Non-Admin service accounts cannot silently change organization configuration, protecting the Grafana environment from tampering.
+      audit: |
+        ### Audit via UI
+
+        1. Sign in to Grafana and open **Administration > Service Accounts**.
+        2. Review the **Role** column for each service account in the list.
+        3. Note any service account showing the **Admin** role.
+
+        A passing result shows every service account assigned the Viewer or Editor role; a failing result shows one or more service accounts with the Admin role.
+
+        ### Audit via API
+
+        Query the Grafana HTTP API and inspect the result:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $GRAFANA_TOKEN" \
+          https://grafana.example.com/api/serviceaccounts/search
+        ```
+
+        A passing response lists every entry in `serviceAccounts[]` with a `role` of `Viewer` or `Editor`; a failing response includes at least one entry where `role` equals `Admin`.
       remediation: |
         Review all service accounts and downgrade any with Admin role to Viewer or Editor:
 
@@ -96,27 +122,53 @@ queries:
     impact: 80
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-03
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
       compliance/iso-27001-2022: iso-27001-2022-a-8-5
-      compliance/nis-2: nis-2-21-2-j
-      compliance/nist-csf-1: nist-csf-1-pr-ac-7
-      compliance/nist-csf-2: nist-csf-2-pr-aa-03
-      compliance/nist-sp-800-171: nist-sp-800-171--3-5-3
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
-      compliance/pci-dss-4: pcidss-requirement-8-3-1
-      compliance/soc2-2017: soc2-control-cc6-1-4
-      compliance/vda-isa-5: vda-isa-5-4-1-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-2
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/pci-dss-4: pcidss-requirement-8-6-3
+      compliance/soc2-2017: soc2-control-cc6-1-9
+      compliance/vda-isa-5: vda-isa-5-4-1-1
     filters: asset.platform == "grafana-org"
     mql: grafana.serviceAccounts.all(tokens.all(hasExpiration == true))
     docs:
       desc: |
-        All service account tokens should have an expiration date configured. Tokens without expiration persist indefinitely and pose a significant risk if leaked, as they remain valid until manually revoked.
+        This check ensures that every service account token is configured with an expiration date. Tokens without an expiration persist indefinitely and remain valid until manually revoked, which is a significant risk if one is leaked.
 
-        ## Rationale
+        **Why this matters**
 
-        Non-expiring tokens are a common source of credential sprawl. If a token is embedded in a CI pipeline, committed to a repository, or stored on a compromised workstation, the attacker has indefinite access. Setting an expiration forces regular rotation and limits the window of exposure.
+        - **Forced rotation:** An expiration date compels regular token rotation instead of relying on long-lived static credentials.
+        - **Limited exposure window:** Even an undetected leak only grants access until the token expires.
+        - **Credential hygiene:** Expiring tokens reduce credential sprawl across CI pipelines, repositories, and workstations.
+
+        **Risk mitigation**
+
+        - **Leaked token containment:** A token embedded in a pipeline or committed to a repository becomes useless once it expires.
+        - **Stale access removal:** Expiration ensures abandoned integrations lose access automatically rather than retaining indefinite credentials.
+      audit: |
+        ### Audit via UI
+
+        1. Sign in to Grafana and open **Administration > Service Accounts**.
+        2. Select each service account and review its **Tokens** section.
+        3. Check the **Expires** column for each token.
+
+        A passing result shows every token with a defined expiration date; a failing result shows one or more tokens with no expiration set.
+
+        ### Audit via API
+
+        Query the Grafana HTTP API and inspect the result:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $GRAFANA_TOKEN" \
+          https://grafana.example.com/api/serviceaccounts/{id}/tokens
+        ```
+
+        A passing response returns tokens that each include an `expiration` timestamp; a failing response includes at least one token with no `expiration` value.
       remediation: |
         Replace non-expiring service account tokens with tokens that have a defined expiration:
 
@@ -143,27 +195,53 @@ queries:
     impact: 70
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-03
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
       compliance/iso-27001-2022: iso-27001-2022-a-8-5
-      compliance/nis-2: nis-2-21-2-j
-      compliance/nist-csf-1: nist-csf-1-pr-ac-7
-      compliance/nist-csf-2: nist-csf-2-pr-aa-03
-      compliance/nist-sp-800-171: nist-sp-800-171--3-5-3
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
-      compliance/pci-dss-4: pcidss-requirement-8-3-1
-      compliance/soc2-2017: soc2-control-cc6-1-4
-      compliance/vda-isa-5: vda-isa-5-4-1-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-2
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/pci-dss-4: pcidss-requirement-8-6-3
+      compliance/soc2-2017: soc2-control-cc6-1-9
+      compliance/vda-isa-5: vda-isa-5-4-1-1
     filters: asset.platform == "grafana-org"
     mql: grafana.serviceAccounts.all(tokens.none(isExpired == true))
     docs:
       desc: |
-        Expired service account tokens should be cleaned up promptly. While expired tokens cannot be used for authentication, their presence indicates poor credential hygiene and suggests that token rotation procedures are not followed.
+        This check ensures that expired service account tokens are cleaned up promptly. Expired tokens cannot authenticate, but their presence indicates poor credential hygiene and that token rotation procedures are not being followed.
 
-        ## Rationale
+        **Why this matters**
 
-        Expired tokens clutter the service account configuration and make it harder to audit active credentials. They also indicate that the associated integration may have broken silently when the token expired, or that an active token was created alongside the expired one without cleaning up.
+        - **Clear audit surface:** Removing expired tokens makes it easier to identify which credentials are actually active.
+        - **Rotation discipline:** Cleaning up expired tokens reflects a working rotation process rather than a neglected one.
+        - **Integration health:** A lingering expired token can signal an integration that broke silently when its token lapsed.
+
+        **Risk mitigation**
+
+        - **Reduced confusion:** Auditors and operators are not misled by stale credentials when reviewing service account configuration.
+        - **Detection of silent failures:** Prompt cleanup surfaces integrations that stopped working when a token expired, prompting timely remediation.
+      audit: |
+        ### Audit via UI
+
+        1. Sign in to Grafana and open **Administration > Service Accounts**.
+        2. Select each service account and review its **Tokens** section.
+        3. Look for tokens marked as expired in the **Expires** column.
+
+        A passing result shows no expired tokens listed under any service account; a failing result shows one or more tokens past their expiration date.
+
+        ### Audit via API
+
+        Query the Grafana HTTP API and inspect the result:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $GRAFANA_TOKEN" \
+          https://grafana.example.com/api/serviceaccounts/{id}/tokens
+        ```
+
+        A passing response returns tokens that all show `hasExpired` set to `false`; a failing response includes at least one token with `hasExpired` set to `true`.
       remediation: |
         Remove expired service account tokens:
 
@@ -187,17 +265,17 @@ queries:
     impact: 70
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-07
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
-      compliance/iso-27001-2022: iso-27001-2022-a-8-5
-      compliance/nis-2: nis-2-21-2-j
-      compliance/nist-csf-1: nist-csf-1-pr-ac-7
-      compliance/nist-csf-2: nist-csf-2-pr-aa-03
-      compliance/nist-sp-800-171: nist-sp-800-171--3-5-3
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
-      compliance/pci-dss-4: pcidss-requirement-8-3-1
-      compliance/soc2-2017: soc2-control-cc6-1-4
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-5-18
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-2
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-2
+      compliance/pci-dss-4: pcidss-requirement-8-6-3
+      compliance/soc2-2017: soc2-control-cc6-1-9
       compliance/vda-isa-5: vda-isa-5-4-1-3
     filters: asset.platform == "grafana-org"
     mql: |
@@ -206,11 +284,37 @@ queries:
       )
     docs:
       desc: |
-        Service accounts that are disabled should not retain any tokens. While disabled service accounts cannot authenticate, retaining tokens is a hygiene risk. If the account is accidentally re-enabled, all existing tokens become immediately valid.
+        This check ensures that disabled service accounts retain no tokens. A disabled service account cannot authenticate, but keeping tokens attached means all of them become immediately valid if the account is re-enabled.
 
-        ## Rationale
+        **Why this matters**
 
-        A disabled service account with tokens attached is one toggle away from having active credentials. Cleaning up tokens when disabling an account ensures that re-enablement is a deliberate two-step process: enable the account, then create new purpose-scoped tokens.
+        - **Deliberate re-enablement:** Removing tokens makes re-enabling an account a two-step decision rather than a single toggle restoring active credentials.
+        - **Credential hygiene:** Disabled accounts with no tokens leave no dormant credentials in the configuration.
+        - **Reduced attack surface:** There are no latent tokens to leak or misuse while an account sits disabled.
+
+        **Risk mitigation**
+
+        - **Accidental reactivation:** If a disabled account is re-enabled by mistake, no old tokens are revived to grant unintended access.
+        - **Scoped recovery:** Re-enabling an account forces creation of fresh, purpose-scoped tokens instead of reusing stale ones.
+      audit: |
+        ### Audit via UI
+
+        1. Sign in to Grafana and open **Administration > Service Accounts**.
+        2. Filter or sort the list to find service accounts shown as disabled.
+        3. Select each disabled account and review its **Tokens** section.
+
+        A passing result shows disabled service accounts with no tokens attached; a failing result shows a disabled service account that still has one or more tokens.
+
+        ### Audit via API
+
+        Query the Grafana HTTP API and inspect the result:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $GRAFANA_TOKEN" \
+          https://grafana.example.com/api/serviceaccounts/search
+        ```
+
+        A passing response shows every entry in `serviceAccounts[]` with `isDisabled` set to `true` reporting a `tokens` count of `0`; a failing response includes a disabled service account with a `tokens` count greater than `0`.
       remediation: |
         Delete all tokens from disabled service accounts:
 
@@ -227,27 +331,55 @@ queries:
     impact: 70
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
-      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
       compliance/nis-2: nis-2-21-2-i
       compliance/nist-csf-1: nist-csf-1-pr-ac-4
       compliance/nist-csf-2: nist-csf-2-pr-aa-05
       compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
-      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/pci-dss-4: pcidss-requirement-7-2-2
       compliance/soc2-2017: soc2-control-cc6-1-3
-      compliance/vda-isa-5: vda-isa-5-4-1-1
+      compliance/vda-isa-5: vda-isa-5-4-2-1
     filters: asset.platform == "grafana-org"
     mql: grafana.users.where(role == "Admin").length <= 3
     docs:
       desc: |
-        The number of users with the Admin role in a Grafana organization should be kept to a minimum. Admin users can modify organization settings, manage users and teams, configure datasources, and install plugins.
+        This check ensures that the number of users with the Admin role in a Grafana organization is kept to a minimum. Admin users can modify organization settings, manage users and teams, configure datasources, and install plugins, so each one is a high-value target.
 
-        ## Rationale
+        **Why this matters**
 
-        Every Admin user is a high-value target. Compromising a single Admin account grants full organizational control. Limiting the number of Admins reduces the attack surface and ensures that privileged access decisions are deliberate and auditable. Most users should operate with Viewer or Editor roles.
+        - **Smaller attack surface:** Fewer Admin accounts mean fewer credentials whose compromise grants full organizational control.
+        - **Deliberate privilege:** Limiting Admins ensures privileged access is granted intentionally and remains auditable.
+        - **Role appropriateness:** Most users can operate effectively with Viewer or Editor roles, reserving Admin for genuine need.
+
+        **Risk mitigation**
+
+        - **Compromise containment:** With fewer Admin accounts, the odds that any single account is breached and abused are reduced.
+        - **Accountability:** A short, documented list of Admins makes it clear who holds organizational control and why.
+
+        This check allows up to 3 organization administrators. If your organization requires more, adjust the threshold to match your operational needs.
+      audit: |
+        ### Audit via UI
+
+        1. Sign in to Grafana and open **Administration > Users**.
+        2. Review the **Role** column and count the users assigned the **Admin** role.
+        3. Compare the count against your approved Admin threshold.
+
+        A passing result shows the number of Admin users at or below the allowed limit; a failing result shows more Admin users than the threshold permits.
+
+        ### Audit via API
+
+        Query the Grafana HTTP API and inspect the result:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $GRAFANA_TOKEN" \
+          https://grafana.example.com/api/org/users
+        ```
+
+        A passing response returns three or fewer entries where `role` equals `Admin`; a failing response returns more than three entries with `role` set to `Admin`.
       remediation: |
         Review the list of organization administrators and downgrade users who do not require Admin access:
 
@@ -266,27 +398,53 @@ queries:
     impact: 80
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-15
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
       compliance/iso-27001-2022: iso-27001-2022-a-8-5
-      compliance/nis-2: nis-2-21-2-j
-      compliance/nist-csf-1: nist-csf-1-pr-ac-7
-      compliance/nist-csf-2: nist-csf-2-pr-aa-03
-      compliance/nist-sp-800-171: nist-sp-800-171--3-5-3
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
-      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-2
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/pci-dss-4: pcidss-requirement-2-2-2
       compliance/soc2-2017: soc2-control-cc6-1-4
       compliance/vda-isa-5: vda-isa-5-4-1-3
     filters: asset.platform == "grafana-org"
     mql: grafana.users.none(login == "admin" && role == "Admin")
     docs:
       desc: |
-        The default Grafana installation creates an admin user with login name `admin`. This well-known login name is the first target for brute-force attacks and credential stuffing.
+        This check ensures that the default Grafana admin login has been changed. A default installation creates an administrator with the login name `admin`, and this well-known name is the first target for brute-force attacks and credential stuffing.
 
-        ## Rationale
+        **Why this matters**
 
-        Attackers routinely scan for default credentials. The `admin` login paired with weak or default passwords is one of the most common attack vectors against Grafana instances. Changing the default admin login name makes automated attacks significantly harder.
+        - **Harder automated attacks:** A unique admin login name defeats tooling that assumes the default `admin` account exists.
+        - **Reduced default exposure:** Removing the predictable login closes one of the most common attack vectors against Grafana.
+        - **Stronger access baseline:** A renamed administrator encourages a fresh credential rather than the shipped default.
+
+        **Risk mitigation**
+
+        - **Brute-force resistance:** Attackers cannot target a known username and must first discover a valid login name.
+        - **Credential stuffing defense:** Reused or leaked `admin` password pairs no longer line up with an account that exists.
+      audit: |
+        ### Audit via UI
+
+        1. Sign in to Grafana and open **Administration > Users**.
+        2. Look for a user whose login name is `admin`.
+        3. If that user exists, check whether it holds the **Admin** role.
+
+        A passing result shows no user with the login `admin` holding the Admin role; a failing result shows an Admin-role user still using the default `admin` login.
+
+        ### Audit via API
+
+        Query the Grafana HTTP API and inspect the result:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $GRAFANA_TOKEN" \
+          https://grafana.example.com/api/org/users
+        ```
+
+        A passing response contains no entry where `login` equals `admin` and `role` equals `Admin`; a failing response includes an entry with `login` set to `admin` and `role` set to `Admin`.
       remediation: |
         Change the default admin user login or create a new admin user and remove the default:
 
@@ -319,18 +477,44 @@ queries:
       compliance/nist-csf-2: nist-csf-2-pr-ir-01
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
-      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/pci-dss-4: false
       compliance/soc2-2017: soc2-control-cc6-6-1
-      compliance/vda-isa-5: vda-isa-5-5-2-6
+      compliance/vda-isa-5: vda-isa-5-5-2-7
     filters: asset.platform == "grafana-org"
     mql: grafana.datasources.all(access == "proxy")
     docs:
       desc: |
-        Datasources should be configured to use proxy access mode rather than direct (browser) access. In proxy mode, the Grafana server makes requests to the datasource on behalf of the user. In direct mode, the user's browser connects directly to the datasource, potentially exposing internal network endpoints and credentials.
+        This check ensures that datasources are configured to use proxy access mode rather than direct browser access. In proxy mode the Grafana server makes requests to the datasource on behalf of the user, while direct mode has the user's browser connect to the datasource itself.
 
-        ## Rationale
+        **Why this matters**
 
-        Direct access mode requires the datasource to be reachable from the user's browser, which may expose internal services to the network. It also means authentication credentials for the datasource are sent to the browser. Proxy mode keeps datasource credentials server-side and allows Grafana to enforce access controls.
+        - **Server-side credentials:** Proxy mode keeps datasource credentials on the Grafana server instead of sending them to the browser.
+        - **Network containment:** Datasources do not need to be reachable from user browsers, avoiding exposure of internal services.
+        - **Enforced access control:** Routing requests through Grafana lets the server apply access controls consistently.
+
+        **Risk mitigation**
+
+        - **Credential interception:** Authentication details for the datasource are never delivered to the client, preventing browser-side capture.
+        - **Internal endpoint exposure:** Internal datasource endpoints stay shielded from the user's network, reducing reconnaissance and pivot opportunities.
+      audit: |
+        ### Audit via UI
+
+        1. Sign in to Grafana and open **Connections > Data sources**.
+        2. Select each datasource and review its **Access** setting.
+        3. Confirm the setting is **Server (default)**, which corresponds to proxy mode.
+
+        A passing result shows every datasource using Server access mode; a failing result shows one or more datasources set to Browser access mode.
+
+        ### Audit via API
+
+        Query the Grafana HTTP API and inspect the result:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $GRAFANA_TOKEN" \
+          https://grafana.example.com/api/datasources
+        ```
+
+        A passing response shows every datasource with `access` set to `proxy`; a failing response includes at least one datasource with `access` set to `direct`.
       remediation: |
         Switch datasources from direct to proxy access mode:
 
@@ -346,27 +530,53 @@ queries:
     impact: 70
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-14
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
       compliance/iso-27001-2022: iso-27001-2022-a-8-5
-      compliance/nis-2: nis-2-21-2-j
+      compliance/nis-2: nis-2-21-2-i
       compliance/nist-csf-1: nist-csf-1-pr-ac-7
       compliance/nist-csf-2: nist-csf-2-pr-aa-03
-      compliance/nist-sp-800-171: nist-sp-800-171--3-5-3
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
-      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-2
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-9
+      compliance/pci-dss-4: pcidss-requirement-8-3-2
       compliance/soc2-2017: soc2-control-cc6-1-4
       compliance/vda-isa-5: vda-isa-5-4-1-3
     filters: asset.platform == "grafana-org"
     mql: grafana.datasources.none(basicAuth == true)
     docs:
       desc: |
-        Datasources should not rely on basic authentication (username and password). Basic auth transmits credentials in a reversible encoding and is vulnerable to credential interception, especially if TLS is not properly configured end-to-end.
+        This check ensures that datasources are configured to avoid basic authentication with a username and password. Basic auth transmits credentials in a reversible encoding and is vulnerable to interception, especially where TLS is not properly configured end to end.
 
-        ## Rationale
+        **Why this matters**
 
-        Basic authentication sends credentials as a Base64-encoded header with every request. If any hop in the connection path lacks TLS, or if logs capture HTTP headers, credentials are exposed. Modern authentication methods such as API tokens, OAuth, or managed identity provide stronger security guarantees and better auditability.
+        - **Stronger authentication:** API tokens, OAuth, and managed identity provide better security guarantees than a static username and password.
+        - **Better auditability:** Token and identity-based methods make datasource access easier to trace and revoke.
+        - **Reduced credential reuse:** Avoiding basic auth discourages embedding shared passwords across datasource configurations.
+
+        **Risk mitigation**
+
+        - **Header interception:** Base64-encoded credentials sent with every request can no longer be captured from an unencrypted hop or logged HTTP headers.
+        - **Credential replay:** Without static basic auth credentials in transit, attackers cannot trivially replay captured headers to reach the datasource.
+      audit: |
+        ### Audit via UI
+
+        1. Sign in to Grafana and open **Connections > Data sources**.
+        2. Select each datasource and review its authentication settings.
+        3. Check whether the **Basic Auth** toggle is enabled.
+
+        A passing result shows every datasource using an alternative authentication method with Basic Auth disabled; a failing result shows one or more datasources with Basic Auth enabled.
+
+        ### Audit via API
+
+        Query the Grafana HTTP API and inspect the result:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $GRAFANA_TOKEN" \
+          https://grafana.example.com/api/datasources
+        ```
+
+        A passing response shows every datasource with `basicAuth` set to `false`; a failing response includes at least one datasource with `basicAuth` set to `true`.
       remediation: |
         Replace basic authentication with stronger authentication methods:
 
@@ -386,9 +596,9 @@ queries:
     impact: 60
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
       compliance/nis-2: nis-2-21-2-h
       compliance/nist-csf-1: nist-csf-1-pr-ds-2
@@ -405,13 +615,37 @@ queries:
       )
     docs:
       desc: |
-        Datasource connection URLs should use HTTPS (TLS) to encrypt data in transit. Unencrypted HTTP connections expose query data and potentially authentication credentials to network-level interception.
+        This check ensures that datasource connection URLs are configured to use HTTPS so data in transit is encrypted. Unencrypted HTTP connections expose query data and potentially authentication credentials to network-level interception. Connections to localhost or 127.0.0.1 are exempt because they do not traverse the network.
 
-        Connections to localhost or 127.0.0.1 are exempt from this check since they do not traverse the network.
+        **Why this matters**
 
-        ## Rationale
+        - **Encrypted telemetry:** Metrics, logs, and tracing data carried by datasources stay confidential between the Grafana server and the datasource.
+        - **Protected headers:** Authentication headers cannot be read by anyone observing the connection path.
+        - **Integrity in transit:** TLS protects datasource traffic from tampering as well as eavesdropping.
 
-        Datasources often carry sensitive metrics, logs, or tracing data. Without TLS, this data is visible to anyone with network access between the Grafana server and the datasource. Additionally, authentication headers sent over HTTP can be captured and replayed.
+        **Risk mitigation**
+
+        - **Network eavesdropping:** Data is no longer visible to an attacker with network access between Grafana and the datasource.
+        - **Header replay:** Authentication headers sent over HTTP cannot be captured and replayed once the connection uses TLS.
+      audit: |
+        ### Audit via UI
+
+        1. Sign in to Grafana and open **Connections > Data sources**.
+        2. Select each datasource and review the **URL** field.
+        3. Confirm the URL begins with `https://`, treating localhost and 127.0.0.1 URLs as exempt.
+
+        A passing result shows every networked datasource URL using HTTPS; a failing result shows one or more datasources with an `http://` URL pointing to a non-local host.
+
+        ### Audit via API
+
+        Query the Grafana HTTP API and inspect the result:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $GRAFANA_TOKEN" \
+          https://grafana.example.com/api/datasources
+        ```
+
+        A passing response shows every datasource with a non-empty `url` using the `https://` scheme or pointing to localhost; a failing response includes a datasource whose `url` uses `http://` for a remote host.
       remediation: |
         Update datasource URLs to use HTTPS:
 
@@ -437,27 +671,53 @@ queries:
     impact: 60
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-03
       compliance/dora: dora-art-10
-      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
-      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/hipaa: hipaa-security-ss164-308-a-6-ii-security-incident-procedures-response-and-reporting
+      compliance/iso-27001-2022: iso-27001-2022-a-8-16
       compliance/nis-2: nis-2-21-2-b
-      compliance/nist-csf-1: nist-csf-1-pr-pt-1
-      compliance/nist-csf-2: nist-csf-2-pr-ps-04
-      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-2
-      compliance/pci-dss-4: pcidss-requirement-10-2-1
+      compliance/nist-csf-1: nist-csf-1-de-dp-4
+      compliance/nist-csf-2: nist-csf-2-de-ae-06
+      compliance/nist-sp-800-171: false
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-6
+      compliance/pci-dss-4: pcidss-requirement-10-7-2
       compliance/soc2-2017: soc2-control-cc7-2-1
       compliance/vda-isa-5: vda-isa-5-5-2-4
     filters: asset.platform == "grafana-org"
     mql: grafana.notificationPolicy.receiver != ""
     docs:
       desc: |
-        The Grafana notification policy tree should have a default receiver configured. Without a default receiver, alerts that do not match any specific routing rule are silently dropped, leaving security events undetected.
+        This check ensures that the Grafana notification policy tree is configured with a default receiver. Without a default receiver, alerts that match no specific routing rule are silently dropped, leaving security events undetected.
 
-        ## Rationale
+        **Why this matters**
 
-        A missing default receiver means unmatched alerts produce no notification. In a security context, this can result in critical alerts being lost if routing rules are misconfigured or incomplete. The default receiver acts as a safety net to ensure all alerts reach at least one notification channel.
+        - **Safety net for alerts:** A default receiver guarantees that unmatched alerts still reach at least one notification channel.
+        - **Resilience to misconfiguration:** Incomplete or incorrect routing rules no longer cause alerts to vanish.
+        - **Reliable detection:** Critical security events are surfaced even when specific routes do not apply.
+
+        **Risk mitigation**
+
+        - **Lost alerts:** Alerts that fail to match a routing rule are still delivered rather than discarded.
+        - **Undetected incidents:** Security events cannot slip past monitoring because of a gap in the routing tree.
+      audit: |
+        ### Audit via UI
+
+        1. Sign in to Grafana and open **Alerting > Notification policies**.
+        2. Review the root of the notification policy tree.
+        3. Confirm a **Default contact point** is selected.
+
+        A passing result shows a default contact point assigned to the root policy; a failing result shows the default contact point unset.
+
+        ### Audit via API
+
+        Query the Grafana HTTP API and inspect the result:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $GRAFANA_TOKEN" \
+          https://grafana.example.com/api/v1/provisioning/policies
+        ```
+
+        A passing response returns a policy with a non-empty `receiver` value; a failing response returns a policy whose `receiver` is empty or absent.
       remediation: |
         Configure a default receiver in the notification policy:
 
@@ -472,27 +732,53 @@ queries:
     impact: 50
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-03
       compliance/dora: dora-art-10
-      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
-      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/hipaa: hipaa-security-ss164-308-a-6-ii-security-incident-procedures-response-and-reporting
+      compliance/iso-27001-2022: iso-27001-2022-a-8-16
       compliance/nis-2: nis-2-21-2-b
-      compliance/nist-csf-1: nist-csf-1-pr-pt-1
-      compliance/nist-csf-2: nist-csf-2-pr-ps-04
-      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-2
-      compliance/pci-dss-4: pcidss-requirement-10-2-1
+      compliance/nist-csf-1: nist-csf-1-de-dp-4
+      compliance/nist-csf-2: nist-csf-2-de-ae-06
+      compliance/nist-sp-800-171: false
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-6
+      compliance/pci-dss-4: pcidss-requirement-10-7-2
       compliance/soc2-2017: soc2-control-cc7-2-1
       compliance/vda-isa-5: vda-isa-5-5-2-4
     filters: asset.platform == "grafana-org"
     mql: grafana.contactPoints.none(disableResolveMessage == true)
     docs:
       desc: |
-        Contact points should not disable resolve messages. Resolve messages notify recipients when an alert condition has cleared, which is essential for incident management workflows and reducing alert fatigue.
+        This check ensures that contact points are configured to keep resolve messages enabled. Resolve messages notify recipients when an alert condition has cleared, which is essential for incident management workflows and for reducing alert fatigue.
 
-        ## Rationale
+        **Why this matters**
 
-        Without resolve messages, on-call responders must manually check whether an alert condition has cleared, increasing response time and cognitive load. Resolve messages provide automatic incident lifecycle tracking and enable downstream integrations (ticketing systems, chat bots) to close or update incidents automatically.
+        - **Incident lifecycle tracking:** Resolve messages automatically signal when an alert condition has cleared.
+        - **Lower responder load:** On-call staff do not have to manually check whether an alert has resolved.
+        - **Downstream automation:** Ticketing systems and chat integrations can close or update incidents when a resolve message arrives.
+
+        **Risk mitigation**
+
+        - **Slow response:** Responders learn promptly that a condition has cleared instead of investigating an already-resolved alert.
+        - **Stale incidents:** Automated integrations can close incidents accurately, preventing lingering open records that obscure real issues.
+      audit: |
+        ### Audit via UI
+
+        1. Sign in to Grafana and open **Alerting > Contact points**.
+        2. Select each contact point and review its settings.
+        3. Confirm the **Disable resolve message** toggle is turned off.
+
+        A passing result shows every contact point with resolve messages enabled; a failing result shows one or more contact points with resolve messages disabled.
+
+        ### Audit via API
+
+        Query the Grafana HTTP API and inspect the result:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $GRAFANA_TOKEN" \
+          https://grafana.example.com/api/v1/provisioning/contact-points
+        ```
+
+        A passing response shows every contact point with `disableResolveMessage` set to `false`; a failing response includes at least one contact point with `disableResolveMessage` set to `true`.
       remediation: |
         Enable resolve messages for all contact points:
 
