@@ -494,8 +494,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-8-3-1
       compliance/soc2-2017: soc2-control-cc6-1-4
       compliance/vda-isa-5: vda-isa-5-4-1-3
-    mql: |
-      microsoft.security.latestSecureScores.controlScores.where(controlName == 'BlockLegacyAuthentication').all(_['score'] == 8)
+    variants:
+      - uid: mondoo-m365-security-enable-conditional-access-policies-to-block-legacy-authentication-microsoft365
+        tags:
+          mondoo.com/filter-title: Microsoft 365
+          mondoo.com/filter-icon: microsoft
+      - uid: mondoo-m365-security-enable-conditional-access-policies-to-block-legacy-authentication-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-m365-security-enable-conditional-access-policies-to-block-legacy-authentication-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-m365-security-enable-conditional-access-policies-to-block-legacy-authentication-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that legacy authentication protocols are disabled in Microsoft 365.
@@ -514,6 +529,26 @@ queries:
           - CIS Controls (CIS Control 16: Account Monitoring and Control)
 
         Disabling legacy authentication is a critical step in implementing a modern, secure authentication framework for Microsoft 365.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the Microsoft Entra admin center at `https://entra.microsoft.com`.
+        2. Go to **Protection** > **Conditional Access** > **Policies**.
+        3. Look for an enabled policy whose **Conditions** > **Client apps** targets the legacy authentication clients (Exchange ActiveSync and other clients) and whose **Grant** control is set to **Block access**.
+
+        A passing tenant has at least one enabled policy that blocks legacy authentication. A failing tenant has no such policy, or it is in **Report-only** or **Off** state.
+
+        ### Audit via PowerShell
+
+        1. Connect to Microsoft Graph and list Conditional Access policies:
+
+        ```powershell
+        Connect-MgGraph -Scopes "Policy.Read.All"
+        Get-MgIdentityConditionalAccessPolicy |
+          Where-Object { $_.State -eq "enabled" -and $_.GrantControls.BuiltInControls -contains "block" }
+        ```
+
+        A passing tenant returns at least one policy that blocks legacy authentication client app types. A failing tenant returns nothing.
       remediation:
         - id: console
           desc: |
@@ -593,6 +628,38 @@ queries:
         title: Microsoft Entra Conditional Access
       - url: https://learn.microsoft.com/en-us/entra/identity/conditional-access/block-legacy-authentication
         title: Block Legacy Authentication with Conditional Access
+  - uid: mondoo-m365-security-enable-conditional-access-policies-to-block-legacy-authentication-microsoft365
+    filters: |
+      asset.platform == "microsoft365"
+    mql: |
+      microsoft.security.latestSecureScores.controlScores.where(controlName == 'BlockLegacyAuthentication').all(_['score'] == 8)
+  - uid: mondoo-m365-security-enable-conditional-access-policies-to-block-legacy-authentication-terraform-hcl
+    filters: |
+      asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == 'azuread_conditional_access_policy')
+    mql: |
+      terraform.resources('azuread_conditional_access_policy').any(
+        arguments['state'] == 'enabled' &&
+        blocks.where(type == 'conditions').any(arguments['client_app_types'] != empty) &&
+        blocks.where(type == 'grant_controls').any(arguments['built_in_controls'].contains('block'))
+      )
+  - uid: mondoo-m365-security-enable-conditional-access-policies-to-block-legacy-authentication-terraform-plan
+    filters: |
+      asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == 'azuread_conditional_access_policy')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'azuread_conditional_access_policy').any(
+        change.after['state'] == 'enabled' &&
+        change.after['conditions'].any(_['client_app_types'] != empty) &&
+        change.after['grant_controls'].any(_['built_in_controls'].contains('block'))
+      )
+  - uid: mondoo-m365-security-enable-conditional-access-policies-to-block-legacy-authentication-terraform-state
+    filters: |
+      asset.platform == "terraform-state" && terraform.state.resources.contains(type == 'azuread_conditional_access_policy')
+    mql: |
+      terraform.state.resources.where(type == 'azuread_conditional_access_policy').any(
+        values['state'] == 'enabled' &&
+        values['conditions'].any(_['client_app_types'] != empty) &&
+        values['grant_controls'].any(_['built_in_controls'].contains('block'))
+      )
   - uid: mondoo-m365-security-ensure-multifactor-authentication-is-enabled-for-all-users-in-administrative-roles
     title: Ensure MFA is enabled for all users in administrative roles
     impact: 100
