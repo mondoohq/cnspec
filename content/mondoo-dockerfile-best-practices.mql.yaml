@@ -76,19 +76,33 @@ queries:
       docker.file.stages.all(run.none(script.contains("apt purge")))
     docs:
       desc: |
-        This check ensures that Dockerfiles use the `apt-get` CLI instead of `apt`.
+        Dockerfile `RUN` instructions should invoke the `apt-get` CLI rather than `apt` for package management operations.
 
         **Why this matters**
 
-        Using `apt-get` instead of `apt` in Dockerfiles provides several advantages:
+        - **Predictable behavior:** The `apt-get` CLI is designed for scripting and automation, offering consistent and reliable behavior in non-interactive Dockerfile contexts.
+        - **Stability:** `apt-get` maintains a stable command-line interface across releases, while `apt` is intended for interactive use and its output and behavior may change between versions.
+        - **Reduced risk of errors:** Using `apt-get` minimizes the chance of unexpected prompts or behavior changes interrupting the build process.
+      audit: |
+        Inspect the Dockerfile to confirm package management uses `apt-get`:
 
-        - **Predictable behavior**: The `apt-get` CLI is designed for scripting and automation, offering more consistent and reliable behavior in Dockerfile contexts.
-        - **Stability**: `apt-get` is considered more stable and less prone to changes in behavior compared to `apt`, which is intended for interactive use.
-        - **Reduced risk of errors**: Using `apt-get` minimizes the risk of unexpected issues during the build process, improving the reliability of containerized environments.
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Search every `RUN` instruction for `apt` invocations: `grep -nE 'RUN.*\bapt\b' Dockerfile`.
+        3. Confirm none of the matches call bare `apt` (such as `apt install`, `apt update`, `apt upgrade`, `apt remove`, or `apt purge`).
 
-        By ensuring the use of `apt-get` instead of `apt`, this check helps maintain a predictable Dockerfile configuration, aligning with best practices.
-      remediation: |
-        Review the Dockerfile `RUN` instructions to replace any `apt` commands with `apt-get`. This ensures that package management operations are performed using the recommended and more stable CLI.
+        If every package operation uses `apt-get`, the check passes. If any `RUN` instruction calls bare `apt`, the check fails.
+      remediation:
+        - id: dockerfile
+          desc: |
+            Replace bare `apt` commands in `RUN` instructions with `apt-get`:
+
+            ```dockerfile
+            # Instead of:
+            RUN apt update && apt install -y curl
+
+            # Use:
+            RUN apt-get update && apt-get install -y curl
+            ```
     refs:
       - url: https://docs.docker.com/build/building/best-practices/#run
         title: Dockerfile Best Practices - RUN
@@ -102,36 +116,41 @@ queries:
       docker.file.stages.all(run.where(script.contains("apk update")).all(script.contains("apk add")))
     docs:
       desc: |
-        This check ensures that package manager update commands (`apt-get update`, `apk update`) are not used alone in a `RUN` instruction without a corresponding install command in the same layer.
+        Package manager update commands (`apt-get update`, `apk update`) should run in the same `RUN` instruction as the corresponding install command, never alone in a separate layer.
 
         **Why this matters**
 
-        Running update commands in a separate `RUN` instruction from the install command causes several problems:
+        - **Stale package lists:** Docker caches each layer independently. If the update layer is cached but the install layer is rebuilt, the install uses outdated package indexes, potentially installing older versions with known vulnerabilities.
+        - **Non-reproducible builds:** Cached update layers create a false sense of freshness. Builds at different times produce different results depending on cache state.
+        - **Unnecessary layer bloat:** The update command creates a layer containing package index files that are only needed during installation and should be cleaned up afterward.
+      audit: |
+        Inspect the Dockerfile to confirm update and install are combined:
 
-        - **Stale package lists**: Docker caches each layer independently. If the update layer is cached but the install layer is rebuilt, the install uses outdated package indexes, potentially installing older versions with known vulnerabilities.
-        - **Non-reproducible builds**: Cached update layers create a false sense of freshness. Builds at different times produce different results depending on cache state.
-        - **Unnecessary layer bloat**: The update command creates a layer containing package index files that are only needed during installation and should be cleaned up afterward.
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Locate every `RUN` instruction containing `apt-get update` or `apk update`: `grep -nE 'RUN.*(apt-get update|apk update)' Dockerfile`.
+        3. Confirm each matched instruction also runs the install command (`apt-get install` or `apk add`) in the same `RUN` statement.
 
-        This aligns with CIS Docker Benchmark check CIS-DI-0007.
-      remediation: |
-        Combine update and install commands in a single `RUN` instruction:
+        If every update is paired with an install in the same instruction, the check passes. If an update runs alone, the check fails.
+      remediation:
+        - id: dockerfile
+          desc: |
+            Combine update and install commands in a single `RUN` instruction:
 
-        ```dockerfile
-        # Instead of:
-        RUN apt-get update
-        RUN apt-get install -y package
+            ```dockerfile
+            # Instead of:
+            RUN apt-get update
+            RUN apt-get install -y package
 
-        # Use:
-        RUN apt-get update && apt-get install -y package && rm -rf /var/lib/apt/lists/*
+            # Use:
+            RUN apt-get update && apt-get install -y package && rm -rf /var/lib/apt/lists/*
 
-        # For Alpine:
-        # Instead of:
-        RUN apk update
-        RUN apk add package
+            # For Alpine, instead of:
+            RUN apk update
+            RUN apk add package
 
-        # Use:
-        RUN apk add --no-cache package
-        ```
+            # Use:
+            RUN apk add --no-cache package
+            ```
     refs:
       - url: https://docs.docker.com/build/building/best-practices/#run
         title: Dockerfile Best Practices - RUN
@@ -144,28 +163,33 @@ queries:
       docker.file.stages.all(run.where(script.contains("apk add")).all(script.contains("--no-cache")))
     docs:
       desc: |
-        This check ensures that Alpine's `apk add` command is always used with the `--no-cache` flag in Dockerfile `RUN` instructions.
+        Alpine's `apk add` command should always include the `--no-cache` flag in Dockerfile `RUN` instructions.
 
         **Why this matters**
 
-        Without `--no-cache`, `apk add` downloads and stores a local package index in `/var/cache/apk/`:
+        - **Image bloat:** Without `--no-cache`, `apk add` downloads and stores a local package index in `/var/cache/apk/`, adding unnecessary size to the image layer and increasing storage costs and pull times.
+        - **Stale cache risk:** A cached index in a layer can become outdated, leading to confusing behavior if the layer is reused.
+        - **Simpler instructions:** The `--no-cache` flag fetches the index temporarily and discards it after the operation, eliminating the need for a separate `apk update` or manual `rm -rf /var/cache/apk/*` cleanup step.
+      audit: |
+        Inspect the Dockerfile to confirm `apk add` uses `--no-cache`:
 
-        - **Image bloat**: The cached index files add unnecessary size to the image layer, increasing storage costs and pull times.
-        - **Stale cache risk**: A cached index in a layer can become outdated, leading to confusing behavior if the layer is reused.
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Locate every `RUN` instruction containing `apk add`: `grep -nE 'RUN.*apk add' Dockerfile`.
+        3. Confirm each matched instruction includes the `--no-cache` flag.
 
-        The `--no-cache` flag tells `apk` to fetch the index temporarily and discard it after the operation, keeping the image layer clean.
-      remediation: |
-        Add the `--no-cache` flag to all `apk add` commands:
+        If every `apk add` uses `--no-cache`, the check passes. If any omits it, the check fails.
+      remediation:
+        - id: dockerfile
+          desc: |
+            Add the `--no-cache` flag to all `apk add` commands:
 
-        ```dockerfile
-        # Instead of:
-        RUN apk update && apk add git curl
+            ```dockerfile
+            # Instead of:
+            RUN apk update && apk add git curl
 
-        # Use:
-        RUN apk add --no-cache git curl
-        ```
-
-        This eliminates the need for a separate `apk update` or a manual `rm -rf /var/cache/apk/*` cleanup step.
+            # Use:
+            RUN apk add --no-cache git curl
+            ```
     refs:
       - url: https://docs.docker.com/build/building/best-practices/#run
         title: Dockerfile Best Practices - RUN
@@ -178,32 +202,36 @@ queries:
       docker.file.stages.all(run.where(script.contains("apt-get install")).all(script.contains("/var/lib/apt/lists")))
     docs:
       desc: |
-        This check ensures that Dockerfile `RUN` instructions that use `apt-get install` also clean up the apt package lists in the same layer.
+        Dockerfile `RUN` instructions that use `apt-get install` should also clean up the apt package lists in the same layer.
 
         **Why this matters**
 
-        After `apt-get install`, the downloaded package index files remain in `/var/lib/apt/lists/`:
+        - **Image bloat:** After `apt-get install`, the downloaded package index files remain in `/var/lib/apt/lists/` and can add tens of megabytes to the image layer.
+        - **Unnecessary data:** The package lists are only needed during installation and serve no purpose at runtime.
+        - **Layer persistence:** If cleanup happens in a separate `RUN` instruction, the files still exist in the install layer due to how Docker's union filesystem works, providing no actual size savings.
+      audit: |
+        Inspect the Dockerfile to confirm apt lists are cleaned in the install layer:
 
-        - **Image bloat**: These index files can add tens of megabytes to the image layer, significantly increasing image size.
-        - **Unnecessary data**: The package lists are only needed during installation and serve no purpose at runtime.
-        - **Layer persistence**: If cleanup happens in a separate `RUN` instruction, the files still exist in the install layer due to how Docker's union filesystem works, providing no actual size savings.
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Locate every `RUN` instruction containing `apt-get install`: `grep -nE 'RUN.*apt-get install' Dockerfile`.
+        3. Confirm each matched instruction also references `/var/lib/apt/lists` to remove the cached index in the same `RUN` statement.
 
-        Cleaning up in the same `RUN` instruction ensures the files never persist in any layer.
-      remediation: |
-        Add cache cleanup to the same `RUN` instruction as `apt-get install`:
+        If every `apt-get install` instruction cleans `/var/lib/apt/lists`, the check passes. If any omits the cleanup, the check fails.
+      remediation:
+        - id: dockerfile
+          desc: |
+            Add cache cleanup to the same `RUN` instruction as `apt-get install`:
 
-        ```dockerfile
-        # Instead of:
-        RUN apt-get update && apt-get install -y package
-        RUN rm -rf /var/lib/apt/lists/*
+            ```dockerfile
+            # Instead of:
+            RUN apt-get update && apt-get install -y package
+            RUN rm -rf /var/lib/apt/lists/*
 
-        # Use:
-        RUN apt-get update && \
-            apt-get install -y --no-install-recommends package && \
-            rm -rf /var/lib/apt/lists/*
-        ```
-
-        Combining update, install, and cleanup in a single `RUN` instruction keeps the image layer as small as possible.
+            # Use:
+            RUN apt-get update && \
+                apt-get install -y --no-install-recommends package && \
+                rm -rf /var/lib/apt/lists/*
+            ```
     refs:
       - url: https://docs.docker.com/build/building/best-practices/#apt-get
         title: Dockerfile Best Practices - apt-get
@@ -216,27 +244,35 @@ queries:
       docker.file.stages.all(run.where(script.contains("yum install")).all(script.contains("yum clean all")))
     docs:
       desc: |
-        This check ensures that Dockerfile `RUN` instructions that use `yum install` also run `yum clean all` in the same layer.
+        Dockerfile `RUN` instructions that use `yum install` should also run `yum clean all` in the same layer.
 
         **Why this matters**
 
-        After `yum install`, cached package data and metadata remain in `/var/cache/yum/`:
+        - **Image bloat:** After `yum install`, cached package data and metadata remain in `/var/cache/yum/` and add significant size to the image layer.
+        - **Unnecessary data:** The cache is only needed during installation and serves no purpose at runtime.
+        - **Layer persistence:** If cleanup happens in a separate `RUN` instruction, the cached files still exist in the install layer due to Docker's union filesystem.
+      audit: |
+        Inspect the Dockerfile to confirm the yum cache is cleaned in the install layer:
 
-        - **Image bloat**: The cached data can add significant size to the image layer.
-        - **Unnecessary data**: The cache is only needed during installation and serves no purpose at runtime.
-        - **Layer persistence**: If cleanup happens in a separate `RUN` instruction, the cached files still exist in the install layer due to Docker's union filesystem.
-      remediation: |
-        Add `yum clean all` to the same `RUN` instruction as `yum install`:
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Locate every `RUN` instruction containing `yum install`: `grep -nE 'RUN.*yum install' Dockerfile`.
+        3. Confirm each matched instruction also runs `yum clean all` in the same `RUN` statement.
 
-        ```dockerfile
-        # Instead of:
-        RUN yum install -y package
+        If every `yum install` instruction runs `yum clean all`, the check passes. If any omits it, the check fails.
+      remediation:
+        - id: dockerfile
+          desc: |
+            Add `yum clean all` to the same `RUN` instruction as `yum install`:
 
-        # Use:
-        RUN yum install -y package && \
-            yum clean all && \
-            rm -rf /var/cache/yum
-        ```
+            ```dockerfile
+            # Instead of:
+            RUN yum install -y package
+
+            # Use:
+            RUN yum install -y package && \
+                yum clean all && \
+                rm -rf /var/cache/yum
+            ```
     refs:
       - url: https://docs.docker.com/build/building/best-practices/#run
         title: Dockerfile Best Practices - RUN
@@ -247,27 +283,35 @@ queries:
       docker.file.stages.all(run.where(script.contains("dnf install")).all(script.contains("dnf clean all")))
     docs:
       desc: |
-        This check ensures that Dockerfile `RUN` instructions that use `dnf install` also run `dnf clean all` in the same layer.
+        Dockerfile `RUN` instructions that use `dnf install` should also run `dnf clean all` in the same layer.
 
         **Why this matters**
 
-        After `dnf install`, cached package data and metadata remain in `/var/cache/dnf/`:
+        - **Image bloat:** After `dnf install`, cached package data and metadata remain in `/var/cache/dnf/` and add significant size to the image layer.
+        - **Unnecessary data:** The cache is only needed during installation and serves no purpose at runtime.
+        - **Layer persistence:** If cleanup happens in a separate `RUN` instruction, the cached files still exist in the install layer due to Docker's union filesystem.
+      audit: |
+        Inspect the Dockerfile to confirm the dnf cache is cleaned in the install layer:
 
-        - **Image bloat**: The cached data can add significant size to the image layer.
-        - **Unnecessary data**: The cache is only needed during installation and serves no purpose at runtime.
-        - **Layer persistence**: If cleanup happens in a separate `RUN` instruction, the cached files still exist in the install layer due to Docker's union filesystem.
-      remediation: |
-        Add `dnf clean all` to the same `RUN` instruction as `dnf install`:
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Locate every `RUN` instruction containing `dnf install`: `grep -nE 'RUN.*dnf install' Dockerfile`.
+        3. Confirm each matched instruction also runs `dnf clean all` in the same `RUN` statement.
 
-        ```dockerfile
-        # Instead of:
-        RUN dnf install -y package
+        If every `dnf install` instruction runs `dnf clean all`, the check passes. If any omits it, the check fails.
+      remediation:
+        - id: dockerfile
+          desc: |
+            Add `dnf clean all` to the same `RUN` instruction as `dnf install`:
 
-        # Use:
-        RUN dnf install -y package && \
-            dnf clean all && \
-            rm -rf /var/cache/dnf
-        ```
+            ```dockerfile
+            # Instead of:
+            RUN dnf install -y package
+
+            # Use:
+            RUN dnf install -y package && \
+                dnf clean all && \
+                rm -rf /var/cache/dnf
+            ```
     refs:
       - url: https://docs.docker.com/build/building/best-practices/#run
         title: Dockerfile Best Practices - RUN
@@ -278,26 +322,34 @@ queries:
       docker.file.stages.all(run.where(script.contains("zypper install")).all(script.contains("zypper clean")))
     docs:
       desc: |
-        This check ensures that Dockerfile `RUN` instructions that use `zypper install` also run `zypper clean` in the same layer.
+        Dockerfile `RUN` instructions that use `zypper install` should also run `zypper clean` in the same layer.
 
         **Why this matters**
 
-        After `zypper install`, cached package data and metadata remain on disk:
+        - **Image bloat:** After `zypper install`, cached package data and metadata remain on disk and add significant size to the image layer.
+        - **Unnecessary data:** The cache is only needed during installation and serves no purpose at runtime.
+        - **Layer persistence:** If cleanup happens in a separate `RUN` instruction, the cached files still exist in the install layer due to Docker's union filesystem.
+      audit: |
+        Inspect the Dockerfile to confirm the zypper cache is cleaned in the install layer:
 
-        - **Image bloat**: The cached data can add significant size to the image layer.
-        - **Unnecessary data**: The cache is only needed during installation and serves no purpose at runtime.
-        - **Layer persistence**: If cleanup happens in a separate `RUN` instruction, the cached files still exist in the install layer due to Docker's union filesystem.
-      remediation: |
-        Add `zypper clean` to the same `RUN` instruction as `zypper install`:
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Locate every `RUN` instruction containing `zypper install`: `grep -nE 'RUN.*zypper install' Dockerfile`.
+        3. Confirm each matched instruction also runs `zypper clean` in the same `RUN` statement.
 
-        ```dockerfile
-        # Instead of:
-        RUN zypper --non-interactive install package
+        If every `zypper install` instruction runs `zypper clean`, the check passes. If any omits it, the check fails.
+      remediation:
+        - id: dockerfile
+          desc: |
+            Add `zypper clean` to the same `RUN` instruction as `zypper install`:
 
-        # Use:
-        RUN zypper --non-interactive install package && \
-            zypper clean --all
-        ```
+            ```dockerfile
+            # Instead of:
+            RUN zypper --non-interactive install package
+
+            # Use:
+            RUN zypper --non-interactive install package && \
+                zypper clean --all
+            ```
     refs:
       - url: https://docs.docker.com/build/building/best-practices/#run
         title: Dockerfile Best Practices - RUN
@@ -308,30 +360,36 @@ queries:
       docker.file.stages.all(run.where(script.contains("pip install")).all(script.contains("--no-cache-dir")))
     docs:
       desc: |
-        This check ensures that `pip install` commands in Dockerfile `RUN` instructions use the `--no-cache-dir` flag.
+        `pip install` commands in Dockerfile `RUN` instructions should include the `--no-cache-dir` flag.
 
         **Why this matters**
 
-        By default, pip caches downloaded packages and build artifacts in `~/.cache/pip/`:
+        - **Image bloat:** By default, pip caches downloaded packages and build artifacts in `~/.cache/pip/`, which can add tens or hundreds of megabytes to the image layer, especially for packages with large binary wheels.
+        - **Unnecessary data:** Cached packages serve no purpose in a container since packages are not reinstalled at runtime.
+        - **Layer persistence:** Even if the cache is deleted in a subsequent `RUN` instruction, it persists in the install layer.
+      audit: |
+        Inspect the Dockerfile to confirm `pip install` uses `--no-cache-dir`:
 
-        - **Image bloat**: The pip cache can add tens or hundreds of megabytes to the image layer, especially for packages with large binary wheels.
-        - **Unnecessary data**: Cached packages serve no purpose in a container since packages are not reinstalled at runtime.
-        - **Layer persistence**: Even if the cache is deleted in a subsequent `RUN` instruction, it persists in the install layer.
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Locate every `RUN` instruction containing `pip install`: `grep -nE 'RUN.*pip install' Dockerfile`.
+        3. Confirm each matched instruction includes the `--no-cache-dir` flag.
 
-        The `--no-cache-dir` flag prevents pip from writing to the cache directory entirely.
-      remediation: |
-        Add `--no-cache-dir` to all `pip install` commands:
+        If every `pip install` uses `--no-cache-dir`, the check passes. If any omits it, the check fails.
+      remediation:
+        - id: dockerfile
+          desc: |
+            Add `--no-cache-dir` to all `pip install` commands:
 
-        ```dockerfile
-        # Instead of:
-        RUN pip install flask gunicorn
+            ```dockerfile
+            # Instead of:
+            RUN pip install flask gunicorn
 
-        # Use:
-        RUN pip install --no-cache-dir flask gunicorn
+            # Use:
+            RUN pip install --no-cache-dir flask gunicorn
 
-        # Also works with requirements files:
-        RUN pip install --no-cache-dir -r requirements.txt
-        ```
+            # Also works with requirements files:
+            RUN pip install --no-cache-dir -r requirements.txt
+            ```
     refs:
       - url: https://docs.docker.com/build/building/best-practices/#run
         title: Dockerfile Best Practices - RUN
@@ -344,25 +402,33 @@ queries:
       docker.file.stages.all(run.where(script.contains("yarn install")).all(script.contains("yarn cache clean")))
     docs:
       desc: |
-        This check ensures that Dockerfile `RUN` instructions that use `yarn install` also run `yarn cache clean` in the same layer.
+        Dockerfile `RUN` instructions that use `yarn install` should also run `yarn cache clean` in the same layer.
 
         **Why this matters**
 
-        After `yarn install`, a local cache of downloaded packages is stored on disk:
+        - **Image bloat:** After `yarn install`, a local cache of downloaded packages is stored on disk and can add significant size to the image layer, often exceeding the size of the installed packages themselves.
+        - **Unnecessary data:** The cache is only useful for speeding up future installs, which do not happen at container runtime.
+        - **Layer persistence:** If cleanup happens in a separate `RUN` instruction, the cached files still exist in the install layer due to Docker's union filesystem.
+      audit: |
+        Inspect the Dockerfile to confirm the yarn cache is cleaned in the install layer:
 
-        - **Image bloat**: The yarn cache can add significant size to the image layer, often exceeding the size of the installed packages themselves.
-        - **Unnecessary data**: The cache is only useful for speeding up future installs, which do not happen at container runtime.
-        - **Layer persistence**: If cleanup happens in a separate `RUN` instruction, the cached files still exist in the install layer due to Docker's union filesystem.
-      remediation: |
-        Add `yarn cache clean` to the same `RUN` instruction as `yarn install`:
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Locate every `RUN` instruction containing `yarn install`: `grep -nE 'RUN.*yarn install' Dockerfile`.
+        3. Confirm each matched instruction also runs `yarn cache clean` in the same `RUN` statement.
 
-        ```dockerfile
-        # Instead of:
-        RUN yarn install
+        If every `yarn install` instruction runs `yarn cache clean`, the check passes. If any omits it, the check fails.
+      remediation:
+        - id: dockerfile
+          desc: |
+            Add `yarn cache clean` to the same `RUN` instruction as `yarn install`:
 
-        # Use:
-        RUN yarn install && yarn cache clean
-        ```
+            ```dockerfile
+            # Instead of:
+            RUN yarn install
+
+            # Use:
+            RUN yarn install && yarn cache clean
+            ```
     refs:
       - url: https://docs.docker.com/build/building/best-practices/#run
         title: Dockerfile Best Practices - RUN
@@ -376,27 +442,35 @@ queries:
       docker.file.stages.all(run.where(script.contains("npm ci")).all(script.contains("npm cache clean")))
     docs:
       desc: |
-        This check ensures that Dockerfile `RUN` instructions that use `npm install` or `npm ci` also run `npm cache clean` in the same layer.
+        Dockerfile `RUN` instructions that use `npm install` or `npm ci` should also run `npm cache clean` in the same layer.
 
         **Why this matters**
 
-        After `npm install` or `npm ci`, a local cache of downloaded packages is stored in `~/.npm/`:
+        - **Image bloat:** After `npm install` or `npm ci`, a local cache of downloaded packages is stored in `~/.npm/` and can add significant size to the image layer, often comparable to or exceeding the size of `node_modules` itself.
+        - **Unnecessary data:** The cache speeds up future installs but serves no purpose at container runtime.
+        - **Layer persistence:** If cleanup happens in a separate `RUN` instruction, the cached files still exist in the install layer due to Docker's union filesystem.
+      audit: |
+        Inspect the Dockerfile to confirm the npm cache is cleaned in the install layer:
 
-        - **Image bloat**: The npm cache can add significant size to the image layer, often comparable to or exceeding the size of `node_modules` itself.
-        - **Unnecessary data**: The cache speeds up future installs but serves no purpose at container runtime.
-        - **Layer persistence**: If cleanup happens in a separate `RUN` instruction, the cached files still exist in the install layer due to Docker's union filesystem.
-      remediation: |
-        Add `npm cache clean --force` to the same `RUN` instruction as `npm install` or `npm ci`:
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Locate every `RUN` instruction containing `npm install` or `npm ci`: `grep -nE 'RUN.*npm (install|ci)' Dockerfile`.
+        3. Confirm each matched instruction also runs `npm cache clean` in the same `RUN` statement.
 
-        ```dockerfile
-        # Instead of:
-        RUN npm install
-        RUN npm ci
+        If every `npm install` and `npm ci` instruction runs `npm cache clean`, the check passes. If any omits it, the check fails.
+      remediation:
+        - id: dockerfile
+          desc: |
+            Add `npm cache clean --force` to the same `RUN` instruction as `npm install` or `npm ci`:
 
-        # Use:
-        RUN npm install && npm cache clean --force
-        RUN npm ci && npm cache clean --force
-        ```
+            ```dockerfile
+            # Instead of:
+            RUN npm install
+            RUN npm ci
+
+            # Use:
+            RUN npm install && npm cache clean --force
+            RUN npm ci && npm cache clean --force
+            ```
     refs:
       - url: https://docs.docker.com/build/building/best-practices/#run
         title: Dockerfile Best Practices - RUN
@@ -409,29 +483,35 @@ queries:
       docker.file.stages.all(run.where(script.contains("apt-get install")).all(script.contains("--no-install-recommends")))
     docs:
       desc: |
-        This check ensures that `apt-get install` commands in Dockerfile `RUN` instructions use the `--no-install-recommends` flag.
+        `apt-get install` commands in Dockerfile `RUN` instructions should include the `--no-install-recommends` flag.
 
         **Why this matters**
 
-        By default, `apt-get install` pulls in "recommended" packages in addition to the direct dependencies:
+        - **Image bloat:** By default, `apt-get install` pulls in recommended packages such as documentation, man pages, and X11 libraries that are unnecessary in a container, which can add hundreds of megabytes to the image.
+        - **Increased attack surface:** Every additional package is a potential source of vulnerabilities that must be tracked and patched.
+        - **Slower builds and pulls:** Larger images take longer to build, push, and pull, increasing CI/CD cycle times and deployment latency.
+      audit: |
+        Inspect the Dockerfile to confirm `apt-get install` uses `--no-install-recommends`:
 
-        - **Image bloat**: Recommended packages often include documentation, man pages, X11 libraries, and other utilities that are unnecessary in a container. This can add hundreds of megabytes to the image.
-        - **Increased attack surface**: Every additional package is a potential source of vulnerabilities that must be tracked and patched.
-        - **Slower builds and pulls**: Larger images take longer to build, push, and pull, increasing CI/CD cycle times and deployment latency.
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Locate every `RUN` instruction containing `apt-get install`: `grep -nE 'RUN.*apt-get install' Dockerfile`.
+        3. Confirm each matched instruction includes the `--no-install-recommends` flag.
 
-        The `--no-install-recommends` flag restricts apt to installing only the direct dependencies, producing a significantly smaller and more focused image.
-      remediation: |
-        Add `--no-install-recommends` to all `apt-get install` commands:
+        If every `apt-get install` uses `--no-install-recommends`, the check passes. If any omits it, the check fails.
+      remediation:
+        - id: dockerfile
+          desc: |
+            Add `--no-install-recommends` to all `apt-get install` commands:
 
-        ```dockerfile
-        # Instead of:
-        RUN apt-get update && apt-get install -y package
+            ```dockerfile
+            # Instead of:
+            RUN apt-get update && apt-get install -y package
 
-        # Use:
-        RUN apt-get update && \
-            apt-get install -y --no-install-recommends package && \
-            rm -rf /var/lib/apt/lists/*
-        ```
+            # Use:
+            RUN apt-get update && \
+                apt-get install -y --no-install-recommends package && \
+                rm -rf /var/lib/apt/lists/*
+            ```
     refs:
       - url: https://docs.docker.com/build/building/best-practices/#apt-get
         title: Dockerfile Best Practices - apt-get
@@ -444,24 +524,32 @@ queries:
       docker.file.stages.all(run.where(script.contains("apt-get install")).all(script.contains("-y")))
     docs:
       desc: |
-        This check ensures that `apt-get install` commands in Dockerfile `RUN` instructions include the `-y` (or `--yes`) flag.
+        `apt-get install` commands in Dockerfile `RUN` instructions should include the `-y` (or `--yes`) flag.
 
         **Why this matters**
 
-        Without the `-y` flag, `apt-get install` prompts for interactive confirmation:
+        - **Build failure:** Docker builds run non-interactively. Without `-y`, `apt-get install` waits for confirmation input that never comes, causing the build to hang and eventually fail.
+        - **CI/CD reliability:** Automated build pipelines cannot provide interactive input, making builds unreliable without this flag.
+      audit: |
+        Inspect the Dockerfile to confirm `apt-get install` uses the `-y` flag:
 
-        - **Build failure**: Docker builds run non-interactively. Without `-y`, the command waits for input that never comes, causing the build to hang and eventually fail.
-        - **CI/CD reliability**: Automated build pipelines cannot provide interactive input, making builds unreliable without this flag.
-      remediation: |
-        Add the `-y` flag to all `apt-get install` commands:
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Locate every `RUN` instruction containing `apt-get install`: `grep -nE 'RUN.*apt-get install' Dockerfile`.
+        3. Confirm each matched instruction includes the `-y` or `--yes` flag.
 
-        ```dockerfile
-        # Instead of:
-        RUN apt-get install package
+        If every `apt-get install` includes `-y`, the check passes. If any omits it, the check fails.
+      remediation:
+        - id: dockerfile
+          desc: |
+            Add the `-y` flag to all `apt-get install` commands:
 
-        # Use:
-        RUN apt-get install -y package
-        ```
+            ```dockerfile
+            # Instead of:
+            RUN apt-get install package
+
+            # Use:
+            RUN apt-get install -y package
+            ```
     refs:
       - url: https://docs.docker.com/build/building/best-practices/#apt-get
         title: Dockerfile Best Practices - apt-get
@@ -472,24 +560,32 @@ queries:
       docker.file.stages.all(run.where(script.contains("yum install")).all(script.contains("-y")))
     docs:
       desc: |
-        This check ensures that `yum install` commands in Dockerfile `RUN` instructions include the `-y` (or `--assumeyes`) flag.
+        `yum install` commands in Dockerfile `RUN` instructions should include the `-y` (or `--assumeyes`) flag.
 
         **Why this matters**
 
-        Without the `-y` flag, `yum install` prompts for interactive confirmation:
+        - **Build failure:** Docker builds run non-interactively. Without `-y`, `yum install` waits for confirmation input that never comes, causing the build to hang and eventually fail.
+        - **CI/CD reliability:** Automated build pipelines cannot provide interactive input, making builds unreliable without this flag.
+      audit: |
+        Inspect the Dockerfile to confirm `yum install` uses the `-y` flag:
 
-        - **Build failure**: Docker builds run non-interactively. Without `-y`, the command waits for input that never comes, causing the build to hang and eventually fail.
-        - **CI/CD reliability**: Automated build pipelines cannot provide interactive input, making builds unreliable without this flag.
-      remediation: |
-        Add the `-y` flag to all `yum install` commands:
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Locate every `RUN` instruction containing `yum install`: `grep -nE 'RUN.*yum install' Dockerfile`.
+        3. Confirm each matched instruction includes the `-y` or `--assumeyes` flag.
 
-        ```dockerfile
-        # Instead of:
-        RUN yum install package
+        If every `yum install` includes `-y`, the check passes. If any omits it, the check fails.
+      remediation:
+        - id: dockerfile
+          desc: |
+            Add the `-y` flag to all `yum install` commands:
 
-        # Use:
-        RUN yum install -y package
-        ```
+            ```dockerfile
+            # Instead of:
+            RUN yum install package
+
+            # Use:
+            RUN yum install -y package
+            ```
     refs:
       - url: https://docs.docker.com/build/building/best-practices/#run
         title: Dockerfile Best Practices - RUN
@@ -500,24 +596,32 @@ queries:
       docker.file.stages.all(run.where(script.contains("dnf install")).all(script.contains("-y")))
     docs:
       desc: |
-        This check ensures that `dnf install` commands in Dockerfile `RUN` instructions include the `-y` (or `--assumeyes`) flag.
+        `dnf install` commands in Dockerfile `RUN` instructions should include the `-y` (or `--assumeyes`) flag.
 
         **Why this matters**
 
-        Without the `-y` flag, `dnf install` prompts for interactive confirmation:
+        - **Build failure:** Docker builds run non-interactively. Without `-y`, `dnf install` waits for confirmation input that never comes, causing the build to hang and eventually fail.
+        - **CI/CD reliability:** Automated build pipelines cannot provide interactive input, making builds unreliable without this flag.
+      audit: |
+        Inspect the Dockerfile to confirm `dnf install` uses the `-y` flag:
 
-        - **Build failure**: Docker builds run non-interactively. Without `-y`, the command waits for input that never comes, causing the build to hang and eventually fail.
-        - **CI/CD reliability**: Automated build pipelines cannot provide interactive input, making builds unreliable without this flag.
-      remediation: |
-        Add the `-y` flag to all `dnf install` commands:
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Locate every `RUN` instruction containing `dnf install`: `grep -nE 'RUN.*dnf install' Dockerfile`.
+        3. Confirm each matched instruction includes the `-y` or `--assumeyes` flag.
 
-        ```dockerfile
-        # Instead of:
-        RUN dnf install package
+        If every `dnf install` includes `-y`, the check passes. If any omits it, the check fails.
+      remediation:
+        - id: dockerfile
+          desc: |
+            Add the `-y` flag to all `dnf install` commands:
 
-        # Use:
-        RUN dnf install -y package
-        ```
+            ```dockerfile
+            # Instead of:
+            RUN dnf install package
+
+            # Use:
+            RUN dnf install -y package
+            ```
     refs:
       - url: https://docs.docker.com/build/building/best-practices/#run
         title: Dockerfile Best Practices - RUN
@@ -528,24 +632,32 @@ queries:
       docker.file.stages.all(run.where(script.contains("zypper install")).all(script.contains("--non-interactive")))
     docs:
       desc: |
-        This check ensures that `zypper install` commands in Dockerfile `RUN` instructions include the `--non-interactive` flag.
+        `zypper install` commands in Dockerfile `RUN` instructions should include the `--non-interactive` flag.
 
         **Why this matters**
 
-        Without the `--non-interactive` flag, `zypper install` prompts for interactive confirmation:
+        - **Build failure:** Docker builds run non-interactively. Without `--non-interactive`, `zypper install` waits for confirmation input that never comes, causing the build to hang and eventually fail.
+        - **CI/CD reliability:** Automated build pipelines cannot provide interactive input, making builds unreliable without this flag.
+      audit: |
+        Inspect the Dockerfile to confirm `zypper install` uses the `--non-interactive` flag:
 
-        - **Build failure**: Docker builds run non-interactively. Without `--non-interactive`, the command waits for input that never comes, causing the build to hang and eventually fail.
-        - **CI/CD reliability**: Automated build pipelines cannot provide interactive input, making builds unreliable without this flag.
-      remediation: |
-        Add the `--non-interactive` flag to all `zypper install` commands:
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Locate every `RUN` instruction containing `zypper install`: `grep -nE 'RUN.*zypper install' Dockerfile`.
+        3. Confirm each matched instruction includes the `--non-interactive` flag.
 
-        ```dockerfile
-        # Instead of:
-        RUN zypper install package
+        If every `zypper install` includes `--non-interactive`, the check passes. If any omits it, the check fails.
+      remediation:
+        - id: dockerfile
+          desc: |
+            Add the `--non-interactive` flag to all `zypper install` commands:
 
-        # Use:
-        RUN zypper --non-interactive install package
-        ```
+            ```dockerfile
+            # Instead of:
+            RUN zypper install package
+
+            # Use:
+            RUN zypper --non-interactive install package
+            ```
     refs:
       - url: https://docs.docker.com/build/building/best-practices/#run
         title: Dockerfile Best Practices - RUN
@@ -556,32 +668,36 @@ queries:
       docker.file.stages.last.healthcheck != null
     docs:
       desc: |
-        This check ensures that the final stage of a Dockerfile includes a HEALTHCHECK instruction.
+        The final stage of a Dockerfile should include a HEALTHCHECK instruction so orchestrators can determine whether the application inside the container is actually working.
 
         **Why this matters**
 
-        Without a HEALTHCHECK, container orchestrators have no way to determine whether the application inside the container is actually working:
+        - **Silent failures:** A container can remain in a "running" state even when the application has crashed, deadlocked, or become unresponsive.
+        - **Traffic to broken containers:** Load balancers and orchestrators continue routing traffic to unhealthy containers, causing user-facing errors.
+        - **Delayed recovery:** Without health information, orchestrators cannot automatically restart or replace failed containers, increasing downtime.
+        - **Monitoring blind spots:** Container health status provides a basic monitoring signal that integrates with orchestrator dashboards and alerting.
+      audit: |
+        Inspect the Dockerfile to confirm a HEALTHCHECK is defined:
 
-        - **Silent failures**: A container can remain in a "running" state even when the application has crashed, deadlocked, or become unresponsive.
-        - **Traffic to broken containers**: Load balancers and orchestrators continue routing traffic to unhealthy containers, causing user-facing errors.
-        - **Delayed recovery**: Without health information, orchestrators cannot automatically restart or replace failed containers, increasing downtime.
-        - **Monitoring blind spots**: Container health status provides a basic monitoring signal that integrates with orchestrator dashboards and alerting.
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Search for a HEALTHCHECK instruction in the final build stage: `grep -nE '^HEALTHCHECK' Dockerfile`.
+        3. Confirm the final stage declares a HEALTHCHECK with a `CMD` that verifies the application responds.
 
-        Define a HEALTHCHECK that verifies the application is responding correctly, not just that the process is running.
-      remediation: |
-        Add a HEALTHCHECK instruction to your Dockerfile:
+        If the final stage defines a HEALTHCHECK, the check passes. If no HEALTHCHECK is present, the check fails.
+      remediation:
+        - id: dockerfile
+          desc: |
+            Add a HEALTHCHECK instruction to the final stage of your Dockerfile that verifies the application is responding, not just that the process exists:
 
-        ```dockerfile
-        # For a web application:
-        HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-          CMD curl -f http://localhost:8080/health || exit 1
+            ```dockerfile
+            # For a web application:
+            HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+              CMD curl -f http://localhost:8080/health || exit 1
 
-        # For a non-HTTP service:
-        HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-          CMD pg_isready -U postgres || exit 1
-        ```
-
-        Choose a health check command that verifies the application is functioning, not just that the process exists.
+            # For a non-HTTP service:
+            HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+              CMD pg_isready -U postgres || exit 1
+            ```
     refs:
       - url: https://docs.docker.com/reference/dockerfile/#healthcheck
         title: Dockerfile Reference - HEALTHCHECK
@@ -594,31 +710,35 @@ queries:
       docker.file.stages.all(healthcheck == null || healthcheck.none == false)
     docs:
       desc: |
-        This check ensures that no Dockerfile stage uses `HEALTHCHECK NONE` to explicitly disable health checking.
+        No Dockerfile stage should use `HEALTHCHECK NONE` to explicitly disable health checking.
 
         **Why this matters**
 
-        `HEALTHCHECK NONE` is worse than simply omitting a HEALTHCHECK because it actively overrides any health check inherited from a base image:
+        - **Overrides base image checks:** Many well-maintained base images include appropriate HEALTHCHECK instructions. `HEALTHCHECK NONE` discards these intentionally configured checks.
+        - **Intentional degradation:** While a missing HEALTHCHECK might be an oversight, `HEALTHCHECK NONE` is a deliberate decision to remove health monitoring.
+        - **Orchestrator impact:** Containers without health checks cannot benefit from automatic restart policies or health-aware load balancing.
+        - **Debugging difficulty:** When a container becomes unresponsive, the lack of health check history makes it harder to determine when the problem started.
+      audit: |
+        Inspect the Dockerfile to confirm no stage disables health checking:
 
-        - **Overrides base image checks**: Many well-maintained base images include appropriate HEALTHCHECK instructions. `HEALTHCHECK NONE` discards these intentionally configured checks.
-        - **Intentional degradation**: While a missing HEALTHCHECK might be an oversight, `HEALTHCHECK NONE` is a deliberate decision to remove health monitoring.
-        - **Orchestrator impact**: Containers without health checks cannot benefit from automatic restart policies or health-aware load balancing.
-        - **Debugging difficulty**: When a container becomes unresponsive, the lack of health check history makes it harder to determine when the problem started.
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Search for `HEALTHCHECK NONE`: `grep -niE '^HEALTHCHECK\s+NONE' Dockerfile`.
+        3. Confirm no stage uses `HEALTHCHECK NONE`.
 
-        If the base image's health check is not appropriate, replace it with a correct one rather than disabling it entirely.
-      remediation: |
-        Remove the `HEALTHCHECK NONE` instruction and replace it with an appropriate health check:
+        If no stage disables the health check, the check passes. If any stage uses `HEALTHCHECK NONE`, the check fails.
+      remediation:
+        - id: dockerfile
+          desc: |
+            Remove the `HEALTHCHECK NONE` instruction and replace it with an appropriate health check. If the base image's health check does not suit your application, override it with a correct one rather than disabling it:
 
-        ```dockerfile
-        # Instead of:
-        HEALTHCHECK NONE
+            ```dockerfile
+            # Instead of:
+            HEALTHCHECK NONE
 
-        # Define a proper health check:
-        HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-          CMD curl -f http://localhost:8080/health || exit 1
-        ```
-
-        If the base image's health check does not suit your application, override it with a correct one rather than disabling it.
+            # Define a proper health check:
+            HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+              CMD curl -f http://localhost:8080/health || exit 1
+            ```
     refs:
       - url: https://docs.docker.com/reference/dockerfile/#healthcheck
         title: Dockerfile Reference - HEALTHCHECK
@@ -631,32 +751,36 @@ queries:
       docker.file.stages.all(workdir.all(path == /^\//))
     docs:
       desc: |
-        This check ensures that all WORKDIR instructions in the Dockerfile use absolute paths rather than relative paths.
+        Every WORKDIR instruction in the Dockerfile should use an absolute path rather than a relative path.
 
         **Why this matters**
 
-        Relative paths in WORKDIR create unpredictable behavior that varies depending on prior instructions:
+        - **Context dependence:** A relative WORKDIR is resolved against the current working directory, which may differ depending on the base image or preceding WORKDIR instructions.
+        - **Build fragility:** Changing the base image or reordering instructions can silently change where files are copied and commands are executed.
+        - **Harder to audit:** With relative paths, determining the actual working directory at any point in the Dockerfile requires tracing through all preceding instructions.
+        - **Unexpected file placement:** Files added with COPY or ADD may end up in unintended locations when the working directory is ambiguous.
+      audit: |
+        Inspect the Dockerfile to confirm WORKDIR paths are absolute:
 
-        - **Context dependence**: A relative WORKDIR is resolved against the current working directory, which may differ depending on the base image or preceding WORKDIR instructions.
-        - **Build fragility**: Changing the base image or reordering instructions can silently change where files are copied and commands are executed.
-        - **Harder to audit**: With relative paths, determining the actual working directory at any point in the Dockerfile requires tracing through all preceding instructions.
-        - **Unexpected file placement**: Files added with COPY or ADD may end up in unintended locations when the working directory is ambiguous.
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Locate every WORKDIR instruction: `grep -nE '^WORKDIR' Dockerfile`.
+        3. Confirm each path begins with `/`.
 
-        Always use absolute paths in WORKDIR to make the Dockerfile explicit and self-documenting.
-      remediation: |
-        Replace relative WORKDIR paths with absolute paths:
+        If every WORKDIR uses an absolute path, the check passes. If any uses a relative path, the check fails.
+      remediation:
+        - id: dockerfile
+          desc: |
+            Replace relative WORKDIR paths with absolute paths so each instruction operates in an explicit location regardless of the base image or prior instructions:
 
-        ```dockerfile
-        # Instead of:
-        WORKDIR src
-        WORKDIR ../app
+            ```dockerfile
+            # Instead of:
+            WORKDIR src
+            WORKDIR ../app
 
-        # Use:
-        WORKDIR /app/src
-        WORKDIR /app
-        ```
-
-        Absolute paths make it clear where each instruction operates, regardless of the base image or prior instructions.
+            # Use:
+            WORKDIR /app/src
+            WORKDIR /app
+            ```
     refs:
       - url: https://docs.docker.com/reference/dockerfile/#workdir
         title: Dockerfile Reference - WORKDIR
@@ -669,35 +793,43 @@ queries:
       docker.file.stages.all(run.none(script == /\bcd\s/))
     docs:
       desc: |
-        This check ensures that Dockerfile `RUN` instructions do not use `cd` to change directories, and instead use the WORKDIR instruction.
+        Dockerfile `RUN` instructions should use the WORKDIR instruction to change directories rather than calling `cd`.
 
         **Why this matters**
 
-        Using `cd` in a RUN instruction only changes the directory for that single RUN command. The working directory resets for the next instruction:
+        - **Non-persistent:** `cd` in a `RUN` instruction only changes the directory for that single command and does not affect subsequent `RUN`, `COPY`, or `ADD` instructions.
+        - **Error-prone:** Developers may expect `cd` to persist across instructions, leading to files being placed in the wrong location or commands failing.
+        - **Readability:** WORKDIR makes the current directory explicit and visible, while `cd` buried in a `RUN` command is easy to miss.
+        - **Idiomatic Dockerfiles:** The WORKDIR instruction is purpose-built for setting the working directory and is the recommended approach.
 
-        - **Non-persistent**: `cd` in a RUN instruction does not affect subsequent RUN, COPY, or ADD instructions, leading to confusion about the current directory.
-        - **Error-prone**: Developers may expect `cd` to persist across instructions, leading to files being placed in the wrong location or commands failing.
-        - **Readability**: WORKDIR makes the current directory explicit and visible in the Dockerfile, while `cd` buried in a RUN command is easy to miss.
-        - **Docker best practice**: The WORKDIR instruction is specifically designed for setting the working directory and is the idiomatic approach in Dockerfiles.
+        This check flags any `RUN` instruction containing `cd`. Using `cd` within a compound command such as `cd /tmp && make && cd /app && make install` is acceptable practice to avoid extra layers but will still trigger this check. Set WORKDIR before the `RUN` instruction where possible.
+      audit: |
+        Inspect the Dockerfile to confirm `RUN` instructions do not use `cd`:
 
-        **Note**: This check flags any RUN instruction containing `cd`. Using `cd` within a compound command (e.g., `cd /tmp && make && cd /app && make install`) is acceptable practice to avoid extra layers but will still trigger this check. Consider using WORKDIR before the RUN instruction where possible.
-      remediation: |
-        Replace `cd` commands in RUN instructions with WORKDIR:
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Search every `RUN` instruction for `cd`: `grep -nE 'RUN.*\bcd\s' Dockerfile`.
+        3. Confirm no `RUN` instruction relies on `cd` to change directories.
 
-        ```dockerfile
-        # Instead of:
-        RUN cd /app && npm install
+        If no `RUN` instruction uses `cd`, the check passes. If any does, the check fails.
+      remediation:
+        - id: dockerfile
+          desc: |
+            Replace `cd` commands in `RUN` instructions with WORKDIR:
 
-        # Use:
-        WORKDIR /app
-        RUN npm install
-        ```
+            ```dockerfile
+            # Instead of:
+            RUN cd /app && npm install
 
-        If you need to run a command in a specific directory without changing the persistent working directory, use a subshell:
+            # Use:
+            WORKDIR /app
+            RUN npm install
+            ```
 
-        ```dockerfile
-        RUN (cd /tmp/build && make install)
-        ```
+            If you need to run a command in a specific directory without changing the persistent working directory, use a subshell:
+
+            ```dockerfile
+            RUN (cd /tmp/build && make install)
+            ```
     refs:
       - url: https://docs.docker.com/reference/dockerfile/#workdir
         title: Dockerfile Reference - WORKDIR
@@ -710,30 +842,32 @@ queries:
       docker.file.stages.all(run.where(script.contains("microdnf install")).all(script.contains("microdnf clean all")))
     docs:
       desc: |
-        This check ensures that `microdnf clean all` is run after `microdnf install` commands in Dockerfiles. microdnf is a minimal DNF implementation used in Red Hat UBI micro images. Like other package managers, it caches downloaded packages and metadata that bloat the image if not cleaned up.
+        Dockerfile `RUN` instructions that use `microdnf install` should also run `microdnf clean all` in the same layer. microdnf is a minimal DNF implementation used in Red Hat UBI micro images, and like other package managers it caches downloaded packages and metadata.
 
         **Why this matters**
 
         - **Image bloat:** microdnf caches downloaded packages and metadata in `/var/cache/yum` or `/var/cache/dnf`, which can add significant size to the image layer.
         - **Consistency:** All other package manager checks (apt, yum, dnf, zypper) require cache cleanup; microdnf should not be an exception.
         - **Layer optimization:** Combining install and cleanup in a single `RUN` instruction ensures the cache never persists in any layer.
+      audit: |
+        Inspect the Dockerfile to confirm the microdnf cache is cleaned in the install layer:
 
-        **Risk mitigation**
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Locate every `RUN` instruction containing `microdnf install`: `grep -nE 'RUN.*microdnf install' Dockerfile`.
+        3. Confirm each matched instruction also runs `microdnf clean all` in the same `RUN` statement.
 
-        - Combine `microdnf install` and `microdnf clean all` in the same `RUN` instruction to prevent cache from persisting in any image layer.
-        - Use multi-stage builds to isolate package installation from the final image.
-        - Audit existing Dockerfiles for microdnf commands missing cleanup steps.
+        If every `microdnf install` instruction runs `microdnf clean all`, the check passes. If any omits it, the check fails.
       remediation:
-        - id: console
+        - id: dockerfile
           desc: |
-            Combine `microdnf install` and `microdnf clean all` in the same RUN instruction:
+            Combine `microdnf install` and `microdnf clean all` in the same `RUN` instruction:
 
             ```dockerfile
-            # Bad
+            # Instead of:
             RUN microdnf install -y httpd
             RUN microdnf clean all
 
-            # Good
+            # Use:
             RUN microdnf install -y httpd && \
                 microdnf clean all
             ```
@@ -747,29 +881,31 @@ queries:
       docker.file.stages.all(copy.where(src.length > 1).all(dst == /\/$/))
     docs:
       desc: |
-        This check ensures that COPY instructions with more than one source argument use a destination path ending with `/`. When COPY has multiple source files but the destination does not end with a slash, the build may fail or produce unexpected results depending on the Docker version.
+        COPY instructions with more than one source argument should use a destination path ending with `/`. When COPY has multiple source files but the destination does not end with a slash, the build may fail or produce unexpected results depending on the Docker version.
 
         **Why this matters**
 
-        - **Build failures:** With multiple source files, Docker expects the destination to be a directory (indicated by a trailing slash). Without it, the build may fail with an ambiguous error.
+        - **Build failures:** With multiple source files, Docker expects the destination to be a directory indicated by a trailing slash. Without it, the build may fail with an ambiguous error.
         - **Accidental overwrites:** If only two arguments are provided and the destination does not end with `/`, Docker treats it as a file path, overwriting the destination with the last source file rather than copying both files into a directory.
         - **Clarity:** A trailing slash explicitly communicates that the destination is a directory, making the Dockerfile easier to understand and maintain.
+      audit: |
+        Inspect the Dockerfile to confirm multi-source COPY destinations end with `/`:
 
-        **Risk mitigation**
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Locate every COPY instruction: `grep -nE '^COPY' Dockerfile`.
+        3. For each COPY with more than one source argument, confirm the destination path ends with `/`.
 
-        - Always append a trailing `/` to the destination path when using COPY with multiple source files.
-        - Use a linter such as hadolint to catch missing trailing slashes during CI.
-        - Review COPY instructions during code review to verify destination paths are unambiguous.
+        If every multi-source COPY destination ends with `/`, the check passes. If any omits the trailing slash, the check fails.
       remediation:
-        - id: console
+        - id: dockerfile
           desc: |
             Add a trailing slash to COPY destinations when copying multiple files:
 
             ```dockerfile
-            # Bad - ambiguous, may fail or overwrite
+            # Instead of: ambiguous, may fail or overwrite
             COPY file1.txt file2.txt /app
 
-            # Good - clearly copies into /app/ directory
+            # Use: clearly copies into the /app/ directory
             COPY file1.txt file2.txt /app/
             ```
     refs:
