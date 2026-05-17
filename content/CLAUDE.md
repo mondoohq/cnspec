@@ -130,6 +130,8 @@ Order the list consistently: `console`/`portal` → `cli` → `terraform` → `c
 
 **Never copy compliance tags from a neighboring check.** The nearby check was mapped for a different control objective; reusing its tags propagates a wrong mapping and misleads auditors. Two checks that both "relate to identity" can map to different controls.
 
+**A new check is not done until it carries compliance tags.** Any check added to a policy whose existing checks have `compliance/*` tags must ship with its own verified tags (completing the process below) — or with the user's explicit approval to skip them. Do **not** open a PR that adds untagged checks next to tagged siblings and merely note the omission in the PR body; that ships an inconsistent, half-finished policy. An empty `find` for the `cnspec-enterprise-policies` repo means **ask the user where the clone lives** — it does not authorize proceeding without tags.
+
 When adding or changing compliance tags, follow this process for **each** framework the policy already tags:
 
 1. **Read the authoritative control text.** Open the framework definition in `cnspec-enterprise-policies/frameworks/<framework>.mql.yaml` (e.g., `iso-27001-2022.mql.yaml`, `soc2-2017.mql.yaml`, `nist-sp-800-53-rev5.mql.yaml`). Each control has a `uid`, `title`, and usually `docs.desc`. Ask the user where their clone lives if you don't already know; if the files aren't available, stop and tell the user — do not guess.
