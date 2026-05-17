@@ -138,6 +138,8 @@ When adding or changing compliance tags, follow this process for **each** framew
 4. **If no control fits, tag it with the YAML boolean `false`** — unquoted, like `compliance/soc2-2017: false`. **Not** `"false"` (the string), not `false-fit`, not `n/a`, not omitting the key. The unquoted boolean is the established repo convention (grep `compliance/.*: false` for ~150+ examples) and is what downstream tooling expects. A missing mapping is strictly better than a wrong one — wrong mappings get caught in compliance audits and create trust debt.
 5. **Cite the control you chose.** When you present tags to the user, include the control title and a short quote from the control description so the user can verify.
 
+**The `<framework>` in the key must exactly match the framework's `uid:` field** — the value declared inside the framework YAML, *not* the file name. They are not always the same: `cnspec-enterprise-policies/frameworks/bsi-grundschutz-sys15.mql.yaml` declares `uid: bsi-sys-1-5`, so the tag is `compliance/bsi-sys-1-5`. A key that matches no real framework `uid` generates a framework map with a dangling `framework_owner`, which fails bundle migration in `cnspec-enterprise-policies` with `cannot find framework owner`. Likewise the `<control-uid>` value must be a `uid` that exists under that framework's `controls:`.
+
 Known high-value anchors (verify before using):
 
 - Identity proofing / email verification: `iso-27001-2022-a-5-16` (Identity management), `nist-csf-2-pr-aa-02` ("Identities are proofed and bound to credentials"), `nist-sp-800-53-rev5-ia-12` (Identity Proofing). No direct equivalent in NIST CSF 1.x, NIST 800-171 rev2, NIS2 Article 21(2), or SOC 2 2017.
