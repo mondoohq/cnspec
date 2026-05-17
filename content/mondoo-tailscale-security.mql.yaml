@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-tailscale-security
     name: Mondoo Tailscale Security
-    version: 1.1.0
+    version: 1.1.1
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -55,18 +55,18 @@ queries:
     impact: 90
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-16
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
-      compliance/iso-27001-2022: iso-27001-2022-a-8-5
-      compliance/nis-2: nis-2-21-2-j
+      compliance/iso-27001-2022: iso-27001-2022-a-8-1
+      compliance/nis-2: nis-2-21-2-i
       compliance/nist-csf-1: nist-csf-1-pr-ac-7
       compliance/nist-csf-2: nist-csf-2-pr-aa-03
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
-      compliance/nist-sp-800-171: nist-sp-800-171--3-5-1
-      compliance/pci-dss-4: pcidss-requirement-8-3-1
-      compliance/soc2-2017: soc2-control-cc6-1-8
-      compliance/vda-isa-5: vda-isa-5-4-1-3
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-4
+      compliance/vda-isa-5: vda-isa-5-4-1-1
     variants:
       - uid: mondoo-tailscale-security-devices-authorized-device
         tags:
@@ -78,19 +78,38 @@ queries:
           mondoo.com/filter-icon: tailscale
     docs:
       desc: |
-        This check ensures that all devices connected to the Tailscale tailnet are explicitly authorized. Unauthorized devices may have been added without proper review and could pose a security risk to the network.
+        This check ensures that every device connected to the tailnet has been explicitly authorized by an administrator. Unauthorized devices may have joined without proper review and can reach internal services until they are removed.
 
         **Why this matters**
 
-        Tailscale device authorization is a critical gate that controls which machines can join your network:
-          •  Unauthorized devices may belong to former employees or compromised systems.
-          •  Without device authorization enforcement, any user with access can add devices without admin review.
-          •  Unauthorized devices can access internal services and resources on the tailnet.
+        - **Controls who joins the network:** Device authorization is the gate that decides which machines are allowed onto the tailnet.
+        - **Catches stale and rogue endpoints:** Unauthorized devices may belong to former employees or to systems that have been compromised.
+        - **Prevents silent enrollment:** Without authorization enforcement, any user with access can add a device with no administrator review.
 
-        Risk mitigation
-          •  Enable device authorization in the Tailscale admin console.
-          •  Regularly review the device list and remove unauthorized or unknown devices.
-          •  Use device tags and ACLs to restrict access even after authorization.
+        **Risk mitigation**
+
+        - **Enforce device approval:** Require authorization for all new devices so they remain pending until an administrator reviews them.
+        - **Review the device list:** Regularly audit connected devices and remove any that are unknown or no longer needed.
+        - **Layer in tag-based ACLs:** Use device tags and ACL rules to restrict what a device can reach even after it has been authorized.
+      audit: |
+        ### Audit via Admin Console
+
+        1. Sign in to the Tailscale admin console at login.tailscale.com/admin.
+        2. Open the **Machines** tab.
+        3. Review the authorization status shown next to each device.
+
+        A passing result shows every device marked as authorized; a failing result shows one or more devices flagged as not authorized or awaiting approval.
+
+        ### Audit via API
+
+        Query the Tailscale API and inspect the result:
+
+        ```bash
+        curl -s -u "$TAILSCALE_API_KEY:" \
+          "https://api.tailscale.com/api/v2/tailnet/<tailnet>/devices"
+        ```
+
+        A passing response shows `"authorized": true` for every device in the list; a failing response includes at least one device with `"authorized": false`.
       remediation:
         - id: console
           desc: |
@@ -120,18 +139,18 @@ queries:
     impact: 80
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-17
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
       compliance/iso-27001-2022: iso-27001-2022-a-5-17
-      compliance/nis-2: nis-2-21-2-g
+      compliance/nis-2: nis-2-21-2-i
       compliance/nist-csf-1: nist-csf-1-pr-ac-1
       compliance/nist-csf-2: nist-csf-2-pr-aa-01
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
-      compliance/nist-sp-800-171: nist-sp-800-171--3-5-7
-      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-6
+      compliance/pci-dss-4: false
       compliance/soc2-2017: soc2-control-cc6-1-9
-      compliance/vda-isa-5: vda-isa-5-4-1-3
+      compliance/vda-isa-5: vda-isa-5-4-1-1
     variants:
       - uid: mondoo-tailscale-security-devices-key-expiry-enabled-device
         tags:
@@ -143,25 +162,38 @@ queries:
           mondoo.com/filter-icon: tailscale
     docs:
       desc: |
-        This check ensures that key expiry is not disabled on Tailscale devices. Key expiry forces devices to periodically re-authenticate, which limits the window of exposure if a device key is compromised.
+        This check ensures that key expiry is not disabled on tailnet devices, so that each device must periodically re-authenticate. When key expiry is disabled, a device stays authenticated indefinitely and there is no forced re-verification of its owner.
 
         **Why this matters**
 
-        When key expiry is disabled, a device remains authenticated indefinitely:
-          •  Compromised device keys provide permanent access to the tailnet.
-          •  Lost or stolen devices retain network access until manually removed.
-          •  There is no forced re-authentication to verify the device owner's identity.
-          •  Violates the principle of limiting credential lifetime.
+        - **Limits credential lifetime:** Key expiry caps how long a single device key remains valid before re-authentication is required.
+        - **Bounds the impact of compromise:** A device with expiry disabled grants permanent tailnet access if its key is stolen.
+        - **Reclaims access from lost devices:** Lost or stolen devices keep network access until expiry forces them out or an administrator removes them.
 
-        Key expiry provides:
-          •  Automatic revocation of access after the expiry period.
-          •  Forced re-authentication that verifies the user still has valid credentials.
-          •  Reduced blast radius for compromised device keys.
+        **Risk mitigation**
 
-        Risk mitigation
-          •  Enable key expiry on all devices.
-          •  Set appropriate expiry periods based on device risk (e.g., shorter for mobile devices).
-          •  Monitor for devices with disabled key expiry and re-enable as needed.
+        - **Re-enable key expiry:** Turn key expiry back on for any device where it has been disabled.
+        - **Match expiry to device risk:** Use shorter durations for higher-risk endpoints such as mobile devices.
+        - **Monitor for drift:** Watch for devices with disabled key expiry and correct them as they appear.
+      audit: |
+        ### Audit via Admin Console
+
+        1. Sign in to the Tailscale admin console at login.tailscale.com/admin.
+        2. Open the **Machines** tab.
+        3. Review each device for a "Key expiry disabled" indicator.
+
+        A passing result shows no devices with key expiry disabled; a failing result shows one or more devices marked as having key expiry disabled.
+
+        ### Audit via API
+
+        Query the Tailscale API and inspect the result:
+
+        ```bash
+        curl -s -u "$TAILSCALE_API_KEY:" \
+          "https://api.tailscale.com/api/v2/tailnet/<tailnet>/devices"
+        ```
+
+        A passing response shows `"keyExpiryDisabled": false` for every device; a failing response includes at least one device with `"keyExpiryDisabled": true`.
       remediation:
         - id: console
           desc: |
@@ -197,16 +229,16 @@ queries:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-tvm-03
       compliance/dora: dora-art-9
-      compliance/hipaa: false
+      compliance/hipaa: hipaa-security-ss164-308-a-1-ii-b-security-management-process-risk-management
       compliance/iso-27001-2022: iso-27001-2022-a-8-8
       compliance/nis-2: nis-2-21-2-e
       compliance/nist-csf-1: nist-csf-1-id-ra-1
-      compliance/nist-csf-2: nist-csf-2-id-ra-01
+      compliance/nist-csf-2: nist-csf-2-pr-ps-02
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-2
       compliance/nist-sp-800-171: nist-sp-800-171--3-14-1
       compliance/pci-dss-4: pcidss-requirement-6-3-3
       compliance/soc2-2017: soc2-control-cc7-1-2
-      compliance/vda-isa-5: vda-isa-5-5-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-5
     variants:
       - uid: mondoo-tailscale-security-devices-client-up-to-date-device
         tags:
@@ -218,24 +250,38 @@ queries:
           mondoo.com/filter-icon: tailscale
     docs:
       desc: |
-        This check ensures that Tailscale devices are running the latest available client software. Outdated clients may contain security vulnerabilities or lack important security features.
+        This check ensures that tailnet devices are running the latest available Tailscale client release. Outdated clients may carry known vulnerabilities or lack current security features.
 
         **Why this matters**
 
-        Running outdated Tailscale client software introduces security risks:
-          •  Known vulnerabilities in older versions may be exploitable.
-          •  Security features and protocol improvements are only available in newer versions.
-          •  Outdated clients may not support the latest authentication and encryption mechanisms.
+        - **Closes known vulnerabilities:** Older client versions may contain flaws that are already public and exploitable.
+        - **Delivers current protections:** Security features, protocol improvements, and bug fixes ship only in newer releases.
+        - **Maintains compatibility:** Outdated clients may not support the latest authentication, encryption, and tailnet security settings.
 
-        Keeping clients up to date ensures:
-          •  Protection against known vulnerabilities.
-          •  Access to the latest security features and bug fixes.
-          •  Compatibility with the latest tailnet security settings.
+        **Risk mitigation**
 
-        Risk mitigation
-          •  Enable automatic updates where possible.
-          •  Monitor for devices with available updates and ensure they are applied promptly.
-          •  Include Tailscale client updates in your organization's patch management process.
+        - **Apply updates promptly:** Identify devices with an available update and ensure the client is upgraded.
+        - **Enable automatic updates:** Turn on automatic client updates wherever the platform supports them.
+        - **Fold into patch management:** Include Tailscale client updates in the organization's standard patch management process.
+      audit: |
+        ### Audit via Admin Console
+
+        1. Sign in to the Tailscale admin console at login.tailscale.com/admin.
+        2. Open the **Machines** tab.
+        3. Look for devices flagged with an available update.
+
+        A passing result shows no devices with an update available; a failing result shows one or more devices flagged as needing a client update.
+
+        ### Audit via API
+
+        Query the Tailscale API and inspect the result:
+
+        ```bash
+        curl -s -u "$TAILSCALE_API_KEY:" \
+          "https://api.tailscale.com/api/v2/tailnet/<tailnet>/devices"
+        ```
+
+        A passing response shows `"updateAvailable": false` for every device; a failing response includes at least one device with `"updateAvailable": true`.
       remediation:
         - id: console
           desc: |
@@ -270,18 +316,18 @@ queries:
     impact: 80
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-16
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
       compliance/iso-27001-2022: iso-27001-2022-a-8-5
-      compliance/nis-2: nis-2-21-2-j
+      compliance/nis-2: nis-2-21-2-h
       compliance/nist-csf-1: nist-csf-1-pr-ac-7
       compliance/nist-csf-2: nist-csf-2-pr-aa-03
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
-      compliance/nist-sp-800-171: nist-sp-800-171--3-5-1
-      compliance/pci-dss-4: pcidss-requirement-8-3-1
-      compliance/soc2-2017: soc2-control-cc6-1-8
-      compliance/vda-isa-5: vda-isa-5-4-1-3
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-2
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-4
+      compliance/vda-isa-5: vda-isa-5-4-1-1
     variants:
       - uid: mondoo-tailscale-security-devices-no-tailnet-lock-errors-device
         tags:
@@ -293,21 +339,38 @@ queries:
           mondoo.com/filter-icon: tailscale
     docs:
       desc: |
-        This check ensures that no devices in the tailnet have tailnet lock signature errors. Tailnet lock errors indicate that a device's node key has not been properly signed, which may prevent it from functioning correctly in a locked tailnet or may indicate a compromised device.
+        This check ensures that no device in the tailnet reports a tailnet lock signature error. A lock error means a device's node key has not been properly signed by a trusted device, which can break connectivity in a locked tailnet or signal an improperly added device.
 
         **Why this matters**
 
-        Tailnet lock adds a layer of security by requiring devices to have their node keys signed by trusted devices:
-          •  Devices with lock errors have not been properly verified by the tailnet lock process.
-          •  Lock errors may indicate that a device was added without proper authorization.
-          •  Unresolved lock errors can prevent devices from communicating properly in the tailnet.
-          •  In a locked tailnet, only devices with properly signed keys should be trusted.
+        - **Confirms device verification:** Tailnet lock requires node keys to be signed by trusted devices, and an error means that verification did not succeed.
+        - **Surfaces unauthorized additions:** A lock error can indicate that a device was added without proper authorization.
+        - **Preserves connectivity:** Unresolved lock errors can prevent a device from communicating correctly within the tailnet.
 
-        Risk mitigation
-          •  Review and resolve all tailnet lock errors promptly.
-          •  Sign legitimate devices using a trusted signing node.
-          •  Remove devices that cannot be properly verified.
-          •  Enable tailnet lock to strengthen device authentication.
+        **Risk mitigation**
+
+        - **Resolve errors promptly:** Review every device reporting a tailnet lock error and address it without delay.
+        - **Sign legitimate devices:** Use a trusted signing node to sign node keys for devices that belong on the tailnet.
+        - **Remove unverifiable devices:** Delete any device that cannot be properly verified through the tailnet lock process.
+      audit: |
+        ### Audit via Admin Console
+
+        1. Sign in to the Tailscale admin console at login.tailscale.com/admin.
+        2. Open the **Machines** tab.
+        3. Review each device for a tailnet lock error indicator.
+
+        A passing result shows no devices reporting tailnet lock errors; a failing result shows one or more devices flagged with a lock signature error.
+
+        ### Audit via API
+
+        Query the Tailscale API and inspect the result:
+
+        ```bash
+        curl -s -u "$TAILSCALE_API_KEY:" \
+          "https://api.tailscale.com/api/v2/tailnet/<tailnet>/devices"
+        ```
+
+        A passing response shows an empty `"tailnetLockError"` string for every device; a failing response includes at least one device with a non-empty `"tailnetLockError"` value.
       remediation:
         - id: console
           desc: |
@@ -339,10 +402,10 @@ queries:
     filters: asset.platform == 'tailscale'
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-06
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
-      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/hipaa: hipaa-security-ss164-308-a-4-ii-b-information-access-management-access-authorization
+      compliance/iso-27001-2022: iso-27001-2022-a-5-18
       compliance/nis-2: nis-2-21-2-i
       compliance/nist-csf-1: nist-csf-1-pr-ac-1
       compliance/nist-csf-2: nist-csf-2-pr-aa-01
@@ -350,29 +413,43 @@ queries:
       compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
       compliance/pci-dss-4: pcidss-requirement-7-2-1
       compliance/soc2-2017: soc2-control-cc6-3-1
-      compliance/vda-isa-5: vda-isa-5-4-1-1
+      compliance/vda-isa-5: vda-isa-5-4-1-3
     mql: |
       tailscale.users.none(status == "needs-approval")
     docs:
       desc: |
-        This check ensures that there are no users stuck in a "needs-approval" state. Users pending approval have requested access to the tailnet but have not been reviewed by an administrator, which may indicate a backlog in access management.
+        This check ensures that no users are stuck in a "needs-approval" state. Users pending approval have requested tailnet access but have not yet been reviewed by an administrator, which can indicate a backlog in access management.
 
         **Why this matters**
 
-        Users in a pending approval state represent unresolved access requests:
-          •  Legitimate users may be blocked from accessing resources they need.
-          •  A backlog of pending requests may indicate that access review processes are not functioning effectively.
-          •  Pending requests should be reviewed and either approved or denied promptly.
+        - **Keeps legitimate users productive:** Users left pending may be blocked from resources they are entitled to use.
+        - **Signals process gaps:** A growing backlog of pending requests suggests that access review is not running effectively.
+        - **Forces a clear decision:** Every pending request should be promptly approved or denied rather than left unresolved.
 
-        Timely access review ensures:
-          •  Users have appropriate access when needed.
-          •  Unauthorized access requests are identified and denied.
-          •  The organization maintains an active access governance process.
+        **Risk mitigation**
 
-        Risk mitigation
-          •  Review pending user approvals regularly.
-          •  Approve legitimate users and deny unknown access requests.
-          •  Configure notifications for new approval requests.
+        - **Review approvals regularly:** Work through pending user requests on a routine cadence.
+        - **Approve or deny explicitly:** Approve expected users and deny unknown or unexpected access requests.
+        - **Enable approval notifications:** Configure alerts so administrators are informed of new approval requests.
+      audit: |
+        ### Audit via Admin Console
+
+        1. Sign in to the Tailscale admin console at login.tailscale.com/admin.
+        2. Open the **Users** tab.
+        3. Review the status column for users marked as needing approval.
+
+        A passing result shows no users with a "Needs approval" status; a failing result shows one or more users awaiting approval.
+
+        ### Audit via API
+
+        Query the Tailscale API and inspect the result:
+
+        ```bash
+        curl -s -u "$TAILSCALE_API_KEY:" \
+          "https://api.tailscale.com/api/v2/tailnet/<tailnet>/users"
+        ```
+
+        A passing response shows no user with `"status": "needs-approval"`; a failing response includes at least one user in the `needs-approval` status.
       remediation:
         - id: console
           desc: |
@@ -390,38 +467,55 @@ queries:
     filters: asset.platform == 'tailscale'
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
-      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/hipaa: hipaa-security-ss164-308-a-4-ii-c-information-access-management-access-establishment-and-modification
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
       compliance/nis-2: nis-2-21-2-i
       compliance/nist-csf-1: nist-csf-1-pr-ac-4
       compliance/nist-csf-2: nist-csf-2-pr-aa-05
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
       compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
-      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/pci-dss-4: pcidss-requirement-7-2-2
       compliance/soc2-2017: soc2-control-cc6-3-3
-      compliance/vda-isa-5: vda-isa-5-4-1-1
+      compliance/vda-isa-5: vda-isa-5-4-2-1
     mql: |
       tailscale.users.where(role == "owner").length <= 2
       tailscale.users.where(role == "admin").length <= 3
     docs:
       desc: |
-        This check ensures that the number of users with administrative privileges in the tailnet is limited. Owner and admin roles have elevated permissions that can modify tailnet configuration, manage devices, and control user access.
+        This check ensures that the number of users holding owner and admin roles is kept small. Owner and admin roles carry elevated permissions that can modify tailnet configuration, manage devices, and control user access.
 
         **Why this matters**
 
-        Excessive administrative access increases the attack surface:
-          •  Each admin or owner account is a high-value target for attackers.
-          •  Compromised admin accounts can modify ACLs, approve devices, and change tailnet settings.
-          •  Too many administrators makes it harder to maintain accountability and audit trails.
-          •  The principle of least privilege requires minimizing the number of highly privileged users.
+        - **Shrinks the attack surface:** Each admin or owner account is a high-value target, so fewer of them means fewer paths to full control.
+        - **Contains compromise:** A compromised privileged account can rewrite ACLs, approve devices, and change tailnet settings.
+        - **Preserves accountability:** A small set of administrators makes it easier to maintain clear audit trails and ownership.
 
-        Risk mitigation
-          •  Limit owner roles to 1-2 primary tailnet owners.
-          •  Limit admin roles to 2-3 trusted administrators.
-          •  Use member roles for most users who only need device connectivity.
-          •  Regularly review and prune admin and owner role assignments.
+        **Risk mitigation**
+
+        - **Apply least privilege:** Keep owner roles to one or two primary owners and admin roles to a handful of trusted administrators.
+        - **Default to member roles:** Assign the member role to users who only need device connectivity.
+        - **Prune role assignments:** Regularly review owner and admin assignments and downgrade users who no longer need them.
+      audit: |
+        ### Audit via Admin Console
+
+        1. Sign in to the Tailscale admin console at login.tailscale.com/admin.
+        2. Open the **Users** tab.
+        3. Count the users assigned the Owner and Admin roles.
+
+        A passing result shows a small number of privileged users, with at most two owners and three admins; a failing result shows more privileged users than expected.
+
+        ### Audit via API
+
+        Query the Tailscale API and inspect the result:
+
+        ```bash
+        curl -s -u "$TAILSCALE_API_KEY:" \
+          "https://api.tailscale.com/api/v2/tailnet/<tailnet>/users"
+        ```
+
+        A passing response shows few users with `"role": "owner"` or `"role": "admin"`; a failing response shows more privileged users than the agreed limit.
       remediation:
         - id: console
           desc: |
@@ -439,37 +533,54 @@ queries:
     filters: asset.platform == 'tailscale'
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-07
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
-      compliance/iso-27001-2022: iso-27001-2022-a-5-17
-      compliance/nis-2: nis-2-21-2-g
-      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/hipaa: hipaa-security-ss164-308-a-4-ii-c-information-access-management-access-establishment-and-modification
+      compliance/iso-27001-2022: iso-27001-2022-a-5-18
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
       compliance/nist-csf-2: nist-csf-2-pr-aa-05
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-12
-      compliance/nist-sp-800-171: nist-sp-800-171--3-1-10
-      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-6
+      compliance/pci-dss-4: pcidss-requirement-7-2-4
       compliance/soc2-2017: soc2-control-cc6-2-2
-      compliance/vda-isa-5: vda-isa-5-4-1-1
+      compliance/vda-isa-5: vda-isa-5-4-1-3
     mql: |
       tailscale.users.none(status == "idle")
     docs:
       desc: |
-        This check ensures that there are no idle users in the tailnet. Idle users have not been seen for more than 28 days and may represent dormant accounts that increase the attack surface.
+        This check ensures that no users in the tailnet have remained idle for an extended period. Idle users have not been seen for more than 28 days and may represent dormant accounts that widen the attack surface.
 
         **Why this matters**
 
-        Idle user accounts are a common security risk:
-          •  Dormant accounts may belong to former employees or contractors who no longer need access.
-          •  Idle accounts can be targeted by attackers, especially if credentials are reused or compromised.
-          •  Unused accounts still have network access and may have overly permissive configurations.
-          •  Maintaining unused accounts violates the principle of least privilege.
+        - **Flags abandoned accounts:** Idle accounts often belong to former employees or contractors who no longer need access.
+        - **Reduces an attacker target:** Dormant accounts are attractive targets, especially where credentials may be reused or already compromised.
+        - **Enforces least privilege:** Unused accounts still hold network access and may carry overly permissive configurations.
 
-        Risk mitigation
-          •  Regularly review idle users and determine if they still need access.
-          •  Suspend or remove users who no longer need tailnet access.
-          •  Implement an offboarding process that includes removing tailnet access.
-          •  Set up alerts for accounts that become idle.
+        **Risk mitigation**
+
+        - **Review idle users:** Routinely check idle users and confirm whether they still require access.
+        - **Suspend or remove dormant accounts:** Disable or delete users who no longer need tailnet access.
+        - **Strengthen offboarding:** Ensure the offboarding process explicitly removes tailnet access for departing personnel.
+      audit: |
+        ### Audit via Admin Console
+
+        1. Sign in to the Tailscale admin console at login.tailscale.com/admin.
+        2. Open the **Users** tab.
+        3. Review the status and last seen columns for users marked as idle.
+
+        A passing result shows no users with an "Idle" status; a failing result shows one or more users inactive for more than 28 days.
+
+        ### Audit via API
+
+        Query the Tailscale API and inspect the result:
+
+        ```bash
+        curl -s -u "$TAILSCALE_API_KEY:" \
+          "https://api.tailscale.com/api/v2/tailnet/<tailnet>/users"
+        ```
+
+        A passing response shows no user with `"status": "idle"`; a failing response includes at least one user in the `idle` status.
       remediation:
         - id: console
           desc: |
@@ -488,40 +599,54 @@ queries:
     filters: asset.platform == 'tailscale'
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-16
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
-      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/hipaa: hipaa-security-ss164-308-a-4-ii-b-information-access-management-access-authorization
+      compliance/iso-27001-2022: iso-27001-2022-a-8-1
       compliance/nis-2: nis-2-21-2-i
       compliance/nist-csf-1: nist-csf-1-pr-ac-1
-      compliance/nist-csf-2: nist-csf-2-pr-aa-01
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-2
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
       compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
       compliance/pci-dss-4: pcidss-requirement-7-2-1
       compliance/soc2-2017: soc2-control-cc6-3-1
-      compliance/vda-isa-5: vda-isa-5-4-1-1
+      compliance/vda-isa-5: vda-isa-5-4-2-1
     mql: |
       tailscale.deviceApprovalRequired == true
     docs:
       desc: |
-        This check ensures that the tailnet requires administrators to manually approve every new device before it can connect. With device approval enforced, an attacker who steals a user's credentials cannot silently enroll a new endpoint into the tailnet.
+        This check ensures that the tailnet requires administrators to manually approve every new device before it can connect. When device approval is enforced, an attacker who steals a user's credentials still cannot silently enroll a new endpoint into the tailnet.
 
         **Why this matters**
 
-        When device approval is not required, any successful authentication produces a connected device immediately:
-          •  Phished credentials translate directly into network access from an attacker-controlled machine.
-          •  There is no human review step that could catch unfamiliar device names, locations, or platforms.
-          •  Compromised personal devices can join a corporate tailnet without IT visibility.
+        - **Stops credential-to-access shortcuts:** Without approval, any successful authentication produces a connected device immediately, so phished credentials become network access.
+        - **Adds a human review step:** Manual approval gives administrators a chance to catch unfamiliar device names, locations, or platforms.
+        - **Keeps BYOD visible:** Compromised or unmanaged personal devices cannot join a corporate tailnet without IT seeing them first.
 
-        Manual device approval provides:
-          •  An explicit out-of-band review point for every new endpoint joining the network.
-          •  An audit trail that ties device join events to administrator decisions.
-          •  A natural choke point for enforcing device-posture and BYOD policies.
+        **Risk mitigation**
 
-        Risk mitigation
-          •  Enable device approval for the tailnet so new devices appear as pending until reviewed.
-          •  Pair device approval with notifications so administrators see new requests promptly.
-          •  Combine with tag-based ACLs so an unapproved device cannot reach sensitive resources even briefly.
+        - **Enable device approval:** Require approval so new devices stay pending until an administrator reviews them.
+        - **Alert on new requests:** Pair device approval with notifications so administrators act on requests promptly.
+        - **Combine with tag-based ACLs:** Ensure an unapproved device cannot reach sensitive resources even briefly.
+      audit: |
+        ### Audit via Admin Console
+
+        1. Sign in to the Tailscale admin console at login.tailscale.com/admin.
+        2. Open **Settings > Device management**.
+        3. Review the device approval setting.
+
+        A passing result shows that manual approval for new devices is enabled; a failing result shows device approval turned off.
+
+        ### Audit via API
+
+        Query the Tailscale API and inspect the result:
+
+        ```bash
+        curl -s -u "$TAILSCALE_API_KEY:" \
+          "https://api.tailscale.com/api/v2/tailnet/<tailnet>/settings"
+        ```
+
+        A passing response shows `"devicesApprovalOn": true`; a failing response shows `"devicesApprovalOn": false`.
       remediation:
         - id: console
           desc: |
@@ -540,40 +665,54 @@ queries:
     filters: asset.platform == 'tailscale'
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-06
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
-      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/hipaa: hipaa-security-ss164-308-a-4-ii-b-information-access-management-access-authorization
+      compliance/iso-27001-2022: iso-27001-2022-a-5-18
       compliance/nis-2: nis-2-21-2-i
       compliance/nist-csf-1: nist-csf-1-pr-ac-1
       compliance/nist-csf-2: nist-csf-2-pr-aa-01
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-2
       compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
-      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/pci-dss-4: pcidss-requirement-7-2-3
       compliance/soc2-2017: soc2-control-cc6-3-1
-      compliance/vda-isa-5: vda-isa-5-4-1-1
+      compliance/vda-isa-5: vda-isa-5-4-1-3
     mql: |
       tailscale.userApprovalRequired == true
     docs:
       desc: |
-        This check ensures that the tailnet requires administrators to manually approve every new user before they can join. With user approval enforced, identity-provider misconfigurations and overly broad SSO scopes cannot grant immediate tailnet access.
+        This check ensures that the tailnet requires administrators to manually approve every new user before they can join. When user approval is enforced, identity-provider misconfigurations and overly broad SSO scopes cannot grant immediate tailnet access.
 
         **Why this matters**
 
-        When user approval is not required, anyone who can sign in through the configured identity provider lands inside the tailnet:
-          •  Misconfigured SSO groups or relaxed allowlists translate directly into network membership.
-          •  Former employees retained in the IdP for legitimate reasons may inadvertently retain Tailscale access.
-          •  There is no review step where an administrator confirms the new account is expected.
+        - **Contains SSO misconfiguration:** Without approval, anyone who can sign in through the configured identity provider lands inside the tailnet, so a relaxed allowlist becomes network membership.
+        - **Catches lingering identities:** Former employees retained in the identity provider for legitimate reasons could otherwise keep Tailscale access.
+        - **Adds a review checkpoint:** Manual approval places a human decision between identity provisioning and network access.
 
-        Manual user approval provides:
-          •  A human review checkpoint between identity provisioning and network access.
-          •  An audit trail that ties user join events to administrator decisions.
-          •  A safety net when IdP integrations or SCIM rules drift from intent.
+        **Risk mitigation**
 
-        Risk mitigation
-          •  Enable user approval so new users appear as pending until an administrator reviews them.
-          •  Configure notifications so administrators are alerted to new approval requests.
-          •  Document the approval criteria so reviewers consistently apply the same access standard.
+        - **Enable user approval:** Require approval so new users stay pending until an administrator reviews them.
+        - **Alert on new requests:** Configure notifications so administrators are aware of new approval requests.
+        - **Document approval criteria:** Define the standard reviewers apply so access decisions stay consistent.
+      audit: |
+        ### Audit via Admin Console
+
+        1. Sign in to the Tailscale admin console at login.tailscale.com/admin.
+        2. Open **Settings > Device management**.
+        3. Review the user approval setting.
+
+        A passing result shows that manual approval for new users is enabled; a failing result shows user approval turned off.
+
+        ### Audit via API
+
+        Query the Tailscale API and inspect the result:
+
+        ```bash
+        curl -s -u "$TAILSCALE_API_KEY:" \
+          "https://api.tailscale.com/api/v2/tailnet/<tailnet>/settings"
+        ```
+
+        A passing response shows `"usersApprovalOn": true`; a failing response shows `"usersApprovalOn": false`.
       remediation:
         - id: console
           desc: |
@@ -594,16 +733,16 @@ queries:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-tvm-03
       compliance/dora: dora-art-9
-      compliance/hipaa: false
+      compliance/hipaa: hipaa-security-ss164-308-a-1-ii-b-security-management-process-risk-management
       compliance/iso-27001-2022: iso-27001-2022-a-8-8
       compliance/nis-2: nis-2-21-2-e
-      compliance/nist-csf-1: nist-csf-1-id-ra-1
-      compliance/nist-csf-2: nist-csf-2-id-ra-01
+      compliance/nist-csf-1: nist-csf-1-pr-ip-12
+      compliance/nist-csf-2: nist-csf-2-pr-ps-02
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-2
       compliance/nist-sp-800-171: nist-sp-800-171--3-14-1
       compliance/pci-dss-4: pcidss-requirement-6-3-3
       compliance/soc2-2017: soc2-control-cc7-1-2
-      compliance/vda-isa-5: vda-isa-5-5-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-5
     mql: |
       tailscale.devicesAutoUpdatesEnabled == true
     docs:
@@ -612,20 +751,34 @@ queries:
 
         **Why this matters**
 
-        When automatic client updates are off, every device has to be patched manually:
-          •  Vulnerabilities in the Tailscale client itself remain exploitable on out-of-date endpoints.
-          •  Devices belonging to users who rarely sign in or who run headless agents can drift far behind the latest release.
-          •  Manual patch rollouts depend on user action that may never happen, leaving long-tail exposure.
+        - **Removes manual patching gaps:** When automatic updates are off, every device must be patched by hand, and vulnerabilities stay exploitable on out-of-date endpoints.
+        - **Prevents version drift:** Devices used by infrequent sign-ins or headless agents can fall far behind the latest release.
+        - **Speeds remediation:** Automatic updates give a faster mean time to remediation for client-side vulnerabilities.
 
-        Automatic updates provide:
-          •  A consistent, fleet-wide patch baseline maintained by the platform itself.
-          •  Reduced operational burden compared to chasing individual users to update.
-          •  Faster mean time to remediation for client-side vulnerabilities.
+        **Risk mitigation**
 
-        Risk mitigation
-          •  Enable automatic updates at the tailnet level so all eligible devices opt in by default.
-          •  Use the per-device check to spot endpoints that need attention even when auto-updates are on.
-          •  Subscribe to Tailscale security advisories so the team knows when a critical update has shipped.
+        - **Enable tailnet auto-updates:** Turn on automatic updates so all eligible devices opt in by default.
+        - **Watch individual devices:** Use the per-device update check to spot endpoints that still need attention.
+        - **Track advisories:** Subscribe to Tailscale security advisories so the team knows when a critical update ships.
+      audit: |
+        ### Audit via Admin Console
+
+        1. Sign in to the Tailscale admin console at login.tailscale.com/admin.
+        2. Open **Settings > Device management**.
+        3. Review the auto-updates setting for the tailnet.
+
+        A passing result shows automatic client updates enabled for the tailnet; a failing result shows auto-updates turned off.
+
+        ### Audit via API
+
+        Query the Tailscale API and inspect the result:
+
+        ```bash
+        curl -s -u "$TAILSCALE_API_KEY:" \
+          "https://api.tailscale.com/api/v2/tailnet/<tailnet>/settings"
+        ```
+
+        A passing response shows `"devicesAutoUpdatesOn": true`; a failing response shows `"devicesAutoUpdatesOn": false`.
       remediation:
         - id: console
           desc: |
@@ -644,40 +797,54 @@ queries:
     filters: asset.platform == 'tailscale'
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-12
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
       compliance/iso-27001-2022: iso-27001-2022-a-5-17
-      compliance/nis-2: nis-2-21-2-g
+      compliance/nis-2: nis-2-21-2-i
       compliance/nist-csf-1: nist-csf-1-pr-ac-1
       compliance/nist-csf-2: nist-csf-2-pr-aa-01
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
-      compliance/nist-sp-800-171: nist-sp-800-171--3-5-7
-      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-6
+      compliance/pci-dss-4: false
       compliance/soc2-2017: soc2-control-cc6-1-9
-      compliance/vda-isa-5: vda-isa-5-4-1-3
+      compliance/vda-isa-5: vda-isa-5-4-1-1
     mql: |
       tailscale.devicesKeyDurationDays > 0 && tailscale.devicesKeyDurationDays <= 180
     docs:
       desc: |
-        This check ensures that the tailnet's default device key duration is set to a finite, reasonable value of 180 days or less. A short key duration limits the useful lifetime of a stolen device credential.
+        This check ensures that the tailnet's default device key duration is set to a finite value of 180 days or less. A short key duration limits the useful lifetime of a stolen device credential.
 
         **Why this matters**
 
-        Device keys are long-lived credentials. The longer they remain valid, the larger the impact of a single compromise:
-          •  A stolen key with a multi-year lifetime grants attackers persistent access until the device is manually revoked.
-          •  Forgotten or unmanaged devices accumulate stale-but-valid credentials that no human is monitoring.
-          •  Compliance frameworks expect cryptographic credentials to be rotated on a defined schedule.
+        - **Bounds credential lifetime:** Device keys are long-lived credentials, and the longer they stay valid, the larger the impact of a single compromise.
+        - **Limits stolen-key abuse:** A key with a multi-year lifetime grants persistent access until the device is manually revoked.
+        - **Surfaces stale devices:** Forgotten or unmanaged devices accumulate valid credentials that no one is monitoring.
 
-        Capping the duration at 180 days or less provides:
-          •  A regular forced re-authentication cadence that proves the user still controls the device.
-          •  An automatic upper bound on how long a leaked key can be abused before it expires on its own.
-          •  Alignment with common credential rotation expectations in security frameworks.
+        **Risk mitigation**
 
-        Risk mitigation
-          •  Set the tailnet device key duration to 180 days or less, choosing a shorter window for higher-risk environments.
-          •  Avoid setting the duration to 0, which disables expiry entirely.
-          •  Use the per-device key expiry check to catch devices where expiry has been individually disabled.
+        - **Cap the duration:** Set the tailnet device key duration to 180 days or less, choosing a shorter window for higher-risk environments.
+        - **Never disable expiry:** Avoid setting the duration to 0, which disables key expiry entirely.
+        - **Catch per-device exceptions:** Use the per-device key expiry check to find devices where expiry has been individually disabled.
+      audit: |
+        ### Audit via Admin Console
+
+        1. Sign in to the Tailscale admin console at login.tailscale.com/admin.
+        2. Open **Settings > Device management**.
+        3. Review the device key duration setting.
+
+        A passing result shows a device key duration of 180 days or less and greater than zero; a failing result shows a longer duration or expiry disabled.
+
+        ### Audit via API
+
+        Query the Tailscale API and inspect the result:
+
+        ```bash
+        curl -s -u "$TAILSCALE_API_KEY:" \
+          "https://api.tailscale.com/api/v2/tailnet/<tailnet>/settings"
+        ```
+
+        A passing response shows `"devicesKeyDurationDays"` set to a value between 1 and 180; a failing response shows a value above 180 or 0.
       remediation:
         - id: console
           desc: |
@@ -700,14 +867,14 @@ queries:
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
       compliance/iso-27001-2022: iso-27001-2022-a-8-22
-      compliance/nis-2: nis-2-21-2-e
+      compliance/nis-2: nis-2-21-2-i
       compliance/nist-csf-1: nist-csf-1-pr-ac-5
       compliance/nist-csf-2: nist-csf-2-pr-ir-01
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-4
-      compliance/nist-sp-800-171: nist-sp-800-171--3-1-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
       compliance/pci-dss-4: pcidss-requirement-1-3-1
       compliance/soc2-2017: soc2-control-cc6-1-3
-      compliance/vda-isa-5: vda-isa-5-5-2-6
+      compliance/vda-isa-5: vda-isa-5-5-2-7
     mql: |
       tailscale.aclPolicy.acls.none(
         _['action'] == "accept" &&
@@ -720,21 +887,34 @@ queries:
 
         **Why this matters**
 
-        A rule with `src: ["*"]`, `dst: ["*:*"]`, and `action: "accept"` reduces the entire ACL to a permissive flat network:
-          •  Any compromised device can pivot to every other device, service, and port.
-          •  The principle of least privilege is not enforced anywhere on the tailnet.
-          •  Tag-based segmentation, group restrictions, and per-service rules added later are masked by the catch-all and provide no protection.
-          •  Network-level audit findings will show that no segmentation exists despite the presence of an ACL file.
+        - **Prevents a flat network:** An accept rule with a source of `*` and destination of `*:*` collapses the entire ACL into a permissive flat network.
+        - **Enables lateral movement:** Any compromised device can pivot to every other device, service, and port on the tailnet.
+        - **Masks tighter rules:** Tag-based segmentation, group restrictions, and per-service rules added later are overridden by the catch-all and provide no protection.
 
-        Removing the catch-all and replacing it with explicit rules provides:
-          •  Per-group and per-tag scoping so only the intended principals can reach each service.
-          •  A meaningful default-deny posture for everything not expressly allowed.
-          •  Clear documentation of which workloads are allowed to communicate.
+        **Risk mitigation**
 
-        Risk mitigation
-          •  Replace any `accept` rule whose source is `*` and destination is `*:*` with explicit per-group or per-tag allow rules.
-          •  Use Tailscale's policy tests to confirm that intended access still works after tightening the ACL.
-          •  Adopt a least-privilege baseline where every new rule names specific sources, destinations, and ports.
+        - **Replace the catch-all:** Swap any accept rule whose source is `*` and destination is `*:*` for explicit per-group or per-tag allow rules.
+        - **Validate with policy tests:** Use Tailscale's policy tests to confirm intended access still works after tightening the ACL.
+        - **Adopt a least-privilege baseline:** Ensure every new rule names specific sources, destinations, and ports.
+      audit: |
+        ### Audit via Admin Console
+
+        1. Sign in to the Tailscale admin console at login.tailscale.com/admin.
+        2. Open the **Access controls** page and the policy file editor.
+        3. Inspect the `acls` section for any entry with `src` of `["*"]`, `dst` of `["*:*"]`, and `action` of `"accept"`.
+
+        A passing result shows no blanket allow-all entry in the policy file; a failing result shows at least one catch-all accept rule.
+
+        ### Audit via API
+
+        Query the Tailscale API and inspect the result:
+
+        ```bash
+        curl -s -u "$TAILSCALE_API_KEY:" \
+          "https://api.tailscale.com/api/v2/tailnet/<tailnet>/acl"
+        ```
+
+        A passing response shows no `acls` entry combining `"action": "accept"` with a `*` source and a `*:*` destination; a failing response includes such a catch-all rule.
       remediation:
         - id: console
           desc: |
