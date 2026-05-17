@@ -159,6 +159,14 @@ queries:
         ASLR randomizes the memory layout of a process, making it significantly harder for attackers to exploit memory corruption vulnerabilities such as buffer overflows. Without ASLR, attackers can reliably predict memory addresses and craft exploits targeting known locations of critical functions and data structures.
 
         Enabling ASLR is one of the most effective exploit mitigation techniques available and should be enabled on all FreeBSD systems.
+      audit: |
+        To verify that ASLR is enabled, run the following command:
+
+        ```bash
+        sysctl kern.elf64.aslr.enable
+        ```
+
+        If the value is `1`, ASLR is enabled and the check passes. If the value is `0`, ASLR is disabled and the check fails.
       remediation:
         - id: cli
           desc: |
@@ -175,7 +183,7 @@ queries:
                 ```ini
                 kern.elf64.aslr.enable=1
                 ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -193,6 +201,21 @@ queries:
             fi
 
             echo "ASLR enabled."
+            ```
+        - id: ansible
+          desc: |
+            To enable ASLR using Ansible:
+
+            1. Add the following task to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Enable ASLR
+              ansible.posix.sysctl:
+                name: kern.elf64.aslr.enable
+                value: '1'
+                sysctl_file: /etc/sysctl.conf
+                reload: true
             ```
   - uid: mondoo-freebsd-security-core-dump-backtraces-are-disabled
     title: Ensure core dump backtraces are disabled
@@ -224,6 +247,15 @@ queries:
         **Why this matters**
 
         If unrestricted, core dumps can be exploited to extract secrets from crashed privileged processes. Disabling the `savecore` service prevents the system from automatically saving crash dumps, reducing the risk of sensitive data exposure.
+      audit: |
+        To verify that the `savecore` service is not active, run the following commands:
+
+        ```bash
+        service savecore status
+        sysrc -n savecore_enable
+        ```
+
+        If `service savecore status` reports the service is not running and `savecore_enable` is `NO`, the check passes. If the service is running or `savecore_enable` is `YES`, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -235,7 +267,7 @@ queries:
             sysrc savecore_enable="NO"
             service savecore stop
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -248,6 +280,24 @@ queries:
             service savecore onestop 2>/dev/null || true
 
             echo "savecore service disabled."
+            ```
+        - id: ansible
+          desc: |
+            To disable the `savecore` service using Ansible:
+
+            1. Add the following tasks to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Disable savecore in rc.conf
+              community.general.sysrc:
+                name: savecore_enable
+                value: 'NO'
+
+            - name: Stop the savecore service
+              ansible.builtin.service:
+                name: savecore
+                state: stopped
             ```
   - uid: mondoo-freebsd-security-core-dump-storage-is-disabled
     title: Ensure core dump storage is disabled
@@ -278,6 +328,14 @@ queries:
         **Why this matters**
 
         Kernel crash dumps may expose sensitive data from kernel memory, including credentials and cryptographic material. Unless crash dumps are specifically needed for debugging, they should be disabled.
+      audit: |
+        To verify that kernel crash dump storage is disabled, run the following command:
+
+        ```bash
+        sysrc -n dumpdev
+        ```
+
+        If the value is `NO`, crash dump storage is disabled and the check passes. If a device path is returned, crash dumps are stored and the check fails.
       remediation:
         - id: cli
           desc: |
@@ -288,7 +346,7 @@ queries:
             ```bash
             sysrc dumpdev="NO"
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -300,6 +358,19 @@ queries:
             sysrc dumpdev="NO"
 
             echo "Crash dump storage disabled."
+            ```
+        - id: ansible
+          desc: |
+            To disable crash dump storage using Ansible:
+
+            1. Add the following task to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Disable crash dump storage
+              community.general.sysrc:
+                name: dumpdev
+                value: 'NO'
             ```
   - uid: mondoo-freebsd-security-ip-forwarding-is-disabled
     title: Ensure IP forwarding is disabled
@@ -333,6 +404,15 @@ queries:
         **Why this matters**
 
         IP forwarding allows a system to route traffic between network interfaces. Unless the system is specifically intended to function as a router or firewall, forwarding should be disabled to prevent the system from being used to relay traffic between network segments, which could bypass network security controls.
+      audit: |
+        To verify that IP forwarding is disabled, run the following commands:
+
+        ```bash
+        sysctl net.inet.ip.forwarding
+        sysctl net.inet6.ip6.forwarding
+        ```
+
+        If both values are `0`, IP forwarding is disabled and the check passes. If either value is `1`, the system routes traffic and the check fails.
       remediation:
         - id: cli
           desc: |
@@ -351,7 +431,7 @@ queries:
                 net.inet.ip.forwarding=0
                 net.inet6.ip6.forwarding=0
                 ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -373,6 +453,24 @@ queries:
             done
 
             echo "IP forwarding disabled."
+            ```
+        - id: ansible
+          desc: |
+            To disable IP forwarding using Ansible:
+
+            1. Add the following tasks to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Disable IPv4 and IPv6 forwarding
+              ansible.posix.sysctl:
+                name: "{{ item }}"
+                value: '0'
+                sysctl_file: /etc/sysctl.conf
+                reload: true
+              loop:
+                - net.inet.ip.forwarding
+                - net.inet6.ip6.forwarding
             ```
   - uid: mondoo-freebsd-security-packet-redirect-sending-is-disabled
     title: Ensure packet redirect sending is disabled
@@ -406,6 +504,15 @@ queries:
         **Why this matters**
 
         ICMP redirects are used by routers to inform hosts of more efficient routes. An attacker could craft fraudulent ICMP redirect messages to corrupt the routing table of a target system, potentially redirecting traffic through a malicious system for interception or modification.
+      audit: |
+        To verify that ICMP redirect sending is disabled, run the following commands:
+
+        ```bash
+        sysctl net.inet.ip.redirect
+        sysctl net.inet6.ip6.redirect
+        ```
+
+        If both values are `0`, redirect sending is disabled and the check passes. If either value is `1`, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -424,7 +531,7 @@ queries:
                 net.inet.ip.redirect=0
                 net.inet6.ip6.redirect=0
                 ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -446,6 +553,24 @@ queries:
             done
 
             echo "Packet redirect sending disabled."
+            ```
+        - id: ansible
+          desc: |
+            To disable ICMP redirect sending using Ansible:
+
+            1. Add the following tasks to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Disable ICMP redirect sending
+              ansible.posix.sysctl:
+                name: "{{ item }}"
+                value: '0'
+                sysctl_file: /etc/sysctl.conf
+                reload: true
+              loop:
+                - net.inet.ip.redirect
+                - net.inet6.ip6.redirect
             ```
   - uid: mondoo-freebsd-security-icmp-redirects-are-not-accepted
     title: Ensure ICMP redirects are not accepted
@@ -479,6 +604,15 @@ queries:
         **Why this matters**
 
         Accepting ICMP redirects from untrusted sources can allow attackers to manipulate the system's routing table, potentially redirecting traffic through a malicious host for man-in-the-middle attacks. Systems that are not routers should not accept routing instructions from ICMP redirects.
+      audit: |
+        To verify that ICMP redirects are not accepted, run the following commands:
+
+        ```bash
+        sysctl net.inet.icmp.drop_redirect
+        sysctl net.inet6.icmp6.rediraccept
+        ```
+
+        If `net.inet.icmp.drop_redirect` is `1` and `net.inet6.icmp6.rediraccept` is `0`, the check passes. Otherwise the check fails.
       remediation:
         - id: cli
           desc: |
@@ -497,7 +631,7 @@ queries:
                 net.inet.icmp.drop_redirect=1
                 net.inet6.icmp6.rediraccept=0
                 ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -519,6 +653,24 @@ queries:
             done
 
             echo "ICMP redirect rejection configured."
+            ```
+        - id: ansible
+          desc: |
+            To reject ICMP redirects using Ansible:
+
+            1. Add the following tasks to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Drop incoming ICMP redirects
+              ansible.posix.sysctl:
+                name: "{{ item.name }}"
+                value: "{{ item.value }}"
+                sysctl_file: /etc/sysctl.conf
+                reload: true
+              loop:
+                - { name: net.inet.icmp.drop_redirect, value: '1' }
+                - { name: net.inet6.icmp6.rediraccept, value: '0' }
             ```
   - uid: mondoo-freebsd-security-source-routed-packets-are-not-accepted
     title: Ensure source routed packets are not accepted
@@ -551,6 +703,14 @@ queries:
         **Why this matters**
 
         Source routing allows the sender to specify the path a packet takes to its destination. Attackers can use source routing to bypass network security devices and access systems on private or protected networks. Disabling acceptance of source routed packets prevents this attack vector.
+      audit: |
+        To verify that source routed packets are not accepted, run the following command:
+
+        ```bash
+        sysctl net.inet.ip.accept_sourceroute
+        ```
+
+        If the value is `0`, source routed packets are rejected and the check passes. If the value is `1`, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -567,7 +727,7 @@ queries:
                 ```ini
                 net.inet.ip.accept_sourceroute=0
                 ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -585,6 +745,21 @@ queries:
             fi
 
             echo "Source routed packets disabled."
+            ```
+        - id: ansible
+          desc: |
+            To reject source routed packets using Ansible:
+
+            1. Add the following task to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Disable source routed packet acceptance
+              ansible.posix.sysctl:
+                name: net.inet.ip.accept_sourceroute
+                value: '0'
+                sysctl_file: /etc/sysctl.conf
+                reload: true
             ```
   - uid: mondoo-freebsd-security-tcp-syn-cookies-is-enabled
     title: Ensure TCP SYN cookies are enabled
@@ -617,6 +792,14 @@ queries:
         **Why this matters**
 
         SYN flood attacks exhaust server resources by sending a large number of SYN packets without completing the TCP handshake. SYN cookies allow the system to continue servicing legitimate connections during a SYN flood by encoding connection state in the SYN-ACK response, eliminating the need to maintain state for half-open connections.
+      audit: |
+        To verify that TCP SYN cookies are enabled, run the following command:
+
+        ```bash
+        sysctl net.inet.tcp.syncookies
+        ```
+
+        If the value is `1`, SYN cookies are enabled and the check passes. If the value is `0`, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -633,7 +816,7 @@ queries:
                 ```ini
                 net.inet.tcp.syncookies=1
                 ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -651,6 +834,21 @@ queries:
             fi
 
             echo "TCP SYN cookies enabled."
+            ```
+        - id: ansible
+          desc: |
+            To enable TCP SYN cookies using Ansible:
+
+            1. Add the following task to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Enable TCP SYN cookies
+              ansible.posix.sysctl:
+                name: net.inet.tcp.syncookies
+                value: '1'
+                sysctl_file: /etc/sysctl.conf
+                reload: true
             ```
   - uid: mondoo-freebsd-security-ipv6-router-advertisements-are-not-accepted
     title: Ensure IPv6 router advertisements are not accepted
@@ -683,6 +881,14 @@ queries:
         **Why this matters**
 
         Rogue IPv6 router advertisements can be used in man-in-the-middle attacks by directing traffic through an attacker-controlled system. Unless the system specifically requires IPv6 autoconfiguration, router advertisements should be disabled.
+      audit: |
+        To verify that IPv6 router advertisements are not accepted, run the following command:
+
+        ```bash
+        sysctl net.inet6.ip6.accept_rtadv
+        ```
+
+        If the value is `0`, router advertisements are rejected and the check passes. If the value is `1`, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -699,7 +905,7 @@ queries:
                 ```ini
                 net.inet6.ip6.accept_rtadv=0
                 ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -717,6 +923,21 @@ queries:
             fi
 
             echo "IPv6 router advertisements disabled."
+            ```
+        - id: ansible
+          desc: |
+            To reject IPv6 router advertisements using Ansible:
+
+            1. Add the following task to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Disable IPv6 router advertisement acceptance
+              ansible.posix.sysctl:
+                name: net.inet6.ip6.accept_rtadv
+                value: '0'
+                sysctl_file: /etc/sysctl.conf
+                reload: true
             ```
   - uid: mondoo-freebsd-security-broadcast-icmp-requests-are-ignored
     title: Ensure broadcast and multicast ICMP requests are ignored
@@ -749,6 +970,14 @@ queries:
         **Why this matters**
 
         Responding to ICMP broadcast requests can be leveraged in network amplification attacks (Smurf attacks), where an attacker sends ICMP echo requests with a spoofed source address to the broadcast address, causing all hosts on the network to respond to the victim. Ignoring these requests eliminates this attack vector.
+      audit: |
+        To verify that broadcast and multicast ICMP requests are ignored, run the following command:
+
+        ```bash
+        sysctl net.inet.icmp.bmcastecho
+        ```
+
+        If the value is `0`, broadcast ICMP requests are ignored and the check passes. If the value is `1`, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -765,7 +994,7 @@ queries:
                 ```ini
                 net.inet.icmp.bmcastecho=0
                 ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -783,6 +1012,21 @@ queries:
             fi
 
             echo "Broadcast ICMP echo responses disabled."
+            ```
+        - id: ansible
+          desc: |
+            To ignore broadcast ICMP requests using Ansible:
+
+            1. Add the following task to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Disable broadcast ICMP echo responses
+              ansible.posix.sysctl:
+                name: net.inet.icmp.bmcastecho
+                value: '0'
+                sysctl_file: /etc/sysctl.conf
+                reload: true
             ```
   - uid: mondoo-freebsd-security-ftp-server-is-not-enabled
     title: Ensure FTP server is not enabled
@@ -813,6 +1057,14 @@ queries:
         **Why this matters**
 
         FTP is an insecure protocol that sends usernames, passwords, and file contents in plaintext over the network. Attackers with network access can trivially intercept credentials and data. Use SSH/SFTP or SCP for secure file transfers instead.
+      audit: |
+        To verify that FTP is not enabled, inspect `/etc/inetd.conf`:
+
+        ```bash
+        grep -E '^ftp' /etc/inetd.conf
+        ```
+
+        If the file does not exist or no uncommented `ftp` line is returned, the check passes. If an active `ftp` entry is present, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -830,7 +1082,7 @@ queries:
             sysrc inetd_enable="NO"
             service inetd stop
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -845,6 +1097,20 @@ queries:
             fi
 
             echo "FTP server disabled."
+            ```
+        - id: ansible
+          desc: |
+            To disable FTP using Ansible:
+
+            1. Add the following task to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Comment out FTP entries in inetd.conf
+              ansible.builtin.replace:
+                path: /etc/inetd.conf
+                regexp: '^ftp'
+                replace: '#ftp'
             ```
   - uid: mondoo-freebsd-security-telnet-server-is-not-enabled
     title: Ensure telnet server is not enabled
@@ -875,6 +1141,14 @@ queries:
         **Why this matters**
 
         Telnet provides no encryption for sessions or credentials, making it trivial for attackers with network access to intercept login credentials and session data. SSH should be used for all remote administration instead.
+      audit: |
+        To verify that telnet is not enabled, inspect `/etc/inetd.conf`:
+
+        ```bash
+        grep -E '^telnet' /etc/inetd.conf
+        ```
+
+        If the file does not exist or no uncommented `telnet` line is returned, the check passes. If an active `telnet` entry is present, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -885,7 +1159,7 @@ queries:
             ```bash
             sed -i '' 's/^telnet/#telnet/' /etc/inetd.conf
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -900,6 +1174,20 @@ queries:
             fi
 
             echo "Telnet server disabled."
+            ```
+        - id: ansible
+          desc: |
+            To disable telnet using Ansible:
+
+            1. Add the following task to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Comment out telnet entries in inetd.conf
+              ansible.builtin.replace:
+                path: /etc/inetd.conf
+                regexp: '^telnet'
+                replace: '#telnet'
             ```
   - uid: mondoo-freebsd-security-nis-server-is-not-enabled
     title: Ensure NIS server is not enabled
@@ -931,6 +1219,15 @@ queries:
         **Why this matters**
 
         NIS is an inherently insecure protocol that transmits unencrypted authentication data over the network. It is trivially exploitable by attackers who can sniff network traffic. Modern alternatives such as LDAP with TLS should be used instead.
+      audit: |
+        To verify that the NIS server is not active, run the following commands:
+
+        ```bash
+        service ypserv status
+        sysrc -n nis_server_enable
+        ```
+
+        If `service ypserv status` reports the service is not running and `nis_server_enable` is `NO`, the check passes. If the service is running or enabled, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -942,7 +1239,7 @@ queries:
             sysrc nis_server_enable="NO"
             service ypserv stop
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -955,6 +1252,24 @@ queries:
             service ypserv onestop 2>/dev/null || true
 
             echo "NIS server disabled."
+            ```
+        - id: ansible
+          desc: |
+            To disable the NIS server using Ansible:
+
+            1. Add the following tasks to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Disable NIS server in rc.conf
+              community.general.sysrc:
+                name: nis_server_enable
+                value: 'NO'
+
+            - name: Stop the ypserv service
+              ansible.builtin.service:
+                name: ypserv
+                state: stopped
             ```
   - uid: mondoo-freebsd-security-rpcbind-is-not-enabled
     title: Ensure rpcbind is not enabled
@@ -986,6 +1301,15 @@ queries:
         **Why this matters**
 
         The `rpcbind` service is required for NFS and NIS and has historically been a target for DDoS amplification attacks and information disclosure. If NFS and NIS are not required, `rpcbind` should be disabled to reduce the attack surface.
+      audit: |
+        To verify that `rpcbind` is not active, run the following commands:
+
+        ```bash
+        service rpcbind status
+        sysrc -n rpcbind_enable
+        ```
+
+        If `service rpcbind status` reports the service is not running and `rpcbind_enable` is `NO`, the check passes. If the service is running or enabled, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -997,7 +1321,7 @@ queries:
             sysrc rpcbind_enable="NO"
             service rpcbind stop
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -1010,6 +1334,24 @@ queries:
             service rpcbind onestop 2>/dev/null || true
 
             echo "rpcbind disabled."
+            ```
+        - id: ansible
+          desc: |
+            To disable `rpcbind` using Ansible:
+
+            1. Add the following tasks to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Disable rpcbind in rc.conf
+              community.general.sysrc:
+                name: rpcbind_enable
+                value: 'NO'
+
+            - name: Stop the rpcbind service
+              ansible.builtin.service:
+                name: rpcbind
+                state: stopped
             ```
   - uid: mondoo-freebsd-security-nfs-server-is-not-enabled
     title: Ensure NFS server is not enabled
@@ -1043,6 +1385,15 @@ queries:
         **Why this matters**
 
         NFS allows file sharing over the network. If not properly configured, NFS can expose sensitive data to unauthorized users. Unless NFS is specifically required, the service should be disabled to reduce the attack surface.
+      audit: |
+        To verify that the NFS daemon is not active, run the following commands:
+
+        ```bash
+        service nfsd status
+        sysrc -n nfs_server_enable
+        ```
+
+        If `service nfsd status` reports the service is not running and `nfs_server_enable` is `NO`, the check passes. If the service is running or enabled, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -1054,7 +1405,7 @@ queries:
             sysrc nfs_server_enable="NO"
             service nfsd stop
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -1067,6 +1418,24 @@ queries:
             service nfsd onestop 2>/dev/null || true
 
             echo "NFS server disabled."
+            ```
+        - id: ansible
+          desc: |
+            To disable the NFS daemon using Ansible:
+
+            1. Add the following tasks to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Disable NFS server in rc.conf
+              community.general.sysrc:
+                name: nfs_server_enable
+                value: 'NO'
+
+            - name: Stop the nfsd service
+              ansible.builtin.service:
+                name: nfsd
+                state: stopped
             ```
   - uid: mondoo-freebsd-security-snmp-server-is-not-enabled
     title: Ensure SNMP server is not enabled
@@ -1098,6 +1467,16 @@ queries:
         **Why this matters**
 
         SNMPv1 and SNMPv2 transmit community strings and data in cleartext, making them vulnerable to interception. Even SNMPv3 can be misconfigured. Unless SNMP monitoring is specifically required and properly configured with SNMPv3, the SNMP service should be disabled.
+      audit: |
+        To verify that the SNMP daemon is not active, run the following commands:
+
+        ```bash
+        service snmpd status
+        sysrc -n snmpd_enable
+        pkg info net-snmp
+        ```
+
+        If `snmpd` is not running and not enabled, or the `net-snmp` package is not installed, the check passes. If `snmpd` is running or enabled, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -1115,7 +1494,7 @@ queries:
             ```bash
             pkg delete net-snmp
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -1128,6 +1507,25 @@ queries:
             service snmpd onestop 2>/dev/null || true
 
             echo "SNMP server disabled."
+            ```
+        - id: ansible
+          desc: |
+            To disable the SNMP daemon using Ansible:
+
+            1. Add the following tasks to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Disable snmpd in rc.conf
+              community.general.sysrc:
+                name: snmpd_enable
+                value: 'NO'
+
+            - name: Stop the snmpd service
+              ansible.builtin.service:
+                name: snmpd
+                state: stopped
+              failed_when: false
             ```
   - uid: mondoo-freebsd-security-tftp-server-is-not-enabled
     title: Ensure TFTP server is not enabled
@@ -1158,6 +1556,14 @@ queries:
         **Why this matters**
 
         TFTP is a protocol designed for simplicity with no authentication or encryption. Any user on the network can read or write files via TFTP. Unless specifically required for network booting infrastructure, TFTP should be disabled.
+      audit: |
+        To verify that TFTP is not enabled, inspect `/etc/inetd.conf`:
+
+        ```bash
+        grep -E '^tftp' /etc/inetd.conf
+        ```
+
+        If the file does not exist or no uncommented `tftp` line is returned, the check passes. If an active `tftp` entry is present, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -1168,7 +1574,7 @@ queries:
             ```bash
             sed -i '' 's/^tftp/#tftp/' /etc/inetd.conf
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -1183,6 +1589,20 @@ queries:
             fi
 
             echo "TFTP server disabled."
+            ```
+        - id: ansible
+          desc: |
+            To disable TFTP using Ansible:
+
+            1. Add the following task to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Comment out TFTP entries in inetd.conf
+              ansible.builtin.replace:
+                path: /etc/inetd.conf
+                regexp: '^tftp'
+                replace: '#tftp'
             ```
   - uid: mondoo-freebsd-security-imap-and-pop3-server-is-not-enabled
     title: Ensure IMAP and POP3 server is not enabled
@@ -1216,6 +1636,16 @@ queries:
         **Why this matters**
 
         Unless the system is intended to be a mail server, IMAP and POP3 services unnecessarily expand the attack surface. These services, if misconfigured, can expose email contents and credentials.
+      audit: |
+        To verify that IMAP and POP3 services are not active, run the following commands:
+
+        ```bash
+        service dovecot status
+        service cyrus_imapd status
+        sysrc -n dovecot_enable cyrus_imapd_enable
+        ```
+
+        If neither `dovecot` nor `cyrus_imapd` is running or enabled, the check passes. If either service is running or enabled, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -1229,7 +1659,7 @@ queries:
             sysrc cyrus_imapd_enable="NO"
             service cyrus_imapd stop
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -1244,6 +1674,31 @@ queries:
             service cyrus_imapd onestop 2>/dev/null || true
 
             echo "IMAP and POP3 services disabled."
+            ```
+        - id: ansible
+          desc: |
+            To disable IMAP and POP3 services using Ansible:
+
+            1. Add the following tasks to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Disable mail access services in rc.conf
+              community.general.sysrc:
+                name: "{{ item }}"
+                value: 'NO'
+              loop:
+                - dovecot_enable
+                - cyrus_imapd_enable
+
+            - name: Stop mail access services
+              ansible.builtin.service:
+                name: "{{ item }}"
+                state: stopped
+              loop:
+                - dovecot
+                - cyrus_imapd
+              failed_when: false
             ```
   - uid: mondoo-freebsd-security-web-proxy-server-is-not-enabled
     title: Ensure web proxy server is not enabled
@@ -1275,6 +1730,16 @@ queries:
         **Why this matters**
 
         A web proxy server, if misconfigured, can allow unauthorized users to relay traffic through the system, bypass network security controls, or access internal resources. Unless proxy functionality is specifically required, it should be disabled.
+      audit: |
+        To verify that the `squid` web proxy is not active, run the following commands:
+
+        ```bash
+        service squid status
+        sysrc -n squid_enable
+        pkg info squid
+        ```
+
+        If `squid` is not running and not enabled, or the `squid` package is not installed, the check passes. If `squid` is running or enabled, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -1292,7 +1757,7 @@ queries:
             ```bash
             pkg delete squid
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -1305,6 +1770,25 @@ queries:
             service squid onestop 2>/dev/null || true
 
             echo "Web proxy server disabled."
+            ```
+        - id: ansible
+          desc: |
+            To disable the `squid` web proxy using Ansible:
+
+            1. Add the following tasks to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Disable squid in rc.conf
+              community.general.sysrc:
+                name: squid_enable
+                value: 'NO'
+
+            - name: Stop the squid service
+              ansible.builtin.service:
+                name: squid
+                state: stopped
+              failed_when: false
             ```
   - uid: mondoo-freebsd-security-mail-transfer-agent-is-configured-for-local-only-mode
     title: Ensure mail transfer agent is configured for local-only mode
@@ -1337,6 +1821,14 @@ queries:
         **Why this matters**
 
         A mail transfer agent that listens on all network interfaces can be used as an open relay for spam or as an attack vector. Unless the system is intended to be a mail server, the MTA should only accept mail from the local system.
+      audit: |
+        To verify that Postfix processes only local mail, inspect its configuration:
+
+        ```bash
+        postconf inet_interfaces
+        ```
+
+        If `inet_interfaces` is set to `localhost` (or `loopback-only`), the MTA processes only local mail and the check passes. If it is set to `all` or a routable address, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -1353,7 +1845,7 @@ queries:
             ```bash
             service postfix restart
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -1378,6 +1870,27 @@ queries:
             service postfix restart 2>/dev/null || true
 
             echo "Postfix configured for local-only mode."
+            ```
+        - id: ansible
+          desc: |
+            To configure Postfix for local-only mode using Ansible:
+
+            1. Add the following tasks to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Restrict Postfix to local interfaces
+              ansible.builtin.lineinfile:
+                path: /usr/local/etc/postfix/main.cf
+                regexp: '^inet_interfaces'
+                line: 'inet_interfaces = localhost'
+              notify: restart postfix
+
+            handlers:
+              - name: restart postfix
+                ansible.builtin.service:
+                  name: postfix
+                  state: restarted
             ```
   - uid: mondoo-freebsd-security-permissions-on-sshd-config-are-configured
     title: Ensure permissions on /etc/ssh/sshd_config are configured
@@ -1417,6 +1930,14 @@ queries:
         **Why this matters**
 
         The SSH daemon configuration file controls how remote access to the system is handled. If this file is readable by unauthorized users, they can learn about the system's SSH configuration and potentially identify weaknesses. If writable, an attacker could weaken the SSH configuration.
+      audit: |
+        To verify the ownership and permissions of the SSH daemon configuration file, run the following command:
+
+        ```bash
+        ls -l /etc/ssh/sshd_config
+        ```
+
+        If the file is owned by `root:wheel` and is not readable, writable, or executable by group or other, the check passes. If group or other have any access, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -1428,7 +1949,7 @@ queries:
             chown root:wheel /etc/ssh/sshd_config
             chmod 0600 /etc/ssh/sshd_config
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -1441,6 +1962,21 @@ queries:
             chmod 0600 /etc/ssh/sshd_config
 
             echo "Permissions on /etc/ssh/sshd_config configured."
+            ```
+        - id: ansible
+          desc: |
+            To set the correct ownership and permissions using Ansible:
+
+            1. Add the following task to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Secure sshd_config permissions
+              ansible.builtin.file:
+                path: /etc/ssh/sshd_config
+                owner: root
+                group: wheel
+                mode: '0600'
             ```
   - uid: mondoo-freebsd-security-permissions-on-ssh-private-host-key-files-are-configured
     title: Ensure permissions on SSH private host key files are configured
@@ -1481,6 +2017,14 @@ queries:
         **Why this matters**
 
         SSH private host keys are used to authenticate the server to clients. If these keys are exposed to unauthorized users, an attacker could impersonate the server, enabling man-in-the-middle attacks. Private keys must be accessible only to root.
+      audit: |
+        To verify the ownership and permissions of the SSH private host key files, run the following command:
+
+        ```bash
+        ls -l /etc/ssh/ssh_host_*key
+        ```
+
+        If every private host key file is owned by `root` with mode `0600` or more restrictive, the check passes. If any file is accessible to group or other, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -1492,7 +2036,7 @@ queries:
             find /etc/ssh -name 'ssh_host_*key' -exec chown root:wheel {} \;
             find /etc/ssh -name 'ssh_host_*key' -exec chmod 0600 {} \;
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -1505,6 +2049,29 @@ queries:
             find /etc/ssh -name 'ssh_host_*key' ! -name '*.pub' -exec chmod 0600 {} \;
 
             echo "SSH private host key file permissions configured."
+            ```
+        - id: ansible
+          desc: |
+            To set the correct ownership and permissions using Ansible:
+
+            1. Add the following tasks to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Find SSH private host key files
+              ansible.builtin.find:
+                paths: /etc/ssh
+                patterns: 'ssh_host_*key'
+                excludes: '*.pub'
+              register: ssh_private_keys
+
+            - name: Secure SSH private host key files
+              ansible.builtin.file:
+                path: "{{ item.path }}"
+                owner: root
+                group: wheel
+                mode: '0600'
+              loop: "{{ ssh_private_keys.files }}"
             ```
   - uid: mondoo-freebsd-security-permissions-on-ssh-public-host-key-files-are-configured
     title: Ensure permissions on SSH public host key files are configured
@@ -1542,6 +2109,14 @@ queries:
         **Why this matters**
 
         While public keys are not secret, unauthorized modification of public host key files could lead to authentication failures or allow an attacker to substitute their own key. Public key files should be writable only by root.
+      audit: |
+        To verify the permissions of the SSH public host key files, run the following command:
+
+        ```bash
+        ls -l /etc/ssh/ssh_host_*key.pub
+        ```
+
+        If no public host key file is writable or executable by group or other, the check passes. If any file grants group or other write or execute access, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -1553,7 +2128,7 @@ queries:
             find /etc/ssh -name 'ssh_host_*key.pub' -exec chown root:wheel {} \;
             find /etc/ssh -name 'ssh_host_*key.pub' -exec chmod 0644 {} \;
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -1566,6 +2141,28 @@ queries:
             find /etc/ssh -name 'ssh_host_*key.pub' -exec chmod 0644 {} \;
 
             echo "SSH public host key file permissions configured."
+            ```
+        - id: ansible
+          desc: |
+            To set the correct ownership and permissions using Ansible:
+
+            1. Add the following tasks to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Find SSH public host key files
+              ansible.builtin.find:
+                paths: /etc/ssh
+                patterns: 'ssh_host_*key.pub'
+              register: ssh_public_keys
+
+            - name: Secure SSH public host key files
+              ansible.builtin.file:
+                path: "{{ item.path }}"
+                owner: root
+                group: wheel
+                mode: '0644'
+              loop: "{{ ssh_public_keys.files }}"
             ```
   - uid: mondoo-freebsd-security-only-strong-ciphers-are-used
     title: Ensure only strong ciphers are used
@@ -1597,6 +2194,14 @@ queries:
         **Why this matters**
 
         Weak ciphers can be exploited to decrypt SSH traffic. CBC-mode ciphers are vulnerable to plaintext recovery attacks, and legacy ciphers like 3DES have insufficient key lengths for modern security requirements. Only authenticated encryption modes (GCM) and strong stream ciphers (CTR, ChaCha20) should be used.
+      audit: |
+        To verify the SSH ciphers in effect, run the following command:
+
+        ```bash
+        sshd -T | grep -i '^ciphers'
+        ```
+
+        If only strong ciphers (`chacha20-poly1305`, AES-GCM, and AES-CTR variants) are listed, the check passes. If any weak cipher such as 3DES, Blowfish, CAST128, or a CBC-mode cipher appears, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -1613,7 +2218,7 @@ queries:
             ```bash
             service sshd restart
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -1634,6 +2239,27 @@ queries:
             service sshd restart
 
             echo "Strong SSH ciphers configured."
+            ```
+        - id: ansible
+          desc: |
+            To restrict SSH to strong ciphers using Ansible:
+
+            1. Add the following task to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Configure strong SSH ciphers
+              ansible.builtin.lineinfile:
+                path: /etc/ssh/sshd_config
+                regexp: '^#?Ciphers'
+                line: 'Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr'
+              notify: restart sshd
+
+            handlers:
+              - name: restart sshd
+                ansible.builtin.service:
+                  name: sshd
+                  state: restarted
             ```
   - uid: mondoo-freebsd-security-only-strong-mac-algorithms-are-used
     title: Ensure only strong MAC algorithms are used
@@ -1665,6 +2291,14 @@ queries:
         **Why this matters**
 
         MAC algorithms ensure the integrity of data transmitted over SSH. Weak MAC algorithms can be exploited to tamper with SSH traffic without detection. Only SHA-256/SHA-512 based MACs and UMAC-128 should be used.
+      audit: |
+        To verify the SSH MAC algorithms in effect, run the following command:
+
+        ```bash
+        sshd -T | grep -i '^macs'
+        ```
+
+        If only strong MAC algorithms (SHA-256/SHA-512 based and UMAC-128) are listed, the check passes. If any weak algorithm such as MD5, SHA1-96, RIPEMD160, or a UMAC-64 variant appears, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -1681,7 +2315,7 @@ queries:
             ```bash
             service sshd restart
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -1702,6 +2336,27 @@ queries:
             service sshd restart
 
             echo "Strong SSH MAC algorithms configured."
+            ```
+        - id: ansible
+          desc: |
+            To restrict SSH to strong MAC algorithms using Ansible:
+
+            1. Add the following task to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Configure strong SSH MAC algorithms
+              ansible.builtin.lineinfile:
+                path: /etc/ssh/sshd_config
+                regexp: '^#?MACs'
+                line: 'MACs umac-128-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com,umac-128@openssh.com,hmac-sha2-256,hmac-sha2-512'
+              notify: restart sshd
+
+            handlers:
+              - name: restart sshd
+                ansible.builtin.service:
+                  name: sshd
+                  state: restarted
             ```
   - uid: mondoo-freebsd-security-only-strong-kex-algorithms-are-used
     title: Ensure only strong key exchange algorithms are used
@@ -1733,6 +2388,14 @@ queries:
         **Why this matters**
 
         The key exchange algorithm determines the shared secret used to encrypt the SSH session. Weak key exchange algorithms may be vulnerable to eavesdropping or man-in-the-middle attacks. Only modern, strong algorithms based on Curve25519 or large Diffie-Hellman groups with SHA-512 should be used.
+      audit: |
+        To verify the SSH key exchange algorithms in effect, run the following command:
+
+        ```bash
+        sshd -T | grep -i '^kexalgorithms'
+        ```
+
+        If only strong algorithms based on Curve25519 or large Diffie-Hellman groups with SHA-512 are listed, the check passes. If a weak algorithm such as `diffie-hellman-group1-sha1` or `diffie-hellman-group14-sha1` appears, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -1749,7 +2412,7 @@ queries:
             ```bash
             service sshd restart
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -1770,6 +2433,27 @@ queries:
             service sshd restart
 
             echo "Strong SSH key exchange algorithms configured."
+            ```
+        - id: ansible
+          desc: |
+            To restrict SSH to strong key exchange algorithms using Ansible:
+
+            1. Add the following task to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Configure strong SSH key exchange algorithms
+              ansible.builtin.lineinfile:
+                path: /etc/ssh/sshd_config
+                regexp: '^#?KexAlgorithms'
+                line: 'KexAlgorithms sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,curve25519-sha256,diffie-hellman-group18-sha512,diffie-hellman-group16-sha512'
+              notify: restart sshd
+
+            handlers:
+              - name: restart sshd
+                ansible.builtin.service:
+                  name: sshd
+                  state: restarted
             ```
   - uid: mondoo-freebsd-security-ssh-root-login-is-disabled
     title: Ensure SSH root login is disabled
@@ -1800,6 +2484,14 @@ queries:
         **Why this matters**
 
         Allowing direct root login over SSH provides attackers with a known username to target in brute force attacks. Disabling root login forces administrators to authenticate as individual users first and then escalate privileges, improving accountability and reducing the attack surface.
+      audit: |
+        To verify the SSH root login setting in effect, run the following command:
+
+        ```bash
+        sshd -T | grep -i '^permitrootlogin'
+        ```
+
+        If the value is `no`, `prohibit-password`, or `without-password`, the check passes. If the value is `yes`, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -1816,7 +2508,7 @@ queries:
             ```bash
             service sshd restart
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -1838,6 +2530,27 @@ queries:
             service sshd restart
 
             echo "SSH root login disabled."
+            ```
+        - id: ansible
+          desc: |
+            To disable SSH root login using Ansible:
+
+            1. Add the following task to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Disable SSH root login
+              ansible.builtin.lineinfile:
+                path: /etc/ssh/sshd_config
+                regexp: '^#?PermitRootLogin'
+                line: 'PermitRootLogin no'
+              notify: restart sshd
+
+            handlers:
+              - name: restart sshd
+                ansible.builtin.service:
+                  name: sshd
+                  state: restarted
             ```
   - uid: mondoo-freebsd-security-ssh-permitemptypasswords-is-disabled
     title: Ensure SSH PermitEmptyPasswords is disabled
@@ -1868,6 +2581,14 @@ queries:
         **Why this matters**
 
         Accounts with empty passwords provide trivial access to any attacker who discovers or guesses the username. SSH should never allow authentication without a password or key.
+      audit: |
+        To verify the SSH empty-password setting in effect, run the following command:
+
+        ```bash
+        sshd -T | grep -i '^permitemptypasswords'
+        ```
+
+        If the value is `no`, the check passes. If the value is `yes`, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -1884,7 +2605,7 @@ queries:
             ```bash
             service sshd restart
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -1906,6 +2627,27 @@ queries:
             service sshd restart
 
             echo "SSH empty passwords disabled."
+            ```
+        - id: ansible
+          desc: |
+            To disable SSH empty passwords using Ansible:
+
+            1. Add the following task to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Disable SSH empty passwords
+              ansible.builtin.lineinfile:
+                path: /etc/ssh/sshd_config
+                regexp: '^#?PermitEmptyPasswords'
+                line: 'PermitEmptyPasswords no'
+              notify: restart sshd
+
+            handlers:
+              - name: restart sshd
+                ansible.builtin.service:
+                  name: sshd
+                  state: restarted
             ```
   - uid: mondoo-freebsd-security-ssh-hostbasedauthentication-is-disabled
     title: Ensure SSH HostbasedAuthentication is disabled
@@ -1936,6 +2678,14 @@ queries:
         **Why this matters**
 
         Host-based authentication trusts the connecting host rather than the individual user, similar to the insecure `.rhosts` mechanism. An attacker who compromises a trusted host can access all systems that trust it. User-based authentication (passwords or keys) should be used instead.
+      audit: |
+        To verify the SSH host-based authentication setting in effect, run the following command:
+
+        ```bash
+        sshd -T | grep -i '^hostbasedauthentication'
+        ```
+
+        If the value is `no`, the check passes. If the value is `yes`, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -1952,7 +2702,7 @@ queries:
             ```bash
             service sshd restart
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -1974,6 +2724,27 @@ queries:
             service sshd restart
 
             echo "SSH host-based authentication disabled."
+            ```
+        - id: ansible
+          desc: |
+            To disable SSH host-based authentication using Ansible:
+
+            1. Add the following task to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Disable SSH host-based authentication
+              ansible.builtin.lineinfile:
+                path: /etc/ssh/sshd_config
+                regexp: '^#?HostbasedAuthentication'
+                line: 'HostbasedAuthentication no'
+              notify: restart sshd
+
+            handlers:
+              - name: restart sshd
+                ansible.builtin.service:
+                  name: sshd
+                  state: restarted
             ```
   - uid: mondoo-freebsd-security-ssh-permituserenvironment-is-disabled
     title: Ensure SSH PermitUserEnvironment is disabled
@@ -2004,6 +2775,14 @@ queries:
         **Why this matters**
 
         Allowing users to set environment variables via SSH can bypass security restrictions. For example, an attacker could set `LD_PRELOAD` to load a malicious shared library or modify `PATH` to execute malicious commands. Disabling this option prevents environment-based privilege escalation.
+      audit: |
+        To verify the SSH user-environment setting in effect, run the following command:
+
+        ```bash
+        sshd -T | grep -i '^permituserenvironment'
+        ```
+
+        If the value is `no`, the check passes. If the value is `yes`, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -2020,7 +2799,7 @@ queries:
             ```bash
             service sshd restart
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -2042,6 +2821,27 @@ queries:
             service sshd restart
 
             echo "SSH PermitUserEnvironment disabled."
+            ```
+        - id: ansible
+          desc: |
+            To disable SSH `PermitUserEnvironment` using Ansible:
+
+            1. Add the following task to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Disable SSH PermitUserEnvironment
+              ansible.builtin.lineinfile:
+                path: /etc/ssh/sshd_config
+                regexp: '^#?PermitUserEnvironment'
+                line: 'PermitUserEnvironment no'
+              notify: restart sshd
+
+            handlers:
+              - name: restart sshd
+                ansible.builtin.service:
+                  name: sshd
+                  state: restarted
             ```
   - uid: mondoo-freebsd-security-ssh-ignorerhosts-is-enabled
     title: Ensure SSH IgnoreRhosts is enabled
@@ -2072,6 +2872,14 @@ queries:
         **Why this matters**
 
         The `.rhosts` mechanism provides a trust relationship based on hostname and username, which is inherently insecure. An attacker who controls DNS or compromises a trusted host can exploit this to gain unauthorized access. SSH should always ignore these files.
+      audit: |
+        To verify the SSH `IgnoreRhosts` setting in effect, run the following command:
+
+        ```bash
+        sshd -T | grep -i '^ignorerhosts'
+        ```
+
+        If the value is `yes`, the check passes. If the value is `no`, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -2088,7 +2896,7 @@ queries:
             ```bash
             service sshd restart
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -2110,6 +2918,27 @@ queries:
             service sshd restart
 
             echo "SSH IgnoreRhosts enabled."
+            ```
+        - id: ansible
+          desc: |
+            To enable SSH `IgnoreRhosts` using Ansible:
+
+            1. Add the following task to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Enable SSH IgnoreRhosts
+              ansible.builtin.lineinfile:
+                path: /etc/ssh/sshd_config
+                regexp: '^#?IgnoreRhosts'
+                line: 'IgnoreRhosts yes'
+              notify: restart sshd
+
+            handlers:
+              - name: restart sshd
+                ansible.builtin.service:
+                  name: sshd
+                  state: restarted
             ```
   - uid: mondoo-freebsd-security-ssh-maxauthtries-is-set-to-4-or-less
     title: Ensure SSH MaxAuthTries is set to 4 or less
@@ -2140,6 +2969,14 @@ queries:
         **Why this matters**
 
         Limiting the number of authentication attempts reduces the effectiveness of brute force attacks. With a low `MaxAuthTries` value, an attacker must establish a new connection for each set of attempts, slowing down automated attacks and making them easier to detect.
+      audit: |
+        To verify the SSH `MaxAuthTries` setting in effect, run the following command:
+
+        ```bash
+        sshd -T | grep -i '^maxauthtries'
+        ```
+
+        If the value is `4` or less, the check passes. If the value is greater than `4`, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -2156,7 +2993,7 @@ queries:
             ```bash
             service sshd restart
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -2178,6 +3015,27 @@ queries:
             service sshd restart
 
             echo "SSH MaxAuthTries set to 4."
+            ```
+        - id: ansible
+          desc: |
+            To limit SSH authentication attempts using Ansible:
+
+            1. Add the following task to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Set SSH MaxAuthTries
+              ansible.builtin.lineinfile:
+                path: /etc/ssh/sshd_config
+                regexp: '^#?MaxAuthTries'
+                line: 'MaxAuthTries 4'
+              notify: restart sshd
+
+            handlers:
+              - name: restart sshd
+                ansible.builtin.service:
+                  name: sshd
+                  state: restarted
             ```
   - uid: mondoo-freebsd-security-ssh-logingracetime-is-configured
     title: Ensure SSH LoginGraceTime is configured
@@ -2209,6 +3067,14 @@ queries:
         **Why this matters**
 
         A long `LoginGraceTime` allows an attacker to keep unauthenticated connections open, consuming server resources and potentially facilitating brute force attacks. Setting this to 60 seconds or less ensures that idle unauthenticated connections are quickly terminated.
+      audit: |
+        To verify the SSH `LoginGraceTime` setting in effect, run the following command:
+
+        ```bash
+        sshd -T | grep -i '^logingracetime'
+        ```
+
+        If the value is between `1` and `60` seconds, the check passes. If the value is `0` or greater than `60`, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -2225,7 +3091,7 @@ queries:
             ```bash
             service sshd restart
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -2247,6 +3113,27 @@ queries:
             service sshd restart
 
             echo "SSH LoginGraceTime set to 60."
+            ```
+        - id: ansible
+          desc: |
+            To configure SSH `LoginGraceTime` using Ansible:
+
+            1. Add the following task to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Set SSH LoginGraceTime
+              ansible.builtin.lineinfile:
+                path: /etc/ssh/sshd_config
+                regexp: '^#?LoginGraceTime'
+                line: 'LoginGraceTime 60'
+              notify: restart sshd
+
+            handlers:
+              - name: restart sshd
+                ansible.builtin.service:
+                  name: sshd
+                  state: restarted
             ```
   - uid: mondoo-freebsd-security-ssh-loglevel-is-appropriate
     title: Ensure SSH LogLevel is appropriate
@@ -2277,6 +3164,14 @@ queries:
         **Why this matters**
 
         Logging SSH authentication events is essential for detecting and investigating unauthorized access attempts. The `INFO` level records login attempts, source addresses, and authentication methods. The `VERBOSE` level adds additional detail useful for forensic analysis. Lower levels may miss important security events.
+      audit: |
+        To verify the SSH `LogLevel` setting in effect, run the following command:
+
+        ```bash
+        sshd -T | grep -i '^loglevel'
+        ```
+
+        If the value is `INFO` or `VERBOSE`, the check passes. If the value is a lower level such as `QUIET` or `ERROR`, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -2293,7 +3188,7 @@ queries:
             ```bash
             service sshd restart
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -2315,6 +3210,27 @@ queries:
             service sshd restart
 
             echo "SSH LogLevel set to VERBOSE."
+            ```
+        - id: ansible
+          desc: |
+            To configure the SSH `LogLevel` using Ansible:
+
+            1. Add the following task to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Set SSH LogLevel
+              ansible.builtin.lineinfile:
+                path: /etc/ssh/sshd_config
+                regexp: '^#?LogLevel'
+                line: 'LogLevel VERBOSE'
+              notify: restart sshd
+
+            handlers:
+              - name: restart sshd
+                ansible.builtin.service:
+                  name: sshd
+                  state: restarted
             ```
   - uid: mondoo-freebsd-security-ssh-idle-timeout-interval-is-configured
     title: Ensure SSH idle timeout interval is configured
@@ -2347,6 +3263,14 @@ queries:
         **Why this matters**
 
         Idle SSH sessions left unattended can be hijacked by an attacker with local access to the terminal. Configuring an idle timeout ensures that inactive sessions are automatically disconnected, reducing the window of opportunity for session hijacking.
+      audit: |
+        To verify the SSH idle timeout settings in effect, run the following command:
+
+        ```bash
+        sshd -T | grep -iE '^clientalive'
+        ```
+
+        If `ClientAliveInterval` is between `1` and `300` seconds and `ClientAliveCountMax` is `3` or less, the check passes. Otherwise the check fails.
       remediation:
         - id: cli
           desc: |
@@ -2364,7 +3288,7 @@ queries:
             ```bash
             service sshd restart
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -2398,6 +3322,30 @@ queries:
 
             echo "SSH idle timeout configured."
             ```
+        - id: ansible
+          desc: |
+            To configure the SSH idle timeout using Ansible:
+
+            1. Add the following tasks to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Configure SSH idle timeout
+              ansible.builtin.lineinfile:
+                path: /etc/ssh/sshd_config
+                regexp: "{{ item.regexp }}"
+                line: "{{ item.line }}"
+              loop:
+                - { regexp: '^#?ClientAliveInterval', line: 'ClientAliveInterval 300' }
+                - { regexp: '^#?ClientAliveCountMax', line: 'ClientAliveCountMax 3' }
+              notify: restart sshd
+
+            handlers:
+              - name: restart sshd
+                ansible.builtin.service:
+                  name: sshd
+                  state: restarted
+            ```
   - uid: mondoo-freebsd-security-ssh-disableforwarding-is-enabled
     title: Ensure SSH DisableForwarding is enabled
     impact: 75
@@ -2427,6 +3375,14 @@ queries:
         **Why this matters**
 
         SSH forwarding features can be used to tunnel traffic through the SSH server, potentially bypassing network security controls and firewalls. Disabling forwarding prevents the SSH server from being used as a proxy for unauthorized traffic and data exfiltration.
+      audit: |
+        To verify the SSH `DisableForwarding` setting in effect, run the following command:
+
+        ```bash
+        sshd -T | grep -i '^disableforwarding'
+        ```
+
+        If the value is `yes`, the check passes. If the value is `no`, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -2443,7 +3399,7 @@ queries:
             ```bash
             service sshd restart
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -2465,6 +3421,27 @@ queries:
             service sshd restart
 
             echo "SSH DisableForwarding enabled."
+            ```
+        - id: ansible
+          desc: |
+            To enable SSH `DisableForwarding` using Ansible:
+
+            1. Add the following task to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Enable SSH DisableForwarding
+              ansible.builtin.lineinfile:
+                path: /etc/ssh/sshd_config
+                regexp: '^#?DisableForwarding'
+                line: 'DisableForwarding yes'
+              notify: restart sshd
+
+            handlers:
+              - name: restart sshd
+                ansible.builtin.service:
+                  name: sshd
+                  state: restarted
             ```
   - uid: mondoo-freebsd-security-ssh-usepam-is-enabled
     title: Ensure SSH UsePAM is enabled
@@ -2495,6 +3472,14 @@ queries:
         **Why this matters**
 
         PAM provides a flexible framework for authentication, session management, and account controls. When UsePAM is disabled, SSH cannot enforce PAM-based policies such as password complexity requirements, account lockout, or session limits. Enabling PAM ensures consistent enforcement of the system's authentication policies.
+      audit: |
+        To verify the SSH `UsePAM` setting in effect, run the following command:
+
+        ```bash
+        sshd -T | grep -i '^usepam'
+        ```
+
+        If the value is `yes`, the check passes. If the value is `no`, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -2511,7 +3496,7 @@ queries:
             ```bash
             service sshd restart
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -2533,6 +3518,27 @@ queries:
             service sshd restart
 
             echo "SSH UsePAM enabled."
+            ```
+        - id: ansible
+          desc: |
+            To enable SSH `UsePAM` using Ansible:
+
+            1. Add the following task to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Enable SSH UsePAM
+              ansible.builtin.lineinfile:
+                path: /etc/ssh/sshd_config
+                regexp: '^#?UsePAM'
+                line: 'UsePAM yes'
+              notify: restart sshd
+
+            handlers:
+              - name: restart sshd
+                ansible.builtin.service:
+                  name: sshd
+                  state: restarted
             ```
   - uid: mondoo-freebsd-security-permissions-on-etc-passwd-are-configured
     title: Ensure permissions on /etc/passwd are configured
@@ -2571,6 +3577,14 @@ queries:
         **Why this matters**
 
         The `/etc/passwd` file contains user account information. If writable by unauthorized users, an attacker could add or modify accounts to gain access to the system. Proper ownership and permissions ensure only root can modify this critical file.
+      audit: |
+        To verify the ownership and permissions of `/etc/passwd`, run the following command:
+
+        ```bash
+        ls -l /etc/passwd
+        ```
+
+        If the file is owned by `root:wheel` with mode `0644` or more restrictive, the check passes. If group or other can write to it or it is executable, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -2582,7 +3596,7 @@ queries:
             chown root:wheel /etc/passwd
             chmod 0644 /etc/passwd
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -2595,6 +3609,21 @@ queries:
             chmod 0644 /etc/passwd
 
             echo "Permissions on /etc/passwd configured."
+            ```
+        - id: ansible
+          desc: |
+            To set the correct ownership and permissions using Ansible:
+
+            1. Add the following task to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Secure /etc/passwd permissions
+              ansible.builtin.file:
+                path: /etc/passwd
+                owner: root
+                group: wheel
+                mode: '0644'
             ```
   - uid: mondoo-freebsd-security-permissions-on-etc-group-are-configured
     title: Ensure permissions on /etc/group are configured
@@ -2633,6 +3662,14 @@ queries:
         **Why this matters**
 
         The `/etc/group` file defines group membership, which is used for access control. If writable by unauthorized users, an attacker could add themselves to privileged groups and escalate their access.
+      audit: |
+        To verify the ownership and permissions of `/etc/group`, run the following command:
+
+        ```bash
+        ls -l /etc/group
+        ```
+
+        If the file is owned by `root:wheel` with mode `0644` or more restrictive, the check passes. If group or other can write to it or it is executable, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -2644,7 +3681,7 @@ queries:
             chown root:wheel /etc/group
             chmod 0644 /etc/group
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -2657,6 +3694,21 @@ queries:
             chmod 0644 /etc/group
 
             echo "Permissions on /etc/group configured."
+            ```
+        - id: ansible
+          desc: |
+            To set the correct ownership and permissions using Ansible:
+
+            1. Add the following task to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Secure /etc/group permissions
+              ansible.builtin.file:
+                path: /etc/group
+                owner: root
+                group: wheel
+                mode: '0644'
             ```
   - uid: mondoo-freebsd-security-permissions-on-etc-master-passwd-are-configured
     title: Ensure permissions on /etc/master.passwd are configured
@@ -2697,6 +3749,14 @@ queries:
         **Why this matters**
 
         The `/etc/master.passwd` file contains hashed passwords for all user accounts. If readable by unauthorized users, an attacker can obtain password hashes and attempt offline cracking attacks. This file must be accessible only to root.
+      audit: |
+        To verify the ownership and permissions of `/etc/master.passwd`, run the following command:
+
+        ```bash
+        ls -l /etc/master.passwd
+        ```
+
+        If the file is owned by `root:wheel` with mode `0600` or more restrictive, the check passes. If group or other have any access, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -2708,7 +3768,7 @@ queries:
             chown root:wheel /etc/master.passwd
             chmod 0600 /etc/master.passwd
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -2721,6 +3781,21 @@ queries:
             chmod 0600 /etc/master.passwd
 
             echo "Permissions on /etc/master.passwd configured."
+            ```
+        - id: ansible
+          desc: |
+            To set the correct ownership and permissions using Ansible:
+
+            1. Add the following task to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Secure /etc/master.passwd permissions
+              ansible.builtin.file:
+                path: /etc/master.passwd
+                owner: root
+                group: wheel
+                mode: '0600'
             ```
   - uid: mondoo-freebsd-security-permissions-on-etc-shells-are-configured
     title: Ensure permissions on /etc/shells are configured
@@ -2758,6 +3833,14 @@ queries:
         **Why this matters**
 
         The `/etc/shells` file lists valid login shells. If writable by unauthorized users, an attacker could add a malicious shell that would be accepted by programs like `chsh`, `ftpd`, and other services that validate shells against this file.
+      audit: |
+        To verify the ownership and permissions of `/etc/shells`, run the following command:
+
+        ```bash
+        ls -l /etc/shells
+        ```
+
+        If the file is owned by `root` with mode `0644` or more restrictive, the check passes. If group or other can write to it or it is executable, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -2769,7 +3852,7 @@ queries:
             chown root:wheel /etc/shells
             chmod 0644 /etc/shells
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -2782,6 +3865,21 @@ queries:
             chmod 0644 /etc/shells
 
             echo "Permissions on /etc/shells configured."
+            ```
+        - id: ansible
+          desc: |
+            To set the correct ownership and permissions using Ansible:
+
+            1. Add the following task to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Secure /etc/shells permissions
+              ansible.builtin.file:
+                path: /etc/shells
+                owner: root
+                group: wheel
+                mode: '0644'
             ```
   - uid: mondoo-freebsd-security-permissions-on-bootloader-config-are-configured
     title: Ensure permissions on bootloader config are configured
@@ -2822,6 +3920,14 @@ queries:
         **Why this matters**
 
         The bootloader configuration file controls kernel parameters and module loading at boot time. If readable by unauthorized users, it may expose sensitive configuration such as bootloader passwords. If writable, an attacker could modify boot parameters to bypass security controls, boot into single-user mode, or load malicious kernel modules.
+      audit: |
+        To verify the ownership and permissions of `/boot/loader.conf`, run the following command:
+
+        ```bash
+        ls -l /boot/loader.conf
+        ```
+
+        If the file is owned by `root:wheel` with mode `0600` or more restrictive, the check passes. If group or other have any access, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -2833,7 +3939,7 @@ queries:
             chown root:wheel /boot/loader.conf
             chmod 0600 /boot/loader.conf
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -2846,6 +3952,21 @@ queries:
             chmod 0600 /boot/loader.conf
 
             echo "Permissions on /boot/loader.conf configured."
+            ```
+        - id: ansible
+          desc: |
+            To set the correct ownership and permissions using Ansible:
+
+            1. Add the following task to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Secure /boot/loader.conf permissions
+              ansible.builtin.file:
+                path: /boot/loader.conf
+                owner: root
+                group: wheel
+                mode: '0600'
             ```
   - uid: mondoo-freebsd-security-root-is-the-only-uid-0-account
     title: Ensure root is the only UID 0 account
@@ -2878,6 +3999,14 @@ queries:
         **Why this matters**
 
         Any account with UID 0 has unrestricted access to the entire system. Multiple UID 0 accounts make it impossible to determine which administrator performed a given action, undermining accountability. The `toor` account, while traditional on FreeBSD, should be removed if not needed.
+      audit: |
+        To verify that only `root` has UID 0, run the following command:
+
+        ```bash
+        awk -F: '$3 == 0 { print $1 }' /etc/passwd
+        ```
+
+        If `root` is the only name returned, the check passes. If any other account is listed, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -2890,7 +4019,7 @@ queries:
             ```
 
             Remove or change the UID of any account other than `root` that has UID 0.
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -2909,6 +4038,24 @@ queries:
             fi
 
             echo "Only root has UID 0. No action needed."
+            ```
+        - id: ansible
+          desc: |
+            To detect non-root UID 0 accounts using Ansible:
+
+            1. Add the following tasks to a playbook targeting the FreeBSD host.
+            2. Run the playbook, then manually remove or re-number any reported account.
+
+            ```yaml
+            - name: Find non-root accounts with UID 0
+              ansible.builtin.shell: "awk -F: '$3 == 0 && $1 != \"root\" { print $1 }' /etc/passwd"
+              register: uid0_accounts
+              changed_when: false
+
+            - name: Fail when a non-root UID 0 account exists
+              ansible.builtin.fail:
+                msg: "Non-root UID 0 accounts found: {{ uid0_accounts.stdout }}"
+              when: uid0_accounts.stdout | length > 0
             ```
   - uid: mondoo-freebsd-security-no-duplicate-uids-exist
     title: Ensure no duplicate UIDs exist
@@ -2939,6 +4086,14 @@ queries:
         **Why this matters**
 
         Duplicate UIDs break the assumption that each UID maps to a unique user. Files owned by one user would appear to be owned by another, creating accountability gaps and making it impossible to reliably audit user actions or enforce per-user access controls.
+      audit: |
+        To verify that no non-root users share a UID, run the following command:
+
+        ```bash
+        awk -F: '$3 != 0 { print $3 }' /etc/passwd | sort -n | uniq -d
+        ```
+
+        If the command returns no output, every non-root user has a unique UID and the check passes. If any UID is listed, it is shared by more than one account and the check fails.
       remediation:
         - id: cli
           desc: |
@@ -2949,7 +4104,7 @@ queries:
             ```bash
             awk -F: '{print $3}' /etc/passwd | sort -n | uniq -d
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -2970,6 +4125,24 @@ queries:
             fi
 
             echo "No duplicate UIDs found."
+            ```
+        - id: ansible
+          desc: |
+            To detect duplicate UIDs using Ansible:
+
+            1. Add the following tasks to a playbook targeting the FreeBSD host.
+            2. Run the playbook, then manually assign unique UIDs to any reported account.
+
+            ```yaml
+            - name: Find duplicate UIDs
+              ansible.builtin.shell: "awk -F: '{print $3}' /etc/passwd | sort -n | uniq -d"
+              register: dup_uids
+              changed_when: false
+
+            - name: Fail when duplicate UIDs exist
+              ansible.builtin.fail:
+                msg: "Duplicate UIDs found: {{ dup_uids.stdout }}"
+              when: dup_uids.stdout | length > 0
             ```
   - uid: mondoo-freebsd-security-no-duplicate-gids-exist
     title: Ensure no duplicate GIDs exist
@@ -3000,6 +4173,14 @@ queries:
         **Why this matters**
 
         Duplicate GIDs create ambiguity in group-based access controls. Files with group ownership may inadvertently grant access to users in an unintended group, leading to unauthorized data access.
+      audit: |
+        To verify that no groups share a GID, run the following command:
+
+        ```bash
+        awk -F: '{ print $3 }' /etc/group | sort -n | uniq -d
+        ```
+
+        If the command returns no output, every group has a unique GID and the check passes. If any GID is listed, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -3010,7 +4191,7 @@ queries:
             ```bash
             awk -F: '{print $3}' /etc/group | sort -n | uniq -d
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -3031,6 +4212,24 @@ queries:
             fi
 
             echo "No duplicate GIDs found."
+            ```
+        - id: ansible
+          desc: |
+            To detect duplicate GIDs using Ansible:
+
+            1. Add the following tasks to a playbook targeting the FreeBSD host.
+            2. Run the playbook, then manually assign unique GIDs to any reported group.
+
+            ```yaml
+            - name: Find duplicate GIDs
+              ansible.builtin.shell: "awk -F: '{print $3}' /etc/group | sort -n | uniq -d"
+              register: dup_gids
+              changed_when: false
+
+            - name: Fail when duplicate GIDs exist
+              ansible.builtin.fail:
+                msg: "Duplicate GIDs found: {{ dup_gids.stdout }}"
+              when: dup_gids.stdout | length > 0
             ```
   - uid: mondoo-freebsd-security-no-duplicate-user-names-exist
     title: Ensure no duplicate user names exist
@@ -3061,6 +4260,14 @@ queries:
         **Why this matters**
 
         Duplicate user names create confusion in access control enforcement and auditing. If two entries share the same username, only one can be reliably used for authentication, while the other may have different UID and group memberships, creating unpredictable behavior.
+      audit: |
+        To verify that no user names are duplicated, run the following command:
+
+        ```bash
+        awk -F: '{ print $1 }' /etc/passwd | sort | uniq -d
+        ```
+
+        If the command returns no output, every user name is unique and the check passes. If any name is listed, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -3071,7 +4278,7 @@ queries:
             ```bash
             awk -F: '{print $1}' /etc/passwd | sort | uniq -d
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -3090,6 +4297,24 @@ queries:
             fi
 
             echo "No duplicate user names found."
+            ```
+        - id: ansible
+          desc: |
+            To detect duplicate user names using Ansible:
+
+            1. Add the following tasks to a playbook targeting the FreeBSD host.
+            2. Run the playbook, then manually resolve any reported duplicate.
+
+            ```yaml
+            - name: Find duplicate user names
+              ansible.builtin.shell: "awk -F: '{print $1}' /etc/passwd | sort | uniq -d"
+              register: dup_users
+              changed_when: false
+
+            - name: Fail when duplicate user names exist
+              ansible.builtin.fail:
+                msg: "Duplicate user names found: {{ dup_users.stdout }}"
+              when: dup_users.stdout | length > 0
             ```
   - uid: mondoo-freebsd-security-no-duplicate-group-names-exist
     title: Ensure no duplicate group names exist
@@ -3120,6 +4345,14 @@ queries:
         **Why this matters**
 
         Duplicate group names create ambiguity in group-based access controls. System utilities may resolve a group name to different GIDs depending on which entry is found first, leading to inconsistent and potentially insecure access control behavior.
+      audit: |
+        To verify that no group names are duplicated, run the following command:
+
+        ```bash
+        awk -F: '{ print $1 }' /etc/group | sort | uniq -d
+        ```
+
+        If the command returns no output, every group name is unique and the check passes. If any name is listed, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -3130,7 +4363,7 @@ queries:
             ```bash
             awk -F: '{print $1}' /etc/group | sort | uniq -d
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -3149,6 +4382,24 @@ queries:
             fi
 
             echo "No duplicate group names found."
+            ```
+        - id: ansible
+          desc: |
+            To detect duplicate group names using Ansible:
+
+            1. Add the following tasks to a playbook targeting the FreeBSD host.
+            2. Run the playbook, then manually resolve any reported duplicate.
+
+            ```yaml
+            - name: Find duplicate group names
+              ansible.builtin.shell: "awk -F: '{print $1}' /etc/group | sort | uniq -d"
+              register: dup_groups
+              changed_when: false
+
+            - name: Fail when duplicate group names exist
+              ansible.builtin.fail:
+                msg: "Duplicate group names found: {{ dup_groups.stdout }}"
+              when: dup_groups.stdout | length > 0
             ```
   - uid: mondoo-freebsd-security-all-groups-in-passwd-exist-in-group
     title: Ensure all groups in /etc/passwd exist in /etc/group
@@ -3181,6 +4432,14 @@ queries:
         **Why this matters**
 
         If a user's primary group does not exist in `/etc/group`, the system cannot properly enforce group-based access controls. This can lead to unexpected file permissions and may indicate a corrupted or manually edited system configuration.
+      audit: |
+        To verify that every user's primary group exists in `/etc/group`, run the following command:
+
+        ```bash
+        pwck -r
+        ```
+
+        If `pwck` reports no missing groups, the check passes. If it reports a primary group that does not exist in `/etc/group`, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -3191,7 +4450,7 @@ queries:
             ```bash
             pwck -r
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -3215,6 +4474,25 @@ queries:
             fi
 
             echo "All user groups exist in /etc/group."
+            ```
+        - id: ansible
+          desc: |
+            To detect users with missing primary groups using Ansible:
+
+            1. Add the following tasks to a playbook targeting the FreeBSD host.
+            2. Run the playbook, then create the missing groups or reassign the reported users.
+
+            ```yaml
+            - name: Check passwd consistency
+              ansible.builtin.command: pwck -r
+              register: pwck_result
+              changed_when: false
+              failed_when: false
+
+            - name: Fail when a primary group is missing
+              ansible.builtin.fail:
+                msg: "pwck reported missing primary groups: {{ pwck_result.stdout }}"
+              when: "'no group' in pwck_result.stdout"
             ```
   - uid: mondoo-freebsd-security-syslogd-is-enabled-and-running
     title: Ensure syslogd is enabled and running
@@ -3246,6 +4524,15 @@ queries:
         **Why this matters**
 
         System logging is critical for security monitoring, incident response, and forensic analysis. Without an active syslog daemon, the system cannot record authentication events, service failures, kernel messages, and other security-relevant events. An attacker could exploit a system without logging to operate undetected.
+      audit: |
+        To verify that `syslogd` is enabled and running, run the following commands:
+
+        ```bash
+        service syslogd status
+        sysrc -n syslogd_enable
+        ```
+
+        If `service syslogd status` reports the service is running and `syslogd_enable` is `YES`, the check passes. If the service is stopped or not enabled, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -3257,7 +4544,7 @@ queries:
             sysrc syslogd_enable="YES"
             service syslogd start
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -3270,6 +4557,24 @@ queries:
             service syslogd start 2>/dev/null || service syslogd restart
 
             echo "syslogd enabled and running."
+            ```
+        - id: ansible
+          desc: |
+            To enable and start `syslogd` using Ansible:
+
+            1. Add the following tasks to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Enable syslogd in rc.conf
+              community.general.sysrc:
+                name: syslogd_enable
+                value: 'YES'
+
+            - name: Start the syslogd service
+              ansible.builtin.service:
+                name: syslogd
+                state: started
             ```
   - uid: mondoo-freebsd-security-syslogd-is-not-accepting-remote-messages
     title: Ensure syslogd is not accepting remote messages
@@ -3300,6 +4605,14 @@ queries:
         **Why this matters**
 
         A syslog daemon that accepts remote messages can be targeted with log injection attacks or used in denial-of-service attacks by flooding it with messages. Unless the system is specifically configured as a log aggregation server, it should only process local log messages.
+      audit: |
+        To verify that `syslogd` rejects remote messages, run the following command:
+
+        ```bash
+        sysrc -n syslogd_flags
+        ```
+
+        If the flags include `-s` (secure mode), `syslogd` does not accept remote messages and the check passes. If `-s` is absent, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -3311,7 +4624,7 @@ queries:
             sysrc syslogd_flags="-s"
             service syslogd restart
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -3330,6 +4643,24 @@ queries:
             service syslogd restart
 
             echo "syslogd configured to reject remote messages."
+            ```
+        - id: ansible
+          desc: |
+            To configure `syslogd` secure mode using Ansible:
+
+            1. Add the following tasks to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Set syslogd secure-mode flag
+              community.general.sysrc:
+                name: syslogd_flags
+                value: '-s'
+
+            - name: Restart the syslogd service
+              ansible.builtin.service:
+                name: syslogd
+                state: restarted
             ```
   - uid: mondoo-freebsd-security-sudo-is-installed
     title: Ensure sudo is installed
@@ -3360,6 +4691,14 @@ queries:
         **Why this matters**
 
         `sudo` provides granular privilege escalation control, allowing administrators to grant specific users permission to run specific commands as root without sharing the root password. Without `sudo`, privilege escalation typically requires sharing the root password via `su`, which is less secure and less auditable.
+      audit: |
+        To verify that the `sudo` package is installed, run the following command:
+
+        ```bash
+        pkg info sudo
+        ```
+
+        If `pkg info` reports the package as installed, the check passes. If the package is not found, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -3370,7 +4709,7 @@ queries:
             ```bash
             pkg install sudo
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -3385,6 +4724,19 @@ queries:
               pkg install -y sudo
               echo "sudo installed."
             fi
+            ```
+        - id: ansible
+          desc: |
+            To install `sudo` using Ansible:
+
+            1. Add the following task to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Install sudo
+              community.general.pkgng:
+                name: sudo
+                state: present
             ```
   - uid: mondoo-freebsd-security-sudo-commands-use-pty
     title: Ensure sudo commands use a pseudo terminal
@@ -3418,6 +4770,14 @@ queries:
         **Why this matters**
 
         When sudo is configured without `use_pty`, a malicious program run via sudo could fork a background process that retains elevated privileges after the sudo command completes. Requiring a pseudo terminal ensures that all child processes are terminated when the terminal session ends, preventing persistent privilege escalation.
+      audit: |
+        To verify that sudo is configured to use a pseudo terminal, inspect the sudoers configuration:
+
+        ```bash
+        grep -rE '^[^#]*Defaults.*use_pty' /usr/local/etc/sudoers /usr/local/etc/sudoers.d/
+        ```
+
+        If a `Defaults use_pty` line is returned, the check passes. If no such line is present, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -3428,7 +4788,7 @@ queries:
             ```
             Defaults use_pty
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -3460,6 +4820,23 @@ queries:
             else
               echo "'use_pty' is already configured."
             fi
+            ```
+        - id: ansible
+          desc: |
+            To require a pseudo terminal for sudo using Ansible:
+
+            1. Add the following task to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Require a pseudo terminal for sudo
+              ansible.builtin.copy:
+                dest: /usr/local/etc/sudoers.d/99-use-pty
+                content: "Defaults use_pty\n"
+                owner: root
+                group: wheel
+                mode: '0440'
+                validate: 'visudo -cf %s'
             ```
   - uid: mondoo-freebsd-security-sudo-nopasswd-is-not-configured
     title: Ensure NOPASSWD is not configured in sudoers
@@ -3495,6 +4872,14 @@ queries:
         **Why this matters**
 
         `NOPASSWD` entries in sudoers allow users to run commands as root without entering a password. If an attacker compromises a user account with `NOPASSWD` access, they can immediately escalate to root without any additional authentication barrier. Requiring password authentication for sudo adds an important layer of defense.
+      audit: |
+        To verify that no sudoers rule grants passwordless access, inspect the sudoers configuration:
+
+        ```bash
+        grep -riE '^[^#]*NOPASSWD' /usr/local/etc/sudoers /usr/local/etc/sudoers.d/
+        ```
+
+        If the command returns no output, no rule uses `NOPASSWD` and the check passes. If any line is returned, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -3507,7 +4892,7 @@ queries:
             ```
 
             Replace lines containing `NOPASSWD:` with `PASSWD:` or simply remove the `NOPASSWD` tag.
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -3542,6 +4927,24 @@ queries:
 
             echo "No NOPASSWD entries found in sudoers."
             ```
+        - id: ansible
+          desc: |
+            To detect `NOPASSWD` sudoers entries using Ansible:
+
+            1. Add the following tasks to a playbook targeting the FreeBSD host.
+            2. Run the playbook, then edit the reported files with `visudo` to remove the `NOPASSWD` tag.
+
+            ```yaml
+            - name: Search for NOPASSWD entries
+              ansible.builtin.shell: "grep -rilE '^[^#]*NOPASSWD' /usr/local/etc/sudoers /usr/local/etc/sudoers.d/ || true"
+              register: nopasswd_files
+              changed_when: false
+
+            - name: Fail when NOPASSWD is configured
+              ansible.builtin.fail:
+                msg: "NOPASSWD found in: {{ nopasswd_files.stdout }}"
+              when: nopasswd_files.stdout | length > 0
+            ```
   - uid: mondoo-freebsd-security-firewall-is-enabled
     title: Ensure a firewall is enabled
     impact: 60
@@ -3571,6 +4974,14 @@ queries:
         **Why this matters**
 
         A firewall is a fundamental network security control that filters incoming and outgoing traffic based on defined rules. Without an active firewall, the system accepts connections on all listening ports, exposing services to potential attacks from the network. FreeBSD supports both `ipfw` and `pf` as firewall options.
+      audit: |
+        To verify that a firewall service is enabled, run the following command:
+
+        ```bash
+        sysrc -n firewall_enable pf_enable
+        ```
+
+        If `firewall_enable` (ipfw) or `pf_enable` is `YES`, a firewall is enabled and the check passes. If both are `NO`, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -3590,7 +5001,7 @@ queries:
             sysrc pf_enable="YES"
             service pf start
             ```
-        - id: sh
+        - id: script
           desc: |
             **Using a Shell Script**
 
@@ -3612,4 +5023,25 @@ queries:
 
               echo "ipfw firewall enabled in workstation mode."
             fi
+            ```
+        - id: ansible
+          desc: |
+            To enable a firewall using Ansible:
+
+            1. Add the following tasks to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Enable ipfw in rc.conf
+              community.general.sysrc:
+                name: "{{ item.name }}"
+                value: "{{ item.value }}"
+              loop:
+                - { name: firewall_enable, value: 'YES' }
+                - { name: firewall_type, value: 'workstation' }
+
+            - name: Start the ipfw service
+              ansible.builtin.service:
+                name: ipfw
+                state: started
             ```
