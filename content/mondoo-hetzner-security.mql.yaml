@@ -90,11 +90,39 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every Hetzner Cloud server is attached to at least one private network.
+        This check ensures that every Hetzner Cloud server is attached to at least one private network. By default, servers communicate over the public internet even when exchanging traffic with other resources inside the same project, because Hetzner does not create or assign a private network automatically.
 
         **Why this matters**
 
-        A Hetzner server with no private network attachment can only reach other resources over the public internet, even resources in the same project. Without network-level segmentation, an attacker who compromises one server has broader reach across the project, and lateral movement is harder to contain. Private networks also reduce unnecessary internet exposure by allowing private-only traffic between resources in the same network.
+        - **Lateral movement containment:** A server with no private network has no network boundary between it and other project resources, making it easier for an attacker who compromises one server to reach others.
+        - **Reduced internet exposure:** Private-network-only traffic between resources never traverses the public internet, eliminating the opportunity for interception or manipulation of intra-project communication.
+        - **Network segmentation:** Assigning servers to private networks enables subnet-level access controls that cannot be expressed with cloud firewall rules alone.
+        - **Defense in depth:** Even if a cloud firewall rule is misconfigured, private-network isolation limits the blast radius of that misconfiguration to hosts on the same network.
+
+        **Risk mitigation**
+
+        - **Intra-project isolation:** Servers on a private network can reach each other over RFC-1918 space, keeping sensitive traffic off the public internet by design.
+        - **Prerequisite for stricter controls:** Private network attachment is a prerequisite for further network segmentation such as dedicated subnets per tier and private-only service endpoints.
+      audit: |
+        ### Audit via Console
+
+        1. Log in to the [Hetzner Cloud Console](https://console.hetzner.cloud) and select the project.
+        2. Navigate to **Servers** and open each server.
+        3. Click the **Networking** tab.
+        4. Review the **Private Networks** section.
+
+        A passing server shows at least one private network listed under **Private Networks**. A failing server shows an empty **Private Networks** section.
+
+        ### Audit via CLI
+
+        1. List all servers and inspect their private network attachments:
+
+        ```bash
+        hcloud server list -o columns=id,name
+        hcloud server describe <server> -o json | grep -A5 'private_net'
+        ```
+
+        A passing server returns a non-empty `private_net` array in the JSON output. A failing server returns an empty `private_net` array (`[]`).
       remediation:
         - id: console
           desc: |
@@ -199,11 +227,39 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every Hetzner Cloud server has at least one Hetzner Cloud Firewall applied.
+        This check ensures that every Hetzner Cloud server has at least one Hetzner Cloud Firewall applied. Hetzner does not attach a firewall to new servers by default, so every port bound on the server's public network interface is reachable from the internet until a firewall rule explicitly restricts access.
 
         **Why this matters**
 
-        Hetzner Cloud servers do not have a default-deny firewall posture. A server with no Cloud Firewall attached exposes every listening port on its public interfaces to the entire internet. Any service unintentionally bound to `0.0.0.0`, such as a debug port, an internal admin tool, or a misconfigured database, is reachable by every host on the network. Applying a Cloud Firewall ensures only the explicitly allowed ports are reachable, even if the OS-level firewall is misconfigured or disabled.
+        - **Default-allow posture:** Without a Cloud Firewall, Hetzner servers accept connections on every listening port from the entire internet, including debug endpoints, internal admin tools, and misconfigured services.
+        - **OS firewall gap:** A Cloud Firewall enforces restrictions at the network edge, so even if the in-guest OS firewall is misconfigured or disabled, unauthorized ports remain unreachable.
+        - **Attack surface reduction:** Firewall rules reduce the exposed service footprint to only the ports required by the workload, limiting the opportunity for exploitation of any vulnerability in a running service.
+        - **Incident containment:** A firewall provides a fast, centralized control plane to block traffic to a compromised server without requiring in-guest access.
+
+        **Risk mitigation**
+
+        - **Principle of least privilege for network access:** An explicit allowlist of required ports prevents unintentional services from ever being reachable, regardless of what software is installed or started on the server.
+        - **Centralized enforcement:** Cloud Firewall rules apply before traffic reaches the server, making them impossible to bypass through guest-level misconfiguration.
+      audit: |
+        ### Audit via Console
+
+        1. Log in to the [Hetzner Cloud Console](https://console.hetzner.cloud) and select the project.
+        2. Navigate to **Servers** and open each server.
+        3. Click the **Firewalls** tab.
+        4. Review the list of applied firewalls.
+
+        A passing server shows at least one firewall listed. A failing server shows no firewalls applied.
+
+        ### Audit via CLI
+
+        1. List all servers and inspect each server's firewall assignments:
+
+        ```bash
+        hcloud server list -o columns=id,name
+        hcloud server describe <server> -o json | grep -A5 'firewall'
+        ```
+
+        A passing server returns a non-empty `public_net.firewalls` or `firewall_ids` array. A failing server returns an empty or absent firewall list.
       remediation:
         - id: console
           desc: |
@@ -289,11 +345,38 @@ queries:
       hetzner.servers.where(image != null).all(image.deprecated == null || image.deprecated > time.now)
     docs:
       desc: |
-        This check ensures that no Hetzner Cloud server was created from a system image that Hetzner has marked deprecated and whose deprecation date has passed.
+        This check ensures that no Hetzner Cloud server was created from a system image whose deprecation date has passed. Hetzner marks an image deprecated when the upstream operating system reaches end of life or when Hetzner plans to retire the image; once the deprecation timestamp is in the past, the image is no longer supported.
 
         **Why this matters**
 
-        Hetzner marks system images deprecated when the upstream operating system reaches end of life or when Hetzner is preparing to remove the image. A server still running a deprecated image is no longer guaranteed to receive vendor security patches; known-exploited CVEs accumulate without remediation. Rebuilding the server from a current image keeps the workload on a supported and patched base.
+        - **No security patches:** A deprecated image is tied to an end-of-life OS that no longer receives upstream security fixes, so known-exploited CVEs accumulate without any remediation path.
+        - **Unsupported software stack:** Beyond the OS kernel, user-space packages and system libraries on a deprecated image are also beyond end of life, widening the vulnerability surface.
+        - **Compliance risk:** Many frameworks require running software on vendor-supported versions; a deprecated image creates a gap that auditors and regulators will flag.
+
+        **Risk mitigation**
+
+        - **Reduced CVE exposure:** Rebuilding from a current, supported image ensures the server starts with all upstream security patches applied, closing the gap created by end-of-life software.
+        - **Maintainability:** A supported image baseline makes future patching and image-refresh workflows predictable and vendor-supported.
+      audit: |
+        ### Audit via Console
+
+        1. Log in to the [Hetzner Cloud Console](https://console.hetzner.cloud) and select the project.
+        2. Navigate to **Servers** and open each server.
+        3. On the **Overview** tab, check the **Image** field.
+        4. A deprecated image is noted with a deprecation warning or end-of-life indicator in the image name or description.
+
+        A passing server shows a current, non-deprecated image. A failing server shows an image flagged as deprecated or end-of-life.
+
+        ### Audit via CLI
+
+        1. Retrieve the image details for each server and check the `deprecated` field:
+
+        ```bash
+        hcloud server describe <server> -o json | grep -A5 '"image"'
+        hcloud image describe <image-id> -o json | grep 'deprecated'
+        ```
+
+        A passing server returns `"deprecated": null` or a `deprecated` date in the future. A failing server returns a `deprecated` date that is in the past.
       remediation:
         - id: console
           desc: |
@@ -368,11 +451,41 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no Hetzner Cloud Firewall has an inbound rule that allows TCP traffic on port 22 from the public internet (`0.0.0.0/0` or `::/0`).
+        This check ensures that no Hetzner Cloud Firewall allows inbound TCP traffic on port 22 from the public internet (source `0.0.0.0/0` or `::/0`). SSH exposed to the entire internet with no source restriction is one of the most common entry points in cloud infrastructure compromises.
 
         **Why this matters**
 
-        SSH exposed to the entire internet is a primary target for credential stuffing, brute-force login attempts, and exploitation of any future SSH server CVE. Even with key-based authentication, open SSH exposes the SSH daemon itself as an attack surface. SSH access should be restricted to a known trusted CIDR range, a bastion host, or a VPN.
+        - **Brute-force and credential-stuffing target:** Internet-facing SSH attracts constant automated login attempts; a single weak or reused credential becomes an immediate breach.
+        - **SSH daemon as an attack surface:** Even with key-based authentication, an unrestricted SSH listener exposes the SSH daemon itself to exploitation of any future pre-authentication vulnerability.
+        - **Lateral movement entry point:** Unauthorized SSH access to one server in a project enables reconnaissance and pivoting to other resources on the same network.
+        - **Audit trail gaps:** Sessions established through unrestricted SSH are harder to attribute and monitor than sessions routed through a bastion or VPN with centralized logging.
+
+        **Risk mitigation**
+
+        - **Source IP restriction:** Limiting SSH source IPs to a known trusted CIDR, bastion host, or VPN egress range eliminates the vast majority of automated attack traffic before it can attempt authentication.
+        - **Reduced exploit window:** Restricting access means that even during the period between vulnerability disclosure and patching, only trusted hosts can reach the SSH service.
+      audit: |
+        ### Audit via Console
+
+        1. Log in to the [Hetzner Cloud Console](https://console.hetzner.cloud) and select the project.
+        2. Navigate to **Firewalls** and open each firewall.
+        3. Review the **Rules** tab, focusing on inbound rules.
+        4. Check whether any inbound TCP rule for port 22 lists `Any IPv4` (`0.0.0.0/0`) or `Any IPv6` (`::/0`) as the source.
+
+        A passing firewall shows no inbound rule for TCP port 22 with a source of `0.0.0.0/0` or `::/0`. A failing firewall shows an inbound TCP rule for port 22 with an unrestricted source.
+
+        ### Audit via CLI
+
+        1. List all firewalls and inspect their rules:
+
+        ```bash
+        hcloud firewall list -o columns=id,name
+        hcloud firewall describe <firewall> -o json
+        ```
+
+        Review the `rules` array for any entry where `direction` is `in`, `protocol` is `tcp`, `port` is `22`, and `source_ips` contains `0.0.0.0/0` or `::/0`.
+
+        A passing firewall returns no such rule. A failing firewall returns at least one rule with direction `in`, protocol `tcp`, port `22`, and source IP `0.0.0.0/0` or `::/0`.
       remediation:
         - id: console
           desc: |
@@ -490,11 +603,40 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no Hetzner Cloud Firewall has an inbound rule that allows TCP traffic on port 3389 from the public internet (`0.0.0.0/0` or `::/0`).
+        This check ensures that no Hetzner Cloud Firewall allows inbound TCP traffic on port 3389 from the public internet (source `0.0.0.0/0` or `::/0`). Internet-facing RDP is one of the most common initial access vectors in ransomware campaigns and targeted intrusions.
 
         **Why this matters**
 
-        RDP is a long-standing target of ransomware deployment and has been involved in repeated high-impact breaches. The RDP protocol itself has had multiple critical pre-authentication RCE CVEs, for example BlueKeep. Exposing RDP to the internet should be treated as an immediate security incident.
+        - **Ransomware entry vector:** RDP exposed to the internet is the primary delivery mechanism for many ransomware families; threat actors actively scan for open port 3389 and attempt credential-based entry.
+        - **Pre-authentication CVE history:** The RDP protocol has a documented history of critical pre-authentication remote code execution vulnerabilities, including BlueKeep (CVE-2019-0708), making even a patched system a higher-risk target when directly exposed.
+        - **Credential-stuffing exposure:** Reused or weak credentials on an internet-facing RDP service can be discovered and exploited within minutes of server provisioning.
+
+        **Risk mitigation**
+
+        - **Eliminate direct exposure:** Removing internet-facing RDP access and routing remote desktop sessions through a VPN or bastion closes the most commonly exploited cloud attack vector.
+        - **Restrict by source CIDR:** If RDP must remain accessible, limiting the source to a specific trusted range prevents automated scanning and exploitation by arbitrary internet hosts.
+      audit: |
+        ### Audit via Console
+
+        1. Log in to the [Hetzner Cloud Console](https://console.hetzner.cloud) and select the project.
+        2. Navigate to **Firewalls** and open each firewall.
+        3. Review the **Rules** tab, focusing on inbound rules.
+        4. Check whether any inbound TCP rule for port 3389 lists `Any IPv4` (`0.0.0.0/0`) or `Any IPv6` (`::/0`) as the source.
+
+        A passing firewall shows no inbound rule for TCP port 3389 with an unrestricted source. A failing firewall shows an inbound TCP rule for port 3389 sourced from `0.0.0.0/0` or `::/0`.
+
+        ### Audit via CLI
+
+        1. List all firewalls and inspect their rules:
+
+        ```bash
+        hcloud firewall list -o columns=id,name
+        hcloud firewall describe <firewall> -o json
+        ```
+
+        Review the `rules` array for any entry where `direction` is `in`, `protocol` is `tcp`, `port` is `3389`, and `source_ips` contains `0.0.0.0/0` or `::/0`.
+
+        A passing firewall returns no such rule. A failing firewall returns at least one rule with direction `in`, protocol `tcp`, port `3389`, and source IP `0.0.0.0/0` or `::/0`.
       remediation:
         - id: console
           desc: |
@@ -610,11 +752,41 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no Hetzner Cloud Firewall allows inbound traffic from the public internet to common database ports: MySQL (3306), PostgreSQL (5432), MongoDB (27017), Redis (6379), Kafka (9092), Elasticsearch/OpenSearch (9200), and SQL Server (1433).
+        This check ensures that no Hetzner Cloud Firewall allows inbound traffic from the public internet to common database ports: MySQL (3306), PostgreSQL (5432), MongoDB (27017), Redis (6379), Kafka (9092), Elasticsearch and OpenSearch (9200), and SQL Server (1433). Database services should only be reachable from within the application network, never directly from the internet.
 
         **Why this matters**
 
-        Databases exposed directly to the internet are routinely scanned and compromised. Credential brute force, unauthenticated misconfiguration exploitation, and ransom-style data extortion are all well-documented outcomes. Database traffic should only traverse private networks; applications needing external access should reach the database through a bastion or through the application tier, not directly.
+        - **Credential brute force:** Databases exposed to the internet are subject to continuous automated login attempts; a guessable or default credential leads directly to data exfiltration.
+        - **Unauthenticated misconfiguration exploitation:** Several of these database engines have had widely-exploited cases where misconfiguration left them accessible without authentication, resulting in data destruction or ransom demands.
+        - **Data exfiltration risk:** Direct internet access to a database port removes the application tier as a layer of access control, allowing an attacker to query or dump data without passing through application-level authorization.
+        - **Protocol vulnerability surface:** Direct internet exposure means any pre-authentication protocol vulnerability in the database engine is exploitable by any host on the internet.
+
+        **Risk mitigation**
+
+        - **Private-network-only access:** Databases placed on a Hetzner private network and not exposed via firewall rules are reachable only from application servers on the same network, enforcing the intended access boundary.
+        - **Application-tier enforcement:** Routing all external database access through the application tier ensures authorization logic is applied before any database query is executed.
+      audit: |
+        ### Audit via Console
+
+        1. Log in to the [Hetzner Cloud Console](https://console.hetzner.cloud) and select the project.
+        2. Navigate to **Firewalls** and open each firewall.
+        3. Review the **Rules** tab, focusing on inbound rules.
+        4. Check whether any inbound TCP rule specifies a port of `3306`, `5432`, `27017`, `6379`, `9092`, `9200`, or `1433` with a source of `Any IPv4` (`0.0.0.0/0`) or `Any IPv6` (`::/0`).
+
+        A passing firewall shows no inbound rule for those database ports sourced from `0.0.0.0/0` or `::/0`. A failing firewall shows at least one such inbound rule permitting unrestricted internet access to a database port.
+
+        ### Audit via CLI
+
+        1. List all firewalls and inspect their rules:
+
+        ```bash
+        hcloud firewall list -o columns=id,name
+        hcloud firewall describe <firewall> -o json
+        ```
+
+        Review the `rules` array for entries where `direction` is `in`, `protocol` is `tcp`, `port` is any of `3306`, `5432`, `27017`, `6379`, `9092`, `9200`, or `1433`, and `source_ips` contains `0.0.0.0/0` or `::/0`.
+
+        A passing firewall returns no such rule. A failing firewall returns at least one inbound rule matching one of those database ports with an unrestricted source.
       remediation:
         - id: console
           desc: |
@@ -734,11 +906,40 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no Hetzner Cloud Firewall has an inbound rule that allows the full port range (`any`, `1-65535`, or `0-65535`) from the public internet.
+        This check ensures that no Hetzner Cloud Firewall has an inbound rule that permits traffic on all ports (`any`, `1-65535`, or `0-65535`) from the public internet (source `0.0.0.0/0` or `::/0`). A rule that opens every port from everywhere is equivalent to having no firewall at all.
 
         **Why this matters**
 
-        An "allow all ports from anywhere" rule is functionally equivalent to having no firewall. It exposes every service running on the server, whether intended or unintended, known or forgotten, to every host on the internet. This is the highest-severity network misconfiguration.
+        - **No effective perimeter:** With all ports open to the internet, every service listening on the server, whether intentional or not, is reachable by every host on the internet.
+        - **Shadow service exposure:** Servers accumulate listening services over time; an all-ports rule means a forgotten debug endpoint, an unintended management interface, or a misconfigured application port is immediately internet-accessible.
+        - **Highest-severity misconfiguration:** This is the most permissive possible firewall state and represents a complete failure of the network access control layer.
+
+        **Risk mitigation**
+
+        - **Replace with per-service rules:** Defining explicit narrow rules for only the ports required by the workload ensures that every other port is implicitly denied, regardless of what is running on the server.
+        - **Scoped source CIDRs:** Combining port-specific rules with source IP restrictions further reduces the effective attack surface to only the hosts that legitimately need access.
+      audit: |
+        ### Audit via Console
+
+        1. Log in to the [Hetzner Cloud Console](https://console.hetzner.cloud) and select the project.
+        2. Navigate to **Firewalls** and open each firewall.
+        3. Review the **Rules** tab, focusing on inbound rules.
+        4. Check whether any inbound rule has the port set to `Any`, `1-65535`, or `0-65535` with a source of `Any IPv4` (`0.0.0.0/0`) or `Any IPv6` (`::/0`).
+
+        A passing firewall shows no inbound rule permitting the full port range from the public internet. A failing firewall shows an inbound rule with an unrestricted port range and an unrestricted source.
+
+        ### Audit via CLI
+
+        1. List all firewalls and inspect their rules:
+
+        ```bash
+        hcloud firewall list -o columns=id,name
+        hcloud firewall describe <firewall> -o json
+        ```
+
+        Review the `rules` array for entries where `direction` is `in`, `port` is `any`, `1-65535`, or `0-65535`, and `source_ips` contains `0.0.0.0/0` or `::/0`.
+
+        A passing firewall returns no such rule. A failing firewall returns at least one inbound rule that opens the full port range from an unrestricted source.
       remediation:
         - id: console
           desc: |
@@ -852,11 +1053,40 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that any load balancer accepting HTTP traffic also has the HTTP-to-HTTPS redirect enabled, so HTTP requests are 301-redirected to HTTPS.
+        This check ensures that every Hetzner Cloud load balancer service that listens on HTTP has the HTTP-to-HTTPS redirect enabled, so plaintext HTTP requests receive a 301 redirect to the HTTPS equivalent. Without this redirect, clients that initiate HTTP connections receive responses over an unencrypted channel.
 
         **Why this matters**
 
-        A load balancer that accepts plaintext HTTP and serves the response in plaintext exposes every request to interception and modification. Credentials, session cookies, API keys, and response content are all readable by any host on the network path. Redirecting HTTP to HTTPS forces subsequent requests over TLS, closing the window where a downgrade or sidejacking attack can succeed.
+        - **Credential and session exposure:** HTTP traffic is plaintext; any credential, session cookie, or API token transmitted over HTTP is readable by any host on the network path between the client and the load balancer.
+        - **Downgrade attack surface:** A load balancer that silently serves HTTP responses gives attackers a window to intercept and strip the TLS layer before the client upgrades, a technique known as SSL stripping.
+        - **Cookie security bypass:** Cookies without the `Secure` attribute can be sent over HTTP; even when set over HTTPS they can be intercepted if the client makes an initial HTTP request before redirecting.
+
+        **Risk mitigation**
+
+        - **Force encrypted channels:** A 301 redirect from HTTP to HTTPS ensures that all subsequent requests in the same session use TLS, closing the window for interception and downgrade.
+        - **Client-side caching via HSTS:** Once clients receive the redirect, pairing it with an HSTS header prevents future HTTP requests from ever leaving the client, eliminating the initial plaintext window entirely.
+      audit: |
+        ### Audit via Console
+
+        1. Log in to the [Hetzner Cloud Console](https://console.hetzner.cloud) and select the project.
+        2. Navigate to **Load Balancers** and open each load balancer.
+        3. Click the **Services** tab.
+        4. Find the service listening on port 80 (HTTP) and check whether **Redirect HTTP to HTTPS** is enabled.
+
+        A passing load balancer shows **Redirect HTTP to HTTPS** toggled on for every HTTP service. A failing load balancer shows an HTTP service with that option disabled or not configured.
+
+        ### Audit via CLI
+
+        1. List all load balancers and inspect their services:
+
+        ```bash
+        hcloud load-balancer list -o columns=id,name
+        hcloud load-balancer describe <lb> -o json
+        ```
+
+        In the `services` array, find entries where `protocol` is `http` and check whether `http.redirect_http` is `true`.
+
+        A passing load balancer returns `"redirect_http": true` for every HTTP service. A failing load balancer returns `"redirect_http": false` or omits the field for an HTTP service.
       remediation:
         - id: console
           desc: |
@@ -953,11 +1183,40 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every load balancer service configured for HTTPS has at least one TLS certificate attached.
+        This check ensures that every Hetzner Cloud load balancer service configured for HTTPS has at least one TLS certificate attached. An HTTPS listener with no certificate cannot complete a TLS handshake, causing clients to receive certificate errors or fall back to unencrypted connections.
 
         **Why this matters**
 
-        An HTTPS listener with no certificate cannot terminate TLS for the listening domain. Clients either hit certificate warnings, fall back to HTTP, or fail to connect entirely. Either outcome exposes user traffic to interception, content injection, and credential theft, and a "fail open to HTTP" path is a classic downgrade-attack surface.
+        - **TLS termination failure:** Without a certificate, the load balancer cannot establish a valid TLS session; clients receive certificate errors that degrade trust and may cause them to bypass security warnings.
+        - **Fail-open downgrade risk:** Some client configurations fall back to HTTP when HTTPS fails, which silently removes encryption from the connection and exposes traffic to interception.
+        - **Service availability impact:** Certificate-related TLS failures often surface as hard-to-diagnose connectivity errors that disrupt users and dependent services, making a missing certificate both a security and an availability concern.
+
+        **Risk mitigation**
+
+        - **Valid TLS termination:** Attaching a certificate to the HTTPS service ensures the load balancer can complete TLS handshakes and deliver encrypted sessions to all clients.
+        - **Automated renewal with managed certificates:** Using Hetzner-managed certificates removes the operational burden of tracking expiry dates, as renewal is handled automatically through Let's Encrypt.
+      audit: |
+        ### Audit via Console
+
+        1. Log in to the [Hetzner Cloud Console](https://console.hetzner.cloud) and select the project.
+        2. Navigate to **Load Balancers** and open each load balancer.
+        3. Click the **Services** tab.
+        4. Find any service configured for HTTPS (port 443) and verify that at least one certificate is listed under **Certificates**.
+
+        A passing load balancer shows at least one certificate attached to every HTTPS service. A failing load balancer shows an HTTPS service with no certificates attached.
+
+        ### Audit via CLI
+
+        1. List all load balancers and inspect their services:
+
+        ```bash
+        hcloud load-balancer list -o columns=id,name
+        hcloud load-balancer describe <lb> -o json
+        ```
+
+        In the `services` array, find entries where `protocol` is `https` and check whether `http.certificates` is a non-empty array.
+
+        A passing load balancer returns a non-empty `certificates` array for every HTTPS service. A failing load balancer returns an empty `certificates` array (`[]`) for an HTTPS service.
       remediation:
         - id: console
           desc: |
@@ -1048,11 +1307,36 @@ queries:
       hetzner.certificates.all(notValidAfter > time.now)
     docs:
       desc: |
-        This check ensures that no TLS certificate managed in Hetzner Cloud has passed its `notValidAfter` expiration date.
+        This check ensures that no TLS certificate managed in Hetzner Cloud has passed its `notValidAfter` expiration date. An expired certificate is rejected by standard TLS clients and breaks the trust chain that encrypted connections rely on.
 
         **Why this matters**
 
-        An expired TLS certificate breaks the trust chain clients rely on. Users see certificate warnings and are trained to click through, which normalizes certificate bypass and gives real man-in-the-middle attempts cover. API clients often fail closed and take down dependent services, so an expired certificate is both a security failure and an availability incident.
+        - **Broken trust chain:** Once a certificate expires, TLS clients reject the handshake and users see certificate warnings; the encrypted channel is no longer established as intended.
+        - **Normalized bypass behavior:** Repeated certificate warnings train users to click through security errors, undermining the protective value of TLS warnings when a real attack occurs.
+        - **Dependent service failures:** API clients and service-to-service integrations typically fail closed on certificate errors rather than falling back, so an expired certificate becomes an availability incident in addition to a security failure.
+
+        **Risk mitigation**
+
+        - **Automated renewal:** Using Hetzner-managed certificates delegates renewal to Hetzner via Let's Encrypt, eliminating the manual tracking that leads to missed expirations.
+        - **Proactive monitoring:** Monitoring certificate expiry and triggering renewal well before the `notValidAfter` date prevents the interruption window that an expired certificate creates.
+      audit: |
+        ### Audit via Console
+
+        1. Log in to the [Hetzner Cloud Console](https://console.hetzner.cloud) and select the project.
+        2. Navigate to **Certificates**.
+        3. Review the **Expires** column for each certificate.
+
+        A passing certificate shows an expiry date in the future. A failing certificate shows an expiry date that has already passed.
+
+        ### Audit via CLI
+
+        1. List all certificates and check the expiry date for each:
+
+        ```bash
+        hcloud certificate list -o columns=id,name,not_valid_after
+        ```
+
+        A passing certificate shows a `not_valid_after` date that is later than today. A failing certificate shows a `not_valid_after` date that is in the past.
       remediation:
         - id: console
           desc: |
@@ -1115,11 +1399,37 @@ queries:
       hetzner.floatingIps.all(blocked == false)
     docs:
       desc: |
-        This check ensures that no floating IP in the project is in a `blocked` state.
+        This check ensures that no floating IP in the Hetzner Cloud project is in a `blocked` state. Hetzner sets the `blocked` flag on a floating IP when its abuse team has determined that the IP is originating malicious traffic such as outbound attacks, spam, scanning, or malware distribution.
 
         **Why this matters**
 
-        Hetzner sets the `blocked` flag on a floating IP when its abuse team has determined the IP is involved in malicious activity (outbound attack traffic, spam, scanning, hosting malware). A blocked IP that is still attached to a server is a strong indicator that the underlying workload is compromised or being misused, and warrants investigation rather than re-enabling the IP.
+        - **Compromise indicator:** A blocked floating IP is a strong signal that the workload attached to it is compromised, misconfigured to emit abusive traffic, or being actively misused by a threat actor.
+        - **Ongoing harm to third parties:** While the IP remains blocked, the underlying workload may continue to generate abusive traffic, causing harm to external recipients and accruing further abuse history against the project.
+        - **Reputational and operational impact:** A blocked IP cannot deliver outbound traffic normally; services relying on the IP for egress or inbound reachability are degraded until the underlying issue is resolved and Hetzner lifts the block.
+
+        **Risk mitigation**
+
+        - **Incident investigation:** Treating a blocked IP as a confirmed incident, rather than an inconvenience to be unblocked, ensures the underlying compromise or misconfiguration is identified and remediated.
+        - **Credential rotation:** If the investigation reveals a compromised workload, rotating all credentials the server held prevents the attacker from retaining access after the server is rebuilt.
+      audit: |
+        ### Audit via Console
+
+        1. Log in to the [Hetzner Cloud Console](https://console.hetzner.cloud) and select the project.
+        2. Navigate to **Floating IPs**.
+        3. Review each floating IP for a blocked or suspended status indicator.
+
+        A passing floating IP shows a normal active status with no blocked indicator. A failing floating IP shows a blocked status, typically surfaced by a warning or abuse notice from Hetzner.
+
+        ### Audit via CLI
+
+        1. List all floating IPs and inspect the `blocked` field for each:
+
+        ```bash
+        hcloud floating-ip list -o columns=id,name,ip,server
+        hcloud floating-ip describe <floating-ip> -o json | grep '"blocked"'
+        ```
+
+        A passing floating IP returns `"blocked": false`. A failing floating IP returns `"blocked": true`.
       remediation:
         - id: console
           desc: |
@@ -1156,11 +1466,37 @@ queries:
       hetzner.primaryIps.all(blocked == false)
     docs:
       desc: |
-        This check ensures that no primary IP in the project is in a `blocked` state.
+        This check ensures that no primary IP in the Hetzner Cloud project is in a `blocked` state. Hetzner sets the `blocked` flag on a primary IP when its abuse team has determined that the assigned server is originating malicious traffic.
 
         **Why this matters**
 
-        Hetzner sets the `blocked` flag on a primary IP when its abuse team has determined the IP is involved in malicious activity originating from the assigned server. A blocked primary IP is a strong indicator that the server is compromised or misconfigured to emit abusive traffic, and warrants investigation rather than re-enabling the IP.
+        - **Compromise indicator:** A blocked primary IP is a strong signal that the server it is assigned to is compromised or misconfigured to emit abusive outbound traffic, including spam, scanning, or attack traffic.
+        - **Ongoing harm:** While the underlying issue is unresolved, the server may continue generating abusive traffic, worsening the abuse history for the project and harming external recipients.
+        - **Service disruption:** A blocked primary IP disrupts all inbound and outbound connectivity for the affected server, making this both a security incident and an availability incident that requires immediate investigation.
+
+        **Risk mitigation**
+
+        - **Incident-first response:** Treating a blocked primary IP as a security incident rather than a connectivity problem ensures the root cause — compromise or misconfiguration — is identified and remediated before requesting that Hetzner lift the block.
+        - **Credential rotation after rebuild:** If investigation reveals a compromised server, rotating all credentials the server held prevents the attacker from reusing them after the server is rebuilt from a clean image.
+      audit: |
+        ### Audit via Console
+
+        1. Log in to the [Hetzner Cloud Console](https://console.hetzner.cloud) and select the project.
+        2. Navigate to **Primary IPs**.
+        3. Review each primary IP for a blocked or suspended status indicator.
+
+        A passing primary IP shows a normal active status with no blocked indicator. A failing primary IP shows a blocked status, typically surfaced by a warning or abuse notice from Hetzner.
+
+        ### Audit via CLI
+
+        1. List all primary IPs and inspect the `blocked` field for each:
+
+        ```bash
+        hcloud primary-ip list -o columns=id,name,ip,server
+        hcloud primary-ip describe <primary-ip> -o json | grep '"blocked"'
+        ```
+
+        A passing primary IP returns `"blocked": false`. A failing primary IP returns `"blocked": true`.
       remediation:
         - id: console
           desc: |
