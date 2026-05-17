@@ -92,12 +92,13 @@ queries:
       dns(reverseDNSDomain).params.PTR.rData.any(_.contains(domainName.fqdn))
     docs:
       desc: |
-        This check ensures that a Reverse IP Lookup PTR record is properly configured. Reverse DNS queries for IPv4 addresses utilize the special domain `in-addr.arpa`. In this domain, the IPv4 address is represented in reverse order as a sequence of four decimal numbers separated by periods, followed by the suffix `.in-addr.arpa`. Each decimal number corresponds to an octet of the 32-bit IPv4 address, arranged from least significant (leftmost) to most significant (rightmost). This reverse ordering is the opposite of the standard IPv4 address notation. Properly configured PTR records are essential for verifying the authenticity of email servers and ensuring compliance with email delivery best practices.
+        A reverse DNS PTR record maps the sending mail server's IP address back to a fully qualified domain name within your domain. Reverse DNS queries for IPv4 addresses use the special domain `in-addr.arpa`, where the IPv4 address is represented in reverse octet order followed by the `.in-addr.arpa` suffix. When the PTR record resolves to a hostname whose forward A record points back to the original IP address, the domain is in a forward-confirmed reverse DNS state, which receiving mail servers treat as a reliable signal that the sender is legitimate.
 
         **Why this matters**
 
         - Validates sender identity and prevents spam classification.
         - Reduces phishing and spoofing by verifying legitimate email servers.
+        - Forward-confirmed reverse DNS provides authentication strong enough to be used for allowlisting email servers.
 
         **If you don't fix this**
 
@@ -105,15 +106,6 @@ queries:
 
         Example:
         IP `123.123.123.123` should have a PTR record pointing to `mail.example.com`, and a forward lookup of `mail.example.com` should resolve back to `123.123.123.123`.
-
-        For example, to query the IP address 8.8.4.4 in reverse order, the PTR record for the domain name 4.4.8.8.in-addr.arpa is queried, which points to dns.google.
-
-        If the A record for dns.google in turn points back to 8.8.4.4, it means that the domain is in a [forward-confirmed reverse DNS](https://en.wikipedia.org/wiki/Forward-confirmed_reverse_DNS) state.
-
-        This creates a form of authentication, which is strong enough to be used for whitelisting purposes of email servers.
-        According to Google's latest guidelines:
-
-        "Your sending IP address must have a PTR record. PTR records verify that the sending hostname is associated with the sending IP address.
       audit: |
         Run the `dig -t PTR <special-reverse-domain>` command and verify that it points to your mail domain.
 
@@ -186,7 +178,7 @@ queries:
         Example:
         TXT record: `v=spf1 include:_spf.google.com ~all`
       audit: |
-        Run the `dig +short TXT <domain>` command and verify that the SPF record is set.
+        Run the `dig +short TXT <domain>` command and verify that at least one TXT record is returned.
 
         Example output:
 
@@ -194,6 +186,8 @@ queries:
         "atlassian-domain-verification=12345"
         "google-site-verification=678910"
         ```
+
+        If one or more TXT records are returned, the check passes. If the output is empty, the check fails.
       remediation: |
         Add a TXT record to your DNS zone file.
 
@@ -245,7 +239,10 @@ queries:
 
         Example:
         A record for `example.com` resolves to `93.184.216.34`.
-      audit: Run the `dig -t A <domain>` command and verify that there is an A record
+      audit: |
+        Run the `dig +short A <domain>` command and verify that an A record is returned.
+
+        If the command returns one or more IPv4 addresses, the check passes. If the output is empty or returns `NXDOMAIN`, the check fails.
       remediation: |
         Add an A record to your DNS zone file. If you're not hosting a dedicated service on the root domain, consider pointing the A record to a web server that redirects visitors to your main corporate website.
 
@@ -293,7 +290,10 @@ queries:
 
         Example:
         SPF record: `v=spf1 ip4:192.168.0.1 include:_spf.example.com -all`
-      audit: Run the `dig -t TXT <domain>` command and verify that the SPF record is set
+      audit: |
+        Run the `dig +short TXT <domain>` command and look for a record beginning with `v=spf1`.
+
+        If exactly one TXT record starting with `v=spf1` is returned, the check passes. If no such record is returned, the check fails.
       remediation: |
         Add a TXT record to your DNS zone file with the following format:
 
@@ -343,7 +343,10 @@ queries:
 
         Example:
         Only one TXT record with `v=spf1` exists for `example.com`.
-      audit: Run the `dig -t TXT <domain>` command and verify that there is only one SPF record
+      audit: |
+        Run the `dig +short TXT <domain>` command and count the records beginning with `v=spf1`.
+
+        If zero or one record starting with `v=spf1` is returned, the check passes. If two or more such records are returned, the check fails.
       remediation: |
         Remove all but one SPF record from your DNS zone file.
 
@@ -390,7 +393,10 @@ queries:
 
         Example:
         SPF record should be under 255 characters: `v=spf1 include:_spf.example.com ~all`
-      audit: Run the `dig -t TXT <domain>` command and verify that the SPF record is not longer than 255 characters
+      audit: |
+        Run the `dig +short TXT <domain>` command and measure the length of the record beginning with `v=spf1`.
+
+        If the SPF record is 255 characters or fewer, the check passes. If it exceeds 255 characters, the check fails.
       remediation: |
         Remove some of the entries from your SPF record.
 
@@ -435,7 +441,10 @@ queries:
 
         Example:
         SPF record should not contain multiple spaces: `v=spf1 include:_spf.example.com ~all`
-      audit: Run the `dig -t TXT <domain>` command and verify that the SPF record does not contain any whitespace
+      audit: |
+        Run the `dig +short TXT <domain>` command and inspect the record beginning with `v=spf1` for runs of consecutive spaces.
+
+        If the SPF record contains no excess whitespace, the check passes. If it contains two or more consecutive spaces, the check fails.
       remediation: |
         Remove all excess whitespace from your SPF record.
 
@@ -478,7 +487,10 @@ queries:
         **If you don't fix this**
 
         - Anyone can send mail pretending to be from your domain without SPF filtering stopping it.
-      audit: Run the `dig -t TXT <domain>` command and verify that the SPF record is set to fail or soft fail all
+      audit: |
+        Run the `dig +short TXT <domain>` command and inspect the end of the record beginning with `v=spf1`.
+
+        If the SPF record ends with `-all` (hard fail) or `~all` (soft fail), the check passes. If it ends with any other mechanism or omits an `all` mechanism, the check fails.
       remediation: |
         The SPF record should end with all.
 
@@ -598,7 +610,10 @@ queries:
 
         Example:
         Use only TXT records for SPF. Do not use deprecated SPF record types.
-      audit: Run the `dig SPF <domain>` command and verify that the SPF record does not use the deprecated SPF DNS Record Type
+      audit: |
+        Run the `dig +short SPF <domain>` command to query for the deprecated `SPF` DNS record type.
+
+        If the command returns no records, the check passes. If any `SPF`-type record is returned, the check fails.
       remediation: |
         Remove the deprecated SPF DNS Record Type from your SPF record.
 
@@ -652,7 +667,19 @@ queries:
         _dmarc.lunalectric.com.  300 IN TXT "v=DMARC1; p=reject; pct=100; rua=mailto:lunalectric.com; ruf=mailto:lunalectric.com; fo=1;"
         ```
       remediation: |
-        Add the _dmarc entry to your DNS zone file.
+        Add a TXT record for the `_dmarc` subdomain to your DNS zone file with the following format:
+
+        ```dns
+        _dmarc.<domain> IN TXT "v=DMARC1; p=reject; pct=100; rua=mailto:lunalectric.com; ruf=mailto:lunalectric.com; fo=1;"
+        ```
+
+        You can verify that the DMARC record was added correctly using the following command:
+
+        ```bash
+        dig +short TXT _dmarc.lunalectric.com
+        ```
+
+        The output should show the DMARC record you added. If you see "no answer" or "NXDOMAIN," it means the DMARC record is not set up.
     refs:
       - url: https://www.m3aawg.org/sites/default/files/m3aawg-email-authentication-recommended-best-practices-09-2020.pdf
         title: M3AAWG Email Authentication Recommended Best Practices (2020)
@@ -751,7 +778,10 @@ queries:
         Examples:
         - `p=reject;` — blocks unauthenticated messages outright.
         - `p=quarantine;` — flags unauthenticated messages as suspicious and typically places them in the recipient's spam or junk folder. This is a safer starting point if you're still gathering data or fine-tuning your DMARC implementation.
-      audit: Run the `dig TXT _dmarc.<domain>` command and verify that the DMARC policy quarantine or reject is configured.
+      audit: |
+        Run the `dig +short TXT _dmarc.<domain>` command and inspect the `p=` tag in the DMARC record.
+
+        If the policy is set to `p=quarantine` or `p=reject`, the check passes. If the policy is `p=none` or absent, the check fails.
       remediation: |
         Add a TXT record to your DNS zone file with the following format:
 
@@ -790,13 +820,12 @@ queries:
     mql: dns("_dmarc."+domainName.fqdn).params['TXT']['rData'].all(/rua=mailto/)
     docs:
       desc: |
-        In the DMARC implementation, you can tell email receivers how to handle email messages that fail authentication and protect your domain from spoofing and other phishing attacks. There are three DMARC policies (Monitoring Policy, Quarantine Policy, Reject Policy) that you can implement.
-
-        Ensures a rua tag exists, specifying where to send aggregate reports.
+        The DMARC record's `rua` tag tells receiving mail servers where to send aggregate authentication reports. These reports summarize how messages claiming to be from your domain performed against SPF, DKIM, and DMARC evaluation.
 
         **Why this matters**
 
         - Lets you monitor authentication pass/fail patterns over time.
+        - Surfaces unauthorized senders and misconfigured legitimate services before they harm deliverability.
 
         **If you don't fix this**
 
@@ -804,7 +833,10 @@ queries:
 
         Example:
         `rua=mailto:dmarc-reports@example.com`
-      audit: Run the `dig TXT _dmarc.<domain>` command and verify that the DMARC RUA tag is configured.
+      audit: |
+        Run the `dig +short TXT _dmarc.<domain>` command and inspect the DMARC record for a `rua=mailto:` tag.
+
+        If the record includes a `rua=mailto:` tag pointing to an aggregate report mailbox, the check passes. If the tag is absent, the check fails.
       remediation: |
         Add a TXT record to your DNS zone file with the following format:
 
@@ -843,9 +875,7 @@ queries:
     mql: dns("_dmarc."+domainName.fqdn).params['TXT']['rData'].all(/ruf=mailto/)
     docs:
       desc: |
-        The RUF (or DMARC Failure or Forensic Report) tag was designed to inform domain administrators when emails fail SPF, DKIM, and DMARC authentication checks. The report includes sensitive details about the email, such as the header, subject, URLs, and attachments. However, many organizations prefer not to request RUF reports due to privacy and compliance concerns. The main goal is to comply with privacy laws and prevent data breaches.
-
-        Ensures a ruf tag exists for receiving failure (forensic) reports.
+        The DMARC record's `ruf` tag tells receiving mail servers where to send failure (forensic) reports when an individual message fails SPF, DKIM, and DMARC authentication. These reports include message-level detail such as headers, subject, URLs, and attachments. Some organizations choose not to request forensic reports because they can contain sensitive content, so weigh privacy and compliance obligations before enabling this tag.
 
         **Why this matters**
 
@@ -858,7 +888,10 @@ queries:
 
         Example:
         `ruf=mailto:security@example.com`
-      audit: Run the `dig TXT _dmarc.<domain>` command and verify that the DMARC RUF tag is configured.
+      audit: |
+        Run the `dig +short TXT _dmarc.<domain>` command and inspect the DMARC record for a `ruf=mailto:` tag.
+
+        If the record includes a `ruf=mailto:` tag pointing to a failure report mailbox, the check passes. If the tag is absent, the check fails.
       remediation: |
         Add a TXT record to your DNS zone file with the following format:
 
@@ -925,7 +958,10 @@ queries:
         Example:
         DKIM record for selector google:
         `google._domainkey.example.com. IN TXT "v=DKIM1; k=rsa; p=MIGfMA0..."`
-      audit: Run the `dig TXT <selector>._domainkey.<domain>` command and verify that the public key is available.
+      audit: |
+        Run the `dig +short TXT <selector>._domainkey.<domain>` command for each DKIM selector your mail provider uses.
+
+        If the record returns a DKIM key containing `p=` (the public key) and `k=rsa`, the check passes. If no record is returned or the key material is missing, the check fails.
       remediation: |
         Add a TXT record to your DNS zone file with the following format:
 
