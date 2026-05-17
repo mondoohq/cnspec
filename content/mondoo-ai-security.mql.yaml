@@ -120,25 +120,46 @@ queries:
       ).length == 0
     docs:
       desc: |
-        This check ensures that no unapproved AI coding agents or local LLM runtimes are actively running on the endpoint.
+        Unapproved AI coding agents and local LLM runtimes running as live processes can transmit proprietary source code, customer data, or secrets to untrusted model providers. Only AI tools reviewed and approved by the security team should be permitted to execute on corporate endpoints. The `mondooAiSecurityApprovedProcesses` property defines the allow-list and can be customized for your environment.
 
-        Running unapproved AI tools can lead to data egress, where proprietary source code, customer data, or secrets are sent to untrusted AI providers. Only AI tools reviewed and approved by the security team should be permitted.
+        **Why this matters**
 
-        Customize the `mondooAiSecurityApprovedProcesses` property to match your organization's approved tool list.
+        - **Data egress:** A running AI agent can stream open files and repository contents to a third-party API without the user explicitly authorizing each transfer.
+        - **Credential exposure:** Agents often read environment variables and configuration files that contain tokens, leaking them to the model provider.
+        - **Bypassed review:** Code generated or modified by an unsanctioned agent skips the controls that govern approved tooling.
+        - **Reduced visibility:** Security teams cannot account for data handled by tools they have not inventoried.
+      audit: |-
+        To verify that no unapproved AI agent processes are running:
+
+        1. Open a terminal on the endpoint.
+        2. List processes whose executables match known AI tool names:
+
+           ```bash
+           ps aux | grep -iE 'ollama|lmstudio|cursor|windsurf|codeium|tabby|codex|goose|zed|chatgpt'
+           ```
+
+        The endpoint passes when no process outside the approved allow-list is returned. Any matching process that is not an approved tool is a failing result.
       remediation:
-        - id: macos
+        - id: gui
           desc: |
-            Identify and terminate unapproved AI processes, then uninstall the tool.
+            To remove an unapproved AI tool using the operating system interface:
+
+            1. Quit the application from the macOS menu bar or close it from the Windows system tray.
+            2. On macOS, drag the application from `/Applications` to the Trash.
+            3. On Windows, open **Settings > Apps > Installed apps**, locate the tool, and select **Uninstall**.
+        - id: cli
+          desc: |
+            To identify, terminate, and uninstall an unapproved AI tool from the command line:
+
+            macOS:
 
             ```bash
             ps aux | grep -iE 'ollama|lmstudio|cursor|windsurf|codeium'
             kill <PID>
-            brew uninstall <tool_name>  # if installed via Homebrew
-            # Or drag the application from /Applications to Trash
+            brew uninstall <tool_name>
             ```
-        - id: linux
-          desc: |
-            Identify and terminate unapproved AI processes, then uninstall the tool.
+
+            Linux:
 
             ```bash
             ps aux | grep -iE 'ollama|lmstudio|cursor|windsurf|codeium'
@@ -146,15 +167,13 @@ queries:
             sudo apt remove <package_name>   # Debian/Ubuntu
             sudo dnf remove <package_name>   # RHEL/Fedora
             ```
-        - id: windows
-          desc: |
-            Identify and terminate unapproved AI processes, then uninstall the tool.
+
+            Windows:
 
             ```powershell
             Get-Process | Where-Object { $_.Name -match 'ollama|lmstudio|cursor|windsurf|codeium' }
             Stop-Process -Name <process_name>
             winget uninstall <tool_name>
-            # Or uninstall via Settings > Apps > Installed Apps
             ```
 
   - uid: mondoo-ai-security-no-unapproved-ai-packages
@@ -186,39 +205,55 @@ queries:
       ).length == 0
     docs:
       desc: |
-        This check ensures that no unapproved AI tools are installed via system package managers (apt, dnf, rpm, Windows Uninstall registry).
+        Unapproved AI tools installed through system package managers such as apt, dnf, rpm, or the Windows uninstall registry remain available even when not actively running. Only AI tools reviewed and approved by the security team should be present on corporate endpoints. The `mondooAiSecurityApprovedPackages` property defines the allow-list and can be customized for your environment.
 
-        Installed but idle AI tools still represent risk since they can be launched at any time and may contain cached credentials or configuration from prior use.
+        **Why this matters**
+
+        - **Latent risk:** An installed but idle AI tool can be launched at any time, reintroducing data-egress exposure on demand.
+        - **Cached state:** Package installations often retain credentials and configuration from prior use that survive between sessions.
+        - **Inventory gaps:** Tools installed outside the approved set leave security teams without an accurate picture of endpoint software.
+        - **Update channels:** Unsanctioned packages pull updates from third-party repositories that are not part of the organization's supply chain.
+      audit: |-
+        To verify that no unapproved AI tools are installed via package managers:
+
+        1. Open a terminal on the endpoint.
+        2. List installed packages and search for known AI tool names:
+
+           ```bash
+           dpkg -l | grep -iE 'ollama|llama|lm-studio|localai|gpt4all|cursor|windsurf|codeium|tabby|codex|goose|chatgpt'
+           ```
+
+           On RHEL or Fedora, use `rpm -qa` in place of `dpkg -l`.
+
+        The endpoint passes when no package outside the approved allow-list is returned. Any matching package that is not an approved tool is a failing result.
       remediation:
-        - id: macos
+        - id: gui
           desc: |
-            Remove unapproved AI packages using the system package manager.
+            To remove an unapproved AI package using the operating system interface:
+
+            1. On Windows, open **Settings > Apps > Installed apps**, locate the tool, and select **Uninstall**.
+            2. On macOS, open the app's installer or drag the application from `/Applications` to the Trash.
+        - id: cli
+          desc: |
+            To remove an unapproved AI package using the system package manager:
+
+            macOS:
 
             ```bash
             brew uninstall <package_name>
             ```
-        - id: linux
-          desc: |
-            Remove unapproved AI packages using the system package manager.
 
-            Debian/Ubuntu:
+            Linux:
 
             ```bash
-            sudo apt remove <package_name>
+            sudo apt remove <package_name>   # Debian/Ubuntu
+            sudo dnf remove <package_name>   # RHEL/Fedora
             ```
 
-            RHEL/Fedora:
-
-            ```bash
-            sudo dnf remove <package_name>
-            ```
-        - id: windows
-          desc: |
-            Remove unapproved AI packages using the system package manager.
+            Windows:
 
             ```powershell
             winget uninstall <package_name>
-            # Or uninstall via Settings > Apps > Installed Apps
             ```
 
   - uid: mondoo-ai-security-no-unapproved-homebrew-ai-packages
@@ -251,11 +286,29 @@ queries:
       ).length == 0
     docs:
       desc: |
-        This check ensures that no unapproved AI tools are installed via Homebrew on macOS. Homebrew casks are a common installation method for desktop AI applications.
+        Homebrew is a common installation path for desktop AI applications on macOS, and packages installed this way persist outside the approved software set. Only AI tools reviewed and approved by the security team should be present on corporate endpoints. The `mondooAiSecurityApprovedHomebrewPackages` property defines the allow-list and can be customized for your environment.
+
+        **Why this matters**
+
+        - **Unmanaged installs:** Homebrew lets users install AI tools without administrator review or change control.
+        - **Latent risk:** A package that is installed but idle can be launched at any time, reintroducing data-egress exposure.
+        - **Inventory gaps:** Tools installed outside the approved set leave security teams without an accurate picture of endpoint software.
+        - **Third-party taps:** Homebrew casks can pull from community taps that are not part of the organization's supply chain.
+      audit: |-
+        To verify that no unapproved AI tools are installed via Homebrew:
+
+        1. Open a terminal on the macOS endpoint.
+        2. List installed Homebrew packages and casks and search for known AI tool names:
+
+           ```bash
+           brew list --versions | grep -iE 'ollama|llama|lm-studio|localai|gpt4all|cursor|windsurf|codex|chatgpt|goose|codeium|tabby'
+           ```
+
+        The endpoint passes when no package outside the approved allow-list is returned. Any matching package that is not an approved tool is a failing result.
       remediation:
-        - id: macos
+        - id: cli
           desc: |
-            Remove unapproved AI packages:
+            To remove an unapproved AI package installed via Homebrew:
 
             ```bash
             brew uninstall <package_name>
@@ -285,29 +338,51 @@ queries:
       cursor.skills.length == 0 && cursor.mcpServers.length == 0 && cursor.rules.length == 0
     docs:
       desc: |
-        This check ensures that Cursor, an AI-native code editor, is not configured on the endpoint. Cursor sends code to cloud AI models for completion and chat, which can result in proprietary source code being transmitted to third-party services.
+        Cursor is an AI-native code editor that sends code to cloud AI models for completion and chat. When it is configured on an endpoint, proprietary source code can be transmitted to third-party services as part of normal editing. Endpoints should carry only the editors approved by the security team.
 
-        If Cursor is approved in your organization, remove this check or add an exception.
+        **Why this matters**
+
+        - **Source code exposure:** Editing files in Cursor routinely uploads code context to a cloud model provider.
+        - **Credential leakage:** Repository files opened in the editor may contain tokens and secrets that are sent alongside code context.
+        - **Bypassed review:** AI-generated edits applied through Cursor skip the controls that govern approved tooling.
+        - **Inventory gaps:** An unsanctioned editor leaves security teams without an accurate picture of how code leaves the endpoint.
+      audit: |-
+        To verify that Cursor is not configured on the endpoint:
+
+        1. Open a terminal on the endpoint.
+        2. Check for the Cursor configuration directories:
+
+           ```bash
+           ls -d ~/.cursor ~/Library/Application\ Support/Cursor ~/.config/Cursor 2>/dev/null
+           ```
+
+        The endpoint passes when no Cursor configuration directory exists. A directory containing skills, MCP servers, or rules is a failing result.
       remediation:
-        - id: macos
+        - id: gui
           desc: |
-            Uninstall Cursor and remove its configuration.
+            To remove Cursor using the operating system interface:
+
+            1. On macOS, quit Cursor and drag the application from `/Applications` to the Trash.
+            2. On Windows, open **Settings > Apps > Installed apps**, locate Cursor, and select **Uninstall**.
+        - id: cli
+          desc: |
+            To uninstall Cursor and remove its configuration from the command line:
+
+            macOS:
 
             ```bash
             rm -rf ~/Library/Application\ Support/Cursor
             rm -rf ~/.cursor
             ```
-        - id: linux
-          desc: |
-            Uninstall Cursor and remove its configuration.
+
+            Linux:
 
             ```bash
             rm -rf ~/.config/Cursor
             rm -rf ~/.cursor
             ```
-        - id: windows
-          desc: |
-            Uninstall Cursor and remove its configuration.
+
+            Windows:
 
             ```powershell
             Remove-Item -Recurse -Force "$env:APPDATA\Cursor"
@@ -336,27 +411,51 @@ queries:
       windsurf.skills.length == 0 && windsurf.mcpServers.length == 0 && windsurf.rules.length == 0
     docs:
       desc: |
-        This check ensures that Windsurf (Codeium), an AI-native code editor, is not configured on the endpoint.
+        Windsurf is an AI-native code editor from Codeium that sends code to cloud AI models for completion and chat. When it is configured on an endpoint, proprietary source code can be transmitted to third-party services as part of normal editing. Endpoints should carry only the editors approved by the security team.
+
+        **Why this matters**
+
+        - **Source code exposure:** Editing files in Windsurf routinely uploads code context to a cloud model provider.
+        - **Credential leakage:** Repository files opened in the editor may contain tokens and secrets that are sent alongside code context.
+        - **Bypassed review:** AI-generated edits applied through Windsurf skip the controls that govern approved tooling.
+        - **Inventory gaps:** An unsanctioned editor leaves security teams without an accurate picture of how code leaves the endpoint.
+      audit: |-
+        To verify that Windsurf is not configured on the endpoint:
+
+        1. Open a terminal on the endpoint.
+        2. Check for the Windsurf configuration directories:
+
+           ```bash
+           ls -d ~/.codeium/windsurf ~/Library/Application\ Support/Windsurf ~/.config/Windsurf 2>/dev/null
+           ```
+
+        The endpoint passes when no Windsurf configuration directory exists. A directory containing skills, MCP servers, or rules is a failing result.
       remediation:
-        - id: macos
+        - id: gui
           desc: |
-            Uninstall Windsurf and remove its configuration.
+            To remove Windsurf using the operating system interface:
+
+            1. On macOS, quit Windsurf and drag the application from `/Applications` to the Trash.
+            2. On Windows, open **Settings > Apps > Installed apps**, locate Windsurf, and select **Uninstall**.
+        - id: cli
+          desc: |
+            To uninstall Windsurf and remove its configuration from the command line:
+
+            macOS:
 
             ```bash
             rm -rf ~/Library/Application\ Support/Windsurf
             rm -rf ~/.codeium/windsurf
             ```
-        - id: linux
-          desc: |
-            Uninstall Windsurf and remove its configuration.
+
+            Linux:
 
             ```bash
             rm -rf ~/.config/Windsurf
             rm -rf ~/.codeium/windsurf
             ```
-        - id: windows
-          desc: |
-            Uninstall Windsurf and remove its configuration.
+
+            Windows:
 
             ```powershell
             Remove-Item -Recurse -Force "$env:APPDATA\Windsurf"
@@ -385,25 +484,43 @@ queries:
       goose.skills.length == 0 && goose.extensions.length == 0
     docs:
       desc: |
-        This check ensures that Goose, an open-source AI agent by Block, is not configured on the endpoint. Goose can connect to multiple AI providers and execute code with full system access via extensions.
+        Goose is an open-source AI agent from Block that connects to multiple model providers and executes code with full system access through extensions. When it is configured on an endpoint, it can act autonomously on local files and systems. Endpoints should carry only the AI agents approved by the security team.
+
+        **Why this matters**
+
+        - **Autonomous execution:** Goose extensions can run commands and modify files with the user's full privileges.
+        - **Source code exposure:** The agent sends file and repository context to whichever model provider it is connected to.
+        - **Credential leakage:** Files and environment variables read by the agent may contain tokens that reach a third-party API.
+        - **Inventory gaps:** An unsanctioned agent leaves security teams without an accurate picture of how code and data leave the endpoint.
+      audit: |-
+        To verify that Goose is not configured on the endpoint:
+
+        1. Open a terminal on the endpoint.
+        2. Check for the Goose configuration directory:
+
+           ```bash
+           ls -d ~/.config/goose 2>/dev/null
+           ```
+
+        The endpoint passes when no Goose configuration directory exists. A directory containing skills or extensions is a failing result.
       remediation:
-        - id: macos
+        - id: gui
           desc: |
-            Remove Goose configuration.
+            To remove the Goose application using the operating system interface:
+
+            1. On macOS, quit Goose and drag the application from `/Applications` to the Trash.
+            2. On Windows, open **Settings > Apps > Installed apps**, locate Goose, and select **Uninstall**.
+        - id: cli
+          desc: |
+            To remove the Goose configuration from the command line:
+
+            macOS and Linux:
 
             ```bash
             rm -rf ~/.config/goose
             ```
-        - id: linux
-          desc: |
-            Remove Goose configuration.
 
-            ```bash
-            rm -rf ~/.config/goose
-            ```
-        - id: windows
-          desc: |
-            Remove Goose configuration.
+            Windows:
 
             ```powershell
             Remove-Item -Recurse -Force "$env:APPDATA\goose"
@@ -430,19 +547,43 @@ queries:
       zed.extensions.length == 0
     docs:
       desc: |
-        This check ensures that Zed, an editor with built-in AI features, is not configured on the endpoint.
+        Zed is a code editor with built-in AI assistant features that send code to cloud model providers for completion and chat. When it is configured on an endpoint, proprietary source code can be transmitted to third-party services as part of normal editing. Endpoints should carry only the editors approved by the security team.
+
+        **Why this matters**
+
+        - **Source code exposure:** Zed's AI features upload code context to a cloud model provider during editing.
+        - **Credential leakage:** Repository files opened in the editor may contain tokens and secrets that are sent alongside code context.
+        - **Bypassed review:** AI-generated edits applied through Zed skip the controls that govern approved tooling.
+        - **Inventory gaps:** An unsanctioned editor leaves security teams without an accurate picture of how code leaves the endpoint.
+      audit: |-
+        To verify that Zed is not configured on the endpoint:
+
+        1. Open a terminal on the endpoint.
+        2. Check for the Zed configuration directories:
+
+           ```bash
+           ls -d ~/.config/zed ~/Library/Application\ Support/Zed ~/.local/share/zed 2>/dev/null
+           ```
+
+        The endpoint passes when no Zed configuration directory exists. A directory containing installed extensions is a failing result.
       remediation:
-        - id: macos
+        - id: gui
           desc: |
-            Remove Zed configuration.
+            To remove Zed using the operating system interface:
+
+            1. On macOS, quit Zed and drag the application from `/Applications` to the Trash.
+        - id: cli
+          desc: |
+            To remove the Zed configuration from the command line:
+
+            macOS:
 
             ```bash
             rm -rf ~/Library/Application\ Support/Zed
             rm -rf ~/.config/zed
             ```
-        - id: linux
-          desc: |
-            Remove Zed configuration.
+
+            Linux:
 
             ```bash
             rm -rf ~/.config/zed
@@ -469,25 +610,37 @@ queries:
     mql: cline.skills.length == 0
     docs:
       desc: |
-        This check ensures that Cline, an AI coding agent, is not configured on the endpoint.
+        Cline is an autonomous AI coding agent that connects to cloud model providers and can execute commands and modify files on the endpoint. When it is configured, proprietary source code and credentials can be transmitted to third-party services. Endpoints should carry only the AI agents approved by the security team.
+
+        **Why this matters**
+
+        - **Autonomous execution:** Cline can run commands and edit files with the user's full privileges.
+        - **Source code exposure:** The agent sends file and repository context to a cloud model provider.
+        - **Credential leakage:** Files and environment variables read by the agent may contain tokens that reach a third-party API.
+        - **Inventory gaps:** An unsanctioned agent leaves security teams without an accurate picture of how code and data leave the endpoint.
+      audit: |-
+        To verify that Cline is not configured on the endpoint:
+
+        1. Open a terminal on the endpoint.
+        2. Check for the Cline configuration directory:
+
+           ```bash
+           ls -d ~/.cline 2>/dev/null
+           ```
+
+        The endpoint passes when no Cline configuration directory exists. A directory containing configured skills is a failing result.
       remediation:
-        - id: macos
+        - id: cli
           desc: |
-            Remove Cline configuration.
+            To remove the Cline configuration from the command line:
+
+            macOS and Linux:
 
             ```bash
             rm -rf ~/.cline
             ```
-        - id: linux
-          desc: |
-            Remove Cline configuration.
 
-            ```bash
-            rm -rf ~/.cline
-            ```
-        - id: windows
-          desc: |
-            Remove Cline configuration.
+            Windows:
 
             ```powershell
             Remove-Item -Recurse -Force "$env:USERPROFILE\.cline"
@@ -513,25 +666,37 @@ queries:
     mql: roo.skills.length == 0
     docs:
       desc: |
-        This check ensures that Roo Code, an AI coding agent, is not configured on the endpoint.
+        Roo Code is an autonomous AI coding agent that connects to cloud model providers and can execute commands and modify files on the endpoint. When it is configured, proprietary source code and credentials can be transmitted to third-party services. Endpoints should carry only the AI agents approved by the security team.
+
+        **Why this matters**
+
+        - **Autonomous execution:** Roo Code can run commands and edit files with the user's full privileges.
+        - **Source code exposure:** The agent sends file and repository context to a cloud model provider.
+        - **Credential leakage:** Files and environment variables read by the agent may contain tokens that reach a third-party API.
+        - **Inventory gaps:** An unsanctioned agent leaves security teams without an accurate picture of how code and data leave the endpoint.
+      audit: |-
+        To verify that Roo Code is not configured on the endpoint:
+
+        1. Open a terminal on the endpoint.
+        2. Check for the Roo Code configuration directory:
+
+           ```bash
+           ls -d ~/.roo 2>/dev/null
+           ```
+
+        The endpoint passes when no Roo Code configuration directory exists. A directory containing configured skills is a failing result.
       remediation:
-        - id: macos
+        - id: cli
           desc: |
-            Remove Roo Code configuration.
+            To remove the Roo Code configuration from the command line:
+
+            macOS and Linux:
 
             ```bash
             rm -rf ~/.roo
             ```
-        - id: linux
-          desc: |
-            Remove Roo Code configuration.
 
-            ```bash
-            rm -rf ~/.roo
-            ```
-        - id: windows
-          desc: |
-            Remove Roo Code configuration.
+            Windows:
 
             ```powershell
             Remove-Item -Recurse -Force "$env:USERPROFILE\.roo"
@@ -557,25 +722,37 @@ queries:
     mql: continuedev.skills.length == 0
     docs:
       desc: |
-        This check ensures that Continue, an open-source AI coding assistant, is not configured on the endpoint.
+        Continue is an open-source AI coding assistant that connects to a range of cloud model providers and can execute commands and modify files on the endpoint. When it is configured, proprietary source code and credentials can be transmitted to third-party services. Endpoints should carry only the AI agents approved by the security team.
+
+        **Why this matters**
+
+        - **Autonomous execution:** Continue can run commands and edit files with the user's full privileges.
+        - **Source code exposure:** The agent sends file and repository context to whichever model provider it is connected to.
+        - **Credential leakage:** Files and environment variables read by the agent may contain tokens that reach a third-party API.
+        - **Inventory gaps:** An unsanctioned agent leaves security teams without an accurate picture of how code and data leave the endpoint.
+      audit: |-
+        To verify that Continue is not configured on the endpoint:
+
+        1. Open a terminal on the endpoint.
+        2. Check for the Continue configuration directory:
+
+           ```bash
+           ls -d ~/.continue 2>/dev/null
+           ```
+
+        The endpoint passes when no Continue configuration directory exists. A directory containing configured skills is a failing result.
       remediation:
-        - id: macos
+        - id: cli
           desc: |
-            Remove Continue configuration.
+            To remove the Continue configuration from the command line:
+
+            macOS and Linux:
 
             ```bash
             rm -rf ~/.continue
             ```
-        - id: linux
-          desc: |
-            Remove Continue configuration.
 
-            ```bash
-            rm -rf ~/.continue
-            ```
-        - id: windows
-          desc: |
-            Remove Continue configuration.
+            Windows:
 
             ```powershell
             Remove-Item -Recurse -Force "$env:USERPROFILE\.continue"
@@ -601,25 +778,37 @@ queries:
     mql: trae.skills.length == 0
     docs:
       desc: |
-        This check ensures that Trae, an AI coding agent, is not configured on the endpoint.
+        Trae is an AI coding agent that connects to cloud model providers and can execute commands and modify files on the endpoint. When it is configured, proprietary source code and credentials can be transmitted to third-party services. Endpoints should carry only the AI agents approved by the security team.
+
+        **Why this matters**
+
+        - **Autonomous execution:** Trae can run commands and edit files with the user's full privileges.
+        - **Source code exposure:** The agent sends file and repository context to a cloud model provider.
+        - **Credential leakage:** Files and environment variables read by the agent may contain tokens that reach a third-party API.
+        - **Inventory gaps:** An unsanctioned agent leaves security teams without an accurate picture of how code and data leave the endpoint.
+      audit: |-
+        To verify that Trae is not configured on the endpoint:
+
+        1. Open a terminal on the endpoint.
+        2. Check for the Trae configuration directory:
+
+           ```bash
+           ls -d ~/.trae 2>/dev/null
+           ```
+
+        The endpoint passes when no Trae configuration directory exists. A directory containing configured skills is a failing result.
       remediation:
-        - id: macos
+        - id: cli
           desc: |
-            Remove Trae configuration.
+            To remove the Trae configuration from the command line:
+
+            macOS and Linux:
 
             ```bash
             rm -rf ~/.trae
             ```
-        - id: linux
-          desc: |
-            Remove Trae configuration.
 
-            ```bash
-            rm -rf ~/.trae
-            ```
-        - id: windows
-          desc: |
-            Remove Trae configuration.
+            Windows:
 
             ```powershell
             Remove-Item -Recurse -Force "$env:USERPROFILE\.trae"
@@ -645,25 +834,37 @@ queries:
     mql: opencode.skills.length == 0
     docs:
       desc: |
-        This check ensures that OpenCode, an AI coding agent, is not configured on the endpoint.
+        OpenCode is an AI coding agent that connects to cloud model providers and can execute commands and modify files on the endpoint. When it is configured, proprietary source code and credentials can be transmitted to third-party services. Endpoints should carry only the AI agents approved by the security team.
+
+        **Why this matters**
+
+        - **Autonomous execution:** OpenCode can run commands and edit files with the user's full privileges.
+        - **Source code exposure:** The agent sends file and repository context to a cloud model provider.
+        - **Credential leakage:** Files and environment variables read by the agent may contain tokens that reach a third-party API.
+        - **Inventory gaps:** An unsanctioned agent leaves security teams without an accurate picture of how code and data leave the endpoint.
+      audit: |-
+        To verify that OpenCode is not configured on the endpoint:
+
+        1. Open a terminal on the endpoint.
+        2. Check for the OpenCode configuration directory:
+
+           ```bash
+           ls -d ~/.config/opencode 2>/dev/null
+           ```
+
+        The endpoint passes when no OpenCode configuration directory exists. A directory containing configured skills is a failing result.
       remediation:
-        - id: macos
+        - id: cli
           desc: |
-            Remove OpenCode configuration.
+            To remove the OpenCode configuration from the command line:
+
+            macOS and Linux:
 
             ```bash
             rm -rf ~/.config/opencode
             ```
-        - id: linux
-          desc: |
-            Remove OpenCode configuration.
 
-            ```bash
-            rm -rf ~/.config/opencode
-            ```
-        - id: windows
-          desc: |
-            Remove OpenCode configuration.
+            Windows:
 
             ```powershell
             Remove-Item -Recurse -Force "$env:APPDATA\opencode"
@@ -689,25 +890,37 @@ queries:
     mql: kiro.skills.length == 0
     docs:
       desc: |
-        This check ensures that Kiro, an AI coding agent, is not configured on the endpoint.
+        Kiro is an AI coding agent that connects to cloud model providers and can execute commands and modify files on the endpoint. When it is configured, proprietary source code and credentials can be transmitted to third-party services. Endpoints should carry only the AI agents approved by the security team.
+
+        **Why this matters**
+
+        - **Autonomous execution:** Kiro can run commands and edit files with the user's full privileges.
+        - **Source code exposure:** The agent sends file and repository context to a cloud model provider.
+        - **Credential leakage:** Files and environment variables read by the agent may contain tokens that reach a third-party API.
+        - **Inventory gaps:** An unsanctioned agent leaves security teams without an accurate picture of how code and data leave the endpoint.
+      audit: |-
+        To verify that Kiro is not configured on the endpoint:
+
+        1. Open a terminal on the endpoint.
+        2. Check for the Kiro configuration directory:
+
+           ```bash
+           ls -d ~/.kiro 2>/dev/null
+           ```
+
+        The endpoint passes when no Kiro configuration directory exists. A directory containing configured skills is a failing result.
       remediation:
-        - id: macos
+        - id: cli
           desc: |
-            Remove Kiro configuration.
+            To remove the Kiro configuration from the command line:
+
+            macOS and Linux:
 
             ```bash
             rm -rf ~/.kiro
             ```
-        - id: linux
-          desc: |
-            Remove Kiro configuration.
 
-            ```bash
-            rm -rf ~/.kiro
-            ```
-        - id: windows
-          desc: |
-            Remove Kiro configuration.
+            Windows:
 
             ```powershell
             Remove-Item -Recurse -Force "$env:USERPROFILE\.kiro"
@@ -733,25 +946,37 @@ queries:
     mql: pi.skills.length == 0
     docs:
       desc: |
-        This check ensures that Pi, an AI coding agent, is not configured on the endpoint.
+        Pi is an AI coding agent that connects to cloud model providers and can execute commands and modify files on the endpoint. When it is configured, proprietary source code and credentials can be transmitted to third-party services. Endpoints should carry only the AI agents approved by the security team.
+
+        **Why this matters**
+
+        - **Autonomous execution:** Pi can run commands and edit files with the user's full privileges.
+        - **Source code exposure:** The agent sends file and repository context to a cloud model provider.
+        - **Credential leakage:** Files and environment variables read by the agent may contain tokens that reach a third-party API.
+        - **Inventory gaps:** An unsanctioned agent leaves security teams without an accurate picture of how code and data leave the endpoint.
+      audit: |-
+        To verify that Pi is not configured on the endpoint:
+
+        1. Open a terminal on the endpoint.
+        2. Check for the Pi agent configuration directory:
+
+           ```bash
+           ls -d ~/.pi/agent 2>/dev/null
+           ```
+
+        The endpoint passes when no Pi agent configuration directory exists. A directory containing configured skills is a failing result.
       remediation:
-        - id: macos
+        - id: cli
           desc: |
-            Remove Pi configuration.
+            To remove the Pi agent configuration from the command line:
+
+            macOS and Linux:
 
             ```bash
             rm -rf ~/.pi/agent
             ```
-        - id: linux
-          desc: |
-            Remove Pi configuration.
 
-            ```bash
-            rm -rf ~/.pi/agent
-            ```
-        - id: windows
-          desc: |
-            Remove Pi configuration.
+            Windows:
 
             ```powershell
             Remove-Item -Recurse -Force "$env:USERPROFILE\.pi\agent"
@@ -777,25 +1002,37 @@ queries:
     mql: mistral.vibe.skills.length == 0
     docs:
       desc: |
-        This check ensures that Mistral Vibe, an AI coding agent by Mistral, is not configured on the endpoint.
+        Mistral Vibe is an AI coding agent from Mistral that connects to cloud model providers and can execute commands and modify files on the endpoint. When it is configured, proprietary source code and credentials can be transmitted to third-party services. Endpoints should carry only the AI agents approved by the security team.
+
+        **Why this matters**
+
+        - **Autonomous execution:** Mistral Vibe can run commands and edit files with the user's full privileges.
+        - **Source code exposure:** The agent sends file and repository context to a cloud model provider.
+        - **Credential leakage:** Files and environment variables read by the agent may contain tokens that reach a third-party API.
+        - **Inventory gaps:** An unsanctioned agent leaves security teams without an accurate picture of how code and data leave the endpoint.
+      audit: |-
+        To verify that Mistral Vibe is not configured on the endpoint:
+
+        1. Open a terminal on the endpoint.
+        2. Check for the Mistral Vibe configuration directory:
+
+           ```bash
+           ls -d ~/.vibe 2>/dev/null
+           ```
+
+        The endpoint passes when no Mistral Vibe configuration directory exists. A directory containing configured skills is a failing result.
       remediation:
-        - id: macos
+        - id: cli
           desc: |
-            Remove Mistral Vibe configuration.
+            To remove the Mistral Vibe configuration from the command line:
+
+            macOS and Linux:
 
             ```bash
             rm -rf ~/.vibe
             ```
-        - id: linux
-          desc: |
-            Remove Mistral Vibe configuration.
 
-            ```bash
-            rm -rf ~/.vibe
-            ```
-        - id: windows
-          desc: |
-            Remove Mistral Vibe configuration.
+            Windows:
 
             ```powershell
             Remove-Item -Recurse -Force "$env:USERPROFILE\.vibe"
@@ -821,25 +1058,37 @@ queries:
     mql: antigravity.skills.length == 0
     docs:
       desc: |
-        This check ensures that Antigravity (Google), an AI coding agent, is not configured on the endpoint.
+        Antigravity is an AI coding agent from Google that connects to cloud model providers and can execute commands and modify files on the endpoint. When it is configured, proprietary source code and credentials can be transmitted to third-party services. Endpoints should carry only the AI agents approved by the security team.
+
+        **Why this matters**
+
+        - **Autonomous execution:** Antigravity can run commands and edit files with the user's full privileges.
+        - **Source code exposure:** The agent sends file and repository context to a cloud model provider.
+        - **Credential leakage:** Files and environment variables read by the agent may contain tokens that reach a third-party API.
+        - **Inventory gaps:** An unsanctioned agent leaves security teams without an accurate picture of how code and data leave the endpoint.
+      audit: |-
+        To verify that Antigravity is not configured on the endpoint:
+
+        1. Open a terminal on the endpoint.
+        2. Check for the Antigravity configuration directory:
+
+           ```bash
+           ls -d ~/.gemini/antigravity 2>/dev/null
+           ```
+
+        The endpoint passes when no Antigravity configuration directory exists. A directory containing configured skills is a failing result.
       remediation:
-        - id: macos
+        - id: cli
           desc: |
-            Remove Antigravity configuration.
+            To remove the Antigravity configuration from the command line:
+
+            macOS and Linux:
 
             ```bash
             rm -rf ~/.gemini/antigravity
             ```
-        - id: linux
-          desc: |
-            Remove Antigravity configuration.
 
-            ```bash
-            rm -rf ~/.gemini/antigravity
-            ```
-        - id: windows
-          desc: |
-            Remove Antigravity configuration.
+            Windows:
 
             ```powershell
             Remove-Item -Recurse -Force "$env:USERPROFILE\.gemini\antigravity"
@@ -865,25 +1114,37 @@ queries:
     mql: ibm.bob.skills.length == 0
     docs:
       desc: |
-        This check ensures that IBM Bob, an AI coding agent, is not configured on the endpoint.
+        IBM Bob is an AI coding agent that connects to cloud model providers and can execute commands and modify files on the endpoint. When it is configured, proprietary source code and credentials can be transmitted to third-party services. Endpoints should carry only the AI agents approved by the security team.
+
+        **Why this matters**
+
+        - **Autonomous execution:** IBM Bob can run commands and edit files with the user's full privileges.
+        - **Source code exposure:** The agent sends file and repository context to a cloud model provider.
+        - **Credential leakage:** Files and environment variables read by the agent may contain tokens that reach a third-party API.
+        - **Inventory gaps:** An unsanctioned agent leaves security teams without an accurate picture of how code and data leave the endpoint.
+      audit: |-
+        To verify that IBM Bob is not configured on the endpoint:
+
+        1. Open a terminal on the endpoint.
+        2. Check for the IBM Bob configuration directory:
+
+           ```bash
+           ls -d ~/.bob 2>/dev/null
+           ```
+
+        The endpoint passes when no IBM Bob configuration directory exists. A directory containing configured skills is a failing result.
       remediation:
-        - id: macos
+        - id: cli
           desc: |
-            Remove IBM Bob configuration.
+            To remove the IBM Bob configuration from the command line:
+
+            macOS and Linux:
 
             ```bash
             rm -rf ~/.bob
             ```
-        - id: linux
-          desc: |
-            Remove IBM Bob configuration.
 
-            ```bash
-            rm -rf ~/.bob
-            ```
-        - id: windows
-          desc: |
-            Remove IBM Bob configuration.
+            Windows:
 
             ```powershell
             Remove-Item -Recurse -Force "$env:USERPROFILE\.bob"
@@ -909,25 +1170,37 @@ queries:
     mql: openclaw.skills.length == 0
     docs:
       desc: |
-        This check ensures that OpenClaw, an AI coding agent, is not configured on the endpoint.
+        OpenClaw is an AI coding agent that connects to cloud model providers and can execute commands and modify files on the endpoint. When it is configured, proprietary source code and credentials can be transmitted to third-party services. Endpoints should carry only the AI agents approved by the security team.
+
+        **Why this matters**
+
+        - **Autonomous execution:** OpenClaw can run commands and edit files with the user's full privileges.
+        - **Source code exposure:** The agent sends file and repository context to a cloud model provider.
+        - **Credential leakage:** Files and environment variables read by the agent may contain tokens that reach a third-party API.
+        - **Inventory gaps:** An unsanctioned agent leaves security teams without an accurate picture of how code and data leave the endpoint.
+      audit: |-
+        To verify that OpenClaw is not configured on the endpoint:
+
+        1. Open a terminal on the endpoint.
+        2. Check for the OpenClaw configuration directory:
+
+           ```bash
+           ls -d ~/.openclaw 2>/dev/null
+           ```
+
+        The endpoint passes when no OpenClaw configuration directory exists. A directory containing configured skills is a failing result.
       remediation:
-        - id: macos
+        - id: cli
           desc: |
-            Remove OpenClaw configuration.
+            To remove the OpenClaw configuration from the command line:
+
+            macOS and Linux:
 
             ```bash
             rm -rf ~/.openclaw
             ```
-        - id: linux
-          desc: |
-            Remove OpenClaw configuration.
 
-            ```bash
-            rm -rf ~/.openclaw
-            ```
-        - id: windows
-          desc: |
-            Remove OpenClaw configuration.
+            Windows:
 
             ```powershell
             Remove-Item -Recurse -Force "$env:USERPROFILE\.openclaw"
@@ -953,25 +1226,37 @@ queries:
     mql: snowflake.cortex.skills.length == 0
     docs:
       desc: |
-        This check ensures that Snowflake Cortex Code, an AI coding agent, is not configured on the endpoint.
+        Snowflake Cortex Code is an AI coding agent that connects to cloud model providers and can execute commands and modify files on the endpoint. When it is configured, proprietary source code and credentials can be transmitted to third-party services. Endpoints should carry only the AI agents approved by the security team.
+
+        **Why this matters**
+
+        - **Autonomous execution:** Snowflake Cortex Code can run commands and edit files with the user's full privileges.
+        - **Source code exposure:** The agent sends file and repository context to a cloud model provider.
+        - **Credential leakage:** Files and environment variables read by the agent may contain tokens that reach a third-party API.
+        - **Inventory gaps:** An unsanctioned agent leaves security teams without an accurate picture of how code and data leave the endpoint.
+      audit: |-
+        To verify that Snowflake Cortex Code is not configured on the endpoint:
+
+        1. Open a terminal on the endpoint.
+        2. Check for the Snowflake Cortex configuration directory:
+
+           ```bash
+           ls -d ~/.snowflake/cortex 2>/dev/null
+           ```
+
+        The endpoint passes when no Snowflake Cortex configuration directory exists. A directory containing configured skills is a failing result.
       remediation:
-        - id: macos
+        - id: cli
           desc: |
-            Remove Snowflake Cortex configuration.
+            To remove the Snowflake Cortex configuration from the command line:
+
+            macOS and Linux:
 
             ```bash
             rm -rf ~/.snowflake/cortex
             ```
-        - id: linux
-          desc: |
-            Remove Snowflake Cortex configuration.
 
-            ```bash
-            rm -rf ~/.snowflake/cortex
-            ```
-        - id: windows
-          desc: |
-            Remove Snowflake Cortex configuration.
+            Windows:
 
             ```powershell
             Remove-Item -Recurse -Force "$env:USERPROFILE\.snowflake\cortex"
@@ -997,25 +1282,37 @@ queries:
     mql: junie.skills.length == 0
     docs:
       desc: |
-        This check ensures that Junie (JetBrains), an AI coding agent, is not configured on the endpoint.
+        Junie is an AI coding agent from JetBrains that connects to cloud model providers and can execute commands and modify files on the endpoint. When it is configured, proprietary source code and credentials can be transmitted to third-party services. Endpoints should carry only the AI agents approved by the security team.
+
+        **Why this matters**
+
+        - **Autonomous execution:** Junie can run commands and edit files with the user's full privileges.
+        - **Source code exposure:** The agent sends file and repository context to a cloud model provider.
+        - **Credential leakage:** Files and environment variables read by the agent may contain tokens that reach a third-party API.
+        - **Inventory gaps:** An unsanctioned agent leaves security teams without an accurate picture of how code and data leave the endpoint.
+      audit: |-
+        To verify that Junie is not configured on the endpoint:
+
+        1. Open a terminal on the endpoint.
+        2. Check for the Junie configuration directory:
+
+           ```bash
+           ls -d ~/.junie 2>/dev/null
+           ```
+
+        The endpoint passes when no Junie configuration directory exists. A directory containing configured skills is a failing result.
       remediation:
-        - id: macos
+        - id: cli
           desc: |
-            Remove Junie configuration.
+            To remove the Junie configuration from the command line:
+
+            macOS and Linux:
 
             ```bash
             rm -rf ~/.junie
             ```
-        - id: linux
-          desc: |
-            Remove Junie configuration.
 
-            ```bash
-            rm -rf ~/.junie
-            ```
-        - id: windows
-          desc: |
-            Remove Junie configuration.
+            Windows:
 
             ```powershell
             Remove-Item -Recurse -Force "$env:USERPROFILE\.junie"
@@ -1041,25 +1338,37 @@ queries:
     mql: augment.skills.length == 0
     docs:
       desc: |
-        This check ensures that Augment, an AI coding agent, is not configured on the endpoint.
+        Augment is an AI coding agent that connects to cloud model providers and can execute commands and modify files on the endpoint. When it is configured, proprietary source code and credentials can be transmitted to third-party services. Endpoints should carry only the AI agents approved by the security team.
+
+        **Why this matters**
+
+        - **Autonomous execution:** Augment can run commands and edit files with the user's full privileges.
+        - **Source code exposure:** The agent sends file and repository context to a cloud model provider.
+        - **Credential leakage:** Files and environment variables read by the agent may contain tokens that reach a third-party API.
+        - **Inventory gaps:** An unsanctioned agent leaves security teams without an accurate picture of how code and data leave the endpoint.
+      audit: |-
+        To verify that Augment is not configured on the endpoint:
+
+        1. Open a terminal on the endpoint.
+        2. Check for the Augment configuration directory:
+
+           ```bash
+           ls -d ~/.augment 2>/dev/null
+           ```
+
+        The endpoint passes when no Augment configuration directory exists. A directory containing configured skills is a failing result.
       remediation:
-        - id: macos
+        - id: cli
           desc: |
-            Remove Augment configuration.
+            To remove the Augment configuration from the command line:
+
+            macOS and Linux:
 
             ```bash
             rm -rf ~/.augment
             ```
-        - id: linux
-          desc: |
-            Remove Augment configuration.
 
-            ```bash
-            rm -rf ~/.augment
-            ```
-        - id: windows
-          desc: |
-            Remove Augment configuration.
+            Windows:
 
             ```powershell
             Remove-Item -Recurse -Force "$env:USERPROFILE\.augment"
@@ -1085,25 +1394,43 @@ queries:
     mql: warp.skills.length == 0
     docs:
       desc: |
-        This check ensures that Warp, an AI-powered terminal, is not configured on the endpoint.
+        Warp is an AI-powered terminal that sends command history and context to cloud model providers for its AI features. When it is configured on an endpoint, command output and code context can be transmitted to third-party services. Endpoints should carry only the terminals approved by the security team.
+
+        **Why this matters**
+
+        - **Command exposure:** Warp's AI features send command history and output to a cloud model provider.
+        - **Credential leakage:** Commands and output may contain tokens and secrets that reach a third-party API.
+        - **Autonomous suggestions:** AI-generated commands can be executed in the terminal without separate review.
+        - **Inventory gaps:** An unsanctioned terminal leaves security teams without an accurate picture of how data leaves the endpoint.
+      audit: |-
+        To verify that Warp is not configured on the endpoint:
+
+        1. Open a terminal on the endpoint.
+        2. Check for the Warp configuration directory:
+
+           ```bash
+           ls -d ~/.warp 2>/dev/null
+           ```
+
+        The endpoint passes when no Warp configuration directory exists. A directory containing configured skills is a failing result.
       remediation:
-        - id: macos
+        - id: gui
           desc: |
-            Remove Warp configuration.
+            To remove Warp using the operating system interface:
+
+            1. On macOS, quit Warp and drag the application from `/Applications` to the Trash.
+            2. On Windows, open **Settings > Apps > Installed apps**, locate Warp, and select **Uninstall**.
+        - id: cli
+          desc: |
+            To remove the Warp configuration from the command line:
+
+            macOS and Linux:
 
             ```bash
             rm -rf ~/.warp
             ```
-        - id: linux
-          desc: |
-            Remove Warp configuration.
 
-            ```bash
-            rm -rf ~/.warp
-            ```
-        - id: windows
-          desc: |
-            Remove Warp configuration.
+            Windows:
 
             ```powershell
             Remove-Item -Recurse -Force "$env:USERPROFILE\.warp"
@@ -1129,25 +1456,37 @@ queries:
     mql: kilocode.skills.length == 0
     docs:
       desc: |
-        This check ensures that Kilo Code, an AI coding agent, is not configured on the endpoint.
+        Kilo Code is an AI coding agent that connects to cloud model providers and can execute commands and modify files on the endpoint. When it is configured, proprietary source code and credentials can be transmitted to third-party services. Endpoints should carry only the AI agents approved by the security team.
+
+        **Why this matters**
+
+        - **Autonomous execution:** Kilo Code can run commands and edit files with the user's full privileges.
+        - **Source code exposure:** The agent sends file and repository context to a cloud model provider.
+        - **Credential leakage:** Files and environment variables read by the agent may contain tokens that reach a third-party API.
+        - **Inventory gaps:** An unsanctioned agent leaves security teams without an accurate picture of how code and data leave the endpoint.
+      audit: |-
+        To verify that Kilo Code is not configured on the endpoint:
+
+        1. Open a terminal on the endpoint.
+        2. Check for the Kilo Code configuration directory:
+
+           ```bash
+           ls -d ~/.kilocode 2>/dev/null
+           ```
+
+        The endpoint passes when no Kilo Code configuration directory exists. A directory containing configured skills is a failing result.
       remediation:
-        - id: macos
+        - id: cli
           desc: |
-            Remove Kilo Code configuration.
+            To remove the Kilo Code configuration from the command line:
+
+            macOS and Linux:
 
             ```bash
             rm -rf ~/.kilocode
             ```
-        - id: linux
-          desc: |
-            Remove Kilo Code configuration.
 
-            ```bash
-            rm -rf ~/.kilocode
-            ```
-        - id: windows
-          desc: |
-            Remove Kilo Code configuration.
+            Windows:
 
             ```powershell
             Remove-Item -Recurse -Force "$env:USERPROFILE\.kilocode"
@@ -1173,25 +1512,37 @@ queries:
     mql: openhands.skills.length == 0
     docs:
       desc: |
-        This check ensures that OpenHands, an AI coding agent, is not configured on the endpoint.
+        OpenHands is an autonomous AI coding agent that connects to cloud model providers and can execute commands and modify files on the endpoint. When it is configured, proprietary source code and credentials can be transmitted to third-party services. Endpoints should carry only the AI agents approved by the security team.
+
+        **Why this matters**
+
+        - **Autonomous execution:** OpenHands can run commands and edit files with the user's full privileges.
+        - **Source code exposure:** The agent sends file and repository context to a cloud model provider.
+        - **Credential leakage:** Files and environment variables read by the agent may contain tokens that reach a third-party API.
+        - **Inventory gaps:** An unsanctioned agent leaves security teams without an accurate picture of how code and data leave the endpoint.
+      audit: |-
+        To verify that OpenHands is not configured on the endpoint:
+
+        1. Open a terminal on the endpoint.
+        2. Check for the OpenHands configuration directory:
+
+           ```bash
+           ls -d ~/.openhands 2>/dev/null
+           ```
+
+        The endpoint passes when no OpenHands configuration directory exists. A directory containing configured skills is a failing result.
       remediation:
-        - id: macos
+        - id: cli
           desc: |
-            Remove OpenHands configuration.
+            To remove the OpenHands configuration from the command line:
+
+            macOS and Linux:
 
             ```bash
             rm -rf ~/.openhands
             ```
-        - id: linux
-          desc: |
-            Remove OpenHands configuration.
 
-            ```bash
-            rm -rf ~/.openhands
-            ```
-        - id: windows
-          desc: |
-            Remove OpenHands configuration.
+            Windows:
 
             ```powershell
             Remove-Item -Recurse -Force "$env:USERPROFILE\.openhands"
@@ -1217,25 +1568,37 @@ queries:
     mql: qwen.code.skills.length == 0
     docs:
       desc: |
-        This check ensures that Qwen Code (Alibaba), an AI coding agent, is not configured on the endpoint.
+        Qwen Code is an AI coding agent from Alibaba that connects to cloud model providers and can execute commands and modify files on the endpoint. When it is configured, proprietary source code and credentials can be transmitted to third-party services. Endpoints should carry only the AI agents approved by the security team.
+
+        **Why this matters**
+
+        - **Autonomous execution:** Qwen Code can run commands and edit files with the user's full privileges.
+        - **Source code exposure:** The agent sends file and repository context to a cloud model provider.
+        - **Credential leakage:** Files and environment variables read by the agent may contain tokens that reach a third-party API.
+        - **Inventory gaps:** An unsanctioned agent leaves security teams without an accurate picture of how code and data leave the endpoint.
+      audit: |-
+        To verify that Qwen Code is not configured on the endpoint:
+
+        1. Open a terminal on the endpoint.
+        2. Check for the Qwen Code configuration directory:
+
+           ```bash
+           ls -d ~/.qwen 2>/dev/null
+           ```
+
+        The endpoint passes when no Qwen Code configuration directory exists. A directory containing configured skills is a failing result.
       remediation:
-        - id: macos
+        - id: cli
           desc: |
-            Remove Qwen Code configuration.
+            To remove the Qwen Code configuration from the command line:
+
+            macOS and Linux:
 
             ```bash
             rm -rf ~/.qwen
             ```
-        - id: linux
-          desc: |
-            Remove Qwen Code configuration.
 
-            ```bash
-            rm -rf ~/.qwen
-            ```
-        - id: windows
-          desc: |
-            Remove Qwen Code configuration.
+            Windows:
 
             ```powershell
             Remove-Item -Recurse -Force "$env:USERPROFILE\.qwen"
@@ -1267,78 +1630,44 @@ queries:
       ).length == 0
     docs:
       desc: |
-        This check ensures that no Codeium AI coding extensions are installed in VS Code-compatible editors. Codeium transmits source code to cloud AI models for completion and chat.
+        Codeium AI coding extensions installed in VS Code-compatible editors transmit source code to cloud AI models for completion and chat. When such an extension is present, proprietary code can leave the endpoint as part of normal editing. Only AI extensions reviewed and approved by the security team should be installed.
+
+        **Why this matters**
+
+        - **Source code exposure:** The extension uploads code context to a cloud model provider during editing.
+        - **Credential leakage:** Files opened in the editor may contain tokens and secrets that are sent alongside code context.
+        - **Bypassed review:** AI-generated edits applied through the extension skip the controls that govern approved tooling.
+        - **Inventory gaps:** An unsanctioned extension leaves security teams without an accurate picture of how code leaves the endpoint.
+      audit: |-
+        To verify that no Codeium extension is installed:
+
+        1. Open a terminal on the endpoint.
+        2. List installed extensions for each VS Code-compatible editor and search for Codeium:
+
+           ```bash
+           code --list-extensions | grep -i codeium
+           cursor --list-extensions | grep -i codeium
+           windsurf --list-extensions | grep -i codeium
+           ```
+
+        The endpoint passes when none of the editors return a Codeium extension. Any line beginning with `codeium.` is a failing result.
       remediation:
-        - id: macos
+        - id: gui
           desc: |
-            Uninstall the extension from whichever editor(s) have it installed. Each VS Code-compatible editor has its own CLI command:
+            To remove the Codeium extension from within the editor:
 
-            VS Code:
-
-            ```bash
-            code --uninstall-extension codeium.codeium
-            ```
-
-            Cursor:
-
-            ```bash
-            cursor --uninstall-extension codeium.codeium
-            ```
-
-            Windsurf:
-
-            ```bash
-            windsurf --uninstall-extension codeium.codeium
-            ```
-
-            You can also uninstall from within the editor: open the Extensions view (`Cmd+Shift+X`), search for the extension, and click **Uninstall**.
-        - id: linux
+            1. Open the Extensions view (`Cmd+Shift+X` on macOS, `Ctrl+Shift+X` on Windows and Linux).
+            2. Search for the Codeium extension.
+            3. Select the extension and click **Uninstall**.
+        - id: cli
           desc: |
-            Uninstall the extension from whichever editor(s) have it installed. Each VS Code-compatible editor has its own CLI command:
-
-            VS Code:
+            To uninstall the Codeium extension from whichever editor has it installed:
 
             ```bash
-            code --uninstall-extension codeium.codeium
+            code --uninstall-extension codeium.codeium       # VS Code
+            cursor --uninstall-extension codeium.codeium     # Cursor
+            windsurf --uninstall-extension codeium.codeium   # Windsurf
             ```
-
-            Cursor:
-
-            ```bash
-            cursor --uninstall-extension codeium.codeium
-            ```
-
-            Windsurf:
-
-            ```bash
-            windsurf --uninstall-extension codeium.codeium
-            ```
-
-            You can also uninstall from within the editor: open the Extensions view (`Ctrl+Shift+X`), search for the extension, and click **Uninstall**.
-        - id: windows
-          desc: |
-            Uninstall the extension from whichever editor(s) have it installed. Each VS Code-compatible editor has its own CLI command:
-
-            VS Code:
-
-            ```powershell
-            code --uninstall-extension codeium.codeium
-            ```
-
-            Cursor:
-
-            ```powershell
-            cursor --uninstall-extension codeium.codeium
-            ```
-
-            Windsurf:
-
-            ```powershell
-            windsurf --uninstall-extension codeium.codeium
-            ```
-
-            You can also uninstall from within the editor: open the Extensions view (`Ctrl+Shift+X`), search for the extension, and click **Uninstall**.
-
 
   - uid: mondoo-ai-security-no-vscode-tabnine-extension
     title: No Tabnine extensions in VS Code-compatible editors
@@ -1363,41 +1692,44 @@ queries:
       ).length == 0
     docs:
       desc: |
-        This check ensures that no Tabnine AI coding extensions are installed in VS Code-compatible editors. Tabnine can transmit source code to cloud models depending on configuration.
+        Tabnine AI coding extensions installed in VS Code-compatible editors can transmit source code to cloud AI models for completion depending on configuration. When such an extension is present, proprietary code can leave the endpoint as part of normal editing. Only AI extensions reviewed and approved by the security team should be installed.
+
+        **Why this matters**
+
+        - **Source code exposure:** The extension can upload code context to a cloud model provider during editing.
+        - **Credential leakage:** Files opened in the editor may contain tokens and secrets that are sent alongside code context.
+        - **Bypassed review:** AI-generated edits applied through the extension skip the controls that govern approved tooling.
+        - **Inventory gaps:** An unsanctioned extension leaves security teams without an accurate picture of how code leaves the endpoint.
+      audit: |-
+        To verify that no Tabnine extension is installed:
+
+        1. Open a terminal on the endpoint.
+        2. List installed extensions for each VS Code-compatible editor and search for Tabnine:
+
+           ```bash
+           code --list-extensions | grep -i tabnine
+           cursor --list-extensions | grep -i tabnine
+           windsurf --list-extensions | grep -i tabnine
+           ```
+
+        The endpoint passes when none of the editors return a Tabnine extension. Any line beginning with `tabnine.` is a failing result.
       remediation:
-        - id: macos
+        - id: gui
           desc: |
-            Uninstall the extension from whichever editor(s) have it installed:
+            To remove the Tabnine extension from within the editor:
+
+            1. Open the Extensions view (`Cmd+Shift+X` on macOS, `Ctrl+Shift+X` on Windows and Linux).
+            2. Search for Tabnine.
+            3. Select the extension and click **Uninstall**.
+        - id: cli
+          desc: |
+            To uninstall the Tabnine extension from whichever editor has it installed:
 
             ```bash
             code --uninstall-extension tabnine.tabnine-vscode       # VS Code
             cursor --uninstall-extension tabnine.tabnine-vscode     # Cursor
             windsurf --uninstall-extension tabnine.tabnine-vscode   # Windsurf
             ```
-
-            Or open the Extensions view (`Cmd+Shift+X`) in the editor, search for Tabnine, and click **Uninstall**.
-        - id: linux
-          desc: |
-            Uninstall the extension from whichever editor(s) have it installed:
-
-            ```bash
-            code --uninstall-extension tabnine.tabnine-vscode       # VS Code
-            cursor --uninstall-extension tabnine.tabnine-vscode     # Cursor
-            windsurf --uninstall-extension tabnine.tabnine-vscode   # Windsurf
-            ```
-
-            Or open the Extensions view (`Ctrl+Shift+X`) in the editor, search for Tabnine, and click **Uninstall**.
-        - id: windows
-          desc: |
-            Uninstall the extension from whichever editor(s) have it installed:
-
-            ```powershell
-            code --uninstall-extension tabnine.tabnine-vscode       # VS Code
-            cursor --uninstall-extension tabnine.tabnine-vscode     # Cursor
-            windsurf --uninstall-extension tabnine.tabnine-vscode   # Windsurf
-            ```
-
-            Or open the Extensions view (`Ctrl+Shift+X`) in the editor, search for Tabnine, and click **Uninstall**.
 
   - uid: mondoo-ai-security-no-vscode-supermaven-extension
     title: No Supermaven extensions in VS Code-compatible editors
@@ -1422,41 +1754,44 @@ queries:
       ).length == 0
     docs:
       desc: |
-        This check ensures that no Supermaven AI coding extensions are installed in VS Code-compatible editors.
+        Supermaven AI coding extensions installed in VS Code-compatible editors transmit source code to cloud AI models for completion. When such an extension is present, proprietary code can leave the endpoint as part of normal editing. Only AI extensions reviewed and approved by the security team should be installed.
+
+        **Why this matters**
+
+        - **Source code exposure:** The extension uploads code context to a cloud model provider during editing.
+        - **Credential leakage:** Files opened in the editor may contain tokens and secrets that are sent alongside code context.
+        - **Bypassed review:** AI-generated edits applied through the extension skip the controls that govern approved tooling.
+        - **Inventory gaps:** An unsanctioned extension leaves security teams without an accurate picture of how code leaves the endpoint.
+      audit: |-
+        To verify that no Supermaven extension is installed:
+
+        1. Open a terminal on the endpoint.
+        2. List installed extensions for each VS Code-compatible editor and search for Supermaven:
+
+           ```bash
+           code --list-extensions | grep -i supermaven
+           cursor --list-extensions | grep -i supermaven
+           windsurf --list-extensions | grep -i supermaven
+           ```
+
+        The endpoint passes when none of the editors return a Supermaven extension. Any line beginning with `supermaven.` is a failing result.
       remediation:
-        - id: macos
+        - id: gui
           desc: |
-            Uninstall the extension from whichever editor(s) have it installed:
+            To remove the Supermaven extension from within the editor:
+
+            1. Open the Extensions view (`Cmd+Shift+X` on macOS, `Ctrl+Shift+X` on Windows and Linux).
+            2. Search for Supermaven.
+            3. Select the extension and click **Uninstall**.
+        - id: cli
+          desc: |
+            To uninstall the Supermaven extension from whichever editor has it installed:
 
             ```bash
             code --uninstall-extension supermaven.supermaven       # VS Code
             cursor --uninstall-extension supermaven.supermaven     # Cursor
             windsurf --uninstall-extension supermaven.supermaven   # Windsurf
             ```
-
-            Or open the Extensions view (`Cmd+Shift+X`) in the editor, search for Supermaven, and click **Uninstall**.
-        - id: linux
-          desc: |
-            Uninstall the extension from whichever editor(s) have it installed:
-
-            ```bash
-            code --uninstall-extension supermaven.supermaven       # VS Code
-            cursor --uninstall-extension supermaven.supermaven     # Cursor
-            windsurf --uninstall-extension supermaven.supermaven   # Windsurf
-            ```
-
-            Or open the Extensions view (`Ctrl+Shift+X`) in the editor, search for Supermaven, and click **Uninstall**.
-        - id: windows
-          desc: |
-            Uninstall the extension from whichever editor(s) have it installed:
-
-            ```powershell
-            code --uninstall-extension supermaven.supermaven       # VS Code
-            cursor --uninstall-extension supermaven.supermaven     # Cursor
-            windsurf --uninstall-extension supermaven.supermaven   # Windsurf
-            ```
-
-            Or open the Extensions view (`Ctrl+Shift+X`) in the editor, search for Supermaven, and click **Uninstall**.
 
   - uid: mondoo-ai-security-no-vscode-continue-extension
     title: No Continue extensions in VS Code-compatible editors
@@ -1481,41 +1816,44 @@ queries:
       ).length == 0
     docs:
       desc: |
-        This check ensures that no Continue AI coding extensions are installed in VS Code-compatible editors. Continue is an open-source AI assistant that can connect to various LLM providers.
+        Continue is an open-source AI coding assistant that connects to a range of LLM providers. When its extension is installed in a VS Code-compatible editor, proprietary code can leave the endpoint as part of normal editing. Only AI extensions reviewed and approved by the security team should be installed.
+
+        **Why this matters**
+
+        - **Source code exposure:** The extension uploads code context to whichever model provider it is connected to.
+        - **Credential leakage:** Files opened in the editor may contain tokens and secrets that are sent alongside code context.
+        - **Bypassed review:** AI-generated edits applied through the extension skip the controls that govern approved tooling.
+        - **Inventory gaps:** An unsanctioned extension leaves security teams without an accurate picture of how code leaves the endpoint.
+      audit: |-
+        To verify that no Continue extension is installed:
+
+        1. Open a terminal on the endpoint.
+        2. List installed extensions for each VS Code-compatible editor and search for Continue:
+
+           ```bash
+           code --list-extensions | grep -i continue
+           cursor --list-extensions | grep -i continue
+           windsurf --list-extensions | grep -i continue
+           ```
+
+        The endpoint passes when none of the editors return a Continue extension. Any line beginning with `continue.continue` is a failing result.
       remediation:
-        - id: macos
+        - id: gui
           desc: |
-            Uninstall the extension from whichever editor(s) have it installed:
+            To remove the Continue extension from within the editor:
+
+            1. Open the Extensions view (`Cmd+Shift+X` on macOS, `Ctrl+Shift+X` on Windows and Linux).
+            2. Search for Continue.
+            3. Select the extension and click **Uninstall**.
+        - id: cli
+          desc: |
+            To uninstall the Continue extension from whichever editor has it installed:
 
             ```bash
             code --uninstall-extension continue.continue       # VS Code
             cursor --uninstall-extension continue.continue     # Cursor
             windsurf --uninstall-extension continue.continue   # Windsurf
             ```
-
-            Or open the Extensions view (`Cmd+Shift+X`) in the editor, search for Continue, and click **Uninstall**.
-        - id: linux
-          desc: |
-            Uninstall the extension from whichever editor(s) have it installed:
-
-            ```bash
-            code --uninstall-extension continue.continue       # VS Code
-            cursor --uninstall-extension continue.continue     # Cursor
-            windsurf --uninstall-extension continue.continue   # Windsurf
-            ```
-
-            Or open the Extensions view (`Ctrl+Shift+X`) in the editor, search for Continue, and click **Uninstall**.
-        - id: windows
-          desc: |
-            Uninstall the extension from whichever editor(s) have it installed:
-
-            ```powershell
-            code --uninstall-extension continue.continue       # VS Code
-            cursor --uninstall-extension continue.continue     # Cursor
-            windsurf --uninstall-extension continue.continue   # Windsurf
-            ```
-
-            Or open the Extensions view (`Ctrl+Shift+X`) in the editor, search for Continue, and click **Uninstall**.
 
   - uid: mondoo-ai-security-no-vscode-cline-extension
     title: No Cline extensions in VS Code-compatible editors
@@ -1540,41 +1878,44 @@ queries:
       ).length == 0
     docs:
       desc: |
-        This check ensures that no Cline (formerly Claude Dev) AI coding extensions are installed in VS Code-compatible editors. Cline is an autonomous AI agent that can execute code and modify files.
+        Cline, formerly Claude Dev, is an autonomous AI agent that runs as a VS Code extension and can execute code and modify files. When its extension is installed in a VS Code-compatible editor, it can act on local files and send code context to a cloud model provider. Only AI extensions reviewed and approved by the security team should be installed.
+
+        **Why this matters**
+
+        - **Autonomous execution:** The extension can run commands and edit files with the user's full privileges.
+        - **Source code exposure:** The agent uploads file and repository context to a cloud model provider.
+        - **Credential leakage:** Files and environment variables read by the agent may contain tokens that reach a third-party API.
+        - **Inventory gaps:** An unsanctioned extension leaves security teams without an accurate picture of how code leaves the endpoint.
+      audit: |-
+        To verify that no Cline extension is installed:
+
+        1. Open a terminal on the endpoint.
+        2. List installed extensions for each VS Code-compatible editor and search for Cline:
+
+           ```bash
+           code --list-extensions | grep -iE 'claude-dev|cline'
+           cursor --list-extensions | grep -iE 'claude-dev|cline'
+           windsurf --list-extensions | grep -iE 'claude-dev|cline'
+           ```
+
+        The endpoint passes when none of the editors return a Cline extension. A line matching `saoudrizwan.claude-dev` or `cline.` is a failing result.
       remediation:
-        - id: macos
+        - id: gui
           desc: |
-            Uninstall the extension from whichever editor(s) have it installed:
+            To remove the Cline extension from within the editor:
+
+            1. Open the Extensions view (`Cmd+Shift+X` on macOS, `Ctrl+Shift+X` on Windows and Linux).
+            2. Search for Cline.
+            3. Select the extension and click **Uninstall**.
+        - id: cli
+          desc: |
+            To uninstall the Cline extension from whichever editor has it installed:
 
             ```bash
             code --uninstall-extension saoudrizwan.claude-dev       # VS Code
             cursor --uninstall-extension saoudrizwan.claude-dev     # Cursor
             windsurf --uninstall-extension saoudrizwan.claude-dev   # Windsurf
             ```
-
-            Or open the Extensions view (`Cmd+Shift+X`) in the editor, search for Cline, and click **Uninstall**.
-        - id: linux
-          desc: |
-            Uninstall the extension from whichever editor(s) have it installed:
-
-            ```bash
-            code --uninstall-extension saoudrizwan.claude-dev       # VS Code
-            cursor --uninstall-extension saoudrizwan.claude-dev     # Cursor
-            windsurf --uninstall-extension saoudrizwan.claude-dev   # Windsurf
-            ```
-
-            Or open the Extensions view (`Ctrl+Shift+X`) in the editor, search for Cline, and click **Uninstall**.
-        - id: windows
-          desc: |
-            Uninstall the extension from whichever editor(s) have it installed:
-
-            ```powershell
-            code --uninstall-extension saoudrizwan.claude-dev       # VS Code
-            cursor --uninstall-extension saoudrizwan.claude-dev     # Cursor
-            windsurf --uninstall-extension saoudrizwan.claude-dev   # Windsurf
-            ```
-
-            Or open the Extensions view (`Ctrl+Shift+X`) in the editor, search for Cline, and click **Uninstall**.
 
   - uid: mondoo-ai-security-no-vscode-cody-extension
     title: No Sourcegraph Cody extensions in VS Code-compatible editors
@@ -1599,41 +1940,44 @@ queries:
       ).length == 0
     docs:
       desc: |
-        This check ensures that no Sourcegraph Cody AI coding extensions are installed in VS Code-compatible editors.
+        Sourcegraph Cody is an AI coding extension that transmits source code to cloud AI models for completion and chat. When its extension is installed in a VS Code-compatible editor, proprietary code can leave the endpoint as part of normal editing. Only AI extensions reviewed and approved by the security team should be installed.
+
+        **Why this matters**
+
+        - **Source code exposure:** The extension uploads code context to a cloud model provider during editing.
+        - **Credential leakage:** Files opened in the editor may contain tokens and secrets that are sent alongside code context.
+        - **Bypassed review:** AI-generated edits applied through the extension skip the controls that govern approved tooling.
+        - **Inventory gaps:** An unsanctioned extension leaves security teams without an accurate picture of how code leaves the endpoint.
+      audit: |-
+        To verify that no Sourcegraph Cody extension is installed:
+
+        1. Open a terminal on the endpoint.
+        2. List installed extensions for each VS Code-compatible editor and search for Cody:
+
+           ```bash
+           code --list-extensions | grep -i cody
+           cursor --list-extensions | grep -i cody
+           windsurf --list-extensions | grep -i cody
+           ```
+
+        The endpoint passes when none of the editors return a Cody extension. Any line beginning with `sourcegraph.cody` is a failing result.
       remediation:
-        - id: macos
+        - id: gui
           desc: |
-            Uninstall the extension from whichever editor(s) have it installed:
+            To remove the Sourcegraph Cody extension from within the editor:
+
+            1. Open the Extensions view (`Cmd+Shift+X` on macOS, `Ctrl+Shift+X` on Windows and Linux).
+            2. Search for Cody.
+            3. Select the extension and click **Uninstall**.
+        - id: cli
+          desc: |
+            To uninstall the Sourcegraph Cody extension from whichever editor has it installed:
 
             ```bash
             code --uninstall-extension sourcegraph.cody-ai       # VS Code
             cursor --uninstall-extension sourcegraph.cody-ai     # Cursor
             windsurf --uninstall-extension sourcegraph.cody-ai   # Windsurf
             ```
-
-            Or open the Extensions view (`Cmd+Shift+X`) in the editor, search for Cody, and click **Uninstall**.
-        - id: linux
-          desc: |
-            Uninstall the extension from whichever editor(s) have it installed:
-
-            ```bash
-            code --uninstall-extension sourcegraph.cody-ai       # VS Code
-            cursor --uninstall-extension sourcegraph.cody-ai     # Cursor
-            windsurf --uninstall-extension sourcegraph.cody-ai   # Windsurf
-            ```
-
-            Or open the Extensions view (`Ctrl+Shift+X`) in the editor, search for Cody, and click **Uninstall**.
-        - id: windows
-          desc: |
-            Uninstall the extension from whichever editor(s) have it installed:
-
-            ```powershell
-            code --uninstall-extension sourcegraph.cody-ai       # VS Code
-            cursor --uninstall-extension sourcegraph.cody-ai     # Cursor
-            windsurf --uninstall-extension sourcegraph.cody-ai   # Windsurf
-            ```
-
-            Or open the Extensions view (`Ctrl+Shift+X`) in the editor, search for Cody, and click **Uninstall**.
 
   - uid: mondoo-ai-security-no-vscode-codex-extension
     title: No OpenAI Codex extensions in VS Code-compatible editors
@@ -1658,41 +2002,44 @@ queries:
       ).length == 0
     docs:
       desc: |
-        This check ensures that no OpenAI Codex extensions are installed in VS Code-compatible editors.
+        OpenAI Codex extensions installed in VS Code-compatible editors transmit source code to OpenAI's cloud models for completion and chat. When such an extension is present, proprietary code can leave the endpoint as part of normal editing. Only AI extensions reviewed and approved by the security team should be installed.
+
+        **Why this matters**
+
+        - **Source code exposure:** The extension uploads code context to a cloud model provider during editing.
+        - **Credential leakage:** Files opened in the editor may contain tokens and secrets that are sent alongside code context.
+        - **Bypassed review:** AI-generated edits applied through the extension skip the controls that govern approved tooling.
+        - **Inventory gaps:** An unsanctioned extension leaves security teams without an accurate picture of how code leaves the endpoint.
+      audit: |-
+        To verify that no OpenAI Codex extension is installed:
+
+        1. Open a terminal on the endpoint.
+        2. List installed extensions for each VS Code-compatible editor and search for Codex:
+
+           ```bash
+           code --list-extensions | grep -i codex
+           cursor --list-extensions | grep -i codex
+           windsurf --list-extensions | grep -i codex
+           ```
+
+        The endpoint passes when none of the editors return a Codex extension. Any line beginning with `openai.codex` is a failing result.
       remediation:
-        - id: macos
+        - id: gui
           desc: |
-            Uninstall the extension from whichever editor(s) have it installed:
+            To remove the OpenAI Codex extension from within the editor:
+
+            1. Open the Extensions view (`Cmd+Shift+X` on macOS, `Ctrl+Shift+X` on Windows and Linux).
+            2. Search for Codex.
+            3. Select the extension and click **Uninstall**.
+        - id: cli
+          desc: |
+            To uninstall the OpenAI Codex extension from whichever editor has it installed:
 
             ```bash
             code --uninstall-extension openai.codex       # VS Code
             cursor --uninstall-extension openai.codex     # Cursor
             windsurf --uninstall-extension openai.codex   # Windsurf
             ```
-
-            Or open the Extensions view (`Cmd+Shift+X`) in the editor, search for Codex, and click **Uninstall**.
-        - id: linux
-          desc: |
-            Uninstall the extension from whichever editor(s) have it installed:
-
-            ```bash
-            code --uninstall-extension openai.codex       # VS Code
-            cursor --uninstall-extension openai.codex     # Cursor
-            windsurf --uninstall-extension openai.codex   # Windsurf
-            ```
-
-            Or open the Extensions view (`Ctrl+Shift+X`) in the editor, search for Codex, and click **Uninstall**.
-        - id: windows
-          desc: |
-            Uninstall the extension from whichever editor(s) have it installed:
-
-            ```powershell
-            code --uninstall-extension openai.codex       # VS Code
-            cursor --uninstall-extension openai.codex     # Cursor
-            windsurf --uninstall-extension openai.codex   # Windsurf
-            ```
-
-            Or open the Extensions view (`Ctrl+Shift+X`) in the editor, search for Codex, and click **Uninstall**.
 
   - uid: mondoo-ai-security-no-vscode-claude-extension
     title: No Claude extensions in VS Code-compatible editors
@@ -1717,41 +2064,44 @@ queries:
       ).length == 0
     docs:
       desc: |
-        This check ensures that no Anthropic Claude extensions are installed in VS Code-compatible editors.
+        Anthropic Claude extensions installed in VS Code-compatible editors transmit source code to Anthropic's cloud models for completion and chat. Even where Claude tooling is approved elsewhere, an editor extension that has not been reviewed represents an uninventoried path for code to leave the endpoint. Only AI extensions reviewed and approved by the security team should be installed.
+
+        **Why this matters**
+
+        - **Source code exposure:** The extension uploads code context to a cloud model provider during editing.
+        - **Credential leakage:** Files opened in the editor may contain tokens and secrets that are sent alongside code context.
+        - **Bypassed review:** AI-generated edits applied through the extension skip the controls that govern approved tooling.
+        - **Inventory gaps:** An unsanctioned extension leaves security teams without an accurate picture of how code leaves the endpoint.
+      audit: |-
+        To verify that no Anthropic Claude extension is installed:
+
+        1. Open a terminal on the endpoint.
+        2. List installed extensions for each VS Code-compatible editor and search for Claude:
+
+           ```bash
+           code --list-extensions | grep -i 'anthropic.claude'
+           cursor --list-extensions | grep -i 'anthropic.claude'
+           windsurf --list-extensions | grep -i 'anthropic.claude'
+           ```
+
+        The endpoint passes when none of the editors return a Claude extension. Any line beginning with `anthropic.claude` is a failing result.
       remediation:
-        - id: macos
+        - id: gui
           desc: |
-            Uninstall the extension from whichever editor(s) have it installed:
+            To remove the Anthropic Claude extension from within the editor:
+
+            1. Open the Extensions view (`Cmd+Shift+X` on macOS, `Ctrl+Shift+X` on Windows and Linux).
+            2. Search for Claude.
+            3. Select the extension and click **Uninstall**.
+        - id: cli
+          desc: |
+            To uninstall the Anthropic Claude extension from whichever editor has it installed:
 
             ```bash
             code --uninstall-extension anthropic.claude       # VS Code
             cursor --uninstall-extension anthropic.claude     # Cursor
             windsurf --uninstall-extension anthropic.claude   # Windsurf
             ```
-
-            Or open the Extensions view (`Cmd+Shift+X`) in the editor, search for Claude, and click **Uninstall**.
-        - id: linux
-          desc: |
-            Uninstall the extension from whichever editor(s) have it installed:
-
-            ```bash
-            code --uninstall-extension anthropic.claude       # VS Code
-            cursor --uninstall-extension anthropic.claude     # Cursor
-            windsurf --uninstall-extension anthropic.claude   # Windsurf
-            ```
-
-            Or open the Extensions view (`Ctrl+Shift+X`) in the editor, search for Claude, and click **Uninstall**.
-        - id: windows
-          desc: |
-            Uninstall the extension from whichever editor(s) have it installed:
-
-            ```powershell
-            code --uninstall-extension anthropic.claude       # VS Code
-            cursor --uninstall-extension anthropic.claude     # Cursor
-            windsurf --uninstall-extension anthropic.claude   # Windsurf
-            ```
-
-            Or open the Extensions view (`Ctrl+Shift+X`) in the editor, search for Claude, and click **Uninstall**.
 
   - uid: mondoo-ai-security-no-vscode-cursor-extension
     title: No Cursor-specific extensions in VS Code-compatible editors
@@ -1776,41 +2126,44 @@ queries:
       ).length == 0
     docs:
       desc: |
-        This check ensures that no Cursor-specific AI extensions are installed in VS Code-compatible editors.
+        Cursor-specific AI extensions installed in VS Code-compatible editors bring Cursor's AI completion and chat features into editors where they have not been reviewed. When such an extension is present, proprietary code can leave the endpoint as part of normal editing. Only AI extensions reviewed and approved by the security team should be installed.
+
+        **Why this matters**
+
+        - **Source code exposure:** The extension uploads code context to a cloud model provider during editing.
+        - **Credential leakage:** Files opened in the editor may contain tokens and secrets that are sent alongside code context.
+        - **Bypassed review:** AI-generated edits applied through the extension skip the controls that govern approved tooling.
+        - **Inventory gaps:** An unsanctioned extension leaves security teams without an accurate picture of how code leaves the endpoint.
+      audit: |-
+        To verify that no Cursor-specific extension is installed:
+
+        1. Open a terminal on the endpoint.
+        2. List installed extensions for each VS Code-compatible editor and search for Cursor publishers:
+
+           ```bash
+           code --list-extensions | grep -i 'cursor.'
+           cursor --list-extensions | grep -i 'cursor.'
+           windsurf --list-extensions | grep -i 'cursor.'
+           ```
+
+        The endpoint passes when none of the editors return a Cursor-specific extension. Any line beginning with `cursor.` is a failing result.
       remediation:
-        - id: macos
+        - id: gui
           desc: |
-            Uninstall the extension from whichever editor(s) have it installed:
+            To remove a Cursor-specific extension from within the editor:
+
+            1. Open the Extensions view (`Cmd+Shift+X` on macOS, `Ctrl+Shift+X` on Windows and Linux).
+            2. Search for the extension.
+            3. Select the extension and click **Uninstall**.
+        - id: cli
+          desc: |
+            To uninstall a Cursor-specific extension from whichever editor has it installed:
 
             ```bash
             code --uninstall-extension <cursor.extension-name>       # VS Code
             cursor --uninstall-extension <cursor.extension-name>     # Cursor
             windsurf --uninstall-extension <cursor.extension-name>   # Windsurf
             ```
-
-            Or open the Extensions view (`Cmd+Shift+X`) in the editor, search for the extension, and click **Uninstall**.
-        - id: linux
-          desc: |
-            Uninstall the extension from whichever editor(s) have it installed:
-
-            ```bash
-            code --uninstall-extension <cursor.extension-name>       # VS Code
-            cursor --uninstall-extension <cursor.extension-name>     # Cursor
-            windsurf --uninstall-extension <cursor.extension-name>   # Windsurf
-            ```
-
-            Or open the Extensions view (`Ctrl+Shift+X`) in the editor, search for the extension, and click **Uninstall**.
-        - id: windows
-          desc: |
-            Uninstall the extension from whichever editor(s) have it installed:
-
-            ```powershell
-            code --uninstall-extension <cursor.extension-name>       # VS Code
-            cursor --uninstall-extension <cursor.extension-name>     # Cursor
-            windsurf --uninstall-extension <cursor.extension-name>   # Windsurf
-            ```
-
-            Or open the Extensions view (`Ctrl+Shift+X`) in the editor, search for the extension, and click **Uninstall**.
 
   - uid: mondoo-ai-security-no-vscode-roo-extension
     title: No Roo Code extensions in VS Code-compatible editors
@@ -1835,41 +2188,44 @@ queries:
       ).length == 0
     docs:
       desc: |
-        This check ensures that no Roo Code AI coding extensions are installed in VS Code-compatible editors. Roo Code is an autonomous AI agent forked from Cline.
+        Roo Code is an autonomous AI agent forked from Cline that runs as a VS Code extension and can execute code and modify files. When its extension is installed in a VS Code-compatible editor, it can act on local files and send code context to a cloud model provider. Only AI extensions reviewed and approved by the security team should be installed.
+
+        **Why this matters**
+
+        - **Autonomous execution:** The extension can run commands and edit files with the user's full privileges.
+        - **Source code exposure:** The agent uploads file and repository context to a cloud model provider.
+        - **Credential leakage:** Files and environment variables read by the agent may contain tokens that reach a third-party API.
+        - **Inventory gaps:** An unsanctioned extension leaves security teams without an accurate picture of how code leaves the endpoint.
+      audit: |-
+        To verify that no Roo Code extension is installed:
+
+        1. Open a terminal on the endpoint.
+        2. List installed extensions for each VS Code-compatible editor and search for Roo Code:
+
+           ```bash
+           code --list-extensions | grep -iE 'roo-cline|roocode'
+           cursor --list-extensions | grep -iE 'roo-cline|roocode'
+           windsurf --list-extensions | grep -iE 'roo-cline|roocode'
+           ```
+
+        The endpoint passes when none of the editors return a Roo Code extension. A line matching `rooveterinaryinc.roo-cline` or `roocode.` is a failing result.
       remediation:
-        - id: macos
+        - id: gui
           desc: |
-            Uninstall the extension from whichever editor(s) have it installed:
+            To remove the Roo Code extension from within the editor:
+
+            1. Open the Extensions view (`Cmd+Shift+X` on macOS, `Ctrl+Shift+X` on Windows and Linux).
+            2. Search for Roo Code.
+            3. Select the extension and click **Uninstall**.
+        - id: cli
+          desc: |
+            To uninstall the Roo Code extension from whichever editor has it installed:
 
             ```bash
             code --uninstall-extension rooveterinaryinc.roo-cline       # VS Code
             cursor --uninstall-extension rooveterinaryinc.roo-cline     # Cursor
             windsurf --uninstall-extension rooveterinaryinc.roo-cline   # Windsurf
             ```
-
-            Or open the Extensions view (`Cmd+Shift+X`) in the editor, search for Roo Code, and click **Uninstall**.
-        - id: linux
-          desc: |
-            Uninstall the extension from whichever editor(s) have it installed:
-
-            ```bash
-            code --uninstall-extension rooveterinaryinc.roo-cline       # VS Code
-            cursor --uninstall-extension rooveterinaryinc.roo-cline     # Cursor
-            windsurf --uninstall-extension rooveterinaryinc.roo-cline   # Windsurf
-            ```
-
-            Or open the Extensions view (`Ctrl+Shift+X`) in the editor, search for Roo Code, and click **Uninstall**.
-        - id: windows
-          desc: |
-            Uninstall the extension from whichever editor(s) have it installed:
-
-            ```powershell
-            code --uninstall-extension rooveterinaryinc.roo-cline       # VS Code
-            cursor --uninstall-extension rooveterinaryinc.roo-cline     # Cursor
-            windsurf --uninstall-extension rooveterinaryinc.roo-cline   # Windsurf
-            ```
-
-            Or open the Extensions view (`Ctrl+Shift+X`) in the editor, search for Roo Code, and click **Uninstall**.
 
   # ---------------------------------------------------------------------------
   # MCP server governance
@@ -1905,55 +2261,38 @@ queries:
       gemini.mcpServers.where(name != props.mondooAiSecurityApprovedMcpServers).length == 0
     docs:
       desc: |
-        This check ensures that only approved MCP (Model Context Protocol) servers are configured across all AI coding agents on the endpoint. It checks Claude Code, OpenAI Codex, Cursor, GitHub Copilot, Windsurf, and Gemini CLI using a single centralized allow-list.
+        Model Context Protocol servers grant AI agents tool access to internal systems such as email, source control, databases, and messaging platforms. Only MCP servers reviewed and approved by the security team should be configured across Claude Code, OpenAI Codex, Cursor, GitHub Copilot, Windsurf, and Gemini CLI. The `mondooAiSecurityApprovedMcpServers` property defines a single centralized allow-list and can be customized for your environment, for example `return /(?i)(mondoo|github|jira)/`.
 
-        MCP servers grant AI agents tool access to internal systems such as email, source control, databases, and messaging platforms. An unreviewed MCP server can read, modify, or exfiltrate data on behalf of the user without explicit consent for each action. This is the highest-risk AI shadow IT vector.
+        **Why this matters**
 
-        By default, no MCP servers are approved. Customize the `mondooAiSecurityApprovedMcpServers` property to allow specific servers by name. For example:
+        - **Broad data access:** An MCP server can read, modify, or exfiltrate data across connected internal systems on behalf of the user.
+        - **Implicit consent:** Once a server is configured, the agent can invoke its tools without the user approving each individual action.
+        - **Highest-risk vector:** Unreviewed MCP servers combine remote system access with autonomous agent behavior, making them the most consequential AI shadow IT exposure.
+        - **Inventory gaps:** Servers configured outside the approved set leave security teams unaware of which systems an agent can reach.
+      audit: |-
+        To verify that only approved MCP servers are configured:
 
-        ```yaml
-        props:
-          - uid: mondooAiSecurityApprovedMcpServers
-            mql: |
-              return /(?i)(mondoo|github|jira)/
-        ```
+        1. Open a terminal on the endpoint.
+        2. Inspect each agent's configuration for an `mcpServers` section:
+
+           ```bash
+           cat ~/.claude/settings.json
+           cat ~/.cursor/mcp.json
+           ls ~/.codex/ ~/.config/github-copilot/ ~/.codeium/windsurf/ ~/.gemini/
+           ```
+
+        The endpoint passes when every configured MCP server name appears in the approved allow-list. Any server name outside the allow-list is a failing result.
       remediation:
-        - id: macos
+        - id: cli
           desc: |
-            Review and remove unapproved MCP servers from each agent's configuration.
+            To remove unapproved MCP servers, open each agent's configuration file, locate the `mcpServers` section, and delete any server entry not in the approved list:
 
-            - Claude Code: `~/.claude/settings.json`
-            - OpenAI Codex: `~/.codex/`
-            - Cursor: `~/.cursor/mcp.json`
-            - GitHub Copilot: `~/.config/github-copilot/`
-            - Windsurf: `~/.codeium/windsurf/`
-            - Gemini CLI: `~/.gemini/`
-
-            Open the relevant configuration file, locate the `mcpServers` section, and remove any server entries that are not in the approved list.
-        - id: linux
-          desc: |
-            Review and remove unapproved MCP servers from each agent's configuration.
-
-            - Claude Code: `~/.claude/settings.json`
-            - OpenAI Codex: `~/.codex/`
-            - Cursor: `~/.cursor/mcp.json`
-            - GitHub Copilot: `~/.config/github-copilot/`
-            - Windsurf: `~/.codeium/windsurf/`
-            - Gemini CLI: `~/.gemini/`
-
-            Open the relevant configuration file, locate the `mcpServers` section, and remove any server entries that are not in the approved list.
-        - id: windows
-          desc: |
-            Review and remove unapproved MCP servers from each agent's configuration.
-
-            - Claude Code: `%USERPROFILE%\.claude\settings.json`
-            - OpenAI Codex: `%USERPROFILE%\.codex\`
-            - Cursor: `%USERPROFILE%\.cursor\mcp.json`
-            - GitHub Copilot: `%APPDATA%\github-copilot\`
-            - Windsurf: `%USERPROFILE%\.codeium\windsurf\`
-            - Gemini CLI: `%USERPROFILE%\.gemini\`
-
-            Open the relevant configuration file, locate the `mcpServers` section, and remove any server entries that are not in the approved list.
+            - Claude Code: `~/.claude/settings.json` (`%USERPROFILE%\.claude\settings.json` on Windows)
+            - OpenAI Codex: `~/.codex/` (`%USERPROFILE%\.codex\` on Windows)
+            - Cursor: `~/.cursor/mcp.json` (`%USERPROFILE%\.cursor\mcp.json` on Windows)
+            - GitHub Copilot: `~/.config/github-copilot/` (`%APPDATA%\github-copilot\` on Windows)
+            - Windsurf: `~/.codeium/windsurf/` (`%USERPROFILE%\.codeium\windsurf\` on Windows)
+            - Gemini CLI: `~/.gemini/` (`%USERPROFILE%\.gemini\` on Windows)
 
   # ---------------------------------------------------------------------------
   # Local LLM runtimes
@@ -1981,38 +2320,55 @@ queries:
       ).length == 0
     docs:
       desc: |
-        This check ensures that no local LLM inference runtimes (Ollama, LM Studio, llama.cpp, LocalAI, GPT4All) are running on the endpoint.
+        Local LLM inference runtimes such as Ollama, LM Studio, llama.cpp, LocalAI, and GPT4All run model inference directly on the endpoint. While they keep prompts off remote APIs, they still allow data to be processed outside approved channels and can carry licensing exposure from the model weights they load. Endpoints should run only the LLM runtimes approved by the security team.
 
-        Local LLMs can be used to process sensitive data outside of approved channels, and the model weights themselves may carry license restrictions that create legal exposure.
+        **Why this matters**
 
-        **Note:** Local LLM processes will also trigger the "No unapproved AI agent processes" check (impact 80) if they are not in the approved process list. This is intentional — local LLM runtimes appear in both the general agent group and the dedicated LLM group to ensure visibility regardless of which group an operator enables.
+        - **Uncontrolled processing:** A local runtime lets users feed sensitive data into models outside sanctioned tooling and review.
+        - **Licensing exposure:** Downloaded model weights may carry license restrictions that create legal risk for the organization.
+        - **Resource and supply-chain risk:** Runtimes pull models from public registries that are not part of the organization's vetted supply chain.
+        - **Inventory gaps:** An unsanctioned runtime leaves security teams without an accurate picture of how data is processed on the endpoint.
+      audit: |-
+        To verify that no local LLM runtime is running:
+
+        1. Open a terminal on the endpoint.
+        2. List processes whose executables match known LLM runtime names:
+
+           ```bash
+           ps aux | grep -iE 'ollama|llama|lmstudio|lm-studio|localai|gpt4all'
+           ```
+
+        The endpoint passes when no matching process is returned. Any running LLM runtime process is a failing result.
       remediation:
-        - id: macos
+        - id: gui
           desc: |
-            Stop and uninstall local LLM runtimes.
+            To remove a local LLM runtime using the operating system interface:
+
+            1. On macOS, quit the runtime and drag the application from `/Applications` to the Trash.
+            2. On Windows, open **Settings > Apps > Installed apps**, locate the runtime, and select **Uninstall**.
+        - id: cli
+          desc: |
+            To stop and uninstall a local LLM runtime from the command line:
+
+            macOS:
 
             ```bash
             brew uninstall ollama
-            # For LM Studio and GPT4All, drag the app from /Applications to Trash
             ```
-        - id: linux
-          desc: |
-            Stop and uninstall local LLM runtimes.
+
+            Linux:
 
             ```bash
             sudo systemctl stop ollama
             sudo apt remove ollama       # Debian/Ubuntu
             sudo dnf remove ollama       # RHEL/Fedora
-            # For AppImage-based tools (LM Studio), delete the AppImage file
             ```
-        - id: windows
-          desc: |
-            Stop and uninstall local LLM runtimes.
+
+            Windows:
 
             ```powershell
             Stop-Process -Name ollama
             winget uninstall Ollama
-            # For LM Studio and GPT4All, uninstall via Settings > Apps > Installed Apps
             ```
 
   - uid: mondoo-ai-security-no-local-llm-listening-ports
@@ -2038,33 +2394,38 @@ queries:
       ).length == 0
     docs:
       desc: |
-        This check ensures that no services are listening on ports commonly used by local LLM inference servers:
+        Local LLM inference servers expose an HTTP API on well-known ports — 11434 for Ollama, 1234 for LM Studio, and 1337 for LocalAI. A service listening on one of these ports indicates an active inference server that can process data outside approved channels and, if bound to a non-loopback address, can be reached by other hosts. Endpoints should run only the LLM servers approved by the security team.
 
-        - **11434**: Ollama
-        - **1234**: LM Studio
-        - **1337**: LocalAI
+        **Why this matters**
 
-        A listening port on these addresses indicates an active LLM inference server that could be used to process sensitive data outside approved channels.
+        - **Active inference endpoint:** A listening port confirms a running server that can accept prompts and process sensitive data.
+        - **Network exposure:** If the server binds to a non-loopback interface, other hosts on the network can submit prompts to it.
+        - **Uncontrolled processing:** Data sent to a local inference API bypasses the review and logging applied to sanctioned tooling.
+        - **Inventory gaps:** An unsanctioned inference server leaves security teams without an accurate picture of how data is processed on the endpoint.
+      audit: |-
+        To verify that no local LLM inference server is listening:
+
+        1. Open a terminal on the endpoint.
+        2. List listening sockets on the LLM inference ports:
+
+           ```bash
+           lsof -nP -iTCP:11434 -iTCP:1234 -iTCP:1337 -sTCP:LISTEN
+           ```
+
+        The endpoint passes when no process is listening on any of these ports. A process bound to port 11434, 1234, or 1337 is a failing result.
       remediation:
-        - id: macos
+        - id: cli
           desc: |
-            Identify and stop the process listening on the flagged port:
+            To identify and stop the process listening on the flagged port:
+
+            macOS and Linux:
 
             ```bash
             lsof -i :<port>
             kill <PID>
             ```
-        - id: linux
-          desc: |
-            Identify and stop the process listening on the flagged port:
 
-            ```bash
-            lsof -i :<port>
-            kill <PID>
-            ```
-        - id: windows
-          desc: |
-            Identify and stop the process listening on the flagged port:
+            Windows:
 
             ```powershell
             Get-NetTCPConnection -LocalPort <port> | Select-Object OwningProcess
