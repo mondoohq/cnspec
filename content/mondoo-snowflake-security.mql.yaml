@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-snowflake-security
     name: Mondoo Snowflake Security
-    version: 1.1.0
+    version: 1.1.1
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -62,7 +62,7 @@ queries:
     filters: asset.platform == 'snowflake'
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-14
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
       compliance/iso-27001-2022: iso-27001-2022-a-8-5
@@ -71,20 +71,18 @@ queries:
       compliance/nist-csf-2: nist-csf-2-pr-aa-03
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
       compliance/nist-sp-800-171: nist-sp-800-171--3-5-3
-      compliance/pci-dss-4: pcidss-requirement-8-3-1
-      compliance/soc2-2017: soc2-control-cc6-1-4
-      compliance/vda-isa-5: vda-isa-5-4-1-3
+      compliance/pci-dss-4: pcidss-requirement-8-4-2
+      compliance/soc2-2017: soc2-control-cc6-6-3
+      compliance/vda-isa-5: vda-isa-5-4-1-2
     mql: |
       snowflake.account.users.where(disabled == false && hasPassword == true).all(extAuthnDuo == true)
     docs:
       desc: |
-        This check ensures that every active user who can sign in with a password has Duo multi-factor authentication enrolled. MFA adds a critical layer of security beyond passwords, significantly reducing the risk of account compromise.
+        This check ensures that every active user who can sign in with a password is configured with Duo multi-factor authentication enrolled. By default Snowflake does not require MFA, so a password alone is enough to authenticate unless an administrator enforces additional factors.
 
         **Scope of this check**
 
-        The check evaluates `disabled == false && hasPassword == true`. It deliberately excludes users that have no password set — service users using key-pair authentication or OAuth cannot enroll in Duo and would otherwise produce false positives.
-
-        The check looks at the `extAuthnDuo` flag (Duo enrollment). It does *not* yet detect TOTP or SAML-based MFA enforced via an authentication policy. If your account uses authentication policies for MFA enforcement instead of (or in addition to) Duo, also confirm an MFA-required policy is attached account-wide:
+        The evaluation targets active users that have a password set, and deliberately excludes users with no password such as service users that rely on key-pair authentication or OAuth, since those identities cannot enroll in Duo and would otherwise produce false positives. It inspects the Duo enrollment flag and does not yet detect TOTP or SAML-based MFA enforced through an authentication policy. If your account enforces MFA through an authentication policy instead of or in addition to Duo, also confirm that an MFA-required policy is attached account-wide:
 
         ```sql
         SHOW PARAMETERS LIKE 'AUTHENTICATION_POLICY' IN ACCOUNT;
@@ -93,18 +91,34 @@ queries:
 
         **Why this matters**
 
-        Without MFA, Snowflake accounts are protected only by passwords:
-          •  Credential stuffing and brute-force attacks can compromise accounts with weak or reused passwords.
-          •  Phishing attacks can steal user credentials, granting attackers full access to the data warehouse.
-          •  Compromised accounts can access, exfiltrate, or modify sensitive data across the entire Snowflake account.
+        - **Resists credential attacks:** Credential stuffing and brute-force attempts cannot succeed against an account that requires a second factor.
+        - **Defeats phishing:** A stolen password is not enough to sign in, so phishing campaigns fail to grant attackers warehouse access.
+        - **Limits breach impact:** A compromised account without MFA can access, exfiltrate, or modify sensitive data across the entire Snowflake account.
+        - **Addresses a proven attack path:** Snowflake has been the target of high-profile breaches where stolen credentials were used to reach customer data, and MFA would have blocked many of them.
 
-        Snowflake has been the target of high-profile attacks where stolen credentials were used to access customer data. MFA would have prevented many of these breaches.
+        **Risk mitigation**
 
-        Risk mitigation
-          •  Enroll Duo MFA for every user who can authenticate with a password — or attach an authentication policy that requires MFA at the account level.
-          •  Prioritize MFA for users with ACCOUNTADMIN, SECURITYADMIN, and SYSADMIN roles.
-          •  Use key-pair authentication or OAuth for service users instead of passwords.
-          •  Regularly audit MFA enrollment status.
+        - **Enforce MFA broadly:** Enroll Duo MFA for every user who can authenticate with a password, or attach an authentication policy that requires MFA at the account level.
+        - **Prioritize privileged users:** Make MFA mandatory first for users holding ACCOUNTADMIN, SECURITYADMIN, and SYSADMIN roles.
+        - **Use stronger auth for services:** Configure service users with key-pair authentication or OAuth instead of passwords, and audit MFA enrollment status regularly.
+      audit: |
+        ### Audit via Snowsight
+
+        1. Sign in to Snowsight as a user with the ACCOUNTADMIN or SECURITYADMIN role.
+        2. Go to **Admin** > **Users & Roles** > **Users**.
+        3. Review the **MFA** column for each active user that signs in with a password.
+
+        A passing result shows every active password-based user marked as enrolled in MFA; a failing result shows one or more active password-based users with MFA not enrolled.
+
+        ### Audit via SQL
+
+        Run the query in a Snowsight worksheet or with SnowSQL:
+
+        ```sql
+        SHOW USERS;
+        ```
+
+        A passing result shows `ext_authn_duo` set to true for every row where `has_password` is true and `disabled` is false; a failing result shows at least one such user with `ext_authn_duo` set to false.
       remediation:
         - id: console
           desc: |
@@ -162,37 +176,53 @@ queries:
     filters: asset.platform == 'snowflake'
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
       compliance/iso-27001-2022: iso-27001-2022-a-8-2
       compliance/nis-2: nis-2-21-2-i
-      compliance/nist-csf-1: nist-csf-1-pr-ac-1
-      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-2
-      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
-      compliance/pci-dss-4: pcidss-requirement-7-2-1
-      compliance/soc2-2017: soc2-control-cc6-3-1
-      compliance/vda-isa-5: vda-isa-5-4-1-1
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/pci-dss-4: pcidss-requirement-7-2-2
+      compliance/soc2-2017: soc2-control-cc6-3-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
     mql: |
       snowflake.account.roles.where(name == "ACCOUNTADMIN").all(assignedToUsers <= 3)
     docs:
       desc: |
-        This check ensures that the ACCOUNTADMIN role, which has the highest privileges in Snowflake, is assigned to no more than 3 users. Limiting privileged access reduces the attack surface and aligns with the principle of least privilege.
+        This check ensures that the ACCOUNTADMIN role is configured to be granted to no more than three users. ACCOUNTADMIN holds the highest privilege level in Snowflake, so keeping its membership small enforces the principle of least privilege and shrinks the attack surface.
 
         **Why this matters**
 
-        The ACCOUNTADMIN role has unrestricted access to the entire Snowflake account:
-          •  ACCOUNTADMIN can manage all objects, users, roles, and account settings.
-          •  Each user with this role is a high-value target for attackers.
-          •  Excessive ACCOUNTADMIN assignments increase the risk of accidental or malicious misuse.
-          •  Audit and accountability are harder to maintain with many privileged users.
+        - **Reduces high-value targets:** Each user holding ACCOUNTADMIN is a prime target for attackers, so fewer holders means fewer paths to total account compromise.
+        - **Limits blast radius:** ACCOUNTADMIN can manage every object, user, role, and account setting, so excessive assignments increase the risk of accidental or malicious misuse.
+        - **Strengthens accountability:** A small, well-known set of administrators makes audit and attribution of privileged actions far easier to maintain.
 
-        Risk mitigation
-          •  Limit ACCOUNTADMIN to 2-3 trusted administrators.
-          •  Use SECURITYADMIN and SYSADMIN for day-to-day administration.
-          •  Ensure all ACCOUNTADMIN users have MFA enabled.
-          •  Regularly review and prune ACCOUNTADMIN role assignments.
+        **Risk mitigation**
+
+        - **Cap membership:** Limit ACCOUNTADMIN to two or three trusted administrators and use SECURITYADMIN and SYSADMIN for day-to-day administration.
+        - **Protect the holders:** Ensure every remaining ACCOUNTADMIN user has MFA enabled.
+        - **Review regularly:** Periodically review and prune ACCOUNTADMIN role assignments to remove access that is no longer required.
+      audit: |
+        ### Audit via Snowsight
+
+        1. Sign in to Snowsight as a user with the ACCOUNTADMIN or SECURITYADMIN role.
+        2. Go to **Admin** > **Users & Roles** > **Roles**.
+        3. Open the `ACCOUNTADMIN` role and review the **Granted to** list of users.
+
+        A passing result shows three or fewer users granted the role; a failing result shows four or more.
+
+        ### Audit via SQL
+
+        Run the query in a Snowsight worksheet or with SnowSQL:
+
+        ```sql
+        SHOW GRANTS OF ROLE ACCOUNTADMIN;
+        ```
+
+        A passing result shows three or fewer rows where `granted_to` is `USER`; a failing result shows four or more such rows.
       remediation:
         - id: console
           desc: |
@@ -230,36 +260,54 @@ queries:
     filters: asset.platform == 'snowflake'
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-15
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/hipaa: hipaa-security-ss164-308-a-5-ii-d-security-awareness-training-and-tools-password-management
       compliance/iso-27001-2022: iso-27001-2022-a-5-17
       compliance/nis-2: nis-2-21-2-g
-      compliance/nist-csf-1: nist-csf-1-pr-ac-7
-      compliance/nist-csf-2: nist-csf-2-pr-aa-03
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
-      compliance/nist-sp-800-171: nist-sp-800-171--3-5-3
-      compliance/pci-dss-4: pcidss-requirement-7-2-1
-      compliance/soc2-2017: soc2-control-cc6-1-4
-      compliance/vda-isa-5: vda-isa-5-4-1-1
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-9
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc6-1-8
+      compliance/vda-isa-5: vda-isa-5-4-1-3
     mql: |
       snowflake.account.users.where(disabled == false).none(mustChangePassword == true)
     docs:
       desc: |
-        This check ensures that no active users still have the `MUST_CHANGE_PASSWORD` flag set, which indicates they are using a temporary or initial password that has not been updated.
+        This check ensures that no active user is configured with the must-change-password flag still set, which indicates the user is relying on a temporary or initial password that has not yet been updated. A pending password change means an unverified credential is still valid for sign-in.
 
         **Why this matters**
 
-        Users with pending password changes are security risks:
-          •  Temporary passwords may have been shared via insecure channels (email, chat).
-          •  Initial passwords are often weak or follow predictable patterns.
-          •  Users who have not completed their password change may be inactive or orphaned accounts.
-          •  Attackers who intercept temporary passwords have access until the password is changed.
+        - **Temporary passwords leak:** Initial passwords are frequently shared over insecure channels such as email or chat, where they can be intercepted.
+        - **Initial passwords are weak:** Administrator-set starting passwords often follow predictable patterns that are easy to guess.
+        - **Signals stale accounts:** A user who never completed their password change may be an inactive or orphaned account that should be disabled.
+        - **Extends the exposure window:** An attacker who obtains a temporary password retains access until that password is finally changed.
 
-        Risk mitigation
-          •  Follow up with users who have not changed their initial passwords.
-          •  Set expiration policies for temporary passwords.
-          •  Disable accounts that have not completed initial setup within a reasonable time frame.
+        **Risk mitigation**
+
+        - **Follow up promptly:** Contact users who have not changed their initial password and require them to complete the change.
+        - **Bound the lifetime:** Set expiration policies for temporary passwords so they cannot remain valid indefinitely.
+        - **Disable abandoned accounts:** Disable accounts that have not completed initial setup within a reasonable time frame.
+      audit: |
+        ### Audit via Snowsight
+
+        1. Sign in to Snowsight as a user with the ACCOUNTADMIN or SECURITYADMIN role.
+        2. Go to **Admin** > **Users & Roles** > **Users**.
+        3. Open each active user and check whether the account is still flagged to require a password change.
+
+        A passing result shows no active user with a pending forced password change; a failing result shows one or more active users still flagged.
+
+        ### Audit via SQL
+
+        Run the query in a Snowsight worksheet or with SnowSQL:
+
+        ```sql
+        SHOW USERS;
+        ```
+
+        A passing result shows `must_change_password` set to false for every row where `disabled` is false; a failing result shows at least one active user with `must_change_password` set to true.
       remediation:
         - id: console
           desc: |
@@ -300,36 +348,54 @@ queries:
     filters: asset.platform == 'snowflake'
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/hipaa: hipaa-security-ss164-308-a-5-ii-d-security-awareness-training-and-tools-password-management
       compliance/iso-27001-2022: iso-27001-2022-a-5-17
       compliance/nis-2: nis-2-21-2-g
-      compliance/nist-csf-1: nist-csf-1-pr-ac-7
-      compliance/nist-csf-2: nist-csf-2-pr-aa-03
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
-      compliance/nist-sp-800-171: nist-sp-800-171--3-5-3
-      compliance/pci-dss-4: pcidss-requirement-7-2-1
-      compliance/soc2-2017: soc2-control-cc6-1-4
-      compliance/vda-isa-5: vda-isa-5-4-1-1
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-7
+      compliance/pci-dss-4: pcidss-requirement-8-3-6
+      compliance/soc2-2017: soc2-control-cc6-1-8
+      compliance/vda-isa-5: vda-isa-5-4-1-3
     mql: |
       snowflake.account.passwordPolicies.all(passwordMinLength >= 14)
     docs:
       desc: |
-        This check ensures that all Snowflake password policies enforce a minimum password length of at least 14 characters. Longer passwords are significantly more resistant to brute-force attacks and credential cracking.
+        This check ensures that every Snowflake password policy is configured to require a minimum password length of at least 14 characters. Longer passwords are dramatically more resistant to brute-force and credential-cracking attacks than the shorter defaults users tend to choose.
 
         **Why this matters**
 
-        Short passwords are the most common weakness in password-based authentication:
-          •  Passwords under 14 characters can be cracked quickly with modern hardware.
-          •  Credential stuffing attacks are more likely to succeed with short, commonly used passwords.
-          •  NIST SP 800-63B recommends a minimum of 8 characters, but longer passwords (14+) provide substantially better protection.
-          •  Snowflake accounts with weak passwords are prime targets for data exfiltration.
+        - **Defeats fast cracking:** Passwords shorter than 14 characters can be cracked quickly with modern hardware.
+        - **Blunts credential stuffing:** Short, commonly used passwords are far more likely to appear in breach lists used by credential stuffing tools.
+        - **Exceeds the baseline:** NIST SP 800-63B sets a floor of 8 characters, but a 14-character minimum provides substantially stronger protection.
+        - **Protects sensitive data:** Snowflake accounts with weak passwords are prime targets for data exfiltration.
 
-        Risk mitigation
-          •  Set minimum password length to 14 or more characters in all password policies.
-          •  Encourage use of passphrases for easier memorization of long passwords.
-          •  Combine password length requirements with MFA for defense-in-depth.
+        **Risk mitigation**
+
+        - **Raise the minimum:** Set the minimum password length to 14 or more characters in every password policy.
+        - **Encourage passphrases:** Promote the use of passphrases so users can satisfy length requirements while keeping passwords memorable.
+        - **Layer with MFA:** Combine length requirements with multi-factor authentication for defense in depth.
+      audit: |
+        ### Audit via Snowsight
+
+        1. Sign in to Snowsight as a user with the ACCOUNTADMIN role.
+        2. Go to **Admin** > **Security** > **Password Policies**.
+        3. Open the password policy attached to the account and review the **Minimum length** setting.
+
+        A passing result shows a minimum length of 14 or greater; a failing result shows a value below 14 or no policy attached.
+
+        ### Audit via SQL
+
+        Run the query in a Snowsight worksheet or with SnowSQL:
+
+        ```sql
+        SHOW PASSWORD POLICIES;
+        ```
+
+        For the policy attached to the account, run `DESC PASSWORD POLICY <policy_name>`: a passing result shows `PASSWORD_MIN_LENGTH` of 14 or greater, while a failing result shows a lower value.
       remediation:
         - id: console
           desc: |
@@ -376,39 +442,52 @@ queries:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
+      compliance/hipaa: hipaa-security-ss164-308-a-5-ii-c-security-awareness-training-and-tools-log-in-monitoring
       compliance/iso-27001-2022: iso-27001-2022-a-8-5
-      compliance/nis-2: nis-2-21-2-j
+      compliance/nis-2: nis-2-21-2-g
       compliance/nist-csf-1: nist-csf-1-pr-ac-7
       compliance/nist-csf-2: nist-csf-2-pr-aa-03
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
-      compliance/nist-sp-800-171: nist-sp-800-171--3-5-3
-      compliance/pci-dss-4: pcidss-requirement-8-3-1
-      compliance/soc2-2017: soc2-control-cc6-1-4
-      compliance/vda-isa-5: vda-isa-5-4-1-3
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-8
+      compliance/pci-dss-4: pcidss-requirement-8-3-4
+      compliance/soc2-2017: soc2-control-cc6-1-8
+      compliance/vda-isa-5: vda-isa-5-4-1-2
     mql: |
       snowflake.account.passwordPolicies.all(passwordMaxRetries > 0 && passwordMaxRetries <= 10)
     docs:
       desc: |
-        This check ensures that all Snowflake password policies have account lockout configured with a reasonable number of maximum retries (between 1 and 10). Account lockout protects against brute-force password attacks.
+        This check ensures that every Snowflake password policy is configured to enforce account lockout, allowing between 1 and 10 failed sign-in attempts before locking the account. Lockout rate-limits password guessing so that brute-force attacks cannot run unchecked.
 
         **Why this matters**
 
-        Without account lockout, attackers can make unlimited password guessing attempts:
-          •  Automated brute-force tools can try thousands of passwords per second.
-          •  Credential stuffing attacks systematically try known compromised credentials.
-          •  Even strong passwords can be eventually guessed without rate limiting or lockout.
+        - **Stops unlimited guessing:** Without lockout, automated brute-force tools can attempt thousands of passwords per second against an account.
+        - **Blunts credential stuffing:** Lockout interrupts systematic attempts to reuse known compromised credentials.
+        - **Surfaces attacks:** Lockout events provide a clear signal of unauthorized access attempts that monitoring can detect.
+        - **Slows automated attacks:** Even strong passwords can eventually be guessed without a forced pause between attempts.
 
-        Account lockout provides:
-          •  Protection against brute-force and credential stuffing attacks.
-          •  Detection of unauthorized access attempts through lockout events.
-          •  A forced pause that limits the speed of automated attacks.
+        **Risk mitigation**
 
-        Risk mitigation
-          •  Configure password lockout retry limits between 3 and 5 attempts.
-          •  Set reasonable lockout duration (e.g., 15-30 minutes).
-          •  Monitor lockout events for signs of attack.
-          •  Combine lockout with MFA for defense-in-depth.
+        - **Set a sane retry limit:** Configure the maximum retry count between 3 and 5 attempts so legitimate users are not over-penalized.
+        - **Set a lockout duration:** Apply a reasonable lockout time, such as 15 to 30 minutes, and monitor lockout events for signs of attack.
+        - **Layer with MFA:** Combine lockout with multi-factor authentication for defense in depth.
+      audit: |
+        ### Audit via Snowsight
+
+        1. Sign in to Snowsight as a user with the ACCOUNTADMIN role.
+        2. Go to **Admin** > **Security** > **Password Policies**.
+        3. Open the password policy attached to the account and review the **Maximum retries** and **Lockout time** settings.
+
+        A passing result shows a maximum retries value between 1 and 10; a failing result shows 0, a value above 10, or no policy attached.
+
+        ### Audit via SQL
+
+        Run the query in a Snowsight worksheet or with SnowSQL:
+
+        ```sql
+        SHOW PASSWORD POLICIES;
+        ```
+
+        For the policy attached to the account, run `DESC PASSWORD POLICY <policy_name>`: a passing result shows `PASSWORD_MAX_RETRIES` between 1 and 10, while a failing result shows 0 or a value above 10.
       remediation:
         - id: console
           desc: |
@@ -460,39 +539,54 @@ queries:
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
       compliance/iso-27001-2022: iso-27001-2022-a-8-20
-      compliance/nis-2: nis-2-21-2-e
+      compliance/nis-2: nis-2-21-2-i
       compliance/nist-csf-1: nist-csf-1-pr-ac-5
       compliance/nist-csf-2: nist-csf-2-pr-ir-01
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
       compliance/pci-dss-4: pcidss-requirement-1-3-1
       compliance/soc2-2017: soc2-control-cc6-6-1
-      compliance/vda-isa-5: vda-isa-5-5-2-6
+      compliance/vda-isa-5: vda-isa-5-5-2-7
     mql: |
       snowflake.account.parameters.where(key == "NETWORK_POLICY").any(value != "")
     docs:
       desc: |
-        This check ensures that a network policy is *attached* to the Snowflake account. Network policies restrict which IP addresses or network ranges can connect to Snowflake, providing network-level access control.
+        This check ensures that the Snowflake account is configured with a network policy attached at the account level. A network policy restricts which IP addresses or ranges can connect, and without one attached Snowflake accepts connections from any address on the internet.
 
-        Snowflake's `SHOW PARAMETERS LIKE 'NETWORK_POLICY' IN ACCOUNT` returns the name of the policy currently bound at the account level. The check looks at this parameter rather than just whether any policy is defined — an account can have several `CREATE NETWORK POLICY` definitions sitting unattached, in which case no IP gating is enforced at all.
+        **Scope of this check**
+
+        The evaluation reads the account-level `NETWORK_POLICY` parameter, which returns the name of the policy currently bound to the account. It checks this binding rather than merely whether a policy definition exists, because an account can hold several `CREATE NETWORK POLICY` definitions that sit unattached and enforce no IP gating at all.
 
         **Why this matters**
 
-        Without network policies, Snowflake accepts connections from any IP address on the internet:
-          •  Stolen credentials can be used from anywhere in the world.
-          •  There is no network-level defense against unauthorized access.
-          •  Compliance frameworks require network-level access restrictions for data platforms.
+        - **Closes global exposure:** Without a network policy, the account is reachable from any IP address in the world.
+        - **Contains stolen credentials:** A network policy prevents leaked credentials from being used outside trusted networks.
+        - **Adds a defense layer:** IP allowlisting and blocklisting provide protection that operates independently of authentication.
+        - **Meets compliance:** Many frameworks require network-level access restrictions for data platforms.
 
-        Network policies provide:
-          •  IP-based allowlisting to restrict access to trusted networks.
-          •  Blocklisting of known malicious IP ranges.
-          •  An additional layer of defense beyond authentication.
+        **Risk mitigation**
 
-        Risk mitigation
-          •  Create network policies that restrict access to corporate networks and VPNs.
-          •  Apply network policies at the account level for broad protection.
-          •  Use network rules for more granular control.
-          •  Regularly review and update IP allowlists as network infrastructure changes.
+        - **Restrict to trusted ranges:** Create network policies that allow only corporate networks and VPN egress addresses.
+        - **Enforce account-wide:** Attach a network policy at the account level so the restriction applies broadly, and use network rules for more granular control.
+        - **Keep allowlists current:** Review and update IP allowlists as network infrastructure changes.
+      audit: |
+        ### Audit via Snowsight
+
+        1. Sign in to Snowsight as a user with the ACCOUNTADMIN or SECURITYADMIN role.
+        2. Open the user menu in the top-right corner and select **Account Details**.
+        3. Review the **Network policy** field to see which policy, if any, is attached to the account.
+
+        A passing result shows a network policy name listed; a failing result shows the field empty.
+
+        ### Audit via SQL
+
+        Run the query in a Snowsight worksheet or with SnowSQL:
+
+        ```sql
+        SHOW PARAMETERS LIKE 'NETWORK_POLICY' IN ACCOUNT;
+        ```
+
+        A passing result shows a non-empty policy name in the `value` column; a failing result shows an empty value.
       remediation:
         - id: console
           desc: |
@@ -547,31 +641,49 @@ queries:
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
       compliance/iso-27001-2022: iso-27001-2022-a-8-20
-      compliance/nis-2: nis-2-21-2-e
+      compliance/nis-2: nis-2-21-2-i
       compliance/nist-csf-1: nist-csf-1-pr-ac-5
       compliance/nist-csf-2: nist-csf-2-pr-ir-01
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
       compliance/pci-dss-4: pcidss-requirement-1-3-1
       compliance/soc2-2017: soc2-control-cc6-6-1
-      compliance/vda-isa-5: vda-isa-5-5-2-6
+      compliance/vda-isa-5: vda-isa-5-5-2-7
     mql: |
       snowflake.account.networkPolicies.none(allowedIpList.contains("0.0.0.0/0") || allowedIpList.contains("::/0"))
     docs:
       desc: |
-        This check ensures that no network policy contains a wildcard CIDR — `0.0.0.0/0` for IPv4 or `::/0` for IPv6 — in its `ALLOWED_IP_LIST`. Either entry permits access from any address and effectively nullifies the network policy.
+        This check ensures that no Snowflake network policy is configured to allow a wildcard CIDR, meaning `0.0.0.0/0` for IPv4 or `::/0` for IPv6, in its allowed IP list. Either entry permits connections from any address and effectively nullifies the network policy.
 
         **Why this matters**
 
-        A network policy that allows `0.0.0.0/0` or `::/0` provides no network-level access control:
-          •  The policy exists but offers no protection, creating a false sense of security.
-          •  All the risks of having no network policy apply equally.
-          •  Audit and compliance checks may incorrectly pass because a network policy exists.
+        - **Creates false security:** A policy that allows `0.0.0.0/0` or `::/0` exists but offers no real protection, masking the gap.
+        - **Restores global exposure:** Every risk of having no network policy applies equally when a policy allows all addresses.
+        - **Misleads audits:** Compliance checks may incorrectly pass simply because a network policy is present, even though it gates nothing.
 
-        Risk mitigation
-          •  Replace `0.0.0.0/0` and `::/0` entries with specific trusted IP ranges.
-          •  Audit network policies regularly for overly permissive entries.
-          •  Use the smallest CIDR blocks that cover your organization's legitimate access points.
+        **Risk mitigation**
+
+        - **Replace wildcards:** Substitute `0.0.0.0/0` and `::/0` entries with specific trusted IP ranges.
+        - **Audit for over-permissiveness:** Review network policies regularly for entries that are broader than necessary.
+        - **Use minimal CIDRs:** Apply the smallest CIDR blocks that still cover your organization's legitimate access points.
+      audit: |
+        ### Audit via Snowsight
+
+        1. Sign in to Snowsight as a user with the ACCOUNTADMIN or SECURITYADMIN role.
+        2. Go to **Admin** > **Security** > **Network Policies**.
+        3. Open each policy and review the **Allowed IPs** entries.
+
+        A passing result shows no policy listing `0.0.0.0/0` or `::/0` among its allowed IPs; a failing result shows at least one policy that does.
+
+        ### Audit via SQL
+
+        Run the query in a Snowsight worksheet or with SnowSQL:
+
+        ```sql
+        SHOW NETWORK POLICIES;
+        ```
+
+        For each policy, run `DESC NETWORK POLICY <policy_name>`: a passing result shows no `ALLOWED_IP_LIST` containing `0.0.0.0/0` or `::/0`, while a failing result shows one or both wildcard entries.
       remediation:
         - id: console
           desc: |
@@ -613,37 +725,54 @@ queries:
     filters: asset.platform == 'snowflake'
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
       compliance/iso-27001-2022: iso-27001-2022-a-8-2
       compliance/nis-2: nis-2-21-2-i
-      compliance/nist-csf-1: nist-csf-1-pr-ac-1
-      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-2
-      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
-      compliance/pci-dss-4: pcidss-requirement-7-2-1
-      compliance/soc2-2017: soc2-control-cc6-3-1
-      compliance/vda-isa-5: vda-isa-5-4-1-1
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-6
+      compliance/pci-dss-4: pcidss-requirement-7-2-2
+      compliance/soc2-2017: soc2-control-cc6-3-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
     mql: |
       snowflake.account.users.where(disabled == false).none(defaultRole == "ACCOUNTADMIN")
     docs:
       desc: |
-        This check ensures that no active Snowflake user has ACCOUNTADMIN set as their default role. When ACCOUNTADMIN is the default role, every session for that user automatically inherits the highest privilege level, increasing the risk of accidental or malicious actions.
+        This check ensures that no active Snowflake user is configured with ACCOUNTADMIN as their default role. When ACCOUNTADMIN is the default, every session for that user automatically starts with the highest privilege level, increasing the risk of accidental or malicious actions.
 
         **Why this matters**
 
-        Using ACCOUNTADMIN as a default role violates the principle of least privilege:
-          •  Every query and operation runs with full administrative privileges by default.
-          •  Accidental operations (DROP, DELETE, ALTER) have maximum blast radius.
-          •  If the user's session is compromised, the attacker immediately has the highest privileges.
-          •  Proper privilege separation requires using lower-privilege roles for routine work.
+        - **Violates least privilege:** Every query and operation runs with full administrative privileges by default rather than the minimum needed.
+        - **Maximizes blast radius:** Accidental DROP, DELETE, or ALTER operations carry their largest possible impact when run as ACCOUNTADMIN.
+        - **Amplifies session compromise:** If the user's session is hijacked, the attacker immediately holds the highest privileges with no further escalation needed.
+        - **Undermines privilege separation:** Routine work should run under lower-privilege roles, which a privileged default role prevents.
 
-        Risk mitigation
-          •  Set default roles to the minimum privilege level needed for daily tasks.
-          •  Use ACCOUNTADMIN only when explicitly required by switching roles.
-          •  Assign SYSADMIN, SECURITYADMIN, or custom roles as defaults.
-          •  Regularly audit user default role assignments.
+        **Risk mitigation**
+
+        - **Default to least privilege:** Set each user's default role to the minimum privilege level needed for daily tasks, such as SYSADMIN, SECURITYADMIN, or a custom role.
+        - **Elevate only when needed:** Use ACCOUNTADMIN explicitly by switching roles only when a task requires it.
+        - **Review regularly:** Periodically audit user default role assignments to catch privileged defaults.
+      audit: |
+        ### Audit via Snowsight
+
+        1. Sign in to Snowsight as a user with the ACCOUNTADMIN or SECURITYADMIN role.
+        2. Go to **Admin** > **Users & Roles** > **Users**.
+        3. Sort or filter the user list by **Default role** and review the entries.
+
+        A passing result shows no active user with a default role of `ACCOUNTADMIN`; a failing result shows one or more active users whose default role is `ACCOUNTADMIN`.
+
+        ### Audit via SQL
+
+        Run the query in a Snowsight worksheet or with SnowSQL:
+
+        ```sql
+        SHOW USERS;
+        ```
+
+        A passing result shows no row where `disabled` is false and `default_role` equals `ACCOUNTADMIN`; a failing result shows at least one such row.
       remediation:
         - id: console
           desc: |
@@ -682,35 +811,53 @@ queries:
     filters: asset.platform == 'snowflake'
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/hipaa: hipaa-security-ss164-308-a-5-ii-d-security-awareness-training-and-tools-password-management
       compliance/iso-27001-2022: iso-27001-2022-a-5-17
       compliance/nis-2: nis-2-21-2-g
-      compliance/nist-csf-1: nist-csf-1-pr-ac-7
-      compliance/nist-csf-2: nist-csf-2-pr-aa-03
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
-      compliance/nist-sp-800-171: nist-sp-800-171--3-5-3
-      compliance/pci-dss-4: pcidss-requirement-7-2-1
-      compliance/soc2-2017: soc2-control-cc6-1-4
-      compliance/vda-isa-5: vda-isa-5-4-1-1
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-7
+      compliance/pci-dss-4: pcidss-requirement-8-3-6
+      compliance/soc2-2017: soc2-control-cc6-1-8
+      compliance/vda-isa-5: vda-isa-5-4-1-3
     mql: |
       snowflake.account.passwordPolicies.all(passwordMinUpperCaseChars >= 1 && passwordMinLowerCaseChars >= 1 && passwordMinNumericChars >= 1 && passwordMinSpecialChars >= 1)
     docs:
       desc: |
-        This check ensures that all Snowflake password policies require a mix of character types: at least one uppercase letter, one lowercase letter, one numeric digit, and one special character. Password complexity requirements increase resistance to dictionary and brute-force attacks.
+        This check ensures that every Snowflake password policy is configured to require a mix of character types, with at least one uppercase letter, one lowercase letter, one numeric digit, and one special character. Complexity requirements increase resistance to dictionary and brute-force attacks.
 
         **Why this matters**
 
-        Without complexity requirements, users may choose simple, easily guessable passwords:
-          •  Passwords consisting of only lowercase letters are significantly easier to crack.
-          •  Dictionary attacks are effective against passwords that don't mix character types.
-          •  Complexity requirements force passwords into a larger search space, making brute-force attacks less feasible.
+        - **Prevents trivial passwords:** Without complexity rules, users may choose simple, easily guessable passwords such as all-lowercase strings.
+        - **Defeats dictionary attacks:** Passwords that mix character types are far harder to match against wordlists.
+        - **Enlarges the search space:** Requiring multiple character classes forces passwords into a larger keyspace, making brute-force attacks less feasible.
 
-        Risk mitigation
-          •  Require at least one character from each category (uppercase, lowercase, numeric, special).
-          •  Combine complexity requirements with minimum length requirements for maximum protection.
-          •  Use MFA as an additional layer of protection.
+        **Risk mitigation**
+
+        - **Require every class:** Mandate at least one character from each category: uppercase, lowercase, numeric, and special.
+        - **Pair with length:** Combine complexity requirements with a strong minimum length for maximum protection.
+        - **Layer with MFA:** Use multi-factor authentication as an additional layer of protection.
+      audit: |
+        ### Audit via Snowsight
+
+        1. Sign in to Snowsight as a user with the ACCOUNTADMIN role.
+        2. Go to **Admin** > **Security** > **Password Policies**.
+        3. Open the password policy attached to the account and review the **Min upper case**, **Min lower case**, **Min numeric**, and **Min special** settings.
+
+        A passing result shows each of the four character-class minimums set to 1 or greater; a failing result shows any of them at 0 or no policy attached.
+
+        ### Audit via SQL
+
+        Run the query in a Snowsight worksheet or with SnowSQL:
+
+        ```sql
+        SHOW PASSWORD POLICIES;
+        ```
+
+        For the policy attached to the account, run `DESC PASSWORD POLICY <policy_name>`: a passing result shows `PASSWORD_MIN_UPPER_CASE_CHARS`, `PASSWORD_MIN_LOWER_CASE_CHARS`, `PASSWORD_MIN_NUMERIC_CHARS`, and `PASSWORD_MIN_SPECIAL_CHARS` all set to 1 or greater, while a failing result shows any of them at 0.
       remediation:
         - id: console
           desc: |
@@ -764,34 +911,51 @@ queries:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
+      compliance/hipaa: hipaa-security-ss164-308-a-5-ii-d-security-awareness-training-and-tools-password-management
       compliance/iso-27001-2022: iso-27001-2022-a-5-17
       compliance/nis-2: nis-2-21-2-g
       compliance/nist-csf-1: nist-csf-1-pr-ac-1
       compliance/nist-csf-2: nist-csf-2-pr-aa-01
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
-      compliance/nist-sp-800-171: nist-sp-800-171--3-5-7
-      compliance/pci-dss-4: pcidss-requirement-8-3-1
-      compliance/soc2-2017: soc2-control-cc6-1-9
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: pcidss-requirement-8-3-9
+      compliance/soc2-2017: soc2-control-cc6-1-8
       compliance/vda-isa-5: vda-isa-5-4-1-3
     mql: |
       snowflake.account.passwordPolicies.all(passwordMaxAgeDays > 0 && passwordMaxAgeDays <= 90)
     docs:
       desc: |
-        This check ensures that all Snowflake password policies enforce a maximum password age of no more than 90 days. Regular password rotation limits the window of exposure for compromised credentials.
+        This check ensures that every Snowflake password policy is configured to enforce a maximum password age of no more than 90 days. Regular rotation limits how long a compromised credential remains usable.
 
         **Why this matters**
 
-        Without a maximum password age, passwords may remain unchanged indefinitely:
-          •  Compromised credentials remain valid until the user voluntarily changes their password.
-          •  Stale passwords are more likely to appear in credential dumps and breach databases.
-          •  Regular rotation ensures that even if a password is compromised, it has a limited useful lifetime.
+        - **Bounds credential exposure:** Without a maximum age, a compromised password stays valid until the user voluntarily changes it.
+        - **Reduces breach-list risk:** Stale, long-lived passwords are more likely to surface in credential dumps and breach databases.
+        - **Forces refresh:** Regular rotation ensures that even an undetected compromise has a limited useful lifetime.
 
-        Risk mitigation
-          •  Set maximum password age to 90 days or less.
-          •  Combine password rotation with MFA for defense-in-depth.
-          •  Notify users in advance of upcoming password expiration.
-          •  Monitor for users who have not rotated passwords on schedule.
+        **Risk mitigation**
+
+        - **Cap the age:** Set the maximum password age to 90 days or less.
+        - **Layer with MFA:** Combine password rotation with multi-factor authentication for defense in depth.
+        - **Track rotation:** Notify users ahead of expiration and monitor for users who have not rotated passwords on schedule.
+      audit: |
+        ### Audit via Snowsight
+
+        1. Sign in to Snowsight as a user with the ACCOUNTADMIN role.
+        2. Go to **Admin** > **Security** > **Password Policies**.
+        3. Open the password policy attached to the account and review the **Max age (days)** setting.
+
+        A passing result shows a maximum age between 1 and 90 days; a failing result shows 0, a value above 90, or no policy attached.
+
+        ### Audit via SQL
+
+        Run the query in a Snowsight worksheet or with SnowSQL:
+
+        ```sql
+        SHOW PASSWORD POLICIES;
+        ```
+
+        For the policy attached to the account, run `DESC PASSWORD POLICY <policy_name>`: a passing result shows `PASSWORD_MAX_AGE_DAYS` between 1 and 90, while a failing result shows 0 or a value above 90.
       remediation:
         - id: console
           desc: |
@@ -836,35 +1000,53 @@ queries:
     filters: asset.platform == 'snowflake'
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/hipaa: hipaa-security-ss164-308-a-5-ii-d-security-awareness-training-and-tools-password-management
       compliance/iso-27001-2022: iso-27001-2022-a-5-17
       compliance/nis-2: nis-2-21-2-g
-      compliance/nist-csf-1: nist-csf-1-pr-ac-7
-      compliance/nist-csf-2: nist-csf-2-pr-aa-03
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
-      compliance/nist-sp-800-171: nist-sp-800-171--3-5-3
-      compliance/pci-dss-4: pcidss-requirement-7-2-1
-      compliance/soc2-2017: soc2-control-cc6-1-4
-      compliance/vda-isa-5: vda-isa-5-4-1-1
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-8
+      compliance/pci-dss-4: pcidss-requirement-8-3-7
+      compliance/soc2-2017: soc2-control-cc6-1-8
+      compliance/vda-isa-5: vda-isa-5-4-1-3
     mql: |
       snowflake.account.passwordPolicies.all(passwordHistory >= 5)
     docs:
       desc: |
-        This check ensures that all Snowflake password policies enforce a password history of at least 5 previous passwords. Password history prevents users from cycling back to previously used passwords, which may have been compromised.
+        This check ensures that every Snowflake password policy is configured to enforce a password history of at least five previous passwords. Password history prevents users from cycling back to recently used passwords, which may already be compromised.
 
         **Why this matters**
 
-        Without password history enforcement, users can reuse old passwords:
-          •  Users may alternate between two passwords, effectively bypassing rotation requirements.
-          •  Previously compromised passwords can be reused, negating the benefit of password rotation.
-          •  Password history enforcement ensures each rotation uses a genuinely new password.
+        - **Stops password recycling:** Without history enforcement, users can alternate between two passwords and effectively bypass rotation requirements.
+        - **Blocks compromised reuse:** Previously breached passwords can be reused, negating the benefit of rotation.
+        - **Guarantees genuine change:** History enforcement ensures each rotation produces a genuinely new password.
 
-        Risk mitigation
-          •  Set password history to at least 5 previous passwords.
-          •  Combine password history with maximum age and complexity requirements.
-          •  Educate users about the importance of using unique passwords.
+        **Risk mitigation**
+
+        - **Retain prior passwords:** Set password history to at least five previous passwords.
+        - **Combine controls:** Pair password history with maximum age and complexity requirements.
+        - **Educate users:** Explain to users why each new password must be genuinely unique.
+      audit: |
+        ### Audit via Snowsight
+
+        1. Sign in to Snowsight as a user with the ACCOUNTADMIN role.
+        2. Go to **Admin** > **Security** > **Password Policies**.
+        3. Open the password policy attached to the account and review the **Password history** setting.
+
+        A passing result shows a history value of 5 or greater; a failing result shows a value below 5 or no policy attached.
+
+        ### Audit via SQL
+
+        Run the query in a Snowsight worksheet or with SnowSQL:
+
+        ```sql
+        SHOW PASSWORD POLICIES;
+        ```
+
+        For the policy attached to the account, run `DESC PASSWORD POLICY <policy_name>`: a passing result shows `PASSWORD_HISTORY` of 5 or greater, while a failing result shows a lower value.
       remediation:
         - id: console
           desc: |
@@ -912,7 +1094,7 @@ queries:
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-bcr-08
       compliance/dora: dora-art-12
       compliance/hipaa: hipaa-security-ss164-308-a-7-ii-a-contingency-plan-data-backup-plan
-      compliance/iso-27001-2022: iso-27001-2022-a-8-14
+      compliance/iso-27001-2022: iso-27001-2022-a-8-13
       compliance/nis-2: nis-2-21-2-c
       compliance/nist-csf-1: nist-csf-1-pr-ip-4
       compliance/nist-csf-2: nist-csf-2-pr-ds-11
@@ -925,25 +1107,38 @@ queries:
       snowflake.account.databases.all(retentionTime > 0)
     docs:
       desc: |
-        This check ensures that all Snowflake databases have Time Travel retention configured (retention time greater than 0 days). Time Travel allows querying, cloning, and restoring historical data, providing protection against accidental or malicious data modifications and deletions.
+        This check ensures that every Snowflake database is configured with Time Travel retention enabled, meaning a retention time greater than 0 days. Time Travel allows querying, cloning, and restoring historical data, protecting against accidental or malicious modifications and deletions.
 
         **Why this matters**
 
-        Without Time Travel retention, data modifications and deletions are permanent:
-          •  Accidental DROP or DELETE operations cannot be undone.
-          •  Malicious data destruction by compromised accounts is irreversible.
-          •  There is no ability to audit or investigate what data existed before a change.
-          •  Compliance requirements often mandate data recovery capabilities.
+        - **Makes data loss recoverable:** Without retention, accidental DROP or DELETE operations cannot be undone.
+        - **Counters malicious destruction:** Data destroyed by a compromised account is irreversible when retention is set to 0.
+        - **Enables investigation:** Retention preserves the ability to audit and investigate what data existed before a change.
+        - **Supports compliance:** Many frameworks mandate data recovery capabilities for production data stores.
 
-        Time Travel provides:
-          •  Recovery from accidental data loss using UNDROP and AT/BEFORE clauses.
-          •  Forensic investigation of data changes for security incidents.
-          •  Point-in-time cloning for testing and analysis.
+        **Risk mitigation**
 
-        Risk mitigation
-          •  Set retention time to at least 1 day for all databases.
-          •  Use longer retention periods (up to 90 days with Enterprise edition) for critical data.
-          •  Monitor databases with zero retention time and remediate promptly.
+        - **Enable retention everywhere:** Set retention time to at least 1 day for all databases and monitor any database left at zero.
+        - **Extend for critical data:** Use longer retention periods, up to 90 days on Enterprise edition, for sensitive or critical databases.
+        - **Set a safe default:** Raise the account-level default so newly created databases inherit a non-zero retention value.
+      audit: |
+        ### Audit via Snowsight
+
+        1. Sign in to Snowsight as a user with the ACCOUNTADMIN role.
+        2. Go to **Data** > **Databases** and open each database.
+        3. Review the **Time Travel retention (days)** value on the database details.
+
+        A passing result shows every database with a retention value greater than 0; a failing result shows one or more databases with a retention of 0 days.
+
+        ### Audit via SQL
+
+        Run the query in a Snowsight worksheet or with SnowSQL:
+
+        ```sql
+        SHOW DATABASES;
+        ```
+
+        A passing result shows a `retention_time` greater than 0 for every database; a failing result shows at least one database with a `retention_time` of 0.
       remediation:
         - id: console
           desc: |
