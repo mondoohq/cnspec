@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-snowflake-security
     name: Mondoo Snowflake Security
-    version: 1.1.1
+    version: 1.2.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -56,6 +56,7 @@ policies:
           - uid: mondoo-snowflake-security-databases-retention-configured
     scoring_system: highest impact
 queries:
+  # No Terraform variants: the runtime check inspects each user's observed Duo enrollment flag (ext_authn_duo), which the snowflake_user resource exposes only as read-only show_output and never as a configurable argument. Per-user MFA enrollment is runtime identity state with no faithful Terraform analog.
   - uid: mondoo-snowflake-security-mfa-enabled-for-active-users
     title: Ensure MFA is enabled for all active users
     impact: 90
@@ -167,9 +168,28 @@ queries:
             ```
 
             Note: `REQUIRE_MFA` only enforces enrollment for *new* logins — it does not retroactively log out sessions that authenticated before the change.
+        - id: terraform
+          desc: |
+            The `snowflakedb/snowflake` provider cannot set a per-user Duo enrollment flag, but it can enforce MFA account-wide with an authentication policy. Define a `snowflake_authentication_policy` that requires MFA enrollment and attach it to the account:
+
+            ```hcl
+            resource "snowflake_authentication_policy" "require_mfa" {
+              database               = "SECURITY"
+              schema                 = "POLICIES"
+              name                   = "REQUIRE_MFA_POLICY"
+              authentication_methods = ["PASSWORD", "SAML"]
+              mfa_enrollment         = "REQUIRED"
+              comment                = "Require MFA enrollment on every login"
+            }
+
+            resource "snowflake_account_authentication_policy_attachment" "account" {
+              authentication_policy = snowflake_authentication_policy.require_mfa.fully_qualified_name
+            }
+            ```
     refs:
       - url: https://docs.snowflake.com/en/user-guide/security-mfa
         title: Snowflake MFA documentation
+  # No Terraform variants: the runtime check counts the total number of users granted the ACCOUNTADMIN role account-wide. ACCOUNTADMIN grants are expressed as individual snowflake_grant_account_role resources, so a Terraform configuration only ever describes the grants it manages — it cannot observe the account-wide total and a count-based assertion would be vacuous.
   - uid: mondoo-snowflake-security-accountadmin-role-limited
     title: Ensure the ACCOUNTADMIN role is assigned to a limited number of users
     impact: 80
@@ -251,13 +271,13 @@ queries:
                 ```
 
             3. Keep at least two named users with `ACCOUNTADMIN` so the account cannot be locked out if one break-glass account becomes unavailable.
+        # No Terraform remediation: capping ACCOUNTADMIN membership means removing grants, but Terraform can only manage the snowflake_grant_account_role resources declared in its configuration. It cannot enforce an account-wide ceiling on a role's total membership.
     refs:
       - url: https://docs.snowflake.com/en/user-guide/security-access-control-overview
         title: Snowflake access control overview
   - uid: mondoo-snowflake-security-no-users-pending-password-change
     title: Ensure no active users have a pending forced password change
     impact: 60
-    filters: asset.platform == 'snowflake'
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-15
@@ -272,8 +292,23 @@ queries:
       compliance/pci-dss-4: false
       compliance/soc2-2017: soc2-control-cc6-1-8
       compliance/vda-isa-5: vda-isa-5-4-1-3
-    mql: |
-      snowflake.account.users.where(disabled == false).none(mustChangePassword == true)
+    variants:
+      - uid: mondoo-snowflake-security-no-users-pending-password-change-snowflake
+        tags:
+          mondoo.com/filter-title: Snowflake
+          mondoo.com/filter-icon: snowflake
+      - uid: mondoo-snowflake-security-no-users-pending-password-change-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-no-users-pending-password-change-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-no-users-pending-password-change-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that no active user is configured with the must-change-password flag still set, which indicates the user is relying on a temporary or initial password that has not yet been updated. A pending password change means an unverified credential is still valid for sign-in.
@@ -339,13 +374,22 @@ queries:
                 ```
 
             3. After a rotation cycle, re-run the query in step 1 — the result should be empty.
+        - id: terraform
+          desc: |
+            With the `snowflakedb/snowflake` provider, set `must_change_password` to `false` on every `snowflake_user` resource so a forced password change is not left pending. Once the user has completed initial setup, omitting or disabling the flag prevents Terraform from re-arming it on the next apply:
+
+            ```hcl
+            resource "snowflake_user" "analyst" {
+              name                 = "ANALYST"
+              must_change_password = false
+            }
+            ```
     refs:
       - url: https://docs.snowflake.com/en/sql-reference/sql/create-user
         title: Snowflake user management documentation
   - uid: mondoo-snowflake-security-password-policy-minimum-length
     title: Ensure password policies enforce a minimum length of at least 14 characters
     impact: 80
-    filters: asset.platform == 'snowflake'
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
@@ -360,8 +404,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-8-3-6
       compliance/soc2-2017: soc2-control-cc6-1-8
       compliance/vda-isa-5: vda-isa-5-4-1-3
-    mql: |
-      snowflake.account.passwordPolicies.all(passwordMinLength >= 14)
+    variants:
+      - uid: mondoo-snowflake-security-password-policy-minimum-length-snowflake
+        tags:
+          mondoo.com/filter-title: Snowflake
+          mondoo.com/filter-icon: snowflake
+      - uid: mondoo-snowflake-security-password-policy-minimum-length-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-password-policy-minimum-length-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-password-policy-minimum-length-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that every Snowflake password policy is configured to require a minimum password length of at least 14 characters. Longer passwords are dramatically more resistant to brute-force and credential-cracking attacks than the shorter defaults users tend to choose.
@@ -431,13 +490,28 @@ queries:
                   PASSWORD_MIN_LENGTH = 14;
                 ALTER ACCOUNT SET PASSWORD POLICY <policy_name>;
                 ```
+        - id: terraform
+          desc: |
+            With the `snowflakedb/snowflake` provider, set `min_length` to at least `14` on the `snowflake_password_policy` resource, then attach the policy to the account:
+
+            ```hcl
+            resource "snowflake_password_policy" "account" {
+              database   = "SECURITY"
+              schema     = "POLICIES"
+              name       = "ACCOUNT_PASSWORD_POLICY"
+              min_length = 14
+            }
+
+            resource "snowflake_account_password_policy_attachment" "account" {
+              password_policy = snowflake_password_policy.account.fully_qualified_name
+            }
+            ```
     refs:
       - url: https://docs.snowflake.com/en/sql-reference/sql/create-password-policy
         title: Snowflake password policy documentation
   - uid: mondoo-snowflake-security-password-policy-lockout-configured
     title: Ensure password policies enforce account lockout
     impact: 80
-    filters: asset.platform == 'snowflake'
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
@@ -452,8 +526,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-8-3-4
       compliance/soc2-2017: soc2-control-cc6-1-8
       compliance/vda-isa-5: vda-isa-5-4-1-2
-    mql: |
-      snowflake.account.passwordPolicies.all(passwordMaxRetries > 0 && passwordMaxRetries <= 10)
+    variants:
+      - uid: mondoo-snowflake-security-password-policy-lockout-configured-snowflake
+        tags:
+          mondoo.com/filter-title: Snowflake
+          mondoo.com/filter-icon: snowflake
+      - uid: mondoo-snowflake-security-password-policy-lockout-configured-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-password-policy-lockout-configured-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-password-policy-lockout-configured-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that every Snowflake password policy is configured to enforce account lockout, allowing between 1 and 10 failed sign-in attempts before locking the account. Lockout rate-limits password guessing so that brute-force attacks cannot run unchecked.
@@ -526,13 +615,29 @@ queries:
                   PASSWORD_LOCKOUT_TIME_MINS = 15;
                 ALTER ACCOUNT SET PASSWORD POLICY <policy_name>;
                 ```
+        - id: terraform
+          desc: |
+            With the `snowflakedb/snowflake` provider, set `max_retries` on the `snowflake_password_policy` resource to a value between 1 and 10, and pair it with `lockout_time_mins`. Then attach the policy to the account:
+
+            ```hcl
+            resource "snowflake_password_policy" "account" {
+              database          = "SECURITY"
+              schema            = "POLICIES"
+              name              = "ACCOUNT_PASSWORD_POLICY"
+              max_retries       = 5
+              lockout_time_mins = 15
+            }
+
+            resource "snowflake_account_password_policy_attachment" "account" {
+              password_policy = snowflake_password_policy.account.fully_qualified_name
+            }
+            ```
     refs:
       - url: https://docs.snowflake.com/en/sql-reference/sql/create-password-policy
         title: Snowflake password policy documentation
   - uid: mondoo-snowflake-security-network-policies-configured
     title: Ensure network policies are configured for the account
     impact: 80
-    filters: asset.platform == 'snowflake'
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
@@ -547,8 +652,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-1-3-1
       compliance/soc2-2017: soc2-control-cc6-6-1
       compliance/vda-isa-5: vda-isa-5-5-2-7
-    mql: |
-      snowflake.account.parameters.where(key == "NETWORK_POLICY").any(value != "")
+    variants:
+      - uid: mondoo-snowflake-security-network-policies-configured-snowflake
+        tags:
+          mondoo.com/filter-title: Snowflake
+          mondoo.com/filter-icon: snowflake
+      - uid: mondoo-snowflake-security-network-policies-configured-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-network-policies-configured-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-network-policies-configured-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that the Snowflake account is configured with a network policy attached at the account level. A network policy restricts which IP addresses or ranges can connect, and without one attached Snowflake accepts connections from any address on the internet.
@@ -628,13 +748,27 @@ queries:
                 ```sql
                 DESC NETWORK POLICY <policy_name>;
                 ```
+        - id: terraform
+          desc: |
+            With the `snowflakedb/snowflake` provider, define a `snowflake_network_policy` and bind it account-wide by setting the `NETWORK_POLICY` account parameter with `snowflake_account_parameter`:
+
+            ```hcl
+            resource "snowflake_network_policy" "corp" {
+              name            = "CORP_NETWORK_POLICY"
+              allowed_ip_list = ["203.0.113.0/24", "198.51.100.0/24"]
+            }
+
+            resource "snowflake_account_parameter" "network_policy" {
+              key   = "NETWORK_POLICY"
+              value = snowflake_network_policy.corp.name
+            }
+            ```
     refs:
       - url: https://docs.snowflake.com/en/user-guide/network-policies
         title: Snowflake network policy documentation
   - uid: mondoo-snowflake-security-network-policies-no-unrestricted-access
     title: Ensure no network policy allows 0.0.0.0/0 or ::/0
     impact: 90
-    filters: asset.platform == 'snowflake'
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
@@ -649,8 +783,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-1-3-1
       compliance/soc2-2017: soc2-control-cc6-6-1
       compliance/vda-isa-5: vda-isa-5-5-2-7
-    mql: |
-      snowflake.account.networkPolicies.none(allowedIpList.contains("0.0.0.0/0") || allowedIpList.contains("::/0"))
+    variants:
+      - uid: mondoo-snowflake-security-network-policies-no-unrestricted-access-snowflake
+        tags:
+          mondoo.com/filter-title: Snowflake
+          mondoo.com/filter-icon: snowflake
+      - uid: mondoo-snowflake-security-network-policies-no-unrestricted-access-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-network-policies-no-unrestricted-access-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-network-policies-no-unrestricted-access-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that no Snowflake network policy is configured to allow a wildcard CIDR, meaning `0.0.0.0/0` for IPv4 or `::/0` for IPv6, in its allowed IP list. Either entry permits connections from any address and effectively nullifies the network policy.
@@ -716,13 +865,22 @@ queries:
                 ```sql
                 DESC NETWORK POLICY <policy_name>;
                 ```
+        - id: terraform
+          desc: |
+            With the `snowflakedb/snowflake` provider, set the `allowed_ip_list` of every `snowflake_network_policy` to specific trusted CIDR ranges. Never include the `0.0.0.0/0` or `::/0` wildcards:
+
+            ```hcl
+            resource "snowflake_network_policy" "corp" {
+              name            = "CORP_NETWORK_POLICY"
+              allowed_ip_list = ["203.0.113.0/24", "198.51.100.0/24"]
+            }
+            ```
     refs:
       - url: https://docs.snowflake.com/en/user-guide/network-policies
         title: Snowflake network policy documentation
   - uid: mondoo-snowflake-security-no-accountadmin-default-role
     title: Ensure no active user has ACCOUNTADMIN as their default role
     impact: 80
-    filters: asset.platform == 'snowflake'
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
@@ -737,8 +895,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-7-2-2
       compliance/soc2-2017: soc2-control-cc6-3-3
       compliance/vda-isa-5: vda-isa-5-4-2-1
-    mql: |
-      snowflake.account.users.where(disabled == false).none(defaultRole == "ACCOUNTADMIN")
+    variants:
+      - uid: mondoo-snowflake-security-no-accountadmin-default-role-snowflake
+        tags:
+          mondoo.com/filter-title: Snowflake
+          mondoo.com/filter-icon: snowflake
+      - uid: mondoo-snowflake-security-no-accountadmin-default-role-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-no-accountadmin-default-role-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-no-accountadmin-default-role-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that no active Snowflake user is configured with ACCOUNTADMIN as their default role. When ACCOUNTADMIN is the default, every session for that user automatically starts with the highest privilege level, increasing the risk of accidental or malicious actions.
@@ -802,13 +975,22 @@ queries:
                 ```
 
             3. The user can still `USE ROLE ACCOUNTADMIN` when explicit elevation is needed; this only changes which role is active at login.
+        - id: terraform
+          desc: |
+            With the `snowflakedb/snowflake` provider, set `default_role` on each `snowflake_user` resource to a least-privilege role such as `SYSADMIN`. Never set it to `ACCOUNTADMIN`:
+
+            ```hcl
+            resource "snowflake_user" "analyst" {
+              name         = "ANALYST"
+              default_role = "SYSADMIN"
+            }
+            ```
     refs:
       - url: https://docs.snowflake.com/en/user-guide/security-access-control-overview
         title: Snowflake access control best practices
   - uid: mondoo-snowflake-security-password-policy-complexity-configured
     title: Ensure password policies enforce character complexity requirements
     impact: 70
-    filters: asset.platform == 'snowflake'
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
@@ -823,8 +1005,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-8-3-6
       compliance/soc2-2017: soc2-control-cc6-1-8
       compliance/vda-isa-5: vda-isa-5-4-1-3
-    mql: |
-      snowflake.account.passwordPolicies.all(passwordMinUpperCaseChars >= 1 && passwordMinLowerCaseChars >= 1 && passwordMinNumericChars >= 1 && passwordMinSpecialChars >= 1)
+    variants:
+      - uid: mondoo-snowflake-security-password-policy-complexity-configured-snowflake
+        tags:
+          mondoo.com/filter-title: Snowflake
+          mondoo.com/filter-icon: snowflake
+      - uid: mondoo-snowflake-security-password-policy-complexity-configured-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-password-policy-complexity-configured-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-password-policy-complexity-configured-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that every Snowflake password policy is configured to require a mix of character types, with at least one uppercase letter, one lowercase letter, one numeric digit, and one special character. Complexity requirements increase resistance to dictionary and brute-force attacks.
@@ -900,13 +1097,31 @@ queries:
                   PASSWORD_MIN_SPECIAL_CHARS    = 1;
                 ALTER ACCOUNT SET PASSWORD POLICY <policy_name>;
                 ```
+        - id: terraform
+          desc: |
+            With the `snowflakedb/snowflake` provider, set each character-class minimum to at least `1` on the `snowflake_password_policy` resource, then attach the policy to the account:
+
+            ```hcl
+            resource "snowflake_password_policy" "account" {
+              database             = "SECURITY"
+              schema               = "POLICIES"
+              name                 = "ACCOUNT_PASSWORD_POLICY"
+              min_upper_case_chars = 1
+              min_lower_case_chars = 1
+              min_numeric_chars    = 1
+              min_special_chars    = 1
+            }
+
+            resource "snowflake_account_password_policy_attachment" "account" {
+              password_policy = snowflake_password_policy.account.fully_qualified_name
+            }
+            ```
     refs:
       - url: https://docs.snowflake.com/en/sql-reference/sql/create-password-policy
         title: Snowflake password policy documentation
   - uid: mondoo-snowflake-security-password-policy-max-age-configured
     title: Ensure password policies enforce a maximum password age
     impact: 70
-    filters: asset.platform == 'snowflake'
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
@@ -921,8 +1136,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-8-3-9
       compliance/soc2-2017: soc2-control-cc6-1-8
       compliance/vda-isa-5: vda-isa-5-4-1-3
-    mql: |
-      snowflake.account.passwordPolicies.all(passwordMaxAgeDays > 0 && passwordMaxAgeDays <= 90)
+    variants:
+      - uid: mondoo-snowflake-security-password-policy-max-age-configured-snowflake
+        tags:
+          mondoo.com/filter-title: Snowflake
+          mondoo.com/filter-icon: snowflake
+      - uid: mondoo-snowflake-security-password-policy-max-age-configured-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-password-policy-max-age-configured-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-password-policy-max-age-configured-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that every Snowflake password policy is configured to enforce a maximum password age of no more than 90 days. Regular rotation limits how long a compromised credential remains usable.
@@ -991,13 +1221,28 @@ queries:
                   PASSWORD_MAX_AGE_DAYS = 90;
                 ALTER ACCOUNT SET PASSWORD POLICY <policy_name>;
                 ```
+        - id: terraform
+          desc: |
+            With the `snowflakedb/snowflake` provider, set `max_age_days` to a value between 1 and 90 on the `snowflake_password_policy` resource, then attach the policy to the account:
+
+            ```hcl
+            resource "snowflake_password_policy" "account" {
+              database     = "SECURITY"
+              schema       = "POLICIES"
+              name         = "ACCOUNT_PASSWORD_POLICY"
+              max_age_days = 90
+            }
+
+            resource "snowflake_account_password_policy_attachment" "account" {
+              password_policy = snowflake_password_policy.account.fully_qualified_name
+            }
+            ```
     refs:
       - url: https://docs.snowflake.com/en/sql-reference/sql/create-password-policy
         title: Snowflake password policy documentation
   - uid: mondoo-snowflake-security-password-policy-history-configured
     title: Ensure password policies enforce password history
     impact: 60
-    filters: asset.platform == 'snowflake'
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
@@ -1012,8 +1257,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-8-3-7
       compliance/soc2-2017: soc2-control-cc6-1-8
       compliance/vda-isa-5: vda-isa-5-4-1-3
-    mql: |
-      snowflake.account.passwordPolicies.all(passwordHistory >= 5)
+    variants:
+      - uid: mondoo-snowflake-security-password-policy-history-configured-snowflake
+        tags:
+          mondoo.com/filter-title: Snowflake
+          mondoo.com/filter-icon: snowflake
+      - uid: mondoo-snowflake-security-password-policy-history-configured-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-password-policy-history-configured-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-password-policy-history-configured-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that every Snowflake password policy is configured to enforce a password history of at least five previous passwords. Password history prevents users from cycling back to recently used passwords, which may already be compromised.
@@ -1082,13 +1342,28 @@ queries:
                   PASSWORD_HISTORY = 5;
                 ALTER ACCOUNT SET PASSWORD POLICY <policy_name>;
                 ```
+        - id: terraform
+          desc: |
+            With the `snowflakedb/snowflake` provider, set `history` to at least `5` on the `snowflake_password_policy` resource, then attach the policy to the account:
+
+            ```hcl
+            resource "snowflake_password_policy" "account" {
+              database = "SECURITY"
+              schema   = "POLICIES"
+              name     = "ACCOUNT_PASSWORD_POLICY"
+              history  = 5
+            }
+
+            resource "snowflake_account_password_policy_attachment" "account" {
+              password_policy = snowflake_password_policy.account.fully_qualified_name
+            }
+            ```
     refs:
       - url: https://docs.snowflake.com/en/sql-reference/sql/create-password-policy
         title: Snowflake password policy documentation
   - uid: mondoo-snowflake-security-databases-retention-configured
     title: Ensure databases have Time Travel retention configured
     impact: 60
-    filters: asset.platform == 'snowflake'
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-bcr-08
@@ -1103,8 +1378,23 @@ queries:
       compliance/pci-dss-4: false
       compliance/soc2-2017: soc2-control-cc9-1-1
       compliance/vda-isa-5: false
-    mql: |
-      snowflake.account.databases.all(retentionTime > 0)
+    variants:
+      - uid: mondoo-snowflake-security-databases-retention-configured-snowflake
+        tags:
+          mondoo.com/filter-title: Snowflake
+          mondoo.com/filter-icon: snowflake
+      - uid: mondoo-snowflake-security-databases-retention-configured-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-databases-retention-configured-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-databases-retention-configured-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that every Snowflake database is configured with Time Travel retention enabled, meaning a retention time greater than 0 days. Time Travel allows querying, cloning, and restoring historical data, protecting against accidental or malicious modifications and deletions.
@@ -1175,6 +1465,266 @@ queries:
                 ```sql
                 ALTER ACCOUNT SET DATA_RETENTION_TIME_IN_DAYS = 7;
                 ```
+        - id: terraform
+          desc: |
+            With the `snowflakedb/snowflake` provider, set `data_retention_time_in_days` to a non-zero value on every `snowflake_database` resource. Most production workloads use `7` or higher:
+
+            ```hcl
+            resource "snowflake_database" "analytics" {
+              name                        = "ANALYTICS"
+              data_retention_time_in_days = 7
+            }
+            ```
     refs:
       - url: https://docs.snowflake.com/en/user-guide/data-time-travel
         title: Snowflake Time Travel documentation
+  - uid: mondoo-snowflake-security-no-users-pending-password-change-snowflake
+    filters: asset.platform == 'snowflake'
+    mql: |
+      snowflake.account.users.where(disabled == false).none(mustChangePassword == true)
+  - uid: mondoo-snowflake-security-no-users-pending-password-change-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'snowflake_user')
+    mql: |
+      terraform.resources('snowflake_user').where(arguments['disabled'] != true).all(
+        arguments['must_change_password'] != true
+      )
+  - uid: mondoo-snowflake-security-no-users-pending-password-change-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'snowflake_user')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'snowflake_user').where(change.after['disabled'] != true).all(
+        change.after['must_change_password'] != true
+      )
+  - uid: mondoo-snowflake-security-no-users-pending-password-change-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'snowflake_user')
+    mql: |
+      terraform.state.resources.where(type == 'snowflake_user').where(values['disabled'] != true).all(
+        values['must_change_password'] != true
+      )
+  - uid: mondoo-snowflake-security-password-policy-minimum-length-snowflake
+    filters: asset.platform == 'snowflake'
+    mql: |
+      snowflake.account.passwordPolicies.all(passwordMinLength >= 14)
+  - uid: mondoo-snowflake-security-password-policy-minimum-length-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'snowflake_password_policy')
+    mql: |
+      terraform.resources('snowflake_password_policy').all(
+        arguments['min_length'] >= 14
+      )
+  - uid: mondoo-snowflake-security-password-policy-minimum-length-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'snowflake_password_policy')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'snowflake_password_policy').all(
+        change.after['min_length'] >= 14
+      )
+  - uid: mondoo-snowflake-security-password-policy-minimum-length-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'snowflake_password_policy')
+    mql: |
+      terraform.state.resources.where(type == 'snowflake_password_policy').all(
+        values['min_length'] >= 14
+      )
+  - uid: mondoo-snowflake-security-password-policy-lockout-configured-snowflake
+    filters: asset.platform == 'snowflake'
+    mql: |
+      snowflake.account.passwordPolicies.all(passwordMaxRetries > 0 && passwordMaxRetries <= 10)
+  - uid: mondoo-snowflake-security-password-policy-lockout-configured-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'snowflake_password_policy')
+    mql: |
+      terraform.resources('snowflake_password_policy').all(
+        arguments['max_retries'] > 0 && arguments['max_retries'] <= 10
+      )
+  - uid: mondoo-snowflake-security-password-policy-lockout-configured-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'snowflake_password_policy')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'snowflake_password_policy').all(
+        change.after['max_retries'] > 0 && change.after['max_retries'] <= 10
+      )
+  - uid: mondoo-snowflake-security-password-policy-lockout-configured-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'snowflake_password_policy')
+    mql: |
+      terraform.state.resources.where(type == 'snowflake_password_policy').all(
+        values['max_retries'] > 0 && values['max_retries'] <= 10
+      )
+  - uid: mondoo-snowflake-security-network-policies-configured-snowflake
+    filters: asset.platform == 'snowflake'
+    mql: |
+      snowflake.account.parameters.where(key == "NETWORK_POLICY").any(value != "")
+  - uid: mondoo-snowflake-security-network-policies-configured-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'snowflake_account_parameter')
+    mql: |
+      terraform.resources('snowflake_account_parameter').where(arguments['key'] == "NETWORK_POLICY").any(
+        arguments['value'] != ""
+      )
+  - uid: mondoo-snowflake-security-network-policies-configured-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'snowflake_account_parameter')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'snowflake_account_parameter').where(change.after['key'] == "NETWORK_POLICY").any(
+        change.after['value'] != ""
+      )
+  - uid: mondoo-snowflake-security-network-policies-configured-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'snowflake_account_parameter')
+    mql: |
+      terraform.state.resources.where(type == 'snowflake_account_parameter').where(values['key'] == "NETWORK_POLICY").any(
+        values['value'] != ""
+      )
+  - uid: mondoo-snowflake-security-network-policies-no-unrestricted-access-snowflake
+    filters: asset.platform == 'snowflake'
+    mql: |
+      snowflake.account.networkPolicies.none(allowedIpList.contains("0.0.0.0/0") || allowedIpList.contains("::/0"))
+  - uid: mondoo-snowflake-security-network-policies-no-unrestricted-access-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'snowflake_network_policy')
+    mql: |
+      terraform.resources('snowflake_network_policy').all(
+        arguments['allowed_ip_list'] == null || arguments['allowed_ip_list'].none(_ == "0.0.0.0/0" || _ == "::/0")
+      )
+  - uid: mondoo-snowflake-security-network-policies-no-unrestricted-access-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'snowflake_network_policy')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'snowflake_network_policy').all(
+        change.after['allowed_ip_list'] == null || change.after['allowed_ip_list'].none(_ == "0.0.0.0/0" || _ == "::/0")
+      )
+  - uid: mondoo-snowflake-security-network-policies-no-unrestricted-access-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'snowflake_network_policy')
+    mql: |
+      terraform.state.resources.where(type == 'snowflake_network_policy').all(
+        values['allowed_ip_list'] == null || values['allowed_ip_list'].none(_ == "0.0.0.0/0" || _ == "::/0")
+      )
+  - uid: mondoo-snowflake-security-no-accountadmin-default-role-snowflake
+    filters: asset.platform == 'snowflake'
+    mql: |
+      snowflake.account.users.where(disabled == false).none(defaultRole == "ACCOUNTADMIN")
+  - uid: mondoo-snowflake-security-no-accountadmin-default-role-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'snowflake_user')
+    mql: |
+      terraform.resources('snowflake_user').where(arguments['disabled'] != true).all(
+        arguments['default_role'] != "ACCOUNTADMIN"
+      )
+  - uid: mondoo-snowflake-security-no-accountadmin-default-role-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'snowflake_user')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'snowflake_user').where(change.after['disabled'] != true).all(
+        change.after['default_role'] != "ACCOUNTADMIN"
+      )
+  - uid: mondoo-snowflake-security-no-accountadmin-default-role-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'snowflake_user')
+    mql: |
+      terraform.state.resources.where(type == 'snowflake_user').where(values['disabled'] != true).all(
+        values['default_role'] != "ACCOUNTADMIN"
+      )
+  - uid: mondoo-snowflake-security-password-policy-complexity-configured-snowflake
+    filters: asset.platform == 'snowflake'
+    mql: |
+      snowflake.account.passwordPolicies.all(passwordMinUpperCaseChars >= 1 && passwordMinLowerCaseChars >= 1 && passwordMinNumericChars >= 1 && passwordMinSpecialChars >= 1)
+  - uid: mondoo-snowflake-security-password-policy-complexity-configured-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'snowflake_password_policy')
+    mql: |
+      terraform.resources('snowflake_password_policy').all(
+        arguments['min_upper_case_chars'] >= 1 && arguments['min_lower_case_chars'] >= 1 && arguments['min_numeric_chars'] >= 1 && arguments['min_special_chars'] >= 1
+      )
+  - uid: mondoo-snowflake-security-password-policy-complexity-configured-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'snowflake_password_policy')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'snowflake_password_policy').all(
+        change.after['min_upper_case_chars'] >= 1 && change.after['min_lower_case_chars'] >= 1 && change.after['min_numeric_chars'] >= 1 && change.after['min_special_chars'] >= 1
+      )
+  - uid: mondoo-snowflake-security-password-policy-complexity-configured-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'snowflake_password_policy')
+    mql: |
+      terraform.state.resources.where(type == 'snowflake_password_policy').all(
+        values['min_upper_case_chars'] >= 1 && values['min_lower_case_chars'] >= 1 && values['min_numeric_chars'] >= 1 && values['min_special_chars'] >= 1
+      )
+  - uid: mondoo-snowflake-security-password-policy-max-age-configured-snowflake
+    filters: asset.platform == 'snowflake'
+    mql: |
+      snowflake.account.passwordPolicies.all(passwordMaxAgeDays > 0 && passwordMaxAgeDays <= 90)
+  - uid: mondoo-snowflake-security-password-policy-max-age-configured-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'snowflake_password_policy')
+    mql: |
+      terraform.resources('snowflake_password_policy').all(
+        arguments['max_age_days'] > 0 && arguments['max_age_days'] <= 90
+      )
+  - uid: mondoo-snowflake-security-password-policy-max-age-configured-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'snowflake_password_policy')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'snowflake_password_policy').all(
+        change.after['max_age_days'] > 0 && change.after['max_age_days'] <= 90
+      )
+  - uid: mondoo-snowflake-security-password-policy-max-age-configured-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'snowflake_password_policy')
+    mql: |
+      terraform.state.resources.where(type == 'snowflake_password_policy').all(
+        values['max_age_days'] > 0 && values['max_age_days'] <= 90
+      )
+  - uid: mondoo-snowflake-security-password-policy-history-configured-snowflake
+    filters: asset.platform == 'snowflake'
+    mql: |
+      snowflake.account.passwordPolicies.all(passwordHistory >= 5)
+  - uid: mondoo-snowflake-security-password-policy-history-configured-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'snowflake_password_policy')
+    mql: |
+      terraform.resources('snowflake_password_policy').all(
+        arguments['history'] >= 5
+      )
+  - uid: mondoo-snowflake-security-password-policy-history-configured-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'snowflake_password_policy')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'snowflake_password_policy').all(
+        change.after['history'] >= 5
+      )
+  - uid: mondoo-snowflake-security-password-policy-history-configured-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'snowflake_password_policy')
+    mql: |
+      terraform.state.resources.where(type == 'snowflake_password_policy').all(
+        values['history'] >= 5
+      )
+  - uid: mondoo-snowflake-security-databases-retention-configured-snowflake
+    filters: asset.platform == 'snowflake'
+    mql: |
+      snowflake.account.databases.all(retentionTime > 0)
+  - uid: mondoo-snowflake-security-databases-retention-configured-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'snowflake_database')
+    mql: |
+      terraform.resources('snowflake_database').all(
+        arguments['data_retention_time_in_days'] == null || arguments['data_retention_time_in_days'] > 0
+      )
+  - uid: mondoo-snowflake-security-databases-retention-configured-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'snowflake_database')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'snowflake_database').all(
+        change.after['data_retention_time_in_days'] == null || change.after['data_retention_time_in_days'] > 0
+      )
+  - uid: mondoo-snowflake-security-databases-retention-configured-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'snowflake_database')
+    mql: |
+      terraform.state.resources.where(type == 'snowflake_database').all(
+        values['data_retention_time_in_days'] == null || values['data_retention_time_in_days'] > 0
+      )
