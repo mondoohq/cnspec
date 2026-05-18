@@ -91,6 +91,10 @@ queries:
   # legitimate user must click a confirmation link delivered to their inbox.
   # `doctl account` exposes only `get` and `ratelimit`; there is no API for
   # triggering or completing email verification.
+  # No Terraform variants: this check reads account-wide state from
+  # digitalocean.account; the digitalocean Terraform provider has no resource that
+  # represents the account or its email-verification status, so there is nothing
+  # to assert against in HCL, plan, or state.
   - uid: mondoo-digitalocean-security-account-email-verified
     title: Ensure the DigitalOcean account email is verified
     impact: 60
@@ -151,6 +155,8 @@ queries:
             2. Navigate to **Settings** > **Profile**.
             3. If the email address shows as unverified, click **Resend verification email**.
             4. Open the verification email and follow the confirmation link.
+        # No Terraform remediation: email verification is an interactive account-level
+        # flow with no provider resource — the same limitation as the CLI above.
     refs:
       - url: https://docs.digitalocean.com/products/accounts/security/
         title: DigitalOcean account security
@@ -1516,8 +1522,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-4-2-1
       compliance/soc2-2017: soc2-control-cc6-7-2
       compliance/vda-isa-5: vda-isa-5-5-1-2
-    mql: |
-      digitalocean.cdnEndpoints.where(customDomain != "").all(certificateId != "")
+    variants:
+      - uid: mondoo-digitalocean-security-cdn-has-certificate-digitalocean
+        tags:
+          mondoo.com/filter-title: DigitalOcean
+          mondoo.com/filter-icon: digitalocean
+      - uid: mondoo-digitalocean-security-cdn-has-certificate-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-digitalocean-security-cdn-has-certificate-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-digitalocean-security-cdn-has-certificate-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that every CDN endpoint configured with a custom domain has a TLS certificate attached. A CDN endpoint on a custom domain without a certificate cannot terminate HTTPS for that domain, forcing clients to use HTTP or encounter certificate errors.
@@ -1565,9 +1586,43 @@ queries:
             ```bash
             doctl compute cdn update <cdn-id> --certificate-id <cert-id>
             ```
+        - id: terraform
+          desc: |
+            To attach a TLS certificate to a custom-domain CDN endpoint in Terraform, set `certificate_name` on the `digitalocean_cdn` resource alongside `custom_domain`:
+
+            ```hcl
+            resource "digitalocean_cdn" "example" {
+              origin           = digitalocean_spaces_bucket.example.bucket_domain_name
+              custom_domain    = "cdn.example.com"
+              certificate_name = digitalocean_certificate.example.name
+            }
+            ```
     refs:
       - url: https://docs.digitalocean.com/products/networking/cdn/how-to/use-custom-subdomain/
         title: CDN custom subdomain and TLS
+
+  - uid: mondoo-digitalocean-security-cdn-has-certificate-digitalocean
+    filters: asset.platform == "digitalocean"
+    mql: |
+      digitalocean.cdnEndpoints.where(customDomain != "").all(certificateId != "")
+  - uid: mondoo-digitalocean-security-cdn-has-certificate-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "digitalocean_cdn")
+    mql: |
+      terraform.resources.where(nameLabel == "digitalocean_cdn").where(arguments["custom_domain"] != empty).all(
+        arguments["certificate_name"] != empty || arguments["certificate_id"] != empty
+      )
+  - uid: mondoo-digitalocean-security-cdn-has-certificate-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "digitalocean_cdn")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "digitalocean_cdn").where(change.after["custom_domain"] != empty).all(
+        change.after["certificate_name"] != empty || change.after["certificate_id"] != empty
+      )
+  - uid: mondoo-digitalocean-security-cdn-has-certificate-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "digitalocean_cdn")
+    mql: |
+      terraform.state.resources.where(type == "digitalocean_cdn").where(values["custom_domain"] != empty).all(
+        values["certificate_name"] != empty || values["certificate_id"] != empty
+      )
 
   - uid: mondoo-digitalocean-security-spaces-key-has-scoped-grants
     title: Ensure Spaces access keys are scoped with bucket grants
@@ -1586,8 +1641,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-7-2-1
       compliance/soc2-2017: soc2-control-cc6-1-3
       compliance/vda-isa-5: vda-isa-5-4-2-1
-    mql: |
-      digitalocean.spacesKeys.all(grants != empty)
+    variants:
+      - uid: mondoo-digitalocean-security-spaces-key-has-scoped-grants-digitalocean
+        tags:
+          mondoo.com/filter-title: DigitalOcean
+          mondoo.com/filter-icon: digitalocean
+      - uid: mondoo-digitalocean-security-spaces-key-has-scoped-grants-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-digitalocean-security-spaces-key-has-scoped-grants-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-digitalocean-security-spaces-key-has-scoped-grants-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that every Spaces access key has at least one bucket grant defined, scoping the key to specific buckets and operations. A key with no grants has unrestricted account-level access to every Spaces bucket in the account.
@@ -1637,10 +1707,46 @@ queries:
               --grants "bucket=<bucket-name>;permission=read"
             doctl spaces keys delete <old-key>
             ```
+        - id: terraform
+          desc: |
+            To scope a Spaces access key in Terraform, declare one or more `grant` blocks on the `digitalocean_spaces_key` resource, each naming a specific bucket and permission:
+
+            ```hcl
+            resource "digitalocean_spaces_key" "example" {
+              name = "example-key"
+
+              grant {
+                bucket     = "example-bucket"
+                permission = "read"
+              }
+            }
+            ```
     refs:
       - url: https://docs.digitalocean.com/products/spaces/how-to/manage-access/
         title: Manage Spaces access keys and grants
 
+  - uid: mondoo-digitalocean-security-spaces-key-has-scoped-grants-digitalocean
+    filters: asset.platform == "digitalocean"
+    mql: |
+      digitalocean.spacesKeys.all(grants != empty)
+  - uid: mondoo-digitalocean-security-spaces-key-has-scoped-grants-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "digitalocean_spaces_key")
+    mql: |
+      terraform.resources.where(nameLabel == "digitalocean_spaces_key").all(blocks.where(type == "grant") != empty)
+  - uid: mondoo-digitalocean-security-spaces-key-has-scoped-grants-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "digitalocean_spaces_key")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "digitalocean_spaces_key").all(change.after["grant"] != empty)
+  - uid: mondoo-digitalocean-security-spaces-key-has-scoped-grants-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "digitalocean_spaces_key")
+    mql: |
+      terraform.state.resources.where(type == "digitalocean_spaces_key").all(values["grant"] != empty)
+
+  # No Terraform variants: this check inspects the scheme of each app's live_url,
+  # which is a read-only computed attribute. App Platform always provisions managed
+  # TLS, so an HTTP live_url reflects a misconfigured custom domain at runtime — a
+  # condition the digitalocean_app resource has no argument to express, and that is
+  # absent from HCL and from a terraform plan before apply.
   - uid: mondoo-digitalocean-security-app-platform-https
     title: Ensure App Platform apps are served over HTTPS
     impact: 60
@@ -1733,6 +1839,10 @@ queries:
                 ```bash
                 doctl apps get <app-id> --format ID,LiveURL
                 ```
+        # No Terraform remediation: an HTTP live_url is caused by a custom domain
+        # whose DNS does not resolve to the app's ingress, which Terraform cannot
+        # fix — the domain block in digitalocean_app does not control certificate
+        # issuance or the resulting URL scheme.
     refs:
       - url: https://docs.digitalocean.com/products/app-platform/how-to/manage-domains/
         title: Manage App Platform domains and certificates
