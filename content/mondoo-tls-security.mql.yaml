@@ -223,6 +223,52 @@ queries:
                 ```
 
             4. Verify the SAN list now includes your domain by re-running the OpenSSL command from step 1.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            The following playbook uses Certbot to issue or renew an NGINX certificate that covers the correct domain names, ensuring the certificate's SAN extension matches the hostname.
+
+            ```yaml
+            ---
+            - name: Issue certificate with correct SAN entries in NGINX
+              hosts: webservers
+              tasks:
+                - name: Install Certbot and NGINX plugin
+                  ansible.builtin.package:
+                    name:
+                      - certbot
+                      - python3-certbot-nginx
+                    state: present
+
+                - name: Issue or renew certificate with correct domain names
+                  ansible.builtin.command:
+                    cmd: >
+                      certbot --nginx --non-interactive --agree-tos
+                      -m admin@yourdomain.com
+                      -d yourdomain.com -d www.yourdomain.com
+                  notify: reload nginx
+
+                - name: Set ssl_certificate path
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_certificate\s'
+                    line: '    ssl_certificate /etc/letsencrypt/live/yourdomain.com/fullchain.pem;'
+                    insertafter: 'server \{'
+                  notify: reload nginx
+
+                - name: Set ssl_certificate_key path
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_certificate_key\s'
+                    line: '    ssl_certificate_key /etc/letsencrypt/live/yourdomain.com/privkey.pem;'
+                    insertafter: 'ssl_certificate '
+                  notify: reload nginx
+              handlers:
+                - name: reload nginx
+                  ansible.builtin.command:
+                    cmd: nginx -s reload
+            ```
     refs:
       - url: https://www.ssllabs.com/projects/best-practices/
         title: SSL/TLS Deployment Best Practices
@@ -374,6 +420,52 @@ queries:
                 ```
 
             4. Re-run the verification command in step 1 — `Verify return code: 0 (ok)` confirms the new chain is trusted.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            The following playbook uses Certbot to obtain or renew a certificate with the correct validity window and configures NGINX to serve it.
+
+            ```yaml
+            ---
+            - name: Issue a valid certificate for NGINX
+              hosts: webservers
+              tasks:
+                - name: Install Certbot and NGINX plugin
+                  ansible.builtin.package:
+                    name:
+                      - certbot
+                      - python3-certbot-nginx
+                    state: present
+
+                - name: Obtain or renew certificate (max 398-day validity)
+                  ansible.builtin.command:
+                    cmd: >
+                      certbot --nginx --non-interactive --agree-tos
+                      -m admin@yourdomain.com
+                      -d yourdomain.com -d www.yourdomain.com
+                  notify: reload nginx
+
+                - name: Set ssl_certificate path
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_certificate\s'
+                    line: '    ssl_certificate /etc/letsencrypt/live/yourdomain.com/fullchain.pem;'
+                    insertafter: 'server \{'
+                  notify: reload nginx
+
+                - name: Set ssl_certificate_key path
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_certificate_key\s'
+                    line: '    ssl_certificate_key /etc/letsencrypt/live/yourdomain.com/privkey.pem;'
+                    insertafter: 'ssl_certificate '
+                  notify: reload nginx
+              handlers:
+                - name: reload nginx
+                  ansible.builtin.command:
+                    cmd: nginx -s reload
+            ```
     refs:
       - url: https://www.ssllabs.com/projects/best-practices/
         title: SSL/TLS Deployment Best Practices
@@ -529,6 +621,55 @@ queries:
                 ```
 
             4. Watch for expiry. Set up monitoring (Nagios/Zabbix/Prometheus blackbox exporter, or a cloud certificate manager) and alert at 30/14/7 days remaining.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            The following playbook renews the certificate using Certbot and enables the Certbot systemd timer so NGINX automatically serves a fresh certificate before expiry.
+
+            ```yaml
+            ---
+            - name: Renew certificate and automate future renewals in NGINX
+              hosts: webservers
+              tasks:
+                - name: Install Certbot and NGINX plugin
+                  ansible.builtin.package:
+                    name:
+                      - certbot
+                      - python3-certbot-nginx
+                    state: present
+
+                - name: Renew certificate now
+                  ansible.builtin.command:
+                    cmd: certbot renew --deploy-hook "systemctl reload nginx"
+                  notify: reload nginx
+
+                - name: Enable Certbot timer for automatic renewal
+                  ansible.builtin.systemd:
+                    name: certbot.timer
+                    enabled: true
+                    state: started
+
+                - name: Set ssl_certificate path
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_certificate\s'
+                    line: '    ssl_certificate /etc/letsencrypt/live/yourdomain.com/fullchain.pem;'
+                    insertafter: 'server \{'
+                  notify: reload nginx
+
+                - name: Set ssl_certificate_key path
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_certificate_key\s'
+                    line: '    ssl_certificate_key /etc/letsencrypt/live/yourdomain.com/privkey.pem;'
+                    insertafter: 'ssl_certificate '
+                  notify: reload nginx
+              handlers:
+                - name: reload nginx
+                  ansible.builtin.command:
+                    cmd: nginx -s reload
+            ```
     refs:
       - url: https://www.ssllabs.com/projects/best-practices/
         title: SSL/TLS Deployment Best Practices
@@ -696,6 +837,51 @@ queries:
                 ```
 
             5. Re-run the iteration in step 1 — every `notAfter` should now be in the future.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            The following playbook forces a certificate renewal to refresh all chain certificates and updates the OS trust store so NGINX can validate the complete chain.
+
+            ```yaml
+            ---
+            - name: Refresh full certificate chain in NGINX
+              hosts: webservers
+              tasks:
+                - name: Update ca-certificates package
+                  ansible.builtin.package:
+                    name: ca-certificates
+                    state: latest
+
+                - name: Update CA trust store
+                  ansible.builtin.command:
+                    cmd: update-ca-certificates
+
+                - name: Force-renew certificate to refresh intermediates
+                  ansible.builtin.command:
+                    cmd: certbot renew --force-renewal --deploy-hook "systemctl reload nginx"
+                  notify: reload nginx
+
+                - name: Set ssl_certificate path (full chain)
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_certificate\s'
+                    line: '    ssl_certificate /etc/letsencrypt/live/yourdomain.com/fullchain.pem;'
+                    insertafter: 'server \{'
+                  notify: reload nginx
+
+                - name: Set ssl_certificate_key path
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_certificate_key\s'
+                    line: '    ssl_certificate_key /etc/letsencrypt/live/yourdomain.com/privkey.pem;'
+                    insertafter: 'ssl_certificate '
+                  notify: reload nginx
+              handlers:
+                - name: reload nginx
+                  ansible.builtin.command:
+                    cmd: nginx -s reload
+            ```
     refs:
       - url: https://www.ssllabs.com/projects/best-practices/
         title: SSL/TLS Deployment Best Practices
@@ -871,6 +1057,52 @@ queries:
                 ```
 
                 A return code of `0 (ok)` confirms the cert chains to a trusted root.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            The following playbook replaces a self-signed certificate with a publicly trusted one from Let's Encrypt and configures NGINX to serve the new full chain.
+
+            ```yaml
+            ---
+            - name: Replace self-signed certificate with trusted CA cert in NGINX
+              hosts: webservers
+              tasks:
+                - name: Install Certbot and NGINX plugin
+                  ansible.builtin.package:
+                    name:
+                      - certbot
+                      - python3-certbot-nginx
+                    state: present
+
+                - name: Obtain certificate from Let's Encrypt
+                  ansible.builtin.command:
+                    cmd: >
+                      certbot --nginx --non-interactive --agree-tos
+                      -m admin@yourdomain.com
+                      -d yourdomain.com -d www.yourdomain.com
+                  notify: reload nginx
+
+                - name: Set ssl_certificate path (full chain)
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_certificate\s'
+                    line: '    ssl_certificate /etc/ssl/certs/yourdomain.com.fullchain.pem;'
+                    insertafter: 'server \{'
+                  notify: reload nginx
+
+                - name: Set ssl_certificate_key path
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_certificate_key\s'
+                    line: '    ssl_certificate_key /etc/ssl/private/yourdomain.com.key;'
+                    insertafter: 'ssl_certificate '
+                  notify: reload nginx
+              handlers:
+                - name: reload nginx
+                  ansible.builtin.command:
+                    cmd: nginx -s reload
+            ```
     refs:
       - url: https://www.ssllabs.com/projects/best-practices/
         title: SSL/TLS Deployment Best Practices
@@ -1062,6 +1294,57 @@ queries:
                 ```
 
             5. Investigate why the cert was revoked. If a private key compromise is suspected, audit access to the host and rotate any related secrets before bringing the new cert online.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            The following playbook force-renews the certificate to replace a revoked one and enables OCSP stapling so clients can confirm revocation status without a third-party round-trip.
+
+            ```yaml
+            ---
+            - name: Replace revoked certificate and enable OCSP stapling in NGINX
+              hosts: webservers
+              tasks:
+                - name: Force-renew certificate with a new key pair
+                  ansible.builtin.command:
+                    cmd: >
+                      certbot --nginx --force-renewal --non-interactive --agree-tos
+                      -m admin@yourdomain.com
+                      -d yourdomain.com
+                  notify: reload nginx
+
+                - name: Set ssl_certificate path
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_certificate\s'
+                    line: '    ssl_certificate /etc/ssl/certs/yourdomain.com.fullchain.pem;'
+                    insertafter: 'server \{'
+                  notify: reload nginx
+
+                - name: Set ssl_certificate_key path
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_certificate_key\s'
+                    line: '    ssl_certificate_key /etc/ssl/private/yourdomain.com.key;'
+                    insertafter: 'ssl_certificate '
+                  notify: reload nginx
+
+                - name: Enable OCSP stapling directives
+                  ansible.builtin.blockinfile:
+                    path: /etc/nginx/nginx.conf
+                    marker: "# {mark} ANSIBLE MANAGED BLOCK - OCSP stapling"
+                    insertafter: 'ssl_certificate_key '
+                    block: |
+                          ssl_stapling          on;
+                          ssl_stapling_verify   on;
+                          resolver              1.1.1.1 8.8.8.8 valid=300s;
+                          resolver_timeout      5s;
+                  notify: reload nginx
+              handlers:
+                - name: reload nginx
+                  ansible.builtin.command:
+                    cmd: nginx -s reload
+            ```
     refs:
       - url: https://datatracker.ietf.org/doc/html/rfc6960
         title: OCSP RFC 6960
@@ -1239,6 +1522,52 @@ queries:
                 ```
 
             4. Re-run the iteration in step 1 — every entry should be SHA-256 or stronger.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            The following playbook reissues the certificate using a SHA-256 signature algorithm and configures NGINX to serve the refreshed chain.
+
+            ```yaml
+            ---
+            - name: Replace weak-signature certificate in NGINX
+              hosts: webservers
+              tasks:
+                - name: Install Certbot and NGINX plugin
+                  ansible.builtin.package:
+                    name:
+                      - certbot
+                      - python3-certbot-nginx
+                    state: present
+
+                - name: Obtain new certificate (Let's Encrypt always issues SHA-256)
+                  ansible.builtin.command:
+                    cmd: >
+                      certbot --nginx --non-interactive --agree-tos
+                      -m admin@yourdomain.com
+                      -d yourdomain.com -d www.yourdomain.com
+                  notify: reload nginx
+
+                - name: Set ssl_certificate path (full chain)
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_certificate\s'
+                    line: '    ssl_certificate /etc/ssl/certs/yourdomain.com.fullchain.pem;'
+                    insertafter: 'server \{'
+                  notify: reload nginx
+
+                - name: Set ssl_certificate_key path
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_certificate_key\s'
+                    line: '    ssl_certificate_key /etc/ssl/private/yourdomain.com.key;'
+                    insertafter: 'ssl_certificate '
+                  notify: reload nginx
+              handlers:
+                - name: reload nginx
+                  ansible.builtin.command:
+                    cmd: nginx -s reload
+            ```
     refs:
       - url: https://www.ssllabs.com/projects/best-practices/
         title: SSL/TLS Deployment Best Practices
@@ -1421,6 +1750,29 @@ queries:
                 ```powershell
                 Restart-Computer
                 ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            The following playbook sets `ssl_protocols TLSv1.2 TLSv1.3;` in the NGINX configuration to disable weak SSL/TLS versions.
+
+            ```yaml
+            ---
+            - name: Disable weak TLS versions in NGINX
+              hosts: webservers
+              tasks:
+                - name: Set ssl_protocols to TLSv1.2 and TLSv1.3 only
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_protocols'
+                    line: '    ssl_protocols TLSv1.2 TLSv1.3;'
+                    insertafter: 'http \{'
+                  notify: reload nginx
+              handlers:
+                - name: reload nginx
+                  ansible.builtin.command:
+                    cmd: nginx -s reload
+            ```
     refs:
       - url: https://datatracker.ietf.org/doc/html/rfc8446
         title: TLS 1.3 RFC 8446
@@ -1545,6 +1897,37 @@ queries:
                 ```bash
                 nmap --script ssl-enum-ciphers -p 443 yourdomain.com | grep -i rc4
                 ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            The following playbook sets an `ssl_ciphers` directive in NGINX that excludes all RC4 cipher suites.
+
+            ```yaml
+            ---
+            - name: Disable RC4 ciphers in NGINX
+              hosts: webservers
+              tasks:
+                - name: Set ssl_ciphers excluding RC4
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_ciphers'
+                    line: "    ssl_ciphers 'ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:!RC4';"
+                    insertafter: 'http \{'
+                  notify: reload nginx
+
+                - name: Set ssl_prefer_server_ciphers on
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_prefer_server_ciphers'
+                    line: '    ssl_prefer_server_ciphers on;'
+                    insertafter: 'ssl_ciphers '
+                  notify: reload nginx
+              handlers:
+                - name: reload nginx
+                  ansible.builtin.command:
+                    cmd: nginx -s reload
+            ```
     refs:
       - url: https://www.ssllabs.com/projects/best-practices/
         title: SSL/TLS Deployment Best Practices
@@ -1670,6 +2053,37 @@ queries:
                 ```bash
                 nmap --script ssl-enum-ciphers -p 443 yourdomain.com | grep -i null
                 ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            The following playbook sets an `ssl_ciphers` directive in NGINX that excludes all NULL cipher suites.
+
+            ```yaml
+            ---
+            - name: Disable NULL cipher suites in NGINX
+              hosts: webservers
+              tasks:
+                - name: Set ssl_ciphers excluding NULL suites
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_ciphers'
+                    line: "    ssl_ciphers 'ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:!NULL:!aNULL:!eNULL';"
+                    insertafter: 'http \{'
+                  notify: reload nginx
+
+                - name: Set ssl_prefer_server_ciphers on
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_prefer_server_ciphers'
+                    line: '    ssl_prefer_server_ciphers on;'
+                    insertafter: 'ssl_ciphers '
+                  notify: reload nginx
+              handlers:
+                - name: reload nginx
+                  ansible.builtin.command:
+                    cmd: nginx -s reload
+            ```
     refs:
       - url: https://www.ssllabs.com/projects/best-practices/
         title: SSL/TLS Deployment Best Practices
@@ -1792,6 +2206,37 @@ queries:
                 ```bash
                 nmap --script ssl-enum-ciphers -p 443 yourdomain.com | grep -i export
                 ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            The following playbook sets an `ssl_ciphers` directive in NGINX that excludes all export-grade cipher suites.
+
+            ```yaml
+            ---
+            - name: Disable export cipher suites in NGINX
+              hosts: webservers
+              tasks:
+                - name: Set ssl_ciphers excluding export suites
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_ciphers'
+                    line: "    ssl_ciphers 'ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:!EXPORT';"
+                    insertafter: 'http \{'
+                  notify: reload nginx
+
+                - name: Set ssl_prefer_server_ciphers on
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_prefer_server_ciphers'
+                    line: '    ssl_prefer_server_ciphers on;'
+                    insertafter: 'ssl_ciphers '
+                  notify: reload nginx
+              handlers:
+                - name: reload nginx
+                  ansible.builtin.command:
+                    cmd: nginx -s reload
+            ```
     refs:
       - url: https://www.ssllabs.com/projects/best-practices/
         title: SSL/TLS Deployment Best Practices
@@ -1914,6 +2359,37 @@ queries:
                 ```bash
                 nmap --script ssl-enum-ciphers -p 443 yourdomain.com | grep -iE "anon|ADH"
                 ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            The following playbook sets an `ssl_ciphers` directive in NGINX that excludes all anonymous Diffie-Hellman cipher suites.
+
+            ```yaml
+            ---
+            - name: Disable anonymous Diffie-Hellman cipher suites in NGINX
+              hosts: webservers
+              tasks:
+                - name: Set ssl_ciphers excluding ADH and aNULL
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_ciphers'
+                    line: "    ssl_ciphers 'ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:!ADH:!aNULL';"
+                    insertafter: 'http \{'
+                  notify: reload nginx
+
+                - name: Set ssl_prefer_server_ciphers on
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_prefer_server_ciphers'
+                    line: '    ssl_prefer_server_ciphers on;'
+                    insertafter: 'ssl_ciphers '
+                  notify: reload nginx
+              handlers:
+                - name: reload nginx
+                  ansible.builtin.command:
+                    cmd: nginx -s reload
+            ```
     refs:
       - url: https://www.ssllabs.com/projects/best-practices/
         title: SSL/TLS Deployment Best Practices
@@ -2050,6 +2526,37 @@ queries:
                 ```bash
                 nmap --script ssl-enum-ciphers -p 443 yourdomain.com | grep -iE "DES|RC2|IDEA"
                 ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            The following playbook sets an `ssl_ciphers` directive in NGINX that excludes DES, 3DES, RC2, and IDEA cipher suites.
+
+            ```yaml
+            ---
+            - name: Disable weak block ciphers in NGINX
+              hosts: webservers
+              tasks:
+                - name: Set ssl_ciphers excluding DES, 3DES, RC2, and IDEA
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_ciphers'
+                    line: "    ssl_ciphers 'ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:!DES:!3DES:!RC2:!IDEA';"
+                    insertafter: 'http \{'
+                  notify: reload nginx
+
+                - name: Set ssl_prefer_server_ciphers on
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_prefer_server_ciphers'
+                    line: '    ssl_prefer_server_ciphers on;'
+                    insertafter: 'ssl_ciphers '
+                  notify: reload nginx
+              handlers:
+                - name: reload nginx
+                  ansible.builtin.command:
+                    cmd: nginx -s reload
+            ```
     refs:
       - url: https://www.ssllabs.com/projects/best-practices/
         title: SSL/TLS Deployment Best Practices
@@ -2186,6 +2693,37 @@ queries:
                 ```bash
                 nmap --script ssl-enum-ciphers -p 443 yourdomain.com | grep -i CBC
                 ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            The following playbook sets an `ssl_ciphers` directive in NGINX to use only AEAD cipher suites, eliminating all CBC-mode ciphers.
+
+            ```yaml
+            ---
+            - name: Disable CBC cipher modes in NGINX
+              hosts: webservers
+              tasks:
+                - name: Set ssl_ciphers to AEAD-only suites (no CBC)
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_ciphers'
+                    line: "    ssl_ciphers 'ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305';"
+                    insertafter: 'http \{'
+                  notify: reload nginx
+
+                - name: Set ssl_prefer_server_ciphers on
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_prefer_server_ciphers'
+                    line: '    ssl_prefer_server_ciphers on;'
+                    insertafter: 'ssl_ciphers '
+                  notify: reload nginx
+              handlers:
+                - name: reload nginx
+                  ansible.builtin.command:
+                    cmd: nginx -s reload
+            ```
     refs:
       - url: https://www.ssllabs.com/projects/best-practices/
         title: SSL/TLS Deployment Best Practices
@@ -2322,6 +2860,37 @@ queries:
                 ```bash
                 nmap --script ssl-enum-ciphers -p 443 yourdomain.com | grep -E "TLS_RSA"
                 ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            The following playbook sets an `ssl_ciphers` directive in NGINX to use only ECDHE and DHE cipher suites, removing all static RSA key exchange suites.
+
+            ```yaml
+            ---
+            - name: Disable RSA key exchange cipher suites in NGINX
+              hosts: webservers
+              tasks:
+                - name: Set ssl_ciphers to ECDHE/DHE-only (no RSA key exchange)
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_ciphers'
+                    line: "    ssl_ciphers 'ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384';"
+                    insertafter: 'http \{'
+                  notify: reload nginx
+
+                - name: Set ssl_prefer_server_ciphers on
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_prefer_server_ciphers'
+                    line: '    ssl_prefer_server_ciphers on;'
+                    insertafter: 'ssl_ciphers '
+                  notify: reload nginx
+              handlers:
+                - name: reload nginx
+                  ansible.builtin.command:
+                    cmd: nginx -s reload
+            ```
     refs:
       - url: https://www.ssllabs.com/projects/best-practices/
         title: SSL/TLS Deployment Best Practices
@@ -2459,6 +3028,45 @@ queries:
             4. Verify using SSL Labs (ssllabs.com/ssltest) to ensure your configuration scores A or A+.
 
             **Resource:** Use the [Mozilla SSL Configuration Generator](https://ssl-config.mozilla.org/) for tested configurations.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            The following playbook replaces the NGINX cipher configuration with a modern cipher suite and restricts protocols to TLSv1.2 and TLSv1.3, removing all legacy cipher suites.
+
+            ```yaml
+            ---
+            - name: Replace old cipher suites with modern configuration in NGINX
+              hosts: webservers
+              tasks:
+                - name: Set ssl_ciphers to modern suite only
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_ciphers'
+                    line: "    ssl_ciphers 'ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384';"
+                    insertafter: 'http \{'
+                  notify: reload nginx
+
+                - name: Set ssl_prefer_server_ciphers on
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_prefer_server_ciphers'
+                    line: '    ssl_prefer_server_ciphers on;'
+                    insertafter: 'ssl_ciphers '
+                  notify: reload nginx
+
+                - name: Set ssl_protocols to TLSv1.2 and TLSv1.3 only
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_protocols'
+                    line: '    ssl_protocols TLSv1.2 TLSv1.3;'
+                    insertafter: 'http \{'
+                  notify: reload nginx
+              handlers:
+                - name: reload nginx
+                  ansible.builtin.command:
+                    cmd: nginx -s reload
+            ```
     refs:
       - url: https://www.ssllabs.com/projects/best-practices/
         title: SSL/TLS Deployment Best Practices
@@ -2599,6 +3207,37 @@ queries:
                 ```bash
                 nmap --script ssl-enum-ciphers -p 443 yourdomain.com | grep -iE "GCM|CHACHA|CCM"
                 ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            The following playbook sets an `ssl_ciphers` directive in NGINX to include AEAD cipher suites (AES-GCM and ChaCha20-Poly1305).
+
+            ```yaml
+            ---
+            - name: Enable AEAD cipher suites in NGINX
+              hosts: webservers
+              tasks:
+                - name: Set ssl_ciphers to include AEAD suites
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_ciphers'
+                    line: "    ssl_ciphers 'ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384';"
+                    insertafter: 'http \{'
+                  notify: reload nginx
+
+                - name: Set ssl_prefer_server_ciphers on
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_prefer_server_ciphers'
+                    line: '    ssl_prefer_server_ciphers on;'
+                    insertafter: 'ssl_ciphers '
+                  notify: reload nginx
+              handlers:
+                - name: reload nginx
+                  ansible.builtin.command:
+                    cmd: nginx -s reload
+            ```
     refs:
       - url: https://www.ssllabs.com/projects/best-practices/
         title: SSL/TLS Deployment Best Practices
@@ -2741,6 +3380,37 @@ queries:
             4. Verify PFS is enabled using SSL Labs (look for "Forward Secrecy: Yes").
 
             **Note:** TLS 1.3 only supports forward secrecy by design.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            The following playbook sets an `ssl_ciphers` directive in NGINX to use ECDHE and DHE cipher suites, ensuring Perfect Forward Secrecy on every connection.
+
+            ```yaml
+            ---
+            - name: Enable Perfect Forward Secrecy cipher suites in NGINX
+              hosts: webservers
+              tasks:
+                - name: Set ssl_ciphers to ECDHE/DHE forward-secrecy suites
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_ciphers'
+                    line: "    ssl_ciphers 'ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384';"
+                    insertafter: 'http \{'
+                  notify: reload nginx
+
+                - name: Set ssl_prefer_server_ciphers on
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_prefer_server_ciphers'
+                    line: '    ssl_prefer_server_ciphers on;'
+                    insertafter: 'ssl_ciphers '
+                  notify: reload nginx
+              handlers:
+                - name: reload nginx
+                  ansible.builtin.command:
+                    cmd: nginx -s reload
+            ```
     refs:
       - url: https://www.ssllabs.com/projects/best-practices/
         title: SSL/TLS Deployment Best Practices
@@ -2903,6 +3573,45 @@ queries:
                 ```
 
             **Important:** Do not use RC4 as a BEAST mitigation. RC4 has severe cryptographic weaknesses.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            The following playbook configures NGINX to use `ssl_protocols TLSv1.2 TLSv1.3` and an AEAD cipher suite, mitigating the BEAST attack by eliminating the vulnerable TLS 1.0 CBC path.
+
+            ```yaml
+            ---
+            - name: Mitigate BEAST attack in NGINX
+              hosts: webservers
+              tasks:
+                - name: Set ssl_protocols to TLSv1.2 and TLSv1.3 only
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_protocols'
+                    line: '    ssl_protocols TLSv1.2 TLSv1.3;'
+                    insertafter: 'http \{'
+                  notify: reload nginx
+
+                - name: Set ssl_ciphers to AEAD-only suites
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_ciphers'
+                    line: "    ssl_ciphers 'ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384';"
+                    insertafter: 'ssl_protocols '
+                  notify: reload nginx
+
+                - name: Set ssl_prefer_server_ciphers on
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_prefer_server_ciphers'
+                    line: '    ssl_prefer_server_ciphers on;'
+                    insertafter: 'ssl_ciphers '
+                  notify: reload nginx
+              handlers:
+                - name: reload nginx
+                  ansible.builtin.command:
+                    cmd: nginx -s reload
+            ```
     refs:
       - url: https://kb.vmware.com/s/article/2008784
         title: VMware mitigation of CVE-2011-3389 (BEAST) for web server administrators
@@ -3087,6 +3796,37 @@ queries:
                 ```
 
                 Re-run the verification from step 1 — `Verify return code: 0 (ok)` confirms success.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            The following playbook configures NGINX to serve the full certificate chain (leaf plus all intermediates) so client chain verification succeeds.
+
+            ```yaml
+            ---
+            - name: Configure NGINX to serve the full verified certificate chain
+              hosts: webservers
+              tasks:
+                - name: Set ssl_certificate to the full chain file
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_certificate\s'
+                    line: '    ssl_certificate /etc/ssl/certs/yourdomain.com.fullchain.pem;'
+                    insertafter: 'server \{'
+                  notify: reload nginx
+
+                - name: Set ssl_certificate_key path
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_certificate_key\s'
+                    line: '    ssl_certificate_key /etc/ssl/private/yourdomain.com.key;'
+                    insertafter: 'ssl_certificate '
+                  notify: reload nginx
+              handlers:
+                - name: reload nginx
+                  ansible.builtin.command:
+                    cmd: nginx -s reload
+            ```
     refs:
       - url: https://www.openssl.org/docs/man1.1.1/man1/verify.html
         title: OpenSSL certificate chain verification
@@ -3217,6 +3957,29 @@ queries:
                 ```bash
                 openssl s_client -connect yourdomain.com:443 -tls1_3
                 ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            The following playbook sets `ssl_protocols TLSv1.2 TLSv1.3;` in the NGINX configuration to ensure TLS 1.3 is offered alongside TLS 1.2.
+
+            ```yaml
+            ---
+            - name: Enable TLS 1.3 support in NGINX
+              hosts: webservers
+              tasks:
+                - name: Set ssl_protocols to include TLSv1.3
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_protocols'
+                    line: '    ssl_protocols TLSv1.2 TLSv1.3;'
+                    insertafter: 'http \{'
+                  notify: reload nginx
+              handlers:
+                - name: reload nginx
+                  ansible.builtin.command:
+                    cmd: nginx -s reload
+            ```
     refs:
       - url: https://datatracker.ietf.org/doc/html/rfc8446
         title: TLS 1.3 RFC 8446
@@ -3378,6 +4141,34 @@ queries:
                 ```
 
                 A `Cert Status: good` line confirms stapling is working.
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            The following playbook enables OCSP stapling directives in NGINX so the server supplies a fresh revocation response with each TLS handshake.
+
+            ```yaml
+            ---
+            - name: Enable OCSP stapling in NGINX
+              hosts: webservers
+              tasks:
+                - name: Enable OCSP stapling directives
+                  ansible.builtin.blockinfile:
+                    path: /etc/nginx/nginx.conf
+                    marker: "# {mark} ANSIBLE MANAGED BLOCK - OCSP stapling"
+                    insertafter: 'ssl_certificate_key '
+                    block: |
+                          ssl_stapling          on;
+                          ssl_stapling_verify   on;
+                          ssl_trusted_certificate /etc/letsencrypt/live/yourdomain.com/chain.pem;
+                          resolver              1.1.1.1 8.8.8.8 valid=300s;
+                          resolver_timeout      5s;
+                  notify: reload nginx
+              handlers:
+                - name: reload nginx
+                  ansible.builtin.command:
+                    cmd: nginx -s reload
+            ```
     refs:
       - url: https://datatracker.ietf.org/doc/html/rfc6960
         title: OCSP RFC 6960
@@ -3534,6 +4325,37 @@ queries:
                 haproxy -c -f /etc/haproxy/haproxy.cfg
                 systemctl reload haproxy
                 ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            The following playbook configures the NGINX `default_server` block to present the public-facing certificate for non-SNI connections, preventing internal certificate leakage.
+
+            ```yaml
+            ---
+            - name: Configure NGINX default_server to prevent SNI certificate leak
+              hosts: webservers
+              tasks:
+                - name: Set ssl_certificate for the default_server block
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_certificate\s'
+                    line: '    ssl_certificate /etc/letsencrypt/live/yourdomain.com/fullchain.pem;'
+                    insertafter: 'listen\s+443 ssl default_server'
+                  notify: reload nginx
+
+                - name: Set ssl_certificate_key for the default_server block
+                  ansible.builtin.lineinfile:
+                    path: /etc/nginx/nginx.conf
+                    regexp: '^\s*ssl_certificate_key\s'
+                    line: '    ssl_certificate_key /etc/letsencrypt/live/yourdomain.com/privkey.pem;'
+                    insertafter: 'ssl_certificate '
+                  notify: reload nginx
+              handlers:
+                - name: reload nginx
+                  ansible.builtin.command:
+                    cmd: nginx -s reload
+            ```
     refs:
       - url: https://datatracker.ietf.org/doc/html/rfc6066
         title: TLS Server Name Indication (SNI) RFC 6066
