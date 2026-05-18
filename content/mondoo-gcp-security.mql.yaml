@@ -29463,12 +29463,63 @@ queries:
               --shard-count=3 \
               --kms-key=projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY
             ```
+        - id: terraform
+          desc: |
+            Set `kms_key` on the `google_memorystore_instance` resource. Backup collections inherit the key from their source instance automatically:
+
+            ```hcl
+            resource "google_memorystore_instance" "cache" {
+              instance_id = "my-instance"
+              location    = "us-central1"
+              shard_count = 3
+              kms_key     = "projects/my-project/locations/us-central1/keyRings/my-ring/cryptoKeys/my-key"
+            }
+            ```
     refs:
       - url: https://cloud.google.com/memorystore/docs/valkey/backup-and-restore
         title: Memorystore backup and restore
+    variants:
+      - uid: mondoo-gcp-security-memorystore-backup-cmek-encryption-gcp
+        tags:
+          mondoo.com/filter-title: GCP Memorystore (Valkey/Redis)
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-memorystore-backup-cmek-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-memorystore-backup-cmek-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-memorystore-backup-cmek-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+  - uid: mondoo-gcp-security-memorystore-backup-cmek-encryption-gcp
     filters: asset.platform == 'gcp'
     mql: |
       gcp.memorystore.backupCollections.all(kmsKey != null)
+  - uid: mondoo-gcp-security-memorystore-backup-cmek-encryption-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_memorystore_instance')
+    mql: |
+      terraform.resources('google_memorystore_instance').all(
+        arguments.kms_key != empty && arguments.kms_key != ""
+      )
+  - uid: mondoo-gcp-security-memorystore-backup-cmek-encryption-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_memorystore_instance')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_memorystore_instance').all(
+        change.after['kms_key'] != empty && change.after['kms_key'] != ""
+      )
+  - uid: mondoo-gcp-security-memorystore-backup-cmek-encryption-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_memorystore_instance')
+    mql: |
+      terraform.state.resources.where(type == 'google_memorystore_instance').all(
+        values['kms_key'] != empty && values['kms_key'] != ""
+      )
   # No Terraform variants: google_memorystore_instance only exposes
   # `psc_auto_connections` (private PSC) as a configurable input. The runtime
   # check evaluates `pscAttachmentDetails[].connectionType == "PUBLIC_ENDPOINT"`,
@@ -30590,6 +30641,13 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-7-2-1
       compliance/soc2-2017: soc2-control-cc6-1-3
       compliance/vda-isa-5: vda-isa-5-4-2-1
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.datastream.connectionProfiles.where(profileType == "gcs").all(
+        bucket.iamConfiguration["uniformBucketLevelAccess"]["enabled"] == true &&
+        bucket.iamConfiguration["publicAccessPrevention"] == "enforced" &&
+        bucket.defaultKmsKey != null
+      )
     docs:
       desc: |
         This check ensures that Cloud Storage buckets used as Datastream GCS destinations have three controls in place: uniform bucket-level access enabled, public access prevention enforced, and CMEK configured. A Datastream GCS destination receives a continuously-updated mirror of the source database, so a bucket that is weaker than the source database's own controls undermines the overall data protection posture.
@@ -30648,18 +30706,27 @@ queries:
               --public-access-prevention \
               --default-encryption-key=projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY
             ```
+        - id: terraform
+          desc: |
+            Configure the GCS bucket used as a Datastream destination with all three required controls on the `google_storage_bucket` resource:
+
+            ```hcl
+            resource "google_storage_bucket" "datastream_destination" {
+              name                        = "my-datastream-destination"
+              location                    = "US"
+              uniform_bucket_level_access = true
+              public_access_prevention    = "enforced"
+
+              encryption {
+                default_kms_key_name = "projects/my-project/locations/us/keyRings/my-ring/cryptoKeys/my-key"
+              }
+            }
+            ```
     refs:
       - url: https://cloud.google.com/storage/docs/uniform-bucket-level-access
         title: Cloud Storage - Uniform bucket-level access
       - url: https://cloud.google.com/storage/docs/public-access-prevention
         title: Cloud Storage - Public access prevention
-    filters: asset.platform == 'gcp'
-    mql: |
-      gcp.datastream.connectionProfiles.where(profileType == "gcs").all(
-        bucket.iamConfiguration["uniformBucketLevelAccess"]["enabled"] == true &&
-        bucket.iamConfiguration["publicAccessPrevention"] == "enforced" &&
-        bucket.defaultKmsKey != null
-      )
   - uid: mondoo-gcp-security-datastream-private-connection-not-default-vpc
     title: Ensure Datastream private connections do not peer the default VPC
     impact: 70
@@ -31021,6 +31088,7 @@ queries:
             gcloud memcache instances describe INSTANCE_ID \
               --region=REGION --format="value(discoveryEndpoint)"
             ```
+        # No Terraform remediation: the discovery endpoint IP is output-only (computed by GCP from the authorized network's IP allocation) and cannot be set directly in any Terraform resource argument.
     refs:
       - url: https://cloud.google.com/memorystore/docs/memcached/auto-discovery-overview
         title: Memorystore for Memcached - Auto Discovery
@@ -33480,6 +33548,7 @@ queries:
               --service-account=vertex-training@PROJECT.iam.gserviceaccount.com \
               --config=config.yaml
             ```
+        # No Terraform remediation: Vertex AI custom training jobs are imperative API operations with no Terraform resource analog; the fix lives in the job submission tooling, not in static infrastructure configuration.
     refs:
       - url: https://cloud.google.com/vertex-ai/docs/general/custom-service-account
         title: Vertex AI - Use a custom service account
