@@ -4646,6 +4646,7 @@ queries:
     filters: |
       asset.platform == "aws-lambda-function"
     mql: |
+      # No resource policy means there are no public resource-based permissions.
       aws.lambda.function.policy == null ||
       aws.lambda.function.policy == empty ||
       aws.lambda.function.policy.Statement.where(Effect == "Allow").where(
@@ -4653,11 +4654,13 @@ queries:
         Principal['AWS'] == "*" ||
         Principal['AWS'].contains(/^\*$/)
       ).all(
-        # Source conditions with wildcard values are still broad access.
-        Condition.string == /[Aa][Ww][Ss]:([Ss]ource[Aa]rn|[Ss]ource[Aa]ccount|[Pp]rincipal[Oo]rgID)/ &&
-        Condition.string != /[Aa][Ww][Ss]:[Ss]ource[Aa]rn.*\*/ &&
-        Condition.string != /[Aa][Ww][Ss]:[Ss]ource[Aa]ccount.*\*/ &&
-        Condition.string != /[Aa][Ww][Ss]:[Pp]rincipal[Oo]rgID.*\*/
+        # Require at least one recognized source condition with no wildcard value.
+        Condition != null &&
+        Condition.values.any(
+          keys.contains(/aws:(sourcearn|sourceaccount|principalorgid)/i) &&
+          values.contains(/\*/) == false &&
+          values.any(_.contains(/\*/)) == false
+        )
       )
   - uid: mondoo-aws-security-lambda-function-public-access-prohibited-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_lambda_permission")
