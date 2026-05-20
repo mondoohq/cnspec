@@ -4510,7 +4510,7 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that the resource-based policy attached to each AWS Lambda function contains no statements that grant unscoped invocation rights to the wildcard principal (`*`). By default, Lambda functions have no resource-based policy, but policies added for service integrations or cross-account access can inadvertently include a wildcard principal that exposes the function to any AWS identity or unauthenticated caller unless constrained by a condition such as `AWS:SourceArn`, `AWS:SourceAccount`, or `aws:PrincipalOrgID`.
+        This check ensures that the resource-based policy attached to each AWS Lambda function contains no statements that grant unscoped invocation rights to the wildcard principal (`*`). By default, Lambda functions have no resource-based policy, but policies added for service integrations or cross-account access can inadvertently include a wildcard principal that exposes the function to any AWS identity or unauthenticated caller unless constrained by a condition such as `AWS:SourceArn`, `AWS:SourceAccount`, or `aws:PrincipalOrgID`. Source conditions should be specific; avoid wildcard source ARN values that effectively grant broad invoke access.
 
         **Why this matters**
 
@@ -4650,11 +4650,11 @@ queries:
       aws.lambda.function.policy.Statement.where(Effect == "Allow").where(
         Principal == "*" ||
         Principal['AWS'] == "*" ||
-        Principal['AWS'] != empty && Principal['AWS'].contains("*")
+        Principal.string == /[Aa][Ww][Ss].*\*/
       ).all(
-        Condition.string.contains("SourceArn") ||
-        Condition.string.contains("SourceAccount") ||
-        Condition.string.contains("PrincipalOrgID")
+        Condition.string == /[Aa][Ww][Ss]:[Ss]ource[Aa]rn/ ||
+        Condition.string == /[Aa][Ww][Ss]:[Ss]ource[Aa]ccount/ ||
+        Condition.string == /[Aa][Ww][Ss]:[Pp]rincipal[Oo]rgID/
       )
   - uid: mondoo-aws-security-lambda-function-public-access-prohibited-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_lambda_permission")
@@ -5947,23 +5947,32 @@ queries:
     filters: |
       asset.platform == "aws-rds-dbcluster"
     mql: |
-      aws.rds.dbcluster.publiclyAccessible == false
+      aws.rds.dbcluster.publiclyAccessible == false &&
       aws.rds.dbcluster.members.all(publiclyAccessible == false)
   - uid: mondoo-aws-security-rds-cluster-public-access-check-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_rds_cluster_instance")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_rds_cluster" || nameLabel == "aws_rds_cluster_instance")
     mql: |
+      terraform.resources.where(nameLabel == "aws_rds_cluster").all(
+        arguments['publicly_accessible'] != true
+      ) &&
       terraform.resources.where(nameLabel == "aws_rds_cluster_instance").all(
         arguments['publicly_accessible'] != true
       )
   - uid: mondoo-aws-security-rds-cluster-public-access-check-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_rds_cluster_instance")
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_rds_cluster" || type == "aws_rds_cluster_instance")
     mql: |
+      terraform.plan.resourceChanges.where(type == "aws_rds_cluster").all(
+        change.after.publicly_accessible != true
+      ) &&
       terraform.plan.resourceChanges.where(type == "aws_rds_cluster_instance").all(
         change.after.publicly_accessible != true
       )
   - uid: mondoo-aws-security-rds-cluster-public-access-check-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_rds_cluster_instance")
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_rds_cluster" || type == "aws_rds_cluster_instance")
     mql: |
+      terraform.state.resources.where(type == "aws_rds_cluster").all(
+        values.publicly_accessible != true
+      ) &&
       terraform.state.resources.where(type == "aws_rds_cluster_instance").all(
         values.publicly_accessible != true
       )
