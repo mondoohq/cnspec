@@ -325,10 +325,44 @@ Framework maps create `maps_to` edges from controls to checks, so `callers` on a
 
 ## Claude Code skill
 
-A Claude Code skill is included for AI-assisted policy navigation. Install it with:
+A [Claude Code](https://docs.anthropic.com/en/docs/claude-code) skill is included for AI-assisted policy navigation. The skill teaches Claude how to use the graph commands to answer questions about policy bundles.
+
+### Installation
 
 ```bash
 make install/skills
 ```
 
-This makes the `/policy-graph` slash command and auto-trigger skill available in all Claude Code projects.
+This copies the skill files to `~/.claude/`, making them available across all projects:
+
+- `~/.claude/commands/policy-graph.md` — Slash command definition
+- `~/.claude/skills/policy-graph/` — Auto-trigger skill with references
+
+### Usage in Claude Code
+
+**Slash command** — type `/policy-graph` followed by your question:
+
+```
+/policy-graph What SSH checks does the Linux security policy have?
+/policy-graph Which compliance controls map to the root login check?
+/policy-graph Show me the structure of mondoo-aws-security
+```
+
+**Auto-trigger** — the skill activates automatically when Claude detects questions about policy structure, compliance mappings, or bundle navigation. Ask naturally:
+
+```
+What checks are in the Linux security policy?
+How does this framework control connect to that check?
+Find all SSH-related checks in the content directory.
+```
+
+### What the skill does
+
+When triggered, Claude uses graph commands to:
+
+1. **Orient** — `export --format json` to understand the bundle (node counts by kind)
+2. **Locate** — `export` with filtering to find specific nodes by name
+3. **Navigate** — `callers`/`callees`/`paths` to explore relationships
+4. **Context** — `context --depth 2` for deep investigation with YAML source snippets
+
+The skill only reads `.mql.yaml` files — it does not scan assets, write queries, or modify bundles.

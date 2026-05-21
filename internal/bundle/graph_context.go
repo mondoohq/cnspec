@@ -139,6 +139,7 @@ func readSourceLines(rootDir, relPath string) []string {
 	if rootDir != "" {
 		path = filepath.Join(rootDir, relPath)
 	}
+	path = filepath.Clean(path)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil

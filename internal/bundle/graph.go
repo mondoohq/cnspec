@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/cockroachdb/errors"
+	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnspec/v13/policy"
 )
 
@@ -197,7 +198,10 @@ func (g *PolicyGraph) findPathsDFS(current, dst string, path []string, visited m
 	for _, e := range g.outEdges[current] {
 		if !visited[e.Target] {
 			visited[e.Target] = true
-			g.findPathsDFS(e.Target, dst, append(path, e.Target), visited, maxDepth, results)
+			newPath := make([]string, len(path)+1)
+			copy(newPath, path)
+			newPath[len(path)] = e.Target
+			g.findPathsDFS(e.Target, dst, newPath, visited, maxDepth, results)
 			delete(visited, e.Target)
 		}
 	}
@@ -266,6 +270,7 @@ func (g *PolicyGraph) resolveEdges() {
 		if ids, ok := nameIdx[unresolved]; ok && len(ids) == 1 {
 			return ids[0]
 		}
+		log.Warn().Str("ref", unresolved).Msg("unresolved edge reference")
 		return ref
 	}
 	for _, e := range g.Edges {
@@ -594,11 +599,11 @@ func extractFrameworkMap(g *PolicyGraph, file string, fm *FrameworkMap) {
 		})
 	}
 	for _, cm := range fm.Controls {
-		extractControlMapping(g, file, cm, fmID)
+		extractControlMapping(g, cm, fmID)
 	}
 }
 
-func extractControlMapping(g *PolicyGraph, _ string, cm *ControlMap, fmapID string) {
+func extractControlMapping(g *PolicyGraph, cm *ControlMap, fmapID string) {
 	if cm.Uid == "" {
 		return
 	}

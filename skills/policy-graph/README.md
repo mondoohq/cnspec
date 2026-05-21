@@ -22,6 +22,14 @@ Provides structured navigation of `.mql.yaml` policy bundles that replaces manua
 /policy-graph trace the path from CIS benchmark to SSH ciphers check
 ```
 
+## Installation
+
+```bash
+make install/skills
+```
+
+This copies the skill to `~/.claude/`, making it available in all Claude Code projects.
+
 ## Requirements
 
 - `cnspec` CLI installed and on PATH (or `go run ./apps/cnspec` from the repo)
