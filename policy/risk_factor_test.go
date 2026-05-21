@@ -288,6 +288,51 @@ func TestRiskFactor_AdjustRiskScoreMultiple2(t *testing.T) {
 			expectedScore: 0, // applied a c b
 		},
 		{
+			name: "fixed score: toxic detected does not reduce",
+			scoredRiskInfos1: []*ScoredRiskInfo{
+				{
+					RiskFactor:       &RiskFactor{Mrn: "a", Magnitude: &RiskMagnitude{Value: 0.2, IsToxic: true}},
+					ScoredRiskFactor: &ScoredRiskFactor{IsDetected: true},
+				},
+			},
+			baseScore:     100,
+			expectedScore: 100,
+		},
+		{
+			name: "fixed score: mixed risk factors do not reduce",
+			scoredRiskInfos1: []*ScoredRiskInfo{
+				{
+					RiskFactor:       &RiskFactor{Mrn: "open-ports", Magnitude: &RiskMagnitude{Value: 0.05}},
+					ScoredRiskFactor: &ScoredRiskFactor{IsDetected: true},
+				},
+				{
+					RiskFactor:       &RiskFactor{Mrn: "private-ssh-keys", Magnitude: &RiskMagnitude{Value: 0.05}},
+					ScoredRiskFactor: &ScoredRiskFactor{IsDetected: false},
+				},
+				{
+					RiskFactor:       &RiskFactor{Mrn: "claude-llm-agent", Magnitude: &RiskMagnitude{Value: 0.05, IsToxic: true}},
+					ScoredRiskFactor: &ScoredRiskFactor{IsDetected: true},
+				},
+				{
+					RiskFactor:       &RiskFactor{Mrn: "high-open-connections", Magnitude: &RiskMagnitude{Value: 0.05, IsToxic: true}},
+					ScoredRiskFactor: &ScoredRiskFactor{IsDetected: true},
+				},
+			},
+			baseScore:     100,
+			expectedScore: 100,
+		},
+		{
+			name: "fixed score: max toxic detected does not reduce",
+			scoredRiskInfos1: []*ScoredRiskInfo{
+				{
+					RiskFactor:       &RiskFactor{Mrn: "a", Magnitude: &RiskMagnitude{Value: 1, IsToxic: true}},
+					ScoredRiskFactor: &ScoredRiskFactor{IsDetected: true},
+				},
+			},
+			baseScore:     100,
+			expectedScore: 100,
+		},
+		{
 			name: "test toxic sorted 2",
 			scoredRiskInfos1: []*ScoredRiskInfo{
 				{

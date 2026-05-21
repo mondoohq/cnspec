@@ -344,6 +344,11 @@ func AdjustRiskScore(score *Score, sortedRisks ...[]*ScoredRiskInfo) {
 		return
 	}
 	score.RiskScore = score.Value
+	// If the check is fixed (value == 100), risk factors cannot reduce the
+	// risk score: there is nothing left to amplify.
+	if score.Value == 100 {
+		return
+	}
 	// Adjust the score based on the risk factors
 	for risk := range mergeSorted(cmpScoredRiskFactors, sortedRisks...) {
 		risk.AdjustRiskScore(score, risk.IsDetected)
