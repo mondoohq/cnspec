@@ -144,6 +144,24 @@ test/lint/golangci-lint/run/new: prep/tools
 	golangci-lint --version
 	golangci-lint run --timeout 10m --config .github/.golangci.yaml --new-from-rev $(shell git log -n 1 origin/main --pretty=format:"%H")
 
+.PHONY: install/skills
+install/skills:
+	@echo "Installing cnspec skills to ~/.claude ..."
+	@for skill_dir in skills/*/skills/*/; do \
+		name=$$(basename $$skill_dir); \
+		mkdir -p ~/.claude/skills/$$name/references; \
+		cp $$skill_dir/SKILL.md ~/.claude/skills/$$name/; \
+		cp $$skill_dir/references/*.md ~/.claude/skills/$$name/references/ 2>/dev/null || true; \
+		echo "  ✓ $$name"; \
+	done
+	@for cmd in skills/*/commands/*.md; do \
+		[ -f "$$cmd" ] || continue; \
+		mkdir -p ~/.claude/commands; \
+		cp $$cmd ~/.claude/commands/; \
+		echo "  ✓ command: $$(basename $$cmd)"; \
+	done
+	@echo "Done. Skills available in all projects."
+
 license: license/headers/check
 
 license/headers/check:
