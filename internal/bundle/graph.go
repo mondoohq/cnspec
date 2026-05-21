@@ -107,6 +107,10 @@ func (g *PolicyGraph) Node(id string) *GraphNode {
 	return g.nodeIdx[id]
 }
 
+func (g *PolicyGraph) BuildNodeIndex() *NodeIndex {
+	return BuildNodeIndex(g)
+}
+
 func (g *PolicyGraph) FindNode(query string) []*GraphNode {
 	query = strings.ToLower(query)
 	var result []*GraphNode

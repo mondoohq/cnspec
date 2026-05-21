@@ -27,6 +27,7 @@ Navigate and understand cnspec policy bundles (`.mql.yaml` files) using structur
 
 | Command | Purpose |
 |---------|---------|
+| `cnspec policy graph search <query> <path>` | Find nodes by name, title, or UID |
 | `cnspec policy graph callers <uid> <path>` | What references this node (inbound edges) |
 | `cnspec policy graph callees <uid> <path>` | What this node contains/references (outbound edges) |
 | `cnspec policy graph context <uid> <path> [--depth N]` | LLM-friendly context with YAML snippets |
@@ -34,7 +35,7 @@ Navigate and understand cnspec policy bundles (`.mql.yaml` files) using structur
 | `cnspec policy graph reachable <uid> <path>` | All nodes transitively reachable |
 | `cnspec policy graph export <path> [--format json\|dot]` | Export full graph |
 
-All commands support `--json` for structured output.
+All commands support `--json` for structured output. Search also supports `--kind`, `--tag`, `--impact`, and `--limit`.
 
 ## Graph Concepts
 

@@ -50,16 +50,19 @@ cnspec policy graph reachable <policy-uid> ./content/
 ## "Find all SSH-related checks"
 
 ```bash
-# Export and filter by name
-cnspec policy graph export ./content/ --format json | \
-  python3 -c "import json,sys; [print(f'{n[\"kind\"]}:{n[\"name\"]} - {n.get(\"title\",\"\")}') for n in json.load(sys.stdin)['nodes'] if 'ssh' in n['name'].lower()]"
+cnspec policy graph search ssh ./content/ --kind check
+```
+
+## "Find checks by title"
+
+```bash
+cnspec policy graph search "root login" ./content/ --kind check
 ```
 
 ## "What policies are in this bundle directory?"
 
 ```bash
-cnspec policy graph export ./content/ --format json | \
-  python3 -c "import json,sys; [print(f'{n[\"name\"]}: {n.get(\"title\",\"\")}') for n in json.load(sys.stdin)['nodes'] if n['kind'] == 'policy']"
+cnspec policy graph search "" ./content/ --kind policy
 ```
 
 ## "Generate a visual diagram"

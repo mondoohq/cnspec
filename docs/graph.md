@@ -25,6 +25,7 @@ cnspec policy graph context mondoo-linux-security-ssh-root-login-is-disabled ./c
 
 | Command | Purpose |
 |---------|---------|
+| `cnspec policy graph search <query> <path>` | Find nodes by name, title, or UID |
 | `cnspec policy graph callers <uid> <path>` | What references this node (inbound edges) |
 | `cnspec policy graph callees <uid> <path>` | What this node contains/references (outbound edges) |
 | `cnspec policy graph context <uid> <path>` | LLM-friendly context with YAML snippets |
@@ -34,7 +35,11 @@ cnspec policy graph context mondoo-linux-security-ssh-root-login-is-disabled ./c
 
 ### Flags
 
-- `--json` — JSON output (callers, callees, paths, reachable)
+- `--json` — JSON output (search, callers, callees, paths, reachable)
+- `--kind` — Filter by node kind: policy, check, group, query, framework, control (search only)
+- `--tag` — Filter by tag key (search only)
+- `--impact N` — Minimum impact score (search only)
+- `--limit N` — Maximum results, default 50 (search only)
 - `--depth N` — Neighborhood depth for context (default 2)
 - `--format json|dot` — Export format (export command only)
 
@@ -70,6 +75,47 @@ The `<path>` argument can be:
 | `variant_of` | Check variant relationship (parent -> platform-specific variant) |
 
 ## Examples
+
+### Search for nodes
+
+```bash
+# Find all SSH-related checks
+$ cnspec policy graph search ssh ./content/ --kind check
+```
+
+```
+check        check:mondoo-linux-security-ssh-root-login-is-d... Ensure SSH root login is disabled or ... (content/mondoo-linux-security.mql.yaml:10822)
+check        check:mondoo-linux-security-ssh-x11-forwarding-... Ensure SSH X11 forwarding is disabled    (content/mondoo-linux-security.mql.yaml:10363)
+...
+```
+
+```bash
+# Find checks by title (searches titles, not just UIDs)
+$ cnspec policy graph search "root login" ./content/ --kind check
+```
+
+```
+check        check:mondoo-junos-security-ssh-root-login-disa... Ensure root login via SSH is denied      (content/mondoo-junos-security.mql.yaml:101)
+check        check:mondoo-freebsd-security-ssh-root-login-is... Ensure SSH root login is disabled        (content/mondoo-freebsd-security.mql.yaml:2458)
+check        check:mondoo-linux-security-ssh-root-login-is-d... Ensure SSH root login is disabled or ... (content/mondoo-linux-security.mql.yaml:10822)
+...
+```
+
+```bash
+# List all policies
+$ cnspec policy graph search "" ./content/ --kind policy
+```
+
+```
+policy       policy:mondoo-linux-security                       Mondoo Linux Security                    (content/mondoo-linux-security.mql.yaml:4)
+policy       policy:mondoo-aws-security                         Mondoo AWS Security                      (content/mondoo-aws-security.mql.yaml:4)
+...
+```
+
+```bash
+# JSON output for programmatic use
+$ cnspec policy graph search ssh ./content/ --kind check --json --limit 2
+```
 
 ### Get an overview of a policy bundle
 
@@ -174,27 +220,14 @@ Path 1:
 ### Find all SSH-related checks
 
 ```bash
-$ cnspec policy graph export ./content/mondoo-linux-security.mql.yaml --format json | \
-    python3 -c "import json,sys; [print(n['name']) for n in json.load(sys.stdin)['nodes'] if 'ssh' in n['name'].lower()]"
+$ cnspec policy graph search ssh ./content/mondoo-linux-security.mql.yaml --kind check
 ```
 
 ```
-mondoo-linux-security-permissions-on-etcsshsshd-config-are-configured
-mondoo-linux-security-permissions-on-ssh-private-host-key-files-are-configured
-mondoo-linux-security-permissions-on-ssh-public-host-key-files-are-configured
-mondoo-linux-security-ssh-protocol-is-set-to-2
-mondoo-linux-security-ssh-loglevel-is-appropriate
-mondoo-linux-security-ssh-x11-forwarding-is-disabled
-mondoo-linux-security-ssh-maxauthtries-is-set-to-4-or-less
-mondoo-linux-security-ssh-ignorerhosts-is-enabled
-mondoo-linux-security-ssh-hostbasedauthentication-is-disabled
-mondoo-linux-security-ssh-root-login-is-disabled
-mondoo-linux-security-ssh-permitemptypasswords-is-disabled
-mondoo-linux-security-ssh-permituserenvironment-is-disabled
-mondoo-linux-security-ssh-idle-timeout-interval-is-configured
-mondoo-linux-security-ssh-logingracetime-is-set-to-one-minute-or-less
-mondoo-linux-security-ssh-access-is-limited
-mondoo-linux-security-ssh-warning-banner-is-configured
+check        check:mondoo-linux-security-permissions-on-etcs... Ensure secure permissions on /etc/ssh... (content/mondoo-linux-security.mql.yaml:9061)
+check        check:mondoo-linux-security-ssh-protocol-is-set... Ensure SSH protocol is set to 2          (content/mondoo-linux-security.mql.yaml:10125)
+check        check:mondoo-linux-security-ssh-root-login-is-d... Ensure SSH root login is disabled or ... (content/mondoo-linux-security.mql.yaml:10822)
+...
 ```
 
 ### Get full context for a check

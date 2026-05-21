@@ -1,5 +1,27 @@
 # cnspec policy graph Commands
 
+## search
+
+Find nodes by name, title, or UID using multi-strategy search: exact name, prefix, or substring match.
+
+```bash
+cnspec policy graph search <query> <path>
+cnspec policy graph search <query> <path> --kind check
+cnspec policy graph search <query> <path> --kind check --json
+cnspec policy graph search "" <path> --kind policy
+```
+
+Flags:
+- `--kind`: Filter by node kind (policy, check, group, query, framework, control)
+- `--tag`: Filter by tag key (e.g. `compliance/cis`)
+- `--impact N`: Minimum impact score
+- `--limit N`: Maximum results (default 50)
+- `--json`: Output as JSON
+
+Search cascade: tries exact name match first, then prefix, then substring (including titles). An empty query with `--kind` lists all nodes of that kind.
+
+**Use cases**: find checks by topic ("ssh", "root login"), list all policies, find checks with specific compliance tags.
+
 ## callers
 
 Show all inbound edges to a node — what references it.

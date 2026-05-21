@@ -34,6 +34,13 @@ func init() {
 
 	policyGraphExportCmd.Flags().String("format", "json", "Output format: json, dot")
 	policyGraphCmd.AddCommand(policyGraphExportCmd)
+
+	policyGraphSearchCmd.Flags().String("kind", "", "Filter by node kind (policy, check, group, query, framework, control)")
+	policyGraphSearchCmd.Flags().String("tag", "", "Filter by tag key")
+	policyGraphSearchCmd.Flags().Int("impact", 0, "Minimum impact score")
+	policyGraphSearchCmd.Flags().Int("limit", 50, "Maximum results")
+	policyGraphSearchCmd.Flags().Bool("json", false, "Output as JSON")
+	policyGraphCmd.AddCommand(policyGraphSearchCmd)
 }
 
 var policyGraphCmd = &cobra.Command{
@@ -197,6 +204,52 @@ var policyGraphExportCmd = &cobra.Command{
 			writeDot(g)
 		default:
 			log.Fatal().Str("format", format).Msg("unknown format (use json or dot)")
+		}
+	},
+}
+
+var policyGraphSearchCmd = &cobra.Command{
+	Use:   "search <query> <path>",
+	Short: "Search for nodes by name, title, or UID",
+	Long:  "Find policy graph nodes using multi-strategy search: exact name, prefix, or substring match across names, qualified names, and titles.",
+	Args:  cobra.MinimumNArgs(2),
+	Run: func(cmd *cobra.Command, args []string) {
+		query, paths := args[0], args[1:]
+		g := mustBuildGraph(paths)
+		idx := g.BuildNodeIndex()
+
+		kind, _ := cmd.Flags().GetString("kind")
+		tag, _ := cmd.Flags().GetString("tag")
+		impact, _ := cmd.Flags().GetInt("impact")
+		limit, _ := cmd.Flags().GetInt("limit")
+
+		results := idx.Search(query, bundle.SearchOpts{
+			Kind:      bundle.NodeKind(kind),
+			TagKey:    tag,
+			MinImpact: impact,
+			Limit:     limit,
+		})
+
+		if jsonOut, _ := cmd.Flags().GetBool("json"); jsonOut {
+			printJSON(results)
+			return
+		}
+
+		if len(results) == 0 {
+			fmt.Printf("No nodes found matching %q\n", query)
+			return
+		}
+
+		for _, n := range results {
+			title := n.Title
+			if len(title) > 40 {
+				title = title[:37] + "..."
+			}
+			qualName := n.QualName
+			if len(qualName) > 50 {
+				qualName = qualName[:47] + "..."
+			}
+			fmt.Printf("%-12s %-50s %-40s (%s:%d)\n", n.Kind, qualName, title, n.File, n.Line)
 		}
 	},
 }

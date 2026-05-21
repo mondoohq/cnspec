@@ -31,9 +31,10 @@ for k, v in kinds.most_common(): print(f'  {k}: {v}')
 ### Phase 2: Locate (find specific nodes)
 
 ```bash
-# Find nodes by name (substring match)
-cnspec policy graph export ./content/mondoo-linux-security.mql.yaml --format json | \
-  python3 -c "import json,sys; [print(f'{n[\"kind\"]}:{n[\"name\"]}') for n in json.load(sys.stdin)['nodes'] if 'ssh' in n['name'].lower()]"
+# Find nodes by name, title, or UID
+cnspec policy graph search ssh ./content/
+cnspec policy graph search "root login" ./content/ --kind check
+cnspec policy graph search "" ./content/ --kind policy
 ```
 
 ### Phase 3: Navigate (explore relationships)
