@@ -241,14 +241,8 @@ var policyGraphSearchCmd = &cobra.Command{
 		}
 
 		for _, n := range results {
-			title := n.Title
-			if len(title) > 40 {
-				title = title[:37] + "..."
-			}
-			qualName := n.QualName
-			if len(qualName) > 50 {
-				qualName = qualName[:47] + "..."
-			}
+			title := truncateRunes(n.Title, 40)
+			qualName := truncateRunes(n.QualName, 50)
 			fmt.Printf("%-12s %-50s %-40s (%s:%d)\n", n.Kind, qualName, title, n.File, n.Line)
 		}
 	},
@@ -317,6 +311,14 @@ func edgesWithNodes(g *bundle.PolicyGraph, edges []*bundle.GraphEdge, useSource 
 		})
 	}
 	return results
+}
+
+func truncateRunes(s string, max int) string {
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	return string(runes[:max-3]) + "..."
 }
 
 func writeDot(g *bundle.PolicyGraph) {
