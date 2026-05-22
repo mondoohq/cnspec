@@ -26,8 +26,8 @@ cnspec skills are compatible with Claude Code, Codex, Gemini CLI, and Cursor.
 2. Install a skill:
 
 ```
-/plugin install mql@mondoohq/cnspec
-/plugin install policy-graph@mondoohq/cnspec
+/plugin install mql@cnspec-skills
+/plugin install policy-graph@cnspec-skills
 ```
 
 ### Codex

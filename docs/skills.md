@@ -22,8 +22,8 @@ Register the cnspec repository as a plugin marketplace:
 Install a skill:
 
 ```shell
-/plugin install mql@mondoohq/cnspec
-/plugin install policy-graph@mondoohq/cnspec
+/plugin install mql@cnspec-skills
+/plugin install policy-graph@cnspec-skills
 ```
 
 ### Codex
