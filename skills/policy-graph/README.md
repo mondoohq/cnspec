@@ -1,6 +1,6 @@
 # policy-graph
 
-A Claude Code skill for navigating and understanding cnspec policy bundles using graph commands.
+An agent skill for navigating and understanding cnspec policy bundles using graph commands.
 
 ## What it does
 
@@ -24,13 +24,4 @@ Provides structured navigation of `.mql.yaml` policy bundles that replaces manua
 
 ## Installation
 
-```bash
-make install/skills
-```
-
-This copies the skill to `~/.claude/`, making it available in all Claude Code projects.
-
-## Requirements
-
-- `cnspec` CLI installed and on PATH (or `go run ./apps/cnspec` from the repo)
-- Works with any `.mql.yaml` policy bundle files
+See [skills/README.md](../README.md) for installation instructions across Claude Code, Codex, Gemini CLI, and Cursor.

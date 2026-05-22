@@ -356,20 +356,13 @@ cnspec policy graph paths <control-uid> <check-uid> ./policies/ ./frameworks/
 
 Framework maps create `maps_to` edges from controls to checks, so `callers` on a check shows which compliance controls require it, and `paths` traces the full chain: framework -> control -> check.
 
-## Claude Code skill
+## Agent skill
 
-A [Claude Code](https://docs.anthropic.com/en/docs/claude-code) skill is included for AI-assisted policy navigation. The skill teaches Claude how to use the graph commands to answer questions about policy bundles.
+An agent skill is included for AI-assisted policy navigation. The skill teaches coding agents how to use the graph commands to answer questions about policy bundles. It works across Claude Code, Codex, Gemini CLI, and Cursor.
 
 ### Installation
 
-```bash
-make install/skills
-```
-
-This copies the skill files to `~/.claude/`, making them available across all projects:
-
-- `~/.claude/commands/policy-graph.md` — Slash command definition
-- `~/.claude/skills/policy-graph/` — Auto-trigger skill with references
+See [skills/README.md](../skills/README.md) for installation instructions.
 
 ### Usage in Claude Code
 

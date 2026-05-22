@@ -256,6 +256,17 @@ If you're interested in writing your own policies or contributing policies back 
 | VMware vSphere                | `vsphere`                  | `cnspec scan vsphere user@domain@host --ask-pass`                                                                                                     |
 | Windows hosts                 | `local`, `ssh`, `winrm`    | `cnspec scan local`,<br></br>`cnspec scan ssh Administrator@IP_ADDRESS --ask-pass` or<br></br>`cnspec scan winrm Administrator@IP_ADDRESS --ask-pass` |
 
+## Agent skills
+
+cnspec includes agent skills that give coding agents MQL expertise and policy navigation capabilities. Skills work across Claude Code, Cursor, Gemini CLI, and Codex.
+
+| Skill | Description |
+|-------|-------------|
+| [mql](skills/mql/) | MQL query development with syntax guidance, platform-specific patterns, and schema discovery |
+| [policy-graph](skills/policy-graph/) | Navigate policy bundles using graph commands — search, trace compliance mappings, explore structure |
+
+See [skills/README.md](skills/README.md) for installation instructions and details.
+
 ## What's next?
 
 There are so many things cnspec can do, from testing your entire fleet for vulnerabilities to gathering information and creating reports for auditors. With its custom policies, cnspec can scan any component you care about!

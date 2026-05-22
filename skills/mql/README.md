@@ -17,18 +17,9 @@ Provides comprehensive guidance for writing MQL queries and security policies:
 The skill automatically activates when working on MQL-related tasks. You can also invoke it directly:
 
 ```
-/mondoo-mql
+/mql
 ```
 
 ## Installation
 
-```bash
-make install/skills
-```
-
-This copies the skill to `~/.claude/`, making it available in all Claude Code projects.
-
-## Requirements
-
-- `cnspec` CLI installed and on PATH (or `go run ./apps/cnspec` from the repo)
-- Works with any `.mql.yaml` policy or query pack files
+See [skills/README.md](../README.md) for installation instructions across Claude Code, Codex, Gemini CLI, and Cursor.
