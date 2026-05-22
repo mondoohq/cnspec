@@ -25,7 +25,7 @@ import (
 type skill struct {
 	Name        string
 	Description string
-	Path        string // relative path to the skill dir (e.g. "skills/mondoo-mql/skills/mondoo-mql")
+	Path        string // relative path to the skill dir (e.g. "skills/mql")
 }
 
 type marketplaceJSON struct {

@@ -26,12 +26,6 @@ Install a skill:
 /plugin install policy-graph@mondoohq/cnspec
 ```
 
-Or install all skills locally from a checkout:
-
-```bash
-make install/skills
-```
-
 ### Codex
 
 Copy or symlink skill directories from `skills/` into one of Codex's standard `.agents/skills` locations (e.g., `$REPO_ROOT/.agents/skills` or `$HOME/.agents/skills`).
