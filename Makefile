@@ -144,14 +144,30 @@ test/lint/golangci-lint/run/new: prep/tools
 	golangci-lint --version
 	golangci-lint run --timeout 10m --config .github/.golangci.yaml --new-from-rev $(shell git log -n 1 origin/main --pretty=format:"%H")
 
+.PHONY: skills/generate
+skills/generate:
+	go run ./scripts/generate-agents
+
+.PHONY: skills/generate/check
+skills/generate/check:
+	go run ./scripts/generate-agents --check
+
 .PHONY: install/skills
 install/skills:
 	@echo "Installing cnspec skills to ~/.claude ..."
-	@for skill_dir in skills/*/skills/*/; do \
+	@for skill_dir in skills/*/; do \
+		[ -f "$$skill_dir/SKILL.md" ] || continue; \
 		name=$$(basename $$skill_dir); \
-		mkdir -p ~/.claude/skills/$$name/references; \
-		cp $$skill_dir/SKILL.md ~/.claude/skills/$$name/; \
-		cp $$skill_dir/references/*.md ~/.claude/skills/$$name/references/ 2>/dev/null || true; \
+		mkdir -p ~/.claude/skills/$$name; \
+		cp $$skill_dir/*.md ~/.claude/skills/$$name/ 2>/dev/null || true; \
+		if [ -d "$$skill_dir/references" ]; then \
+			mkdir -p ~/.claude/skills/$$name/references; \
+			cp $$skill_dir/references/*.md ~/.claude/skills/$$name/references/ 2>/dev/null || true; \
+		fi; \
+		if [ -d "$$skill_dir/samples" ]; then \
+			mkdir -p ~/.claude/skills/$$name/samples; \
+			cp $$skill_dir/samples/*.md ~/.claude/skills/$$name/samples/ 2>/dev/null || true; \
+		fi; \
 		echo "  ✓ $$name"; \
 	done
 	@for cmd in skills/*/commands/*.md; do \
