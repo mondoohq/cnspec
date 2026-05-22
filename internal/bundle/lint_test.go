@@ -181,6 +181,16 @@ func TestLinter_Fail(t *testing.T) {
 		assert.Equal(t, "error", results.Entries[0].Level)
 	})
 
+	t.Run("fail-query-title-too-long", func(t *testing.T) {
+		file := "./testdata/fail-query-title-too-long.mql.yaml"
+		results, err := Lint(schema, testLintOptions, file)
+		require.NoError(t, err)
+		assert.Equal(t, 1, len(results.Entries))
+		assert.Equal(t, "Global query 'ubuntu-hard-2-2' title is 83 characters long, exceeding the maximum of 75", results.Entries[0].Message)
+		assert.Equal(t, "query-title-too-long", results.Entries[0].RuleID)
+		assert.Equal(t, "warning", results.Entries[0].Level)
+	})
+
 	t.Run("fail-query-variant-uses-non-default-fields", func(t *testing.T) {
 		file := "./testdata/fail-query-variant-uses-non-default-fields.mql.yaml"
 		results, err := Lint(schema, testLintOptions, file)
