@@ -175,7 +175,7 @@ To learn about Mondoo Platform, read the [Mondoo Platform docs](https://mondoo.c
 
 ### Register cnspec with Mondoo Platform
 
-To use cnspec with Mondoo Platform, [generate a token in the Mondoo Console](https://mondoo.com/docs/cnspec/cnspec-platform/), then run:
+To use cnspec with Mondoo Platform, [generate a token in the Mondoo App](https://mondoo.com/docs/cnspec/cnspec-platform/), then run:
 
 ```bash
 cnspec login --token TOKEN
