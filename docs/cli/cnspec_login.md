@@ -11,7 +11,7 @@ Log in to Mondoo Platform using a registration token. To pass in the token, use
 the '--token' flag.
 
 You can generate a new registration token on the Mondoo Dashboard. Go to
-https://console.mondoo.com -> Space -> Settings -> Registration Token. Copy the token and pass it in
+https://app.mondoo.com -> Space -> Settings -> Registration Token. Copy the token and pass it in
 using the '--token' argument.
 
 You remain logged in until you explicitly log out using the 'logout' subcommand.

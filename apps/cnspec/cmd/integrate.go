@@ -151,7 +151,7 @@ var (
 				edgePrefix = "edge."
 			}
 
-			integrationUrl := fmt.Sprintf("https://%sconsole.mondoo.com/space/integrations/aws?spaceId=%s", edgePrefix, space)
+			integrationUrl := fmt.Sprintf("https://%sapp.mondoo.com/space/integrations/aws?spaceId=%s", edgePrefix, space)
 
 			log.Info().Msg(theme.DefaultTheme.Success("Mondoo integration was successful!"))
 			log.Info().Msgf("To view integration status, visit %s", integrationUrl)
@@ -296,7 +296,7 @@ NOTE that --allow and --deny are mutually exclusive and can't be used together.`
 			if applied {
 				log.Info().Msg(theme.DefaultTheme.Success("Mondoo integration was successful!"))
 				log.Info().Msgf(
-					"To view integration status, visit https://console.mondoo.com/space/integrations/azure?spaceId=%s",
+					"To view integration status, visit https://app.mondoo.com/space/integrations/azure?spaceId=%s",
 					space,
 				)
 			}
@@ -387,7 +387,7 @@ Ensure that the Azure account used for execution has the Azure AD Role "Global R
 			if applied {
 				log.Info().Msg(theme.DefaultTheme.Success("Mondoo integration was successful!"))
 				log.Info().Msgf(
-					"To view integration status, visit https://console.mondoo.com/space/integrations/ms365?spaceId=%s",
+					"To view integration status, visit https://app.mondoo.com/space/integrations/ms365?spaceId=%s",
 					space,
 				)
 			}

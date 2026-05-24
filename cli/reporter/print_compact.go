@@ -209,7 +209,7 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 			url := ""
 			if len(orderedAssets) > 1 {
 				// we do not have a space url, so we extract it from the asset url
-				// https://console.mondoo.com/space/inventory/2JtqGyVTZULTW0uwQ5YxXW4nh6Y?spaceId=dazzling-golick-767384
+				// https://app.mondoo.com/space/inventory/2JtqGyVTZULTW0uwQ5YxXW4nh6Y?spaceId=dazzling-golick-767384
 				// an individual asset url wouldn't make sense here
 				// when running inside cicd, we create a url for the cicd project
 				spaceUrlRegexp := regexp.MustCompile(`^(http.*)/inventory/[a-zA-Z0-9-]+(\?.+)$`)
@@ -226,7 +226,7 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 				url = assetUrl
 			}
 
-			r.out("See more scan results and asset relationships on the Mondoo Console: ")
+			r.out("See more scan results and asset relationships on the Mondoo App: ")
 			r.out(url + NewLineCharacter)
 
 			if len(orderedAssets) == 1 && orderedAssets[0].Mrn != "" && r.isStoreResourcesEnabled {
