@@ -269,9 +269,38 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 		cliRes.Asset.TraceId = traceId
 	}
 
+	// Auto-discover an inventory.yml next to the loaded mondoo.yml when
+	// --inventory-file was not set explicitly. This makes ad-hoc
+	// `cnspec scan local` see the same per-asset configuration (notably the
+	// id_detector list) that `cnspec serve` already auto-loads on each
+	// scheduled scan cycle. We gate on config.LoadedConfig so a stray
+	// inventory.yml in $PWD does not get picked up by scans that have no
+	// managed-agent context.
+	autoDiscoveredInventory := false
+	if config.LoadedConfig && viper.GetString("inventory-file") == "" {
+		if invPath, ok := config.InventoryPath(viper.ConfigFileUsed()); ok {
+			log.Info().Str("path", invPath).Msg("found inventory file")
+			viper.Set("inventory-file", invPath)
+			autoDiscoveredInventory = true
+		}
+	}
+
 	inv, err := inventoryloader.ParseOrUse(cliRes.Asset, viper.GetBool("insecure"), optAnnotations)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to parse inventory")
+	}
+
+	// When the inventory file was auto-discovered (not user-supplied) and the
+	// CLI gave us a target asset, treat the inventory as a library of per-asset
+	// overrides rather than as the authoritative asset list. We copy the
+	// id_detector list from any inventory asset whose connection type overlaps
+	// the CLI asset's, then narrow inv.Spec.Assets to just the CLI asset. This
+	// keeps `cnspec scan local` picking up the id_detector configured by the
+	// Windows installer while leaving `cnspec scan aws account 123` and other
+	// non-local targets unaffected even though the same inventory.yml is on
+	// disk next to mondoo.yml.
+	if autoDiscoveredInventory && cliRes.Asset != nil {
+		applyAutoDiscoveredInventory(cliRes.Asset, inv)
 	}
 
 	riskThreshold := viper.GetInt("risk-threshold")
@@ -398,6 +427,52 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 	}
 
 	return &conf, nil
+}
+
+// applyAutoDiscoveredInventory narrows an auto-discovered inventory down to the
+// CLI-provided asset, after lifting per-asset fields (currently only the
+// id_detector list) from any inventory asset whose connection type overlaps
+// the target's. Auto-discovery happens only when --inventory-file was not set
+// by the user, so this function should never be reached for an inventory the
+// user explicitly pointed at.
+func applyAutoDiscoveredInventory(target *inventory.Asset, inv *inventory.Inventory) {
+	if target == nil || inv == nil || inv.Spec == nil {
+		return
+	}
+	targetConns := make(map[string]struct{}, len(target.Connections))
+	for _, c := range target.Connections {
+		if c != nil && c.Type != "" {
+			targetConns[c.Type] = struct{}{}
+		}
+	}
+	for _, invAsset := range inv.Spec.GetAssets() {
+		if invAsset == nil || invAsset == target {
+			continue
+		}
+		if !assetSharesConnectionType(invAsset, targetConns) {
+			continue
+		}
+		if len(target.IdDetector) == 0 && len(invAsset.IdDetector) > 0 {
+			target.IdDetector = append(target.IdDetector, invAsset.IdDetector...)
+		}
+		break
+	}
+	inv.Spec.Assets = []*inventory.Asset{target}
+}
+
+func assetSharesConnectionType(asset *inventory.Asset, want map[string]struct{}) bool {
+	if asset == nil || len(want) == 0 {
+		return false
+	}
+	for _, c := range asset.Connections {
+		if c == nil {
+			continue
+		}
+		if _, ok := want[c.Type]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *scanConfig) loadPolicies(ctx context.Context) error {
