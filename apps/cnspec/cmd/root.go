@@ -81,6 +81,11 @@ func BuildRootCmd() (*cobra.Command, error) {
 			Action:  "Run a query with ",
 		},
 		&providers.Command{
+			Command: cnquery_app.DiscoverCmd,
+			Run:     cnquery_app.DiscoverCmdRun,
+			Action:  "Discover assets with ",
+		},
+		&providers.Command{
 			Command: scanCmd,
 			Run:     scanCmdRun,
 			Action:  "Scan ",
