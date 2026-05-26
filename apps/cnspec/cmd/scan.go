@@ -275,20 +275,16 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 	// id_detector list) that `cnspec serve` already auto-loads on each
 	// scheduled scan cycle. We gate on config.LoadedConfig so a stray
 	// inventory.yml in $PWD does not get picked up by scans that have no
-	// managed-agent context.
-	//
-	// inventoryloader.ParseOrUse reads the path from the global viper
-	// "inventory-file" key, so the override is set just before the call and
-	// restored immediately after. Without the restore, repeated calls to
-	// getCobraScanConfig (notably from tests) would see the auto-discovered
-	// path on subsequent invocations and skip the discovery branch.
+	// managed-agent context. inventoryloader.ParseOrUse reads the path
+	// from the global viper "inventory-file" key, matching how serve.go
+	// performs the same lookup.
 	autoDiscoveredInventory := false
 	if config.LoadedConfig && viper.GetString("inventory-file") == "" {
 		if invPath, ok := config.InventoryPath(viper.ConfigFileUsed()); ok {
-			log.Info().Str("path", invPath).Msg("found inventory file")
-			previous := viper.GetString("inventory-file")
+			log.Info().
+				Str("path", invPath).
+				Msg("auto-discovered default inventory file next to mondoo.yml")
 			viper.Set("inventory-file", invPath)
-			defer viper.Set("inventory-file", previous)
 			autoDiscoveredInventory = true
 		}
 	}
