@@ -92,3 +92,34 @@ func TestApplyAutoDiscoveredInventory_NilSafe(t *testing.T) {
 	applyAutoDiscoveredInventory(nil, &inventory.Inventory{Spec: &inventory.InventorySpec{}})
 	applyAutoDiscoveredInventory(&inventory.Asset{}, &inventory.Inventory{})
 }
+
+func TestApplyAutoDiscoveredInventory_OnlyFirstMatchingAssetIsMergedIntoTarget(t *testing.T) {
+	// Locks in the documented first-match-wins semantics on the break:
+	// when multiple inventory assets share the CLI target's connection
+	// type, only the first one's id_detector is lifted. If this behavior
+	// ever changes (e.g. to merge across matches), the test should be
+	// updated together with the comment in scan.go.
+	target := &inventory.Asset{
+		Name:        "local-cli",
+		Connections: []*inventory.Config{{Type: "local"}},
+	}
+	inv := &inventory.Inventory{Spec: &inventory.InventorySpec{Assets: []*inventory.Asset{
+		{
+			Name:        "first-local",
+			Connections: []*inventory.Config{{Type: "local"}},
+			IdDetector:  []string{"hostname"},
+		},
+		{
+			Name:        "second-local",
+			Connections: []*inventory.Config{{Type: "local"}},
+			IdDetector:  []string{"machine-id", "bios-uuid"},
+		},
+	}}}
+
+	applyAutoDiscoveredInventory(target, inv)
+
+	assert.Equal(t, []string{"hostname"}, target.IdDetector,
+		"only the first matching inventory asset's id_detector should be lifted")
+	assert.Equal(t, []*inventory.Asset{target}, inv.Spec.Assets,
+		"second-local and all other inventory assets should be discarded")
+}

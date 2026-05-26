@@ -276,11 +276,19 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 	// scheduled scan cycle. We gate on config.LoadedConfig so a stray
 	// inventory.yml in $PWD does not get picked up by scans that have no
 	// managed-agent context.
+	//
+	// inventoryloader.ParseOrUse reads the path from the global viper
+	// "inventory-file" key, so the override is set just before the call and
+	// restored immediately after. Without the restore, repeated calls to
+	// getCobraScanConfig (notably from tests) would see the auto-discovered
+	// path on subsequent invocations and skip the discovery branch.
 	autoDiscoveredInventory := false
 	if config.LoadedConfig && viper.GetString("inventory-file") == "" {
 		if invPath, ok := config.InventoryPath(viper.ConfigFileUsed()); ok {
 			log.Info().Str("path", invPath).Msg("found inventory file")
+			previous := viper.GetString("inventory-file")
 			viper.Set("inventory-file", invPath)
+			defer viper.Set("inventory-file", previous)
 			autoDiscoveredInventory = true
 		}
 	}
@@ -455,7 +463,30 @@ func applyAutoDiscoveredInventory(target *inventory.Asset, inv *inventory.Invent
 		if len(target.IdDetector) == 0 && len(invAsset.IdDetector) > 0 {
 			target.IdDetector = append(target.IdDetector, invAsset.IdDetector...)
 		}
+		// First-match wins. The Windows installer writes exactly one
+		// local-scan asset, and we only care about lifting id_detector here;
+		// later matches would not contribute anything beyond what the first
+		// already provided. If inventories ever grow to carry multiple
+		// assets of the same connection type with *different* id_detector
+		// lists that should all apply, this loop needs to merge across
+		// matches instead of breaking.
 		break
+	}
+	// Auto-discovered inventories are treated as per-asset override libraries,
+	// not as the authoritative asset list, so any inventory asset that didn't
+	// match the CLI target is intentionally dropped here. Log it at debug so
+	// the dropped count is visible when troubleshooting unexpected scan
+	// targets.
+	dropped := 0
+	for _, a := range inv.Spec.GetAssets() {
+		if a != nil && a != target {
+			dropped++
+		}
+	}
+	if dropped > 0 {
+		log.Debug().
+			Int("count", dropped).
+			Msg("dropping inventory assets that did not match the CLI target")
 	}
 	inv.Spec.Assets = []*inventory.Asset{target}
 }
