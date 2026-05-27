@@ -102,6 +102,12 @@ func BuildRootCmd() (*cobra.Command, error) {
 			Action:              "Collect a software bill of materials (SBOM) for ",
 			SupportedConnectors: []string{"docker", "container", "filesystem", "local", "ssh", "vagrant", "winrm", "sbom"},
 		},
+		&providers.Command{
+			Command:             aibomCmd,
+			Run:                 aibomCmdRun,
+			Action:              "Generate an AI bill of materials (AIBOM) for ",
+			SupportedConnectors: []string{"local", "docker", "container", "filesystem", "ssh", "vagrant", "winrm", "ollama", "huggingface", "aws", "gcp", "azure"},
+		},
 	)
 	return rootCmd, err
 }
