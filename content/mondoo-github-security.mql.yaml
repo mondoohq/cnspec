@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-github-organization-security
     name: Mondoo GitHub Organization Security
-    version: 1.7.0
+    version: 1.8.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -56,7 +56,7 @@ policies:
     scoring_system: highest impact
   - uid: mondoo-github-repository-security
     name: Mondoo GitHub Repository Security
-    version: 1.7.0
+    version: 1.8.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -148,6 +148,9 @@ policies:
           - uid: mondoo-github-repository-security-webhooks-use-ssl
     scoring_system: highest impact
 queries:
+  # No Terraform variants: the integrations/github provider (v6.x) does not expose a
+  # two-factor enforcement argument on github_organization_settings. The org-level 2FA
+  # requirement is set in the GitHub UI / REST API but not modeled as a Terraform field.
   - uid: mondoo-github-organization-security-two-factor-auth
     title: Enable Two-factor authentication for all users in the organization
     impact: 90
@@ -213,19 +216,7 @@ queries:
               4. Save the changes.
 
             For more details, see [Enforcing two-factor authentication for your organization](https://docs.github.com/en/authentication/securing-your-account-with-two-factor-authentication-2fa/enforcing-two-factor-authentication-for-your-organization) in the GitHub documentation.
-        - id: terraform
-          desc: |
-            **Using Terraform**
-
-            To enforce two-factor authentication for all users in your GitHub organization using Terraform, you can use the `github_organization_settings` resource. Here is an example configuration:
-
-            ```hcl
-            resource "github_organization_settings" "example" {
-              enforce_two_factor_authentication = true
-            }
-            ```
-
-            For more details, see [github_organization_settings](https://registry.terraform.io/providers/integrations/github/latest/docs/resources/organization_settings) in the Terraform Registry.
+        # No Terraform remediation: github_organization_settings has no two-factor-enforcement argument. Earlier versions of this remediation referenced `enforce_two_factor_authentication`, which is not a real argument and would fail terraform plan with "Unsupported argument".
         - id: cli
           desc: |
             **Using GitHub CLI**
@@ -237,6 +228,11 @@ queries:
     refs:
       - url: https://docs.github.com/en/authentication/securing-your-account-with-two-factor-authentication-2fa
         title: Securing your account with two-factor authentication (2FA)
+  # No Terraform variants: domain verification is a runtime/external-state property
+  # determined by GitHub after DNS TXT record validation. The integrations/github provider
+  # does not expose a "verified" field on github_organization_settings, and the
+  # github_organization data source surfaces verification status as runtime state, not as a
+  # configurable resource argument.
   - uid: mondoo-github-organization-security-verified-domain
     title: Organization should have a verified domain attached
     impact: 80
@@ -330,7 +326,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-7-2-1
       compliance/soc2-2017: soc2-control-cc6-3-1
       compliance/vda-isa-5: vda-isa-5-4-1-1
-    mql: github.organization.defaultRepositoryPermission == "read"
+    variants:
+      - uid: mondoo-github-organization-security-default-permission-level-github
+        tags:
+          mondoo.com/filter-title: GitHub Organization
+          mondoo.com/filter-icon: github
+      - uid: mondoo-github-organization-security-default-permission-level-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-github-organization-security-default-permission-level-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-github-organization-security-default-permission-level-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that GitHub Organizations have base permissions configured to control the default level of access members have to the organization's repositories.
@@ -400,6 +412,27 @@ queries:
     refs:
       - url: https://docs.github.com/en/organizations/managing-user-access-to-your-organizations-repositories/managing-repository-roles/repository-roles-for-an-organization
         title: Setting base permissions for an organization
+  - uid: mondoo-github-organization-security-default-permission-level-github
+    filters: asset.platform == "github-org"
+    mql: github.organization.defaultRepositoryPermission == "read"
+  - uid: mondoo-github-organization-security-default-permission-level-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "github_organization_settings")
+    mql: |
+      terraform.resources.where(nameLabel == "github_organization_settings").all(arguments["default_repository_permission"] == "read")
+  - uid: mondoo-github-organization-security-default-permission-level-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "github_organization_settings")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "github_organization_settings").all(change.after.default_repository_permission == "read")
+  - uid: mondoo-github-organization-security-default-permission-level-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "github_organization_settings")
+    mql: |
+      terraform.state.resources.where(type == "github_organization_settings").all(values.default_repository_permission == "read")
+  # No Terraform variants: this check looks for a SECURITY.md file in the org's .github
+  # repository (or in each repo as a fallback). File-content presence is not a Terraform
+  # configuration property — github_repository_file can manage the file, but verifying its
+  # presence across an arbitrary number of repos from a single Terraform module requires
+  # cross-resource correlation that produces false positives on modules managing files
+  # elsewhere.
   - uid: mondoo-github-organization-security-security-policy
     title: Ensure repository defines a security policy
     impact: 30
@@ -516,6 +549,14 @@ queries:
     refs:
       - url: https://docs.github.com/en/code-security/getting-started/adding-a-security-policy-to-your-repository
         title: GitHub Docs - Adding a security policy to your repository
+  # No Terraform variants: this check asks "does the repository's default branch have a
+  # protection rule?" Verifying that requires cross-resource correlation — matching
+  # github_repository.default_branch against the patterns on github_branch_protection
+  # resources targeting the same repository_id. The other branch-protection checks (signed
+  # commits, PR reviews, etc.) do have variants because they assert config properties of
+  # any declared github_branch_protection; this existence check would need joins that MQL
+  # variants do not express well, and would false-positive on modules that manage branch
+  # protection elsewhere.
   - uid: mondoo-github-repository-security-ensure-default-branch-protection
     title: Ensure GitHub repository default branch is protected
     impact: 90
@@ -628,6 +669,12 @@ queries:
         title: About Branch protection
       - url: https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-branches-in-your-repository/changing-the-default-branch
         title: Changing the default branch
+  # No Terraform variants: the runtime check iterates the repository's branches and looks
+  # for those matching the user-configurable release-branch pattern, then asserts each has
+  # protection. Both halves are impractical from HCL/plan/state: branches are not declared
+  # in Terraform (they exist in the repo's git history), so we cannot enumerate them; and
+  # asserting that some pattern in props is covered by a github_branch_protection.pattern
+  # requires cross-resource correlation that produces false positives.
   - uid: mondoo-github-repository-security-ensure-release-branch-protection
     title: Ensure GitHub repository release branches are protected
     impact: 90
@@ -759,13 +806,23 @@ queries:
       compliance/pci-dss-4: false
       compliance/soc2-2017: soc2-control-cc6-8-2
       compliance/vda-isa-5: false
-    mql: |
-      github.repository.branches
-        .where( isDefault == true )
-        .all( isProtected == true )
-      github.repository.branches
-        .where( isDefault == true )
-        .all( protectionRules { allowForcePushes['enabled'] == false } )
+    variants:
+      - uid: mondoo-github-repository-security-prevent-force-pushes-default-branch-github
+        tags:
+          mondoo.com/filter-title: GitHub Repository
+          mondoo.com/filter-icon: github
+      - uid: mondoo-github-repository-security-prevent-force-pushes-default-branch-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-github-repository-security-prevent-force-pushes-default-branch-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-github-repository-security-prevent-force-pushes-default-branch-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that the default branch does not allow force pushes. Branch protection enforces certain workflows or requirements that must be met before a collaborator can push changes to a branch in a repository. It is highly recommended to disable force pushes to the default repository branch.
@@ -849,6 +906,33 @@ queries:
     refs:
       - url: https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches
         title: GitHub Docs - About protected branches
+  - uid: mondoo-github-repository-security-prevent-force-pushes-default-branch-github
+    filters: asset.platform == "github-repo"
+    mql: |
+      github.repository.branches
+        .where( isDefault == true )
+        .all( isProtected == true )
+      github.repository.branches
+        .where( isDefault == true )
+        .all( protectionRules { allowForcePushes['enabled'] == false } )
+  - uid: mondoo-github-repository-security-prevent-force-pushes-default-branch-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "github_branch_protection")
+    mql: |
+      terraform.resources.where(nameLabel == "github_branch_protection").all(arguments["allows_force_pushes"] != true)
+  - uid: mondoo-github-repository-security-prevent-force-pushes-default-branch-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "github_branch_protection")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "github_branch_protection").all(change.after.allows_force_pushes != true)
+  - uid: mondoo-github-repository-security-prevent-force-pushes-default-branch-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "github_branch_protection")
+    mql: |
+      terraform.state.resources.where(type == "github_branch_protection").all(values.allows_force_pushes != true)
+  # No Terraform variants: same cross-resource correlation problem as ensure-release-branch-protection.
+  # The check iterates branches matching a user-configurable release pattern (props.mondooGithubReleaseBranches)
+  # and asserts allows_force_pushes is disabled on each. Asserting that the pattern is covered
+  # by a github_branch_protection requires joins that MQL variants do not express well, and
+  # the prevent-force-pushes-default-branch variant already covers the typical case for any
+  # declared protection.
   - uid: mondoo-github-repository-security-prevent-force-pushes-release-branch
     title: Ensure repository does not allow force pushes to any release branches
     impact: 80
@@ -978,13 +1062,23 @@ queries:
       compliance/pci-dss-4: false
       compliance/soc2-2017: soc2-control-cc6-8-2
       compliance/vda-isa-5: false
-    mql: |
-      github.repository.branches
-        .where( isDefault == true )
-        .all( isProtected == true )
-      github.repository.branches
-        .where( isDefault == true )
-        .all( protectionRules { requiredConversationResolution['enabled'] == true } )
+    variants:
+      - uid: mondoo-github-repository-security-require-conversation-resolution-github
+        tags:
+          mondoo.com/filter-title: GitHub Repository
+          mondoo.com/filter-icon: github
+      - uid: mondoo-github-repository-security-require-conversation-resolution-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-github-repository-security-require-conversation-resolution-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-github-repository-security-require-conversation-resolution-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that a branch protection rule is configured to require all comments on the pull request to be resolved before it can be merged to a protected branch. Branch protection enforces certain workflows or requirements that must be met before a collaborator can push changes to a branch in a repository.
@@ -1068,6 +1162,27 @@ queries:
         title: GitHub Docs - About protected branches
       - url: https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches#require-conversation-resolution-before-merging
         title: GitHub Documentation - Require conversation resolution before merging
+  - uid: mondoo-github-repository-security-require-conversation-resolution-github
+    filters: asset.platform == "github-repo"
+    mql: |
+      github.repository.branches
+        .where( isDefault == true )
+        .all( isProtected == true )
+      github.repository.branches
+        .where( isDefault == true )
+        .all( protectionRules { requiredConversationResolution['enabled'] == true } )
+  - uid: mondoo-github-repository-security-require-conversation-resolution-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "github_branch_protection")
+    mql: |
+      terraform.resources.where(nameLabel == "github_branch_protection").all(arguments["require_conversation_resolution"] == true)
+  - uid: mondoo-github-repository-security-require-conversation-resolution-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "github_branch_protection")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "github_branch_protection").all(change.after.require_conversation_resolution == true)
+  - uid: mondoo-github-repository-security-require-conversation-resolution-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "github_branch_protection")
+    mql: |
+      terraform.state.resources.where(type == "github_branch_protection").all(values.require_conversation_resolution == true)
   - uid: mondoo-github-repository-security-require-status-checks-before-merging
     title: Ensure status checks are passing before merging PRs on the default branch
     impact: 80
@@ -1085,13 +1200,23 @@ queries:
       compliance/pci-dss-4: false
       compliance/soc2-2017: soc2-control-cc6-8-2
       compliance/vda-isa-5: false
-    mql: |
-      github.repository.branches
-        .where( isDefault == true )
-        .all( isProtected == true )
-      github.repository.branches
-        .where( isDefault == true )
-        .all( protectionRules { requiredStatusChecks.length > 0 } )
+    variants:
+      - uid: mondoo-github-repository-security-require-status-checks-before-merging-github
+        tags:
+          mondoo.com/filter-title: GitHub Repository
+          mondoo.com/filter-icon: github
+      - uid: mondoo-github-repository-security-require-status-checks-before-merging-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-github-repository-security-require-status-checks-before-merging-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-github-repository-security-require-status-checks-before-merging-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that all required CI tests pass before collaborators can merge changes to a protected branch. Branch protection enforces certain workflows or requirements that must be met before a collaborator can push changes to a branch in a repository.
@@ -1177,6 +1302,29 @@ queries:
         title: GitHub Docs - About protected branches
       - url: https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches#require-status-checks-before-merging
         title: Require status checks before merging
+  - uid: mondoo-github-repository-security-require-status-checks-before-merging-github
+    filters: asset.platform == "github-repo"
+    mql: |
+      github.repository.branches
+        .where( isDefault == true )
+        .all( isProtected == true )
+      github.repository.branches
+        .where( isDefault == true )
+        .all( protectionRules { requiredStatusChecks.length > 0 } )
+  - uid: mondoo-github-repository-security-require-status-checks-before-merging-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "github_branch_protection")
+    mql: |
+      terraform.resources.where(nameLabel == "github_branch_protection").all(
+        blocks.where(type == "required_status_checks") != empty
+      )
+  - uid: mondoo-github-repository-security-require-status-checks-before-merging-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "github_branch_protection")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "github_branch_protection").all(change.after["required_status_checks"] != empty)
+  - uid: mondoo-github-repository-security-require-status-checks-before-merging-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "github_branch_protection")
+    mql: |
+      terraform.state.resources.where(type == "github_branch_protection").all(values["required_status_checks"] != empty)
   - uid: mondoo-github-repository-security-required-signed-commits
     title: Ensure repository branch protection requires signed commits
     impact: 80
@@ -1194,13 +1342,23 @@ queries:
       compliance/pci-dss-4: false
       compliance/soc2-2017: soc2-control-cc6-8-2
       compliance/vda-isa-5: false
-    mql: |
-      github.repository.branches
-        .where( isDefault == true )
-        .all( isProtected == true )
-      github.repository.branches
-        .where( isDefault == true )
-        .all( protectionRules { requiredSignatures == true } )
+    variants:
+      - uid: mondoo-github-repository-security-required-signed-commits-github
+        tags:
+          mondoo.com/filter-title: GitHub Repository
+          mondoo.com/filter-icon: github
+      - uid: mondoo-github-repository-security-required-signed-commits-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-github-repository-security-required-signed-commits-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-github-repository-security-required-signed-commits-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that a branch protection rule exists to require signed commits on the default branch. Signing commits and tags locally gives other people confidence about the origin of changes made to a project. If a commit or tag has a GPG, SSH, or S/MIME signature that is cryptographically verifiable, GitHub marks the commit or tag as "Verified" or "Partially verified."
@@ -1274,6 +1432,27 @@ queries:
         title: GitHub Docs - About protected branches
       - url: https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification
         title: GitHub Docs - About commit signature verification
+  - uid: mondoo-github-repository-security-required-signed-commits-github
+    filters: asset.platform == "github-repo"
+    mql: |
+      github.repository.branches
+        .where( isDefault == true )
+        .all( isProtected == true )
+      github.repository.branches
+        .where( isDefault == true )
+        .all( protectionRules { requiredSignatures == true } )
+  - uid: mondoo-github-repository-security-required-signed-commits-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "github_branch_protection")
+    mql: |
+      terraform.resources.where(nameLabel == "github_branch_protection").all(arguments["require_signed_commits"] == true)
+  - uid: mondoo-github-repository-security-required-signed-commits-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "github_branch_protection")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "github_branch_protection").all(change.after.require_signed_commits == true)
+  - uid: mondoo-github-repository-security-required-signed-commits-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "github_branch_protection")
+    mql: |
+      terraform.state.resources.where(type == "github_branch_protection").all(values.require_signed_commits == true)
   - uid: mondoo-github-repository-security-enforce-branch-protection
     title: Ensure repository does not allow bypassing of branch protection rules
     impact: 70
@@ -1291,13 +1470,23 @@ queries:
       compliance/pci-dss-4: false
       compliance/soc2-2017: soc2-control-cc6-8-2
       compliance/vda-isa-5: false
-    mql: |
-      github.repository.branches
-        .where( isDefault == true )
-        .all( isProtected == true )
-      github.repository.branches
-        .where( isDefault == true )
-        .all( protectionRules.enforceAdmins['enabled'] == true )
+    variants:
+      - uid: mondoo-github-repository-security-enforce-branch-protection-github
+        tags:
+          mondoo.com/filter-title: GitHub Repository
+          mondoo.com/filter-icon: github
+      - uid: mondoo-github-repository-security-enforce-branch-protection-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-github-repository-security-enforce-branch-protection-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-github-repository-security-enforce-branch-protection-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that branch protection rules cannot be bypassed. By default, the restrictions of a branch protection rule do not apply to people with admin permissions to the repository or custom roles with the "bypass branch protections" permission in a repository.
@@ -1369,6 +1558,32 @@ queries:
     refs:
       - url: https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches
         title: GitHub Docs - About protected branches
+  - uid: mondoo-github-repository-security-enforce-branch-protection-github
+    filters: asset.platform == "github-repo"
+    mql: |
+      github.repository.branches
+        .where( isDefault == true )
+        .all( isProtected == true )
+      github.repository.branches
+        .where( isDefault == true )
+        .all( protectionRules.enforceAdmins['enabled'] == true )
+  - uid: mondoo-github-repository-security-enforce-branch-protection-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "github_branch_protection")
+    mql: |
+      terraform.resources.where(nameLabel == "github_branch_protection").all(arguments["enforce_admins"] == true)
+  - uid: mondoo-github-repository-security-enforce-branch-protection-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "github_branch_protection")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "github_branch_protection").all(change.after.enforce_admins == true)
+  - uid: mondoo-github-repository-security-enforce-branch-protection-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "github_branch_protection")
+    mql: |
+      terraform.state.resources.where(type == "github_branch_protection").all(values.enforce_admins == true)
+  # No Terraform variants: this check asserts the existence and contents of a SECURITY.md
+  # file in the repository, which is a git tree property rather than a Terraform-declared
+  # configuration. github_repository_file can manage individual files but cannot be reverse-
+  # scanned to verify presence of a specific path across arbitrary repositories without
+  # cross-resource correlation that produces false positives.
   - uid: mondoo-github-repository-security-security-policy
     title: Ensure repository defines a security policy
     impact: 30
@@ -1463,6 +1678,10 @@ queries:
     refs:
       - url: https://docs.github.com/en/code-security/getting-started/adding-a-security-policy-to-your-repository
         title: GitHub Docs - Adding a security policy to your repository
+  # No Terraform variants: this check inspects the contents of every file tracked by the
+  # repository to detect binary artifacts. File contents are a git tree property, not a
+  # Terraform-declared configuration — Terraform manages resource state, not the bytes
+  # inside an arbitrary file in a repository.
   - uid: mondoo-github-repository-security-binary-artifacts
     title: Ensure repository does not generate binary artifacts
     impact: 90
@@ -1533,6 +1752,11 @@ queries:
     refs:
       - url: https://github.com/ossf/scorecard/blob/main/docs/checks.md#binary-artifacts
         title: OSSF Scorecard - Binary Artifacts
+  # No Terraform variants: this check verifies the presence of a .github/dependabot.yaml
+  # (or .yml) file in the repository's git tree. File existence is not a Terraform-declared
+  # configuration — github_repository_file can manage individual files but a per-module
+  # variant cannot enumerate the contents of an arbitrary repository to verify the file is
+  # present.
   - uid: mondoo-github-repository-security-ensure-dependabot-workflow
     title: Ensure a GitHub Actions workflow exists for Dependabot
     impact: 70
@@ -1660,7 +1884,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-7-2-1
       compliance/soc2-2017: soc2-control-cc6-1-3
       compliance/vda-isa-5: vda-isa-5-4-1-1
-    mql: github.organization.membersCanForkPrivateRepos == false
+    variants:
+      - uid: mondoo-github-organization-security-fork-private-repos-github
+        tags:
+          mondoo.com/filter-title: GitHub Organization
+          mondoo.com/filter-icon: github
+      - uid: mondoo-github-organization-security-fork-private-repos-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-github-organization-security-fork-private-repos-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-github-organization-security-fork-private-repos-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that organization members are not allowed to fork private repositories to their personal GitHub accounts.
@@ -1731,6 +1971,21 @@ queries:
     refs:
       - url: https://docs.github.com/en/organizations/managing-organization-settings/managing-the-forking-policy-for-your-organization
         title: Managing the forking policy for your organization
+  - uid: mondoo-github-organization-security-fork-private-repos-github
+    filters: asset.platform == "github-org"
+    mql: github.organization.membersCanForkPrivateRepos == false
+  - uid: mondoo-github-organization-security-fork-private-repos-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "github_organization_settings")
+    mql: |
+      terraform.resources.where(nameLabel == "github_organization_settings").all(arguments["members_can_fork_private_repositories"] == false)
+  - uid: mondoo-github-organization-security-fork-private-repos-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "github_organization_settings")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "github_organization_settings").all(change.after.members_can_fork_private_repositories == false)
+  - uid: mondoo-github-organization-security-fork-private-repos-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "github_organization_settings")
+    mql: |
+      terraform.state.resources.where(type == "github_organization_settings").all(values.members_can_fork_private_repositories == false)
   - uid: mondoo-github-organization-security-secret-scanning-new-repos
     title: Ensure secret scanning is enabled for new repositories
     impact: 80
@@ -1748,7 +2003,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-6-3-3
       compliance/soc2-2017: soc2-control-cc7-1-2
       compliance/vda-isa-5: vda-isa-5-5-2-1
-    mql: github.organization.secretScanningEnabledForNewRepos == true
+    variants:
+      - uid: mondoo-github-organization-security-secret-scanning-new-repos-github
+        tags:
+          mondoo.com/filter-title: GitHub Organization
+          mondoo.com/filter-icon: github
+      - uid: mondoo-github-organization-security-secret-scanning-new-repos-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-github-organization-security-secret-scanning-new-repos-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-github-organization-security-secret-scanning-new-repos-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that secret scanning is automatically enabled for all new repositories created in the organization.
@@ -1819,6 +2090,21 @@ queries:
     refs:
       - url: https://docs.github.com/en/organizations/keeping-your-organization-secure/managing-security-settings-for-your-organization/managing-security-and-analysis-settings-for-your-organization
         title: Managing security and analysis settings for your organization
+  - uid: mondoo-github-organization-security-secret-scanning-new-repos-github
+    filters: asset.platform == "github-org"
+    mql: github.organization.secretScanningEnabledForNewRepos == true
+  - uid: mondoo-github-organization-security-secret-scanning-new-repos-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "github_organization_settings")
+    mql: |
+      terraform.resources.where(nameLabel == "github_organization_settings").all(arguments["secret_scanning_enabled_for_new_repositories"] == true)
+  - uid: mondoo-github-organization-security-secret-scanning-new-repos-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "github_organization_settings")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "github_organization_settings").all(change.after.secret_scanning_enabled_for_new_repositories == true)
+  - uid: mondoo-github-organization-security-secret-scanning-new-repos-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "github_organization_settings")
+    mql: |
+      terraform.state.resources.where(type == "github_organization_settings").all(values.secret_scanning_enabled_for_new_repositories == true)
   - uid: mondoo-github-organization-security-secret-scanning-push-protection-new-repos
     title: Ensure secret scanning push protection is enabled for new repositories
     impact: 90
@@ -1836,7 +2122,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-6-3-3
       compliance/soc2-2017: soc2-control-cc7-1-2
       compliance/vda-isa-5: vda-isa-5-5-2-1
-    mql: github.organization.secretScanningPushProtectionEnabledForNewRepos == true
+    variants:
+      - uid: mondoo-github-organization-security-secret-scanning-push-protection-new-repos-github
+        tags:
+          mondoo.com/filter-title: GitHub Organization
+          mondoo.com/filter-icon: github
+      - uid: mondoo-github-organization-security-secret-scanning-push-protection-new-repos-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-github-organization-security-secret-scanning-push-protection-new-repos-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-github-organization-security-secret-scanning-push-protection-new-repos-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that secret scanning push protection is automatically enabled for all new repositories created in the organization.
@@ -1903,6 +2205,21 @@ queries:
     refs:
       - url: https://docs.github.com/en/code-security/secret-scanning/push-protection-for-repositories-and-organizations
         title: Push protection for repositories and organizations
+  - uid: mondoo-github-organization-security-secret-scanning-push-protection-new-repos-github
+    filters: asset.platform == "github-org"
+    mql: github.organization.secretScanningPushProtectionEnabledForNewRepos == true
+  - uid: mondoo-github-organization-security-secret-scanning-push-protection-new-repos-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "github_organization_settings")
+    mql: |
+      terraform.resources.where(nameLabel == "github_organization_settings").all(arguments["secret_scanning_push_protection_enabled_for_new_repositories"] == true)
+  - uid: mondoo-github-organization-security-secret-scanning-push-protection-new-repos-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "github_organization_settings")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "github_organization_settings").all(change.after.secret_scanning_push_protection_enabled_for_new_repositories == true)
+  - uid: mondoo-github-organization-security-secret-scanning-push-protection-new-repos-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "github_organization_settings")
+    mql: |
+      terraform.state.resources.where(type == "github_organization_settings").all(values.secret_scanning_push_protection_enabled_for_new_repositories == true)
   - uid: mondoo-github-organization-security-dependabot-alerts-new-repos
     title: Ensure Dependabot alerts are enabled for new repositories
     impact: 70
@@ -1920,7 +2237,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-6-3-3
       compliance/soc2-2017: soc2-control-cc7-1-2
       compliance/vda-isa-5: vda-isa-5-5-2-1
-    mql: github.organization.dependabotAlertsEnabledForNewRepos == true
+    variants:
+      - uid: mondoo-github-organization-security-dependabot-alerts-new-repos-github
+        tags:
+          mondoo.com/filter-title: GitHub Organization
+          mondoo.com/filter-icon: github
+      - uid: mondoo-github-organization-security-dependabot-alerts-new-repos-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-github-organization-security-dependabot-alerts-new-repos-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-github-organization-security-dependabot-alerts-new-repos-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that Dependabot alerts are automatically enabled for all new repositories created in the organization.
@@ -1987,6 +2320,21 @@ queries:
     refs:
       - url: https://docs.github.com/en/organizations/keeping-your-organization-secure/managing-security-settings-for-your-organization/managing-security-and-analysis-settings-for-your-organization
         title: Managing security and analysis settings for your organization
+  - uid: mondoo-github-organization-security-dependabot-alerts-new-repos-github
+    filters: asset.platform == "github-org"
+    mql: github.organization.dependabotAlertsEnabledForNewRepos == true
+  - uid: mondoo-github-organization-security-dependabot-alerts-new-repos-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "github_organization_settings")
+    mql: |
+      terraform.resources.where(nameLabel == "github_organization_settings").all(arguments["dependabot_alerts_enabled_for_new_repositories"] == true)
+  - uid: mondoo-github-organization-security-dependabot-alerts-new-repos-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "github_organization_settings")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "github_organization_settings").all(change.after.dependabot_alerts_enabled_for_new_repositories == true)
+  - uid: mondoo-github-organization-security-dependabot-alerts-new-repos-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "github_organization_settings")
+    mql: |
+      terraform.state.resources.where(type == "github_organization_settings").all(values.dependabot_alerts_enabled_for_new_repositories == true)
   - uid: mondoo-github-organization-security-dependabot-security-updates-new-repos
     title: Ensure Dependabot security updates are enabled for new repositories
     impact: 70
@@ -2004,7 +2352,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-6-3-3
       compliance/soc2-2017: soc2-control-cc7-1-2
       compliance/vda-isa-5: vda-isa-5-5-2-1
-    mql: github.organization.dependabotSecurityUpdatesEnabledForNewRepos == true
+    variants:
+      - uid: mondoo-github-organization-security-dependabot-security-updates-new-repos-github
+        tags:
+          mondoo.com/filter-title: GitHub Organization
+          mondoo.com/filter-icon: github
+      - uid: mondoo-github-organization-security-dependabot-security-updates-new-repos-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-github-organization-security-dependabot-security-updates-new-repos-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-github-organization-security-dependabot-security-updates-new-repos-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that Dependabot security updates are automatically enabled for all new repositories created in the organization.
@@ -2071,6 +2435,25 @@ queries:
     refs:
       - url: https://docs.github.com/en/code-security/dependabot/dependabot-security-updates/configuring-dependabot-security-updates
         title: Configuring Dependabot security updates
+  - uid: mondoo-github-organization-security-dependabot-security-updates-new-repos-github
+    filters: asset.platform == "github-org"
+    mql: github.organization.dependabotSecurityUpdatesEnabledForNewRepos == true
+  - uid: mondoo-github-organization-security-dependabot-security-updates-new-repos-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "github_organization_settings")
+    mql: |
+      terraform.resources.where(nameLabel == "github_organization_settings").all(arguments["dependabot_security_updates_enabled_for_new_repositories"] == true)
+  - uid: mondoo-github-organization-security-dependabot-security-updates-new-repos-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "github_organization_settings")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "github_organization_settings").all(change.after.dependabot_security_updates_enabled_for_new_repositories == true)
+  - uid: mondoo-github-organization-security-dependabot-security-updates-new-repos-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "github_organization_settings")
+    mql: |
+      terraform.state.resources.where(type == "github_organization_settings").all(values.dependabot_security_updates_enabled_for_new_repositories == true)
+  # No Terraform variants: the integrations/github provider (v6.x) does not expose a
+  # members_can_change_repo_visibility argument on github_organization_settings. The closest
+  # analogs (members_can_create_public/private_repositories) control repository *creation*,
+  # not visibility-change permission — different feature, so a variant would mis-assert.
   - uid: mondoo-github-organization-security-members-cannot-change-repo-visibility
     title: Ensure organization members cannot change repository visibility
     impact: 80
@@ -2135,19 +2518,7 @@ queries:
             4. Save the changes.
 
             For more details, see [Restricting repository visibility changes in your organization](https://docs.github.com/en/organizations/managing-organization-settings/restricting-repository-visibility-changes-in-your-organization) in the GitHub documentation.
-        - id: terraform
-          desc: |
-            **Using Terraform**
-
-            To prevent members from changing repository visibility using Terraform, you can use the `github_organization_settings` resource. Here is an example configuration:
-
-            ```hcl
-            resource "github_organization_settings" "example" {
-              members_can_change_repo_visibility = false
-            }
-            ```
-
-            For more details, see [github_organization_settings](https://registry.terraform.io/providers/integrations/github/latest/docs/resources/organization_settings) in the Terraform Registry.
+        # No Terraform remediation: github_organization_settings has no members_can_change_repo_visibility argument. Earlier versions of this remediation referenced that field, which is not a real argument and would fail terraform plan with "Unsupported argument".
         - id: cli
           desc: |
             **Using GitHub CLI**
@@ -2160,6 +2531,10 @@ queries:
     refs:
       - url: https://docs.github.com/en/organizations/managing-organization-settings/restricting-repository-visibility-changes-in-your-organization
         title: Restricting repository visibility changes in your organization
+  # No Terraform variants: the integrations/github provider (v6.x) does not expose a
+  # members_can_delete_repositories argument on github_organization_settings. The setting
+  # exists in the GitHub UI (Org Settings > Member privileges) but is not modeled by the
+  # provider as of v6.x.
   - uid: mondoo-github-organization-security-members-cannot-delete-repos
     title: Ensure organization members cannot delete repositories
     impact: 70
@@ -2224,19 +2599,7 @@ queries:
             4. Save the changes.
 
             For more details, see [Setting permissions for deleting or transferring repositories](https://docs.github.com/en/organizations/managing-organization-settings/setting-permissions-for-deleting-or-transferring-repositories) in the GitHub documentation.
-        - id: terraform
-          desc: |
-            **Using Terraform**
-
-            To prevent members from deleting repositories using Terraform, you can use the `github_organization_settings` resource. Here is an example configuration:
-
-            ```hcl
-            resource "github_organization_settings" "example" {
-              members_can_delete_repositories = false
-            }
-            ```
-
-            For more details, see [github_organization_settings](https://registry.terraform.io/providers/integrations/github/latest/docs/resources/organization_settings) in the Terraform Registry.
+        # No Terraform remediation: github_organization_settings has no members_can_delete_repositories argument. Earlier versions of this remediation referenced that field, which is not a real argument and would fail terraform plan with "Unsupported argument".
         - id: cli
           desc: |
             **Using GitHub CLI**
@@ -2248,6 +2611,11 @@ queries:
     refs:
       - url: https://docs.github.com/en/organizations/managing-organization-settings/setting-permissions-for-deleting-or-transferring-repositories
         title: Setting permissions for deleting or transferring repositories
+  # No Terraform variants: open-alert state is runtime telemetry from the GitHub secret
+  # scanning API. The presence and resolution status of individual alerts are not Terraform
+  # configuration — they exist as findings produced after code is scanned. The related
+  # secret-scanning-new-repos org-settings check (which IS variant-covered) controls
+  # whether the feature is enabled.
   - uid: mondoo-github-repository-security-no-open-secret-scanning-alerts
     title: Ensure repository has no open secret scanning alerts
     impact: 90
@@ -2351,7 +2719,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-4-2-1
       compliance/soc2-2017: soc2-control-cc6-7-2
       compliance/vda-isa-5: vda-isa-5-5-1-2
-    mql: github.repository.webhooks.all( config['insecure_ssl'] == "0" )
+    variants:
+      - uid: mondoo-github-repository-security-webhooks-use-ssl-github
+        tags:
+          mondoo.com/filter-title: GitHub Repository
+          mondoo.com/filter-icon: github
+      - uid: mondoo-github-repository-security-webhooks-use-ssl-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-github-repository-security-webhooks-use-ssl-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-github-repository-security-webhooks-use-ssl-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that all webhooks configured on the repository use SSL verification to protect data in transit.
@@ -2431,6 +2815,27 @@ queries:
     refs:
       - url: https://docs.github.com/en/webhooks/using-webhooks/creating-webhooks
         title: Creating webhooks
+  - uid: mondoo-github-repository-security-webhooks-use-ssl-github
+    filters: asset.platform == "github-repo"
+    mql: github.repository.webhooks.all( config['insecure_ssl'] == "0" )
+  - uid: mondoo-github-repository-security-webhooks-use-ssl-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "github_repository_webhook")
+    mql: |
+      terraform.resources.where(nameLabel == "github_repository_webhook").all(
+        blocks.where(type == "configuration").all(arguments["insecure_ssl"] != true)
+      )
+  - uid: mondoo-github-repository-security-webhooks-use-ssl-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "github_repository_webhook")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "github_repository_webhook").all(
+        change.after["configuration"].all(_["insecure_ssl"] != true)
+      )
+  - uid: mondoo-github-repository-security-webhooks-use-ssl-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "github_repository_webhook")
+    mql: |
+      terraform.state.resources.where(type == "github_repository_webhook").all(
+        values["configuration"].all(_["insecure_ssl"] != true)
+      )
   - uid: mondoo-github-repository-security-actions-require-sha-pinning
     title: Ensure GitHub Actions require SHA pinning
     impact: 80
@@ -2448,8 +2853,23 @@ queries:
       compliance/pci-dss-4: false
       compliance/soc2-2017: soc2-control-cc6-8-2
       compliance/vda-isa-5: false
-    mql: |
-      github.repository.actionsSettings.shaPinningRequired == true
+    variants:
+      - uid: mondoo-github-repository-security-actions-require-sha-pinning-github
+        tags:
+          mondoo.com/filter-title: GitHub Repository
+          mondoo.com/filter-icon: github
+      - uid: mondoo-github-repository-security-actions-require-sha-pinning-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-github-repository-security-actions-require-sha-pinning-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-github-repository-security-actions-require-sha-pinning-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that GitHub Actions workflows are required to use SHA-pinned action references instead of mutable tags.
@@ -2522,11 +2942,42 @@ queries:
             ```
 
             Then update the workflow file to use the full SHA (e.g., `actions/checkout@<full-sha>`).
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            ```hcl
+            resource "github_actions_repository_permissions" "example" {
+              repository           = github_repository.example.name
+              sha_pinning_required = true
+            }
+            ```
     refs:
       - url: https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions
         title: Security hardening for GitHub Actions
       - url: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository
         title: Managing GitHub Actions settings for a repository
+  - uid: mondoo-github-repository-security-actions-require-sha-pinning-github
+    filters: asset.platform == "github-repo"
+    mql: |
+      github.repository.actionsSettings.shaPinningRequired == true
+  - uid: mondoo-github-repository-security-actions-require-sha-pinning-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "github_actions_repository_permissions")
+    mql: |
+      terraform.resources.where(nameLabel == "github_actions_repository_permissions").all(arguments["sha_pinning_required"] == true)
+  - uid: mondoo-github-repository-security-actions-require-sha-pinning-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "github_actions_repository_permissions")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "github_actions_repository_permissions").all(change.after.sha_pinning_required == true)
+  - uid: mondoo-github-repository-security-actions-require-sha-pinning-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "github_actions_repository_permissions")
+    mql: |
+      terraform.state.resources.where(type == "github_actions_repository_permissions").all(values.sha_pinning_required == true)
+  # No Terraform variants: open-alert state is runtime telemetry from the GitHub code
+  # scanning API, produced by CodeQL or third-party scanners after analyzing the code. The
+  # presence and resolution status of individual alerts are not Terraform configuration.
+  # The advanced-security-new-repos org-settings check (variant-covered) controls whether
+  # the feature is enabled.
   - uid: mondoo-github-repository-security-no-open-code-scanning-alerts
     title: Ensure repository has no open code scanning alerts
     impact: 80
@@ -2613,6 +3064,11 @@ queries:
         title: Managing code scanning alerts for your repository
       - url: https://docs.github.com/en/code-security/code-scanning/introduction-to-code-scanning/about-code-scanning
         title: About code scanning
+  # No Terraform variants: open-alert state is runtime telemetry from the GitHub Dependabot
+  # alerts API, produced after dependency graph analysis identifies vulnerable packages in
+  # the repository's manifests. Alerts and their severities are not Terraform configuration.
+  # The dependabot-alerts-new-repos org-settings check (variant-covered) controls whether
+  # the feature is enabled.
   - uid: mondoo-github-repository-security-no-open-critical-dependabot-alerts
     title: Ensure repository has no open critical Dependabot alerts
     impact: 90
@@ -2719,13 +3175,23 @@ queries:
       compliance/pci-dss-4: false
       compliance/soc2-2017: soc2-control-cc6-8-2
       compliance/vda-isa-5: false
-    mql: |
-      github.repository.branches
-        .where( isDefault == true )
-        .all( isProtected == true )
-      github.repository.branches
-        .where( isDefault == true )
-        .all( protectionRules { requiredPullRequestReviews['enabled'] == true } )
+    variants:
+      - uid: mondoo-github-repository-security-require-pull-request-reviews-github
+        tags:
+          mondoo.com/filter-title: GitHub Repository
+          mondoo.com/filter-icon: github
+      - uid: mondoo-github-repository-security-require-pull-request-reviews-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-github-repository-security-require-pull-request-reviews-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-github-repository-security-require-pull-request-reviews-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that the default branch requires pull request reviews before merging. Without required reviews, any user with write access can push changes directly to the default branch without peer review.
@@ -2808,6 +3274,29 @@ queries:
         title: Managing a branch protection rule
       - url: https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-a-branch-protection-rule/about-protected-branches
         title: About protected branches
+  - uid: mondoo-github-repository-security-require-pull-request-reviews-github
+    filters: asset.platform == "github-repo"
+    mql: |
+      github.repository.branches
+        .where( isDefault == true )
+        .all( isProtected == true )
+      github.repository.branches
+        .where( isDefault == true )
+        .all( protectionRules { requiredPullRequestReviews['enabled'] == true } )
+  - uid: mondoo-github-repository-security-require-pull-request-reviews-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "github_branch_protection")
+    mql: |
+      terraform.resources.where(nameLabel == "github_branch_protection").all(
+        blocks.where(type == "required_pull_request_reviews") != empty
+      )
+  - uid: mondoo-github-repository-security-require-pull-request-reviews-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "github_branch_protection")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "github_branch_protection").all(change.after["required_pull_request_reviews"] != empty)
+  - uid: mondoo-github-repository-security-require-pull-request-reviews-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "github_branch_protection")
+    mql: |
+      terraform.state.resources.where(type == "github_branch_protection").all(values["required_pull_request_reviews"] != empty)
   - uid: mondoo-github-repository-security-block-creations-default-branch
     title: Ensure repository default branch blocks direct creations
     impact: 70
@@ -2825,13 +3314,23 @@ queries:
       compliance/pci-dss-4: false
       compliance/soc2-2017: soc2-control-cc6-8-2
       compliance/vda-isa-5: false
-    mql: |
-      github.repository.branches
-        .where( isDefault == true )
-        .all( isProtected == true )
-      github.repository.branches
-        .where( isDefault == true )
-        .all( protectionRules { blockCreations == true } )
+    variants:
+      - uid: mondoo-github-repository-security-block-creations-default-branch-github
+        tags:
+          mondoo.com/filter-title: GitHub Repository
+          mondoo.com/filter-icon: github
+      - uid: mondoo-github-repository-security-block-creations-default-branch-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-github-repository-security-block-creations-default-branch-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-github-repository-security-block-creations-default-branch-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that the default branch protection rule blocks the creation of matching branches that bypass protection. When block creations is disabled, users can create branches that match the protection pattern without going through the required checks.
@@ -2931,6 +3430,36 @@ queries:
         title: Managing a branch protection rule
       - url: https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-a-branch-protection-rule/about-protected-branches
         title: About protected branches
+  - uid: mondoo-github-repository-security-block-creations-default-branch-github
+    filters: asset.platform == "github-repo"
+    mql: |
+      github.repository.branches
+        .where( isDefault == true )
+        .all( isProtected == true )
+      github.repository.branches
+        .where( isDefault == true )
+        .all( protectionRules { blockCreations == true } )
+  - uid: mondoo-github-repository-security-block-creations-default-branch-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "github_branch_protection")
+    mql: |
+      terraform.resources.where(nameLabel == "github_branch_protection").all(
+        blocks.where(type == "restrict_pushes") != empty &&
+        blocks.where(type == "restrict_pushes").all(arguments["blocks_creations"] == true)
+      )
+  - uid: mondoo-github-repository-security-block-creations-default-branch-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "github_branch_protection")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "github_branch_protection").all(
+        change.after["restrict_pushes"] != empty &&
+        change.after["restrict_pushes"].all(_["blocks_creations"] == true)
+      )
+  - uid: mondoo-github-repository-security-block-creations-default-branch-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "github_branch_protection")
+    mql: |
+      terraform.state.resources.where(type == "github_branch_protection").all(
+        values["restrict_pushes"] != empty &&
+        values["restrict_pushes"].all(_["blocks_creations"] == true)
+      )
   - uid: mondoo-github-repository-security-environment-prevent-self-review
     title: Ensure environment protection rules prevent self-review
     impact: 80
@@ -2948,10 +3477,23 @@ queries:
       compliance/pci-dss-4: false
       compliance/soc2-2017: soc2-control-cc6-8-2
       compliance/vda-isa-5: false
-    mql: |
-      github.repository.environments
-        .where( protectionRules.length > 0 )
-        .all( protectionRules.where( type == "required_reviewers" ).all( preventSelfReview == true ) )
+    variants:
+      - uid: mondoo-github-repository-security-environment-prevent-self-review-github
+        tags:
+          mondoo.com/filter-title: GitHub Repository
+          mondoo.com/filter-icon: github
+      - uid: mondoo-github-repository-security-environment-prevent-self-review-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-github-repository-security-environment-prevent-self-review-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-github-repository-security-environment-prevent-self-review-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that environment protection rules that require reviewers also prevent the deploying user from approving their own deployment. Self-review defeats the purpose of required reviewers by allowing a single person to initiate and approve a deployment.
@@ -3030,6 +3572,24 @@ queries:
         title: Using environments for deployment
       - url: https://docs.github.com/en/actions/managing-workflow-runs-and-deployments/managing-deployments/managing-environments-for-deployment
         title: Managing environments for deployment
+  - uid: mondoo-github-repository-security-environment-prevent-self-review-github
+    filters: asset.platform == "github-repo"
+    mql: |
+      github.repository.environments
+        .where( protectionRules.length > 0 )
+        .all( protectionRules.where( type == "required_reviewers" ).all( preventSelfReview == true ) )
+  - uid: mondoo-github-repository-security-environment-prevent-self-review-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "github_repository_environment")
+    mql: |
+      terraform.resources.where(nameLabel == "github_repository_environment").all(arguments["prevent_self_review"] == true)
+  - uid: mondoo-github-repository-security-environment-prevent-self-review-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "github_repository_environment")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "github_repository_environment").all(change.after.prevent_self_review == true)
+  - uid: mondoo-github-repository-security-environment-prevent-self-review-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "github_repository_environment")
+    mql: |
+      terraform.state.resources.where(type == "github_repository_environment").all(values.prevent_self_review == true)
   - uid: mondoo-github-organization-security-advanced-security-new-repos
     title: Ensure advanced security is enabled for new repositories
     impact: 80
@@ -3047,8 +3607,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-6-3-3
       compliance/soc2-2017: soc2-control-cc7-1-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
-    mql: |
-      github.organization.advancedSecurityEnabledForNewRepos
+    variants:
+      - uid: mondoo-github-organization-security-advanced-security-new-repos-github
+        tags:
+          mondoo.com/filter-title: GitHub Organization
+          mondoo.com/filter-icon: github
+      - uid: mondoo-github-organization-security-advanced-security-new-repos-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-github-organization-security-advanced-security-new-repos-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-github-organization-security-advanced-security-new-repos-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that GitHub Advanced Security (GHAS) is automatically enabled for all new repositories created in the organization. GHAS provides code scanning (CodeQL), secret scanning, and dependency review capabilities.
@@ -3115,6 +3690,22 @@ queries:
         title: Managing security and analysis settings for your organization
       - url: https://docs.github.com/en/get-started/learning-about-github/about-github-advanced-security
         title: About GitHub Advanced Security
+  - uid: mondoo-github-organization-security-advanced-security-new-repos-github
+    filters: asset.platform == "github-org"
+    mql: |
+      github.organization.advancedSecurityEnabledForNewRepos
+  - uid: mondoo-github-organization-security-advanced-security-new-repos-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "github_organization_settings")
+    mql: |
+      terraform.resources.where(nameLabel == "github_organization_settings").all(arguments["advanced_security_enabled_for_new_repositories"] == true)
+  - uid: mondoo-github-organization-security-advanced-security-new-repos-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "github_organization_settings")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "github_organization_settings").all(change.after.advanced_security_enabled_for_new_repositories == true)
+  - uid: mondoo-github-organization-security-advanced-security-new-repos-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "github_organization_settings")
+    mql: |
+      terraform.state.resources.where(type == "github_organization_settings").all(values.advanced_security_enabled_for_new_repositories == true)
   - uid: mondoo-github-organization-security-dependency-graph-new-repos
     title: Ensure dependency graph is enabled for new repositories
     impact: 70
@@ -3132,8 +3723,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-6-3-3
       compliance/soc2-2017: soc2-control-cc7-1-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
-    mql: |
-      github.organization.dependencyGraphEnabledForNewRepos
+    variants:
+      - uid: mondoo-github-organization-security-dependency-graph-new-repos-github
+        tags:
+          mondoo.com/filter-title: GitHub Organization
+          mondoo.com/filter-icon: github
+      - uid: mondoo-github-organization-security-dependency-graph-new-repos-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-github-organization-security-dependency-graph-new-repos-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-github-organization-security-dependency-graph-new-repos-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that the dependency graph is automatically enabled for all new repositories in the organization. The dependency graph identifies all dependencies in your project and is required for Dependabot alerts, security updates, and SBOM generation.
@@ -3200,3 +3806,19 @@ queries:
         title: Managing security and analysis settings for your organization
       - url: https://docs.github.com/en/code-security/supply-chain-security/understanding-your-software-supply-chain/about-the-dependency-graph
         title: About the dependency graph
+  - uid: mondoo-github-organization-security-dependency-graph-new-repos-github
+    filters: asset.platform == "github-org"
+    mql: |
+      github.organization.dependencyGraphEnabledForNewRepos
+  - uid: mondoo-github-organization-security-dependency-graph-new-repos-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "github_organization_settings")
+    mql: |
+      terraform.resources.where(nameLabel == "github_organization_settings").all(arguments["dependency_graph_enabled_for_new_repositories"] == true)
+  - uid: mondoo-github-organization-security-dependency-graph-new-repos-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "github_organization_settings")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "github_organization_settings").all(change.after.dependency_graph_enabled_for_new_repositories == true)
+  - uid: mondoo-github-organization-security-dependency-graph-new-repos-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "github_organization_settings")
+    mql: |
+      terraform.state.resources.where(type == "github_organization_settings").all(values.dependency_graph_enabled_for_new_repositories == true)
