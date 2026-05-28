@@ -125,6 +125,12 @@ func LintPolicyBundle(schema resources.ResourcesSchema, filename string, data []
 
 	// check if the file is compilable
 	if policyBundleForCompilation != nil {
+		// Mirror the scan path: convert querypacks to policies and generate
+		// evidence so that pack/evidence MQL is compiled here. Without this,
+		// invalid MQL in querypacks slips past the linter and only fails on
+		// the server.
+		policyBundleForCompilation.Prepare()
+
 		ctx := context.Background()
 		features := mql.DefaultFeatures
 		features = append(features, byte(mql.FailIfNoEntryPoints))
