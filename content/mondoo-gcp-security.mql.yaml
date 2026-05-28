@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-gcp-security
     name: Mondoo Google Cloud (GCP) Security
-    version: 9.0.1
+    version: 9.1.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -14226,6 +14226,10 @@ queries:
           _['ios_key_restrictions'] != empty
         )
       )
+  # No Terraform variants: the 90-day rotation window is runtime telemetry derived from
+  # the key's created/updated timestamps. google_apikeys_key has no rotation-age field, so
+  # HCL/plan/state cannot express whether a key is stale (the terraform remediation below
+  # shows how to force key recreation, but it can't be asserted against).
   - uid: mondoo-gcp-security-api-keys-not-stale
     title: Ensure API keys have been rotated within 90 days
     impact: 60
@@ -18086,6 +18090,10 @@ queries:
       terraform.state.resources.where(type == 'google_compute_ssl_policy').all(
         values['profile'] == "MODERN" || values['profile'] == "RESTRICTED"
       )
+  # No Terraform variants: certificate expiry (expireTime) is issuance-time telemetry, not a
+  # configurable field. google_compute_ssl_certificate carries the cert inside the PEM and
+  # google_compute_managed_ssl_certificate auto-renews, so HCL/plan/state cannot assert a
+  # validity window.
   - uid: mondoo-gcp-security-ssl-certificate-not-expired
     title: Ensure SSL certificates are not expired or expiring within 30 days
     impact: 70
@@ -20740,6 +20748,9 @@ queries:
         values['network'] != empty ||
         values['private_service_connect_config'] != empty
       )
+  # No Terraform variants: Vertex AI models are uploaded artifacts with no Terraform resource
+  # (there is no google_vertex_ai_model). CMEK is set at upload time via the API/CLI, as the
+  # terraform remediation note below states.
   - uid: mondoo-gcp-security-vertexai-model-cmek-encryption
     title: Ensure Vertex AI models are encrypted with CMEK
     impact: 60
@@ -21003,6 +21014,9 @@ queries:
       terraform.state.resources.where(type == 'google_vertex_ai_dataset').all(
         values.encryption_spec != empty
       )
+  # No Terraform variants: Vertex AI pipeline jobs are imperative API executions with no
+  # Terraform resource analog (no google_vertex_ai_pipeline_job). They are submitted via the
+  # API/CLI, so there is no HCL/plan/state to evaluate.
   - uid: mondoo-gcp-security-vertexai-pipeline-job-cmek-encryption
     title: Ensure Vertex AI pipeline jobs are encrypted with CMEK
     impact: 60
@@ -21137,6 +21151,9 @@ queries:
       gcp.project.vertexai.pipelineJobs.all(
         encryptionSpec != empty
       )
+  # No Terraform variants: Vertex AI pipeline jobs are imperative API executions with no
+  # Terraform resource analog (no google_vertex_ai_pipeline_job). google_vertex_ai_custom_job
+  # is a different resource, so a variant cannot be written against pipeline jobs.
   - uid: mondoo-gcp-security-vertexai-pipeline-job-vpc-network
     title: Ensure Vertex AI pipeline jobs use a VPC network
     impact: 80
@@ -21261,6 +21278,9 @@ queries:
       gcp.project.vertexai.pipelineJobs.all(
         network != ""
       )
+  # No Terraform variants: Vertex AI pipeline jobs are imperative API executions with no
+  # Terraform resource analog (no google_vertex_ai_pipeline_job), so the service-account
+  # configuration cannot be evaluated from HCL/plan/state.
   - uid: mondoo-gcp-security-vertexai-pipeline-job-no-default-service-account
     title: Ensure Vertex AI pipeline jobs don't use default SA
     impact: 80
@@ -24267,6 +24287,12 @@ queries:
         values.private_cluster_config != empty &&
         values.private_cluster_config.any(_['enable_private_endpoint'] == true)
       )
+  # No Terraform variants: this is an org-posture existence check (the organization has at
+  # least one access policy). A per-module Terraform variant would only trigger when a
+  # google_access_context_manager_access_policy is already present and would then vacuously
+  # assert its presence — and it would false-positive on modules that legitimately manage
+  # VPC-SC in a separate root module. The terraform remediation below still shows how to
+  # declare the resource.
   - uid: mondoo-gcp-security-vpc-sc-access-policies-defined
     title: Ensure VPC Service Controls access policies are defined
     impact: 70
@@ -24367,6 +24393,11 @@ queries:
     filters: asset.platform == 'gcp'
     mql: |
       gcp.organization.accessPolicies.length > 0
+  # No Terraform variants: org-posture existence check (the organization has at least one
+  # service perimeter). A per-module variant gated on google_access_context_manager_service_perimeter
+  # being present would vacuously assert its own trigger and would false-positive on modules
+  # that manage perimeters elsewhere. (The related -perimeter-enforced check does have variants,
+  # because it asserts a config property of declared perimeters rather than mere existence.)
   - uid: mondoo-gcp-security-vpc-sc-service-perimeters
     title: Ensure VPC Service Controls service perimeters exist
     impact: 70
@@ -24505,6 +24536,18 @@ queries:
         tags:
           mondoo.com/filter-title: GCP Organization
           mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-vpc-sc-perimeter-enforced-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-vpc-sc-perimeter-enforced-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-vpc-sc-perimeter-enforced-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that VPC Service Controls service perimeters are operating in enforced mode rather than dry-run mode. When `useExplicitDryRunSpec` is enabled on a perimeter, it logs policy violations but does not block unauthorized access, providing monitoring without actual data protection.
@@ -24594,6 +24637,22 @@ queries:
     filters: asset.platform == 'gcp'
     mql: |
       gcp.organization.accessPolicies.all(servicePerimeters.all(useExplicitDryRunSpec == false))
+  - uid: mondoo-gcp-security-vpc-sc-perimeter-enforced-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "google_access_context_manager_service_perimeter")
+    mql: |
+      terraform.resources.where(nameLabel == "google_access_context_manager_service_perimeter").all(arguments["use_explicit_dry_run_spec"] != true)
+  - uid: mondoo-gcp-security-vpc-sc-perimeter-enforced-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "google_access_context_manager_service_perimeter")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "google_access_context_manager_service_perimeter").all(change.after.use_explicit_dry_run_spec != true)
+  - uid: mondoo-gcp-security-vpc-sc-perimeter-enforced-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "google_access_context_manager_service_perimeter")
+    mql: |
+      terraform.state.resources.where(type == "google_access_context_manager_service_perimeter").all(values.use_explicit_dry_run_spec != true)
+  # No Terraform variants: org-posture existence check (the organization has at least one
+  # access level). A per-module variant gated on google_access_context_manager_access_level
+  # being present would vacuously assert its own trigger and would false-positive on modules
+  # that manage access levels elsewhere.
   - uid: mondoo-gcp-security-vpc-sc-access-levels-defined
     title: Ensure VPC Service Controls access levels are defined
     impact: 60
@@ -26747,6 +26806,18 @@ queries:
         tags:
           mondoo.com/filter-title: GCP Project
           mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-model-armor-pi-jailbreak-filter-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-model-armor-pi-jailbreak-filter-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-model-armor-pi-jailbreak-filter-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that Google Cloud Model Armor templates have prompt injection and jailbreak filtering enabled. Prompt injection is consistently ranked as the top attack vector against LLM applications, where adversarial inputs manipulate model behavior to bypass safety guardrails, extract sensitive data, or produce harmful outputs that would otherwise be blocked.
@@ -26828,6 +26899,36 @@ queries:
       gcp.project.modelArmor.templates.all(
         filterConfig['piAndJailbreakFilterSettings']['filterEnforcement'] == "ENABLED"
       )
+  - uid: mondoo-gcp-security-model-armor-pi-jailbreak-filter-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "google_model_armor_template")
+    mql: |
+      terraform.resources.where(nameLabel == "google_model_armor_template").all(
+        blocks.where(type == "filter_config") != empty &&
+        blocks.where(type == "filter_config").all(
+          blocks.where(type == "pi_and_jailbreak_filter_settings") != empty &&
+          blocks.where(type == "pi_and_jailbreak_filter_settings").all(arguments["filter_enforcement"] == "ENABLED")
+        )
+      )
+  - uid: mondoo-gcp-security-model-armor-pi-jailbreak-filter-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "google_model_armor_template")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "google_model_armor_template").all(
+        change.after["filter_config"] != empty &&
+        change.after["filter_config"].all(
+          _["pi_and_jailbreak_filter_settings"] != empty &&
+          _["pi_and_jailbreak_filter_settings"].all(_["filter_enforcement"] == "ENABLED")
+        )
+      )
+  - uid: mondoo-gcp-security-model-armor-pi-jailbreak-filter-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "google_model_armor_template")
+    mql: |
+      terraform.state.resources.where(type == "google_model_armor_template").all(
+        values["filter_config"] != empty &&
+        values["filter_config"].all(
+          _["pi_and_jailbreak_filter_settings"] != empty &&
+          _["pi_and_jailbreak_filter_settings"].all(_["filter_enforcement"] == "ENABLED")
+        )
+      )
   - uid: mondoo-gcp-security-model-armor-malicious-uri-filter
     title: Ensure Model Armor templates enable malicious URI filtering
     impact: 80
@@ -26850,6 +26951,18 @@ queries:
         tags:
           mondoo.com/filter-title: GCP Project
           mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-model-armor-malicious-uri-filter-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-model-armor-malicious-uri-filter-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-model-armor-malicious-uri-filter-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that Google Cloud Model Armor templates have malicious URI filtering enabled. LLM responses can contain URLs sourced from training data, retrieved context, or adversarially crafted prompts; without URI filtering, these links are delivered to end users without being checked against threat intelligence.
@@ -26928,6 +27041,36 @@ queries:
       gcp.project.modelArmor.templates.all(
         filterConfig['maliciousUriFilterSettings']['filterEnforcement'] == "ENABLED"
       )
+  - uid: mondoo-gcp-security-model-armor-malicious-uri-filter-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "google_model_armor_template")
+    mql: |
+      terraform.resources.where(nameLabel == "google_model_armor_template").all(
+        blocks.where(type == "filter_config") != empty &&
+        blocks.where(type == "filter_config").all(
+          blocks.where(type == "malicious_uri_filter_settings") != empty &&
+          blocks.where(type == "malicious_uri_filter_settings").all(arguments["filter_enforcement"] == "ENABLED")
+        )
+      )
+  - uid: mondoo-gcp-security-model-armor-malicious-uri-filter-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "google_model_armor_template")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "google_model_armor_template").all(
+        change.after["filter_config"] != empty &&
+        change.after["filter_config"].all(
+          _["malicious_uri_filter_settings"] != empty &&
+          _["malicious_uri_filter_settings"].all(_["filter_enforcement"] == "ENABLED")
+        )
+      )
+  - uid: mondoo-gcp-security-model-armor-malicious-uri-filter-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "google_model_armor_template")
+    mql: |
+      terraform.state.resources.where(type == "google_model_armor_template").all(
+        values["filter_config"] != empty &&
+        values["filter_config"].all(
+          _["malicious_uri_filter_settings"] != empty &&
+          _["malicious_uri_filter_settings"].all(_["filter_enforcement"] == "ENABLED")
+        )
+      )
   - uid: mondoo-gcp-security-model-armor-rai-filters
     title: Ensure Model Armor templates have RAI filters configured
     impact: 70
@@ -26950,6 +27093,18 @@ queries:
         tags:
           mondoo.com/filter-title: GCP Project
           mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-model-armor-rai-filters-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-model-armor-rai-filters-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-model-armor-rai-filters-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that Google Cloud Model Armor templates have at least one Responsible AI (RAI) filter category configured to detect harmful content. RAI filters screen for harmful content categories including sexually explicit material, hate speech, harassment, and dangerous content in both prompts and model responses.
@@ -27047,6 +27202,38 @@ queries:
       gcp.project.modelArmor.templates.all(
         filterConfig['raiSettings']['raiFilters'] != empty
       )
+  - uid: mondoo-gcp-security-model-armor-rai-filters-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "google_model_armor_template")
+    mql: |
+      terraform.resources.where(nameLabel == "google_model_armor_template").all(
+        blocks.where(type == "filter_config") != empty &&
+        blocks.where(type == "filter_config").all(
+          blocks.where(type == "rai_settings") != empty &&
+          blocks.where(type == "rai_settings").all(
+            blocks.where(type == "rai_filters") != empty
+          )
+        )
+      )
+  - uid: mondoo-gcp-security-model-armor-rai-filters-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "google_model_armor_template")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "google_model_armor_template").all(
+        change.after["filter_config"] != empty &&
+        change.after["filter_config"].all(
+          _["rai_settings"] != empty &&
+          _["rai_settings"].all(_["rai_filters"] != empty)
+        )
+      )
+  - uid: mondoo-gcp-security-model-armor-rai-filters-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "google_model_armor_template")
+    mql: |
+      terraform.state.resources.where(type == "google_model_armor_template").all(
+        values["filter_config"] != empty &&
+        values["filter_config"].all(
+          _["rai_settings"] != empty &&
+          _["rai_settings"].all(_["rai_filters"] != empty)
+        )
+      )
   - uid: mondoo-gcp-security-model-armor-sdp-enabled
     title: Ensure Model Armor templates have Sensitive Data Protection
     impact: 80
@@ -27069,6 +27256,18 @@ queries:
         tags:
           mondoo.com/filter-title: GCP Project
           mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-model-armor-sdp-enabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-model-armor-sdp-enabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-model-armor-sdp-enabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that all Google Cloud Model Armor templates are configured with Sensitive Data Protection (SDP) enabled. By default SDP is not required on new templates, leaving LLM prompts and responses without automated detection or redaction of sensitive information.
@@ -27158,6 +27357,29 @@ queries:
       gcp.project.modelArmor.templates.all(
         filterConfig['sdpSettings'] != empty
       )
+  - uid: mondoo-gcp-security-model-armor-sdp-enabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "google_model_armor_template")
+    mql: |
+      terraform.resources.where(nameLabel == "google_model_armor_template").all(
+        blocks.where(type == "filter_config") != empty &&
+        blocks.where(type == "filter_config").all(
+          blocks.where(type == "sdp_settings") != empty
+        )
+      )
+  - uid: mondoo-gcp-security-model-armor-sdp-enabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "google_model_armor_template")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "google_model_armor_template").all(
+        change.after["filter_config"] != empty &&
+        change.after["filter_config"].all(_["sdp_settings"] != empty)
+      )
+  - uid: mondoo-gcp-security-model-armor-sdp-enabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "google_model_armor_template")
+    mql: |
+      terraform.state.resources.where(type == "google_model_armor_template").all(
+        values["filter_config"] != empty &&
+        values["filter_config"].all(_["sdp_settings"] != empty)
+      )
   - uid: mondoo-gcp-security-model-armor-blocking-mode
     title: Ensure Model Armor templates enforce blocking mode
     impact: 80
@@ -27180,6 +27402,18 @@ queries:
         tags:
           mondoo.com/filter-title: GCP Project
           mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-model-armor-blocking-mode-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-model-armor-blocking-mode-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-model-armor-blocking-mode-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that every Google Cloud Model Armor template is configured to block harmful content rather than only log it. Templates operate in either INSPECT_ONLY mode, which records detections but lets content through, or INSPECT_AND_BLOCK mode, which actively stops flagged requests and responses.
@@ -27260,6 +27494,26 @@ queries:
       gcp.project.modelArmor.templates.all(
         templateMetadata['enforcementType'] != "INSPECT_ONLY"
       )
+  - uid: mondoo-gcp-security-model-armor-blocking-mode-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "google_model_armor_template")
+    mql: |
+      terraform.resources.where(nameLabel == "google_model_armor_template").all(
+        blocks.where(type == "template_metadata").all(arguments["enforcement_type"] != "INSPECT_ONLY")
+      )
+  - uid: mondoo-gcp-security-model-armor-blocking-mode-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "google_model_armor_template")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "google_model_armor_template").all(
+        change.after["template_metadata"] == empty ||
+        change.after["template_metadata"].all(_["enforcement_type"] != "INSPECT_ONLY")
+      )
+  - uid: mondoo-gcp-security-model-armor-blocking-mode-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "google_model_armor_template")
+    mql: |
+      terraform.state.resources.where(type == "google_model_armor_template").all(
+        values["template_metadata"] == empty ||
+        values["template_metadata"].all(_["enforcement_type"] != "INSPECT_ONLY")
+      )
   - uid: mondoo-gcp-security-model-armor-sanitize-logging
     title: Ensure Model Armor templates log sanitize operations
     impact: 50
@@ -27282,6 +27536,18 @@ queries:
         tags:
           mondoo.com/filter-title: GCP Project
           mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-model-armor-sanitize-logging-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-model-armor-sanitize-logging-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-model-armor-sanitize-logging-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that every Google Cloud Model Armor template has sanitize operation logging enabled. By default, `logSanitizeOperations` is not set to true on new templates, meaning content that Model Armor flags, modifies, or blocks is not recorded to Cloud Logging.
@@ -27358,6 +27624,27 @@ queries:
       gcp.project.modelArmor.templates.all(
         templateMetadata['logSanitizeOperations'] == true
       )
+  - uid: mondoo-gcp-security-model-armor-sanitize-logging-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "google_model_armor_template")
+    mql: |
+      terraform.resources.where(nameLabel == "google_model_armor_template").all(
+        blocks.where(type == "template_metadata") != empty &&
+        blocks.where(type == "template_metadata").all(arguments["log_sanitize_operations"] == true)
+      )
+  - uid: mondoo-gcp-security-model-armor-sanitize-logging-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "google_model_armor_template")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "google_model_armor_template").all(
+        change.after["template_metadata"] != empty &&
+        change.after["template_metadata"].all(_["log_sanitize_operations"] == true)
+      )
+  - uid: mondoo-gcp-security-model-armor-sanitize-logging-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "google_model_armor_template")
+    mql: |
+      terraform.state.resources.where(type == "google_model_armor_template").all(
+        values["template_metadata"] != empty &&
+        values["template_metadata"].all(_["log_sanitize_operations"] == true)
+      )
   - uid: mondoo-gcp-security-model-armor-rai-confidence
     title: Ensure Model Armor RAI filters use adequate confidence
     impact: 60
@@ -27380,6 +27667,18 @@ queries:
         tags:
           mondoo.com/filter-title: GCP Project
           mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-model-armor-rai-confidence-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-model-armor-rai-confidence-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-model-armor-rai-confidence-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that every Responsible AI (RAI) filter configured in a Google Cloud Model Armor template uses a confidence level of LOW_AND_ABOVE or MEDIUM_AND_ABOVE, not HIGH. The HIGH confidence level catches only the most obvious violations, allowing borderline harmful content to pass undetected.
@@ -27480,6 +27779,44 @@ queries:
           _['confidenceLevel'] != "HIGH"
         )
       )
+  - uid: mondoo-gcp-security-model-armor-rai-confidence-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "google_model_armor_template")
+    mql: |
+      terraform.resources.where(nameLabel == "google_model_armor_template").all(
+        blocks.where(type == "filter_config").all(
+          blocks.where(type == "rai_settings").all(
+            blocks.where(type == "rai_filters").all(arguments["confidence_level"] != "HIGH")
+          )
+        )
+      )
+  - uid: mondoo-gcp-security-model-armor-rai-confidence-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "google_model_armor_template")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "google_model_armor_template").all(
+        change.after["filter_config"].all(
+          _["rai_settings"] == empty ||
+          _["rai_settings"].all(
+            _["rai_filters"] == empty ||
+            _["rai_filters"].all(_["confidence_level"] != "HIGH")
+          )
+        )
+      )
+  - uid: mondoo-gcp-security-model-armor-rai-confidence-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "google_model_armor_template")
+    mql: |
+      terraform.state.resources.where(type == "google_model_armor_template").all(
+        values["filter_config"].all(
+          _["rai_settings"] == empty ||
+          _["rai_settings"].all(
+            _["rai_filters"] == empty ||
+            _["rai_filters"].all(_["confidence_level"] != "HIGH")
+          )
+        )
+      )
+  # No Terraform variants: org-posture existence check (the organization has at least one SCC
+  # notification config). A per-module variant gated on google_scc_notification_config being
+  # present would vacuously assert its own trigger and would false-positive on modules that
+  # manage SCC exports elsewhere. Same rationale as the VPC-SC existence checks above.
   - uid: mondoo-gcp-security-scc-notification-configs
     title: Ensure SCC notification configs are configured
     impact: 70
@@ -27585,6 +27922,10 @@ queries:
     filters: asset.platform == 'gcp'
     mql: |
       gcp.organization.sccNotificationConfigs.length > 0
+  # No Terraform variants: org-posture existence check (the organization has at least one SCC
+  # BigQuery export). A per-module variant gated on the export resource being present would
+  # vacuously assert its own trigger and would false-positive on modules that manage SCC
+  # exports elsewhere. Same rationale as the VPC-SC existence checks above.
   - uid: mondoo-gcp-security-scc-bigquery-exports
     title: Ensure SCC BigQuery exports are configured
     impact: 60
