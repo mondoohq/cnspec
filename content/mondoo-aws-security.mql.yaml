@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-aws-security
     name: Mondoo AWS Security
-    version: 12.0.1
+    version: 12.1.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -1619,6 +1619,11 @@ queries:
         values.password_reuse_prevention >= props.mondooAWSSecurityIamPasswordPolicyPasswordReusePrevention &&
         values.allow_users_to_change_password == true
       )
+  # No Terraform variants for HCL or plan: rotation age is computed from the key's
+  # create_date, which aws_iam_access_key only exposes as a post-apply exported attribute.
+  # It is not expressible from HCL source, and in `terraform plan` JSON it is "(known after
+  # apply)" rather than a concrete timestamp. Only the -terraform-state variant above can
+  # evaluate it, because state captures the real creation time from the AWS API.
   - uid: mondoo-aws-security-access-keys-rotated
     title: Ensure IAM user access keys are rotated
     impact: 70
@@ -1645,7 +1650,7 @@ queries:
         tags:
           mondoo.com/filter-title: AWS Account
           mondoo.com/filter-icon: aws
-      - uid: mondoo-aws-security-access-keys-rotated-state
+      - uid: mondoo-aws-security-access-keys-rotated-terraform-state
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
@@ -1780,7 +1785,7 @@ queries:
     mql: |
       aws.iam.credentialReport.where(accessKey1Active == true && time.now - createdAt > props.mondooAWSSecurityMaxAccessKeyAge * time.day).all(time.now - accessKey1LastRotated < props.mondooAWSSecurityMaxAccessKeyAge * time.day)
       aws.iam.credentialReport.where(accessKey2Active == true && time.now - createdAt > props.mondooAWSSecurityMaxAccessKeyAge * time.day).all(time.now - accessKey2LastRotated < props.mondooAWSSecurityMaxAccessKeyAge * time.day)
-  - uid: mondoo-aws-security-access-keys-rotated-state
+  - uid: mondoo-aws-security-access-keys-rotated-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_iam_access_key")
     mql: |
       terraform.state.resources.where(type == "aws_iam_access_key").all(time.now - parse.date(values.create_date) < props.mondooAWSSecurityMaxAccessKeyAge * time.day)
@@ -10728,12 +10733,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-10-2-1
       compliance/soc2-2017: soc2-control-cc7-2-1
       compliance/vda-isa-5: vda-isa-5-5-2-4
-    # No Terraform variants: aws_api_gateway_method_settings stores logging level per-method which doesn't round-trip cleanly via .resources() iteration
     variants:
       - uid: mondoo-aws-security-api-gw-execution-logging-enabled-aws
         tags:
           mondoo.com/filter-title: AWS Gateway REST API
           mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-api-gw-execution-logging-enabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-api-gw-execution-logging-enabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-api-gw-execution-logging-enabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that Amazon API Gateway stages have execution logging enabled by verifying that the logging level for method settings is set to ERROR or INFO rather than OFF. By default, execution logging is disabled on new API Gateway stages, which means API request and response details are not captured in CloudWatch Logs.
@@ -10796,7 +10812,22 @@ queries:
               --patch-operations op=replace,path=/accessLogSettings/destinationArn,value=<log-group-arn> \
               op=replace,path=/accessLogSettings/format,value='<log-format>'
             ```
-        # No Terraform remediation: aws_api_gateway_method_settings stores logging level per-method which doesn't round-trip cleanly via .resources() iteration
+        - id: terraform
+          desc: |
+            To enable execution logging for an API Gateway stage in Terraform, declare an `aws_api_gateway_method_settings` resource with `method_path = "*/*"` and set `settings.logging_level` to `INFO` or `ERROR`:
+
+            ```hcl
+            resource "aws_api_gateway_method_settings" "example" {
+              rest_api_id = aws_api_gateway_rest_api.example.id
+              stage_name  = aws_api_gateway_stage.example.stage_name
+              method_path = "*/*"
+
+              settings {
+                logging_level   = "INFO"
+                metrics_enabled = true
+              }
+            }
+            ```
         - id: cloudformation
           desc: |
             To ensure API Gateway stages have execution logging enabled in CloudFormation:
@@ -10828,6 +10859,33 @@ queries:
         methodSettings['*/*'] != empty &&
         methodSettings['*/*']['LoggingLevel'] != "" &&
         methodSettings['*/*']['LoggingLevel'] != "OFF"
+      )
+  - uid: mondoo-aws-security-api-gw-execution-logging-enabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_api_gateway_method_settings")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_api_gateway_method_settings" && arguments["method_path"] == "*/*").all(
+        blocks.where(type == "settings") != empty &&
+        blocks.where(type == "settings").all(
+          arguments["logging_level"] != empty && arguments["logging_level"] != "OFF"
+        )
+      )
+  - uid: mondoo-aws-security-api-gw-execution-logging-enabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_api_gateway_method_settings")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_api_gateway_method_settings" && change.after.method_path == "*/*").all(
+        change.after["settings"] != empty &&
+        change.after["settings"].all(
+          _["logging_level"] != empty && _["logging_level"] != "OFF"
+        )
+      )
+  - uid: mondoo-aws-security-api-gw-execution-logging-enabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_api_gateway_method_settings")
+    mql: |
+      terraform.state.resources.where(type == "aws_api_gateway_method_settings" && values.method_path == "*/*").all(
+        values["settings"] != empty &&
+        values["settings"].all(
+          _["logging_level"] != empty && _["logging_level"] != "OFF"
+        )
       )
   - uid: mondoo-aws-security-api-gw-require-authentication
     title: Ensure API Gateway methods require authentication
