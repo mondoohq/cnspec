@@ -21,6 +21,7 @@ import shlex
 import subprocess
 import sys
 import urllib.request
+from collections.abc import Iterator
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).parent
@@ -1057,6 +1058,33 @@ def probe_gcloud_command(cmd_path: str) -> list[str] | None:
 _GCLOUD_SUBCOMMAND_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 
 
+def _iter_gcloud_policy_invocations() -> Iterator[list[str]]:
+    """Yield the post-``gcloud`` token list for every gcloud invocation in an
+    ``id: cli`` remediation in the GCP policy.
+
+    Centralises the YAML + fenced-block + line-continuation parsing so the
+    per-token filtering logic stays in the callers.
+    """
+    if not GCLOUD_POLICY_FILE.exists():
+        return
+
+    content = GCLOUD_POLICY_FILE.read_text()
+    for match in re.finditer(
+        r"- id: cli\s*\n\s+desc: \|\s*\n(.*?)(?=\n\s+- id: |\n\s+refs:|\n  - uid: |\Z)",
+        content,
+        re.DOTALL,
+    ):
+        for fence in re.finditer(
+            r"```bash\s*\n(.*?)```", match.group(1), re.DOTALL
+        ):
+            joined = re.sub(r"\\\s*\n\s*", " ", fence.group(1))
+            for line in joined.split("\n"):
+                line = line.strip()
+                if not line.startswith("gcloud "):
+                    continue
+                yield line.split()[1:]
+
+
 def detect_gcloud_policy_command_paths() -> set[str]:
     """Return the bare gcloud command paths referenced by `id: cli` policy
     remediations.
@@ -1066,64 +1094,30 @@ def detect_gcloud_policy_command_paths() -> set[str]:
     The result is suitable for direct lookup against the in-memory
     commands DB.
     """
-    if not GCLOUD_POLICY_FILE.exists():
-        return set()
-
-    content = GCLOUD_POLICY_FILE.read_text()
     paths: set[str] = set()
-    for match in re.finditer(
-        r"- id: cli\s*\n\s+desc: \|\s*\n(.*?)(?=\n\s+- id: |\n\s+refs:|\n  - uid: |\Z)",
-        content,
-        re.DOTALL,
-    ):
-        for fence in re.finditer(
-            r"```bash\s*\n(.*?)```", match.group(1), re.DOTALL
-        ):
-            joined = re.sub(r"\\\s*\n\s*", " ", fence.group(1))
-            for line in joined.split("\n"):
-                line = line.strip()
-                if not line.startswith("gcloud "):
-                    continue
-                parts = line.split()
-                cmd_parts: list[str] = []
-                for p in parts[1:]:
-                    if p.startswith("-") or not _GCLOUD_SUBCOMMAND_RE.match(p):
-                        break
-                    cmd_parts.append(p)
-                if cmd_parts:
-                    paths.add(" ".join(cmd_parts))
+    for tokens in _iter_gcloud_policy_invocations():
+        cmd_parts: list[str] = []
+        for p in tokens:
+            if p.startswith("-") or not _GCLOUD_SUBCOMMAND_RE.match(p):
+                break
+            cmd_parts.append(p)
+        if cmd_parts:
+            paths.add(" ".join(cmd_parts))
     return paths
 
 
 def detect_gcloud_policy_commands(commands_db: dict[str, list[str]]) -> set[str]:
     """Return the set of known gcloud command paths used in the GCP policy."""
-    if not GCLOUD_POLICY_FILE.exists():
-        return set()
-
-    content = GCLOUD_POLICY_FILE.read_text()
-    policy_commands = set()
-    for match in re.finditer(
-        r"- id: cli\s*\n\s+desc: \|\s*\n(.*?)(?=\n\s+- id: |\n\s+refs:|\n  - uid: |\Z)",
-        content,
-        re.DOTALL,
-    ):
-        for fence in re.finditer(
-            r"```bash\s*\n(.*?)```", match.group(1), re.DOTALL
-        ):
-            joined = re.sub(r"\\\s*\n\s*", " ", fence.group(1))
-            for line in joined.split("\n"):
-                line = line.strip()
-                if not line.startswith("gcloud "):
-                    continue
-                parts = line.split()
-                cmd_parts = []
-                for p in parts[1:]:
-                    if p.startswith("-"):
-                        break
-                    cmd_parts.append(p)
-                candidate = " ".join(cmd_parts)
-                if candidate in commands_db:
-                    policy_commands.add(candidate)
+    policy_commands: set[str] = set()
+    for tokens in _iter_gcloud_policy_invocations():
+        cmd_parts: list[str] = []
+        for p in tokens:
+            if p.startswith("-"):
+                break
+            cmd_parts.append(p)
+        candidate = " ".join(cmd_parts)
+        if candidate in commands_db:
+            policy_commands.add(candidate)
     return policy_commands
 
 
