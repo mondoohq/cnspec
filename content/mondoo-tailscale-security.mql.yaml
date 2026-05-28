@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-tailscale-security
     name: Mondoo Tailscale Security
-    version: 1.2.0
+    version: 1.3.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -86,6 +86,18 @@ queries:
         tags:
           mondoo.com/filter-title: Tailscale Tailnet
           mondoo.com/filter-icon: tailscale
+      - uid: mondoo-tailscale-security-devices-authorized-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-tailscale-security-devices-authorized-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-tailscale-security-devices-authorized-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that every device connected to the tailnet has been explicitly authorized by an administrator. Unauthorized devices may have joined without proper review and can reach internal services until they are removed.
@@ -133,6 +145,16 @@ queries:
 
             1. Go to **Settings > Device management**.
             2. Enable **Device approval**.
+        - id: terraform
+          desc: |
+            To authorize a device in Terraform, declare a `tailscale_device_authorization` resource with `authorized = true`. Note this catches devices managed through Terraform; devices added directly through the admin console or via auth keys remain governed by the tailnet-wide approval setting (see `device-approval-required`):
+
+            ```hcl
+            resource "tailscale_device_authorization" "example" {
+              device_id  = data.tailscale_device.example.id
+              authorized = true
+            }
+            ```
     refs:
       - url: https://tailscale.com/kb/1099/device-authorization
         title: Tailscale device authorization documentation
@@ -144,6 +166,18 @@ queries:
     filters: asset.platform == 'tailscale'
     mql: |
       tailscale.devices.all(authorized == true)
+  - uid: mondoo-tailscale-security-devices-authorized-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "tailscale_device_authorization")
+    mql: |
+      terraform.resources.where(nameLabel == "tailscale_device_authorization").all(arguments["authorized"] == true)
+  - uid: mondoo-tailscale-security-devices-authorized-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "tailscale_device_authorization")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "tailscale_device_authorization").all(change.after.authorized == true)
+  - uid: mondoo-tailscale-security-devices-authorized-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "tailscale_device_authorization")
+    mql: |
+      terraform.state.resources.where(type == "tailscale_device_authorization").all(values.authorized == true)
   - uid: mondoo-tailscale-security-devices-key-expiry-enabled
     title: Ensure device key expiry is not disabled
     impact: 80
@@ -170,6 +204,18 @@ queries:
         tags:
           mondoo.com/filter-title: Tailscale Tailnet
           mondoo.com/filter-icon: tailscale
+      - uid: mondoo-tailscale-security-devices-key-expiry-enabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-tailscale-security-devices-key-expiry-enabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-tailscale-security-devices-key-expiry-enabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that key expiry is not disabled on tailnet devices, so that each device must periodically re-authenticate. When key expiry is disabled, a device stays authenticated indefinitely and there is no forced re-verification of its owner.
@@ -221,6 +267,16 @@ queries:
             # To check key expiry status
             tailscale status --json | jq '.Self.KeyExpiry'
             ```
+        - id: terraform
+          desc: |
+            To keep key expiry enabled in Terraform, leave `key_expiry_disabled` unset (defaults to `false`) or set it to `false` explicitly on any `tailscale_device_key` resource:
+
+            ```hcl
+            resource "tailscale_device_key" "example" {
+              device_id           = data.tailscale_device.example.id
+              key_expiry_disabled = false
+            }
+            ```
     refs:
       - url: https://tailscale.com/kb/1028/key-expiry
         title: Tailscale key expiry documentation
@@ -232,6 +288,22 @@ queries:
     filters: asset.platform == 'tailscale'
     mql: |
       tailscale.devices.all(keyExpiryDisabled == false)
+  - uid: mondoo-tailscale-security-devices-key-expiry-enabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "tailscale_device_key")
+    mql: |
+      terraform.resources.where(nameLabel == "tailscale_device_key").all(arguments["key_expiry_disabled"] != true)
+  - uid: mondoo-tailscale-security-devices-key-expiry-enabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "tailscale_device_key")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "tailscale_device_key").all(change.after.key_expiry_disabled != true)
+  - uid: mondoo-tailscale-security-devices-key-expiry-enabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "tailscale_device_key")
+    mql: |
+      terraform.state.resources.where(type == "tailscale_device_key").all(values.key_expiry_disabled != true)
+  # No Terraform variants: client update-availability is runtime telemetry surfaced by the
+  # Tailscale API per device. It is not a configuration field — there is no field in
+  # tailscale_device_authorization, tailscale_device_key, or tailscale_tailnet_settings that
+  # expresses or constrains the installed client version.
   - uid: mondoo-tailscale-security-devices-client-up-to-date
     title: Ensure devices are running up-to-date Tailscale client software
     impact: 60
@@ -321,6 +393,9 @@ queries:
     filters: asset.platform == 'tailscale'
     mql: |
       tailscale.devices.where(isExternal == false).all(updateAvailable == false)
+  # No Terraform variants: tailnet lock errors are runtime state from the Tailscale API
+  # (whether a device has unresolved signature/key issues with the tailnet lock). It is not
+  # a configuration field, so there is no HCL/plan/state shape to evaluate.
   - uid: mondoo-tailscale-security-devices-no-tailnet-lock-errors
     title: Ensure no devices have tailnet lock errors
     impact: 80
@@ -406,6 +481,11 @@ queries:
     filters: asset.platform == 'tailscale'
     mql: |
       tailscale.devices.all(tailnetLockError == "")
+  # No Terraform variants: user approval status ("needs-approval") is runtime state set by
+  # the Tailscale API as a result of admin actions. The tailscale provider has no resource
+  # that models a user's approval state — users themselves are not Terraform-managed (there
+  # is no tailscale_user resource), only the tailnet-wide users_approval_on toggle. See the
+  # user-approval-required check for the variant-covered control.
   - uid: mondoo-tailscale-security-no-users-pending-approval
     title: Ensure no users are pending approval to join the tailnet
     impact: 70
@@ -471,6 +551,11 @@ queries:
     refs:
       - url: https://tailscale.com/kb/1138/user-management
         title: Tailscale user management documentation
+  # No Terraform variants: the tailscale provider does not expose a per-user role-assignment
+  # resource. As of provider v0.29.x there is no tailscale_user_role (only the tailnet-wide
+  # users_role_allowed_to_join_external_tailnet setting), so role membership for owners and
+  # admins cannot be evaluated from HCL/plan/state. This may become possible if a future
+  # provider release adds a user-role resource.
   - uid: mondoo-tailscale-security-admin-owner-roles-limited
     title: Ensure admin and owner roles are limited to a small number of users
     impact: 70
@@ -537,6 +622,9 @@ queries:
     refs:
       - url: https://tailscale.com/kb/1138/user-management
         title: Tailscale user roles documentation
+  # No Terraform variants: user idle status ("idle") is runtime activity telemetry from the
+  # Tailscale API based on last-seen timestamps. It is not a configuration field — there is
+  # no tailscale_user resource and no HCL argument that expresses or constrains user activity.
   - uid: mondoo-tailscale-security-no-idle-users
     title: Ensure no users have been idle for an extended period
     impact: 50
@@ -606,7 +694,6 @@ queries:
   - uid: mondoo-tailscale-security-device-approval-required
     title: Ensure new devices require admin approval to join the tailnet
     impact: 70
-    filters: asset.platform == 'tailscale'
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-16
@@ -621,8 +708,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-7-2-1
       compliance/soc2-2017: soc2-control-cc6-3-1
       compliance/vda-isa-5: vda-isa-5-4-2-1
-    mql: |
-      tailscale.deviceApprovalRequired == true
+    variants:
+      - uid: mondoo-tailscale-security-device-approval-required-tailscale
+        tags:
+          mondoo.com/filter-title: Tailscale Tailnet
+          mondoo.com/filter-icon: tailscale
+      - uid: mondoo-tailscale-security-device-approval-required-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-tailscale-security-device-approval-required-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-tailscale-security-device-approval-required-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that the tailnet requires administrators to manually approve every new device before it can connect. When device approval is enforced, an attacker who steals a user's credentials still cannot silently enroll a new endpoint into the tailnet.
@@ -666,13 +768,37 @@ queries:
             2. Locate the **Device approval** section.
             3. Enable **Manually approve new devices**.
             4. Save the change.
+        - id: terraform
+          desc: |
+            To enforce device approval in Terraform, set `devices_approval_on = true` on the `tailscale_tailnet_settings` resource:
+
+            ```hcl
+            resource "tailscale_tailnet_settings" "example" {
+              devices_approval_on = true
+            }
+            ```
     refs:
       - url: https://tailscale.com/kb/1099/device-approval
         title: Tailscale device approval documentation
+  - uid: mondoo-tailscale-security-device-approval-required-tailscale
+    filters: asset.platform == 'tailscale'
+    mql: |
+      tailscale.deviceApprovalRequired == true
+  - uid: mondoo-tailscale-security-device-approval-required-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "tailscale_tailnet_settings")
+    mql: |
+      terraform.resources.where(nameLabel == "tailscale_tailnet_settings").all(arguments["devices_approval_on"] == true)
+  - uid: mondoo-tailscale-security-device-approval-required-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "tailscale_tailnet_settings")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "tailscale_tailnet_settings").all(change.after.devices_approval_on == true)
+  - uid: mondoo-tailscale-security-device-approval-required-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "tailscale_tailnet_settings")
+    mql: |
+      terraform.state.resources.where(type == "tailscale_tailnet_settings").all(values.devices_approval_on == true)
   - uid: mondoo-tailscale-security-user-approval-required
     title: Ensure new users require admin approval to join the tailnet
     impact: 70
-    filters: asset.platform == 'tailscale'
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-06
@@ -687,8 +813,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-7-2-3
       compliance/soc2-2017: soc2-control-cc6-3-1
       compliance/vda-isa-5: vda-isa-5-4-1-3
-    mql: |
-      tailscale.userApprovalRequired == true
+    variants:
+      - uid: mondoo-tailscale-security-user-approval-required-tailscale
+        tags:
+          mondoo.com/filter-title: Tailscale Tailnet
+          mondoo.com/filter-icon: tailscale
+      - uid: mondoo-tailscale-security-user-approval-required-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-tailscale-security-user-approval-required-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-tailscale-security-user-approval-required-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that the tailnet requires administrators to manually approve every new user before they can join. When user approval is enforced, identity-provider misconfigurations and overly broad SSO scopes cannot grant immediate tailnet access.
@@ -732,13 +873,37 @@ queries:
             2. Locate the **User approval** section.
             3. Enable **Manually approve new users**.
             4. Save the change.
+        - id: terraform
+          desc: |
+            To enforce user approval in Terraform, set `users_approval_on = true` on the `tailscale_tailnet_settings` resource:
+
+            ```hcl
+            resource "tailscale_tailnet_settings" "example" {
+              users_approval_on = true
+            }
+            ```
     refs:
       - url: https://tailscale.com/kb/1239/user-approval
         title: Tailscale user approval documentation
+  - uid: mondoo-tailscale-security-user-approval-required-tailscale
+    filters: asset.platform == 'tailscale'
+    mql: |
+      tailscale.userApprovalRequired == true
+  - uid: mondoo-tailscale-security-user-approval-required-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "tailscale_tailnet_settings")
+    mql: |
+      terraform.resources.where(nameLabel == "tailscale_tailnet_settings").all(arguments["users_approval_on"] == true)
+  - uid: mondoo-tailscale-security-user-approval-required-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "tailscale_tailnet_settings")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "tailscale_tailnet_settings").all(change.after.users_approval_on == true)
+  - uid: mondoo-tailscale-security-user-approval-required-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "tailscale_tailnet_settings")
+    mql: |
+      terraform.state.resources.where(type == "tailscale_tailnet_settings").all(values.users_approval_on == true)
   - uid: mondoo-tailscale-security-devices-auto-updates-enabled
     title: Ensure devices have automatic Tailscale client updates enabled
     impact: 60
-    filters: asset.platform == 'tailscale'
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-tvm-03
@@ -753,8 +918,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-6-3-3
       compliance/soc2-2017: soc2-control-cc7-1-2
       compliance/vda-isa-5: vda-isa-5-5-2-5
-    mql: |
-      tailscale.devicesAutoUpdatesEnabled == true
+    variants:
+      - uid: mondoo-tailscale-security-devices-auto-updates-enabled-tailscale
+        tags:
+          mondoo.com/filter-title: Tailscale Tailnet
+          mondoo.com/filter-icon: tailscale
+      - uid: mondoo-tailscale-security-devices-auto-updates-enabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-tailscale-security-devices-auto-updates-enabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-tailscale-security-devices-auto-updates-enabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that the tailnet is configured to automatically update the Tailscale client on devices. Automatic updates close the window between disclosure of a Tailscale client vulnerability and rollout of the fix across the fleet.
@@ -798,13 +978,37 @@ queries:
             2. Locate the **Auto-updates** section.
             3. Enable automatic updates for the tailnet.
             4. Save the change.
+        - id: terraform
+          desc: |
+            To enable tailnet-wide automatic client updates in Terraform, set `devices_auto_updates_on = true` on the `tailscale_tailnet_settings` resource:
+
+            ```hcl
+            resource "tailscale_tailnet_settings" "example" {
+              devices_auto_updates_on = true
+            }
+            ```
     refs:
       - url: https://tailscale.com/kb/1067/update
         title: Tailscale client auto-update documentation
+  - uid: mondoo-tailscale-security-devices-auto-updates-enabled-tailscale
+    filters: asset.platform == 'tailscale'
+    mql: |
+      tailscale.devicesAutoUpdatesEnabled == true
+  - uid: mondoo-tailscale-security-devices-auto-updates-enabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "tailscale_tailnet_settings")
+    mql: |
+      terraform.resources.where(nameLabel == "tailscale_tailnet_settings").all(arguments["devices_auto_updates_on"] == true)
+  - uid: mondoo-tailscale-security-devices-auto-updates-enabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "tailscale_tailnet_settings")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "tailscale_tailnet_settings").all(change.after.devices_auto_updates_on == true)
+  - uid: mondoo-tailscale-security-devices-auto-updates-enabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "tailscale_tailnet_settings")
+    mql: |
+      terraform.state.resources.where(type == "tailscale_tailnet_settings").all(values.devices_auto_updates_on == true)
   - uid: mondoo-tailscale-security-devices-key-duration-capped
     title: Ensure tailnet device key duration is set to 180 days or less
     impact: 70
-    filters: asset.platform == 'tailscale'
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-12
@@ -819,8 +1023,23 @@ queries:
       compliance/pci-dss-4: false
       compliance/soc2-2017: soc2-control-cc6-1-9
       compliance/vda-isa-5: vda-isa-5-4-1-1
-    mql: |
-      tailscale.devicesKeyDurationDays > 0 && tailscale.devicesKeyDurationDays <= 180
+    variants:
+      - uid: mondoo-tailscale-security-devices-key-duration-capped-tailscale
+        tags:
+          mondoo.com/filter-title: Tailscale Tailnet
+          mondoo.com/filter-icon: tailscale
+      - uid: mondoo-tailscale-security-devices-key-duration-capped-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-tailscale-security-devices-key-duration-capped-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-tailscale-security-devices-key-duration-capped-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that the tailnet's default device key duration is set to a finite value of 180 days or less. A short key duration limits the useful lifetime of a stolen device credential.
@@ -864,9 +1083,46 @@ queries:
             2. Locate the **Device key duration** section.
             3. Set the duration to a value of 180 days or less.
             4. Save the change.
+        - id: terraform
+          desc: |
+            To cap the device key duration in Terraform, set `devices_key_duration_days` on the `tailscale_tailnet_settings` resource to a value between 1 and 180:
+
+            ```hcl
+            resource "tailscale_tailnet_settings" "example" {
+              devices_key_duration_days = 90
+            }
+            ```
     refs:
       - url: https://tailscale.com/kb/1028/key-expiry
         title: Tailscale key expiry documentation
+  - uid: mondoo-tailscale-security-devices-key-duration-capped-tailscale
+    filters: asset.platform == 'tailscale'
+    mql: |
+      tailscale.devicesKeyDurationDays > 0 && tailscale.devicesKeyDurationDays <= 180
+  - uid: mondoo-tailscale-security-devices-key-duration-capped-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "tailscale_tailnet_settings")
+    mql: |
+      terraform.resources.where(nameLabel == "tailscale_tailnet_settings").all(
+        arguments["devices_key_duration_days"] > 0 && arguments["devices_key_duration_days"] <= 180
+      )
+  - uid: mondoo-tailscale-security-devices-key-duration-capped-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "tailscale_tailnet_settings")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "tailscale_tailnet_settings").all(
+        change.after.devices_key_duration_days > 0 && change.after.devices_key_duration_days <= 180
+      )
+  - uid: mondoo-tailscale-security-devices-key-duration-capped-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "tailscale_tailnet_settings")
+    mql: |
+      terraform.state.resources.where(type == "tailscale_tailnet_settings").all(
+        values.devices_key_duration_days > 0 && values.devices_key_duration_days <= 180
+      )
+  # No Terraform variants: the ACL policy is a HuJSON/JSON string in tailscale_acl.acl.
+  # Asserting "no rule with src ['*'] and dst ['*:*'] and action 'accept'" requires parsing
+  # the string body and is highly sensitive to formatting, comments, variable interpolation,
+  # heredoc vs jsonencode(), and module references. Inspecting the raw string risks false
+  # positives and false negatives, so this check stays runtime-only. The terraform remediation
+  # below still shows the safe shape.
   - uid: mondoo-tailscale-security-acl-no-allow-all
     title: Ensure tailnet ACL policy does not contain blanket allow-all rules
     impact: 90
@@ -936,6 +1192,32 @@ queries:
             4. Replace it with explicit per-group, per-tag, or per-service rules that grant only the access each group needs.
             5. Use the **Preview** button and the policy `tests` block to confirm the intended access still works.
             6. Save the policy.
+        - id: terraform
+          desc: |
+            To manage the tailnet ACL in Terraform, declare a `tailscale_acl` resource whose `acl` argument is least-privilege HuJSON (no `src = ["*"]` paired with `dst = ["*:*"]` at `action = "accept"`). Use `jsonencode` so the structure is easy to review in diffs:
+
+            ```hcl
+            resource "tailscale_acl" "policy" {
+              acl = jsonencode({
+                tagOwners = {
+                  "tag:web" = ["group:platform"]
+                  "tag:db"  = ["group:platform"]
+                }
+                acls = [
+                  {
+                    action = "accept"
+                    src    = ["group:platform"]
+                    dst    = ["tag:web:443"]
+                  },
+                  {
+                    action = "accept"
+                    src    = ["tag:web"]
+                    dst    = ["tag:db:5432"]
+                  },
+                ]
+              })
+            }
+            ```
     refs:
       - url: https://tailscale.com/kb/1018/acls
         title: Tailscale ACL policy documentation
@@ -944,7 +1226,6 @@ queries:
   - uid: mondoo-tailscale-security-authkeys-have-expiration
     title: Ensure active pre-auth keys have an expiration set
     impact: 90
-    filters: asset.platform == 'tailscale'
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-10
@@ -959,8 +1240,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-8-6-3
       compliance/soc2-2017: soc2-control-cc6-1-9
       compliance/vda-isa-5: vda-isa-5-4-1-1
-    mql: |
-      tailscale.authKeys.where(invalid == false && revoked.unix == 0).all(expires.unix > 0)
+    variants:
+      - uid: mondoo-tailscale-security-authkeys-have-expiration-tailscale
+        tags:
+          mondoo.com/filter-title: Tailscale Tailnet
+          mondoo.com/filter-icon: tailscale
+      - uid: mondoo-tailscale-security-authkeys-have-expiration-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-tailscale-security-authkeys-have-expiration-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-tailscale-security-authkeys-have-expiration-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that every active pre-auth key has a non-zero `expires` timestamp. A pre-auth key with no expiration acts as a long-lived bearer credential that can enroll arbitrary devices into the tailnet for the life of the tailnet itself; a leaked copy stays valid indefinitely.
@@ -1031,13 +1327,42 @@ queries:
             curl -s -u "$TAILSCALE_API_KEY:" \
               -X DELETE "https://api.tailscale.com/api/v2/tailnet/<tailnet>/keys/<old-key-id>"
             ```
+        - id: terraform
+          desc: |
+            To ensure a pre-auth key has a finite expiration in Terraform, leave `expiry` at its default (7776000 seconds / 90 days) or set it to an explicit positive integer on `tailscale_tailnet_key`. Setting `expiry = 0` disables expiry and is the failure case:
+
+            ```hcl
+            resource "tailscale_tailnet_key" "ci" {
+              reusable      = false
+              ephemeral     = true
+              preauthorized = true
+              expiry        = 7776000
+              description   = "CI bootstrap"
+              tags          = ["tag:ci"]
+            }
+            ```
     refs:
       - url: https://tailscale.com/kb/1085/auth-keys
         title: Tailscale auth keys
+  - uid: mondoo-tailscale-security-authkeys-have-expiration-tailscale
+    filters: asset.platform == 'tailscale'
+    mql: |
+      tailscale.authKeys.where(invalid == false && revoked.unix == 0).all(expires.unix > 0)
+  - uid: mondoo-tailscale-security-authkeys-have-expiration-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "tailscale_tailnet_key")
+    mql: |
+      terraform.resources.where(nameLabel == "tailscale_tailnet_key").all(arguments["expiry"] != 0)
+  - uid: mondoo-tailscale-security-authkeys-have-expiration-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "tailscale_tailnet_key")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "tailscale_tailnet_key").all(change.after.expiry != 0)
+  - uid: mondoo-tailscale-security-authkeys-have-expiration-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "tailscale_tailnet_key")
+    mql: |
+      terraform.state.resources.where(type == "tailscale_tailnet_key").all(values.expiry != 0)
   - uid: mondoo-tailscale-security-authkeys-not-reusable
     title: Ensure active pre-auth keys are not marked reusable
     impact: 80
-    filters: asset.platform == 'tailscale'
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-10
@@ -1052,8 +1377,23 @@ queries:
       compliance/pci-dss-4: false
       compliance/soc2-2017: soc2-control-cc6-1-9
       compliance/vda-isa-5: vda-isa-5-4-1-1
-    mql: |
-      tailscale.authKeys.where(invalid == false && revoked.unix == 0).none(reusable)
+    variants:
+      - uid: mondoo-tailscale-security-authkeys-not-reusable-tailscale
+        tags:
+          mondoo.com/filter-title: Tailscale Tailnet
+          mondoo.com/filter-icon: tailscale
+      - uid: mondoo-tailscale-security-authkeys-not-reusable-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-tailscale-security-authkeys-not-reusable-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-tailscale-security-authkeys-not-reusable-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that no active, valid pre-auth key is marked `reusable`. A reusable key can enroll an unbounded number of devices for as long as it remains valid; a single-use key burns itself the moment the first device authenticates, capping the damage of a leak to one enrollment.
@@ -1113,9 +1453,44 @@ queries:
             curl -s -u "$TAILSCALE_API_KEY:" \
               -X DELETE "https://api.tailscale.com/api/v2/tailnet/<tailnet>/keys/<old-reusable-key-id>"
             ```
+        - id: terraform
+          desc: |
+            To declare single-use pre-auth keys in Terraform, leave `reusable` at its default (`false`) or set it explicitly on `tailscale_tailnet_key`. The failure case is `reusable = true`:
+
+            ```hcl
+            resource "tailscale_tailnet_key" "ci_job" {
+              reusable      = false
+              ephemeral     = true
+              preauthorized = true
+              expiry        = 86400
+              tags          = ["tag:ci"]
+            }
+            ```
     refs:
       - url: https://tailscale.com/kb/1085/auth-keys
         title: Tailscale auth keys
+  - uid: mondoo-tailscale-security-authkeys-not-reusable-tailscale
+    filters: asset.platform == 'tailscale'
+    mql: |
+      tailscale.authKeys.where(invalid == false && revoked.unix == 0).none(reusable)
+  - uid: mondoo-tailscale-security-authkeys-not-reusable-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "tailscale_tailnet_key")
+    mql: |
+      terraform.resources.where(nameLabel == "tailscale_tailnet_key").all(arguments["reusable"] != true)
+  - uid: mondoo-tailscale-security-authkeys-not-reusable-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "tailscale_tailnet_key")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "tailscale_tailnet_key").all(change.after.reusable != true)
+  - uid: mondoo-tailscale-security-authkeys-not-reusable-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "tailscale_tailnet_key")
+    mql: |
+      terraform.state.resources.where(type == "tailscale_tailnet_key").all(values.reusable != true)
+  # No Terraform variants: this is an org-posture existence check (the tailnet has at least
+  # one logstream of type "configuration"). A per-module variant gated on
+  # tailscale_logstream_configuration being present would vacuously assert its own trigger
+  # and would false-positive on modules that legitimately manage logstreams in a separate
+  # root module. Same rationale as the GCP scc-notification-configs and VPC-SC existence
+  # checks. The terraform remediation below still shows how to declare the resource.
   - uid: mondoo-tailscale-security-configuration-logstream-configured
     title: Ensure the tailnet exports the configuration audit log
     impact: 80
@@ -1199,6 +1574,22 @@ queries:
             ```
 
             Verify the configuration with `GET .../logging/configuration/stream` and confirm new events appear in the destination.
+        - id: terraform
+          desc: |
+            To declare the configuration audit log export in Terraform, use the `tailscale_logstream_configuration` resource with `log_type = "configuration"`. The example below sends to S3 using an assumed role; the resource also supports `splunk`, `elastic`, `panther`, `cribl`, `datadog`, `axiom`, and `gcs`:
+
+            ```hcl
+            resource "tailscale_logstream_configuration" "config_audit" {
+              log_type               = "configuration"
+              destination_type       = "s3"
+              s3_bucket              = "tailnet-audit-logs"
+              s3_region              = "us-east-1"
+              s3_key_prefix          = "tailscale-config/"
+              s3_authentication_type = "rolearn"
+              s3_role_arn            = "arn:aws:iam::123456789012:role/tailscale-export"
+              s3_external_id         = var.tailscale_external_id
+            }
+            ```
     refs:
       - url: https://tailscale.com/kb/1255/log-streaming
         title: Tailscale log streaming
@@ -1207,7 +1598,6 @@ queries:
   - uid: mondoo-tailscale-security-webhooks-use-https
     title: Ensure tailnet webhook endpoints use HTTPS
     impact: 80
-    filters: asset.platform == 'tailscale'
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
@@ -1222,8 +1612,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-4-2-1
       compliance/soc2-2017: soc2-control-cc6-7-2
       compliance/vda-isa-5: vda-isa-5-5-1-2
-    mql: |
-      tailscale.webhooks.all(endpointUrl == /^https:\/\//)
+    variants:
+      - uid: mondoo-tailscale-security-webhooks-use-https-tailscale
+        tags:
+          mondoo.com/filter-title: Tailscale Tailnet
+          mondoo.com/filter-icon: tailscale
+      - uid: mondoo-tailscale-security-webhooks-use-https-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-tailscale-security-webhooks-use-https-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-tailscale-security-webhooks-use-https-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that every tailnet webhook endpoint URL uses the `https://` scheme. Tailscale webhooks deliver configuration-change events (device approval requests, ACL updates, key expiry warnings, user provisioning) to the receiver; sending those events over plaintext HTTP leaks sensitive operational metadata to anyone on the network path.
@@ -1278,6 +1683,32 @@ queries:
             ```
 
             Then send a synthetic test event from the admin console or the API and confirm the receiver records the new URL.
+        - id: terraform
+          desc: |
+            To require HTTPS webhook endpoints in Terraform, set `endpoint_url` to an `https://` URL on the `tailscale_webhook` resource:
+
+            ```hcl
+            resource "tailscale_webhook" "approvals" {
+              endpoint_url  = "https://receiver.example.com/tailscale"
+              subscriptions = ["nodeApproved", "nodeNeedsApproval"]
+            }
+            ```
     refs:
       - url: https://tailscale.com/kb/1213/webhooks
         title: Tailscale webhooks
+  - uid: mondoo-tailscale-security-webhooks-use-https-tailscale
+    filters: asset.platform == 'tailscale'
+    mql: |
+      tailscale.webhooks.all(endpointUrl == /^https:\/\//)
+  - uid: mondoo-tailscale-security-webhooks-use-https-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "tailscale_webhook")
+    mql: |
+      terraform.resources.where(nameLabel == "tailscale_webhook").all(arguments["endpoint_url"] == /^https:\/\//)
+  - uid: mondoo-tailscale-security-webhooks-use-https-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "tailscale_webhook")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "tailscale_webhook").all(change.after.endpoint_url == /^https:\/\//)
+  - uid: mondoo-tailscale-security-webhooks-use-https-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "tailscale_webhook")
+    mql: |
+      terraform.state.resources.where(type == "tailscale_webhook").all(values.endpoint_url == /^https:\/\//)
