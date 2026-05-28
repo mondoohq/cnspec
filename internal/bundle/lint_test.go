@@ -238,6 +238,19 @@ func TestLinter_Fail(t *testing.T) {
 		assert.Equal(t, "error", results.Entries[0].Level)
 	})
 
+	t.Run("fail-querypack-compile-error", func(t *testing.T) {
+		// Regression: invalid MQL inside a querypack must surface as
+		// bundle-compile-error at lint time (matches server-side compile).
+		file := "./testdata/fail-querypack-compile-error.mql.yaml"
+		results, err := Lint(schema, testLintOptions, file)
+		require.NoError(t, err)
+
+		result := findEntry(results.Entries, "bundle-compile-error")
+		require.NotNil(t, result, "expected bundle-compile-error entry")
+		assert.Equal(t, "error", result.Level)
+		assert.Contains(t, result.Message, "expected closing '}', got ':'")
+	})
+
 	t.Run("fail-bundle-unknown-field", func(t *testing.T) {
 		file := "./testdata/fail-bundle-unknown-field.mql.yaml"
 		results, err := Lint(schema, testLintOptions, file)
