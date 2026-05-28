@@ -1028,6 +1028,73 @@ def get_gcloud_flags_from_help(cmd_path: str) -> list[str]:
     return sorted(flags)
 
 
+def probe_gcloud_command(cmd_path: str) -> list[str] | None:
+    """Run `gcloud <cmd_path> --help` and return the parsed flags if the
+    command exists, otherwise None.
+
+    Used to backfill commands missing from the SDK's static completion
+    tree — gcloud hides some real subcommands such as
+    `gcloud logging cmek-settings update`.
+    """
+    try:
+        result = subprocess.run(
+            ["gcloud"] + cmd_path.split() + ["--help"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return None
+    if result.returncode != 0:
+        return None
+    output = result.stdout + result.stderr
+    flags = set()
+    for match in re.finditer(r"(--[a-z][a-z0-9-]*)", output):
+        flags.add(match.group(1))
+    return sorted(flags)
+
+
+_GCLOUD_SUBCOMMAND_RE = re.compile(r"^[a-z][a-z0-9-]*$")
+
+
+def detect_gcloud_policy_command_paths() -> set[str]:
+    """Return the bare gcloud command paths referenced by `id: cli` policy
+    remediations.
+
+    A path is the longest leading run of lowercase-hyphen tokens before any
+    flag or positional placeholder (`INSTANCE_NAME`, `[ZONE]`, `<KEY>`).
+    The result is suitable for direct lookup against the in-memory
+    commands DB.
+    """
+    if not GCLOUD_POLICY_FILE.exists():
+        return set()
+
+    content = GCLOUD_POLICY_FILE.read_text()
+    paths: set[str] = set()
+    for match in re.finditer(
+        r"- id: cli\s*\n\s+desc: \|\s*\n(.*?)(?=\n\s+- id: |\n\s+refs:|\n  - uid: |\Z)",
+        content,
+        re.DOTALL,
+    ):
+        for fence in re.finditer(
+            r"```bash\s*\n(.*?)```", match.group(1), re.DOTALL
+        ):
+            joined = re.sub(r"\\\s*\n\s*", " ", fence.group(1))
+            for line in joined.split("\n"):
+                line = line.strip()
+                if not line.startswith("gcloud "):
+                    continue
+                parts = line.split()
+                cmd_parts: list[str] = []
+                for p in parts[1:]:
+                    if p.startswith("-") or not _GCLOUD_SUBCOMMAND_RE.match(p):
+                        break
+                    cmd_parts.append(p)
+                if cmd_parts:
+                    paths.add(" ".join(cmd_parts))
+    return paths
+
+
 def detect_gcloud_policy_commands(commands_db: dict[str, list[str]]) -> set[str]:
     """Return the set of known gcloud command paths used in the GCP policy."""
     if not GCLOUD_POLICY_FILE.exists():
@@ -1143,6 +1210,20 @@ def build_gcloud_commands_db() -> dict[str, list[str]]:
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
             for cmd_name, merged in pool.map(_merge, policy_commands):
                 commands[cmd_name] = merged
+
+    # Backfill policy-referenced commands that aren't in the static
+    # completion tree (e.g. `gcloud logging cmek-settings update`) by
+    # probing `gcloud <cmd> --help` and using its exit code as ground truth.
+    policy_paths = detect_gcloud_policy_command_paths()
+    missing_paths = sorted(p for p in policy_paths if p not in commands)
+    if missing_paths:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+            for cmd_path, flags in zip(
+                missing_paths, pool.map(probe_gcloud_command, missing_paths)
+            ):
+                if flags is None:
+                    continue
+                commands[cmd_path] = sorted(set(flags + global_flags))
 
     return commands
 
