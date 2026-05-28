@@ -1173,25 +1173,28 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-3
       compliance/vda-isa-5: vda-isa-5-4-1-1
     mql: |
-      docker.file.stages.all(run.all(mounts.where(type == "bind" || type == empty).none(source == /^\/(etc|proc|sys|dev|boot|root|home|var\/run|run)?(\/|$)/)))
+      docker.file.stages.all(run.all(mounts.where(type == "bind" || type == empty).none(source == /^\/(etc|proc|sys|dev|boot|root|home|tmp|var|run)?(\/|$)/)))
     docs:
       desc: |
-        Dockerfile `RUN` instructions should not bind-mount sensitive host paths such as `/`, `/etc`, `/proc`, `/sys`, `/dev`, `/boot`, `/root`, `/home`, `/var/run`, or `/run` from the build host. Sub-paths beneath those directories are equally dangerous; mounting `/etc/shadow`, `/root/.ssh`, `/home/<user>`, or `/var/run/docker.sock` directly is just as exposing as mounting the parent. A `RUN --mount=type=bind,source=<host-path>` step gives the build command direct access to whatever sits at that host path on the machine running BuildKit.
+        Dockerfile `RUN` instructions should not bind-mount sensitive host paths such as `/`, `/etc`, `/proc`, `/sys`, `/dev`, `/boot`, `/root`, `/home`, `/tmp`, `/var`, or `/run` from the build host. Sub-paths beneath those directories are equally dangerous; mounting `/etc/shadow`, `/root/.ssh`, `/home/<user>`, `/var/run/docker.sock`, or `/var/lib/docker` directly is just as exposing as mounting the parent. A `RUN --mount=type=bind,source=<host-path>` step gives the build command direct access to whatever sits at that host path on the machine running BuildKit.
 
         **Why this matters**
 
         - **Host filesystem exposure:** Binding `/`, `/etc`, or a sub-path like `/etc/shadow` reveals host system configuration, shadow files, and other credentials to every build step that follows.
         - **User credential theft:** Binding `/home`, `/root`, or sub-paths beneath them exposes SSH keys, shell history, cloud CLI tokens, and other user credentials to build steps.
-        - **Container escape via Docker socket:** Mounting `/var/run/docker.sock`, or the parent `/var/run` and `/run` directories that contain it, lets the build command spawn sibling containers with arbitrary privileges and effectively own the build host.
+        - **Container escape via Docker socket:** Mounting `/var/run/docker.sock`, or the parent `/var`, `/var/run`, and `/run` directories that contain it, lets the build command spawn sibling containers with arbitrary privileges and effectively own the build host.
+        - **Host state leakage:** `/var/lib` carries package-manager state, database data dirs, and container runtime state; `/var/log` carries logs that may include credentials; `/tmp` carries application sockets and short-lived secrets such as SSH-agent and X11 auth files.
         - **Kernel interface access:** `/proc` and `/sys` mounts, including sub-paths such as `/proc/1/environ` or `/sys/fs/cgroup`, expose kernel parameters, process information, and tunables that can be combined with other weaknesses to escape the build sandbox.
         - **Device passthrough:** A `/dev` bind mount hands the build raw access to host devices, enabling disk reads, kernel module loading, or hardware tampering.
         - **Supply-chain blast radius:** Build steps run untrusted package managers and installers. A bind mount turns any compromise in those tools into direct host compromise.
+
+        Legitimate BuildKit caching uses `--mount=type=cache` rather than bind mounts of host directories, so this check only flags `type=bind` (and the BuildKit-default omitted-type case) and does not interfere with cache mounts.
       audit: |
         Inspect the Dockerfile to confirm no `RUN` instruction bind-mounts a sensitive host path:
 
         1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
         2. Search every `RUN` instruction for bind mounts: `grep -nE 'RUN.*--mount=' Dockerfile`.
-        3. For each match, confirm the `source=` value is not `/` and does not point at `/etc`, `/proc`, `/sys`, `/dev`, `/boot`, `/root`, `/home`, `/var/run`, or `/run`. Sub-paths beneath those directories also fail the check, so `source=/etc/shadow`, `source=/root/.ssh`, `source=/home/builder`, and `source=/var/run/docker.sock` are all violations. Mounts that omit `type=` default to `type=bind` and must be checked the same way.
+        3. For each match, confirm the `source=` value is not `/` and does not point at `/etc`, `/proc`, `/sys`, `/dev`, `/boot`, `/root`, `/home`, `/tmp`, `/var`, or `/run`. Sub-paths beneath those directories also fail the check, so `source=/etc/shadow`, `source=/root/.ssh`, `source=/home/builder`, `source=/var/run/docker.sock`, and `source=/var/lib/docker` are all violations. Mounts that omit `type=` default to `type=bind` and must be checked the same way.
 
         If no `RUN` mount references a sensitive host path, the check passes. If any does, the check fails.
       remediation:
