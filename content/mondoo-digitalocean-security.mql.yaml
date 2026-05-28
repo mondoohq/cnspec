@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-digitalocean-security
     name: Mondoo DigitalOcean Security
-    version: 1.2.1
+    version: 1.3.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -183,8 +183,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-1-3-1
       compliance/soc2-2017: soc2-control-cc6-1-5
       compliance/vda-isa-5: vda-isa-5-5-2-7
-    mql: |
-      digitalocean.droplets.all(vpc != null)
+    variants:
+      - uid: mondoo-digitalocean-security-droplet-in-vpc-digitalocean
+        tags:
+          mondoo.com/filter-title: DigitalOcean
+          mondoo.com/filter-icon: digitalocean
+      - uid: mondoo-digitalocean-security-droplet-in-vpc-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-digitalocean-security-droplet-in-vpc-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-digitalocean-security-droplet-in-vpc-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that every Droplet is deployed inside a Virtual Private Cloud (VPC). By default, DigitalOcean places Droplets outside a named VPC unless one is selected at creation time, leaving them with only public-facing network interfaces.
@@ -238,9 +253,39 @@ queries:
               --region <region> \
               --vpc-uuid <vpc-uuid>
             ```
+        - id: terraform
+          desc: |
+            To deploy Droplets inside a VPC in Terraform, set `vpc_uuid` on the `digitalocean_droplet` resource:
+
+            ```hcl
+            resource "digitalocean_droplet" "example" {
+              name     = "example"
+              image    = "ubuntu-22-04-x64"
+              region   = "nyc3"
+              size     = "s-1vcpu-1gb"
+              vpc_uuid = digitalocean_vpc.example.id
+            }
+            ```
     refs:
       - url: https://docs.digitalocean.com/products/networking/vpc/
         title: DigitalOcean VPC overview
+
+  - uid: mondoo-digitalocean-security-droplet-in-vpc-digitalocean
+    filters: asset.platform == "digitalocean"
+    mql: |
+      digitalocean.droplets.all(vpc != null)
+  - uid: mondoo-digitalocean-security-droplet-in-vpc-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "digitalocean_droplet")
+    mql: |
+      terraform.resources.where(nameLabel == "digitalocean_droplet").all(arguments.vpc_uuid != empty)
+  - uid: mondoo-digitalocean-security-droplet-in-vpc-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "digitalocean_droplet")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "digitalocean_droplet").all(change.after.vpc_uuid != empty)
+  - uid: mondoo-digitalocean-security-droplet-in-vpc-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "digitalocean_droplet")
+    mql: |
+      terraform.state.resources.where(type == "digitalocean_droplet").all(values.vpc_uuid != empty)
 
   # No Terraform variants: this check requires cross-resource correlation between
   # digitalocean_droplet and digitalocean_firewall (matched by id or by overlapping
@@ -349,17 +394,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-1-3-1
       compliance/soc2-2017: soc2-control-cc6-6-1
       compliance/vda-isa-5: vda-isa-5-5-2-7
-    mql: |
-      digitalocean.firewalls.all(
-        inboundRules.none(
-          _["protocol"] == "tcp" && _["ports"] == "22" && _["sourceAddresses"].contains("0.0.0.0/0")
-        )
-      )
-      digitalocean.firewalls.all(
-        inboundRules.none(
-          _["protocol"] == "tcp" && _["ports"] == "22" && _["sourceAddresses"].contains("::/0")
-        )
-      )
+    variants:
+      - uid: mondoo-digitalocean-security-firewall-no-unrestricted-ssh-digitalocean
+        tags:
+          mondoo.com/filter-title: DigitalOcean
+          mondoo.com/filter-icon: digitalocean
+      - uid: mondoo-digitalocean-security-firewall-no-unrestricted-ssh-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-digitalocean-security-firewall-no-unrestricted-ssh-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-digitalocean-security-firewall-no-unrestricted-ssh-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that no Cloud Firewall has an inbound rule permitting TCP traffic on port 22 from the entire public internet (`0.0.0.0/0` or `::/0`). SSH should be restricted to a known trusted CIDR range, a bastion host, or a VPN endpoint.
@@ -412,9 +463,65 @@ queries:
             doctl compute firewall add-rules <firewall-id> \
               --inbound-rules "protocol:tcp,ports:22,address:<your-trusted-cidr>"
             ```
+        - id: terraform
+          desc: |
+            To scope SSH access in Terraform, set `source_addresses` on the `inbound_rule` for port 22 to a trusted CIDR instead of `0.0.0.0/0` or `::/0`:
+
+            ```hcl
+            resource "digitalocean_firewall" "example" {
+              name = "example"
+
+              inbound_rule {
+                protocol         = "tcp"
+                port_range       = "22"
+                source_addresses = ["203.0.113.0/24"]
+              }
+            }
+            ```
     refs:
       - url: https://docs.digitalocean.com/products/networking/firewalls/how-to/configure-rules/
         title: Configure Cloud Firewall rules
+
+  - uid: mondoo-digitalocean-security-firewall-no-unrestricted-ssh-digitalocean
+    filters: asset.platform == "digitalocean"
+    mql: |
+      digitalocean.firewalls.all(
+        inboundRules.none(
+          _["protocol"] == "tcp" && _["ports"] == "22" && _["sourceAddresses"].contains("0.0.0.0/0")
+        )
+      )
+      digitalocean.firewalls.all(
+        inboundRules.none(
+          _["protocol"] == "tcp" && _["ports"] == "22" && _["sourceAddresses"].contains("::/0")
+        )
+      )
+  - uid: mondoo-digitalocean-security-firewall-no-unrestricted-ssh-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "digitalocean_firewall")
+    mql: |
+      terraform.resources.where(nameLabel == "digitalocean_firewall").all(
+        blocks.where(type == "inbound_rule").none(
+          arguments["protocol"] == "tcp" && arguments["port_range"] == "22" && arguments["source_addresses"].contains("0.0.0.0/0")
+        ) &&
+        blocks.where(type == "inbound_rule").none(
+          arguments["protocol"] == "tcp" && arguments["port_range"] == "22" && arguments["source_addresses"].contains("::/0")
+        )
+      )
+  - uid: mondoo-digitalocean-security-firewall-no-unrestricted-ssh-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "digitalocean_firewall")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "digitalocean_firewall").all(
+        change.after["inbound_rule"] == empty ||
+        change.after["inbound_rule"].none(_["protocol"] == "tcp" && _["port_range"] == "22" && _["source_addresses"].contains("0.0.0.0/0")) &&
+        change.after["inbound_rule"].none(_["protocol"] == "tcp" && _["port_range"] == "22" && _["source_addresses"].contains("::/0"))
+      )
+  - uid: mondoo-digitalocean-security-firewall-no-unrestricted-ssh-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "digitalocean_firewall")
+    mql: |
+      terraform.state.resources.where(type == "digitalocean_firewall").all(
+        values["inbound_rule"] == empty ||
+        values["inbound_rule"].none(_["protocol"] == "tcp" && _["port_range"] == "22" && _["source_addresses"].contains("0.0.0.0/0")) &&
+        values["inbound_rule"].none(_["protocol"] == "tcp" && _["port_range"] == "22" && _["source_addresses"].contains("::/0"))
+      )
 
   - uid: mondoo-digitalocean-security-firewall-no-unrestricted-rdp
     title: Ensure no firewall allows unrestricted inbound RDP (port 3389)
@@ -433,17 +540,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-1-3-1
       compliance/soc2-2017: soc2-control-cc6-6-1
       compliance/vda-isa-5: vda-isa-5-5-2-7
-    mql: |
-      digitalocean.firewalls.all(
-        inboundRules.none(
-          _["protocol"] == "tcp" && _["ports"] == "3389" && _["sourceAddresses"].contains("0.0.0.0/0")
-        )
-      )
-      digitalocean.firewalls.all(
-        inboundRules.none(
-          _["protocol"] == "tcp" && _["ports"] == "3389" && _["sourceAddresses"].contains("::/0")
-        )
-      )
+    variants:
+      - uid: mondoo-digitalocean-security-firewall-no-unrestricted-rdp-digitalocean
+        tags:
+          mondoo.com/filter-title: DigitalOcean
+          mondoo.com/filter-icon: digitalocean
+      - uid: mondoo-digitalocean-security-firewall-no-unrestricted-rdp-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-digitalocean-security-firewall-no-unrestricted-rdp-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-digitalocean-security-firewall-no-unrestricted-rdp-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that no Cloud Firewall has an inbound rule permitting TCP traffic on port 3389 from the entire public internet (`0.0.0.0/0` or `::/0`). RDP should never be reachable from untrusted networks.
@@ -494,9 +607,65 @@ queries:
             doctl compute firewall remove-rules <firewall-id> \
               --inbound-rules "protocol:tcp,ports:3389,address:0.0.0.0/0"
             ```
+        - id: terraform
+          desc: |
+            To remove unrestricted RDP access in Terraform, drop the public `inbound_rule` for port 3389 or scope its `source_addresses` to a trusted CIDR:
+
+            ```hcl
+            resource "digitalocean_firewall" "example" {
+              name = "example"
+
+              inbound_rule {
+                protocol         = "tcp"
+                port_range       = "3389"
+                source_addresses = ["203.0.113.0/24"]
+              }
+            }
+            ```
     refs:
       - url: https://docs.digitalocean.com/products/networking/firewalls/how-to/configure-rules/
         title: Configure Cloud Firewall rules
+
+  - uid: mondoo-digitalocean-security-firewall-no-unrestricted-rdp-digitalocean
+    filters: asset.platform == "digitalocean"
+    mql: |
+      digitalocean.firewalls.all(
+        inboundRules.none(
+          _["protocol"] == "tcp" && _["ports"] == "3389" && _["sourceAddresses"].contains("0.0.0.0/0")
+        )
+      )
+      digitalocean.firewalls.all(
+        inboundRules.none(
+          _["protocol"] == "tcp" && _["ports"] == "3389" && _["sourceAddresses"].contains("::/0")
+        )
+      )
+  - uid: mondoo-digitalocean-security-firewall-no-unrestricted-rdp-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "digitalocean_firewall")
+    mql: |
+      terraform.resources.where(nameLabel == "digitalocean_firewall").all(
+        blocks.where(type == "inbound_rule").none(
+          arguments["protocol"] == "tcp" && arguments["port_range"] == "3389" && arguments["source_addresses"].contains("0.0.0.0/0")
+        ) &&
+        blocks.where(type == "inbound_rule").none(
+          arguments["protocol"] == "tcp" && arguments["port_range"] == "3389" && arguments["source_addresses"].contains("::/0")
+        )
+      )
+  - uid: mondoo-digitalocean-security-firewall-no-unrestricted-rdp-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "digitalocean_firewall")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "digitalocean_firewall").all(
+        change.after["inbound_rule"] == empty ||
+        change.after["inbound_rule"].none(_["protocol"] == "tcp" && _["port_range"] == "3389" && _["source_addresses"].contains("0.0.0.0/0")) &&
+        change.after["inbound_rule"].none(_["protocol"] == "tcp" && _["port_range"] == "3389" && _["source_addresses"].contains("::/0"))
+      )
+  - uid: mondoo-digitalocean-security-firewall-no-unrestricted-rdp-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "digitalocean_firewall")
+    mql: |
+      terraform.state.resources.where(type == "digitalocean_firewall").all(
+        values["inbound_rule"] == empty ||
+        values["inbound_rule"].none(_["protocol"] == "tcp" && _["port_range"] == "3389" && _["source_addresses"].contains("0.0.0.0/0")) &&
+        values["inbound_rule"].none(_["protocol"] == "tcp" && _["port_range"] == "3389" && _["source_addresses"].contains("::/0"))
+      )
 
   - uid: mondoo-digitalocean-security-firewall-no-unrestricted-db-ports
     title: Ensure no firewall allows unrestricted inbound on common database ports
@@ -515,19 +684,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-1-3-1
       compliance/soc2-2017: soc2-control-cc6-6-1
       compliance/vda-isa-5: vda-isa-5-5-2-7
-    mql: |
-      digitalocean.firewalls.all(inboundRules.none(_["protocol"] == "tcp" && _["ports"] == "3306" && _["sourceAddresses"].contains("0.0.0.0/0")))
-      digitalocean.firewalls.all(inboundRules.none(_["protocol"] == "tcp" && _["ports"] == "3306" && _["sourceAddresses"].contains("::/0")))
-      digitalocean.firewalls.all(inboundRules.none(_["protocol"] == "tcp" && _["ports"] == "5432" && _["sourceAddresses"].contains("0.0.0.0/0")))
-      digitalocean.firewalls.all(inboundRules.none(_["protocol"] == "tcp" && _["ports"] == "5432" && _["sourceAddresses"].contains("::/0")))
-      digitalocean.firewalls.all(inboundRules.none(_["protocol"] == "tcp" && _["ports"] == "27017" && _["sourceAddresses"].contains("0.0.0.0/0")))
-      digitalocean.firewalls.all(inboundRules.none(_["protocol"] == "tcp" && _["ports"] == "27017" && _["sourceAddresses"].contains("::/0")))
-      digitalocean.firewalls.all(inboundRules.none(_["protocol"] == "tcp" && _["ports"] == "6379" && _["sourceAddresses"].contains("0.0.0.0/0")))
-      digitalocean.firewalls.all(inboundRules.none(_["protocol"] == "tcp" && _["ports"] == "6379" && _["sourceAddresses"].contains("::/0")))
-      digitalocean.firewalls.all(inboundRules.none(_["protocol"] == "tcp" && _["ports"] == "9092" && _["sourceAddresses"].contains("0.0.0.0/0")))
-      digitalocean.firewalls.all(inboundRules.none(_["protocol"] == "tcp" && _["ports"] == "9092" && _["sourceAddresses"].contains("::/0")))
-      digitalocean.firewalls.all(inboundRules.none(_["protocol"] == "tcp" && _["ports"] == "9200" && _["sourceAddresses"].contains("0.0.0.0/0")))
-      digitalocean.firewalls.all(inboundRules.none(_["protocol"] == "tcp" && _["ports"] == "9200" && _["sourceAddresses"].contains("::/0")))
+    variants:
+      - uid: mondoo-digitalocean-security-firewall-no-unrestricted-db-ports-digitalocean
+        tags:
+          mondoo.com/filter-title: DigitalOcean
+          mondoo.com/filter-icon: digitalocean
+      - uid: mondoo-digitalocean-security-firewall-no-unrestricted-db-ports-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-digitalocean-security-firewall-no-unrestricted-db-ports-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-digitalocean-security-firewall-no-unrestricted-db-ports-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that no Cloud Firewall allows inbound traffic from the public internet to common database ports: MySQL (3306), PostgreSQL (5432), MongoDB (27017), Redis (6379), Kafka (9092), and Elasticsearch/OpenSearch (9200). Database connectivity should be confined to private networks.
@@ -581,9 +754,71 @@ queries:
             ```
 
             Repeat for each offending port (`3306`, `5432`, `27017`, `6379`, `9092`, `9200`).
+        - id: terraform
+          desc: |
+            To keep database ports off the public internet in Terraform, scope each database-port `inbound_rule` to a trusted CIDR or omit the public rule entirely:
+
+            ```hcl
+            resource "digitalocean_firewall" "example" {
+              name = "example"
+
+              inbound_rule {
+                protocol         = "tcp"
+                port_range       = "5432"
+                source_addresses = ["10.0.0.0/8"]
+              }
+            }
+            ```
     refs:
       - url: https://docs.digitalocean.com/products/networking/firewalls/how-to/configure-rules/
         title: Configure Cloud Firewall rules
+
+  - uid: mondoo-digitalocean-security-firewall-no-unrestricted-db-ports-digitalocean
+    filters: asset.platform == "digitalocean"
+    mql: |
+      digitalocean.firewalls.all(inboundRules.none(_["protocol"] == "tcp" && _["ports"] == "3306" && _["sourceAddresses"].contains("0.0.0.0/0")))
+      digitalocean.firewalls.all(inboundRules.none(_["protocol"] == "tcp" && _["ports"] == "3306" && _["sourceAddresses"].contains("::/0")))
+      digitalocean.firewalls.all(inboundRules.none(_["protocol"] == "tcp" && _["ports"] == "5432" && _["sourceAddresses"].contains("0.0.0.0/0")))
+      digitalocean.firewalls.all(inboundRules.none(_["protocol"] == "tcp" && _["ports"] == "5432" && _["sourceAddresses"].contains("::/0")))
+      digitalocean.firewalls.all(inboundRules.none(_["protocol"] == "tcp" && _["ports"] == "27017" && _["sourceAddresses"].contains("0.0.0.0/0")))
+      digitalocean.firewalls.all(inboundRules.none(_["protocol"] == "tcp" && _["ports"] == "27017" && _["sourceAddresses"].contains("::/0")))
+      digitalocean.firewalls.all(inboundRules.none(_["protocol"] == "tcp" && _["ports"] == "6379" && _["sourceAddresses"].contains("0.0.0.0/0")))
+      digitalocean.firewalls.all(inboundRules.none(_["protocol"] == "tcp" && _["ports"] == "6379" && _["sourceAddresses"].contains("::/0")))
+      digitalocean.firewalls.all(inboundRules.none(_["protocol"] == "tcp" && _["ports"] == "9092" && _["sourceAddresses"].contains("0.0.0.0/0")))
+      digitalocean.firewalls.all(inboundRules.none(_["protocol"] == "tcp" && _["ports"] == "9092" && _["sourceAddresses"].contains("::/0")))
+      digitalocean.firewalls.all(inboundRules.none(_["protocol"] == "tcp" && _["ports"] == "9200" && _["sourceAddresses"].contains("0.0.0.0/0")))
+      digitalocean.firewalls.all(inboundRules.none(_["protocol"] == "tcp" && _["ports"] == "9200" && _["sourceAddresses"].contains("::/0")))
+  - uid: mondoo-digitalocean-security-firewall-no-unrestricted-db-ports-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "digitalocean_firewall")
+    mql: |
+      terraform.resources.where(nameLabel == "digitalocean_firewall").all(
+        blocks.where(type == "inbound_rule").none(
+          arguments["protocol"] == "tcp" &&
+          arguments["port_range"] == /^(3306|5432|27017|6379|9092|9200)$/ &&
+          arguments["source_addresses"].contains("0.0.0.0/0")
+        ) &&
+        blocks.where(type == "inbound_rule").none(
+          arguments["protocol"] == "tcp" &&
+          arguments["port_range"] == /^(3306|5432|27017|6379|9092|9200)$/ &&
+          arguments["source_addresses"].contains("::/0")
+        )
+      )
+  - uid: mondoo-digitalocean-security-firewall-no-unrestricted-db-ports-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "digitalocean_firewall")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "digitalocean_firewall").all(
+        change.after["inbound_rule"] == empty ||
+        change.after["inbound_rule"].none(_["protocol"] == "tcp" && _["port_range"] == /^(3306|5432|27017|6379|9092|9200)$/ && _["source_addresses"].contains("0.0.0.0/0")) &&
+        change.after["inbound_rule"].none(_["protocol"] == "tcp" && _["port_range"] == /^(3306|5432|27017|6379|9092|9200)$/ && _["source_addresses"].contains("::/0"))
+      )
+  - uid: mondoo-digitalocean-security-firewall-no-unrestricted-db-ports-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "digitalocean_firewall")
+    mql: |
+      terraform.state.resources.where(type == "digitalocean_firewall").all(
+        values["inbound_rule"] == empty ||
+        values["inbound_rule"].none(_["protocol"] == "tcp" && _["port_range"] == /^(3306|5432|27017|6379|9092|9200)$/ && _["source_addresses"].contains("0.0.0.0/0")) &&
+        values["inbound_rule"].none(_["protocol"] == "tcp" && _["port_range"] == /^(3306|5432|27017|6379|9092|9200)$/ && _["source_addresses"].contains("::/0"))
+      )
 
   - uid: mondoo-digitalocean-security-firewall-no-all-ports-open
     title: Ensure no firewall allows unrestricted inbound on all ports
@@ -602,15 +837,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-1-3-1
       compliance/soc2-2017: soc2-control-cc6-6-1
       compliance/vda-isa-5: vda-isa-5-5-2-7
-    mql: |
-      digitalocean.firewalls.all(inboundRules.none(_["ports"] == "0" && _["sourceAddresses"].contains("0.0.0.0/0")))
-      digitalocean.firewalls.all(inboundRules.none(_["ports"] == "0" && _["sourceAddresses"].contains("::/0")))
-      digitalocean.firewalls.all(inboundRules.none(_["ports"] == "all" && _["sourceAddresses"].contains("0.0.0.0/0")))
-      digitalocean.firewalls.all(inboundRules.none(_["ports"] == "all" && _["sourceAddresses"].contains("::/0")))
-      digitalocean.firewalls.all(inboundRules.none(_["ports"] == "1-65535" && _["sourceAddresses"].contains("0.0.0.0/0")))
-      digitalocean.firewalls.all(inboundRules.none(_["ports"] == "1-65535" && _["sourceAddresses"].contains("::/0")))
-      digitalocean.firewalls.all(inboundRules.none(_["ports"] == "0-65535" && _["sourceAddresses"].contains("0.0.0.0/0")))
-      digitalocean.firewalls.all(inboundRules.none(_["ports"] == "0-65535" && _["sourceAddresses"].contains("::/0")))
+    variants:
+      - uid: mondoo-digitalocean-security-firewall-no-all-ports-open-digitalocean
+        tags:
+          mondoo.com/filter-title: DigitalOcean
+          mondoo.com/filter-icon: digitalocean
+      - uid: mondoo-digitalocean-security-firewall-no-all-ports-open-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-digitalocean-security-firewall-no-all-ports-open-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-digitalocean-security-firewall-no-all-ports-open-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that no Cloud Firewall has an inbound rule opening the full port range (`0`, `all`, `1-65535`, or `0-65535`) from the public internet. Firewalls must only expose specific ports required by the workload.
@@ -662,10 +905,71 @@ queries:
             doctl compute firewall remove-rules <firewall-id> \
               --inbound-rules "protocol:tcp,ports:0,address:0.0.0.0/0"
             ```
+        - id: terraform
+          desc: |
+            To avoid a catch-all rule in Terraform, define `inbound_rule` blocks that name only the specific ports the workload needs instead of `port_range = "all"` (or the full range), and scope `source_addresses`:
+
+            ```hcl
+            resource "digitalocean_firewall" "example" {
+              name = "example"
+
+              inbound_rule {
+                protocol         = "tcp"
+                port_range       = "443"
+                source_addresses = ["0.0.0.0/0", "::/0"]
+              }
+            }
+            ```
     refs:
       - url: https://docs.digitalocean.com/products/networking/firewalls/how-to/configure-rules/
         title: Configure Cloud Firewall rules
 
+  - uid: mondoo-digitalocean-security-firewall-no-all-ports-open-digitalocean
+    filters: asset.platform == "digitalocean"
+    mql: |
+      digitalocean.firewalls.all(inboundRules.none(_["ports"] == "0" && _["sourceAddresses"].contains("0.0.0.0/0")))
+      digitalocean.firewalls.all(inboundRules.none(_["ports"] == "0" && _["sourceAddresses"].contains("::/0")))
+      digitalocean.firewalls.all(inboundRules.none(_["ports"] == "all" && _["sourceAddresses"].contains("0.0.0.0/0")))
+      digitalocean.firewalls.all(inboundRules.none(_["ports"] == "all" && _["sourceAddresses"].contains("::/0")))
+      digitalocean.firewalls.all(inboundRules.none(_["ports"] == "1-65535" && _["sourceAddresses"].contains("0.0.0.0/0")))
+      digitalocean.firewalls.all(inboundRules.none(_["ports"] == "1-65535" && _["sourceAddresses"].contains("::/0")))
+      digitalocean.firewalls.all(inboundRules.none(_["ports"] == "0-65535" && _["sourceAddresses"].contains("0.0.0.0/0")))
+      digitalocean.firewalls.all(inboundRules.none(_["ports"] == "0-65535" && _["sourceAddresses"].contains("::/0")))
+  - uid: mondoo-digitalocean-security-firewall-no-all-ports-open-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "digitalocean_firewall")
+    mql: |
+      terraform.resources.where(nameLabel == "digitalocean_firewall").all(
+        blocks.where(type == "inbound_rule").none(
+          arguments["port_range"] == /^(0|all|1-65535|0-65535)$/ &&
+          arguments["source_addresses"].contains("0.0.0.0/0")
+        ) &&
+        blocks.where(type == "inbound_rule").none(
+          arguments["port_range"] == /^(0|all|1-65535|0-65535)$/ &&
+          arguments["source_addresses"].contains("::/0")
+        )
+      )
+  - uid: mondoo-digitalocean-security-firewall-no-all-ports-open-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "digitalocean_firewall")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "digitalocean_firewall").all(
+        change.after["inbound_rule"] == empty ||
+        change.after["inbound_rule"].none(_["port_range"] == /^(0|all|1-65535|0-65535)$/ && _["source_addresses"].contains("0.0.0.0/0")) &&
+        change.after["inbound_rule"].none(_["port_range"] == /^(0|all|1-65535|0-65535)$/ && _["source_addresses"].contains("::/0"))
+      )
+  - uid: mondoo-digitalocean-security-firewall-no-all-ports-open-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "digitalocean_firewall")
+    mql: |
+      terraform.state.resources.where(type == "digitalocean_firewall").all(
+        values["inbound_rule"] == empty ||
+        values["inbound_rule"].none(_["port_range"] == /^(0|all|1-65535|0-65535)$/ && _["source_addresses"].contains("0.0.0.0/0")) &&
+        values["inbound_rule"].none(_["port_range"] == /^(0|all|1-65535|0-65535)$/ && _["source_addresses"].contains("::/0"))
+      )
+
+  # No Terraform variants: this check requires cross-resource correlation between
+  # digitalocean_database_cluster and digitalocean_database_firewall (matched by
+  # cluster_id), which is awkward to express reliably in MQL on Terraform sources.
+  # The runtime check reads the firewallRules collected per cluster server-side. This
+  # is the same correlation limitation as mondoo-digitalocean-security-droplet-firewall-coverage.
   - uid: mondoo-digitalocean-security-db-firewall-configured
     title: Ensure managed databases restrict access via Trusted Sources
     impact: 90
@@ -737,6 +1041,7 @@ queries:
             doctl databases firewalls append <database-id> \
               --rule ip_addr:<cidr>
             ```
+        # No Terraform remediation: the same cross-resource correlation limitation as the variants above. Trusted Sources are a separate digitalocean_database_firewall resource referencing cluster_id, so an HCL snippet cannot assert coverage of an arbitrary cluster.
     refs:
       - url: https://docs.digitalocean.com/products/databases/postgresql/how-to/secure/
         title: Secure a managed database cluster
@@ -758,8 +1063,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-1-3-1
       compliance/soc2-2017: soc2-control-cc6-1-5
       compliance/vda-isa-5: vda-isa-5-5-2-7
-    mql: |
-      digitalocean.databases.all(privateNetworkUuid != "")
+    variants:
+      - uid: mondoo-digitalocean-security-db-in-private-network-digitalocean
+        tags:
+          mondoo.com/filter-title: DigitalOcean
+          mondoo.com/filter-icon: digitalocean
+      - uid: mondoo-digitalocean-security-db-in-private-network-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-digitalocean-security-db-in-private-network-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-digitalocean-security-db-in-private-network-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that every managed database cluster is attached to a VPC private network. By default, managed databases receive a public connection string and must be connected over the internet unless a private network is configured at creation time.
@@ -810,9 +1130,41 @@ queries:
               --region <region> \
               --private-network-uuid <vpc-uuid>
             ```
+        - id: terraform
+          desc: |
+            To attach a managed database to a VPC in Terraform, set `private_network_uuid` on the `digitalocean_database_cluster` resource:
+
+            ```hcl
+            resource "digitalocean_database_cluster" "example" {
+              name                 = "example"
+              engine               = "pg"
+              version              = "16"
+              size                 = "db-s-1vcpu-1gb"
+              region               = "nyc3"
+              node_count           = 1
+              private_network_uuid = digitalocean_vpc.example.id
+            }
+            ```
     refs:
       - url: https://docs.digitalocean.com/products/databases/postgresql/how-to/connect/
         title: Connect to a managed database cluster
+
+  - uid: mondoo-digitalocean-security-db-in-private-network-digitalocean
+    filters: asset.platform == "digitalocean"
+    mql: |
+      digitalocean.databases.all(privateNetworkUuid != "")
+  - uid: mondoo-digitalocean-security-db-in-private-network-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "digitalocean_database_cluster")
+    mql: |
+      terraform.resources.where(nameLabel == "digitalocean_database_cluster").all(arguments.private_network_uuid != empty)
+  - uid: mondoo-digitalocean-security-db-in-private-network-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "digitalocean_database_cluster")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "digitalocean_database_cluster").all(change.after.private_network_uuid != empty)
+  - uid: mondoo-digitalocean-security-db-in-private-network-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "digitalocean_database_cluster")
+    mql: |
+      terraform.state.resources.where(type == "digitalocean_database_cluster").all(values.private_network_uuid != empty)
 
   - uid: mondoo-digitalocean-security-db-engine-supported-version
     title: Ensure managed database engines are not running an EOL version
@@ -831,13 +1183,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-6-3-3
       compliance/soc2-2017: soc2-control-cc7-1-5
       compliance/vda-isa-5: vda-isa-5-5-2-5
-    mql: |
-      digitalocean.databases.where(engine == "pg").all(version != "9" && version != "9.5" && version != "9.6" && version != "10" && version != "11" && version != "12" && version != "13")
-      digitalocean.databases.where(engine == "mysql").all(version != "5.6" && version != "5.7")
-      digitalocean.databases.where(engine == "redis").all(version != "4" && version != "5" && version != "6")
-      digitalocean.databases.where(engine == "mongodb").all(version != "3.6" && version != "4.0" && version != "4.2" && version != "4.4" && version != "5.0")
-      digitalocean.databases.where(engine == "kafka").all(version != "2.8" && version != "3.0" && version != "3.1" && version != "3.2" && version != "3.3" && version != "3.4")
-      digitalocean.databases.where(engine == "opensearch").all(version != "1.0" && version != "1.1" && version != "1.2" && version != "1.3")
+    variants:
+      - uid: mondoo-digitalocean-security-db-engine-supported-version-digitalocean
+        tags:
+          mondoo.com/filter-title: DigitalOcean
+          mondoo.com/filter-icon: digitalocean
+      - uid: mondoo-digitalocean-security-db-engine-supported-version-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-digitalocean-security-db-engine-supported-version-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-digitalocean-security-db-engine-supported-version-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that managed database clusters are not running a database engine version that has reached end of life or is no longer receiving security patches from its upstream maintainer or from DigitalOcean.
@@ -924,9 +1286,60 @@ queries:
                 ```bash
                 doctl databases delete <old-cluster-id>
                 ```
+        - id: terraform
+          desc: |
+            Terraform manages the engine version through the `version` argument on `digitalocean_database_cluster`. Set it to a supported major version. Note that Terraform performs an in-place update only where the engine supports it; otherwise the resource is replaced, so review the plan and back up data first:
+
+            ```hcl
+            resource "digitalocean_database_cluster" "example" {
+              name       = "example"
+              engine     = "pg"
+              version    = "16"
+              size       = "db-s-1vcpu-1gb"
+              region     = "nyc3"
+              node_count = 1
+            }
+            ```
     refs:
       - url: https://docs.digitalocean.com/products/databases/postgresql/how-to/upgrade-major-version/
         title: Upgrade a managed database major version
+
+  - uid: mondoo-digitalocean-security-db-engine-supported-version-digitalocean
+    filters: asset.platform == "digitalocean"
+    mql: |
+      digitalocean.databases.where(engine == "pg").all(version != "9" && version != "9.5" && version != "9.6" && version != "10" && version != "11" && version != "12" && version != "13")
+      digitalocean.databases.where(engine == "mysql").all(version != "5.6" && version != "5.7")
+      digitalocean.databases.where(engine == "redis").all(version != "4" && version != "5" && version != "6")
+      digitalocean.databases.where(engine == "mongodb").all(version != "3.6" && version != "4.0" && version != "4.2" && version != "4.4" && version != "5.0")
+      digitalocean.databases.where(engine == "kafka").all(version != "2.8" && version != "3.0" && version != "3.1" && version != "3.2" && version != "3.3" && version != "3.4")
+      digitalocean.databases.where(engine == "opensearch").all(version != "1.0" && version != "1.1" && version != "1.2" && version != "1.3")
+  - uid: mondoo-digitalocean-security-db-engine-supported-version-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "digitalocean_database_cluster")
+    mql: |
+      terraform.resources.where(nameLabel == "digitalocean_database_cluster" && arguments["engine"] == "pg").all(arguments["version"] != "9" && arguments["version"] != "9.5" && arguments["version"] != "9.6" && arguments["version"] != "10" && arguments["version"] != "11" && arguments["version"] != "12" && arguments["version"] != "13")
+      terraform.resources.where(nameLabel == "digitalocean_database_cluster" && arguments["engine"] == "mysql").all(arguments["version"] != "5.6" && arguments["version"] != "5.7")
+      terraform.resources.where(nameLabel == "digitalocean_database_cluster" && arguments["engine"] == "redis").all(arguments["version"] != "4" && arguments["version"] != "5" && arguments["version"] != "6")
+      terraform.resources.where(nameLabel == "digitalocean_database_cluster" && arguments["engine"] == "mongodb").all(arguments["version"] != "3.6" && arguments["version"] != "4.0" && arguments["version"] != "4.2" && arguments["version"] != "4.4" && arguments["version"] != "5.0")
+      terraform.resources.where(nameLabel == "digitalocean_database_cluster" && arguments["engine"] == "kafka").all(arguments["version"] != "2.8" && arguments["version"] != "3.0" && arguments["version"] != "3.1" && arguments["version"] != "3.2" && arguments["version"] != "3.3" && arguments["version"] != "3.4")
+      terraform.resources.where(nameLabel == "digitalocean_database_cluster" && arguments["engine"] == "opensearch").all(arguments["version"] != "1.0" && arguments["version"] != "1.1" && arguments["version"] != "1.2" && arguments["version"] != "1.3")
+  - uid: mondoo-digitalocean-security-db-engine-supported-version-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "digitalocean_database_cluster")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "digitalocean_database_cluster" && change.after.engine == "pg").all(change.after.version != "9" && change.after.version != "9.5" && change.after.version != "9.6" && change.after.version != "10" && change.after.version != "11" && change.after.version != "12" && change.after.version != "13")
+      terraform.plan.resourceChanges.where(type == "digitalocean_database_cluster" && change.after.engine == "mysql").all(change.after.version != "5.6" && change.after.version != "5.7")
+      terraform.plan.resourceChanges.where(type == "digitalocean_database_cluster" && change.after.engine == "redis").all(change.after.version != "4" && change.after.version != "5" && change.after.version != "6")
+      terraform.plan.resourceChanges.where(type == "digitalocean_database_cluster" && change.after.engine == "mongodb").all(change.after.version != "3.6" && change.after.version != "4.0" && change.after.version != "4.2" && change.after.version != "4.4" && change.after.version != "5.0")
+      terraform.plan.resourceChanges.where(type == "digitalocean_database_cluster" && change.after.engine == "kafka").all(change.after.version != "2.8" && change.after.version != "3.0" && change.after.version != "3.1" && change.after.version != "3.2" && change.after.version != "3.3" && change.after.version != "3.4")
+      terraform.plan.resourceChanges.where(type == "digitalocean_database_cluster" && change.after.engine == "opensearch").all(change.after.version != "1.0" && change.after.version != "1.1" && change.after.version != "1.2" && change.after.version != "1.3")
+  - uid: mondoo-digitalocean-security-db-engine-supported-version-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "digitalocean_database_cluster")
+    mql: |
+      terraform.state.resources.where(type == "digitalocean_database_cluster" && values.engine == "pg").all(values.version != "9" && values.version != "9.5" && values.version != "9.6" && values.version != "10" && values.version != "11" && values.version != "12" && values.version != "13")
+      terraform.state.resources.where(type == "digitalocean_database_cluster" && values.engine == "mysql").all(values.version != "5.6" && values.version != "5.7")
+      terraform.state.resources.where(type == "digitalocean_database_cluster" && values.engine == "redis").all(values.version != "4" && values.version != "5" && values.version != "6")
+      terraform.state.resources.where(type == "digitalocean_database_cluster" && values.engine == "mongodb").all(values.version != "3.6" && values.version != "4.0" && values.version != "4.2" && values.version != "4.4" && values.version != "5.0")
+      terraform.state.resources.where(type == "digitalocean_database_cluster" && values.engine == "kafka").all(values.version != "2.8" && values.version != "3.0" && values.version != "3.1" && values.version != "3.2" && values.version != "3.3" && values.version != "3.4")
+      terraform.state.resources.where(type == "digitalocean_database_cluster" && values.engine == "opensearch").all(values.version != "1.0" && values.version != "1.1" && values.version != "1.2" && values.version != "1.3")
 
   # No Terraform variants: the check inspects the validity window of the CA certificate the cluster currently advertises — runtime telemetry that has no analog in digitalocean_database_cluster HCL. Terraform expresses desired cluster configuration; the CA is managed and rotated by DigitalOcean and only exposed by the live API.
   - uid: mondoo-digitalocean-security-db-ca-certificate-not-expired
@@ -1037,10 +1450,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-4-2-1
       compliance/soc2-2017: soc2-control-cc6-7-2
       compliance/vda-isa-5: vda-isa-5-5-1-2
-    mql: |
-      digitalocean.loadBalancers.all(
-        forwardingRules.none(_["entry_protocol"] == "http") || redirectHttpToHttps == true
-      )
+    variants:
+      - uid: mondoo-digitalocean-security-lb-http-redirected-to-https-digitalocean
+        tags:
+          mondoo.com/filter-title: DigitalOcean
+          mondoo.com/filter-icon: digitalocean
+      - uid: mondoo-digitalocean-security-lb-http-redirected-to-https-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-digitalocean-security-lb-http-redirected-to-https-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-digitalocean-security-lb-http-redirected-to-https-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that any load balancer accepting inbound HTTP traffic has `redirectHttpToHttps` enabled, so clients are issued a 301 redirect to the HTTPS equivalent of their request. A load balancer that forwards HTTP without redirecting it allows plaintext sessions end-to-end.
@@ -1090,9 +1516,58 @@ queries:
             doctl compute load-balancer update <lb-id> \
               --redirect-http-to-https
             ```
+        - id: terraform
+          desc: |
+            To enforce the HTTP-to-HTTPS redirect in Terraform, set `redirect_http_to_https = true` on the `digitalocean_loadbalancer` resource alongside an HTTPS forwarding rule:
+
+            ```hcl
+            resource "digitalocean_loadbalancer" "example" {
+              name                   = "example-lb"
+              region                 = "nyc3"
+              redirect_http_to_https = true
+
+              forwarding_rule {
+                entry_port       = 443
+                entry_protocol   = "https"
+                target_port      = 80
+                target_protocol  = "http"
+                certificate_name = digitalocean_certificate.example.name
+              }
+            }
+            ```
     refs:
       - url: https://docs.digitalocean.com/products/networking/load-balancers/how-to/ssl-termination/
         title: Load balancer SSL termination and redirect
+
+  - uid: mondoo-digitalocean-security-lb-http-redirected-to-https-digitalocean
+    filters: asset.platform == "digitalocean"
+    mql: |
+      digitalocean.loadBalancers.all(
+        forwardingRules.none(_["entry_protocol"] == "http") || redirectHttpToHttps == true
+      )
+  - uid: mondoo-digitalocean-security-lb-http-redirected-to-https-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "digitalocean_loadbalancer")
+    mql: |
+      terraform.resources.where(nameLabel == "digitalocean_loadbalancer").all(
+        blocks.where(type == "forwarding_rule").none(arguments["entry_protocol"] == "http") ||
+        arguments["redirect_http_to_https"] == true
+      )
+  - uid: mondoo-digitalocean-security-lb-http-redirected-to-https-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "digitalocean_loadbalancer")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "digitalocean_loadbalancer").all(
+        change.after["forwarding_rule"] == empty ||
+        change.after["forwarding_rule"].none(_["entry_protocol"] == "http") ||
+        change.after.redirect_http_to_https == true
+      )
+  - uid: mondoo-digitalocean-security-lb-http-redirected-to-https-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "digitalocean_loadbalancer")
+    mql: |
+      terraform.state.resources.where(type == "digitalocean_loadbalancer").all(
+        values["forwarding_rule"] == empty ||
+        values["forwarding_rule"].none(_["entry_protocol"] == "http") ||
+        values.redirect_http_to_https == true
+      )
 
   - uid: mondoo-digitalocean-security-lb-in-vpc
     title: Ensure load balancers are deployed inside a VPC
@@ -1240,8 +1715,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-6-3-3
       compliance/soc2-2017: soc2-control-cc7-1-5
       compliance/vda-isa-5: vda-isa-5-5-2-5
-    mql: |
-      digitalocean.kubernetesClusters.all(autoUpgrade == true)
+    variants:
+      - uid: mondoo-digitalocean-security-doks-auto-upgrade-enabled-digitalocean
+        tags:
+          mondoo.com/filter-title: DigitalOcean
+          mondoo.com/filter-icon: digitalocean
+      - uid: mondoo-digitalocean-security-doks-auto-upgrade-enabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-digitalocean-security-doks-auto-upgrade-enabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-digitalocean-security-doks-auto-upgrade-enabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that every DigitalOcean Kubernetes Service (DOKS) cluster has automatic patch upgrades enabled. By default, auto-upgrade is not enabled on new clusters, leaving patch application as a manual operator responsibility.
@@ -1289,9 +1779,49 @@ queries:
             ```bash
             doctl kubernetes cluster update <cluster-id> --auto-upgrade=true
             ```
+        - id: terraform
+          desc: |
+            To enable automatic patch upgrades in Terraform, set `auto_upgrade = true` on the `digitalocean_kubernetes_cluster` resource (a `maintenance_policy` block is recommended to control the upgrade window):
+
+            ```hcl
+            resource "digitalocean_kubernetes_cluster" "example" {
+              name         = "example"
+              region       = "nyc3"
+              version      = "1.31.1-do.0"
+              auto_upgrade = true
+
+              maintenance_policy {
+                start_time = "04:00"
+                day        = "sunday"
+              }
+
+              node_pool {
+                name       = "default"
+                size       = "s-1vcpu-2gb"
+                node_count = 1
+              }
+            }
+            ```
     refs:
       - url: https://docs.digitalocean.com/products/kubernetes/how-to/upgrade-cluster/
         title: Upgrade a DOKS cluster
+
+  - uid: mondoo-digitalocean-security-doks-auto-upgrade-enabled-digitalocean
+    filters: asset.platform == "digitalocean"
+    mql: |
+      digitalocean.kubernetesClusters.all(autoUpgrade == true)
+  - uid: mondoo-digitalocean-security-doks-auto-upgrade-enabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "digitalocean_kubernetes_cluster")
+    mql: |
+      terraform.resources.where(nameLabel == "digitalocean_kubernetes_cluster").all(arguments["auto_upgrade"] == true)
+  - uid: mondoo-digitalocean-security-doks-auto-upgrade-enabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "digitalocean_kubernetes_cluster")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "digitalocean_kubernetes_cluster").all(change.after.auto_upgrade == true)
+  - uid: mondoo-digitalocean-security-doks-auto-upgrade-enabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "digitalocean_kubernetes_cluster")
+    mql: |
+      terraform.state.resources.where(type == "digitalocean_kubernetes_cluster").all(values.auto_upgrade == true)
 
   - uid: mondoo-digitalocean-security-doks-supported-version
     title: Ensure DOKS clusters run a supported Kubernetes minor version
@@ -1310,10 +1840,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-6-3-3
       compliance/soc2-2017: soc2-control-cc7-1-5
       compliance/vda-isa-5: vda-isa-5-5-2-5
-    mql: |
-      digitalocean.kubernetesClusters.all(
-        version == /^1\.(3[0-9]|[4-9][0-9]|[1-9][0-9]{2})\./
-      )
+    variants:
+      - uid: mondoo-digitalocean-security-doks-supported-version-digitalocean
+        tags:
+          mondoo.com/filter-title: DigitalOcean
+          mondoo.com/filter-icon: digitalocean
+      - uid: mondoo-digitalocean-security-doks-supported-version-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-digitalocean-security-doks-supported-version-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-digitalocean-security-doks-supported-version-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that every DOKS cluster runs Kubernetes version 1.30 or newer, staying within the three-minor-version support window that DigitalOcean maintains. Clusters on older minor versions no longer receive security patches from either the upstream Kubernetes community or DigitalOcean.
@@ -1363,9 +1906,55 @@ queries:
             doctl kubernetes options versions
             doctl kubernetes cluster upgrade <cluster-id> --version <supported-version>
             ```
+        - id: terraform
+          desc: |
+            Terraform manages the cluster version through the `version` argument on `digitalocean_kubernetes_cluster`. Set it to a supported minor release (1.30 or newer). Use the `digitalocean_kubernetes_versions` data source to resolve the latest patch for a prefix:
+
+            ```hcl
+            data "digitalocean_kubernetes_versions" "example" {
+              version_prefix = "1.31."
+            }
+
+            resource "digitalocean_kubernetes_cluster" "example" {
+              name    = "example"
+              region  = "nyc3"
+              version = data.digitalocean_kubernetes_versions.example.latest_version
+
+              node_pool {
+                name       = "default"
+                size       = "s-1vcpu-2gb"
+                node_count = 1
+              }
+            }
+            ```
     refs:
       - url: https://docs.digitalocean.com/products/kubernetes/details/supported-releases/
         title: DOKS supported Kubernetes releases
+
+  - uid: mondoo-digitalocean-security-doks-supported-version-digitalocean
+    filters: asset.platform == "digitalocean"
+    mql: |
+      digitalocean.kubernetesClusters.all(
+        version == /^1\.(3[0-9]|[4-9][0-9]|[1-9][0-9]{2})\./
+      )
+  - uid: mondoo-digitalocean-security-doks-supported-version-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "digitalocean_kubernetes_cluster")
+    mql: |
+      terraform.resources.where(nameLabel == "digitalocean_kubernetes_cluster").all(
+        arguments["version"] == /^1\.(3[0-9]|[4-9][0-9]|[1-9][0-9]{2})\./
+      )
+  - uid: mondoo-digitalocean-security-doks-supported-version-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "digitalocean_kubernetes_cluster")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "digitalocean_kubernetes_cluster").all(
+        change.after.version == /^1\.(3[0-9]|[4-9][0-9]|[1-9][0-9]{2})\./
+      )
+  - uid: mondoo-digitalocean-security-doks-supported-version-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "digitalocean_kubernetes_cluster")
+    mql: |
+      terraform.state.resources.where(type == "digitalocean_kubernetes_cluster").all(
+        values.version == /^1\.(3[0-9]|[4-9][0-9]|[1-9][0-9]{2})\./
+      )
 
   # No Terraform variants: SSO configuration was added to the DigitalOcean godo
   # SDK in v1.187.0 and the digitalocean Terraform provider does not yet expose
@@ -1529,6 +2118,11 @@ queries:
       - url: https://docs.digitalocean.com/products/kubernetes/how-to/manage-cluster-access/
         title: Manage DOKS cluster access
 
+  # No Terraform variants: this check inspects the certificate's notAfter validity
+  # window — runtime telemetry set at issuance, not a configuration field. The
+  # digitalocean_certificate resource has no expiration argument (Let's Encrypt certs
+  # auto-renew; custom certs carry the date inside the uploaded PEM), so expiry is
+  # only observable through the live API.
   - uid: mondoo-digitalocean-security-cert-not-expired
     title: Ensure TLS certificates are not expired
     impact: 100
@@ -1598,6 +2192,7 @@ queries:
               --type lets_encrypt \
               --dns-names <domain>
             ```
+        # No Terraform remediation: expiry is not a configurable field. A digitalocean_certificate resource can provision a replacement, but Terraform cannot express or assert the validity window of an issued certificate.
     refs:
       - url: https://docs.digitalocean.com/products/networking/certificates/
         title: DigitalOcean TLS certificates
