@@ -426,12 +426,10 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-3-1
       compliance/vda-isa-5: vda-isa-5-4-1-1
     mql: |
-      firstStageIdentifier = docker.file.stages[0].from.image
-      docker.file.stages.where(from.image != firstStageIdentifier).all(user != empty)
-      docker.file.stages.where(from.image != firstStageIdentifier).all(user.user != "root")
+      docker.file.finalStage.runsAsRoot == false
     docs:
       desc: |
-        Dockerfile stages after the initial build stage should set a `USER` instruction that specifies a non-root user, so container processes do not run as root.
+        The final stage of the Dockerfile should set a `USER` instruction that specifies a non-root user, so container processes do not run as root. This check fails when the final stage omits `USER` entirely or sets it to `root` or UID `0`.
 
         **Why this matters**
 
@@ -440,17 +438,17 @@ queries:
         - **Least privilege:** Security standards recommend running containers with the least privileges necessary to perform their tasks.
         - **Operational risks:** Misconfigurations or vulnerabilities in containers running as root can lead to unintended access, data breaches, or service disruptions.
       audit: |
-        Inspect the Dockerfile to confirm runtime stages run as a non-root user:
+        Inspect the Dockerfile to confirm the final stage runs as a non-root user:
 
         1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
         2. Locate every `USER` instruction: `grep -nE '^USER' Dockerfile`.
-        3. Confirm each stage after the initial build stage declares a `USER` instruction and that none specify `root`.
+        3. Confirm the final build stage declares a `USER` instruction and that it does not specify `root` or `0`.
 
-        If every runtime stage sets a non-root `USER`, the check passes. If a stage omits `USER` or sets it to `root`, the check fails.
+        If the final stage sets a non-root `USER`, the check passes. If the final stage omits `USER` or sets it to `root` or `0`, the check fails.
       remediation:
         - id: dockerfile
           desc: |
-            Add a `USER` instruction that specifies a non-root user in every stage after the initial build stage. Make sure the user exists and has the permissions needed for the processes in that stage:
+            Add a `USER` instruction that specifies a non-root user in the final stage of the Dockerfile. Make sure the user exists and has the permissions needed for the processes in that stage:
 
             ```dockerfile
             RUN groupadd -r appgroup && useradd -r -g appgroup appuser
@@ -586,11 +584,10 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-3-1
       compliance/vda-isa-5: vda-isa-5-4-1-1
     mql: |
-      firstStageIdentifier = docker.file.stages[0].from.image
-      docker.file.stages.where(from.image != firstStageIdentifier).all(user.user != "0")
+      docker.file.finalStage.user.user != "0"
     docs:
       desc: |
-        The `USER` instruction in Dockerfile stages after the initial build stage should not specify UID 0, the root user's numeric identifier. This complements the non-root user check by catching cases where `USER 0` is used instead of `USER root`.
+        The `USER` instruction in the final Dockerfile stage should not specify UID 0, the root user's numeric identifier. This complements the non-root user check by catching cases where `USER 0` is used instead of `USER root`.
 
         **Why this matters**
 
@@ -599,13 +596,13 @@ queries:
         - **Container escape risk:** Running as UID 0 increases the impact of container escape vulnerabilities, potentially granting root access on the host.
         - **Kubernetes restrictions:** Many Kubernetes clusters enforce `runAsNonRoot` security contexts, which check the numeric UID, not the username.
       audit: |
-        Inspect the Dockerfile to confirm runtime stages do not run as UID 0:
+        Inspect the Dockerfile to confirm the final stage does not run as UID 0:
 
         1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
         2. Locate every `USER` instruction: `grep -nE '^USER' Dockerfile`.
-        3. Confirm no stage after the initial build stage sets `USER 0` or any form that resolves to UID 0.
+        3. Confirm the final stage does not set `USER 0` or any form that resolves to UID 0.
 
-        If no runtime stage uses UID 0, the check passes. If any stage sets `USER 0`, the check fails.
+        If the final stage does not use UID 0, the check passes. If it sets `USER 0`, the check fails.
       remediation:
         - id: dockerfile
           desc: |
@@ -936,7 +933,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-1
       compliance/vda-isa-5: false
     mql: |
-      docker.file.stages.last.labels["org.opencontainers.image.source"] != empty
+      docker.file.finalStage.labels["org.opencontainers.image.source"] != empty
     docs:
       desc: |
         The final stage of the Dockerfile should set the `org.opencontainers.image.source` label. This [OCI image annotation](https://github.com/opencontainers/image-spec/blob/main/annotations.md) records the URL of the source code repository that produced the image, so any running container can be traced back to the repository it was built from.
@@ -1002,7 +999,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-1
       compliance/vda-isa-5: false
     mql: |
-      docker.file.stages.last.labels["org.opencontainers.image.authors"] != empty
+      docker.file.finalStage.labels["org.opencontainers.image.authors"] != empty
     docs:
       desc: |
         The final stage of the Dockerfile should set the `org.opencontainers.image.authors` label. This [OCI image annotation](https://github.com/opencontainers/image-spec/blob/main/annotations.md) records the contact information for the people or team responsible for the image, so any running container can be traced back to a clear owner.
