@@ -98,6 +98,7 @@ Never edit these files manually. Regenerate with `make cnspec/generate`:
 
 - [cnspec Documentation](https://mondoo.com/docs/cnspec/)
 - [MQL Documentation](https://mondoo.com/docs/mql/) · [Built-in Functions](https://mondoo.com/docs/mql/functions) · [Resources by Provider](https://mondoo.com/docs/mql/resources/)
+- [MQL operator precedence](https://github.com/mondoohq/mql/blob/main/mqlc/parser/operators.go#L11) — reference for operator precedence during policy reviews
 - [Policy Authoring Guide](https://mondoo.com/docs/cnspec/write-policies/write-intro/)
 - [cnquery Repository](https://github.com/mondoohq/cnquery)
 - [Full Mondoo Docs (LLM-friendly text)](https://mondoo.com/docs/llms-full.txt)
