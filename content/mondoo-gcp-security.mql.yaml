@@ -92,6 +92,7 @@ policies:
           - uid: mondoo-gcp-security-cloud-dns-rsasha1-ksk-not-used
           - uid: mondoo-gcp-security-cloud-dns-rsasha1-zsk-not-used
           - uid: mondoo-gcp-security-cloud-dns-dnssec-nsec3-enabled
+          - uid: mondoo-gcp-security-cloud-dns-no-weak-dnssec-algorithms
       - title: Compute Engine Instances
         checks:
           - uid: mondoo-gcp-security-compute-instances-block-project-wide-ssh-keys
@@ -236,6 +237,7 @@ policies:
           - uid: mondoo-gcp-security-logging-bucket-cmek-encryption
           - uid: mondoo-gcp-security-logging-sinks-configured
           - uid: mondoo-gcp-security-logging-sink-destination-cmek-encryption
+          - uid: mondoo-gcp-security-logging-log-router-cmek-encryption
       - title: Pub/Sub
         checks:
           - uid: mondoo-gcp-security-pubsub-topic-cmek-encryption
@@ -287,6 +289,7 @@ policies:
       - title: Cloud Composer
         checks:
           - uid: mondoo-gcp-security-composer-environment-cmek-encryption
+          - uid: mondoo-gcp-security-composer-environment-private
       - title: Dataflow
         checks:
           - uid: mondoo-gcp-security-dataflow-job-no-public-ips
@@ -358,6 +361,7 @@ policies:
           - uid: mondoo-gcp-security-alloydb-cmek-encryption
           - uid: mondoo-gcp-security-alloydb-no-public-ip
           - uid: mondoo-gcp-security-alloydb-audit-logging-flags
+          - uid: mondoo-gcp-security-alloydb-psc-enabled
       - title: Backup & DR
         checks:
           - uid: mondoo-gcp-security-backupdr-vault-access-restricted
@@ -6956,6 +6960,175 @@ queries:
         values['dnssec_config'] != empty &&
         values['dnssec_config'].where(_['state'] == "on").all(
           _['default_key_specs'].where(_['key_type'] == "zoneSigning").all(_['algorithm'] != "rsasha1")
+        )
+      )
+  - uid: mondoo-gcp-security-cloud-dns-no-weak-dnssec-algorithms
+    title: Ensure Cloud DNS DNSSEC default key specs do not use weak algorithms
+    impact: 40
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-13
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-10
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc6-1-11
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-gcp-security-cloud-dns-no-weak-dnssec-algorithms-gcp
+        tags:
+          mondoo.com/filter-title: GCP Cloud DNS Managed Zone
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-cloud-dns-no-weak-dnssec-algorithms-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-cloud-dns-no-weak-dnssec-algorithms-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-cloud-dns-no-weak-dnssec-algorithms-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that the default key specs configured on a Cloud DNS managed zone with DNSSEC enabled do not use weak signing algorithms — currently `rsasha1` and `rsasha1-nsec3-sha1`. RSASHA1-family algorithms rely on SHA-1, which is no longer considered collision-resistant and is deprecated for DNSSEC use by ICANN and the IETF. A zone signed with a weak algorithm can be undermined by an attacker capable of forging DNSSEC responses, defeating the purpose of DNSSEC entirely.
+
+        This check complements the more specific RSASHA1 KSK and ZSK checks: those flag `rsasha1` per key role for CIS 3.4 / 3.5 alignment, while this check rejects the full set of weak algorithms (including `rsasha1-nsec3-sha1`) across all default key specs in a single signal.
+
+        **Why this matters**
+
+        - **Collision-prone signatures:** SHA-1 collisions have been demonstrated in practice, and DNSSEC signatures inherit the underlying hash function's resistance.
+        - **Spoofing risk:** A weak DNSSEC signature can be forged or replaced, allowing an attacker to redirect queries while validators continue to mark responses as authentic.
+        - **Deprecation guidance:** Both IANA registries and the IETF mark RSASHA1 family algorithms as historic or not recommended; modern zones should use ECDSAP256SHA256 or RSASHA256.
+        - **Audit findings:** Multiple compliance frameworks call out approved cryptographic algorithms; a zone signed with SHA-1 fails algorithm-strength controls.
+
+        **Risk mitigation**
+
+        - **Algorithm rotation:** Replacing weak key specs with ECDSA-P256-SHA256 keeps DNSSEC strong and reduces signature size.
+        - **Defense in depth:** Combined with NSEC3, modern algorithms make zone enumeration and signature forgery both economically and computationally impractical.
+      audit: |
+        ### Audit via Console
+
+        1. Go to **Network Services > Cloud DNS** in the Google Cloud Console.
+        2. Open a managed zone, then select the **DNSSEC** tab.
+        3. Confirm the **Key-signing key** and **Zone-signing key** algorithms are not `rsasha1` or `rsasha1-nsec3-sha1`.
+
+        A passing zone shows both key specs configured with a modern algorithm (for example, `ecdsap256sha256` or `rsasha256`). A failing zone shows either key spec configured with `rsasha1` or `rsasha1-nsec3-sha1`.
+
+        ### Audit via CLI
+
+        1. Inspect the DNSSEC configuration for each managed zone:
+
+        ```bash
+        gcloud dns managed-zones describe ZONE_NAME \
+          --format="json(dnssecConfig.defaultKeySpecs)"
+        ```
+
+        A passing zone returns `defaultKeySpecs[].algorithm` values that are not `rsasha1` or `rsasha1-nsec3-sha1`. A failing zone returns at least one entry whose `algorithm` is in the weak set.
+      remediation:
+        - id: terraform
+          desc: |
+            To configure strong DNSSEC algorithms on a Cloud DNS managed zone in Terraform, set both default key specs to `ecdsap256sha256` (or another modern algorithm):
+
+            ```hcl
+            resource "google_dns_managed_zone" "example" {
+              name        = "example-zone"
+              dns_name    = "example.com."
+              dnssec_config {
+                state         = "on"
+                non_existence = "nsec3"
+
+                default_key_specs {
+                  algorithm  = "ecdsap256sha256"
+                  key_type   = "keySigning"
+                  key_length = 256
+                }
+
+                default_key_specs {
+                  algorithm  = "ecdsap256sha256"
+                  key_type   = "zoneSigning"
+                  key_length = 256
+                }
+              }
+            }
+            ```
+
+            DNSSEC algorithms cannot be changed on an active zone; the zone must be re-created or DNSSEC must be turned off, reconfigured, and turned back on with the new algorithms, then the DS record updated at the registrar.
+        - id: console
+          desc: |
+            To configure strong DNSSEC algorithms on a Cloud DNS managed zone using the Google Cloud Console:
+
+            1. Go to **Network Services > Cloud DNS**.
+            2. Open the zone, select the **DNSSEC** tab, and turn DNSSEC off if it is currently on with weak algorithms.
+            3. Re-enable DNSSEC and choose **ECDSA P256 with SHA256** (or another modern algorithm) for both key types.
+            4. Publish a new DS record at the domain's registrar referencing the new key.
+        - id: cli
+          desc: |
+            To rotate to strong DNSSEC algorithms using the Google Cloud CLI:
+
+            ```bash
+            # Disable DNSSEC
+            gcloud dns managed-zones update ZONE_NAME --dnssec-state=off
+
+            # Re-enable with strong algorithms
+            gcloud dns managed-zones update ZONE_NAME \
+              --dnssec-state=on \
+              --ksk-algorithm=ecdsap256sha256 --ksk-key-length=256 \
+              --zsk-algorithm=ecdsap256sha256 --zsk-key-length=256
+            ```
+
+            After the new keys are active, update the DS record at the domain's registrar.
+    refs:
+      - url: https://cloud.google.com/dns/docs/dnssec-config-advanced
+        title: Configure DNSSEC advanced settings
+      - url: https://www.iana.org/assignments/dns-sec-alg-numbers/dns-sec-alg-numbers.xhtml
+        title: IANA DNS Security Algorithm Numbers
+  - uid: mondoo-gcp-security-cloud-dns-no-weak-dnssec-algorithms-gcp
+    filters: |
+      asset.platform == "gcp-dns-zone"
+      gcp.project.dnsService.managedzone.visibility != "private"
+    mql: |
+      gcp.dns.managedzone.dnsSecAlgorithmWeak == false
+  - uid: mondoo-gcp-security-cloud-dns-no-weak-dnssec-algorithms-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' &&
+        terraform.resources('google_dns_managed_zone') != empty
+    mql: |
+      terraform.resources('google_dns_managed_zone').where(arguments.visibility == 'public' || arguments.visibility == empty).all(
+        blocks.where(type == 'dnssec_config') == empty ||
+        blocks.where(type == 'dnssec_config').where(arguments.state == "on").all(
+          blocks.where(type == 'default_key_specs').all(
+            arguments.algorithm != "rsasha1" && arguments.algorithm != "rsasha1-nsec3-sha1"
+          )
+        )
+      )
+  - uid: mondoo-gcp-security-cloud-dns-no-weak-dnssec-algorithms-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan'
+      terraform.plan.resourceChanges.contains(type == 'google_dns_managed_zone')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_dns_managed_zone').where(change.after['visibility'] == 'public' || change.after['visibility'] == empty).all(
+        change.after['dnssec_config'] == empty ||
+        change.after['dnssec_config'].where(_['state'] == "on").all(
+          _['default_key_specs'].all(_['algorithm'] != "rsasha1" && _['algorithm'] != "rsasha1-nsec3-sha1")
+        )
+      )
+  - uid: mondoo-gcp-security-cloud-dns-no-weak-dnssec-algorithms-terraform-state
+    filters: |
+      asset.platform == 'terraform-state'
+      terraform.state.resources.contains(type == 'google_dns_managed_zone')
+    mql: |
+      terraform.state.resources.where(type == 'google_dns_managed_zone').where(values['visibility'] == 'public' || values['visibility'] == empty).all(
+        values['dnssec_config'] == empty ||
+        values['dnssec_config'].where(_['state'] == "on").all(
+          _['default_key_specs'].all(_['algorithm'] != "rsasha1" && _['algorithm'] != "rsasha1-nsec3-sha1")
         )
       )
   # Note: this check enforces NSEC3 specifically; consider revisiting per RFC 9276
@@ -19668,6 +19841,150 @@ queries:
         values['network_config'] == empty ||
         values['network_config'].all(_['enable_public_ip'] != true)
       )
+  - uid: mondoo-gcp-security-alloydb-psc-enabled
+    title: Ensure AlloyDB clusters use Private Service Connect
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    variants:
+      - uid: mondoo-gcp-security-alloydb-psc-enabled-gcp
+        tags:
+          mondoo.com/filter-title: GCP AlloyDB
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-alloydb-psc-enabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-alloydb-psc-enabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-alloydb-psc-enabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that AlloyDB clusters have Private Service Connect (PSC) enabled, so consumers reach the database through a private endpoint in their own VPC rather than over public networking or shared private services access. PSC is a stronger control than simply omitting a public IP: it gives each consumer VPC its own service attachment, eliminates IP-range overlap between producer and consumer networks, and works with VPC Service Controls perimeters.
+
+        **Why this matters**
+
+        - **Private connectivity:** PSC routes database traffic through a service attachment that is reachable only from the consumer VPC, keeping it off the public internet and outside the shared services network.
+        - **No address overlap:** Unlike private services access, PSC does not require allocating an IP range from the producer's network, so multiple consumer VPCs with overlapping CIDRs can each reach the cluster.
+        - **VPC Service Controls compatibility:** PSC endpoints participate in the consumer's VPC-SC perimeter, so a misconfigured peering cannot bypass perimeter restrictions.
+        - **Defense in depth:** Combined with the no-public-IP control, PSC removes both the public attack surface and the broader services-network blast radius from any single misconfigured rule.
+
+        **Risk mitigation**
+
+        - **Lateral movement:** A compromised host in a different VPC cannot reach a PSC-only AlloyDB cluster without an explicit service-attachment subscription.
+        - **Service mesh exposure:** Limiting connectivity to PSC consumers prevents inadvertent exposure when a shared services network is widened for an unrelated workload.
+      audit: |
+        ### Audit via Console
+
+        1. Go to the **AlloyDB** page in the Google Cloud Console.
+        2. Select the cluster, then open the **Connectivity** tab.
+        3. Confirm **Private Service Connect** is enabled and a service attachment is listed.
+
+        A passing AlloyDB cluster shows **Private Service Connect** enabled with one or more service attachments. A failing cluster shows PSC disabled or no service attachments configured.
+
+        ### Audit via CLI
+
+        1. List AlloyDB clusters and inspect the PSC configuration:
+
+        ```bash
+        gcloud alloydb clusters describe CLUSTER_ID \
+          --region=REGION \
+          --format="json(pscConfig)"
+        ```
+
+        A passing cluster returns `pscConfig.pscEnabled: true`. A failing cluster returns `pscConfig` missing or `pscEnabled: false`.
+      remediation:
+        - id: terraform
+          desc: |
+            To enable Private Service Connect on an AlloyDB cluster in Terraform, set `psc_config.psc_enabled` to `true`:
+
+            ```hcl
+            resource "google_alloydb_cluster" "primary" {
+              cluster_id = "my-cluster"
+              location   = "us-central1"
+
+              psc_config {
+                psc_enabled = true
+              }
+            }
+            ```
+
+            PSC cannot be enabled on an existing cluster created with private services access — create a new cluster with PSC and migrate data.
+        - id: console
+          desc: |
+            To enable Private Service Connect on a new AlloyDB cluster using the Google Cloud Console:
+
+            1. Go to the **AlloyDB** page.
+            2. Select **Create cluster**.
+            3. Under **Network connectivity**, choose **Private Service Connect**.
+            4. Complete the remaining cluster settings and select **Create**.
+            5. After the cluster is created, create a service attachment and a consumer endpoint in each VPC that needs to reach the cluster.
+
+            Existing clusters created with private services access cannot be converted to PSC in place — create a new PSC-enabled cluster and migrate the data.
+        - id: cli
+          desc: |
+            To create a new AlloyDB cluster with Private Service Connect enabled using the Google Cloud CLI:
+
+            ```bash
+            gcloud alloydb clusters create CLUSTER_ID \
+              --region=REGION \
+              --password=PASSWORD \
+              --enable-private-service-connect
+            ```
+
+            After the cluster is ready, configure consumer PSC endpoints from the VPCs that need access.
+    refs:
+      - url: https://cloud.google.com/alloydb/docs/private-service-connect-enable
+        title: Enable Private Service Connect on AlloyDB
+      - url: https://cloud.google.com/vpc/docs/private-service-connect
+        title: Private Service Connect overview
+  - uid: mondoo-gcp-security-alloydb-psc-enabled-gcp
+    filters: asset.platform == 'gcp-alloydb-cluster'
+    mql: |
+      gcp.project.alloydbService.cluster.pscEnabled == true
+  - uid: mondoo-gcp-security-alloydb-psc-enabled-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_alloydb_cluster')
+    mql: |
+      terraform.resources('google_alloydb_cluster').all(
+        blocks.where(type == 'psc_config') != empty &&
+        blocks.where(type == 'psc_config').all(
+          arguments.psc_enabled == true
+        )
+      )
+  - uid: mondoo-gcp-security-alloydb-psc-enabled-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_alloydb_cluster')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_alloydb_cluster').all(
+        change.after['psc_config'] != empty &&
+        change.after['psc_config'].all(_['psc_enabled'] == true)
+      )
+  - uid: mondoo-gcp-security-alloydb-psc-enabled-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_alloydb_cluster')
+    mql: |
+      terraform.state.resources.where(type == 'google_alloydb_cluster').all(
+        values['psc_config'] != empty &&
+        values['psc_config'].all(_['psc_enabled'] == true)
+      )
   - uid: mondoo-gcp-security-gke-security-posture-enabled
     title: Ensure GKE clusters have Security Posture enabled
     impact: 70
@@ -22170,9 +22487,8 @@ queries:
   - uid: mondoo-gcp-security-gke-legacy-client-auth-disabled-gcp
     filters: asset.platform == 'gcp-gke-cluster'
     mql: |
-      gcp.project.gkeService.cluster.masterAuth['username'] == ""
-      gcp.project.gkeService.cluster.masterAuth['password'] == ""
-      gcp.project.gkeService.cluster.masterAuth['clientCertificateConfig']['issueClientCertificate'] != true
+      gcp.project.gkeService.cluster.clientCertificateEnabled == false
+      gcp.project.gkeService.cluster.basicAuthEnabled == false
   - uid: mondoo-gcp-security-gke-legacy-client-auth-disabled-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_container_cluster')
@@ -24263,7 +24579,7 @@ queries:
   - uid: mondoo-gcp-security-gke-control-plane-private-endpoint-gcp
     filters: asset.platform == 'gcp-gke-cluster'
     mql: |
-      gcp.project.gkeService.cluster.privateClusterConfig['enablePrivateEndpoint'] == true
+      gcp.project.gkeService.cluster.controlPlanePublicEndpointEnabled == false
   - uid: mondoo-gcp-security-gke-control-plane-private-endpoint-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_container_cluster')
@@ -34958,6 +35274,169 @@ queries:
           _['encryption_config'].all(_['kms_key_name'] != empty)
         )
       )
+  - uid: mondoo-gcp-security-composer-environment-private
+    title: Ensure Cloud Composer environments use a Private IP setup
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    variants:
+      - uid: mondoo-gcp-security-composer-environment-private-gcp
+        tags:
+          mondoo.com/filter-title: GCP
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-composer-environment-private-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-composer-environment-private-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-composer-environment-private-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Cloud Composer environments are deployed as Private IP environments, so the underlying GKE cluster nodes and the Airflow web server are not reachable on public IP addresses. By default, Composer can provision a public environment whose worker nodes have external IPs and whose web server is exposed to any source.
+
+        **Why this matters**
+
+        - **Removes the public attack surface:** A Private IP environment places worker nodes on private addresses inside the project's VPC, eliminating the direct internet exposure of every GKE node that runs DAGs.
+        - **Limits web-server reach:** The Airflow web server in a private environment is reachable only through the configured IP allowlist or a Private Service Connect endpoint, not over the open internet.
+        - **Network egress control:** Private environments force outbound calls through Cloud NAT or a private routing path, making egress filtering and logging tractable.
+        - **Compliance alignment:** Most regulated workloads (PCI, HIPAA, internal-data ETL) require that data-processing platforms not run on public IP addresses; a public Composer environment is an automatic finding for those audits.
+
+        **Risk mitigation**
+
+        - **Credential and DAG protection:** Private environments cannot be enumerated or probed from the internet, reducing the risk that a misconfigured firewall rule exposes DAG source code or Airflow connection metadata.
+        - **Container escape blast radius:** A compromised DAG running on a private-node environment cannot pivot to arbitrary external destinations without explicit egress permits.
+      audit: |
+        ### Audit via Console
+
+        1. Go to the **Composer** page in the Google Cloud Console.
+        2. For each environment, click the environment name and open the **Environment configuration** tab.
+        3. Confirm **Networking type** is **Private IP environment** and review **Web server access control** for an allowlist.
+
+        A passing environment shows **Private IP environment** with **Web server access control** restricted to specific CIDR ranges. A failing environment shows **Public IP environment** or open web-server access.
+
+        ### Audit via CLI
+
+        1. List Composer environments and inspect the networking configuration:
+
+        ```bash
+        gcloud composer environments describe ENVIRONMENT_ID \
+          --location=LOCATION \
+          --format="json(config.privateEnvironmentConfig,config.webServerNetworkAccessControl)"
+        ```
+
+        A passing environment returns `privateEnvironmentConfig.enablePrivateEnvironment: true` and a populated `webServerNetworkAccessControl.allowedIpRanges`. A failing environment returns an empty `privateEnvironmentConfig` or an open web-server access policy.
+      remediation:
+        - id: terraform
+          desc: |
+            To deploy a private Cloud Composer environment in Terraform, set `enable_private_environment` and restrict web-server access:
+
+            ```hcl
+            resource "google_composer_environment" "private" {
+              name   = "my-composer"
+              region = "us-central1"
+
+              config {
+                private_environment_config {
+                  enable_private_endpoint = true
+                  enable_private_environment = true
+                }
+
+                web_server_network_access_control {
+                  allowed_ip_range {
+                    value       = "10.0.0.0/8"
+                    description = "Corp network"
+                  }
+                }
+              }
+            }
+            ```
+
+            Networking type cannot be changed in place. A new private environment must be created and DAGs migrated.
+        - id: console
+          desc: |
+            To deploy a private Cloud Composer environment using the Google Cloud Console:
+
+            1. Go to the **Composer** page.
+            2. Select **Create environment**.
+            3. Under **Network configuration**, select **Private IP environment** and choose **Enable private endpoint for the cluster control plane**.
+            4. Under **Web server network access control**, add the CIDR ranges that should reach the Airflow web server.
+            5. Complete the remaining settings and select **Create**.
+
+            The networking type cannot be changed after creation — public environments must be replaced.
+        - id: cli
+          desc: |
+            To create a private Cloud Composer environment using the Google Cloud CLI:
+
+            ```bash
+            gcloud composer environments create ENVIRONMENT_ID \
+              --location=LOCATION \
+              --image-version=composer-3-airflow-2 \
+              --enable-private-environment \
+              --enable-private-endpoint \
+              --web-server-allow-ip=ip_range=10.0.0.0/8,description="corp network"
+            ```
+    refs:
+      - url: https://cloud.google.com/composer/docs/composer-3/configure-private-ip
+        title: Configure Private IP environments
+      - url: https://cloud.google.com/composer/docs/composer-3/configure-network-access-control
+        title: Configure web server network access control
+  - uid: mondoo-gcp-security-composer-environment-private-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.project.composer.environments.all(privateEnvironmentEnabled == true)
+  - uid: mondoo-gcp-security-composer-environment-private-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_composer_environment')
+    mql: |
+      terraform.resources('google_composer_environment').all(
+        blocks.where(type == 'config') != empty &&
+        blocks.where(type == 'config').all(
+          blocks.where(type == 'private_environment_config') != empty &&
+          blocks.where(type == 'private_environment_config').all(
+            arguments.enable_private_environment == true
+          )
+        )
+      )
+  - uid: mondoo-gcp-security-composer-environment-private-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_composer_environment')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_composer_environment').all(
+        change.after['config'] != empty &&
+        change.after['config'].all(
+          _['private_environment_config'] != empty &&
+          _['private_environment_config'].all(_['enable_private_environment'] == true)
+        )
+      )
+  - uid: mondoo-gcp-security-composer-environment-private-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_composer_environment')
+    mql: |
+      terraform.state.resources.where(type == 'google_composer_environment').all(
+        values['config'] != empty &&
+        values['config'].all(
+          _['private_environment_config'] != empty &&
+          _['private_environment_config'].all(_['enable_private_environment'] == true)
+        )
+      )
   - uid: mondoo-gcp-security-dataflow-job-cmek-encryption
     title: Ensure Cloud Dataflow jobs are encrypted with CMEK
     impact: 60
@@ -35377,6 +35856,154 @@ queries:
     mql: |
       terraform.state.resources.where(type == 'google_logging_project_bucket_config').all(
         values['cmek_settings'] != empty
+      )
+  - uid: mondoo-gcp-security-logging-log-router-cmek-encryption
+    title: Ensure the Cloud Logging Log Router is encrypted with CMEK
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-10
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-gcp-security-logging-log-router-cmek-encryption-gcp
+        tags:
+          mondoo.com/filter-title: GCP
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-logging-log-router-cmek-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-logging-log-router-cmek-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-logging-log-router-cmek-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that the Cloud Logging Log Router in the project uses a customer-managed encryption key (CMEK) to encrypt newly ingested log entries while they are being routed and held in transit by the Log Router. Without project-level CMEK settings, the Log Router encrypts log entries with Google-managed keys, leaving no customer control over key rotation, revocation, or destruction.
+
+        **Why this matters**
+
+        - **Single revocation lever:** Setting CMEK on the project's Log Router scope means a key compromise or incident can be addressed by revoking access to one KMS key, stopping ingestion-time encryption across the project rather than per-bucket cleanup.
+        - **Distinct from bucket CMEK:** Per-bucket CMEK protects data at rest in each log bucket, but the Log Router itself temporarily holds entries between ingestion and bucket storage; covering that interval requires the project-level CMEK setting.
+        - **Cryptographic separation:** Regulated workloads frequently require all log data — including in-transit Log Router state — to be encrypted with customer-controlled keys.
+        - **Audit completeness:** Compliance reviews increasingly look at log routing as a discrete subsystem; a missing Log Router CMEK setting is a common audit finding even when individual buckets are CMEK-encrypted.
+
+        **Risk mitigation**
+
+        - **Key compromise containment:** A revoked CMEK immediately stops new log entries from being ingested under that key, providing a clean incident-response boundary.
+        - **Insider risk reduction:** Restricting `cloudkms.cryptoKeyEncrypterDecrypter` on the Log Router CMEK to a narrow set of principals limits who can decrypt routed log content.
+      audit: |
+        ### Audit via Console
+
+        1. Go to **Logging > Settings** in the Google Cloud Console.
+        2. Review the **Logs Router CMEK key** section.
+        3. Confirm a customer-managed Cloud KMS key is configured.
+
+        A passing project shows a configured CMEK key in the Logs Router CMEK section. A failing project shows the section empty or set to **Google-managed key**.
+
+        ### Audit via CLI
+
+        1. Inspect the Log Router CMEK settings for the project:
+
+        ```bash
+        gcloud logging cmek-settings describe --project=PROJECT_ID \
+          --format="json(kmsKeyName)"
+        ```
+
+        A passing project returns a populated `kmsKeyName` (for example, `projects/PROJECT_ID/locations/global/keyRings/RING/cryptoKeys/KEY`). A failing project returns an empty `kmsKeyName`.
+      remediation:
+        - id: terraform
+          desc: |
+            To configure CMEK on the project's Log Router in Terraform, use `google_logging_project_cmek_settings` and grant the Log Router service account the encrypter/decrypter role:
+
+            ```hcl
+            data "google_logging_project_cmek_settings" "current" {
+              project = var.project_id
+            }
+
+            resource "google_kms_crypto_key_iam_binding" "log_router" {
+              crypto_key_id = google_kms_crypto_key.log_router.id
+              role          = "roles/cloudkms.cryptoKeyEncrypterDecrypter"
+              members       = [data.google_logging_project_cmek_settings.current.service_account_id]
+            }
+
+            resource "google_logging_project_cmek_settings" "log_router" {
+              project     = var.project_id
+              kms_key_name = google_kms_crypto_key.log_router.id
+
+              depends_on = [google_kms_crypto_key_iam_binding.log_router]
+            }
+            ```
+        - id: console
+          desc: |
+            To configure CMEK on the project's Log Router using the Google Cloud Console:
+
+            1. In Cloud KMS, create or identify a key ring and crypto key in the project's logging region (global is supported).
+            2. In Cloud Logging, go to **Settings** and copy the Logs Router service account email.
+            3. Grant that service account **Cloud KMS CryptoKey Encrypter/Decrypter** on the chosen key.
+            4. Return to **Logging > Settings**, select **Edit CMEK settings**, and enter the key resource name.
+            5. Select **Update**.
+        - id: cli
+          desc: |
+            To configure CMEK on the project's Log Router using the Google Cloud CLI:
+
+            ```bash
+            # Grant the Logs Router service account access to the key
+            SA=$(gcloud logging cmek-settings describe --project=PROJECT_ID --format='value(serviceAccountId)')
+            gcloud kms keys add-iam-policy-binding KEY \
+              --keyring=KEY_RING \
+              --location=LOCATION \
+              --member="serviceAccount:${SA}" \
+              --role=roles/cloudkms.cryptoKeyEncrypterDecrypter
+
+            # Bind the CMEK key to the Log Router
+            gcloud logging cmek-settings update \
+              --project=PROJECT_ID \
+              --kms-key-name=projects/PROJECT_ID/locations/LOCATION/keyRings/KEY_RING/cryptoKeys/KEY
+            ```
+    refs:
+      - url: https://cloud.google.com/logging/docs/routing/managed-encryption
+        title: Configure CMEK for log routing
+      - url: https://cloud.google.com/logging/docs/api/reference/rest/v2/projects.locations/getCmekSettings
+        title: Logging CMEK settings API
+  - uid: mondoo-gcp-security-logging-log-router-cmek-encryption-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.project.loggingservice.cmekKmsKeyName != ""
+  - uid: mondoo-gcp-security-logging-log-router-cmek-encryption-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_logging_project_cmek_settings')
+    mql: |
+      terraform.resources('google_logging_project_cmek_settings').all(
+        arguments.kms_key_name != empty
+      )
+  - uid: mondoo-gcp-security-logging-log-router-cmek-encryption-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_logging_project_cmek_settings')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_logging_project_cmek_settings').all(
+        change.after['kms_key_name'] != empty
+      )
+  - uid: mondoo-gcp-security-logging-log-router-cmek-encryption-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_logging_project_cmek_settings')
+    mql: |
+      terraform.state.resources.where(type == 'google_logging_project_cmek_settings').all(
+        values['kms_key_name'] != empty
       )
   - uid: mondoo-gcp-security-vertex-ai-job-cmek-encryption
     title: Ensure Vertex AI training and runtime assets are encrypted with CMEK
