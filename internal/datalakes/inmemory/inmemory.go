@@ -38,6 +38,12 @@ type DataStore interface {
 	// no-op; the SQLite scandb wrapper persists the code_ids so a
 	// captured scan db carries enough state for offline replay.
 	SetAssetFilters(ctx context.Context, assetMrn string, filters *policy.Mqueries) error
+	// WriteQueryDuration records the wall-clock time a single query spent
+	// in the MQL executor. codeId is the value the caller wants persisted
+	// — typically the llx query checksum, or a resolved query MRN. The
+	// default in-memory cache treats it as a no-op; the SQLite scandb
+	// wrapper persists it so a captured scan db carries per-query timings.
+	WriteQueryDuration(ctx context.Context, assetMrn string, codeId string, durationMs int64) error
 }
 
 type cacheDataWriter struct {
@@ -126,6 +132,13 @@ func (n *cacheDataWriter) SetAssetFilters(_ context.Context, _ string, _ *policy
 	return nil
 }
 
+// WriteQueryDuration is a no-op for the cache writer — per-query timings
+// only matter when the scan database is being persisted (i.e. the scandb
+// wrapper).
+func (n *cacheDataWriter) WriteQueryDuration(_ context.Context, _ string, _ string, _ int64) error {
+	return nil
+}
+
 func (n *cacheDataWriter) WriteResource(ctx context.Context, assetMrn string, resource *llx.ResourceRecording) error {
 	return nil
 }
@@ -208,6 +221,16 @@ func (db *Db) SetAssetFilters(ctx context.Context, assetMrn string, filters *pol
 		return nil
 	}
 	return db.writer.SetAssetFilters(ctx, assetMrn, filters)
+}
+
+// WriteQueryDuration delegates per-query timing capture to the underlying
+// writer. The default in-memory cache is a no-op; the scandb wrapper
+// persists the row so a captured scan db carries per-query timings.
+func (db *Db) WriteQueryDuration(ctx context.Context, assetMrn string, codeId string, durationMs int64) error {
+	if db.writer == nil {
+		return nil
+	}
+	return db.writer.WriteQueryDuration(ctx, assetMrn, codeId, durationMs)
 }
 
 func (db *Db) SetNowProvider(f func() time.Time) {

@@ -71,3 +71,13 @@ INSERT OR REPLACE INTO asset_filters (code_id) VALUES (?);
 
 -- name: StreamAssetFilters :many
 SELECT code_id FROM asset_filters ORDER BY code_id;
+
+-- Query duration operations
+-- name: InsertQueryDuration :exec
+INSERT OR REPLACE INTO query_durations (code_id, duration_ms) VALUES (?, ?);
+
+-- name: GetQueryDuration :one
+SELECT duration_ms FROM query_durations WHERE code_id = ?;
+
+-- name: StreamQueryDurations :many
+SELECT code_id, duration_ms FROM query_durations ORDER BY code_id;

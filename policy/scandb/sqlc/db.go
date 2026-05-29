@@ -36,6 +36,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getMetadataByKeyStmt, err = db.PrepareContext(ctx, getMetadataByKey); err != nil {
 		return nil, fmt.Errorf("error preparing query GetMetadataByKey: %w", err)
 	}
+	if q.getQueryDurationStmt, err = db.PrepareContext(ctx, getQueryDuration); err != nil {
+		return nil, fmt.Errorf("error preparing query GetQueryDuration: %w", err)
+	}
 	if q.getResourceStmt, err = db.PrepareContext(ctx, getResource); err != nil {
 		return nil, fmt.Errorf("error preparing query GetResource: %w", err)
 	}
@@ -57,6 +60,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.insertMetadataStmt, err = db.PrepareContext(ctx, insertMetadata); err != nil {
 		return nil, fmt.Errorf("error preparing query InsertMetadata: %w", err)
 	}
+	if q.insertQueryDurationStmt, err = db.PrepareContext(ctx, insertQueryDuration); err != nil {
+		return nil, fmt.Errorf("error preparing query InsertQueryDuration: %w", err)
+	}
 	if q.insertResourceStmt, err = db.PrepareContext(ctx, insertResource); err != nil {
 		return nil, fmt.Errorf("error preparing query InsertResource: %w", err)
 	}
@@ -71,6 +77,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.streamDataStmt, err = db.PrepareContext(ctx, streamData); err != nil {
 		return nil, fmt.Errorf("error preparing query StreamData: %w", err)
+	}
+	if q.streamQueryDurationsStmt, err = db.PrepareContext(ctx, streamQueryDurations); err != nil {
+		return nil, fmt.Errorf("error preparing query StreamQueryDurations: %w", err)
 	}
 	if q.streamResourcesStmt, err = db.PrepareContext(ctx, streamResources); err != nil {
 		return nil, fmt.Errorf("error preparing query StreamResources: %w", err)
@@ -104,6 +113,11 @@ func (q *Queries) Close() error {
 	if q.getMetadataByKeyStmt != nil {
 		if cerr := q.getMetadataByKeyStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getMetadataByKeyStmt: %w", cerr)
+		}
+	}
+	if q.getQueryDurationStmt != nil {
+		if cerr := q.getQueryDurationStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getQueryDurationStmt: %w", cerr)
 		}
 	}
 	if q.getResourceStmt != nil {
@@ -141,6 +155,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing insertMetadataStmt: %w", cerr)
 		}
 	}
+	if q.insertQueryDurationStmt != nil {
+		if cerr := q.insertQueryDurationStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing insertQueryDurationStmt: %w", cerr)
+		}
+	}
 	if q.insertResourceStmt != nil {
 		if cerr := q.insertResourceStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing insertResourceStmt: %w", cerr)
@@ -164,6 +183,11 @@ func (q *Queries) Close() error {
 	if q.streamDataStmt != nil {
 		if cerr := q.streamDataStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing streamDataStmt: %w", cerr)
+		}
+	}
+	if q.streamQueryDurationsStmt != nil {
+		if cerr := q.streamQueryDurationsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing streamQueryDurationsStmt: %w", cerr)
 		}
 	}
 	if q.streamResourcesStmt != nil {
@@ -218,51 +242,57 @@ func (q *Queries) queryRow(ctx context.Context, stmt *sql.Stmt, query string, ar
 }
 
 type Queries struct {
-	db                     DBTX
-	tx                     *sql.Tx
-	getAssetStmt           *sql.Stmt
-	getDataStmt            *sql.Stmt
-	getMetadataStmt        *sql.Stmt
-	getMetadataByKeyStmt   *sql.Stmt
-	getResourceStmt        *sql.Stmt
-	getRiskFactorStmt      *sql.Stmt
-	getScoreStmt           *sql.Stmt
-	insertAssetStmt        *sql.Stmt
-	insertAssetFilterStmt  *sql.Stmt
-	insertDataStmt         *sql.Stmt
-	insertMetadataStmt     *sql.Stmt
-	insertResourceStmt     *sql.Stmt
-	insertRiskFactorStmt   *sql.Stmt
-	insertScoreStmt        *sql.Stmt
-	streamAssetFiltersStmt *sql.Stmt
-	streamDataStmt         *sql.Stmt
-	streamResourcesStmt    *sql.Stmt
-	streamRiskFactorsStmt  *sql.Stmt
-	streamScoresStmt       *sql.Stmt
+	db                       DBTX
+	tx                       *sql.Tx
+	getAssetStmt             *sql.Stmt
+	getDataStmt              *sql.Stmt
+	getMetadataStmt          *sql.Stmt
+	getMetadataByKeyStmt     *sql.Stmt
+	getQueryDurationStmt     *sql.Stmt
+	getResourceStmt          *sql.Stmt
+	getRiskFactorStmt        *sql.Stmt
+	getScoreStmt             *sql.Stmt
+	insertAssetStmt          *sql.Stmt
+	insertAssetFilterStmt    *sql.Stmt
+	insertDataStmt           *sql.Stmt
+	insertMetadataStmt       *sql.Stmt
+	insertQueryDurationStmt  *sql.Stmt
+	insertResourceStmt       *sql.Stmt
+	insertRiskFactorStmt     *sql.Stmt
+	insertScoreStmt          *sql.Stmt
+	streamAssetFiltersStmt   *sql.Stmt
+	streamDataStmt           *sql.Stmt
+	streamQueryDurationsStmt *sql.Stmt
+	streamResourcesStmt      *sql.Stmt
+	streamRiskFactorsStmt    *sql.Stmt
+	streamScoresStmt         *sql.Stmt
 }
 
 func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 	return &Queries{
-		db:                     tx,
-		tx:                     tx,
-		getAssetStmt:           q.getAssetStmt,
-		getDataStmt:            q.getDataStmt,
-		getMetadataStmt:        q.getMetadataStmt,
-		getMetadataByKeyStmt:   q.getMetadataByKeyStmt,
-		getResourceStmt:        q.getResourceStmt,
-		getRiskFactorStmt:      q.getRiskFactorStmt,
-		getScoreStmt:           q.getScoreStmt,
-		insertAssetStmt:        q.insertAssetStmt,
-		insertAssetFilterStmt:  q.insertAssetFilterStmt,
-		insertDataStmt:         q.insertDataStmt,
-		insertMetadataStmt:     q.insertMetadataStmt,
-		insertResourceStmt:     q.insertResourceStmt,
-		insertRiskFactorStmt:   q.insertRiskFactorStmt,
-		insertScoreStmt:        q.insertScoreStmt,
-		streamAssetFiltersStmt: q.streamAssetFiltersStmt,
-		streamDataStmt:         q.streamDataStmt,
-		streamResourcesStmt:    q.streamResourcesStmt,
-		streamRiskFactorsStmt:  q.streamRiskFactorsStmt,
-		streamScoresStmt:       q.streamScoresStmt,
+		db:                       tx,
+		tx:                       tx,
+		getAssetStmt:             q.getAssetStmt,
+		getDataStmt:              q.getDataStmt,
+		getMetadataStmt:          q.getMetadataStmt,
+		getMetadataByKeyStmt:     q.getMetadataByKeyStmt,
+		getQueryDurationStmt:     q.getQueryDurationStmt,
+		getResourceStmt:          q.getResourceStmt,
+		getRiskFactorStmt:        q.getRiskFactorStmt,
+		getScoreStmt:             q.getScoreStmt,
+		insertAssetStmt:          q.insertAssetStmt,
+		insertAssetFilterStmt:    q.insertAssetFilterStmt,
+		insertDataStmt:           q.insertDataStmt,
+		insertMetadataStmt:       q.insertMetadataStmt,
+		insertQueryDurationStmt:  q.insertQueryDurationStmt,
+		insertResourceStmt:       q.insertResourceStmt,
+		insertRiskFactorStmt:     q.insertRiskFactorStmt,
+		insertScoreStmt:          q.insertScoreStmt,
+		streamAssetFiltersStmt:   q.streamAssetFiltersStmt,
+		streamDataStmt:           q.streamDataStmt,
+		streamQueryDurationsStmt: q.streamQueryDurationsStmt,
+		streamResourcesStmt:      q.streamResourcesStmt,
+		streamRiskFactorsStmt:    q.streamRiskFactorsStmt,
+		streamScoresStmt:         q.streamScoresStmt,
 	}
 }

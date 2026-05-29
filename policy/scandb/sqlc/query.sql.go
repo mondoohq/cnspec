@@ -70,6 +70,17 @@ func (q *Queries) GetMetadataByKey(ctx context.Context, key string) (string, err
 	return value, err
 }
 
+const getQueryDuration = `-- name: GetQueryDuration :one
+SELECT duration_ms FROM query_durations WHERE code_id = ?
+`
+
+func (q *Queries) GetQueryDuration(ctx context.Context, codeID string) (int64, error) {
+	row := q.queryRow(ctx, q.getQueryDurationStmt, getQueryDuration, codeID)
+	var duration_ms int64
+	err := row.Scan(&duration_ms)
+	return duration_ms, err
+}
+
 const getResource = `-- name: GetResource :one
 SELECT data FROM resources WHERE name = ? AND id = ?
 `
@@ -174,6 +185,21 @@ type InsertMetadataParams struct {
 // Metadata operations
 func (q *Queries) InsertMetadata(ctx context.Context, arg InsertMetadataParams) error {
 	_, err := q.exec(ctx, q.insertMetadataStmt, insertMetadata, arg.Key, arg.Value)
+	return err
+}
+
+const insertQueryDuration = `-- name: InsertQueryDuration :exec
+INSERT OR REPLACE INTO query_durations (code_id, duration_ms) VALUES (?, ?)
+`
+
+type InsertQueryDurationParams struct {
+	CodeID     string `json:"code_id"`
+	DurationMs int64  `json:"duration_ms"`
+}
+
+// Query duration operations
+func (q *Queries) InsertQueryDuration(ctx context.Context, arg InsertQueryDurationParams) error {
+	_, err := q.exec(ctx, q.insertQueryDurationStmt, insertQueryDuration, arg.CodeID, arg.DurationMs)
 	return err
 }
 
@@ -289,6 +315,33 @@ func (q *Queries) StreamData(ctx context.Context) ([]Datum, error) {
 	for rows.Next() {
 		var i Datum
 		if err := rows.Scan(&i.CodeID, &i.Data); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const streamQueryDurations = `-- name: StreamQueryDurations :many
+SELECT code_id, duration_ms FROM query_durations ORDER BY code_id
+`
+
+func (q *Queries) StreamQueryDurations(ctx context.Context) ([]QueryDuration, error) {
+	rows, err := q.query(ctx, q.streamQueryDurationsStmt, streamQueryDurations)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []QueryDuration
+	for rows.Next() {
+		var i QueryDuration
+		if err := rows.Scan(&i.CodeID, &i.DurationMs); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

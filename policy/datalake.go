@@ -114,4 +114,13 @@ type DataLake interface {
 	// scan database is being captured, so offline replay can call
 	// ResolveAndUpdateJobs without re-deriving the filter set.
 	SetAssetFilters(ctx context.Context, assetMrn string, filters *Mqueries) error
+
+	// WriteQueryDuration records the wall-clock time the MQL executor
+	// spent on a single query. codeId is the value the caller wants
+	// persisted — typically the llx query checksum, or a resolved query
+	// MRN. Implementations that don't need per-query timings (e.g. the
+	// server's persistent datalake) can return nil. The cnspec
+	// client-side datalake persists the row when a scan database is
+	// being captured.
+	WriteQueryDuration(ctx context.Context, assetMrn string, codeId string, durationMs int64) error
 }

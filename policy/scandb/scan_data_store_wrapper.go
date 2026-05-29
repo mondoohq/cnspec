@@ -134,6 +134,17 @@ func (w *ScanDataStoreWrapper) Finalize() (string, error) {
 	return w.store.Finalize()
 }
 
+// WriteQueryDuration validates the asset MRN and forwards a per-query
+// execution time to the underlying scan data store. codeId is the value
+// the caller wants persisted in the query_durations.code_id column —
+// typically the llx query checksum, or a resolved query MRN.
+func (w *ScanDataStoreWrapper) WriteQueryDuration(ctx context.Context, assetMrn string, codeId string, durationMs int64) error {
+	if err := w.validate(assetMrn); err != nil {
+		return err
+	}
+	return w.store.WriteQueryDuration(ctx, codeId, durationMs)
+}
+
 // SetAssetFilters records the code_ids of the filters the scanner sent to
 // ResolveAndUpdateJobs into the scan database. Verifies the asset MRN
 // matches and pulls just the code_ids from the proto — no MQL/text is

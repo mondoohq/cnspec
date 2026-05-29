@@ -1203,7 +1203,8 @@ func (s *localAssetScanner) runPolicy() (*policy.ResolvedPolicy, error) {
 	logger.DebugDumpJSON("resolvedPolicy", resolvedPolicy)
 
 	features := mql.GetFeatures(s.job.Ctx)
-	err = executor.ExecuteResolvedPolicy(s.job.Ctx, s.Runtime, resolver, s.job.Asset.Mrn, resolvedPolicy, features, s.ProgressReporter)
+	durationCollector := newQueryDurationCollector(s.job.Ctx, s.services.DataLake, s.job.Asset.Mrn, resolvedPolicy)
+	err = executor.ExecuteResolvedPolicy(s.job.Ctx, s.Runtime, resolver, s.job.Asset.Mrn, resolvedPolicy, features, s.ProgressReporter, durationCollector)
 	if err != nil {
 		return nil, err
 	}
@@ -1316,4 +1317,77 @@ func createProgressBar(disableProgressBar bool) (progress.MultiProgress, error) 
 		return progress.NewTodoList(progress.WithScore())
 	}
 	return progress.NoopMultiProgress{}, nil
+}
+
+// queryDurationCollector forwards per-query execution times to the
+// DataLake. Most datalakes treat WriteQueryDuration as a no-op; the
+// SQLite scandb path persists the row so a captured scan db carries
+// per-query timings. The collector swaps the llx code_id for a query
+// MRN when the resolved policy unambiguously maps the code_id to a
+// single MRN.
+type queryDurationCollector struct {
+	ctx         context.Context
+	dataLake    policy.DataLake
+	assetMrn    string
+	codeIDToMrn map[string]string
+}
+
+func newQueryDurationCollector(ctx context.Context, dataLake policy.DataLake, assetMrn string, resolvedPolicy *policy.ResolvedPolicy) *queryDurationCollector {
+	return &queryDurationCollector{
+		ctx:         ctx,
+		dataLake:    dataLake,
+		assetMrn:    assetMrn,
+		codeIDToMrn: buildCodeIDToMrn(resolvedPolicy),
+	}
+}
+
+func (c *queryDurationCollector) SinkDuration(codeID string, duration time.Duration) {
+	if c == nil || c.dataLake == nil || codeID == "" {
+		return
+	}
+	id := codeID
+	if mrn, ok := c.codeIDToMrn[codeID]; ok {
+		id = mrn
+	}
+	if err := c.dataLake.WriteQueryDuration(c.ctx, c.assetMrn, id, duration.Milliseconds()); err != nil {
+		log.Debug().Err(err).Str("codeID", codeID).Msg("failed to record query duration")
+	}
+}
+
+// buildCodeIDToMrn walks the resolved policy's CollectorJob to find a
+// 1:1 mapping from query checksum (code_id) to query MRN. Code_ids that
+// resolve to multiple MRNs (deduped across policies) are skipped so
+// callers fall back to the raw code_id rather than picking arbitrarily.
+func buildCodeIDToMrn(resolvedPolicy *policy.ResolvedPolicy) map[string]string {
+	out := map[string]string{}
+	if resolvedPolicy == nil || resolvedPolicy.CollectorJob == nil {
+		return out
+	}
+	jobs := resolvedPolicy.CollectorJob.ReportingJobs
+	for codeID, arr := range resolvedPolicy.CollectorJob.ReportingQueries {
+		if arr == nil {
+			continue
+		}
+		mrns := map[string]struct{}{}
+		for _, uuid := range arr.Items {
+			rj, ok := jobs[uuid]
+			if !ok {
+				continue
+			}
+			if rj.QrId != "" && rj.QrId != "root" {
+				mrns[rj.QrId] = struct{}{}
+			}
+			for _, m := range rj.Mrns {
+				if m != "" {
+					mrns[m] = struct{}{}
+				}
+			}
+		}
+		if len(mrns) == 1 {
+			for m := range mrns {
+				out[codeID] = m
+			}
+		}
+	}
+	return out
 }
