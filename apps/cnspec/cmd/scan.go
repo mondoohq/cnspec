@@ -18,6 +18,7 @@ import (
 	"github.com/spf13/viper"
 	"go.mondoo.com/cnspec/v13/cli/reporter"
 	"go.mondoo.com/cnspec/v13/internal/datalakes/sqlite"
+	"go.mondoo.com/cnspec/v13/internal/supportbundle"
 	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/cnspec/v13/policy/scan"
 	"go.mondoo.com/mql/v13"
@@ -83,6 +84,8 @@ func init() {
 	_ = scanCmd.Flags().Int("parallelism", 1, "Set the number of assets to scan in parallel. A value of 0 or 1 means sequential")
 	_ = scanCmd.Flags().String("output-scan-db", "", "Save each asset's scan database (SQLite) to this directory in addition to uploading. Used to capture seeds for the cnspec loadtest tool")
 	_ = scanCmd.Flags().MarkHidden("output-scan-db")
+	_ = scanCmd.Flags().Bool("collect-support-bundle", false, "Collect a support bundle (debug logs, asset bundle, inventory, resolved policy, report, provider versions) for sharing with Mondoo support. By default writes to a timestamped directory in the current working dir; override with --support-bundle-dir.")
+	_ = scanCmd.Flags().String("support-bundle-dir", "", "Directory to write the support bundle into. Only used when --collect-support-bundle is set. Defaults to ./cnspec-support-bundle-<timestamp>/.")
 }
 
 var scanCmd = &cobra.Command{
@@ -143,6 +146,8 @@ To manually configure a policy, use this:
 		_ = viper.BindPFlag("output-target", cmd.Flags().Lookup("output-target"))
 		_ = viper.BindPFlag("parallelism", cmd.Flags().Lookup("parallelism"))
 		_ = viper.BindPFlag("output-scan-db", cmd.Flags().Lookup("output-scan-db"))
+		_ = viper.BindPFlag("collect-support-bundle", cmd.Flags().Lookup("collect-support-bundle"))
+		_ = viper.BindPFlag("support-bundle-dir", cmd.Flags().Lookup("support-bundle-dir"))
 	},
 	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		if len(args) == 0 {
@@ -156,6 +161,28 @@ To manually configure a policy, use this:
 
 var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *plugin.ParseCLIRes) {
 	ctx := context.Background()
+
+	// Set up the support bundle BEFORE anything else so we capture early
+	// failures too. The bundle redirects DEBUG dumps and tees logs to a file.
+	var support *supportbundle.Bundle
+	if viper.GetBool("collect-support-bundle") {
+		var err error
+		support, err = supportbundle.New(viper.GetString("support-bundle-dir"))
+		if err != nil {
+			log.Fatal().Err(err).Msg("failed to prepare support bundle")
+		}
+		support.Args = os.Args
+		if err := support.Activate(); err != nil {
+			log.Fatal().Err(err).Msg("failed to activate support bundle")
+		}
+		// Wrap the logger to flush the bundle on any Fatal log. zerolog calls
+		// os.Exit(1) after Fatal hooks run, so this is our only chance to
+		// finalize on log.Fatal paths.
+		support.HookFatal()
+		// Defer catches panics and normal returns; explicit calls before
+		// os.Exit cover the exit-1 branches below.
+		defer support.FinalizeAndAnnounce(os.Stderr)
+	}
 
 	conf, err := getCobraScanConfig(cmd, runtime, cliRes)
 	if err != nil {
@@ -190,14 +217,24 @@ var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 		log.Fatal().Err(err).Msg("failed to write report to output target")
 	}
 
+	if support != nil {
+		support.RecordResolvedAssets(report)
+	}
+
 	// if we had asset errors, we return a non-zero exit code
 	// asset errors are only connection issues
 	if report != nil {
 		if len(report.Errors) > 0 {
+			if support != nil {
+				support.FinalizeAndAnnounce(os.Stderr)
+			}
 			os.Exit(1)
 		}
 
 		if (100 - report.GetWorstScore()) >= uint32(conf.RiskThreshold) {
+			if support != nil {
+				support.FinalizeAndAnnounce(os.Stderr)
+			}
 			os.Exit(1)
 		}
 	}

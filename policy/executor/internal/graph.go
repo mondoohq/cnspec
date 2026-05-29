@@ -12,6 +12,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/mql/v13/llx"
+	"go.mondoo.com/mql/v13/logger"
 )
 
 type (
@@ -209,12 +210,20 @@ OUTER:
 }
 
 func (ge *GraphExecutor) Debug(name string) {
-	if val, ok := os.LookupEnv("DEBUG"); ok && (val == "1" || val == "true") {
+	// Honor logger.DumpLocal first so --collect-support-bundle catches the
+	// graph regardless of DEBUG/TRACE env vars; fall back to the env-var gate
+	// + CWD prefix for users who set DEBUG=1 directly.
+	var path string
+	if logger.DumpLocal != "" {
+		path = logger.DumpLocal + name + ".dot"
+	} else if val, ok := os.LookupEnv("DEBUG"); ok && (val == "1" || val == "true") {
+		path = fmt.Sprintf("mondoo-debug-%s.dot", name)
 	} else if val, ok := os.LookupEnv("TRACE"); ok && (val == "1" || val == "true") {
+		path = fmt.Sprintf("mondoo-debug-%s.dot", name)
 	} else {
 		return
 	}
-	f, err := os.Create(fmt.Sprintf("mondoo-debug-%s.dot", name))
+	f, err := os.Create(path)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to write debug graph")
 		return
