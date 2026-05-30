@@ -16,7 +16,6 @@ import (
 	"go.mondoo.com/mql/v13"
 	"go.mondoo.com/mql/v13/checksums"
 	"go.mondoo.com/mql/v13/llx"
-	"go.mondoo.com/mql/v13/logger"
 	"go.mondoo.com/mql/v13/mqlc"
 	"go.mondoo.com/mql/v13/mrn"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/resources"
@@ -85,7 +84,10 @@ func (l *BundleLoader) BundleFromPaths(paths ...string) (*Bundle, error) {
 		aggregatedBundle = Merge(aggregatedBundle, bundle)
 	}
 
-	logger.DebugDumpYAML("resolved_mql_bundle.mql", aggregatedBundle)
+	// The caller (cnspec scan) is responsible for dumping the resolved bundle
+	// when --collect-support-bundle / DEBUG=1 is on; we used to do it here
+	// via the mql logger, but that wrote to CWD with no asset context and
+	// fired for every BundleFromPaths consumer (policy lint, etc.).
 	return aggregatedBundle, nil
 }
 

@@ -5,14 +5,14 @@ package internal
 
 import (
 	"container/heap"
+	"context"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/rs/zerolog/log"
+	"go.mondoo.com/cnspec/v13/internal/scandump"
 	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/mql/v13/llx"
-	"go.mondoo.com/mql/v13/logger"
 )
 
 type (
@@ -209,23 +209,14 @@ OUTER:
 	return err
 }
 
-func (ge *GraphExecutor) Debug(name string) {
-	// Honor logger.DumpLocal first so --collect-support-bundle catches the
-	// graph regardless of DEBUG/TRACE env vars; fall back to the env-var gate
-	// + CWD prefix for users who set DEBUG=1 directly.
-	var path string
-	if logger.DumpLocal != "" {
-		path = logger.DumpLocal + name + ".dot"
-	} else if val, ok := os.LookupEnv("DEBUG"); ok && (val == "1" || val == "true") {
-		path = fmt.Sprintf("mondoo-debug-%s.dot", name)
-	} else if val, ok := os.LookupEnv("TRACE"); ok && (val == "1" || val == "true") {
-		path = fmt.Sprintf("mondoo-debug-%s.dot", name)
-	} else {
-		return
-	}
-	f, err := os.Create(path)
+func (ge *GraphExecutor) Debug(ctx context.Context, name string) {
+	f, err := scandump.Create(ctx, name+".dot")
 	if err != nil {
 		log.Error().Err(err).Msg("failed to write debug graph")
+		return
+	}
+	if f == nil {
+		// No scandump.Run attached — debug graphs are off for this scan.
 		return
 	}
 	defer f.Close()

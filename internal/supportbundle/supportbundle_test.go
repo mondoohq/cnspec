@@ -5,6 +5,7 @@ package supportbundle
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"os"
@@ -16,23 +17,12 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.mondoo.com/cnspec/v13/internal/scandump"
 	"go.mondoo.com/mql/v13/logger"
 )
 
-// chdir switches into dir for the duration of the test and restores cwd after.
-// We need this because Bundle.sweepCWD reads files from the working directory
-// the bundle was created in, and we want isolation between tests.
-func chdir(t *testing.T, dir string) {
-	t.Helper()
-	prev, err := os.Getwd()
-	require.NoError(t, err)
-	require.NoError(t, os.Chdir(dir))
-	t.Cleanup(func() { _ = os.Chdir(prev) })
-}
-
 // resetGlobals saves and restores the package-level state that Activate
-// mutates (logger.DumpLocal, log.Logger, zerolog.GlobalLevel) so concurrent
-// or sequential tests don't interfere with each other.
+// mutates so sequential tests don't interfere.
 func resetGlobals(t *testing.T) {
 	t.Helper()
 	prevDump := logger.DumpLocal
@@ -46,8 +36,10 @@ func resetGlobals(t *testing.T) {
 }
 
 func TestNew_DefaultPath_CreatesTimestampedDir(t *testing.T) {
-	dir := t.TempDir()
-	chdir(t, dir)
+	prevWd, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(t.TempDir()))
+	t.Cleanup(func() { _ = os.Chdir(prevWd) })
 
 	b, err := New("")
 	require.NoError(t, err)
@@ -72,7 +64,7 @@ func TestNew_ExplicitPath_IsUsedVerbatim(t *testing.T) {
 	assert.True(t, info.IsDir())
 }
 
-func TestActivate_SetsDumpLocalAndForcesDebugLevel(t *testing.T) {
+func TestActivate_AttachesScandumpRunToContext(t *testing.T) {
 	resetGlobals(t)
 	zerolog.SetGlobalLevel(zerolog.InfoLevel)
 	logger.DumpLocal = ""
@@ -80,24 +72,30 @@ func TestActivate_SetsDumpLocalAndForcesDebugLevel(t *testing.T) {
 	dir := t.TempDir()
 	b, err := New(filepath.Join(dir, "bundle"))
 	require.NoError(t, err)
-	require.NoError(t, b.Activate())
+
+	ctx, err := b.Activate(context.Background())
+	require.NoError(t, err)
 	defer b.Finalize()
 
+	assert.True(t, scandump.Active(ctx),
+		"Activate must return a ctx that carries a scandump.Run")
 	assert.Equal(t, zerolog.DebugLevel, zerolog.GlobalLevel(),
-		"Activate must force debug level so DebugDumpJSON/YAML helpers fire")
-	assert.Equal(t, filepath.Join(b.Dir, "mondoo-debug-"), logger.DumpLocal,
-		"DumpLocal should be set to the bundle prefix so existing dump calls land in the bundle dir")
+		"Activate must force debug level so dump helpers fire")
+	assert.True(t, strings.HasSuffix(logger.DumpLocal, "mondoo-debug-"),
+		"DumpLocal should be set so cnquery-side dumps land in the bundle; got %q", logger.DumpLocal)
+	assert.True(t, strings.Contains(logger.DumpLocal, "debug"),
+		"DumpLocal must point inside the bundle's debug/ subdirectory; got %q", logger.DumpLocal)
 }
 
 func TestActivate_DoesNotLowerVerbosityIfTraceAlready(t *testing.T) {
 	resetGlobals(t)
 	zerolog.SetGlobalLevel(zerolog.TraceLevel)
-	logger.DumpLocal = ""
 
 	dir := t.TempDir()
 	b, err := New(filepath.Join(dir, "bundle"))
 	require.NoError(t, err)
-	require.NoError(t, b.Activate())
+	_, err = b.Activate(context.Background())
+	require.NoError(t, err)
 	defer b.Finalize()
 
 	assert.Equal(t, zerolog.TraceLevel, zerolog.GlobalLevel(),
@@ -110,7 +108,8 @@ func TestActivate_TeesLogsToFileWithTimestamps(t *testing.T) {
 	dir := t.TempDir()
 	b, err := New(filepath.Join(dir, "bundle"))
 	require.NoError(t, err)
-	require.NoError(t, b.Activate())
+	_, err = b.Activate(context.Background())
+	require.NoError(t, err)
 
 	log.Debug().Str("k", "v").Msg("hello support bundle")
 
@@ -121,7 +120,7 @@ func TestActivate_TeesLogsToFileWithTimestamps(t *testing.T) {
 	contents := string(raw)
 	assert.Contains(t, contents, "hello support bundle")
 	assert.Contains(t, contents, "k=v")
-	// RFC3339Nano timestamps always include "T" and one of "Z" or a tz offset.
+	// RFC3339Nano timestamps always include "T".
 	assert.Contains(t, contents, "T", "expected an RFC3339Nano timestamp in the log file")
 }
 
@@ -134,15 +133,15 @@ func TestFinalize_RestoresGlobalsAndIsIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	b, err := New(filepath.Join(dir, "bundle"))
 	require.NoError(t, err)
-	require.NoError(t, b.Activate())
+	_, err = b.Activate(context.Background())
+	require.NoError(t, err)
 
-	// Mutate globals through Activate, then verify Finalize restores them.
 	require.NoError(t, b.Finalize())
 	assert.Equal(t, "/preset-prefix-", logger.DumpLocal, "DumpLocal must be restored")
 	assert.Equal(t, zerolog.WarnLevel, zerolog.GlobalLevel(), "global level must be restored")
 	assert.Equal(t, originalLogger, log.Logger, "log.Logger must be restored")
 
-	// Second call is a no-op and must not panic.
+	// Second call is a no-op.
 	require.NoError(t, b.Finalize())
 }
 
@@ -153,10 +152,10 @@ func TestFinalize_WritesManifestAndProviders(t *testing.T) {
 	b, err := New(filepath.Join(dir, "bundle"))
 	require.NoError(t, err)
 	b.Args = []string{"cnspec", "scan", "local", "--collect-support-bundle"}
-	require.NoError(t, b.Activate())
+	_, err = b.Activate(context.Background())
+	require.NoError(t, err)
 	require.NoError(t, b.Finalize())
 
-	// Manifest contents
 	raw, err := os.ReadFile(filepath.Join(b.Dir, "manifest.json"))
 	require.NoError(t, err)
 	var m Manifest
@@ -169,7 +168,6 @@ func TestFinalize_WritesManifestAndProviders(t *testing.T) {
 	assert.Equal(t, []string{"cnspec", "scan", "local", "--collect-support-bundle"}, m.Args)
 	assert.False(t, m.CreatedAt.IsZero())
 
-	// Providers file is present even when provider listing returns nothing.
 	pRaw, err := os.ReadFile(filepath.Join(b.Dir, "providers.json"))
 	require.NoError(t, err)
 	assert.NotEmpty(t, pRaw, "providers.json should be written even when no providers configured")
@@ -184,7 +182,8 @@ func TestFinalize_DoesNotLeakCredentialEnvVars(t *testing.T) {
 	dir := t.TempDir()
 	b, err := New(filepath.Join(dir, "bundle"))
 	require.NoError(t, err)
-	require.NoError(t, b.Activate())
+	_, err = b.Activate(context.Background())
+	require.NoError(t, err)
 	require.NoError(t, b.Finalize())
 
 	raw, err := os.ReadFile(filepath.Join(b.Dir, "manifest.json"))
@@ -195,47 +194,6 @@ func TestFinalize_DoesNotLeakCredentialEnvVars(t *testing.T) {
 	assert.NotContains(t, contents, "should-not-leak")
 	assert.Contains(t, contents, `"DEBUG": "1"`,
 		"manifest should record DEBUG since it's on the curated env-var list")
-}
-
-func TestSweepCWD_MovesLeftoverDebugFiles(t *testing.T) {
-	resetGlobals(t)
-	dir := t.TempDir()
-	chdir(t, dir)
-
-	// Plant a file that some non-cnspec code might write to CWD (e.g. cnquery
-	// graph executor) before the bundle finalizes.
-	leftover := filepath.Join(dir, "mondoo-debug-resolved-policy.dot")
-	require.NoError(t, os.WriteFile(leftover, []byte("digraph {}"), 0o644))
-
-	b, err := New(filepath.Join(dir, "bundle"))
-	require.NoError(t, err)
-	require.NoError(t, b.Activate())
-	require.NoError(t, b.Finalize())
-
-	_, err = os.Stat(leftover)
-	assert.True(t, os.IsNotExist(err), "leftover file should have been swept into bundle")
-
-	moved := filepath.Join(b.Dir, "mondoo-debug-resolved-policy.dot")
-	raw, err := os.ReadFile(moved)
-	require.NoError(t, err)
-	assert.Equal(t, "digraph {}", string(raw))
-}
-
-func TestSweepCWD_IgnoresUnrelatedFiles(t *testing.T) {
-	resetGlobals(t)
-	dir := t.TempDir()
-	chdir(t, dir)
-
-	unrelated := filepath.Join(dir, "policy-bundle.yaml")
-	require.NoError(t, os.WriteFile(unrelated, []byte("policies: []"), 0o644))
-
-	b, err := New(filepath.Join(dir, "bundle"))
-	require.NoError(t, err)
-	require.NoError(t, b.Activate())
-	require.NoError(t, b.Finalize())
-
-	_, err = os.Stat(unrelated)
-	assert.NoError(t, err, "unrelated files must not be moved")
 }
 
 func TestFinalizeAndAnnounce_NilSafe(t *testing.T) {
@@ -249,7 +207,8 @@ func TestFinalizeAndAnnounce_PrintsPathOnce(t *testing.T) {
 	dir := t.TempDir()
 	b, err := New(filepath.Join(dir, "bundle"))
 	require.NoError(t, err)
-	require.NoError(t, b.Activate())
+	_, err = b.Activate(context.Background())
+	require.NoError(t, err)
 
 	var buf bytes.Buffer
 	b.FinalizeAndAnnounce(&buf)
@@ -257,4 +216,28 @@ func TestFinalizeAndAnnounce_PrintsPathOnce(t *testing.T) {
 
 	count := strings.Count(buf.String(), "support bundle written to:")
 	assert.Equal(t, 1, count, "path should only be announced once across multiple FinalizeAndAnnounce calls")
+}
+
+func TestActivate_DumpsLandInDebugSubdir(t *testing.T) {
+	resetGlobals(t)
+
+	dir := t.TempDir()
+	b, err := New(filepath.Join(dir, "bundle"))
+	require.NoError(t, err)
+	ctx, err := b.Activate(context.Background())
+	require.NoError(t, err)
+	defer b.Finalize()
+
+	// Run-level dump
+	scandump.JSON(ctx, "run-level", map[string]int{"x": 1})
+	// Per-asset dump
+	ctx2, _, err := scandump.WithAsset(ctx, "webserver")
+	require.NoError(t, err)
+	scandump.JSON(ctx2, "report", map[string]int{"y": 2})
+
+	debugDir := filepath.Join(b.Dir, "debug")
+	_, err = os.Stat(filepath.Join(debugDir, "run-level.json"))
+	assert.NoError(t, err, "run-level dump should land under <bundle>/debug/")
+	_, err = os.Stat(filepath.Join(debugDir, "webserver", "report.json"))
+	assert.NoError(t, err, "per-asset dump should land under <bundle>/debug/<asset>/")
 }

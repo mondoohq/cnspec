@@ -1,13 +1,32 @@
 // Copyright Mondoo, Inc. 2024, 2026
 // SPDX-License-Identifier: BUSL-1.1
 
-// Package supportbundle gathers the artifacts a cnspec scan produces under
-// DEBUG=1 (asset bundle, inventory, resolved policy, report, graph dot files,
-// etc.) into a single directory that users can hand to Mondoo support for
-// analysis. Activated via the --collect-support-bundle flag on `cnspec scan`.
+// Package supportbundle gathers the artifacts a cnspec scan produces into a
+// single directory that users can hand to Mondoo support for analysis.
+// Activated via --collect-support-bundle on `cnspec scan`.
+//
+// Layout produced:
+//
+//	<bundle>/
+//	  manifest.json           # cnspec/cnquery versions, OS/arch, scan args, host
+//	  providers.json          # installed providers + versions
+//	  debug.log               # zerolog tee with RFC3339Nano timestamps
+//	  debug/                  # the scandump.Run directory
+//	    mondoo-debug-inventory-unresolved.json   # cnquery side (via logger.DumpLocal)
+//	    report.json                              # run-level cnspec
+//	    assets-resolved.json
+//	    resolved_mql_bundle.mql.yaml
+//	    <asset>/                                  # one directory per scanned asset
+//	      assetBundle.yaml
+//	      policyFilters.yaml
+//	      assetFilters.yaml
+//	      resolvedPolicy.json
+//	      resolved-policy.dot
+//	      filter-queries.dot
 package supportbundle
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -22,43 +41,40 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnspec/v13"
-	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/cnspec/v13/internal/scandump"
 	"go.mondoo.com/mql/v13"
 	"go.mondoo.com/mql/v13/logger"
 	"go.mondoo.com/mql/v13/providers"
-	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
 )
 
-// dumpPrefix is the prefix the upstream logger.DebugDumpJSON/YAML helpers,
-// the cnspec graph executor, and the cnquery graph executor use when writing
-// debug artifacts. We rely on it here to sweep any files written to CWD into
-// the bundle directory at finalize time.
-const dumpPrefix = "mondoo-debug-"
+// debugSubdir is the directory under the bundle root that holds per-run /
+// per-asset debug artifacts. It's the path cnquery-side dumps are pointed at
+// via logger.DumpLocal, and is where scandump.Run is rooted.
+const debugSubdir = "debug"
 
-// Bundle owns a support-bundle output directory. Activate switches the global
-// debug-dump prefix and forces debug-level logging; Finalize collects the
-// final artifacts (manifest, provider versions, leftover files) and restores
-// any global state we touched.
+// Bundle owns a support-bundle output directory. Activate stands up the dump
+// pipeline and global-state mutations; Finalize writes the metadata files
+// and restores everything Activate touched.
 type Bundle struct {
-	// Dir is the absolute path the bundle is written to.
+	// Dir is the absolute bundle root.
 	Dir string
 	// Args are the command-line arguments recorded in the manifest.
 	Args []string
 
 	started    time.Time
-	cwd        string
+	debugDir   string
 	logFile    *os.File
 	prevDump   string
 	prevLogger zerolog.Logger
 	prevLevel  zerolog.Level
+	run        *scandump.Run
 	finalizeMu sync.Mutex
 	finalized  bool
 	announced  bool
 }
 
 // New creates a bundle directory at the given path. If path is empty, a
-// timestamped directory under the current working directory is used. The
-// returned Bundle is not active yet; call Activate before running the scan.
+// timestamped directory under the current working directory is used.
 func New(path string) (*Bundle, error) {
 	started := time.Now().UTC()
 
@@ -70,60 +86,58 @@ func New(path string) (*Bundle, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to resolve support-bundle path")
 	}
-
 	if err := os.MkdirAll(abs, 0o755); err != nil {
 		return nil, errors.Wrap(err, "failed to create support-bundle directory")
 	}
 
-	cwd, err := os.Getwd()
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to determine working directory")
-	}
-
 	return &Bundle{
-		Dir:     abs,
-		started: started,
-		cwd:     cwd,
+		Dir:      abs,
+		started:  started,
+		debugDir: filepath.Join(abs, debugSubdir),
 	}, nil
 }
 
-// Activate redirects DebugDumpJSON/YAML output, the cnspec graph .dot file,
-// and a tee'd debug log into the bundle directory, and forces debug-level
-// logging if a more restrictive level was set. Must be paired with Finalize.
-func (b *Bundle) Activate() error {
-	// Force debug level so the dump helpers actually fire. Remember the prior
-	// level so Finalize can restore it.
+// Activate stands up the dump pipeline:
+//
+//   - forces zerolog to debug level so dump helpers fire,
+//   - creates a scandump.Run under <bundle>/debug and attaches it to ctx,
+//   - points cnquery's logger.DumpLocal at the same dir so its
+//     inventory-unresolved dump lands in the bundle,
+//   - tees zerolog output to <bundle>/debug.log with RFC3339Nano timestamps.
+//
+// Returns the augmented context. Must be paired with Finalize.
+func (b *Bundle) Activate(parent context.Context) (context.Context, error) {
+	// Force debug level so dump helpers and cnquery's gated DebugDumpJSON
+	// actually fire.
 	b.prevLevel = zerolog.GlobalLevel()
 	if b.prevLevel > zerolog.DebugLevel {
 		zerolog.SetGlobalLevel(zerolog.DebugLevel)
 	}
 
-	// logger.DumpLocal is a "prefix" — DebugDumpJSON writes DumpLocal+name+".json".
-	// Setting it to "<dir>/mondoo-debug-" lands every existing call inside the
-	// bundle dir without changing their hardcoded names.
-	b.prevDump = logger.DumpLocal
-	logger.DumpLocal = filepath.Join(b.Dir, dumpPrefix)
+	run, err := scandump.NewRun(b.debugDir)
+	if err != nil {
+		return parent, errors.Wrap(err, "failed to create scandump run")
+	}
+	b.run = run
 
-	// Tee zerolog output: keep writing to the existing console destination
-	// (LogOutputWriter — the buffered stderr the CLI uses) and also write
-	// to debug.log with RFC3339Nano timestamps. The CLI's compact ConsoleWriter
-	// suppresses timestamps; the file writer reinstates them so support can
-	// reconstruct timing.
-	//
-	// Note: when active, we use a plain ConsoleWriter for the console rather
-	// than cnquery's custom-formatted one. That trades the cute level glyphs
-	// (→, !, x) for a working fan-out. The file is what support needs anyway.
+	// Point cnquery's mql/logger.DebugDumpJSON at the same directory. It
+	// writes "<DumpLocal><name>.json", so the trailing prefix is intentional.
+	b.prevDump = logger.DumpLocal
+	logger.DumpLocal = filepath.Join(run.Dir, "mondoo-debug-")
+
+	// Tee logs to debug.log with full timestamps; the CLI console writer
+	// strips them.
 	logPath := filepath.Join(b.Dir, "debug.log")
 	f, err := os.Create(logPath)
 	if err != nil {
-		return errors.Wrap(err, "failed to create support-bundle debug log")
+		return parent, errors.Wrap(err, "failed to create support-bundle debug log")
 	}
 	b.logFile = f
 
 	consoleSink := zerolog.ConsoleWriter{
 		Out:        logger.LogOutputWriter,
 		NoColor:    false,
-		TimeFormat: time.Kitchen, // short timestamps for console; full ones go to file
+		TimeFormat: time.Kitchen,
 	}
 	fileSink := zerolog.ConsoleWriter{
 		Out:        f,
@@ -136,17 +150,15 @@ func (b *Bundle) Activate() error {
 		With().Timestamp().Logger()
 
 	log.Debug().Str("dir", b.Dir).Msg("support bundle collection started")
-	return nil
+	return scandump.WithRun(parent, run), nil
 }
 
 // HookFatal attaches a zerolog hook that finalizes the bundle when a Fatal
-// event fires. zerolog runs Done hooks before its ExitFunc, so this gives
-// us a deterministic flush even when scanCmdRun calls log.Fatal().
+// event fires. zerolog runs hooks before its ExitFunc, so this is our only
+// chance to flush when callers reach log.Fatal().
 func (b *Bundle) HookFatal() {
 	log.Logger = log.Logger.Hook(zerolog.HookFunc(func(_ *zerolog.Event, level zerolog.Level, _ string) {
 		if level == zerolog.FatalLevel {
-			// Best-effort: errors here will be swallowed because the
-			// process is about to exit anyway.
 			_ = b.Finalize()
 			fmt.Fprintf(os.Stderr, "support bundle written to: %s\n", b.Dir)
 		}
@@ -154,13 +166,12 @@ func (b *Bundle) HookFatal() {
 }
 
 // FinalizeAndAnnounce wraps Finalize with a user-visible note on the bundle
-// path. Safe to call multiple times; subsequent calls are no-ops.
+// path. Safe to call multiple times; only announces once.
 func (b *Bundle) FinalizeAndAnnounce(w io.Writer) {
 	if b == nil {
 		return
 	}
 	if err := b.Finalize(); err != nil {
-		// Don't fail the scan over a bundle write error; just complain loudly.
 		log.Warn().Err(err).Msg("support bundle finalize had errors")
 	}
 	if !b.announced {
@@ -169,35 +180,8 @@ func (b *Bundle) FinalizeAndAnnounce(w io.Writer) {
 	}
 }
 
-// RecordResolvedAssets dumps the asset list from the scan report so support
-// can see which assets actually got resolved/scanned. The unresolved inventory
-// is captured separately by the cnquery inventory manager via DebugDumpJSON.
-func (b *Bundle) RecordResolvedAssets(report *policy.ReportCollection) {
-	if report == nil {
-		return
-	}
-	// Pull the bits that identify each asset; the full report.Assets values
-	// include scoring state we already dump elsewhere via "report.json".
-	resolved := struct {
-		Assets map[string]*inventory.Asset `json:"assets"`
-		Errors map[string]string           `json:"errors,omitempty"`
-	}{
-		Assets: report.Assets,
-		Errors: report.Errors,
-	}
-	raw, err := json.MarshalIndent(resolved, "", "  ")
-	if err != nil {
-		log.Warn().Err(err).Msg("failed to marshal resolved assets")
-		return
-	}
-	if err := os.WriteFile(filepath.Join(b.Dir, "assets-resolved.json"), raw, 0o644); err != nil {
-		log.Warn().Err(err).Msg("failed to write resolved assets")
-	}
-}
-
-// Finalize writes manifest.json + providers.json, sweeps any leftover
-// ./mondoo-debug-* files into the bundle dir, restores global logger state,
-// and closes the debug log. Safe to call more than once.
+// Finalize writes manifest.json + providers.json, restores global logger
+// state, and closes the debug log. Safe to call more than once.
 func (b *Bundle) Finalize() error {
 	b.finalizeMu.Lock()
 	defer b.finalizeMu.Unlock()
@@ -214,9 +198,6 @@ func (b *Bundle) Finalize() error {
 	if err := b.writeProviders(); err != nil {
 		errs = append(errs, errors.Wrap(err, "providers"))
 	}
-	if err := b.sweepCWD(); err != nil {
-		errs = append(errs, errors.Wrap(err, "sweep"))
-	}
 
 	log.Debug().Str("dir", b.Dir).Msg("support bundle collection finished")
 
@@ -232,7 +213,6 @@ func (b *Bundle) Finalize() error {
 	}
 
 	if len(errs) > 0 {
-		// Return all errors joined so callers see every failure.
 		msgs := make([]string, len(errs))
 		for i, e := range errs {
 			msgs[i] = e.Error()
@@ -242,9 +222,7 @@ func (b *Bundle) Finalize() error {
 	return nil
 }
 
-// Manifest is the metadata blob written to manifest.json. It captures the
-// versions of the binaries involved and basic host info so support can
-// reproduce the environment.
+// Manifest is the metadata blob written to manifest.json.
 type Manifest struct {
 	CreatedAt  time.Time         `json:"created_at"`
 	CnspecInfo string            `json:"cnspec"`
@@ -258,7 +236,7 @@ type Manifest struct {
 }
 
 func (b *Bundle) writeManifest() error {
-	host, _ := os.Hostname() // best effort
+	host, _ := os.Hostname()
 
 	m := Manifest{
 		CreatedAt:  b.started,
@@ -279,8 +257,9 @@ func (b *Bundle) writeManifest() error {
 	return os.WriteFile(filepath.Join(b.Dir, "manifest.json"), raw, 0o644)
 }
 
-// collectRelevantEnv records only the env vars that affect cnspec behavior.
-// We deliberately do NOT dump os.Environ() — it may contain credentials.
+// loggedEnvVars is the curated list of environment variables we record in
+// the manifest. We deliberately do NOT dump os.Environ() — it may contain
+// credentials.
 var loggedEnvVars = []string{
 	"DEBUG", "TRACE", "MONDOO_CONFIG_PATH", "MONDOO_CONFIG_HOME",
 	"MONDOO_HOME", "MONDOO_AUTO_UPDATE", "NO_COLOR", "HTTP_PROXY",
@@ -297,8 +276,7 @@ func collectRelevantEnv() map[string]string {
 	return out
 }
 
-// ProvidersDoc is the on-disk shape of providers.json. We keep the list
-// alphabetized for deterministic diffs across captures.
+// ProvidersDoc is the on-disk shape of providers.json.
 type ProvidersDoc struct {
 	Providers []ProviderEntry `json:"providers"`
 }
@@ -315,8 +293,6 @@ type ProviderEntry struct {
 func (b *Bundle) writeProviders() error {
 	all, err := providers.ListAll()
 	if err != nil {
-		// Don't fail the whole bundle if provider listing chokes — record what
-		// we got and surface the error in the file itself.
 		entry := struct {
 			Error string `json:"error"`
 		}{Error: err.Error()}
@@ -339,7 +315,7 @@ func (b *Bundle) writeProviders() error {
 			ID:         p.ID,
 			Connectors: connectors,
 			Path:       p.Path,
-			Builtin:    p.HasBinary == false,
+			Builtin:    !p.HasBinary,
 		})
 	}
 
@@ -348,59 +324,4 @@ func (b *Bundle) writeProviders() error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(b.Dir, "providers.json"), raw, 0o644)
-}
-
-// sweepCWD moves any leftover ./mondoo-debug-* files from the working dir
-// the process started in into the bundle. This catches debug artifacts
-// written by code that hardcodes the prefix without honoring DumpLocal —
-// notably the cnquery-side graph executor's .dot file.
-func (b *Bundle) sweepCWD() error {
-	entries, err := os.ReadDir(b.cwd)
-	if err != nil {
-		return err
-	}
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		name := e.Name()
-		if !strings.HasPrefix(name, dumpPrefix) {
-			continue
-		}
-		src := filepath.Join(b.cwd, name)
-		dst := filepath.Join(b.Dir, name)
-		if src == dst {
-			continue
-		}
-		if err := moveFile(src, dst); err != nil {
-			log.Warn().Err(err).Str("file", name).Msg("failed to move debug artifact into support bundle")
-		}
-	}
-	return nil
-}
-
-// moveFile renames src → dst when both are on the same filesystem, falling
-// back to copy+remove across devices. We don't worry about partial copies on
-// failure — the original stays put for the user to inspect.
-func moveFile(src, dst string) error {
-	if err := os.Rename(src, dst); err == nil {
-		return nil
-	}
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		_ = out.Close()
-		return err
-	}
-	if err := out.Close(); err != nil {
-		return err
-	}
-	return os.Remove(src)
 }
