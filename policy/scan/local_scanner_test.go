@@ -614,3 +614,117 @@ func TestNewLocalScannerWithOptions(t *testing.T) {
 		assert.False(t, rt.AutoUpdate.Enabled, "should not be modified if a custom runtime is provided")
 	})
 }
+
+func TestBuildCodeIDToMrns(t *testing.T) {
+	mrnA := "//policy.api.mondoo.app/queries/check-a"
+	mrnB := "//policy.api.mondoo.app/queries/check-b"
+	codeID := "RNQ4JIDDCic="
+	otherCodeID := "OTHER="
+
+	t.Run("single MRN parent via mrns array", func(t *testing.T) {
+		rp := &policy.ResolvedPolicy{CollectorJob: &policy.CollectorJob{
+			ReportingJobs: map[string]*policy.ReportingJob{
+				"parent": {
+					Uuid:      "parent",
+					QrId:      mrnA,
+					Type:      policy.ReportingJob_CHECK,
+					Mrns:      []string{mrnA},
+					ChildJobs: map[string]*policy.Impact{"child": {}},
+				},
+				"child": {
+					Uuid: "child",
+					QrId: codeID,
+					Type: policy.ReportingJob_EXECUTION_QUERY,
+				},
+			},
+		}}
+		got := buildCodeIDToMrns(rp)
+		assert.Equal(t, map[string][]string{codeID: {mrnA}}, got)
+	})
+
+	t.Run("falls back to qr_id when mrns array is empty", func(t *testing.T) {
+		rp := &policy.ResolvedPolicy{CollectorJob: &policy.CollectorJob{
+			ReportingJobs: map[string]*policy.ReportingJob{
+				"parent": {
+					Uuid:      "parent",
+					QrId:      mrnA,
+					Type:      policy.ReportingJob_CHECK,
+					ChildJobs: map[string]*policy.Impact{"child": {}},
+				},
+				"child": {
+					Uuid: "child",
+					QrId: codeID,
+					Type: policy.ReportingJob_EXECUTION_QUERY,
+				},
+			},
+		}}
+		got := buildCodeIDToMrns(rp)
+		assert.Equal(t, map[string][]string{codeID: {mrnA}}, got)
+	})
+
+	t.Run("one code_id shared by two MRN-bearing parents", func(t *testing.T) {
+		rp := &policy.ResolvedPolicy{CollectorJob: &policy.CollectorJob{
+			ReportingJobs: map[string]*policy.ReportingJob{
+				"parentA": {
+					Uuid:      "parentA",
+					QrId:      mrnA,
+					Type:      policy.ReportingJob_CHECK,
+					Mrns:      []string{mrnA},
+					ChildJobs: map[string]*policy.Impact{"child": {}},
+				},
+				"parentB": {
+					Uuid:      "parentB",
+					QrId:      mrnB,
+					Type:      policy.ReportingJob_CHECK,
+					Mrns:      []string{mrnB},
+					ChildJobs: map[string]*policy.Impact{"child": {}},
+				},
+				"child": {
+					Uuid: "child",
+					QrId: codeID,
+					Type: policy.ReportingJob_EXECUTION_QUERY,
+				},
+			},
+		}}
+		got := buildCodeIDToMrns(rp)
+		require.Len(t, got[codeID], 2)
+		assert.ElementsMatch(t, []string{mrnA, mrnB}, got[codeID])
+	})
+
+	t.Run("ignores non-MRN parents and non-EXECUTION_QUERY children", func(t *testing.T) {
+		rp := &policy.ResolvedPolicy{CollectorJob: &policy.CollectorJob{
+			ReportingJobs: map[string]*policy.ReportingJob{
+				"root": {
+					Uuid:      "root",
+					QrId:      "root", // not an MRN
+					Type:      policy.ReportingJob_POLICY,
+					ChildJobs: map[string]*policy.Impact{"child": {}},
+				},
+				"parent": {
+					Uuid:      "parent",
+					QrId:      mrnA,
+					Type:      policy.ReportingJob_CHECK,
+					Mrns:      []string{mrnA},
+					ChildJobs: map[string]*policy.Impact{"check-child": {}, "exec-child": {}},
+				},
+				"check-child": { // non-execution-query child, must be ignored
+					Uuid: "check-child",
+					QrId: otherCodeID,
+					Type: policy.ReportingJob_CHECK,
+				},
+				"exec-child": {
+					Uuid: "exec-child",
+					QrId: codeID,
+					Type: policy.ReportingJob_EXECUTION_QUERY,
+				},
+			},
+		}}
+		got := buildCodeIDToMrns(rp)
+		assert.Equal(t, map[string][]string{codeID: {mrnA}}, got)
+	})
+
+	t.Run("nil resolved policy returns empty map", func(t *testing.T) {
+		assert.Empty(t, buildCodeIDToMrns(nil))
+		assert.Empty(t, buildCodeIDToMrns(&policy.ResolvedPolicy{}))
+	})
+}
