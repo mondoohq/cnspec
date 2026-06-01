@@ -4032,6 +4032,7 @@ queries:
         deliverLogsStatus == "SUCCESS" &&
         trafficType.in(["REJECT", "ALL"])
       )
+  # Correlation matches a child resource to its parent via the Terraform reference string (e.g. vpc_id = aws_vpc.<name>.id). A child that uses a literal ID (e.g. "vpc-abc123") won't match, but such an ID refers to a VPC managed outside this configuration, which is out of scope for HCL analysis. This reference-based correlation is shared by the other "every parent has a compliant child" checks in this policy (S3, Secrets Manager, Route 53, EFS).
   - uid: mondoo-aws-security-vpc-flow-logs-enabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_vpc")
     mql: |
@@ -43553,8 +43554,8 @@ queries:
   - uid: mondoo-aws-security-secgroup-no-unrestricted-egress-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_security_group" || nameLabel == "aws_security_group_rule" || nameLabel == "aws_vpc_security_group_egress_rule")
     mql: |
-      terraform.resources.where(nameLabel == "aws_security_group").all(arguments["egress"] == empty || arguments["egress"].where(_["protocol"] == "-1").where(_["cidr_blocks"] != null).none(_["cidr_blocks"].contains("0.0.0.0/0")))
-      terraform.resources.where(nameLabel == "aws_security_group_rule").where(arguments["type"] == "egress").where(arguments["protocol"] == "-1").where(arguments["cidr_blocks"] != null).none(arguments["cidr_blocks"].contains("0.0.0.0/0"))
+      terraform.resources.where(nameLabel == "aws_security_group").all(arguments["egress"] == empty || arguments["egress"].where(_["protocol"] == "-1").none(_["cidr_blocks"] != null && _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"] != null && _["ipv6_cidr_blocks"].contains("::/0")))
+      terraform.resources.where(nameLabel == "aws_security_group_rule").where(arguments["type"] == "egress").where(arguments["protocol"] == "-1").none(arguments["cidr_blocks"] != null && arguments["cidr_blocks"].contains("0.0.0.0/0") || arguments["ipv6_cidr_blocks"] != null && arguments["ipv6_cidr_blocks"].contains("::/0"))
       terraform.resources.where(nameLabel == "aws_vpc_security_group_egress_rule").where(arguments["ip_protocol"] == "-1").none(arguments["cidr_ipv4"] == "0.0.0.0/0" || arguments["cidr_ipv6"] == "::/0")
   - uid: mondoo-aws-security-secgroup-no-unrestricted-egress-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_security_group")
@@ -56628,7 +56629,7 @@ queries:
     refs:
       - url: https://docs.aws.amazon.com/singlesignon/latest/userguide/permissionsetsconcept.html
         title: AWS Documentation - Permission sets
-  # session_duration is an ISO-8601 duration; AWS Identity Center emits whole-hour values (PTxH, max PT12H). Compare the hour component numerically — a lexical string compare is wrong ("PT8H" sorts after "PT12H"). Sub-hour edge cases (e.g. "PT720M") are not separately handled.
+  # session_duration is an ISO-8601 duration; AWS Identity Center emits whole-hour values (e.g. PT8H, max PT12H). Compare the hour component numerically — a lexical string compare is wrong ("PT8H" sorts after "PT12H"). Sub-hour edge cases (e.g. "PT720M") are not separately handled.
   - uid: mondoo-aws-security-identitycenter-session-duration-aws
     filters: asset.platform == "aws"
     mql: |
