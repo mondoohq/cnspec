@@ -11691,6 +11691,7 @@ queries:
           )
         }
       }
+  # [_["Resource"]].flat.any(_.contains("*")) handles both string and list values (.toString() returns "[]" for a list). Any "*" is treated as a wildcard — including sub-resource/path-scoped ARNs like "arn:aws:s3:::bucket/*" — which is intentional and matches the aws variant's contains("*") behavior; tightening to == "*" would only catch the full wildcard and diverge from the runtime check.
   - uid: mondoo-aws-security-iam-no-wildcards-policies-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_iam_policy" || nameLabel == "aws_iam_user_policy" || nameLabel == "aws_iam_role_policy" || nameLabel == "aws_iam_group_policy")
     mql: |
@@ -21459,6 +21460,7 @@ queries:
         ).all(
           httpPutResponseHopLimit == 1
         )
+  # The aws_instance metadata_options default for http_put_response_hop_limit is 1, so an unset value is compliant — the aws variant checks the resolved value == 1, which the default satisfies. Enforcing IMDS v2 (http_tokens == "required") is a separate control, not this one.
   - uid: mondoo-aws-security-ec2-imds-hop-limit-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_instance")
     mql: |
@@ -24518,6 +24520,7 @@ queries:
     filters: asset.platform == "aws"
     mql: |
       aws.ec2.keypairs.all(type == "ed25519" || type == "rsa")
+  # Mirrors the aws variant (type == "ed25519" || type == "rsa"): both are accepted. aws_key_pair defaults key_type to "rsa" when unset, so a null value is compliant. Restricting to ed25519-only would be a separate policy-tightening decision applied to both variants.
   - uid: mondoo-aws-security-ec2-keypair-type-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_key_pair")
     mql: |
@@ -25555,13 +25558,11 @@ queries:
     refs:
       - url: https://docs.aws.amazon.com/acm/latest/userguide/acm-certificate.html
         title: AWS Certificate Manager certificates
+  # Allowlist of strong key algorithms; the regex accepts both the "RSA-2048" form the aws provider returns (seen in live scan output) and the "RSA_2048" form the AWS SDK uses, so it is robust to either separator. Weak RSA-1024 is rejected.
   - uid: mondoo-aws-security-acm-certificate-key-algorithm-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.acm.certificates.all(
-        keyAlgorithm == "RSA-2048" || keyAlgorithm == "RSA-3072" || keyAlgorithm == "RSA-4096" ||
-        keyAlgorithm == "EC-prime256v1" || keyAlgorithm == "EC-secp384r1" || keyAlgorithm == "EC-secp521r1"
-      )
+      aws.acm.certificates.all(keyAlgorithm == /^(RSA[-_](2048|3072|4096)|EC[-_](prime256v1|secp384r1|secp521r1))$/)
   - uid: mondoo-aws-security-acm-certificate-key-algorithm-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_acm_certificate")
     mql: |
