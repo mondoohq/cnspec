@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path"
@@ -86,7 +87,9 @@ var aibomCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *p
 	conf.Bundle = pb
 	conf.IsIncognito = true
 
-	report, err := RunScan(conf, scan.DisableProgressBar())
+	ctx := setupDebugDumps(context.Background(), "cnspec-aibom-debug")
+
+	report, err := RunScan(ctx, conf, scan.DisableProgressBar())
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to run scan")
 	}

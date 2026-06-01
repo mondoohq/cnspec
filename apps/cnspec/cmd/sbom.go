@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path"
@@ -16,7 +17,7 @@ import (
 	"go.mondoo.com/cnspec/v13/internal/sbom"
 	"go.mondoo.com/cnspec/v13/internal/sbom/generator"
 	"go.mondoo.com/cnspec/v13/internal/sbom/pack"
-	"go.mondoo.com/mql/v13/logger"
+	"go.mondoo.com/cnspec/v13/internal/scandump"
 	"go.mondoo.com/mql/v13/providers"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/plugin"
 )
@@ -74,6 +75,9 @@ Note this command is experimental and may change in the future.
 
 var sbomCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *plugin.ParseCLIRes) {
 	log.Info().Msg("This command is experimental. Please report any issues to https://github.com/mondoohq/cnspec.")
+
+	ctx := setupDebugDumps(context.Background(), "cnspec-sbom-debug")
+
 	pb, err := pack.QueryPack()
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to load query pack")
@@ -89,7 +93,7 @@ var sbomCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 	conf.Bundle = pb
 	conf.IsIncognito = true
 
-	report, err := RunScan(conf)
+	report, err := RunScan(ctx, conf)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to run scan")
 	}
@@ -98,7 +102,7 @@ var sbomCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 	if err == nil {
 		log.Debug().Msg("converted report to proto")
 		data, _ := cnspecReport.ToJSON()
-		logger.DebugDumpJSON("mondoo-sbom-report", data)
+		scandump.JSON(ctx, "sbom-report", data)
 	}
 
 	boms := generator.GenerateBom(cnspecReport.ToCnqueryReport())

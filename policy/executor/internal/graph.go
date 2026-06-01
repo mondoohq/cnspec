@@ -5,11 +5,12 @@ package internal
 
 import (
 	"container/heap"
+	"context"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/rs/zerolog/log"
+	"go.mondoo.com/cnspec/v13/internal/scandump"
 	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/mql/v13/llx"
 )
@@ -208,15 +209,14 @@ OUTER:
 	return err
 }
 
-func (ge *GraphExecutor) Debug(name string) {
-	if val, ok := os.LookupEnv("DEBUG"); ok && (val == "1" || val == "true") {
-	} else if val, ok := os.LookupEnv("TRACE"); ok && (val == "1" || val == "true") {
-	} else {
-		return
-	}
-	f, err := os.Create(fmt.Sprintf("mondoo-debug-%s.dot", name))
+func (ge *GraphExecutor) Debug(ctx context.Context, name string) {
+	f, err := scandump.Create(ctx, name+".dot")
 	if err != nil {
 		log.Error().Err(err).Msg("failed to write debug graph")
+		return
+	}
+	if f == nil {
+		// No scandump.Run attached — debug graphs are off for this scan.
 		return
 	}
 	defer f.Close()
