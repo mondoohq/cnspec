@@ -11693,10 +11693,10 @@ queries:
   - uid: mondoo-aws-security-iam-no-wildcards-policies-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_iam_policy" || nameLabel == "aws_iam_user_policy" || nameLabel == "aws_iam_role_policy" || nameLabel == "aws_iam_group_policy")
     mql: |
-      terraform.resources.where(nameLabel == "aws_iam_policy").where(arguments["policy"].first["Statement"] != null).all(arguments["policy"].first["Statement"].all(_["Effect"].downcase == "deny" || _["Resource"].toString().contains("*") == false && _["Action"].toString().contains("*") == false))
-      terraform.resources.where(nameLabel == "aws_iam_role_policy").where(arguments["policy"].first["Statement"] != null).all(arguments["policy"].first["Statement"].all(_["Effect"].downcase == "deny" || _["Resource"].toString().contains("*") == false && _["Action"].toString().contains("*") == false))
-      terraform.resources.where(nameLabel == "aws_iam_user_policy").where(arguments["policy"].first["Statement"] != null).all(arguments["policy"].first["Statement"].all(_["Effect"].downcase == "deny" || _["Resource"].toString().contains("*") == false && _["Action"].toString().contains("*") == false))
-      terraform.resources.where(nameLabel == "aws_iam_group_policy").where(arguments["policy"].first["Statement"] != null).all(arguments["policy"].first["Statement"].all(_["Effect"].downcase == "deny" || _["Resource"].toString().contains("*") == false && _["Action"].toString().contains("*") == false))
+      terraform.resources.where(nameLabel == "aws_iam_policy").where(arguments["policy"].first["Statement"] != null).all(arguments["policy"].first["Statement"].all(_["Effect"].downcase == "deny" || [_["Resource"]].flat.any(_.contains("*")) == false && [_["Action"]].flat.any(_.contains("*")) == false))
+      terraform.resources.where(nameLabel == "aws_iam_role_policy").where(arguments["policy"].first["Statement"] != null).all(arguments["policy"].first["Statement"].all(_["Effect"].downcase == "deny" || [_["Resource"]].flat.any(_.contains("*")) == false && [_["Action"]].flat.any(_.contains("*")) == false))
+      terraform.resources.where(nameLabel == "aws_iam_user_policy").where(arguments["policy"].first["Statement"] != null).all(arguments["policy"].first["Statement"].all(_["Effect"].downcase == "deny" || [_["Resource"]].flat.any(_.contains("*")) == false && [_["Action"]].flat.any(_.contains("*")) == false))
+      terraform.resources.where(nameLabel == "aws_iam_group_policy").where(arguments["policy"].first["Statement"] != null).all(arguments["policy"].first["Statement"].all(_["Effect"].downcase == "deny" || [_["Resource"]].flat.any(_.contains("*")) == false && [_["Action"]].flat.any(_.contains("*")) == false))
   - uid: mondoo-aws-security-iam-no-wildcards-policies-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_iam_policy" || type == "aws_iam_user_policy" || type == "aws_iam_role_policy" || type == "aws_iam_group_policy")
     mql: |
@@ -19079,6 +19079,7 @@ queries:
       cloudformation.template.resources.where(type == "AWS::ElastiCache::ReplicationGroup").all(
       properties['AuthToken'] != empty
       )
+  # No Terraform variants: AWS Backup vaults are always encrypted (an AWS-managed KMS key is used when no CMK is set), so "is it encrypted" cannot be false in HCL/plan/state; kms_key_arn only distinguishes a customer-managed key, which is a separate control.
   - uid: mondoo-aws-security-backup-vault-encrypted
     title: Ensure AWS Backup vaults are encrypted
     impact: 70
@@ -19101,18 +19102,6 @@ queries:
         tags:
           mondoo.com/filter-title: AWS Account
           mondoo.com/filter-icon: aws
-      - uid: mondoo-aws-security-backup-vault-encrypted-terraform-hcl
-        tags:
-          mondoo.com/filter-title: Terraform HCL
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-aws-security-backup-vault-encrypted-terraform-plan
-        tags:
-          mondoo.com/filter-title: Terraform Plan
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-aws-security-backup-vault-encrypted-terraform-state
-        tags:
-          mondoo.com/filter-title: Terraform State
-          mondoo.com/filter-icon: terraform
       - uid: mondoo-aws-security-backup-vault-encrypted-cloudformation
         tags:
           mondoo.com/filter-title: CloudFormation
@@ -19201,22 +19190,6 @@ queries:
   - uid: mondoo-aws-security-backup-vault-encrypted-aws
     filters: asset.platform == "aws"
     mql: aws.backup.vaults.all(encryptionKey != null)
-  - uid: mondoo-aws-security-backup-vault-encrypted-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_backup_vault")
-    mql: |
-      terraform.resources.where(nameLabel == "aws_backup_vault").all(true)
-  - uid: mondoo-aws-security-backup-vault-encrypted-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_backup_vault")
-    mql: |
-      terraform.plan.resourceChanges.where(type == "aws_backup_vault").all(
-        change.after.kms_key_arn != empty
-      )
-  - uid: mondoo-aws-security-backup-vault-encrypted-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_backup_vault")
-    mql: |
-      terraform.state.resources.where(type == "aws_backup_vault").all(
-        values.kms_key_arn != empty
-      )
   - uid: mondoo-aws-security-backup-vault-encrypted-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Backup::BackupVault")
     mql: |
@@ -25584,7 +25557,10 @@ queries:
   - uid: mondoo-aws-security-acm-certificate-key-algorithm-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.acm.certificates.all(keyAlgorithm != "RSA-1024" && keyAlgorithm != "RSA_1024")
+      aws.acm.certificates.all(
+        keyAlgorithm == "RSA-2048" || keyAlgorithm == "RSA-3072" || keyAlgorithm == "RSA-4096" ||
+        keyAlgorithm == "EC-prime256v1" || keyAlgorithm == "EC-secp384r1" || keyAlgorithm == "EC-secp521r1"
+      )
   - uid: mondoo-aws-security-acm-certificate-key-algorithm-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_acm_certificate")
     mql: |
@@ -56652,6 +56628,7 @@ queries:
     refs:
       - url: https://docs.aws.amazon.com/singlesignon/latest/userguide/permissionsetsconcept.html
         title: AWS Documentation - Permission sets
+  # session_duration is an ISO-8601 duration; AWS Identity Center emits whole-hour values (PTxH, max PT12H). Compare the hour component numerically — a lexical string compare is wrong ("PT8H" sorts after "PT12H"). Sub-hour edge cases (e.g. "PT720M") are not separately handled.
   - uid: mondoo-aws-security-identitycenter-session-duration-aws
     filters: asset.platform == "aws"
     mql: |
@@ -56660,7 +56637,7 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_ssoadmin_permission_set")
     mql: |
       terraform.resources.where(nameLabel == "aws_ssoadmin_permission_set").all(
-        arguments.session_duration == null || arguments.session_duration <= "PT12H"
+        arguments.session_duration == null || arguments.session_duration.find(/[0-9]+/).length == 0 || int(arguments.session_duration.find(/[0-9]+/).first) <= 12
       )
   - uid: mondoo-aws-security-identitycenter-session-duration-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_ssoadmin_permission_set")
@@ -57126,6 +57103,9 @@ queries:
     refs:
       - url: https://docs.aws.amazon.com/secretsmanager/latest/userguide/auth-and-access_resource-based-policies.html
         title: AWS Documentation - Resource-based policies for Secrets Manager
+  # Passes when there is no resource policy; otherwise requires the policy not grant Allow to a wildcard principal.
+  # MQL has no grouping parentheses, so this relies on && binding tighter than ||:
+  #   empty || empty || (not-public-star && not-public-aws-star)
   - uid: mondoo-aws-security-secretsmanager-no-public-policy-aws
     filters: asset.platform == "aws-secretsmanager-secret"
     mql: |
@@ -61504,6 +61484,7 @@ queries:
     filters: asset.platform == "aws-s3-bucket"
     mql: |
       aws.s3.bucket.ownershipControls == "BucketOwnerEnforced"
+  # Uses join("|") (vs join(",") in the otherwise-identical s3-ownership-controls-enforced-terraform-hcl) on purpose: cnspec deduplicates checks with identical MQL checksums, so the separator is varied to keep both checks scoring independently.
   - uid: mondoo-aws-security-s3-bucket-ownership-bucket-owner-enforced-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_s3_bucket")
     mql: |
