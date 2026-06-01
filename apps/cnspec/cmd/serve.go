@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"context"
+	"os"
 	"slices"
 	"time"
 
@@ -68,6 +69,9 @@ var serveCmd = &cobra.Command{
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		prof.InitProfiler()
+
+		// Serve is a long-running daemon: never write per-scan debug-dump files.
+		disableServeDebugArtifacts()
 
 		// prevent colors on windows
 		viper.Set("color", "none")
@@ -170,6 +174,28 @@ var serveCmd = &cobra.Command{
 		})
 		return nil
 	},
+}
+
+// disableServeDebugArtifacts stops cnquery's logger.DebugDumpJSON/YAML from
+// writing per-scan mondoo-debug-*.json/.yaml files in serve mode. Those helpers
+// fall back to a "./mondoo-debug-" prefix when DEBUG=1/TRACE=1 and
+// logger.DumpLocal is unset, rewriting files in the working directory on every
+// scan cycle. serve's PreRun has already captured the log level and applied it
+// to zerolog before RunE runs, so clearing these env vars here leaves debug
+// *logging* intact (provider plugins also keep their level — they receive it via
+// the --log-level flag, not the env) while routing the dump helpers down their
+// no-op path. The cnspec-side scandump system is already inert in serve (no
+// scandump.Run is attached to the scan ctx), and --collect-support-bundle is a
+// scan-only flag never wired into serve, so no support-bundle tar is produced
+// here either.
+//
+// Side effect: DEBUG/TRACE-gated diagnostics that run after this point also stop
+// seeing the variable. In practice that is limited to verbose k8s-discovery in
+// provider subprocesses; the prometheus debug-metrics server is started at
+// process boot (before serve dispatch) and is unaffected.
+func disableServeDebugArtifacts() {
+	_ = os.Unsetenv("DEBUG")
+	_ = os.Unsetenv("TRACE")
 }
 
 func getServeConfig() (*scanConfig, *cnspec_config.CliConfig, error) {
