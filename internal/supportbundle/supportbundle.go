@@ -5,7 +5,10 @@
 // single directory that users can hand to Mondoo support for analysis.
 // Activated via --collect-support-bundle on `cnspec scan`.
 //
-// Layout produced:
+// On Finalize the directory is packed into a sibling <bundle>.tar.gz and the
+// directory itself is removed, leaving a single archive to share.
+//
+// Layout produced (inside the tarball, under a single <bundle>/ root):
 //
 //	<bundle>/
 //	  manifest.json           # cnspec/cnquery versions, OS/arch, scan args, host
@@ -56,8 +59,12 @@ const debugSubdir = "debug"
 // pipeline and global-state mutations; Finalize writes the metadata files
 // and restores everything Activate touched.
 type Bundle struct {
-	// Dir is the absolute bundle root.
+	// Dir is the absolute bundle root. After Finalize it is removed in favor
+	// of the tarball (see Archive).
 	Dir string
+	// Archive is the absolute path to the <bundle>.tar.gz produced by Finalize.
+	// Empty until Finalize succeeds in packing the directory.
+	Archive string
 	// Args are the command-line arguments recorded in the manifest.
 	Args []string
 
@@ -160,7 +167,7 @@ func (b *Bundle) HookFatal() {
 	log.Logger = log.Logger.Hook(zerolog.HookFunc(func(_ *zerolog.Event, level zerolog.Level, _ string) {
 		if level == zerolog.FatalLevel {
 			_ = b.Finalize()
-			fmt.Fprintf(os.Stderr, "support bundle written to: %s\n", b.Dir)
+			fmt.Fprintf(os.Stderr, "support bundle written to: %s\n", b.outputPath())
 		}
 	}))
 }
@@ -175,9 +182,19 @@ func (b *Bundle) FinalizeAndAnnounce(w io.Writer) {
 		log.Warn().Err(err).Msg("support bundle finalize had errors")
 	}
 	if !b.announced {
-		fmt.Fprintf(w, "support bundle written to: %s\n", b.Dir)
+		fmt.Fprintf(w, "support bundle written to: %s\n", b.outputPath())
 		b.announced = true
 	}
+}
+
+// outputPath is the user-facing artifact path: the tarball once Finalize has
+// packed it, otherwise the bundle directory (e.g. when archiving failed and we
+// kept the directory).
+func (b *Bundle) outputPath() string {
+	if b.Archive != "" {
+		return b.Archive
+	}
+	return b.Dir
 }
 
 // Finalize writes manifest.json + providers.json, restores global logger
@@ -209,6 +226,20 @@ func (b *Bundle) Finalize() error {
 	if b.logFile != nil {
 		if err := b.logFile.Close(); err != nil {
 			errs = append(errs, errors.Wrap(err, "close log"))
+		}
+	}
+
+	// Pack the bundle into a single .tar.gz for easy sharing, then drop the
+	// directory. On failure we keep the directory so the collected data isn't
+	// lost, and leave Archive empty so callers announce the directory instead.
+	archivePath := b.Dir + ".tar.gz"
+	if err := archiveDir(b.Dir, archivePath); err != nil {
+		errs = append(errs, errors.Wrap(err, "archive"))
+		_ = os.Remove(archivePath) // discard any partial archive
+	} else {
+		b.Archive = archivePath
+		if err := os.RemoveAll(b.Dir); err != nil {
+			errs = append(errs, errors.Wrap(err, "cleanup bundle dir"))
 		}
 	}
 

@@ -4,7 +4,9 @@
 package supportbundle
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"io"
@@ -20,6 +22,36 @@ import (
 	"go.mondoo.com/cnspec/v13/internal/scandump"
 	"go.mondoo.com/mql/v13/logger"
 )
+
+// readTarGz reads every regular-file entry from a .tar.gz into a map keyed by
+// the archive entry name (forward-slash paths, e.g. "<bundle>/manifest.json").
+func readTarGz(t *testing.T, path string) map[string]string {
+	t.Helper()
+	f, err := os.Open(path)
+	require.NoError(t, err)
+	defer f.Close()
+
+	gz, err := gzip.NewReader(f)
+	require.NoError(t, err)
+	defer gz.Close()
+
+	out := map[string]string{}
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		require.NoError(t, err)
+		if hdr.Typeflag == tar.TypeDir {
+			continue
+		}
+		data, err := io.ReadAll(tr)
+		require.NoError(t, err)
+		out[hdr.Name] = string(data)
+	}
+	return out
+}
 
 // resetGlobals saves and restores the package-level state that Activate
 // mutates so sequential tests don't interfere.
@@ -75,7 +107,7 @@ func TestActivate_AttachesScandumpRunToContext(t *testing.T) {
 
 	ctx, err := b.Activate(context.Background())
 	require.NoError(t, err)
-	defer b.Finalize()
+	defer func() { _ = b.Finalize() }()
 
 	assert.True(t, scandump.Active(ctx),
 		"Activate must return a ctx that carries a scandump.Run")
@@ -96,7 +128,7 @@ func TestActivate_DoesNotLowerVerbosityIfTraceAlready(t *testing.T) {
 	require.NoError(t, err)
 	_, err = b.Activate(context.Background())
 	require.NoError(t, err)
-	defer b.Finalize()
+	defer func() { _ = b.Finalize() }()
 
 	assert.Equal(t, zerolog.TraceLevel, zerolog.GlobalLevel(),
 		"Activate must not downgrade from trace to debug")
@@ -115,9 +147,8 @@ func TestActivate_TeesLogsToFileWithTimestamps(t *testing.T) {
 
 	require.NoError(t, b.Finalize())
 
-	raw, err := os.ReadFile(filepath.Join(b.Dir, "debug.log"))
-	require.NoError(t, err)
-	contents := string(raw)
+	entries := readTarGz(t, b.Archive)
+	contents := entries[filepath.Base(b.Dir)+"/debug.log"]
 	assert.Contains(t, contents, "hello support bundle")
 	assert.Contains(t, contents, "k=v")
 	// RFC3339Nano timestamps always include "T".
@@ -156,10 +187,13 @@ func TestFinalize_WritesManifestAndProviders(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, b.Finalize())
 
-	raw, err := os.ReadFile(filepath.Join(b.Dir, "manifest.json"))
-	require.NoError(t, err)
+	entries := readTarGz(t, b.Archive)
+	name := filepath.Base(b.Dir)
+
+	raw, ok := entries[name+"/manifest.json"]
+	require.True(t, ok, "tarball should contain manifest.json")
 	var m Manifest
-	require.NoError(t, json.Unmarshal(raw, &m))
+	require.NoError(t, json.Unmarshal([]byte(raw), &m))
 	assert.NotEmpty(t, m.CnspecInfo)
 	assert.NotEmpty(t, m.CnquerySDK)
 	assert.NotEmpty(t, m.GoVersion)
@@ -168,8 +202,8 @@ func TestFinalize_WritesManifestAndProviders(t *testing.T) {
 	assert.Equal(t, []string{"cnspec", "scan", "local", "--collect-support-bundle"}, m.Args)
 	assert.False(t, m.CreatedAt.IsZero())
 
-	pRaw, err := os.ReadFile(filepath.Join(b.Dir, "providers.json"))
-	require.NoError(t, err)
+	pRaw, ok := entries[name+"/providers.json"]
+	require.True(t, ok, "tarball should contain providers.json")
 	assert.NotEmpty(t, pRaw, "providers.json should be written even when no providers configured")
 }
 
@@ -186,9 +220,8 @@ func TestFinalize_DoesNotLeakCredentialEnvVars(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, b.Finalize())
 
-	raw, err := os.ReadFile(filepath.Join(b.Dir, "manifest.json"))
-	require.NoError(t, err)
-	contents := string(raw)
+	entries := readTarGz(t, b.Archive)
+	contents := entries[filepath.Base(b.Dir)+"/manifest.json"]
 	assert.NotContains(t, contents, "AWS_SECRET_ACCESS_KEY",
 		"manifest must NOT dump arbitrary env vars — only the curated list")
 	assert.NotContains(t, contents, "should-not-leak")
@@ -216,6 +249,52 @@ func TestFinalizeAndAnnounce_PrintsPathOnce(t *testing.T) {
 
 	count := strings.Count(buf.String(), "support bundle written to:")
 	assert.Equal(t, 1, count, "path should only be announced once across multiple FinalizeAndAnnounce calls")
+	assert.Contains(t, buf.String(), b.Archive,
+		"announce should point at the tarball, not the removed directory")
+	assert.True(t, strings.HasSuffix(b.Archive, ".tar.gz"))
+}
+
+func TestFinalize_ArchivesAndRemovesDir(t *testing.T) {
+	resetGlobals(t)
+
+	dir := t.TempDir()
+	b, err := New(filepath.Join(dir, "bundle"))
+	require.NoError(t, err)
+	_, err = b.Activate(context.Background())
+	require.NoError(t, err)
+	require.NoError(t, b.Finalize())
+
+	assert.Equal(t, b.Dir+".tar.gz", b.Archive, "Archive should be the sibling .tar.gz of the bundle dir")
+
+	info, err := os.Stat(b.Archive)
+	require.NoError(t, err, "tarball should exist after finalize")
+	assert.Greater(t, info.Size(), int64(0), "tarball should not be empty")
+
+	_, err = os.Stat(b.Dir)
+	assert.True(t, os.IsNotExist(err), "bundle directory should be removed once archived")
+
+	entries := readTarGz(t, b.Archive)
+	name := filepath.Base(b.Dir)
+	_, ok := entries[name+"/manifest.json"]
+	assert.True(t, ok, "tarball should contain manifest.json under the bundle dir")
+	_, ok = entries[name+"/providers.json"]
+	assert.True(t, ok, "tarball should contain providers.json under the bundle dir")
+}
+
+func TestArchiveDir_PreservesTreeAndContent(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "cnspec-support-bundle-xyz")
+	require.NoError(t, os.MkdirAll(filepath.Join(src, "debug", "webserver"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(src, "manifest.json"), []byte(`{"ok":true}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(src, "debug", "report.json"), []byte("report"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(src, "debug", "webserver", "resolvedPolicy.json"), []byte("policy"), 0o644))
+
+	dest := src + ".tar.gz"
+	require.NoError(t, archiveDir(src, dest))
+
+	entries := readTarGz(t, dest)
+	assert.Equal(t, `{"ok":true}`, entries["cnspec-support-bundle-xyz/manifest.json"])
+	assert.Equal(t, "report", entries["cnspec-support-bundle-xyz/debug/report.json"])
+	assert.Equal(t, "policy", entries["cnspec-support-bundle-xyz/debug/webserver/resolvedPolicy.json"])
 }
 
 func TestActivate_DumpsLandInDebugSubdir(t *testing.T) {
@@ -226,7 +305,7 @@ func TestActivate_DumpsLandInDebugSubdir(t *testing.T) {
 	require.NoError(t, err)
 	ctx, err := b.Activate(context.Background())
 	require.NoError(t, err)
-	defer b.Finalize()
+	defer func() { _ = b.Finalize() }()
 
 	// Run-level dump
 	scandump.JSON(ctx, "run-level", map[string]int{"x": 1})
