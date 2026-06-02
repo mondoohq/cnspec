@@ -483,6 +483,7 @@ policies:
           - uid: mondoo-aws-security-route53-health-check-not-disabled
           - uid: mondoo-aws-security-route53-health-check-https
           - uid: mondoo-aws-security-route53-resolver-query-logging-enabled
+          - uid: mondoo-aws-security-route53-resolver-dns-firewall-threat-protection
       - title: Route 53 Domains
         checks:
           - uid: mondoo-aws-security-route53-domain-transfer-lock
@@ -69706,3 +69707,102 @@ queries:
       cloudformation.template.resources.where(type == "AWS::CodeArtifact::Domain").all(
         properties['EncryptionKey'] != empty
       )
+  # No Terraform variants: DNS Firewall Advanced threat-protection rules (DGA / DNS-tunneling
+  # detection) are configured through the dnsThreatProtection and confidenceThreshold settings,
+  # which the AWS Terraform provider's aws_route53resolver_firewall_rule resource does not yet
+  # expose. The capability is reachable only through the API, CLI, and console. Revisit if the
+  # provider adds advanced-rule arguments.
+  - uid: mondoo-aws-security-route53-resolver-dns-firewall-threat-protection
+    title: Ensure Route 53 Resolver DNS Firewall enables DNS threat protection
+    impact: 70
+    filters: asset.platform == "aws"
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-tvm-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-5-ii-b-security-awareness-training-and-tools-protection-from-malicious-software
+      compliance/iso-27001-2022: iso-27001-2022-a-8-7
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-de-cm-4
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-2
+      compliance/pci-dss-4: pcidss-requirement-5-2-2
+      compliance/soc2-2017: soc2-control-cc6-8-4
+      compliance/vda-isa-5: vda-isa-5-5-2-3
+    mql: |
+      aws.route53.resolver.firewallRuleGroups != empty
+      aws.route53.resolver.firewallRuleGroups.all(
+        firewallRules.any(dnsThreatProtection != null && dnsThreatProtection != "")
+      )
+    docs:
+      desc: |
+        This check ensures that Route 53 Resolver DNS Firewall is deployed and that each rule group includes at least one rule with advanced DNS threat protection enabled. DNS Firewall Advanced inspects query patterns to detect and block domain-generation-algorithm (DGA) malware command-and-control domains and DNS tunneling — exfiltration and C2 techniques that static domain block-lists do not catch.
+
+        **Why this matters**
+
+        - **DNS as a C2 and exfiltration channel:** Outbound DNS is rarely blocked at the egress firewall, making it a favored channel for command-and-control beacons and data exfiltration; advanced threat protection inspects the query stream for these behaviors.
+        - **Beyond static block-lists:** Domain-list rules only block known-bad domains; DGA malware generates thousands of fresh domains that no static list covers, which is exactly what threat protection is designed to detect.
+        - **Inline blocking:** Threat protection acts on the resolution path, so malicious lookups are blocked before the workload ever connects to the malicious infrastructure.
+        - **VPC-wide coverage:** A rule group associated with a VPC applies to every workload in it, providing consistent protection without per-host agents.
+
+        **Risk mitigation**
+
+        - **Add threat-protection rules to every rule group:** Configure DGA and DNS-tunneling protection on each rule group so all associated VPCs are covered.
+        - **Set rules to block:** Use a blocking action (rather than alert-only) for high-confidence detections so malicious resolutions are actually prevented.
+        - **Associate rule groups with all VPCs:** Ensure every VPC carrying workloads is associated with a rule group that includes threat protection.
+      audit: |
+        ### Audit via Console
+
+        1. Open the **Route 53** console and choose **DNS Firewall** then **Rule groups**.
+        2. Select each rule group and review its rules.
+        3. Confirm at least one rule has **DNS threat protection** configured (DGA or DNS tunneling).
+
+        A passing account has at least one DNS Firewall rule group, and every rule group contains a threat-protection rule. A failing account has no rule groups, or has a rule group with no threat-protection rule.
+
+        ### Audit via CLI
+
+        1. List the DNS Firewall rule groups, then list the rules in each and inspect their threat-protection settings:
+
+        ```bash
+        aws route53resolver list-firewall-rule-groups \
+          --query 'FirewallRuleGroups[*].{Id:Id,Name:Name}' --output table
+
+        aws route53resolver list-firewall-rules \
+          --firewall-rule-group-id <rule-group-id> \
+          --query 'FirewallRules[*].{Name:Name,DnsThreatProtection:DnsThreatProtection,Action:Action}' \
+          --output table
+        ```
+
+        A passing rule group returns at least one rule with a non-empty `DnsThreatProtection` value. A failing rule group returns no rules with threat protection, or no rule groups exist.
+      remediation:
+        - id: console
+          desc: |
+            To enable DNS threat protection using the AWS Console:
+
+            1. Open the **Route 53** console and choose **DNS Firewall** then **Rule groups**.
+            2. Select a rule group (or create one) and choose **Add rule**.
+            3. Choose **DNS Firewall Advanced** and select the threat type (DGA or DNS tunneling) and a confidence threshold.
+            4. Set the action to **Block** for high-confidence detections.
+            5. Associate the rule group with the VPCs that should be protected.
+        - id: cli
+          desc: |
+            To add a DNS Firewall Advanced threat-protection rule using the AWS CLI:
+
+            ```bash
+            aws route53resolver create-firewall-rule \
+              --firewall-rule-group-id <rule-group-id> \
+              --name dga-protection \
+              --priority 100 \
+              --action BLOCK \
+              --dns-threat-protection DGA \
+              --confidence-threshold HIGH
+            ```
+        # No Terraform remediation: the aws_route53resolver_firewall_rule resource does not expose
+        # the advanced threat-protection arguments (dns_threat_protection, confidence_threshold);
+        # configure these rules through the console or CLI above.
+        # No CloudFormation remediation: AWS::Route53Resolver::FirewallRule does not support the
+        # advanced threat-protection properties; use the console or CLI above.
+    refs:
+      - url: https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/resolver-dns-firewall-advanced.html
+        title: DNS Firewall Advanced threat protection
