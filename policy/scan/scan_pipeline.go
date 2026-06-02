@@ -318,9 +318,13 @@ func (d *scanDispatcher) reportPanic(tracked *discovery.TrackedAsset) {
 				Build:   build,
 			},
 			Error: &health.ErrorInfo{
-				Message:    "panic: " + fmt.Sprintf("%v -- %v", r, tags),
+				Message:    "panic: " + fmt.Sprintf("%v", r),
 				Stacktrace: string(stacktrace),
 			},
+			// Send asset identification as structured tags so the platform
+			// can attribute the panic to a specific asset, rather than
+			// burying the map in the message string.
+			Tags: tags,
 		}
 
 		sendErrorToMondooPlatform(serviceAccount, event)
