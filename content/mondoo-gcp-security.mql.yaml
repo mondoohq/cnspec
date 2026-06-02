@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-gcp-security
     name: Mondoo Google Cloud (GCP) Security
-    version: 9.1.0
+    version: 9.2.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -243,7 +243,12 @@ policies:
           - uid: mondoo-gcp-security-pubsub-topic-cmek-encryption
           - uid: mondoo-gcp-security-pubsub-subscription-expiration-configured
           - uid: mondoo-gcp-security-pubsub-topic-not-publicly-accessible
+          - uid: mondoo-gcp-security-pubsub-topic-schema-validation-enabled
+          - uid: mondoo-gcp-security-pubsub-topic-message-storage-policy-configured
           - uid: mondoo-gcp-security-pubsub-subscription-not-publicly-accessible
+          - uid: mondoo-gcp-security-pubsub-subscription-push-endpoint-https
+          - uid: mondoo-gcp-security-pubsub-subscription-dead-letter-configured
+          - uid: mondoo-gcp-security-pubsub-subscription-not-detached
       - title: Cloud Healthcare API
         checks:
           - uid: mondoo-gcp-security-healthcare-dataset-cmek-encryption
@@ -266,6 +271,9 @@ policies:
           - uid: mondoo-gcp-security-cloud-run-vpc-access-configured
           - uid: mondoo-gcp-security-cloud-run-job-no-default-service-account
           - uid: mondoo-gcp-security-cloud-run-job-cmek-encryption
+          - uid: mondoo-gcp-security-cloud-run-job-image-not-latest-tag
+          - uid: mondoo-gcp-security-cloud-run-job-vpc-egress-configured
+          - uid: mondoo-gcp-security-cloud-run-job-no-plaintext-secrets-in-env
       - title: App Engine
         checks:
           - uid: mondoo-gcp-security-appengine-iap-or-vpc-only-ingress
@@ -347,6 +355,7 @@ policies:
         checks:
           - uid: mondoo-gcp-security-firestore-cmek-encryption
           - uid: mondoo-gcp-security-firestore-project-iam-no-public-datastore-roles
+          - uid: mondoo-gcp-security-firestore-point-in-time-recovery-enabled
       - title: Spanner
         checks:
           - uid: mondoo-gcp-security-spanner-cmek-encryption
@@ -380,6 +389,9 @@ policies:
           - uid: mondoo-gcp-security-vertexai-custom-job-no-default-service-account
           - uid: mondoo-gcp-security-vertex-ai-workbench-no-public-ip
           - uid: mondoo-gcp-security-vertex-ai-job-cmek-encryption
+          - uid: mondoo-gcp-security-vertexai-custom-job-cmek-encryption
+          - uid: mondoo-gcp-security-vertexai-custom-job-private-network
+          - uid: mondoo-gcp-security-vertexai-custom-job-web-access-disabled
       - title: Cloud Workstations
         checks:
           - uid: mondoo-gcp-security-workstations-cluster-private-cluster
@@ -11505,6 +11517,10 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-3
       compliance/vda-isa-5: vda-isa-5-4-2-1
     variants:
+      - uid: mondoo-gcp-security-pubsub-topic-not-publicly-accessible-gcp
+        tags:
+          mondoo.com/filter-title: GCP Pub/Sub Topic
+          mondoo.com/filter-icon: gcp
       - uid: mondoo-gcp-security-pubsub-topic-not-publicly-accessible-terraform-hcl
         tags:
           mondoo.com/filter-title: Terraform HCL
@@ -11594,6 +11610,12 @@ queries:
     refs:
       - url: https://cloud.google.com/pubsub/docs/access-control
         title: Pub/Sub access control
+  - uid: mondoo-gcp-security-pubsub-topic-not-publicly-accessible-gcp
+    filters: asset.platform == 'gcp-pubsub-topic'
+    mql: |
+      gcp.project.pubsubService.topic.iamPolicy.all(
+        members.none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
   - uid: mondoo-gcp-security-pubsub-topic-not-publicly-accessible-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_pubsub_topic_iam_binding' || nameLabel == 'google_pubsub_topic_iam_member')
@@ -11642,6 +11664,10 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-3
       compliance/vda-isa-5: vda-isa-5-4-2-1
     variants:
+      - uid: mondoo-gcp-security-pubsub-subscription-not-publicly-accessible-gcp
+        tags:
+          mondoo.com/filter-title: GCP Pub/Sub Subscription
+          mondoo.com/filter-icon: gcp
       - uid: mondoo-gcp-security-pubsub-subscription-not-publicly-accessible-terraform-hcl
         tags:
           mondoo.com/filter-title: Terraform HCL
@@ -11731,6 +11757,12 @@ queries:
     refs:
       - url: https://cloud.google.com/pubsub/docs/access-control
         title: Pub/Sub access control
+  - uid: mondoo-gcp-security-pubsub-subscription-not-publicly-accessible-gcp
+    filters: asset.platform == 'gcp-pubsub-subscription'
+    mql: |
+      gcp.project.pubsubService.subscription.iamPolicy.all(
+        members.none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
   - uid: mondoo-gcp-security-pubsub-subscription-not-publicly-accessible-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_pubsub_subscription_iam_binding' || nameLabel == 'google_pubsub_subscription_iam_member')
@@ -36538,3 +36570,1432 @@ queries:
         )
       )
   # Skipped: Filestore in-transit encryption is not a resource-level configuration. NFSv3 mounts traverse the customer VPC unencrypted at the protocol level; Enterprise tier with Kerberos can encrypt mounts but neither cnquery nor the Terraform google_filestore_instance resource expose Kerberos config. Revisit if Filestore adds a configurable encrypt-in-transit field or if the cnquery gcp provider exposes the underlying network mode in a way that distinguishes private-service-access from a direct, untrusted peering.
+  - uid: mondoo-gcp-security-pubsub-topic-schema-validation-enabled
+    title: Ensure Pub/Sub topics enforce a message schema
+    impact: 50
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: hipaa-security-ss164-312-c-1-integrity
+      compliance/iso-27001-2022: iso-27001-2022-a-8-26
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ds-6
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-10
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-gcp-security-pubsub-topic-schema-validation-enabled-gcp
+        tags:
+          mondoo.com/filter-title: GCP Pub/Sub Topic
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-pubsub-topic-schema-validation-enabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-pubsub-topic-schema-validation-enabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-pubsub-topic-schema-validation-enabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Pub/Sub topics have a schema configured so that messages are validated before they are accepted. By default, Pub/Sub topics accept messages of any shape, allowing malformed or unexpected payloads to enter downstream consumers without validation.
+
+        **Why this matters**
+
+        - **Deserialization safety:** Consumers that parse message payloads without validation are vulnerable to malformed input that can trigger parsing errors, crashes, or unexpected code paths.
+        - **Data pipeline integrity:** Unvalidated messages that contain wrong field types or missing required fields can corrupt downstream processing pipelines, databases, and analytics jobs silently.
+        - **Operational cost:** Malformed messages that pass through without rejection must be identified, quarantined, and replayed later, increasing operational effort and latency.
+
+        **Risk mitigation**
+
+        - **Reject malformed messages at ingress:** Schema enforcement rejects invalid messages at the topic boundary before they can propagate to any subscriber or storage sink.
+        - **Document expected contract:** A Pub/Sub schema serves as a machine-enforced API contract, making the expected message structure visible to producers and consumers alike.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the [Google Cloud Console](https://console.cloud.google.com) and select the project.
+        2. Navigate to **Pub/Sub > Topics**.
+        3. For each topic, click the topic name to view its details.
+        4. Check the **Schema** field.
+
+        A passing topic shows a schema name in the **Schema** field. A failing topic shows no schema attached.
+
+        ### Audit via CLI
+
+        1. Describe each topic and inspect the `schemaSettings` field:
+
+        ```bash
+        gcloud pubsub topics describe TOPIC_NAME --format="value(schemaSettings)"
+        ```
+
+        A passing topic returns a `schemaSettings` block with a non-empty `schema` field. A failing topic returns an empty or absent `schemaSettings`.
+      remediation:
+        - id: console
+          desc: |
+            To enforce a message schema on a Pub/Sub topic using the Google Cloud Console:
+
+            1. Create or identify a schema under **Pub/Sub > Schemas**.
+            2. Navigate to **Pub/Sub > Topics** and select the topic.
+            3. Click **Edit topic**.
+            4. Under **Schema**, select the schema you want to enforce and set the encoding.
+            5. Click **Update**.
+        - id: cli
+          desc: |
+            To attach a schema to an existing Pub/Sub topic using the Google Cloud CLI:
+
+            ```bash
+            gcloud pubsub topics update TOPIC_NAME \
+              --message-encoding=JSON \
+              --schema=projects/PROJECT_ID/schemas/SCHEMA_NAME
+            ```
+        - id: terraform
+          desc: |
+            To enforce a message schema on a Pub/Sub topic in Terraform:
+
+            ```hcl
+            resource "google_pubsub_schema" "example" {
+              name       = "example-schema"
+              type       = "AVRO"
+              definition = file("schema.avsc")
+            }
+
+            resource "google_pubsub_topic" "example" {
+              name = "example-topic"
+
+              schema_settings {
+                schema   = google_pubsub_schema.example.id
+                encoding = "JSON"
+              }
+            }
+            ```
+    refs:
+      - url: https://cloud.google.com/pubsub/docs/schemas
+        title: Pub/Sub schemas overview
+  - uid: mondoo-gcp-security-pubsub-topic-schema-validation-enabled-gcp
+    filters: asset.platform == 'gcp-pubsub-topic'
+    mql: |
+      gcp.project.pubsubService.topic.config.schemaSettings != empty
+  - uid: mondoo-gcp-security-pubsub-topic-schema-validation-enabled-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_pubsub_topic')
+    mql: |
+      terraform.resources('google_pubsub_topic').all(
+        blocks.where(type == 'schema_settings') != empty
+      )
+  - uid: mondoo-gcp-security-pubsub-topic-schema-validation-enabled-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_pubsub_topic')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_pubsub_topic').all(
+        change.after['schema_settings'] != empty
+      )
+  - uid: mondoo-gcp-security-pubsub-topic-schema-validation-enabled-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_pubsub_topic')
+    mql: |
+      terraform.state.resources.where(type == 'google_pubsub_topic').all(
+        values['schema_settings'] != empty
+      )
+  - uid: mondoo-gcp-security-pubsub-topic-message-storage-policy-configured
+    title: Ensure Pub/Sub topics restrict message storage regions
+    impact: 50
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-5-31
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sa-9
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-gcp-security-pubsub-topic-message-storage-policy-configured-gcp
+        tags:
+          mondoo.com/filter-title: GCP Pub/Sub Topic
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-pubsub-topic-message-storage-policy-configured-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-pubsub-topic-message-storage-policy-configured-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-pubsub-topic-message-storage-policy-configured-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Pub/Sub topics have a message storage policy configured that restricts which regions may store messages at rest. Without a storage policy, Google Pub/Sub may place messages in any region globally, which can conflict with data sovereignty requirements, contractual obligations, or regulatory frameworks that mandate geographic data boundaries.
+
+        **Why this matters**
+
+        - **Data sovereignty compliance:** Regulatory frameworks such as GDPR, data localization laws, and contractual data processing agreements often require that data remain within specific jurisdictions. Without a storage policy, message data may leave the required region.
+        - **Audit trail clarity:** A defined storage policy makes it straightforward to demonstrate to auditors that data at rest is confined to approved regions, rather than having to rely on Google's default placement behavior.
+        - **Blast radius containment:** Restricting storage to specific regions limits the geographic spread of data in the event of an account compromise or accidental exposure.
+
+        **Risk mitigation**
+
+        - **Define allowed regions explicitly:** Configure the message storage policy to list only the regions where the organization is authorized to store data, and review this list whenever regional compliance requirements change.
+        - **Combine with organization policy:** Use the `constraints/pubsub.enforceInTransitRegions` organization policy constraint alongside the topic storage policy for defense-in-depth.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the [Google Cloud Console](https://console.cloud.google.com) and select the project.
+        2. Navigate to **Pub/Sub > Topics**.
+        3. For each topic, click the topic name to view its details.
+        4. Check the **Message storage policy** field.
+
+        A passing topic shows one or more allowed regions listed under **Message storage policy**. A failing topic shows no message storage policy configured.
+
+        ### Audit via CLI
+
+        1. Describe each topic and inspect the `messageStoragePolicy` field:
+
+        ```bash
+        gcloud pubsub topics describe TOPIC_NAME --format="value(messageStoragePolicy)"
+        ```
+
+        A passing topic returns a `messageStoragePolicy` block with a non-empty `allowedPersistenceRegions` list. A failing topic returns an empty or absent `messageStoragePolicy`.
+      remediation:
+        - id: console
+          desc: |
+            To configure a message storage policy on a Pub/Sub topic using the Google Cloud Console:
+
+            1. Navigate to **Pub/Sub > Topics** in the Google Cloud Console.
+            2. Select the topic and click **Edit topic**.
+            3. Under **Message storage policy**, select **Use custom policy** and add the allowed regions.
+            4. Click **Update**.
+        - id: cli
+          desc: |
+            To set a message storage policy on a Pub/Sub topic using the Google Cloud CLI:
+
+            ```bash
+            gcloud pubsub topics update TOPIC_NAME \
+              --message-storage-policy-allowed-regions=us-central1,us-east1
+            ```
+        - id: terraform
+          desc: |
+            To configure a message storage policy on a Pub/Sub topic in Terraform:
+
+            ```hcl
+            resource "google_pubsub_topic" "example" {
+              name = "example-topic"
+
+              message_storage_policy {
+                allowed_persistence_regions = ["us-central1", "us-east1"]
+              }
+            }
+            ```
+    refs:
+      - url: https://cloud.google.com/pubsub/docs/resource-location-restriction
+        title: Pub/Sub resource location restriction
+  - uid: mondoo-gcp-security-pubsub-topic-message-storage-policy-configured-gcp
+    filters: asset.platform == 'gcp-pubsub-topic'
+    mql: |
+      gcp.project.pubsubService.topic.config.messageStoragePolicy != empty
+  - uid: mondoo-gcp-security-pubsub-topic-message-storage-policy-configured-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_pubsub_topic')
+    mql: |
+      terraform.resources('google_pubsub_topic').all(
+        blocks.where(type == 'message_storage_policy') != empty
+      )
+  - uid: mondoo-gcp-security-pubsub-topic-message-storage-policy-configured-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_pubsub_topic')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_pubsub_topic').all(
+        change.after['message_storage_policy'] != empty
+      )
+  - uid: mondoo-gcp-security-pubsub-topic-message-storage-policy-configured-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_pubsub_topic')
+    mql: |
+      terraform.state.resources.where(type == 'google_pubsub_topic').all(
+        values['message_storage_policy'] != empty
+      )
+  - uid: mondoo-gcp-security-pubsub-subscription-push-endpoint-https
+    title: Ensure Pub/Sub push subscriptions use HTTPS endpoints
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    variants:
+      - uid: mondoo-gcp-security-pubsub-subscription-push-endpoint-https-gcp
+        tags:
+          mondoo.com/filter-title: GCP Pub/Sub Subscription
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-pubsub-subscription-push-endpoint-https-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-pubsub-subscription-push-endpoint-https-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-pubsub-subscription-push-endpoint-https-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Pub/Sub push subscriptions deliver messages only to HTTPS endpoints. Push subscriptions that use plain HTTP endpoints transmit message payloads in cleartext, exposing the content of messages to interception on any network path between the Pub/Sub service and the endpoint.
+
+        **Why this matters**
+
+        - **Cleartext exposure:** HTTP delivery sends message payloads without encryption, allowing any on-path observer to read or tamper with message content in transit.
+        - **Authentication bypass:** HTTPS endpoints with valid TLS certificates can be authenticated against Pub/Sub's push delivery mechanism; plain HTTP endpoints cannot participate in this authentication flow, weakening delivery security.
+        - **Compliance violation:** Many frameworks require encryption for data in transit regardless of whether the data is classified as sensitive; plain HTTP delivery violates this baseline requirement.
+
+        **Risk mitigation**
+
+        - **Require HTTPS push endpoints:** Configure all push subscriptions to target HTTPS URLs with valid TLS certificates to ensure message confidentiality and authenticity in transit.
+        - **Validate audience tokens:** Use Pub/Sub's push authentication to attach signed OIDC tokens to deliveries, and validate the token on the receiving endpoint to reject forged or replayed deliveries.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the [Google Cloud Console](https://console.cloud.google.com) and select the project.
+        2. Navigate to **Pub/Sub > Subscriptions**.
+        3. For each subscription, click the subscription name to view its details.
+        4. Under **Delivery type**, check whether the push endpoint URL begins with `https://`.
+
+        A passing push subscription shows an endpoint URL that starts with `https://`. A pull subscription has no push endpoint and is not in scope for this check. A failing push subscription shows an endpoint URL that starts with `http://`.
+
+        ### Audit via CLI
+
+        1. Describe each subscription and inspect the `pushEndpoint` field:
+
+        ```bash
+        gcloud pubsub subscriptions describe SUBSCRIPTION_NAME \
+          --format="value(pushConfig.pushEndpoint)"
+        ```
+
+        A passing push subscription returns a URL beginning with `https://`. A pull subscription returns an empty value, which is not a violation. A failing push subscription returns a URL beginning with `http://`.
+      remediation:
+        - id: console
+          desc: |
+            To update a push subscription to use an HTTPS endpoint using the Google Cloud Console:
+
+            1. Navigate to **Pub/Sub > Subscriptions** in the Google Cloud Console.
+            2. Select the subscription and click **Edit subscription**.
+            3. Under **Push endpoint URL**, update the endpoint to use an `https://` URL.
+            4. Click **Update**.
+        - id: cli
+          desc: |
+            To update a push subscription to use an HTTPS endpoint using the Google Cloud CLI:
+
+            ```bash
+            gcloud pubsub subscriptions modify-push-config SUBSCRIPTION_NAME \
+              --push-endpoint=https://your-endpoint.example.com/push
+            ```
+        - id: terraform
+          desc: |
+            To configure a push subscription with an HTTPS endpoint in Terraform:
+
+            ```hcl
+            resource "google_pubsub_subscription" "example" {
+              name  = "example-subscription"
+              topic = google_pubsub_topic.example.name
+
+              push_config {
+                push_endpoint = "https://your-endpoint.example.com/push"
+              }
+            }
+            ```
+    refs:
+      - url: https://cloud.google.com/pubsub/docs/push
+        title: Pub/Sub push subscriptions
+  - uid: mondoo-gcp-security-pubsub-subscription-push-endpoint-https-gcp
+    filters: asset.platform == 'gcp-pubsub-subscription'
+    mql: |
+      gcp.project.pubsubService.subscription.config().pushConfig.endpoint == empty || gcp.project.pubsubService.subscription.config().pushConfig.endpoint == /^https:/
+  - uid: mondoo-gcp-security-pubsub-subscription-push-endpoint-https-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_pubsub_subscription')
+    mql: |
+      terraform.resources('google_pubsub_subscription').all(
+        blocks.where(type == 'push_config') == empty ||
+        blocks.where(type == 'push_config').all(
+          arguments['push_endpoint'] == /^https:/
+        )
+      )
+  - uid: mondoo-gcp-security-pubsub-subscription-push-endpoint-https-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_pubsub_subscription')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_pubsub_subscription').all(
+        change.after['push_config'] == empty ||
+        change.after['push_config'].all(
+          _['push_endpoint'] == empty || _['push_endpoint'] == /^https:/
+        )
+      )
+  - uid: mondoo-gcp-security-pubsub-subscription-push-endpoint-https-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_pubsub_subscription')
+    mql: |
+      terraform.state.resources.where(type == 'google_pubsub_subscription').all(
+        values['push_config'] == empty ||
+        values['push_config'].all(
+          _['push_endpoint'] == empty || _['push_endpoint'] == /^https:/
+        )
+      )
+  - uid: mondoo-gcp-security-pubsub-subscription-dead-letter-configured
+    title: Ensure Pub/Sub subscriptions configure a dead-letter policy
+    impact: 50
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-bcr-08
+      compliance/dora: dora-art-12
+      compliance/hipaa: hipaa-security-ss164-308-a-7-ii-a-contingency-plan-data-backup-plan
+      compliance/iso-27001-2022: iso-27001-2022-a-8-13
+      compliance/nis-2: nis-2-21-2-c
+      compliance/nist-csf-1: nist-csf-1-pr-ip-4
+      compliance/nist-csf-2: nist-csf-2-pr-ds-11
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cp-9
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc9-1-1
+      compliance/vda-isa-5: vda-isa-5-3-1-2
+    variants:
+      - uid: mondoo-gcp-security-pubsub-subscription-dead-letter-configured-gcp
+        tags:
+          mondoo.com/filter-title: GCP Pub/Sub Subscription
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-pubsub-subscription-dead-letter-configured-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-pubsub-subscription-dead-letter-configured-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-pubsub-subscription-dead-letter-configured-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Pub/Sub subscriptions have a dead-letter policy configured to capture messages that cannot be successfully delivered after the maximum delivery attempt threshold is reached. Without a dead-letter policy, undeliverable messages are either silently discarded or indefinitely reattempted, depending on configuration, with no mechanism to inspect or reprocess them.
+
+        **Why this matters**
+
+        - **Message loss prevention:** Without a dead-letter topic, messages that fail processing after the maximum number of retries are simply discarded, creating silent data loss in event-driven pipelines.
+        - **Operational visibility:** A dead-letter topic collects failed messages in one place, allowing operators to inspect payloads, diagnose delivery failures, and replay messages once the root cause is resolved.
+        - **Service resilience:** Undeliverable messages that accumulate without a dead-letter policy can stall subscription processing and block healthy messages behind a backlog of poison messages.
+
+        **Risk mitigation**
+
+        - **Configure a dead-letter topic and max delivery attempts:** Set a reasonable `maxDeliveryAttempts` value and point the dead-letter policy to a dedicated topic with appropriate subscriber access, so failed messages are quarantined rather than lost.
+        - **Monitor the dead-letter topic:** Set up alerts on the dead-letter topic's unacked message count so that delivery failures are surfaced promptly and do not accumulate undetected.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the [Google Cloud Console](https://console.cloud.google.com) and select the project.
+        2. Navigate to **Pub/Sub > Subscriptions**.
+        3. For each subscription, click the subscription name to view its details.
+        4. Check the **Dead letter topic** field under the subscription configuration.
+
+        A passing subscription shows a dead-letter topic name and a maximum delivery attempts value. A failing subscription shows no dead-letter policy configured.
+
+        ### Audit via CLI
+
+        1. Describe each subscription and inspect the `deadLetterPolicy` field:
+
+        ```bash
+        gcloud pubsub subscriptions describe SUBSCRIPTION_NAME \
+          --format="value(deadLetterPolicy)"
+        ```
+
+        A passing subscription returns a `deadLetterPolicy` block containing `deadLetterTopic` and `maxDeliveryAttempts`. A failing subscription returns an empty or absent `deadLetterPolicy`.
+      remediation:
+        - id: console
+          desc: |
+            To configure a dead-letter policy on a Pub/Sub subscription using the Google Cloud Console:
+
+            1. Navigate to **Pub/Sub > Subscriptions** in the Google Cloud Console.
+            2. Select the subscription and click **Edit subscription**.
+            3. Under **Dead lettering**, enable dead lettering and select or create a dead-letter topic.
+            4. Set the maximum delivery attempts (5–100).
+            5. Click **Update**.
+        - id: cli
+          desc: |
+            To configure a dead-letter policy on a Pub/Sub subscription using the Google Cloud CLI:
+
+            ```bash
+            gcloud pubsub subscriptions update SUBSCRIPTION_NAME \
+              --dead-letter-topic=projects/PROJECT_ID/topics/DEAD_LETTER_TOPIC \
+              --max-delivery-attempts=5
+            ```
+        - id: terraform
+          desc: |
+            To configure a dead-letter policy on a Pub/Sub subscription in Terraform:
+
+            ```hcl
+            resource "google_pubsub_subscription" "example" {
+              name  = "example-subscription"
+              topic = google_pubsub_topic.example.name
+
+              dead_letter_policy {
+                dead_letter_topic     = google_pubsub_topic.dead_letter.id
+                max_delivery_attempts = 5
+              }
+            }
+            ```
+    refs:
+      - url: https://cloud.google.com/pubsub/docs/handling-failures
+        title: Pub/Sub - Handling message failures
+  - uid: mondoo-gcp-security-pubsub-subscription-dead-letter-configured-gcp
+    filters: asset.platform == 'gcp-pubsub-subscription'
+    mql: |
+      gcp.project.pubsubService.subscription.config().deadLetterPolicy != empty
+  - uid: mondoo-gcp-security-pubsub-subscription-dead-letter-configured-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_pubsub_subscription')
+    mql: |
+      terraform.resources('google_pubsub_subscription').all(
+        blocks.where(type == 'dead_letter_policy') != empty
+      )
+  - uid: mondoo-gcp-security-pubsub-subscription-dead-letter-configured-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_pubsub_subscription')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_pubsub_subscription').all(
+        change.after['dead_letter_policy'] != empty
+      )
+  - uid: mondoo-gcp-security-pubsub-subscription-dead-letter-configured-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_pubsub_subscription')
+    mql: |
+      terraform.state.resources.where(type == 'google_pubsub_subscription').all(
+        values['dead_letter_policy'] != empty
+      )
+  - uid: mondoo-gcp-security-pubsub-subscription-not-detached
+    title: Ensure Pub/Sub subscriptions are not detached from their topic
+    impact: 40
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-bcr-08
+      compliance/dora: dora-art-12
+      compliance/hipaa: hipaa-security-ss164-308-a-7-ii-a-contingency-plan-data-backup-plan
+      compliance/iso-27001-2022: iso-27001-2022-a-8-13
+      compliance/nis-2: nis-2-21-2-c
+      compliance/nist-csf-1: nist-csf-1-pr-ip-4
+      compliance/nist-csf-2: nist-csf-2-pr-ds-11
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cp-9
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc9-1-1
+      compliance/vda-isa-5: vda-isa-5-3-1-2
+    variants:
+      - uid: mondoo-gcp-security-pubsub-subscription-not-detached-gcp
+        tags:
+          mondoo.com/filter-title: GCP Pub/Sub Subscription
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-pubsub-subscription-not-detached-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-pubsub-subscription-not-detached-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-pubsub-subscription-not-detached-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Pub/Sub subscriptions remain attached to their topic and are not in a detached state. A detached subscription no longer receives new messages published to its source topic, meaning any data published after detachment is not delivered to subscribers of that subscription.
+
+        **Why this matters**
+
+        - **Silent message loss:** A detached subscription stops receiving messages without raising an obvious error to publishers, creating a gap in message delivery that may go unnoticed until an application failure surface the missing data.
+        - **Stale subscriber state:** Applications consuming from a detached subscription continue processing their backlog until it is exhausted, then fall silent without indication that the source topic is no longer feeding them.
+        - **Orphaned resource cost:** Detached subscriptions continue to accumulate storage for their existing backlog but serve no operational purpose, wasting resources without delivering value.
+
+        **Risk mitigation**
+
+        - **Investigate and reattach or delete:** Review any detached subscriptions to determine whether they resulted from an accidental `seek` or intentional detachment, and either reattach them to the topic or delete them if they are no longer needed.
+        - **Monitor subscription state:** Set up alerting on subscription detachment events in Cloud Audit Logs so that detachment is surfaced promptly rather than discovered during an incident.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the [Google Cloud Console](https://console.cloud.google.com) and select the project.
+        2. Navigate to **Pub/Sub > Subscriptions**.
+        3. For each subscription, click the subscription name to view its details.
+        4. Check the **Detached** field.
+
+        A passing subscription shows **Detached: false** or no detached indicator. A failing subscription shows **Detached: true**.
+
+        ### Audit via CLI
+
+        1. Describe each subscription and inspect the `detached` field:
+
+        ```bash
+        gcloud pubsub subscriptions describe SUBSCRIPTION_NAME \
+          --format="value(detached)"
+        ```
+
+        A passing subscription returns `False` or an empty value. A failing subscription returns `True`.
+      remediation:
+        - id: console
+          desc: |
+            A detached subscription cannot be directly reattached via the console. To remediate:
+
+            1. Navigate to **Pub/Sub > Subscriptions** in the Google Cloud Console.
+            2. Note the configuration of the detached subscription.
+            3. Delete the detached subscription.
+            4. Create a new subscription on the same topic with the same configuration and consumer permissions.
+        - id: cli
+          desc: |
+            A detached subscription cannot be reattached directly. Delete and recreate it:
+
+            ```bash
+            gcloud pubsub subscriptions delete SUBSCRIPTION_NAME
+
+            gcloud pubsub subscriptions create SUBSCRIPTION_NAME \
+              --topic=TOPIC_NAME \
+              --ack-deadline=60
+            ```
+        - id: terraform
+          desc: |
+            To prevent subscription detachment in Terraform, ensure the `detached` argument is not set to `true`:
+
+            ```hcl
+            resource "google_pubsub_subscription" "example" {
+              name  = "example-subscription"
+              topic = google_pubsub_topic.example.name
+
+              # detached defaults to false; do not set it to true
+            }
+            ```
+    refs:
+      - url: https://cloud.google.com/pubsub/docs/subscription-detach
+        title: Pub/Sub - Detaching subscriptions
+  - uid: mondoo-gcp-security-pubsub-subscription-not-detached-gcp
+    filters: asset.platform == 'gcp-pubsub-subscription'
+    mql: |
+      gcp.project.pubsubService.subscription.config().detached == false
+  - uid: mondoo-gcp-security-pubsub-subscription-not-detached-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_pubsub_subscription')
+    mql: |
+      terraform.resources('google_pubsub_subscription').all(
+        arguments['detached'] != true
+      )
+  - uid: mondoo-gcp-security-pubsub-subscription-not-detached-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_pubsub_subscription')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_pubsub_subscription').all(
+        change.after['detached'] != true
+      )
+  - uid: mondoo-gcp-security-pubsub-subscription-not-detached-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_pubsub_subscription')
+    mql: |
+      terraform.state.resources.where(type == 'google_pubsub_subscription').all(
+        values['detached'] != true
+      )
+  - uid: mondoo-gcp-security-firestore-point-in-time-recovery-enabled
+    title: Ensure Firestore databases enable point-in-time recovery
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-bcr-08
+      compliance/dora: dora-art-12
+      compliance/hipaa: hipaa-security-ss164-308-a-7-ii-a-contingency-plan-data-backup-plan
+      compliance/iso-27001-2022: iso-27001-2022-a-8-13
+      compliance/nis-2: nis-2-21-2-c
+      compliance/nist-csf-1: nist-csf-1-pr-ip-4
+      compliance/nist-csf-2: nist-csf-2-pr-ds-11
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cp-9
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc9-1-1
+      compliance/vda-isa-5: vda-isa-5-3-1-2
+    variants:
+      - uid: mondoo-gcp-security-firestore-point-in-time-recovery-enabled-gcp
+        tags:
+          mondoo.com/filter-title: GCP Firestore Database
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-firestore-point-in-time-recovery-enabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-firestore-point-in-time-recovery-enabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-firestore-point-in-time-recovery-enabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Firestore databases have point-in-time recovery (PITR) enabled, which allows restoring the database to any second within the past seven days. Without PITR, the only recovery path after accidental deletion, corruption, or ransomware is from a scheduled backup, which may be stale by hours or days.
+
+        **Why this matters**
+
+        - **Granular recovery window:** PITR allows restoring to any second within the retention window, not just to the last backup snapshot, minimizing data loss after accidental writes or deletes.
+        - **Ransomware resilience:** PITR state is maintained independently of the live database; an attacker who gains write access and corrupts documents cannot retroactively eliminate the historical state needed for recovery.
+        - **Reduced RTO:** Restoring from a PITR timestamp is faster than importing from a Cloud Storage backup, reducing the recovery time objective for critical applications.
+
+        **Risk mitigation**
+
+        - **Enable PITR on all production databases:** PITR has no additional storage cost for the first seven days of history; the protection-to-cost ratio is favorable for any database that holds non-reproducible data.
+        - **Test recovery procedures regularly:** Enable PITR and periodically execute a test restore to a development database to verify that the recovery path works before an incident requires it.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the [Google Cloud Console](https://console.cloud.google.com) and select the project.
+        2. Navigate to **Firestore > Databases**.
+        3. Select each database and click its name to view details.
+        4. Check the **Point-in-time recovery** field.
+
+        A passing database shows **Point-in-time recovery: Enabled**. A failing database shows **Point-in-time recovery: Disabled**.
+
+        ### Audit via CLI
+
+        1. Describe the Firestore database and inspect the `pointInTimeRecoveryEnablement` field:
+
+        ```bash
+        gcloud firestore databases describe DATABASE_ID \
+          --format="value(pointInTimeRecoveryEnablement)"
+        ```
+
+        A passing database returns `POINT_IN_TIME_RECOVERY_ENABLED`. A failing database returns `POINT_IN_TIME_RECOVERY_DISABLED` or an empty value.
+      remediation:
+        - id: console
+          desc: |
+            To enable point-in-time recovery on a Firestore database using the Google Cloud Console:
+
+            1. Navigate to **Firestore > Databases** in the Google Cloud Console.
+            2. Select the database and click **Edit**.
+            3. Under **Point-in-time recovery**, toggle the setting to **Enabled**.
+            4. Click **Save**.
+        - id: cli
+          desc: |
+            To enable point-in-time recovery on a Firestore database using the Google Cloud CLI:
+
+            ```bash
+            gcloud firestore databases update DATABASE_ID \
+              --enable-pitr
+            ```
+        - id: terraform
+          desc: |
+            To enable point-in-time recovery on a Firestore database in Terraform:
+
+            ```hcl
+            resource "google_firestore_database" "example" {
+              name                              = "example-database"
+              location_id                       = "us-central"
+              type                              = "FIRESTORE_NATIVE"
+              point_in_time_recovery_enablement = "POINT_IN_TIME_RECOVERY_ENABLED"
+            }
+            ```
+    refs:
+      - url: https://cloud.google.com/firestore/docs/point-in-time-recovery
+        title: Firestore point-in-time recovery
+  - uid: mondoo-gcp-security-firestore-point-in-time-recovery-enabled-gcp
+    filters: asset.platform == 'gcp-firestore-database'
+    mql: |
+      gcp.firestore.database.pointInTimeRecoveryEnablement == "POINT_IN_TIME_RECOVERY_ENABLED"
+  - uid: mondoo-gcp-security-firestore-point-in-time-recovery-enabled-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_firestore_database')
+    mql: |
+      terraform.resources('google_firestore_database').all(
+        arguments['point_in_time_recovery_enablement'] == "POINT_IN_TIME_RECOVERY_ENABLED"
+      )
+  - uid: mondoo-gcp-security-firestore-point-in-time-recovery-enabled-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_firestore_database')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_firestore_database').all(
+        change.after['point_in_time_recovery_enablement'] == "POINT_IN_TIME_RECOVERY_ENABLED"
+      )
+  - uid: mondoo-gcp-security-firestore-point-in-time-recovery-enabled-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_firestore_database')
+    mql: |
+      terraform.state.resources.where(type == 'google_firestore_database').all(
+        values['point_in_time_recovery_enablement'] == "POINT_IN_TIME_RECOVERY_ENABLED"
+      )
+  - uid: mondoo-gcp-security-cloud-run-job-image-not-latest-tag
+    title: Ensure Cloud Run jobs do not use mutable :latest image tags
+    impact: 50
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ais-06
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ds-6
+      compliance/nist-csf-2: nist-csf-2-pr-ps-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-3
+      compliance/pci-dss-4: pcidss-requirement-2-2-1
+      compliance/soc2-2017: soc2-control-cc6-8-1
+      compliance/vda-isa-5: vda-isa-5-5-3-1
+    variants:
+      - uid: mondoo-gcp-security-cloud-run-job-image-not-latest-tag-gcp
+        tags:
+          mondoo.com/filter-title: GCP Cloud Run Job
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-cloud-run-job-image-not-latest-tag-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-cloud-run-job-image-not-latest-tag-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-cloud-run-job-image-not-latest-tag-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Cloud Run job containers reference container images with explicit, immutable tags rather than the mutable `:latest` tag. The `:latest` tag resolves to whatever image was most recently pushed to the registry, meaning the running image can change without any code or configuration change to the job itself.
+
+        **Why this matters**
+
+        - **Supply-chain integrity:** A mutable `:latest` tag means a compromised registry or a misconfigured push pipeline can silently replace the running image with malicious code the next time the job executes.
+        - **Deployment unpredictability:** The same job definition can produce different behavior across executions because the resolved image changes each time a new build is pushed, making rollbacks and incident investigation significantly harder.
+        - **Audit trail gaps:** Container image digests provide cryptographic proof of exactly which code ran; `:latest` references make it impossible to reconstruct the exact image state from the configuration alone.
+
+        **Risk mitigation**
+
+        - **Pin to an image digest or an immutable tag:** Use a registry digest (e.g., `image@sha256:...`) or a version tag tied to a specific build (e.g., `v1.2.3`) so that the image pulled is always the same regardless of when the job runs.
+        - **Enforce image signing:** Combine immutable tags with container image signing (via Binary Authorization) to ensure that only signed, verified images can be run in production Cloud Run jobs.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the [Google Cloud Console](https://console.cloud.google.com) and select the project.
+        2. Navigate to **Cloud Run > Jobs**.
+        3. For each job, click the job name to view its details.
+        4. Under **Container**, inspect the **Container image URL** for each container.
+
+        A passing job shows a container image URL that does not end with `:latest` and includes an explicit version tag or digest. A failing job shows a container image URL ending in `:latest` or containing no tag.
+
+        ### Audit via CLI
+
+        1. Describe each Cloud Run job and inspect the container images:
+
+        ```bash
+        gcloud run jobs describe JOB_NAME \
+          --region=REGION \
+          --format="value(template.template.containers[].image)"
+        ```
+
+        A passing job returns image URLs that include an explicit version tag (e.g., `gcr.io/project/image:v1.2.3`) or a digest. A failing job returns an image URL ending in `:latest` or with no tag.
+      remediation:
+        - id: console
+          desc: |
+            To update a Cloud Run job to use an immutable image tag using the Google Cloud Console:
+
+            1. Navigate to **Cloud Run > Jobs** in the Google Cloud Console.
+            2. Select the job and click **Edit**.
+            3. Under **Container**, update the **Container image URL** to use a specific version tag or digest instead of `:latest`.
+            4. Click **Update job**.
+        - id: cli
+          desc: |
+            To update a Cloud Run job to use an immutable image tag using the Google Cloud CLI:
+
+            ```bash
+            gcloud run jobs update JOB_NAME \
+              --region=REGION \
+              --image=gcr.io/PROJECT_ID/IMAGE_NAME:v1.2.3
+            ```
+        - id: terraform
+          desc: |
+            To pin the container image to an explicit tag in Terraform:
+
+            ```hcl
+            resource "google_cloud_run_v2_job" "example" {
+              name     = "example-job"
+              location = "us-central1"
+
+              template {
+                template {
+                  containers {
+                    # Use an explicit version tag, not :latest
+                    image = "gcr.io/my-project/my-image:v1.2.3"
+                  }
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://cloud.google.com/run/docs/deploying#images
+        title: Cloud Run - Deploying container images
+  - uid: mondoo-gcp-security-cloud-run-job-image-not-latest-tag-gcp
+    filters: asset.platform == 'gcp-cloudrun-job'
+    mql: |
+      gcp.project.cloudRunService.job.template.template.containers.all(
+        image != /:latest$/ && image.contains(":")
+      )
+  - uid: mondoo-gcp-security-cloud-run-job-image-not-latest-tag-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_cloud_run_v2_job')
+    mql: |
+      terraform.resources('google_cloud_run_v2_job').all(
+        blocks.where(type == 'template').all(
+          blocks.where(type == 'template').all(
+            blocks.where(type == 'containers').all(
+              arguments['image'] != /:latest$/ && arguments['image'].contains(":")
+            )
+          )
+        )
+      )
+  - uid: mondoo-gcp-security-cloud-run-job-image-not-latest-tag-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_cloud_run_v2_job')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_cloud_run_v2_job').all(
+        change.after['template'] != empty &&
+        change.after['template'].all(
+          _['template'] != empty &&
+          _['template'].all(
+            _['containers'] != empty &&
+            _['containers'].all(
+              _['image'] != /:latest$/ && _['image'].contains(":")
+            )
+          )
+        )
+      )
+  - uid: mondoo-gcp-security-cloud-run-job-image-not-latest-tag-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_cloud_run_v2_job')
+    mql: |
+      terraform.state.resources.where(type == 'google_cloud_run_v2_job').all(
+        values['template'] != empty &&
+        values['template'].all(
+          _['template'] != empty &&
+          _['template'].all(
+            _['containers'] != empty &&
+            _['containers'].all(
+              _['image'] != /:latest$/ && _['image'].contains(":")
+            )
+          )
+        )
+      )
+  - uid: mondoo-gcp-security-cloud-run-job-vpc-egress-configured
+    title: Ensure Cloud Run jobs route egress through a VPC connector
+    impact: 50
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    variants:
+      - uid: mondoo-gcp-security-cloud-run-job-vpc-egress-configured-gcp
+        tags:
+          mondoo.com/filter-title: GCP Cloud Run Job
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-cloud-run-job-vpc-egress-configured-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-cloud-run-job-vpc-egress-configured-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-cloud-run-job-vpc-egress-configured-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Cloud Run jobs are configured with VPC access so that their egress traffic is routed through a VPC network rather than the public internet. Without VPC egress configuration, a Cloud Run job's outbound connections bypass firewall rules, Private Google Access controls, and network monitoring that are applied to the organization's VPC.
+
+        **Why this matters**
+
+        - **Network policy enforcement:** Without a VPC connector or direct VPC egress, a Cloud Run job's traffic bypasses all firewall rules, VPC Service Controls, and network telemetry configured in the organization's VPC, creating a policy gap.
+        - **Private service access:** Jobs that need to reach Cloud SQL, Memorystore, or internal services via RFC 1918 addresses require VPC egress; without it, those endpoints are unreachable and jobs may fall back to less-secure public paths.
+        - **Egress monitoring:** Routing all outbound traffic through a VPC enables Cloud Logging network telemetry and VPC flow logs, which are required for network-level audit trails and anomaly detection.
+
+        **Risk mitigation**
+
+        - **Configure VPC access with all-traffic egress:** Set the VPC connector or direct VPC egress setting to route all traffic through the VPC rather than only private-address traffic, to ensure no connection bypasses network controls.
+        - **Apply egress firewall rules:** Once egress is through the VPC, use firewall rules to restrict outbound destinations to only the services and IPs the job legitimately needs.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the [Google Cloud Console](https://console.cloud.google.com) and select the project.
+        2. Navigate to **Cloud Run > Jobs**.
+        3. For each job, click the job name to view its details.
+        4. Under the **Networking** tab, check the **VPC** setting.
+
+        A passing job shows a VPC connector or direct VPC egress configured. A failing job shows no VPC configuration.
+
+        ### Audit via CLI
+
+        1. Describe each Cloud Run job and inspect the VPC access configuration:
+
+        ```bash
+        gcloud run jobs describe JOB_NAME \
+          --region=REGION \
+          --format="value(template.template.vpcAccess)"
+        ```
+
+        A passing job returns a `vpcAccess` block with a non-empty connector or network interface configuration. A failing job returns an empty or absent `vpcAccess`.
+      remediation:
+        - id: console
+          desc: |
+            To configure VPC egress for a Cloud Run job using the Google Cloud Console:
+
+            1. Navigate to **Cloud Run > Jobs** in the Google Cloud Console.
+            2. Select the job and click **Edit**.
+            3. Under the **Networking** tab, select a VPC connector or enable direct VPC egress.
+            4. Set egress to **Route all traffic** through the VPC.
+            5. Click **Update job**.
+        - id: cli
+          desc: |
+            To configure VPC egress for a Cloud Run job using the Google Cloud CLI:
+
+            ```bash
+            gcloud run jobs update JOB_NAME \
+              --region=REGION \
+              --vpc-connector=projects/PROJECT_ID/locations/REGION/connectors/CONNECTOR_NAME \
+              --vpc-egress=all-traffic
+            ```
+        - id: terraform
+          desc: |
+            To configure VPC egress for a Cloud Run job in Terraform:
+
+            ```hcl
+            resource "google_cloud_run_v2_job" "example" {
+              name     = "example-job"
+              location = "us-central1"
+
+              template {
+                template {
+                  vpc_access {
+                    connector = google_vpc_access_connector.connector.id
+                    egress    = "ALL_TRAFFIC"
+                  }
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://cloud.google.com/run/docs/configuring/vpc-direct-vpc
+        title: Cloud Run - Configuring VPC egress
+  - uid: mondoo-gcp-security-cloud-run-job-vpc-egress-configured-gcp
+    filters: asset.platform == 'gcp-cloudrun-job'
+    mql: |
+      gcp.project.cloudRunService.job.template.template.vpcAccess != empty
+  - uid: mondoo-gcp-security-cloud-run-job-vpc-egress-configured-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_cloud_run_v2_job')
+    mql: |
+      terraform.resources('google_cloud_run_v2_job').all(
+        blocks.where(type == 'template').all(
+          blocks.where(type == 'template').all(
+            blocks.where(type == 'vpc_access') != empty
+          )
+        )
+      )
+  - uid: mondoo-gcp-security-cloud-run-job-vpc-egress-configured-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_cloud_run_v2_job')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_cloud_run_v2_job').all(
+        change.after['template'] != empty &&
+        change.after['template'].all(
+          _['template'] != empty &&
+          _['template'].all(_['vpc_access'] != empty)
+        )
+      )
+  - uid: mondoo-gcp-security-cloud-run-job-vpc-egress-configured-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_cloud_run_v2_job')
+    mql: |
+      terraform.state.resources.where(type == 'google_cloud_run_v2_job').all(
+        values['template'] != empty &&
+        values['template'].all(
+          _['template'] != empty &&
+          _['template'].all(_['vpc_access'] != empty)
+        )
+      )
+  # No Terraform variants: Cloud Run v2 job env vars are in a deeply nested repeated block
+  # (template > template > containers[*] > env[*]) whose Terraform representation as a
+  # list-of-maps does not support the key-name regex matching needed to detect secret-like
+  # variable names, making a correct lint-passing MQL expression impractical.
+  - uid: mondoo-gcp-security-cloud-run-job-no-plaintext-secrets-in-env
+    title: Ensure Cloud Run jobs do not store secrets in plaintext env vars
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-dsp-17
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ds-5
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/pci-dss-4: pcidss-requirement-8-6-2
+      compliance/soc2-2017: soc2-control-cc6-1-9
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    variants:
+      - uid: mondoo-gcp-security-cloud-run-job-no-plaintext-secrets-in-env-gcp
+        tags:
+          mondoo.com/filter-title: GCP Cloud Run Job
+          mondoo.com/filter-icon: gcp
+    docs:
+      desc: |
+        This check ensures that Cloud Run job containers do not have environment variables whose names suggest they contain credentials, API keys, or other secrets with non-empty plaintext values. Storing secrets in environment variables exposes them in job configuration, Cloud Run metadata APIs, and any tooling that inspects container specs.
+
+        **Why this matters**
+
+        - **Configuration API exposure:** Cloud Run job specifications are readable by any principal with the `run.jobs.get` IAM permission; plaintext secrets in env vars are therefore visible to a wide set of IAM principals beyond those who need the secret value.
+        - **Secret sprawl:** Secrets embedded in job definitions are duplicated across every revision, making rotation difficult and leaving stale credentials in historical configuration records.
+        - **Logging risk:** Environment variable values can appear in initialization logs, error messages, or debug output from the container runtime, increasing the surface area for accidental secret disclosure.
+
+        **Risk mitigation**
+
+        - **Use Secret Manager references:** Replace plaintext env vars with Secret Manager secret references, which Cloud Run resolves at runtime and injects without storing the value in the job specification.
+        - **Rotate any exposed credentials immediately:** If plaintext secrets are found in existing job configurations, treat the credentials as compromised, rotate them, and update the job to use Secret Manager before redeploying.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the [Google Cloud Console](https://console.cloud.google.com) and select the project.
+        2. Navigate to **Cloud Run > Jobs**.
+        3. For each job, click the job name and then the **Edit** button to view the job template.
+        4. Under each container's **Variables & Secrets**, inspect the environment variable names for entries that resemble credential names (e.g., `PASSWORD`, `SECRET`, `API_KEY`, `PRIVATE_KEY`, `ACCESS_TOKEN`).
+        5. For any variable with a credential-like name, verify that the value is empty or references a secret version rather than a plaintext value.
+
+        A passing job shows no plaintext values for environment variables with credential-like names. A failing job shows a non-empty plaintext value for an environment variable with a name matching a credential pattern.
+
+        ### Audit via CLI
+
+        1. Describe each Cloud Run job and inspect the container environment variables:
+
+        ```bash
+        gcloud run jobs describe JOB_NAME \
+          --region=REGION \
+          --format="json" | jq '.template.template.containers[].env[]'
+        ```
+
+        A passing job returns no environment variables where the `name` matches a credential pattern and the `value` field is non-empty. A failing job returns at least one environment variable with a credential-like name and a non-empty `value` field.
+      remediation:
+        - id: console
+          desc: |
+            To replace a plaintext secret in a Cloud Run job env var using the Google Cloud Console:
+
+            1. Store the secret value in Secret Manager: navigate to **Security > Secret Manager** and create or update the secret.
+            2. Navigate to **Cloud Run > Jobs**, select the job, and click **Edit**.
+            3. Under each container's **Variables & Secrets**, remove the plaintext environment variable.
+            4. Add a **Referenced secret** for the same variable name pointing to the Secret Manager secret version.
+            5. Click **Update job**.
+        - id: cli
+          desc: |
+            To migrate a plaintext env var to a Secret Manager reference in a Cloud Run job:
+
+            ```bash
+            gcloud run jobs update JOB_NAME \
+              --region=REGION \
+              --update-secrets=MY_SECRET=my-secret:latest
+            ```
+        # No Terraform remediation: Cloud Run v2 job env vars referencing secrets are
+        # represented as a deeply nested repeated block that the MQL Terraform provider
+        # cannot traverse with key-name regex matching; the runtime check covers this
+        # control surface instead.
+    refs:
+      - url: https://cloud.google.com/run/docs/configuring/secrets
+        title: Cloud Run - Using secrets from Secret Manager
+  - uid: mondoo-gcp-security-cloud-run-job-no-plaintext-secrets-in-env-gcp
+    filters: asset.platform == 'gcp-cloudrun-job'
+    mql: |
+      gcp.project.cloudRunService.job.template.template.containers.all(
+        env.none(_['name'] == /(?i)(password|secret|api[_-]?key|private[_-]?key|access[_-]?token|auth[_-]?token|credentials|connection[_-]?string)/ && _['value'] != empty)
+      )
+# No Terraform variants: Vertex AI custom jobs are short-lived imperative API resources with no Terraform analog.
+  - uid: mondoo-gcp-security-vertexai-custom-job-cmek-encryption
+    title: Ensure Vertex AI custom jobs are encrypted with CMEK
+    impact: 70
+    filters: |
+      asset.platform == 'gcp-vertexai-job' &&
+      gcp.project.vertexaiService.customJob.state.in(["JOB_STATE_RUNNING", "JOB_STATE_PENDING", "JOB_STATE_QUEUED"])
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-10
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    mql: |
+      gcp.project.vertexaiService.customJob.encryptionSpec != empty
+    docs:
+      desc: |
+        This check ensures that active Vertex AI custom jobs have a customer-managed encryption key (CMEK) configured in their encryption specification. Without CMEK, the training data, model artifacts, and intermediate outputs associated with the job are encrypted using Google-managed keys, which the organization cannot independently rotate, audit, or revoke.
+
+        **Why this matters**
+
+        - **Key lifecycle control:** CMEK allows the organization to define its own key rotation schedule and retire key versions independently of Google's key management timeline.
+        - **Cryptographic revocation:** Disabling or destroying the CMEK immediately makes all encrypted job artifacts unreadable, providing a break-glass control for data containment that Google-managed encryption cannot offer.
+        - **Compliance scope:** Frameworks such as PCI-DSS, HIPAA, and SOC 2 commonly require customer-controlled encryption keys for workloads that process regulated data, including ML training pipelines.
+
+        **Risk mitigation**
+
+        - **Provision a dedicated KMS key per job class:** Create separate Cloud KMS key rings for different sensitivity levels of training data, and require that job submissions reference the appropriate key.
+        - **Enforce via IAM policy:** Require that job submissions include an `encryptionSpec.kmsKeyName` by denying job creation to service accounts that lack the KMS encrypter role, forcing callers to configure encryption explicitly.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the [Google Cloud Console](https://console.cloud.google.com) and navigate to **Vertex AI > Training > Custom jobs**.
+        2. For each running, pending, or queued job, click the job name to view its details.
+        3. Check the **Encryption** section for a Cloud KMS key reference.
+
+        A passing job shows a customer-managed Cloud KMS key path in the **Encryption** section. A failing job shows no encryption key or indicates Google-managed encryption.
+
+        ### Audit via CLI
+
+        1. List active custom jobs and inspect the `encryptionSpec` field:
+
+        ```bash
+        gcloud ai custom-jobs list \
+          --region=REGION \
+          --filter="state:(JOB_STATE_RUNNING OR JOB_STATE_PENDING OR JOB_STATE_QUEUED)" \
+          --format="table(name,state,encryptionSpec.kmsKeyName)"
+        ```
+
+        A passing job returns a non-empty `kmsKeyName` in `encryptionSpec`. A failing job returns an empty or absent `encryptionSpec.kmsKeyName`.
+      remediation:
+        - id: console
+          desc: |
+            CMEK for Vertex AI custom jobs must be configured at job creation time and cannot be applied retroactively.
+
+            1. Navigate to **Vertex AI > Training > Custom jobs** and create a new job.
+            2. Under **Encryption**, select **Customer-managed key** and choose a Cloud KMS key in the same region as the job.
+            3. Ensure the Vertex AI service agent has the `roles/cloudkms.cryptoKeyEncrypterDecrypter` role on the selected key.
+        - id: cli
+          desc: |
+            Submit a custom job with CMEK configured:
+
+            ```bash
+            gcloud ai custom-jobs create \
+              --region=REGION \
+              --display-name=JOB_NAME \
+              --kms-key=projects/PROJECT/locations/REGION/keyRings/RING/cryptoKeys/KEY \
+              --config=config.yaml
+            ```
+        # No Terraform remediation: Vertex AI custom jobs are short-lived imperative API
+        # resources with no long-lived Terraform resource; use the CLI or SDK to submit
+        # jobs with an encryptionSpec at submission time.
+    refs:
+      - url: https://cloud.google.com/vertex-ai/docs/general/cmek
+        title: Vertex AI CMEK overview
+# No Terraform variants: Vertex AI custom jobs are short-lived imperative API resources with no Terraform analog.
+  - uid: mondoo-gcp-security-vertexai-custom-job-private-network
+    title: Ensure Vertex AI custom jobs run on a private network
+    impact: 70
+    filters: |
+      asset.platform == 'gcp-vertexai-job' &&
+      gcp.project.vertexaiService.customJob.state.in(["JOB_STATE_RUNNING", "JOB_STATE_PENDING", "JOB_STATE_QUEUED"])
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    mql: |
+      gcp.project.vertexaiService.customJob.jobSpec['network'] != empty
+    docs:
+      desc: |
+        This check ensures that active Vertex AI custom jobs specify a VPC network in their job specification so that training workers run on a private network rather than the default public internet path. Without a network configuration, worker-to-worker traffic and access to internal services traverse the public internet, bypassing the organization's network controls.
+
+        **Why this matters**
+
+        - **Worker traffic isolation:** Training workers that communicate across nodes use the configured VPC, meaning all inter-node traffic stays within the organization's network boundary and is subject to firewall rules.
+        - **Private access to GCP services:** A private VPC network enables workers to reach Cloud Storage, Bigtable, Cloud SQL, and other services via Private Google Access without exposing the training pipeline to the public internet.
+        - **Network telemetry:** VPC flow logs and firewall rule logging capture all traffic from training workers, enabling detection of anomalous outbound connections or data exfiltration attempts during training.
+
+        **Risk mitigation**
+
+        - **Specify a peered VPC network:** Configure the `network` field to reference a VPC network that is peered with the Vertex AI service project, and enable Private Google Access on the subnet used for training workers.
+        - **Restrict firewall egress:** Once workers are on a private network, apply egress firewall rules to limit outbound connections to only the GCP APIs and data sources the training job legitimately requires.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the [Google Cloud Console](https://console.cloud.google.com) and navigate to **Vertex AI > Training > Custom jobs**.
+        2. For each running, pending, or queued job, click the job name to view its details.
+        3. Check the **Networking** section for a VPC network reference.
+
+        A passing job shows a VPC network path in the **Networking** section. A failing job shows no network configured.
+
+        ### Audit via CLI
+
+        1. List active custom jobs and inspect the `network` field in `jobSpec`:
+
+        ```bash
+        gcloud ai custom-jobs list \
+          --region=REGION \
+          --filter="state:(JOB_STATE_RUNNING OR JOB_STATE_PENDING OR JOB_STATE_QUEUED)" \
+          --format="table(name,state,jobSpec.network)"
+        ```
+
+        A passing job returns a non-empty `network` value in `jobSpec`. A failing job returns an empty or absent `jobSpec.network`.
+      remediation:
+        - id: console
+          desc: |
+            Configure a private VPC network for Vertex AI custom jobs at job creation time:
+
+            1. Navigate to **Vertex AI > Training > Custom jobs** and create a new job.
+            2. Under **Networking**, select the VPC network to use for training workers.
+            3. Ensure the subnet has Private Google Access enabled.
+        - id: cli
+          desc: |
+            Submit a custom job with a private network configured:
+
+            ```bash
+            gcloud ai custom-jobs create \
+              --region=REGION \
+              --display-name=JOB_NAME \
+              --network=projects/PROJECT_NUMBER/global/networks/VPC_NAME \
+              --config=config.yaml
+            ```
+        # No Terraform remediation: Vertex AI custom jobs are short-lived imperative API
+        # resources with no long-lived Terraform resource; use the CLI or SDK to submit
+        # jobs with a network field at submission time.
+    refs:
+      - url: https://cloud.google.com/vertex-ai/docs/general/vpc-peering
+        title: Vertex AI - VPC Network Peering
+# No Terraform variants: Vertex AI custom jobs are short-lived imperative API resources with no Terraform analog.
+  - uid: mondoo-gcp-security-vertexai-custom-job-web-access-disabled
+    title: Ensure Vertex AI custom jobs disable interactive web access
+    impact: 70
+    filters: |
+      asset.platform == 'gcp-vertexai-job' &&
+      gcp.project.vertexaiService.customJob.state.in(["JOB_STATE_RUNNING", "JOB_STATE_PENDING", "JOB_STATE_QUEUED"])
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-c-1-integrity
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-pt-3
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-7
+      compliance/pci-dss-4: pcidss-requirement-2-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    mql: |
+      gcp.project.vertexaiService.customJob.jobSpec['enableWebAccessPortals'] != true
+    docs:
+      desc: |
+        This check ensures that active Vertex AI custom jobs do not have interactive web access portals enabled. When `enableWebAccessPortals` is set to `true`, Vertex AI creates a publicly accessible web endpoint that allows anyone with the URL to interact with the training worker, potentially accessing training data, model artifacts, and the container environment directly.
+
+        **Why this matters**
+
+        - **Unauthorized interactive access:** Web access portals expose a terminal or notebook interface to training workers; anyone who obtains the URL and authentication token can execute arbitrary commands within the training environment.
+        - **Training data exposure:** An attacker with web portal access can exfiltrate training datasets, model checkpoints, and intermediate artifacts directly from the worker's local filesystem.
+        - **Least-functionality principle:** Interactive web access is a debugging convenience feature that should not be enabled in production training runs; leaving it active creates an unnecessary attack surface that serves no operational purpose once debugging is complete.
+
+        **Risk mitigation**
+
+        - **Disable web access portals in all production job submissions:** Set `enableWebAccessPortals` to `false` or omit it from the job specification; it defaults to `false` and should remain so for all non-interactive training workloads.
+        - **Use Cloud Logging and Vertex AI Experiments for debugging:** Instead of enabling web portals, rely on structured logging via Cloud Logging and Vertex AI Experiments for post-hoc training diagnostics without exposing interactive access.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the [Google Cloud Console](https://console.cloud.google.com) and navigate to **Vertex AI > Training > Custom jobs**.
+        2. For each running, pending, or queued job, click the job name to view its details.
+        3. Check the **Web access** or **Enable web access** field in the job specification.
+
+        A passing job shows web access as disabled or not configured. A failing job shows web access as enabled.
+
+        ### Audit via CLI
+
+        1. List active custom jobs and inspect the `enableWebAccessPortals` field:
+
+        ```bash
+        gcloud ai custom-jobs list \
+          --region=REGION \
+          --filter="state:(JOB_STATE_RUNNING OR JOB_STATE_PENDING OR JOB_STATE_QUEUED)" \
+          --format="table(name,state,jobSpec.enableWebAccessPortals)"
+        ```
+
+        A passing job returns `False` or an empty value for `jobSpec.enableWebAccessPortals`. A failing job returns `True`.
+      remediation:
+        - id: console
+          desc: |
+            Disable web access portals for Vertex AI custom jobs at job creation time:
+
+            1. Navigate to **Vertex AI > Training > Custom jobs** and create a new job.
+            2. In the advanced configuration, ensure **Enable web access** is unchecked.
+        - id: cli
+          desc: |
+            Submit a custom job without web access portals enabled (omit the flag or set it explicitly to false):
+
+            ```bash
+            gcloud ai custom-jobs create \
+              --region=REGION \
+              --display-name=JOB_NAME \
+              --config=config.yaml
+            ```
+
+            Ensure your `config.yaml` does not include `enableWebAccessPortals: true`.
+        # No Terraform remediation: Vertex AI custom jobs are short-lived imperative API
+        # resources with no long-lived Terraform resource; use the CLI or SDK to submit
+        # jobs without enableWebAccessPortals at submission time.
+    refs:
+      - url: https://cloud.google.com/vertex-ai/docs/training/monitor-training#enable_web_access
+        title: Vertex AI - Enable web access for custom training
