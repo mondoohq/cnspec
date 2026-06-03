@@ -66,6 +66,7 @@ policies:
         filters: |
           asset.platform == "microsoft365"
         checks:
+          - uid: mondoo-m365-security-ensure-that-spf-records-are-published-for-all-exchange-domains
           - uid: mondoo-m365-security-ensure-dkim-signing-enabled-for-all-exchange-domains
           - uid: mondoo-m365-security-ensure-dmarc-records-published
           - uid: mondoo-m365-security-block-external-email-auto-forwarding
@@ -1645,6 +1646,153 @@ queries:
     refs:
       - url: https://learn.microsoft.com/en-us/entra/identity/authentication/concept-password-ban-bad
         title: Microsoft Entra Password Protection
+  # No Terraform variants: this check inspects live published DNS records; the Terraform analog depends on which DNS provider hosts each domain and cannot be expressed as a single M365 resource.
+  - uid: mondoo-m365-security-ensure-that-spf-records-are-published-for-all-exchange-domains
+    title: Ensure that SPF records are published for all Exchange Domains
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-8
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: pcidss-requirement-5-4-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    mql: |
+      microsoft.domains.all(serviceConfigurationRecords.any(supportedService == "Email" && recordType == "Txt"))
+      microsoft.domains.all(serviceConfigurationRecords.where(supportedService == "Email" && recordType == "Txt").all(text == "v=spf1 include:spf.protection.outlook.com -all"))
+    docs:
+      desc: |
+        This check ensures that every Exchange Online domain has a published SPF (Sender Policy Framework) TXT record that explicitly authorizes Microsoft's mail servers. By default no SPF record is created automatically when a domain is added to Microsoft 365; it must be published manually at the DNS provider.
+
+        **Why this matters**
+
+        - **Anti-spoofing protection:** SPF lets receiving mail servers confirm that inbound messages claiming to be from your domain actually originate from a server you have authorized, blocking the most common form of sender impersonation.
+        - **Phishing defense:** Without an SPF record, attackers can send email that appears to come from your domain's address with no technical barrier, making your brand a convenient cover for phishing campaigns targeting your customers, partners, or employees.
+        - **Deliverability and reputation:** Receiving servers and spam filters use SPF pass or fail results as a strong signal when deciding whether to deliver, quarantine, or reject email, so a missing record can cause legitimate outbound mail to be flagged as suspicious.
+
+        **Risk mitigation**
+
+        - **Domain impersonation:** A valid SPF record with a hard-fail policy (`-all`) causes receiving servers to reject messages sent from unauthorized sources, directly preventing spoofed email from reaching recipients.
+        - **Cascading email-authentication failures:** SPF is a prerequisite for effective DMARC enforcement; without a passing SPF result, DMARC cannot reliably align and reject spoofed messages, undermining the entire email authentication chain.
+      audit: |
+        Verify that every Exchange domain publishes an SPF record by querying its DNS TXT records:
+
+        ```bash
+        dig +short TXT example.com
+        ```
+
+        A passing domain returns a TXT record beginning with `v=spf1`. A failing domain returns no `v=spf1` record.
+      remediation:
+        - id: console
+          desc: |
+            **To setup SPF records for Exchange Online accepted domains, perform the following steps:**
+
+            1. If all email in your domain is sent from and received by Exchange Online, add the following TXT record for each Accepted Domain:
+
+            ```text
+            v=spf1 include:spf.protection.outlook.com -all
+            ```
+
+            2. If there are other systems that send email in the environment, ensure the SPF record includes all authorized email-sending systems. For example:
+
+            ```text
+            v=spf1 include:spf.protection.outlook.com include:<other-system> -all
+            ```
+
+            3. Use the Microsoft 365 Defender portal to validate your SPF record configuration. Refer to this article for detailed guidance: [https://learn.microsoft.com/en-us/microsoft-365/security/office-365-security/how-office-365-uses-spf-to-prevent-spoofing](https://learn.microsoft.com/en-us/microsoft-365/security/office-365-security/how-office-365-uses-spf-to-prevent-spoofing).
+        - id: cli
+          desc: |
+            **Using CLI tools**
+
+            SPF records must be configured at your DNS provider. Use these CLI examples based on your provider:
+
+            **Using Azure DNS CLI:**
+            ```bash
+            az network dns record-set txt add-record \
+              --resource-group <resource-group> \
+              --zone-name <domain.com> \
+              --record-set-name "@" \
+              --value "v=spf1 include:spf.protection.outlook.com -all"
+            ```
+
+            **Using AWS Route 53 CLI:**
+            ```bash
+            aws route53 change-resource-record-sets \
+              --hosted-zone-id <zone-id> \
+              --change-batch '{
+                "Changes": [{
+                  "Action": "UPSERT",
+                  "ResourceRecordSet": {
+                    "Name": "domain.com",
+                    "Type": "TXT",
+                    "TTL": 3600,
+                    "ResourceRecords": [{"Value": "\"v=spf1 include:spf.protection.outlook.com -all\""}]
+                  }
+                }]
+              }'
+            ```
+
+            **Using Google Cloud DNS:**
+            ```bash
+            gcloud dns record-sets create @ \
+              --zone=<zone-name> \
+              --type=TXT \
+              --ttl=3600 \
+              --rrdatas="v=spf1 include:spf.protection.outlook.com -all"
+            ```
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Configure SPF records at your DNS provider:
+
+            **Azure DNS:**
+            ```hcl
+            resource "azurerm_dns_txt_record" "spf" {
+              name                = "@"
+              zone_name           = azurerm_dns_zone.example.name
+              resource_group_name = azurerm_resource_group.example.name
+              ttl                 = 3600
+
+              record {
+                value = "v=spf1 include:spf.protection.outlook.com -all"
+              }
+            }
+            ```
+
+            **AWS Route 53:**
+            ```hcl
+            resource "aws_route53_record" "spf" {
+              zone_id = aws_route53_zone.example.zone_id
+              name    = "example.com"
+              type    = "TXT"
+              ttl     = 3600
+              records = ["v=spf1 include:spf.protection.outlook.com -all"]
+            }
+            ```
+
+            **Google Cloud DNS:**
+            ```hcl
+            resource "google_dns_record_set" "spf" {
+              name         = "example.com."
+              managed_zone = google_dns_managed_zone.example.name
+              type         = "TXT"
+              ttl          = 3600
+              rrdatas      = ["v=spf1 include:spf.protection.outlook.com -all"]
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/defender-office-365/email-authentication-about
+        title: Email Authentication in Microsoft 365
+      - url: https://learn.microsoft.com/en-us/exchange/security-and-compliance/security-and-compliance
+        title: Exchange Online Security and Compliance
   # No Terraform variants: the tenant authorization policy has no resource in the azuread Terraform provider.
   - uid: mondoo-m365-security-ensure-third-party-integrated-applications-are-not-allowed
     title: Ensure that no third party integrated applications are allowed
