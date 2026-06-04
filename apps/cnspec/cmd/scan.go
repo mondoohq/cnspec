@@ -203,7 +203,7 @@ var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 	// it can be ctx-aware and only fires for scan, not policy lint).
 	scandump.YAML(ctx, "resolved_mql_bundle.mql", conf.Bundle)
 
-	report, err := RunScan(ctx, conf, scan.WithReportType(conf.ReportType), scan.WithAutoUpdate(viper.GetBool("auto-update")), scan.WithScanSource(scan.ScanSourceInteractive))
+	report, err := RunScan(ctx, conf, scan.WithReportType(conf.ReportType), scan.WithAutoUpdate(viper.GetBool("auto-update")))
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to run scan")
 	}
@@ -636,7 +636,10 @@ func (c *scanConfig) loadPolicies(ctx context.Context) error {
 }
 
 func RunScan(parentCtx context.Context, config *scanConfig, scannerOpts ...scan.ScannerOption) (*policy.ReportCollection, error) {
-	opts := scannerOpts
+	// RunScan is the entry point for the interactive CLI scan commands (scan,
+	// vuln, sbom, aibom, ...), so default the scan source to interactive. It is
+	// prepended so callers (e.g. `serve`) can override it via WithScanSource.
+	opts := append([]scan.ScannerOption{scan.WithScanSource(scan.ScanSourceInteractive)}, scannerOpts...)
 	if config.runtime.UpstreamConfig != nil {
 		opts = append(opts, scan.WithUpstream(config.runtime.UpstreamConfig))
 	}

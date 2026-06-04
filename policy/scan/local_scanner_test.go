@@ -644,6 +644,14 @@ func TestNewLocalScannerWithOptions(t *testing.T) {
 		assert.Equal(t, ScanSourceInteractive, scanner.scanSource)
 	})
 
+	t.Run("later scan source overrides earlier default", func(t *testing.T) {
+		// RunScan prepends an interactive default; callers like `serve` append
+		// their own source, which must win.
+		scanner := NewLocalScanner(WithScanSource(ScanSourceInteractive), WithScanSource(ScanSourceService))
+		require.NotNil(t, scanner)
+		assert.Equal(t, ScanSourceService, scanner.scanSource)
+	})
+
 	t.Run("with custom runtime ignores auto-update option", func(t *testing.T) {
 		// Create a new runtime instance for this test to ensure isolation.
 		customRuntime := &providers.Runtime{
