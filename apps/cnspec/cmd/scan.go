@@ -203,7 +203,7 @@ var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 	// it can be ctx-aware and only fires for scan, not policy lint).
 	scandump.YAML(ctx, "resolved_mql_bundle.mql", conf.Bundle)
 
-	report, err := RunScan(ctx, conf, scan.WithReportType(conf.ReportType), scan.WithAutoUpdate(viper.GetBool("auto-update")))
+	report, err := RunScan(ctx, conf, scan.WithReportType(conf.ReportType), scan.WithAutoUpdate(viper.GetBool("auto-update")), scan.WithScanSource(scan.ScanSourceInteractive))
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to run scan")
 	}

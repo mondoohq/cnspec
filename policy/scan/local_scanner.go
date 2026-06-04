@@ -68,7 +68,20 @@ type LocalScanner struct {
 	reportType          ReportType
 	autoUpdate          bool
 	refreshInterval     int
+	// scanSource records how the scan was triggered (e.g. "interactive" or
+	// "service"). When set, it is applied as a label to every scanned asset.
+	scanSource string
 }
+
+const (
+	// LabelScanSource is the asset label that records how a scan was triggered.
+	LabelScanSource = "mondoo.com/scan-source"
+	// ScanSourceInteractive marks scans started interactively via `cnspec scan`.
+	ScanSourceInteractive = "interactive"
+	// ScanSourceService marks scans started by a long-running service, e.g.
+	// `cnspec serve` or the scan REST API.
+	ScanSourceService = "service"
+)
 
 type ScannerOption func(*LocalScanner)
 
@@ -117,6 +130,15 @@ func WithRefreshInterval(refreshInterval int) ScannerOption {
 func WithRuntime(r *providers.Runtime) ScannerOption {
 	return func(s *LocalScanner) {
 		s.runtime = r
+	}
+}
+
+// WithScanSource records how scans run by this scanner were triggered. The
+// value (e.g. ScanSourceInteractive or ScanSourceService) is stamped onto every
+// scanned asset as the LabelScanSource label so it can be aggregated upstream.
+func WithScanSource(source string) ScannerOption {
+	return func(s *LocalScanner) {
+		s.scanSource = source
 	}
 }
 
@@ -315,7 +337,22 @@ func createReporter(ctx context.Context, job *Job, upstream *upstream.UpstreamCo
 	return reporter, nil
 }
 
+// stampScanSource applies the configured scan source (e.g. "interactive" or
+// "service") as the LabelScanSource label to every asset in the job inventory.
+// It is a no-op when no scan source was configured or there is no inventory.
+func (s *LocalScanner) stampScanSource(job *Job) {
+	if s.scanSource == "" || job == nil || job.Inventory == nil {
+		return
+	}
+	job.Inventory.ApplyLabels(map[string]string{LabelScanSource: s.scanSource})
+}
+
 func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *upstream.UpstreamConfig) (*ScanResult, error) {
+	// Stamp the scan source (interactive vs. service) onto every asset so it can
+	// be aggregated upstream. This is the single chokepoint for Run/RunIncognito
+	// and the admission-review and queue paths.
+	s.stampScanSource(job)
+
 	reporter, err := createReporter(ctx, job, upstream)
 	if err != nil {
 		return nil, err

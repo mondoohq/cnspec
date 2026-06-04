@@ -554,6 +554,49 @@ func TestLocalScannerSuite(t *testing.T) {
 	suite.Run(t, new(LocalScannerSuite))
 }
 
+func TestStampScanSource(t *testing.T) {
+	newJob := func() *Job {
+		return &Job{
+			Inventory: &inventory.Inventory{
+				Spec: &inventory.InventorySpec{
+					Assets: []*inventory.Asset{
+						{Name: "asset-1"},
+						{Name: "asset-2", Labels: map[string]string{"existing": "value"}},
+					},
+				},
+			},
+		}
+	}
+
+	t.Run("stamps every asset", func(t *testing.T) {
+		scanner := NewLocalScanner(WithScanSource(ScanSourceService))
+		job := newJob()
+		scanner.stampScanSource(job)
+
+		for _, a := range job.Inventory.Spec.Assets {
+			assert.Equal(t, ScanSourceService, a.Labels[LabelScanSource], "asset %q", a.Name)
+		}
+		// pre-existing labels are preserved
+		assert.Equal(t, "value", job.Inventory.Spec.Assets[1].Labels["existing"])
+	})
+
+	t.Run("no-op without a scan source", func(t *testing.T) {
+		scanner := NewLocalScanner()
+		job := newJob()
+		scanner.stampScanSource(job)
+
+		for _, a := range job.Inventory.Spec.Assets {
+			_, ok := a.Labels[LabelScanSource]
+			assert.False(t, ok, "asset %q should not be labeled", a.Name)
+		}
+	})
+
+	t.Run("no-op without an inventory", func(t *testing.T) {
+		scanner := NewLocalScanner(WithScanSource(ScanSourceService))
+		assert.NotPanics(t, func() { scanner.stampScanSource(&Job{}) })
+	})
+}
+
 func TestNewLocalScannerWithOptions(t *testing.T) {
 	t.Run("default values", func(t *testing.T) {
 		scanner := NewLocalScanner()
@@ -593,6 +636,12 @@ func TestNewLocalScannerWithOptions(t *testing.T) {
 		require.True(t, ok)
 		assert.True(t, rt.AutoUpdate.Enabled)
 		assert.Equal(t, 1234, rt.AutoUpdate.RefreshInterval)
+	})
+
+	t.Run("with scan source", func(t *testing.T) {
+		scanner := NewLocalScanner(WithScanSource(ScanSourceInteractive))
+		require.NotNil(t, scanner)
+		assert.Equal(t, ScanSourceInteractive, scanner.scanSource)
 	})
 
 	t.Run("with custom runtime ignores auto-update option", func(t *testing.T) {

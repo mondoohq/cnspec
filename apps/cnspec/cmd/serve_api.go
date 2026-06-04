@@ -80,6 +80,7 @@ var serveApiCmd = &cobra.Command{
 			scan.WithUpstream(&upstreamConfig),
 			scan.DisableProgressBar(),
 			scan.WithRecording(recording.Null{}),
+			scan.WithScanSource(scan.ScanSourceService),
 		)
 		if err := scanner.EnableQueue(); err != nil {
 			log.Fatal().Err(err).Msg("could not enable scan queue")
