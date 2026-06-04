@@ -636,7 +636,10 @@ func (c *scanConfig) loadPolicies(ctx context.Context) error {
 }
 
 func RunScan(parentCtx context.Context, config *scanConfig, scannerOpts ...scan.ScannerOption) (*policy.ReportCollection, error) {
-	opts := scannerOpts
+	// RunScan is the entry point for the interactive CLI scan commands (scan,
+	// vuln, sbom, aibom, ...), so default the scan source to interactive. It is
+	// prepended so callers (e.g. `serve`) can override it via WithScanSource.
+	opts := append([]scan.ScannerOption{scan.WithScanSource(scan.ScanSourceInteractive)}, scannerOpts...)
 	if config.runtime.UpstreamConfig != nil {
 		opts = append(opts, scan.WithUpstream(config.runtime.UpstreamConfig))
 	}
