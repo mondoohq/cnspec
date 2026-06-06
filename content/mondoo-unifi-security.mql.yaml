@@ -47,6 +47,7 @@ policies:
           - uid: mondoo-unifi-security-ips-enabled
           - uid: mondoo-unifi-security-dns-filtering-enabled
           - uid: mondoo-unifi-security-honeypot-enabled
+          - uid: mondoo-unifi-security-dpi-enabled
       - title: VPN Security
         filters: asset.platform == "unifi"
         checks:
@@ -60,6 +61,7 @@ policies:
           - uid: mondoo-unifi-security-broadcast-ping-disabled
           - uid: mondoo-unifi-security-icmp-redirects-disabled
           - uid: mondoo-unifi-security-syn-cookies-enabled
+          - uid: mondoo-unifi-security-geo-ip-filtering-enabled
       - title: Switch Security
         filters: asset.platform == "unifi"
         checks:
@@ -76,6 +78,8 @@ policies:
           - uid: mondoo-unifi-security-auto-upgrade-enabled
           - uid: mondoo-unifi-security-analytics-disabled
           - uid: mondoo-unifi-security-devices-firmware-uptodate
+          - uid: mondoo-unifi-security-no-eol-devices
+          - uid: mondoo-unifi-security-no-unsupported-devices
           - uid: mondoo-unifi-security-remote-syslog-enabled
       - title: Network Segmentation
         filters: asset.platform == "unifi"
@@ -2581,3 +2585,209 @@ queries:
         title: UniFi firmware management
 
 
+  - uid: mondoo-unifi-security-no-eol-devices
+    title: Ensure no end-of-life devices are in use
+    impact: 90
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-tvm-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-8
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ip-12
+      compliance/nist-csf-2: nist-csf-2-pr-ps-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-1
+      compliance/pci-dss-4: pcidss-requirement-6-3-3
+      compliance/soc2-2017: soc2-control-cc7-1-1
+      compliance/vda-isa-5: vda-isa-5-5-2-1
+    mql: |
+      unifi.devices.all(modelEol == false)
+    docs:
+      desc: |
+        This check ensures that no adopted UniFi devices have reached end-of-life (EOL) status.
+
+        **Why this matters**
+
+        End-of-life hardware no longer receives firmware or security updates from Ubiquiti:
+          - Vulnerabilities discovered after a device reaches EOL are never patched.
+          - Network devices are high-value targets — a compromised access point, switch, or gateway exposes all traffic that flows through it.
+          - EOL devices accumulate unmitigated risk for as long as they remain in service.
+
+        Replacing end-of-life hardware ensures:
+          - Devices continue to receive security patches.
+          - The network is not anchored to permanently vulnerable equipment.
+      audit: |
+        To verify device lifecycle status using the UniFi Network web application:
+
+        1. Sign in to the UniFi Network web application.
+        2. Go to **Devices** and review each adopted device's model.
+        3. Cross-reference the model against Ubiquiti's end-of-life announcements.
+
+        If no adopted device is end-of-life, the check passes. If any device's model is end-of-life, the check fails.
+      remediation:
+        - id: console
+          desc: |
+            To remediate end-of-life devices using the UniFi Network web application:
+
+            1. Identify the devices reported as end-of-life under **Devices**.
+            2. Plan and budget replacement with a currently supported model.
+            3. Migrate configuration to the replacement device and decommission the end-of-life hardware.
+        # No cli remediation: device lifecycle status is reported by the controller; no device CLI action changes a model's end-of-life state.
+    refs:
+      - url: https://help.ui.com/hc/en-us/articles/204910134
+        title: UniFi device lifecycle and support
+
+  - uid: mondoo-unifi-security-no-unsupported-devices
+    title: Ensure no unsupported devices are adopted
+    impact: 50
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ccc-06
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ip-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-1
+      compliance/pci-dss-4: pcidss-requirement-2-2-1
+      compliance/soc2-2017: soc2-control-cc6-8-1
+      compliance/vda-isa-5: vda-isa-5-5-2-1
+    mql: |
+      unifi.devices.all(unsupported == false)
+    docs:
+      desc: |
+        This check ensures that the controller is not managing any devices it reports as unsupported.
+
+        **Why this matters**
+
+        A device flagged as unsupported is not fully managed by the controller's current software:
+          - Security settings and provisioning the controller applies may not take effect on the device.
+          - The device may run firmware the controller can neither audit nor update.
+          - Unsupported devices represent unmanaged, unverifiable attack surface on the network.
+
+        Keeping every adopted device supported ensures the controller's hardening and update mechanisms actually apply to it.
+      audit: |
+        To verify device support status using the UniFi Network web application:
+
+        1. Sign in to the UniFi Network web application.
+        2. Go to **Devices** and review each adopted device's status.
+
+        If no adopted device is reported as unsupported, the check passes. If any device is unsupported, the check fails.
+      remediation:
+        - id: console
+          desc: |
+            To remediate unsupported devices using the UniFi Network web application:
+
+            1. Identify the unsupported devices under **Devices**.
+            2. Update the controller (and the device firmware) to a version that supports the hardware, or replace the device with a supported model.
+        # No cli remediation: support status is determined by the controller software; the device CLI cannot change it.
+    refs:
+      - url: https://help.ui.com/hc/en-us/articles/204910134
+        title: UniFi device lifecycle and support
+
+  - uid: mondoo-unifi-security-dpi-enabled
+    title: Ensure Deep Packet Inspection is enabled
+    impact: 40
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
+      compliance/dora: dora-art-10
+      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
+      compliance/iso-27001-2022: iso-27001-2022-a-8-16
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-de-cm-1
+      compliance/nist-csf-2: nist-csf-2-de-cm-09
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-4
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-6
+      compliance/pci-dss-4: pcidss-requirement-10-2-1
+      compliance/soc2-2017: soc2-control-cc7-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-4
+    mql: |
+      unifi.siteSettings.dpiEnabled == true
+    docs:
+      desc: |
+        This check ensures that Deep Packet Inspection (DPI) is enabled on the UniFi controller.
+
+        **Why this matters**
+
+        DPI provides application-level visibility into the traffic crossing the network:
+          - Without DPI, traffic is only classified by port, which malware and tunneling tools routinely evade.
+          - DPI surfaces anomalous applications and destinations that flat flow logs miss.
+          - It is the data source behind UniFi's traffic-identification, fingerprinting, and several threat-management features.
+
+        Enabling DPI improves the network's detection and monitoring posture.
+      audit: |
+        To verify Deep Packet Inspection using the UniFi Network web application:
+
+        1. Sign in to the UniFi Network web application.
+        2. Go to **Settings > Security** (or **Settings > System**, depending on version).
+        3. Review the **Deep Packet Inspection** setting.
+
+        If DPI is enabled, the check passes. If it is disabled, the check fails.
+      remediation:
+        - id: console
+          desc: |
+            To enable Deep Packet Inspection using the UniFi Network web application:
+
+            1. Go to the security/system settings.
+            2. Enable **Deep Packet Inspection**.
+        # No cli remediation: DPI is a controller-managed site setting; the device SSH CLI cannot change it and the controller overwrites local changes on provision.
+    refs:
+      - url: https://help.ui.com/hc/en-us/articles/360038690813
+        title: UniFi traffic identification and DPI
+
+  - uid: mondoo-unifi-security-geo-ip-filtering-enabled
+    title: Ensure geo-IP firewall filtering is enabled
+    impact: 40
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-2
+    mql: |
+      unifi.siteSettings.gateway.geoIpFilteringEnabled == true
+    docs:
+      desc: |
+        This check ensures that geo-IP firewall filtering is enabled on the UniFi gateway.
+
+        **Why this matters**
+
+        Geo-IP filtering blocks traffic to and from countries the organization has no legitimate business with:
+          - It removes large swaths of the internet (and the attackers operating from them) from the reachable attack surface.
+          - It reduces inbound scanning, brute-force, and command-and-control traffic from high-risk regions.
+          - Combined with explicit firewall rules, it provides defense-in-depth at the network boundary.
+
+        Note that geo-IP filtering is a coarse control and is not a substitute for proper firewall rules, but it meaningfully reduces exposure.
+      audit: |
+        To verify geo-IP filtering using the UniFi Network web application:
+
+        1. Sign in to the UniFi Network web application.
+        2. Go to **Settings > Security > Geo IP Filtering** (or **Settings > Internet Security**, depending on version).
+        3. Review whether geo-IP filtering is enabled and which countries and direction are configured.
+
+        If geo-IP filtering is enabled, the check passes. If it is disabled, the check fails.
+      remediation:
+        - id: console
+          desc: |
+            To enable geo-IP filtering using the UniFi Network web application:
+
+            1. Go to the gateway/internet security settings.
+            2. Enable **Geo IP Filtering**.
+            3. Choose **Block** (or **Allow**) mode, select the countries, and set the traffic direction (both, ingress, or egress) appropriate for your environment.
+        # No cli remediation: gateway security is a controller-managed site setting; the device SSH CLI cannot change it and the controller overwrites local changes on provision.
+    refs:
+      - url: https://help.ui.com/hc/en-us/articles/115003173168
+        title: UniFi gateway settings
