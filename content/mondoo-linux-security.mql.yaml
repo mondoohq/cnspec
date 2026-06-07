@@ -199,6 +199,8 @@ policies:
           asset.family.contains('linux')
         checks:
           - uid: mondoo-linux-security-chrony-time-source-is-configured
+          - uid: mondoo-linux-security-timesyncd-time-source-is-configured
+          - uid: mondoo-linux-security-timesyncd-clock-is-synchronized
       - title: Package Management
         filters: |
           asset.family.contains('linux')
@@ -14278,6 +14280,212 @@ queries:
     refs:
       - url: https://chrony-project.org/documentation.html
         title: chrony - Documentation
+  - uid: mondoo-linux-security-timesyncd-time-source-is-configured
+    title: Ensure a time source is configured in systemd-timesyncd
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-06
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-17
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-45
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-7
+      compliance/pci-dss-4: pcidss-requirement-10-6-1
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    filters: |
+      systemd.timesyncd.active
+    mql: |
+      systemd.timesyncd.servers != []
+    docs:
+      desc: |
+        This check ensures that systemd-timesyncd, when it is the active time synchronization client, has at least one NTP server explicitly configured rather than relying solely on the compiled-in fallback servers. An explicit `NTP=` setting guarantees the host synchronizes against the time sources the operator intends.
+
+        **Why this matters**
+
+        - **Reliable audit trails:** Security events recorded across many hosts can only be correlated and ordered when every clock agrees on the current time.
+        - **Operator control:** Defining the NTP servers explicitly ensures the host uses approved, reachable time sources instead of distribution defaults that may be blocked or undesirable.
+        - **Certificate and ticket validity:** TLS certificate expiry and Kerberos ticket lifetimes are evaluated against the local clock, so drift can break authentication or silently accept expired credentials.
+
+        **Risk mitigation**
+
+        - **Predictable sources:** Pinning the time servers removes any dependency on fallback hosts that the operator does not control.
+        - **Detect tampering:** A synchronized clock makes it harder for an attacker to disguise the timing of malicious activity.
+      audit: |
+        Run this command to display the configured NTP servers and synchronization state:
+
+        ```bash
+        timedatectl show-timesync --all
+        ```
+
+        Also inspect the configuration file directly:
+
+        ```bash
+        grep -E '^\s*NTP=' /etc/systemd/timesyncd.conf
+        ```
+
+        A passing result lists one or more servers in the `SystemNTPServers` field or a non-empty `NTP=` directive. A failing result shows only fallback servers and no configured `NTP=` value.
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
+
+            Set an authorized NTP server in the timesyncd configuration and restart the service:
+
+            ```bash
+            sed -i 's/^#\?NTP=.*/NTP=2.pool.ntp.org/' /etc/systemd/timesyncd.conf
+            systemctl restart systemd-timesyncd
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Use this Bash script to ensure an `NTP=` server is configured and restart timesyncd:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            CONF=/etc/systemd/timesyncd.conf
+
+            if grep -qE '^\s*NTP=' "$CONF"; then
+              sed -i 's/^\s*NTP=.*/NTP=2.pool.ntp.org/' "$CONF"
+            else
+              printf '[Time]\nNTP=2.pool.ntp.org\n' >> "$CONF"
+            fi
+
+            systemctl restart systemd-timesyncd
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to set the NTP server in the timesyncd configuration:
+
+            ```yaml
+            ---
+            - name: Configure systemd-timesyncd NTP server
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Ensure an NTP server is configured
+                  ansible.builtin.ini_file:
+                    path: /etc/systemd/timesyncd.conf
+                    section: Time
+                    option: NTP
+                    value: "2.pool.ntp.org"
+                    no_extra_spaces: true
+                  notify: Restart timesyncd
+
+              handlers:
+                - name: Restart timesyncd
+                  ansible.builtin.service:
+                    name: systemd-timesyncd
+                    state: restarted
+            ```
+    refs:
+      - url: https://www.freedesktop.org/software/systemd/man/latest/timesyncd.conf.html
+        title: systemd - timesyncd.conf manual page
+  - uid: mondoo-linux-security-timesyncd-clock-is-synchronized
+    title: Ensure the system clock is synchronized via systemd-timesyncd
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-06
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-17
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-45
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-7
+      compliance/pci-dss-4: pcidss-requirement-10-6-1
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    filters: |
+      service('systemd-timesyncd').enabled
+    mql: |
+      systemd.timesyncd.active == true
+      systemd.timesyncd.synchronized == true
+    docs:
+      desc: |
+        This check ensures that when systemd-timesyncd is enabled it is actually running and has synchronized the system clock to a time source. A daemon that is enabled but inactive, or active but unable to reach a server, leaves the clock drifting without anyone noticing.
+
+        **Why this matters**
+
+        - **Confirmed accuracy:** A configured time source is only useful if the daemon is running and has successfully synchronized against it.
+        - **Reliable audit trails:** Security events recorded across many hosts can only be correlated and ordered when every clock is actually synchronized.
+        - **Certificate and ticket validity:** TLS certificate expiry and Kerberos ticket lifetimes are evaluated against the local clock, so an unsynchronized clock can break authentication or silently accept expired credentials.
+
+        **Risk mitigation**
+
+        - **Detect failures early:** Verifying the synchronized state surfaces daemons that started but never reached a time source.
+        - **Forensic integrity:** Accurate timestamps are essential when reconstructing the sequence of an incident.
+      audit: |
+        Run this command to confirm the daemon is active and the clock is synchronized:
+
+        ```bash
+        timedatectl status
+        ```
+
+        A passing result reports `NTP service: active` and `System clock synchronized: yes`. A failing result reports the service as inactive or the clock as not synchronized.
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
+
+            Enable network time synchronization and start the daemon:
+
+            ```bash
+            timedatectl set-ntp true
+            systemctl restart systemd-timesyncd
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Use this Bash script to enable, start, and verify timesyncd synchronization:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            timedatectl set-ntp true
+            systemctl enable --now systemd-timesyncd
+            systemctl restart systemd-timesyncd
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to enable and start timesyncd so the clock synchronizes:
+
+            ```yaml
+            ---
+            - name: Ensure systemd-timesyncd synchronizes the clock
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Enable network time synchronization
+                  ansible.builtin.command: timedatectl set-ntp true
+                  changed_when: false
+
+                - name: Ensure timesyncd is enabled and running
+                  ansible.builtin.service:
+                    name: systemd-timesyncd
+                    enabled: true
+                    state: started
+            ```
+    refs:
+      - url: https://www.freedesktop.org/software/systemd/man/latest/systemd-timesyncd.service.html
+        title: systemd - systemd-timesyncd.service manual page
   - uid: mondoo-linux-security-gpgcheck-is-globally-activated
     title: Ensure gpgcheck is globally activated
     impact: 80
