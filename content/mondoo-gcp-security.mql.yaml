@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-gcp-security
     name: Mondoo Google Cloud (GCP) Security
-    version: 9.2.0
+    version: 9.3.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -22,29 +22,44 @@ policies:
         This policy provides security checks across key GCP services, uncovering misconfigurations that could put critical resources at risk, particularly those exposed to the public internet:
 
         - AlloyDB
+        - API Gateway
         - API Keys
+        - App Engine
+        - Artifact Registry
         - Audit Logging
         - Backup & DR
         - BigQuery
         - Bigtable
         - Binary Authorization
         - Cloud Armor
+        - Cloud Build
+        - Cloud CDN
+        - Cloud Composer
+        - Cloud Data Loss Prevention (DLP)
         - Cloud DNS
         - Cloud Functions
+        - Cloud Healthcare API
         - Cloud Key Management Service (KMS)
         - Cloud Logging
         - Cloud NAT
         - Cloud Run
-        - Cloud VPN
         - Cloud SQL
         - Cloud Storage
-        - Compute Engine instances, firewalls, networks, subnetworks, and VPNs
+        - Cloud VPN
+        - Cloud Workstations
+        - Compute Engine instances, disks, firewalls, networks, subnetworks, forwarding rules, images, and snapshots
+        - Dataflow
         - Dataproc
+        - Datastream
+        - Essential Contacts
+        - Filestore
         - Firestore
         - Google Kubernetes Engine (GKE)
         - Identity and Access Management (IAM)
-        - Memorystore for Redis / Redis Cluster
+        - Identity-Aware Proxy (IAP)
+        - Memorystore for Redis, Redis Cluster, Valkey, and Memcached
         - Model Armor
+        - Network Security
         - Organization Policies
         - Pub/Sub
         - Secret Manager
@@ -173,6 +188,7 @@ policies:
           - uid: mondoo-gcp-security-gke-network-policy-provider-specified
           - uid: mondoo-gcp-security-gke-notification-topic-same-project
           - uid: mondoo-gcp-security-gke-backup-plan-exists
+          - uid: mondoo-gcp-security-gke-rbac-no-insecure-system-bindings
       - title: Cloud SQL
         checks:
           - uid: mondoo-gcp-security-cloud-sql-mysql-connections-require-ssl-tls
@@ -234,6 +250,7 @@ policies:
           - uid: mondoo-gcp-security-iam-service-account-keys-rotated-90-days
           - uid: mondoo-gcp-security-iam-no-disabled-service-account-keys
           - uid: mondoo-gcp-security-iam-service-account-not-impersonatable
+          - uid: mondoo-gcp-security-iam-no-stale-service-accounts
       - title: Cloud Logging
         checks:
           - uid: mondoo-gcp-security-logging-bucket-retention-30-days
@@ -343,6 +360,9 @@ policies:
           - uid: mondoo-gcp-security-ssl-certificate-not-expired
           - uid: mondoo-gcp-security-target-ssl-proxy-has-explicit-policy
           - uid: mondoo-gcp-security-https-lb-ssl-policy-min-tls-1-2
+      - title: Network Security
+        checks:
+          - uid: mondoo-gcp-security-server-tls-policy-disallow-plaintext
       - title: Cloud NAT
         checks:
           - uid: mondoo-gcp-security-cloud-nat-no-endpoint-independent-mapping
@@ -9262,6 +9282,151 @@ queries:
           _['shielded_instance_config'].any(_['enable_secure_boot'] == true && _['enable_integrity_monitoring'] == true)
         )
       )
+  - uid: mondoo-gcp-security-gke-rbac-no-insecure-system-bindings
+    title: Ensure GKE clusters disallow insecure RBAC bindings to system groups
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-16
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-3-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-gcp-security-gke-rbac-no-insecure-system-bindings-gcp
+        tags:
+          mondoo.com/filter-title: GCP GKE Cluster
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-gke-rbac-no-insecure-system-bindings-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-gke-rbac-no-insecure-system-bindings-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-gke-rbac-no-insecure-system-bindings-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that GKE clusters do not permit Kubernetes RBAC bindings to the built-in subjects `system:anonymous`, `system:unauthenticated`, or `system:authenticated`. A cluster's RBAC binding configuration can relax the default protections that block these subjects, and when it does, a `ClusterRoleBinding` or `RoleBinding` can grant cluster permissions to unauthenticated callers or to every authenticated principal at once.
+
+        **Why this matters**
+
+        - **Anonymous access exposure:** Allowing bindings to `system:anonymous` or `system:unauthenticated` lets a caller that presents no credentials receive whatever role the binding grants, turning a single misconfigured binding into unauthenticated cluster access.
+        - **Overbroad authenticated access:** Binding a role to `system:authenticated` grants that role to every identity the cluster can authenticate, including service accounts and federated identities that were never meant to hold the permission.
+        - **Privilege escalation surface:** These subjects are a common target for attackers because a single binding to a powerful role bypasses the per-identity review that least-privilege models depend on.
+
+        **Risk mitigation**
+
+        - **Keep insecure bindings disabled:** Leave both insecure binding settings off so the API server rejects bindings to these system subjects.
+        - **Grant to explicit identities:** Bind roles to named users, groups, or service accounts rather than to broad system subjects.
+        - **Review existing bindings:** Audit `ClusterRoleBinding` and `RoleBinding` objects for references to system subjects before enabling any relaxed setting.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the [Google Cloud Console](https://console.cloud.google.com).
+        2. Navigate to **Kubernetes Engine** > **Clusters**.
+        3. Select a cluster and open the **Details** tab.
+        4. Under the **Security** section, review the **RBAC binding restrictions** setting.
+
+        A passing cluster restricts bindings to `system:anonymous`, `system:unauthenticated`, and `system:authenticated`. A failing cluster shows that insecure bindings to these subjects are permitted.
+
+        ### Audit via CLI
+
+        1. Describe the cluster and read its RBAC binding configuration:
+
+        ```bash
+        gcloud container clusters describe CLUSTER_NAME \
+          --zone ZONE \
+          --format="value(rbacBindingConfig.enableInsecureBindingSystemAuthenticated,rbacBindingConfig.enableInsecureBindingSystemUnauthenticated)"
+        ```
+
+        A passing cluster returns `False` for both values or returns no output. A failing cluster returns `True` for either value.
+      remediation:
+        - id: console
+          desc: |
+            To disallow insecure RBAC bindings to system groups using the Google Cloud Console:
+
+            1. Go to the **Kubernetes Engine > Clusters** page.
+            2. Select the cluster you want to update.
+            3. Select **Security**.
+            4. Under **RBAC binding restrictions**, disable bindings to `system:authenticated` and to `system:anonymous` and `system:unauthenticated`.
+            5. Select **Save changes**.
+        - id: cli
+          desc: |
+            To disallow insecure RBAC bindings to system groups using the Google Cloud CLI:
+
+            ```bash
+            gcloud container clusters update CLUSTER_NAME \
+              --zone ZONE \
+              --no-enable-insecure-binding-system-authenticated \
+              --no-enable-insecure-binding-system-unauthenticated
+            ```
+        - id: terraform
+          desc: |
+            To disallow insecure RBAC bindings to system groups in Terraform, set both flags in the `rbac_binding_config` block to `false`:
+
+            ```hcl
+            resource "google_container_cluster" "primary" {
+              name     = "my-cluster"
+              location = "us-central1"
+
+              rbac_binding_config {
+                enable_insecure_binding_system_authenticated   = false
+                enable_insecure_binding_system_unauthenticated = false
+              }
+            }
+            ```
+    refs:
+      - url: https://cloud.google.com/kubernetes-engine/docs/how-to/restrict-default-bindings
+        title: Restrict default RBAC bindings in GKE
+  - uid: mondoo-gcp-security-gke-rbac-no-insecure-system-bindings-gcp
+    filters: asset.platform == 'gcp-gke-cluster'
+    mql: |
+      gcp.project.gkeService.cluster.rbacBindingConfig['enableInsecureBindingSystemAuthenticated'] != true &&
+      gcp.project.gkeService.cluster.rbacBindingConfig['enableInsecureBindingSystemUnauthenticated'] != true
+  - uid: mondoo-gcp-security-gke-rbac-no-insecure-system-bindings-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_container_cluster')
+    mql: |
+      terraform.resources('google_container_cluster').all(
+        blocks.where(type == 'rbac_binding_config').all(
+          arguments.enable_insecure_binding_system_authenticated != true &&
+          arguments.enable_insecure_binding_system_unauthenticated != true
+        )
+      )
+  - uid: mondoo-gcp-security-gke-rbac-no-insecure-system-bindings-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_container_cluster').all(
+        change.after['rbac_binding_config'] == empty ||
+        change.after['rbac_binding_config'].all(
+          _['enable_insecure_binding_system_authenticated'] != true &&
+          _['enable_insecure_binding_system_unauthenticated'] != true
+        )
+      )
+  - uid: mondoo-gcp-security-gke-rbac-no-insecure-system-bindings-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.state.resources.where(type == 'google_container_cluster').all(
+        values['rbac_binding_config'] == empty ||
+        values['rbac_binding_config'].all(
+          _['enable_insecure_binding_system_authenticated'] != true &&
+          _['enable_insecure_binding_system_unauthenticated'] != true
+        )
+      )
   - uid: mondoo-gcp-security-gke-release-channel-configured
     title: Ensure GKE clusters use a release channel for version management
     impact: 60
@@ -10738,6 +10903,100 @@ queries:
       terraform.state.resources.where(type == 'google_service_account_key').all(
         values.disabled == null || values.disabled == false
       )
+  # No Terraform variants: the inactivity signal comes from Policy Intelligence last-authentication
+  # telemetry, which has no Terraform configuration analog to assert against.
+  - uid: mondoo-gcp-security-iam-no-stale-service-accounts
+    title: Ensure service accounts unused for 90 days are disabled or removed
+    impact: 70
+    filters: asset.platform == 'gcp-iam-service-account'
+    mql: |
+      gcp.project.iam.serviceAccount.disabled == true ||
+      gcp.project.iam.serviceAccount.isDefault == true ||
+      gcp.project.iam.serviceAccount.lastAuthenticatedTime.inRange(time.now - 90 * time.day, time.now)
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-07
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-4-ii-c-information-access-management-access-establishment-and-modification
+      compliance/iso-27001-2022: iso-27001-2022-a-5-18
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-6
+      compliance/pci-dss-4: pcidss-requirement-8-2-6
+      compliance/soc2-2017: soc2-control-cc6-2-2
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    docs:
+      desc: |
+        This check ensures that service accounts which have not authenticated within the last 90 days are disabled or deleted. By default, Google Cloud never expires an unused service account, so a credential that no workload depends on remains fully active and continues to grant access through its keys and impersonation bindings. Google-managed default service accounts and already-disabled accounts are outside the scope of this check.
+
+        **Why this matters**
+
+        - **Dormant attack surface:** An enabled service account that nothing uses is a credential an attacker can exploit through a leaked key or an impersonation grant without anyone noticing the activity against a normally idle identity.
+        - **Forgotten ownership:** Accounts that outlive the workload or team that created them rarely have a clear owner, so their keys go unrotated and their permissions go unreviewed.
+        - **Audit accuracy:** A directory full of unused accounts makes access reviews unreliable because reviewers cannot easily tell which identities are operationally required.
+
+        **Risk mitigation**
+
+        - **Disable before deleting:** Disable an unused account first so it can be restored quickly if a hidden dependency surfaces, then delete it once you confirm nothing breaks.
+        - **Review on a schedule:** Reconcile the service account inventory against active workloads on a regular cadence and remove accounts that no longer map to a running system.
+        - **Prefer short-lived credentials:** Replace standing service accounts with Workload Identity Federation or attached service accounts so unused long-lived identities do not accumulate.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the [Google Cloud Console](https://console.cloud.google.com) and open the target project.
+        2. Navigate to **IAM & Admin > Service Accounts**.
+        3. For each enabled, non-default account, open **Activity Analyzer** from the account's **Activity** view to see its most recent authentication time.
+
+        A passing account either is disabled, is a Google-managed default account, or has authenticated within the last 90 days. A failing account is enabled, is not a default account, and has not authenticated in the last 90 days.
+
+        ### Audit via CLI
+
+        1. List the service accounts in the project and their status:
+
+        ```bash
+        gcloud iam service-accounts list \
+          --project=PROJECT_ID \
+          --format="table(email,disabled)"
+        ```
+
+        2. Surface accounts that Google has identified as unused through Policy Intelligence:
+
+        ```bash
+        gcloud recommender insights list \
+          --project=PROJECT_ID \
+          --location=global \
+          --insight-type=google.iam.serviceAccount.Insight
+        ```
+
+        A passing project has no enabled, non-default accounts that have been idle for 90 days or more. A failing project has one or more such accounts.
+      remediation:
+        - id: console
+          desc: |
+            To disable or remove an unused service account using the Google Cloud Console:
+
+            1. Navigate to **IAM & Admin > Service Accounts** in the Google Cloud Console.
+            2. Select the unused service account.
+            3. Select **Disable** to deactivate the account while preserving it for rollback.
+            4. Once you confirm no workload depends on it, select **Delete** to remove it.
+        - id: cli
+          desc: |
+            To disable an unused service account using the Google Cloud CLI:
+
+            ```bash
+            gcloud iam service-accounts disable SA_EMAIL
+            ```
+
+            Once you confirm no workload depends on it, delete the account:
+
+            ```bash
+            gcloud iam service-accounts delete SA_EMAIL
+            ```
+        # No Terraform remediation: service-account inactivity is runtime telemetry from Policy Intelligence, not a Terraform-managed attribute; the fix is to disable or delete the unused account.
+    refs:
+      - url: https://cloud.google.com/iam/docs/service-account-monitoring
+        title: Monitor usage of service accounts and keys
   - uid: mondoo-gcp-security-logging-bucket-retention-30-days
     title: Ensure Cloud Logging log buckets have at least 30-day retention
     impact: 60
@@ -18176,6 +18435,159 @@ queries:
     mql: |
       terraform.state.resources.where(type == 'google_compute_ssl_policy').all(
         values['min_tls_version'] == "TLS_1_2"
+      )
+  - uid: mondoo-gcp-security-server-tls-policy-disallow-plaintext
+    title: Ensure Network Security server TLS policies do not allow plaintext
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-gcp-security-server-tls-policy-disallow-plaintext-gcp
+        tags:
+          mondoo.com/filter-title: GCP Server TLS Policy
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-server-tls-policy-disallow-plaintext-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-server-tls-policy-disallow-plaintext-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-server-tls-policy-disallow-plaintext-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Network Security server TLS policies do not permit plaintext connections. A server TLS policy controls how a load balancer or service mesh endpoint terminates client connections, and enabling the open setting lets the endpoint accept unencrypted traffic alongside TLS. Permitting plaintext exposes data in transit to interception and tampering and undermines the guarantees a TLS policy is meant to provide.
+
+        **Why this matters**
+
+        - **Eavesdropping risk:** Plaintext connections carry credentials, tokens, and application data in the clear, where any party on the network path can read them.
+        - **Tampering risk:** Without TLS integrity protection, an on-path attacker can modify requests and responses without detection.
+        - **Downgrade exposure:** Accepting plaintext alongside TLS gives an attacker a path to force clients onto the unencrypted listener instead of negotiating a secure session.
+
+        **Risk mitigation**
+
+        - **Require TLS for every listener:** Keep the open setting disabled so the endpoint only accepts encrypted connections.
+        - **Validate clients where needed:** Pair the policy with mutual TLS so the server also verifies client certificates for sensitive workloads.
+        - **Audit attached endpoints:** Confirm that every target proxy or mesh endpoint references a policy that rejects plaintext.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the [Google Cloud Console](https://console.cloud.google.com).
+        2. Navigate to **Network Security > Server TLS policies**.
+        3. Select each policy and review whether plaintext connections are allowed.
+
+        A passing policy rejects plaintext connections. A failing policy is configured to allow open, plaintext connections.
+
+        ### Audit via CLI
+
+        1. List the server TLS policies in the project:
+
+        ```bash
+        gcloud network-security server-tls-policies list \
+          --location=global \
+          --format="table(name)"
+        ```
+
+        2. Inspect the open setting for each policy:
+
+        ```bash
+        gcloud network-security server-tls-policies describe POLICY_NAME \
+          --location=global \
+          --format="value(allowOpen)"
+        ```
+
+        A passing policy returns `False` or no output. A failing policy returns `True`.
+      remediation:
+        - id: console
+          desc: |
+            To stop a server TLS policy from allowing plaintext connections using the Google Cloud Console:
+
+            1. Go to the **Network Security > Server TLS policies** page.
+            2. Select the policy you want to update.
+            3. Disable the option that allows open, plaintext connections.
+            4. Configure a server certificate or mutual TLS settings so the endpoint can terminate TLS.
+            5. Select **Save**.
+        - id: cli
+          desc: |
+            To stop a server TLS policy from allowing plaintext connections using the Google Cloud CLI, define the policy with `allowOpen` set to `false` in a YAML file and import it:
+
+            ```bash
+            gcloud network-security server-tls-policies import POLICY_NAME \
+              --source=server-tls-policy.yaml \
+              --location=global
+            ```
+
+            The `server-tls-policy.yaml` file sets `allowOpen` to `false`:
+
+            ```yaml
+            name: POLICY_NAME
+            allowOpen: false
+            serverCertificate:
+              certificateProviderInstance:
+                pluginInstance: google_cloud_private_spiffe
+            ```
+        - id: terraform
+          desc: |
+            To stop a server TLS policy from allowing plaintext connections in Terraform, set `allow_open` to `false`:
+
+            ```hcl
+            resource "google_network_security_server_tls_policy" "default" {
+              name       = "my-server-tls-policy"
+              location   = "global"
+              allow_open = false
+
+              server_certificate {
+                certificate_provider_instance {
+                  plugin_instance = "google_cloud_private_spiffe"
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://cloud.google.com/traffic-director/docs/reference/network-security/rest/v1beta1/projects.locations.serverTlsPolicies
+        title: ServerTlsPolicy resource reference
+  - uid: mondoo-gcp-security-server-tls-policy-disallow-plaintext-gcp
+    filters: asset.platform == 'gcp'
+    mql: |
+      gcp.project.networkSecurity.serverTlsPolicies.all(
+        allowOpen != true
+      )
+  - uid: mondoo-gcp-security-server-tls-policy-disallow-plaintext-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_network_security_server_tls_policy')
+    mql: |
+      terraform.resources('google_network_security_server_tls_policy').all(
+        arguments.allow_open != true
+      )
+  - uid: mondoo-gcp-security-server-tls-policy-disallow-plaintext-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_network_security_server_tls_policy')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_network_security_server_tls_policy').all(
+        change.after['allow_open'] != true
+      )
+  - uid: mondoo-gcp-security-server-tls-policy-disallow-plaintext-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_network_security_server_tls_policy')
+    mql: |
+      terraform.state.resources.where(type == 'google_network_security_server_tls_policy').all(
+        values['allow_open'] != true
       )
   - uid: mondoo-gcp-security-ssl-policy-modern-or-restricted-profile
     title: Ensure SSL policies use MODERN or RESTRICTED profile
