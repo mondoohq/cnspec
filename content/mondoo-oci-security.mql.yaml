@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-oci-security
     name: Mondoo Oracle Cloud Infrastructure (OCI) Security
-    version: 4.0.1
+    version: 4.1.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -24,6 +24,18 @@ policies:
         - Identity and Access Management (IAM)
         - Object Storage
         - Virtual Cloud Network (VCN)
+        - Compute and Block Storage
+        - File Storage
+        - Key Management (Vault)
+        - Database and Autonomous Database
+        - Load Balancer
+        - Oracle Kubernetes Engine (OKE)
+        - OCI Cache (Redis)
+        - Cloud Guard
+        - Functions
+        - Container Instances
+        - API Gateway
+        - Certificates
 
         Learn more about scanning Oracle Cloud Infrastructure in the [cnspec Oracle Cloud Infrastructure documentation](https://mondoo.com/docs/cnspec/cloud/oci).
 
@@ -42,6 +54,8 @@ policies:
           - uid: mondoo-oci-security-iam-admin-group-membership-limited
           - uid: mondoo-oci-security-iam-no-any-user-policies
           - uid: mondoo-oci-security-iam-no-cross-tenant-policies
+          - uid: mondoo-oci-security-iam-password-policy-strong
+          - uid: mondoo-oci-security-iam-api-keys-rotated
       - title: Object Storage
         checks:
           - uid: mondoo-oci-security-object-storage-buckets-not-publicly-accessible
@@ -68,11 +82,15 @@ policies:
           - uid: mondoo-oci-security-vcn-no-unrestricted-ipv6-ingress
           - uid: mondoo-oci-security-nsg-no-unrestricted-admin-ports
           - uid: mondoo-oci-security-public-vnic-has-nsg
+          - uid: mondoo-oci-security-vcn-flow-logs-enabled
       - title: Compute
         checks:
           - uid: mondoo-oci-security-compute-instance-tagging
           - uid: mondoo-oci-security-compute-imds-v2-only
           - uid: mondoo-oci-security-compute-metadata-no-secrets
+          - uid: mondoo-oci-security-compute-vnic-source-dest-check
+          - uid: mondoo-oci-security-block-volume-customer-managed-encryption
+          - uid: mondoo-oci-security-boot-volume-customer-managed-encryption
       - title: Load Balancer
         checks:
           - uid: mondoo-oci-security-loadbalancer-tls-minimum-1-2
@@ -92,6 +110,15 @@ policies:
           - uid: mondoo-oci-security-dbsystem-private-subnet
           - uid: mondoo-oci-security-dbsystem-subnet-no-internet-gateway
           - uid: mondoo-oci-security-database-backups-customer-managed-encryption
+          - uid: mondoo-oci-security-dbsystem-customer-managed-encryption
+          - uid: mondoo-oci-security-adb-customer-managed-encryption
+      - title: Key Management
+        checks:
+          - uid: mondoo-oci-security-kms-keys-hsm-protected
+          - uid: mondoo-oci-security-kms-keys-auto-rotation-enabled
+      - title: File Storage
+        checks:
+          - uid: mondoo-oci-security-file-storage-customer-managed-encryption
       - title: Vault
         checks:
           - uid: mondoo-oci-security-vault-secrets-rotation-enabled
@@ -9488,4 +9515,1384 @@ queries:
     mql: |
       terraform.state.resources.where(type == 'oci_cloud_guard_security_zone').all(
         values['is_inheritance_after_delete_enabled'] == true
+      )
+  - uid: mondoo-oci-security-iam-password-policy-strong
+    title: Ensure the IAM password policy enforces strong complexity requirements
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-5-ii-d-security-awareness-training-and-tools-password-management
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-7
+      compliance/pci-dss-4: pcidss-requirement-8-3-6
+      compliance/soc2-2017: soc2-control-cc6-1-9
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    variants:
+      - uid: mondoo-oci-security-iam-password-policy-strong-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-iam-password-policy-strong-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-iam-password-policy-strong-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-iam-password-policy-strong-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that the OCI tenancy password policy requires passwords to be at least 14 characters long, to mix uppercase, lowercase, numeric, and special characters, and to disallow passwords that contain the username. The OCI default policy enforces only a 12-character minimum with a single character from three of four character classes, which permits weaker passwords than most security frameworks require.
+
+        **Why this matters**
+
+        - **Brute-force resistance:** Longer passwords with mixed character classes dramatically increase the search space an attacker must cover to guess or crack a credential offline.
+        - **Credential-stuffing resistance:** Disallowing username containment prevents trivially guessable passwords derived from the account name.
+        - **Framework alignment:** Frameworks such as PCI DSS and CIS prescribe minimum length and complexity requirements that exceed the OCI defaults.
+
+        **Risk mitigation**
+
+        - **Set length and complexity at the tenancy level:** Configure the authentication policy once so every local IAM user inherits the stronger requirements.
+        - **Disallow username containment:** Reject passwords that embed the username to eliminate a common weak-password pattern.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console as an administrator.
+        2. Navigate to **Identity & Security > Domains**, select the default domain, then open **Settings > Password policy** (or **Identity & Security > Authentication Settings** for the legacy IAM experience).
+        3. Review the minimum length and character-class requirements.
+
+        A passing tenancy requires at least 14 characters, all four character classes, and disallows username containment. A failing tenancy allows shorter or simpler passwords or permits the username inside the password.
+
+        ### Audit via CLI
+
+        1. Retrieve the authentication policy for the tenancy:
+
+        ```bash
+        oci iam authentication-policy get --compartment-id <tenancy-ocid>
+        ```
+
+        A passing tenancy returns `password-policy` with `minimum-password-length` of 14 or more, each `is-*-characters-required` set to `true`, and `is-username-containment-allowed` set to `false`. A failing tenancy returns weaker values.
+      remediation:
+        - id: console
+          desc: |
+            To strengthen the password policy using the OCI Console:
+
+            1. Navigate to **Identity & Security > Domains**, select the default domain, then open **Settings > Password policy**.
+            2. Set the minimum length to **14**.
+            3. Require **uppercase**, **lowercase**, **numeric**, and **special** characters.
+            4. Disable **Allow username in password**.
+            5. Select **Save changes**.
+        - id: cli
+          desc: |
+            To strengthen the password policy using the OCI CLI, update the authentication policy:
+
+            ```bash
+            oci iam authentication-policy update --compartment-id <tenancy-ocid> \
+              --password-policy '{"minimumPasswordLength": 14, "isUppercaseCharactersRequired": true, "isLowercaseCharactersRequired": true, "isNumericCharactersRequired": true, "isSpecialCharactersRequired": true, "isUsernameContainmentAllowed": false}'
+            ```
+        - id: terraform
+          desc: |
+            To enforce a strong password policy in Terraform, configure the `password_policy` block on the authentication policy:
+
+            ```hcl
+            resource "oci_identity_authentication_policy" "example" {
+              compartment_id = var.tenancy_ocid
+
+              password_policy {
+                minimum_password_length          = 14
+                is_uppercase_characters_required = true
+                is_lowercase_characters_required = true
+                is_numeric_characters_required   = true
+                is_special_characters_required   = true
+                is_username_containment_allowed  = false
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Identity/Reference/iampolicyreference.htm
+        title: OCI authentication policy documentation
+  - uid: mondoo-oci-security-iam-password-policy-strong-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.identity.authenticationPolicy.minimumPasswordLength >= 14
+      oci.identity.authenticationPolicy.passwordRequiresUppercase == true
+      oci.identity.authenticationPolicy.passwordRequiresLowercase == true
+      oci.identity.authenticationPolicy.passwordRequiresNumeric == true
+      oci.identity.authenticationPolicy.passwordRequiresSpecial == true
+      oci.identity.authenticationPolicy.passwordUsernameContainmentAllowed == false
+  - uid: mondoo-oci-security-iam-password-policy-strong-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_identity_authentication_policy')
+    mql: |
+      terraform.resources('oci_identity_authentication_policy').all(
+        blocks.where(type == 'password_policy').all(
+          arguments['minimum_password_length'] >= 14 &&
+          arguments['is_uppercase_characters_required'] == true &&
+          arguments['is_lowercase_characters_required'] == true &&
+          arguments['is_numeric_characters_required'] == true &&
+          arguments['is_special_characters_required'] == true &&
+          arguments['is_username_containment_allowed'] == false
+        )
+      )
+  - uid: mondoo-oci-security-iam-password-policy-strong-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_identity_authentication_policy')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_identity_authentication_policy').all(
+        change.after['password_policy'][0]['minimum_password_length'] >= 14 &&
+        change.after['password_policy'][0]['is_uppercase_characters_required'] == true &&
+        change.after['password_policy'][0]['is_lowercase_characters_required'] == true &&
+        change.after['password_policy'][0]['is_numeric_characters_required'] == true &&
+        change.after['password_policy'][0]['is_special_characters_required'] == true &&
+        change.after['password_policy'][0]['is_username_containment_allowed'] == false
+      )
+  - uid: mondoo-oci-security-iam-password-policy-strong-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_identity_authentication_policy')
+    mql: |
+      terraform.state.resources.where(type == 'oci_identity_authentication_policy').all(
+        values['password_policy'][0]['minimum_password_length'] >= 14 &&
+        values['password_policy'][0]['is_uppercase_characters_required'] == true &&
+        values['password_policy'][0]['is_lowercase_characters_required'] == true &&
+        values['password_policy'][0]['is_numeric_characters_required'] == true &&
+        values['password_policy'][0]['is_special_characters_required'] == true &&
+        values['password_policy'][0]['is_username_containment_allowed'] == false
+      )
+  # No Terraform variants: API key age is runtime-only telemetry derived from each key's creation timestamp; the `oci_identity_api_key` Terraform resource exposes no `time_created` argument and cannot evidence rotation cadence.
+  - uid: mondoo-oci-security-iam-api-keys-rotated
+    title: Ensure IAM user API signing keys are rotated within 90 days
+    impact: 70
+    filters: asset.platform == "oci-identity-user"
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-10
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: pcidss-requirement-8-3-9
+      compliance/soc2-2017: soc2-control-cc6-1-9
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    mql: |
+      oci.identity.user.apiKeys.where(state == "ACTIVE").all(
+        time.now - created <= 90 * time.day
+      )
+    docs:
+      desc: |
+        This check ensures that every active OCI IAM API signing key was created within the last 90 days, enforcing a regular rotation cadence. API signing keys authenticate to the OCI REST APIs and SDK and never expire on their own, so a key that is never rotated behaves as a permanent static credential.
+
+        **Why this matters**
+
+        - **Unbounded exposure window:** API signing keys remain valid until an administrator manually deletes them, so a key leaked into a repository, CI log, or laptop backup stays usable indefinitely.
+        - **Offboarding gaps:** Keys created for a person or automation that is no longer active continue to grant API access until explicitly removed.
+        - **Compromise containment:** Regular rotation limits how long a stolen private key remains useful and forces re-issuance through a controlled process.
+
+        **Risk mitigation**
+
+        - **Rotate on a fixed schedule:** Replace each API signing key at least every 90 days and delete the superseded key.
+        - **Automate key replacement:** Build workflows that generate a new key pair, upload the public key, update the consuming system, and delete the old key.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console and navigate to **Identity & Security > Users**.
+        2. Select the user you want to inspect.
+        3. Under **Resources**, select **API Keys**.
+        4. For each active key, review the **Created** date.
+
+        A passing user has all active API keys created within the last 90 days. A failing user has one or more active API keys older than 90 days.
+
+        ### Audit via CLI
+
+        1. List the API keys for a user:
+
+        ```bash
+        oci iam user api-key list --user-id <user-ocid>
+        ```
+
+        2. For each key in `ACTIVE` state, compare `time-created` with the current date.
+
+        A passing user returns only keys created within the last 90 days. A failing user returns one or more active keys older than 90 days.
+      remediation:
+        - id: console
+          desc: |
+            To rotate an API signing key using the OCI Console:
+
+            1. Open **Identity & Security** → **Users** → select the user → **API Keys**.
+            2. Select **Add API Key** and upload or generate a new key pair.
+            3. Update the consuming application or SDK configuration to use the new key.
+            4. **Delete** the old API key once the new key is confirmed working.
+        - id: cli
+          desc: |
+            To rotate an API signing key using the OCI CLI, upload a replacement public key and delete the old one:
+
+            ```bash
+            oci iam user api-key upload --user-id <user-ocid> --key-file ./new_public_key.pem
+            oci iam user api-key delete --user-id <user-ocid> --fingerprint <old-key-fingerprint>
+            ```
+        # No Terraform remediation: API key creation timestamps are runtime-only; the `oci_identity_api_key` Terraform resource has no field that controls or evidences rotation age.
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Identity/Tasks/managingcredentials.htm
+        title: OCI managing user credentials documentation
+  - uid: mondoo-oci-security-kms-keys-hsm-protected
+    title: Ensure KMS master encryption keys are protected by an HSM
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-12
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-10
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-oci-security-kms-keys-hsm-protected-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-kms-keys-hsm-protected-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-kms-keys-hsm-protected-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-kms-keys-hsm-protected-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that OCI Vault master encryption keys use the `HSM` protection mode rather than `SOFTWARE`. HSM-protected keys are generated and stored inside FIPS 140-2 Level 3 validated hardware security modules and the private key material never leaves the HSM, whereas software-protected keys are stored in software and can be exported.
+
+        **Why this matters**
+
+        - **Non-exportable key material:** HSM keys cannot be extracted, so even a compromise of the control plane cannot exfiltrate the raw key.
+        - **Tamper-resistant hardware:** Cryptographic operations execute inside certified hardware that resists physical and logical tampering.
+        - **Regulatory assurance:** Many frameworks require that keys protecting regulated data be held in validated hardware security modules.
+
+        **Risk mitigation**
+
+        - **Create keys with HSM protection:** Select the HSM protection mode when provisioning master encryption keys for sensitive data.
+        - **Migrate software keys:** Where a software key already protects sensitive resources, create an HSM key and re-encrypt or re-key the affected resources.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console and navigate to **Identity & Security > Vault**.
+        2. Open each vault and review its **Master Encryption Keys**.
+        3. Check the **Protection Mode** column for each key.
+
+        A passing key shows **HSM** as the protection mode. A failing key shows **Software**.
+
+        ### Audit via CLI
+
+        1. List the keys in a vault and review their protection mode:
+
+        ```bash
+        oci kms management key list --compartment-id <compartment-ocid> --endpoint <vault-management-endpoint> --query 'data[*].{name:"display-name", protection:"protection-mode"}'
+        ```
+
+        A passing key returns `HSM` for `protection-mode`. A failing key returns `SOFTWARE`.
+      remediation:
+        - id: console
+          desc: |
+            To protect a master encryption key with an HSM using the OCI Console:
+
+            1. Navigate to **Identity & Security > Vault** and open the target vault.
+            2. Select **Create Key**.
+            3. For **Protection Mode**, choose **HSM**.
+            4. Complete the key shape and name, then select **Create Key**.
+            5. Re-assign the new HSM key to the resources that previously used a software key.
+        - id: cli
+          desc: |
+            To create an HSM-protected master encryption key using the OCI CLI:
+
+            ```bash
+            oci kms management key create --compartment-id <compartment-ocid> \
+              --display-name "hsm-key" \
+              --key-shape '{"algorithm": "AES", "length": 32}' \
+              --protection-mode HSM \
+              --endpoint <vault-management-endpoint>
+            ```
+        - id: terraform
+          desc: |
+            To create an HSM-protected master encryption key in Terraform, set `protection_mode` to `HSM`:
+
+            ```hcl
+            resource "oci_kms_key" "example" {
+              compartment_id      = var.compartment_ocid
+              display_name        = "hsm-key"
+              management_endpoint = oci_kms_vault.example.management_endpoint
+              protection_mode     = "HSM"
+
+              key_shape {
+                algorithm = "AES"
+                length    = 32
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/KeyManagement/Concepts/keyoverview.htm
+        title: OCI Vault key management documentation
+  - uid: mondoo-oci-security-kms-keys-hsm-protected-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.kms.vaults.all(
+        keys.where(state == "ENABLED").all(protectionMode == "HSM")
+      )
+  - uid: mondoo-oci-security-kms-keys-hsm-protected-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_kms_key')
+    mql: |
+      terraform.resources('oci_kms_key').all(
+        arguments['protection_mode'] == "HSM"
+      )
+  - uid: mondoo-oci-security-kms-keys-hsm-protected-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_kms_key')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_kms_key').all(
+        change.after['protection_mode'] == "HSM"
+      )
+  - uid: mondoo-oci-security-kms-keys-hsm-protected-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_kms_key')
+    mql: |
+      terraform.state.resources.where(type == 'oci_kms_key').all(
+        values['protection_mode'] == "HSM"
+      )
+  - uid: mondoo-oci-security-kms-keys-auto-rotation-enabled
+    title: Ensure KMS master encryption keys have automatic rotation enabled
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-12
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/pci-dss-4: pcidss-requirement-3-6-1
+      compliance/soc2-2017: soc2-control-cc6-1-10
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-oci-security-kms-keys-auto-rotation-enabled-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-kms-keys-auto-rotation-enabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-kms-keys-auto-rotation-enabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-kms-keys-auto-rotation-enabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that OCI Vault master encryption keys have automatic rotation enabled. Rotating a key generates a new key version that is used for all subsequent encryption operations while previous versions remain available to decrypt existing data. Keys that are never rotated act as long-lived static secrets, so a single compromised key version exposes every object ever encrypted with it.
+
+        **Why this matters**
+
+        - **Limited exposure window:** Automatic rotation bounds how much data is protected by any single key version, reducing the impact of a compromised version.
+        - **Cryptographic hygiene:** Regular rotation is a baseline expectation for managed key material and is required by several regulatory frameworks.
+        - **Operational consistency:** Built-in rotation removes the need for manual, error-prone rotation procedures that are often skipped.
+
+        **Risk mitigation**
+
+        - **Enable rotation on every master key:** Turn on automatic rotation for each key protecting sensitive resources.
+        - **Set an appropriate interval:** Choose a rotation interval that satisfies your compliance requirements while remaining operationally practical.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console and navigate to **Identity & Security > Vault**.
+        2. Open each vault and review its **Master Encryption Keys**.
+        3. Open each key and check whether **Automatic key rotation** is enabled.
+
+        A passing key has automatic key rotation enabled. A failing key has it disabled.
+
+        ### Audit via CLI
+
+        1. List the keys in a vault and review their rotation configuration:
+
+        ```bash
+        oci kms management key list --compartment-id <compartment-ocid> --endpoint <vault-management-endpoint> --query 'data[*].{name:"display-name", autoRotation:"auto-key-rotation-details"}'
+        ```
+
+        A passing key returns a populated `auto-key-rotation-details` object with rotation enabled. A failing key returns `null`.
+      remediation:
+        - id: console
+          desc: |
+            To enable automatic key rotation using the OCI Console:
+
+            1. Navigate to **Identity & Security > Vault** and open the vault.
+            2. Open the master encryption key.
+            3. Select **Edit** and enable **Automatic key rotation**.
+            4. Set the rotation interval.
+            5. Select **Save Changes**.
+        - id: cli
+          desc: |
+            To enable automatic key rotation using the OCI CLI, update the key:
+
+            ```bash
+            oci kms management key update --key-id <key-ocid> --is-auto-rotation-enabled true --endpoint <vault-management-endpoint>
+            ```
+        - id: terraform
+          desc: |
+            To enable automatic key rotation in Terraform, configure the `auto_key_rotation_details` block on the key:
+
+            ```hcl
+            resource "oci_kms_key" "example" {
+              compartment_id      = var.compartment_ocid
+              display_name        = "example-key"
+              management_endpoint = oci_kms_vault.example.management_endpoint
+
+              key_shape {
+                algorithm = "AES"
+                length    = 32
+              }
+
+              auto_key_rotation_details {
+                rotation_interval_in_days = 90
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/KeyManagement/Tasks/rotatingkeys.htm
+        title: OCI Vault key rotation documentation
+  - uid: mondoo-oci-security-kms-keys-auto-rotation-enabled-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.kms.vaults.all(
+        keys.where(state == "ENABLED").all(isAutoRotationEnabled == true)
+      )
+  - uid: mondoo-oci-security-kms-keys-auto-rotation-enabled-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_kms_key')
+    mql: |
+      terraform.resources('oci_kms_key').all(
+        blocks.where(type == 'auto_key_rotation_details') != empty
+      )
+  - uid: mondoo-oci-security-kms-keys-auto-rotation-enabled-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_kms_key')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_kms_key').all(
+        change.after['auto_key_rotation_details'] != empty
+      )
+  - uid: mondoo-oci-security-kms-keys-auto-rotation-enabled-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_kms_key')
+    mql: |
+      terraform.state.resources.where(type == 'oci_kms_key').all(
+        values['auto_key_rotation_details'] != empty
+      )
+  - uid: mondoo-oci-security-block-volume-customer-managed-encryption
+    title: Ensure block volumes use customer-managed encryption keys
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-12
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-10
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-oci-security-block-volume-customer-managed-encryption-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-block-volume-customer-managed-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-block-volume-customer-managed-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-block-volume-customer-managed-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that OCI block volumes are encrypted using a customer-managed key stored in OCI Vault rather than the default Oracle-managed key. OCI encrypts all block storage at rest automatically, so the risk here is not the absence of encryption but the absence of customer control over the key lifecycle.
+
+        **Why this matters**
+
+        - **Key revocation capability:** With a customer-managed key, you can immediately revoke access to all data on the volume by disabling or deleting the key in OCI Vault.
+        - **Separation of duties:** Storing the key in a customer-controlled vault separates key management from storage management, enabling independent access controls and audit trails.
+        - **Regulatory key-control requirements:** Frameworks such as HIPAA and PCI DSS require organizations to demonstrate control over the keys protecting regulated data.
+
+        **Risk mitigation**
+
+        - **Assign a Vault key at volume creation:** Provision a master encryption key and reference it when creating each block volume that holds sensitive data.
+        - **Rotate and monitor keys:** Configure rotation on each key and review OCI Audit logs for key operations.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console and navigate to **Storage > Block Volumes**.
+        2. Open each volume and locate the **Encryption** section.
+        3. Verify that a customer-managed key from OCI Vault is assigned.
+
+        A passing volume shows a customer-managed KMS key OCID. A failing volume shows **Oracle-managed key** or an empty encryption key field.
+
+        ### Audit via CLI
+
+        1. Retrieve the KMS key assignment for a volume:
+
+        ```bash
+        oci bv volume get --volume-id <volume-ocid> --query 'data.{name:"display-name", kmsKeyId:"kms-key-id"}'
+        ```
+
+        A passing volume returns a non-empty OCID in `kmsKeyId`. A failing volume returns `null`.
+      remediation:
+        - id: console
+          desc: |
+            To assign a customer-managed encryption key to a block volume using the OCI Console:
+
+            1. Navigate to **Storage > Block Volumes** and open the volume.
+            2. Select **Edit**.
+            3. Under **Encryption**, choose **Encrypt using customer-managed keys**.
+            4. Select the vault, master encryption key, and key version.
+            5. Select **Save Changes**.
+        - id: cli
+          desc: |
+            To assign a customer-managed encryption key to a block volume using the OCI CLI:
+
+            ```bash
+            oci bv volume-kms-key update --volume-id <volume-ocid> --kms-key-id <key-ocid>
+            ```
+        - id: terraform
+          desc: |
+            To assign a customer-managed encryption key to a block volume in Terraform, reference the key in the volume resource:
+
+            ```hcl
+            resource "oci_core_volume" "example" {
+              compartment_id      = var.compartment_ocid
+              availability_domain = var.availability_domain
+              display_name        = "example-volume"
+              kms_key_id          = oci_kms_key.example.id
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Block/Concepts/overview.htm
+        title: OCI Block Volume encryption documentation
+  - uid: mondoo-oci-security-block-volume-customer-managed-encryption-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.compute.blockVolumes.all(kmsKey != null)
+  - uid: mondoo-oci-security-block-volume-customer-managed-encryption-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_core_volume')
+    mql: |
+      terraform.resources('oci_core_volume').all(
+        arguments['kms_key_id'] != null && arguments['kms_key_id'] != ""
+      )
+  - uid: mondoo-oci-security-block-volume-customer-managed-encryption-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_core_volume')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_core_volume').all(
+        change.after['kms_key_id'] != null && change.after['kms_key_id'] != ""
+      )
+  - uid: mondoo-oci-security-block-volume-customer-managed-encryption-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_core_volume')
+    mql: |
+      terraform.state.resources.where(type == 'oci_core_volume').all(
+        values['kms_key_id'] != null && values['kms_key_id'] != ""
+      )
+  - uid: mondoo-oci-security-boot-volume-customer-managed-encryption
+    title: Ensure boot volumes use customer-managed encryption keys
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-12
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-10
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-oci-security-boot-volume-customer-managed-encryption-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-boot-volume-customer-managed-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-boot-volume-customer-managed-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-boot-volume-customer-managed-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that OCI boot volumes are encrypted using a customer-managed key stored in OCI Vault rather than the default Oracle-managed key. Boot volumes hold the operating system and often application binaries and configuration, so customer control over their encryption key is as important as for data volumes.
+
+        **Why this matters**
+
+        - **Key revocation capability:** A customer-managed key lets you revoke access to the boot volume contents by disabling or deleting the key in OCI Vault.
+        - **Separation of duties:** Holding the key in a customer-controlled vault separates key management from compute management.
+        - **Regulatory key-control requirements:** Frameworks such as HIPAA and PCI DSS require demonstrable control over the keys protecting regulated data, including data on boot volumes.
+
+        **Risk mitigation**
+
+        - **Assign a Vault key to boot volumes:** Provision a master encryption key and reference it when launching instances or creating boot volumes.
+        - **Rotate and monitor keys:** Configure rotation on each key and review OCI Audit logs for key operations.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console and navigate to **Storage > Boot Volumes**.
+        2. Open each boot volume and locate the **Encryption** section.
+        3. Verify that a customer-managed key from OCI Vault is assigned.
+
+        A passing boot volume shows a customer-managed KMS key OCID. A failing boot volume shows **Oracle-managed key** or an empty encryption key field.
+
+        ### Audit via CLI
+
+        1. Retrieve the KMS key assignment for a boot volume:
+
+        ```bash
+        oci bv boot-volume get --boot-volume-id <boot-volume-ocid> --query 'data.{name:"display-name", kmsKeyId:"kms-key-id"}'
+        ```
+
+        A passing boot volume returns a non-empty OCID in `kmsKeyId`. A failing boot volume returns `null`.
+      remediation:
+        - id: console
+          desc: |
+            To assign a customer-managed encryption key to a boot volume using the OCI Console:
+
+            1. Navigate to **Storage > Boot Volumes** and open the boot volume.
+            2. Select **Edit**.
+            3. Under **Encryption**, choose **Encrypt using customer-managed keys**.
+            4. Select the vault, master encryption key, and key version.
+            5. Select **Save Changes**.
+        - id: cli
+          desc: |
+            To assign a customer-managed encryption key to a boot volume using the OCI CLI:
+
+            ```bash
+            oci bv boot-volume-kms-key update --boot-volume-id <boot-volume-ocid> --kms-key-id <key-ocid>
+            ```
+        - id: terraform
+          desc: |
+            To assign a customer-managed encryption key to a boot volume in Terraform, reference the key in the boot volume resource:
+
+            ```hcl
+            resource "oci_core_boot_volume" "example" {
+              compartment_id      = var.compartment_ocid
+              availability_domain = var.availability_domain
+              display_name        = "example-boot-volume"
+              kms_key_id          = oci_kms_key.example.id
+
+              source_details {
+                type = "bootVolume"
+                id   = var.source_boot_volume_id
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Block/Concepts/bootvolumes.htm
+        title: OCI Boot Volume documentation
+  - uid: mondoo-oci-security-boot-volume-customer-managed-encryption-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.compute.bootVolumes.all(kmsKey != null)
+  - uid: mondoo-oci-security-boot-volume-customer-managed-encryption-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_core_boot_volume')
+    mql: |
+      terraform.resources('oci_core_boot_volume').all(
+        arguments['kms_key_id'] != null && arguments['kms_key_id'] != ""
+      )
+  - uid: mondoo-oci-security-boot-volume-customer-managed-encryption-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_core_boot_volume')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_core_boot_volume').all(
+        change.after['kms_key_id'] != null && change.after['kms_key_id'] != ""
+      )
+  - uid: mondoo-oci-security-boot-volume-customer-managed-encryption-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_core_boot_volume')
+    mql: |
+      terraform.state.resources.where(type == 'oci_core_boot_volume').all(
+        values['kms_key_id'] != null && values['kms_key_id'] != ""
+      )
+  - uid: mondoo-oci-security-file-storage-customer-managed-encryption
+    title: Ensure File Storage file systems use customer-managed encryption keys
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-12
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-10
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-oci-security-file-storage-customer-managed-encryption-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-file-storage-customer-managed-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-file-storage-customer-managed-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-file-storage-customer-managed-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that OCI File Storage file systems are encrypted using a customer-managed key stored in OCI Vault rather than the default Oracle-managed key. File systems frequently hold shared application data and user files, so customer control over the encryption key is essential for sensitive workloads.
+
+        **Why this matters**
+
+        - **Key revocation capability:** A customer-managed key lets you revoke access to the entire file system by disabling or deleting the key in OCI Vault.
+        - **Separation of duties:** Holding the key in a customer-controlled vault separates key management from file storage management.
+        - **Regulatory key-control requirements:** Frameworks such as HIPAA and PCI DSS require demonstrable control over the keys protecting regulated data.
+
+        **Risk mitigation**
+
+        - **Assign a Vault key to file systems:** Provision a master encryption key and reference it when creating each file system.
+        - **Rotate and monitor keys:** Configure rotation on each key and review OCI Audit logs for key operations.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console and navigate to **Storage > File Systems**.
+        2. Open each file system and locate the **Encryption** section.
+        3. Verify that a customer-managed key from OCI Vault is assigned.
+
+        A passing file system shows a customer-managed KMS key OCID. A failing file system shows **Oracle-managed key** or an empty encryption key field.
+
+        ### Audit via CLI
+
+        1. Retrieve the KMS key assignment for a file system:
+
+        ```bash
+        oci fs file-system get --file-system-id <file-system-ocid> --query 'data.{name:"display-name", kmsKeyId:"kms-key-id"}'
+        ```
+
+        A passing file system returns a non-empty OCID in `kmsKeyId`. A failing file system returns `null`.
+      remediation:
+        - id: console
+          desc: |
+            To assign a customer-managed encryption key to a file system using the OCI Console:
+
+            1. Navigate to **Storage > File Systems** and open the file system.
+            2. Select **Edit** next to **Encryption**.
+            3. Choose **Encrypt using customer-managed keys**.
+            4. Select the vault, master encryption key, and key version.
+            5. Select **Save Changes**.
+        - id: cli
+          desc: |
+            To assign a customer-managed encryption key to a file system using the OCI CLI:
+
+            ```bash
+            oci fs file-system update --file-system-id <file-system-ocid> --kms-key-id <key-ocid>
+            ```
+        - id: terraform
+          desc: |
+            To assign a customer-managed encryption key to a file system in Terraform, reference the key in the file system resource:
+
+            ```hcl
+            resource "oci_file_storage_file_system" "example" {
+              compartment_id      = var.compartment_ocid
+              availability_domain = var.availability_domain
+              display_name        = "example-fs"
+              kms_key_id          = oci_kms_key.example.id
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/File/Tasks/encrypt-file-system.htm
+        title: OCI File Storage encryption documentation
+  - uid: mondoo-oci-security-file-storage-customer-managed-encryption-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.fileStorage.fileSystems.all(kmsKey != null)
+  - uid: mondoo-oci-security-file-storage-customer-managed-encryption-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_file_storage_file_system')
+    mql: |
+      terraform.resources('oci_file_storage_file_system').all(
+        arguments['kms_key_id'] != null && arguments['kms_key_id'] != ""
+      )
+  - uid: mondoo-oci-security-file-storage-customer-managed-encryption-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_file_storage_file_system')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_file_storage_file_system').all(
+        change.after['kms_key_id'] != null && change.after['kms_key_id'] != ""
+      )
+  - uid: mondoo-oci-security-file-storage-customer-managed-encryption-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_file_storage_file_system')
+    mql: |
+      terraform.state.resources.where(type == 'oci_file_storage_file_system').all(
+        values['kms_key_id'] != null && values['kms_key_id'] != ""
+      )
+  - uid: mondoo-oci-security-dbsystem-customer-managed-encryption
+    title: Ensure DB systems use customer-managed encryption keys
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-12
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-10
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-oci-security-dbsystem-customer-managed-encryption-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-dbsystem-customer-managed-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-dbsystem-customer-managed-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-dbsystem-customer-managed-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that OCI Database (DB system) databases use Transparent Data Encryption backed by a customer-managed key stored in OCI Vault rather than an Oracle-managed key. The database always encrypts data at rest, so the risk here is the absence of customer control over the TDE master key.
+
+        **Why this matters**
+
+        - **Key revocation capability:** A customer-managed key lets you revoke access to the database contents by disabling or deleting the key in OCI Vault.
+        - **Separation of duties:** Holding the TDE key in a customer-controlled vault separates key management from database administration.
+        - **Regulatory key-control requirements:** Frameworks such as HIPAA and PCI DSS require demonstrable control over the keys protecting regulated data.
+
+        **Risk mitigation**
+
+        - **Assign a Vault key at provisioning:** Reference a master encryption key when creating the DB system database.
+        - **Rotate and monitor keys:** Configure rotation on each key and review OCI Audit logs for key operations.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console and navigate to **Oracle Database > Bare Metal, VM, and Exadata**.
+        2. Open each DB system, then open the database.
+        3. Locate the **Encryption** section and review the encryption key.
+
+        A passing database shows a customer-managed KMS key OCID. A failing database shows **Oracle-managed key**.
+
+        ### Audit via CLI
+
+        1. Retrieve the KMS key assignment for a database:
+
+        ```bash
+        oci db database get --database-id <database-ocid> --query 'data.{name:"db-name", kmsKeyId:"kms-key-id"}'
+        ```
+
+        A passing database returns a non-empty OCID in `kmsKeyId`. A failing database returns `null`.
+      remediation:
+        - id: console
+          desc: |
+            To use a customer-managed encryption key for a DB system database using the OCI Console:
+
+            1. Navigate to **Oracle Database > Bare Metal, VM, and Exadata** and open the DB system.
+            2. Open the database and locate the **Encryption** section.
+            3. Select **Rotate Encryption Key** or, at creation time, choose **Encrypt using customer-managed keys**.
+            4. Select the vault and master encryption key.
+            5. Confirm the change.
+        - id: cli
+          desc: |
+            To migrate a DB system database to a customer-managed encryption key using the OCI CLI:
+
+            ```bash
+            oci db database migrate-vault-key --database-id <database-ocid> --kms-key-id <key-ocid> --vault-id <vault-ocid>
+            ```
+        - id: terraform
+          desc: |
+            To use a customer-managed encryption key for a DB system database in Terraform, set `kms_key_id` in the `database` block:
+
+            ```hcl
+            resource "oci_database_db_system" "example" {
+              compartment_id      = var.compartment_ocid
+              availability_domain = var.availability_domain
+              shape               = "VM.Standard2.2"
+              subnet_id           = var.subnet_ocid
+              ssh_public_keys     = [var.ssh_public_key]
+              hostname            = "exampledb"
+              cpu_core_count      = 2
+
+              db_home {
+                db_version = "19.0.0.0"
+
+                database {
+                  admin_password = var.db_admin_password
+                  db_name        = "exampledb"
+                  kms_key_id     = oci_kms_key.example.id
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Database/Concepts/overview.htm
+        title: OCI Database service documentation
+  - uid: mondoo-oci-security-dbsystem-customer-managed-encryption-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.database.dbSystems.all(kmsKey != null)
+  - uid: mondoo-oci-security-dbsystem-customer-managed-encryption-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_database_db_system')
+    mql: |
+      terraform.resources('oci_database_db_system').all(
+        blocks.where(type == 'db_home').all(
+          blocks.where(type == 'database').all(
+            arguments['kms_key_id'] != null && arguments['kms_key_id'] != ""
+          )
+        )
+      )
+  - uid: mondoo-oci-security-dbsystem-customer-managed-encryption-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_database_db_system')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_database_db_system').all(
+        change.after['db_home'][0]['database'][0]['kms_key_id'] != null &&
+        change.after['db_home'][0]['database'][0]['kms_key_id'] != ""
+      )
+  - uid: mondoo-oci-security-dbsystem-customer-managed-encryption-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_database_db_system')
+    mql: |
+      terraform.state.resources.where(type == 'oci_database_db_system').all(
+        values['db_home'][0]['database'][0]['kms_key_id'] != null &&
+        values['db_home'][0]['database'][0]['kms_key_id'] != ""
+      )
+  - uid: mondoo-oci-security-adb-customer-managed-encryption
+    title: Ensure Autonomous Databases use customer-managed encryption keys
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-12
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-10
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-oci-security-adb-customer-managed-encryption-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-adb-customer-managed-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-adb-customer-managed-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-adb-customer-managed-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that OCI Autonomous Databases use a customer-managed key stored in OCI Vault for encryption at rest rather than the default Oracle-managed key. Autonomous Database always encrypts data at rest, so the risk here is the absence of customer control over the encryption key.
+
+        **Why this matters**
+
+        - **Key revocation capability:** A customer-managed key lets you revoke access to the database contents by disabling or deleting the key in OCI Vault.
+        - **Separation of duties:** Holding the key in a customer-controlled vault separates key management from database administration.
+        - **Regulatory key-control requirements:** Frameworks such as HIPAA and PCI DSS require demonstrable control over the keys protecting regulated data.
+
+        **Risk mitigation**
+
+        - **Assign a Vault key at provisioning:** Reference a master encryption key when creating the Autonomous Database.
+        - **Rotate and monitor keys:** Configure rotation on each key and review OCI Audit logs for key operations.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console and navigate to **Oracle Database > Autonomous Database**.
+        2. Open each Autonomous Database and locate the **Encryption Key** section.
+        3. Verify that a customer-managed key from OCI Vault is assigned.
+
+        A passing database shows a customer-managed KMS key OCID. A failing database shows **Oracle-managed key**.
+
+        ### Audit via CLI
+
+        1. Retrieve the KMS key assignment for an Autonomous Database:
+
+        ```bash
+        oci db autonomous-database get --autonomous-database-id <adb-ocid> --query 'data.{name:"db-name", kmsKeyId:"kms-key-id"}'
+        ```
+
+        A passing database returns a non-empty OCID in `kmsKeyId`. A failing database returns `null`.
+      remediation:
+        - id: console
+          desc: |
+            To use a customer-managed encryption key for an Autonomous Database using the OCI Console:
+
+            1. Navigate to **Oracle Database > Autonomous Database** and open the database.
+            2. Under **More Actions**, select **Manage Encryption Key**.
+            3. Choose **Encrypt using customer-managed keys**.
+            4. Select the vault and master encryption key.
+            5. Select **Save Changes**.
+        - id: cli
+          desc: |
+            To assign a customer-managed encryption key to an Autonomous Database using the OCI CLI:
+
+            ```bash
+            oci db autonomous-database configure-key --autonomous-database-id <adb-ocid> --kms-key-id <key-ocid> --vault-id <vault-ocid>
+            ```
+        - id: terraform
+          desc: |
+            To use a customer-managed encryption key for an Autonomous Database in Terraform, set `kms_key_id` and `vault_id`:
+
+            ```hcl
+            resource "oci_database_autonomous_database" "example" {
+              compartment_id           = var.compartment_ocid
+              db_name                  = "exampleadb"
+              admin_password           = var.adb_admin_password
+              cpu_core_count           = 1
+              data_storage_size_in_tbs = 1
+              db_workload              = "OLTP"
+              kms_key_id               = oci_kms_key.example.id
+              vault_id                 = oci_kms_vault.example.id
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/autonomous-database-serverless/doc/customer-managed-keys.html
+        title: OCI Autonomous Database customer-managed keys documentation
+  - uid: mondoo-oci-security-adb-customer-managed-encryption-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.database.autonomousDatabases.all(kmsKey != null)
+  - uid: mondoo-oci-security-adb-customer-managed-encryption-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_database_autonomous_database')
+    mql: |
+      terraform.resources('oci_database_autonomous_database').all(
+        arguments['kms_key_id'] != null && arguments['kms_key_id'] != ""
+      )
+  - uid: mondoo-oci-security-adb-customer-managed-encryption-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_database_autonomous_database')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_database_autonomous_database').all(
+        change.after['kms_key_id'] != null && change.after['kms_key_id'] != ""
+      )
+  - uid: mondoo-oci-security-adb-customer-managed-encryption-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_database_autonomous_database')
+    mql: |
+      terraform.state.resources.where(type == 'oci_database_autonomous_database').all(
+        values['kms_key_id'] != null && values['kms_key_id'] != ""
+      )
+  # No Terraform variants: VCN and subnet flow logs are separate `oci_logging_log` resources whose `configuration.source` references the VCN or subnet OCID; statically correlating each log back to the network resource it covers requires reference-string parsing that Terraform assets do not support reliably.
+  - uid: mondoo-oci-security-vcn-flow-logs-enabled
+    title: Ensure VCN flow logs are enabled
+    impact: 60
+    filters: asset.platform == 'oci'
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
+      compliance/dora: dora-art-10
+      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
+      compliance/iso-27001-2022: iso-27001-2022-a-8-16
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-de-cm-1
+      compliance/nist-csf-2: nist-csf-2-de-cm-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-4
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-6
+      compliance/pci-dss-4: pcidss-requirement-10-2-1
+      compliance/soc2-2017: soc2-control-cc7-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-4
+    mql: |
+      oci.network.vcns.all(
+        flowLogs.where(isEnabled == true) != empty
+      )
+    docs:
+      desc: |
+        This check ensures that every OCI Virtual Cloud Network has at least one enabled flow log capturing network traffic. Flow logs record accepted and rejected connections traversing the VCN's subnets, providing the network-level visibility needed for intrusion detection, incident response, and forensic analysis. OCI does not enable flow logs by default.
+
+        **Why this matters**
+
+        - **Threat detection:** Flow logs reveal port scans, lateral movement, and connections to known-malicious endpoints that are otherwise invisible.
+        - **Incident response:** During an investigation, flow logs establish which hosts communicated, when, and over which ports.
+        - **Forensic evidence:** Retained flow logs provide a durable record of network activity for after-the-fact analysis and compliance reporting.
+
+        **Risk mitigation**
+
+        - **Enable flow logs on every VCN subnet:** Create a log group and enable flow logs for each subnet that carries sensitive traffic.
+        - **Centralize and retain logs:** Forward flow logs to a central log group with a retention period that satisfies your incident-response and compliance requirements.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console and navigate to **Observability & Management > Logging > Logs**.
+        2. Filter by log type **Service** and look for **Flow Logs** entries.
+        3. Confirm that an enabled flow log exists for each VCN subnet.
+
+        A passing VCN has at least one enabled flow log covering its subnets. A failing VCN has no enabled flow logs.
+
+        ### Audit via CLI
+
+        1. List the logs in the flow-log log group and review their enabled state:
+
+        ```bash
+        oci logging log list --log-group-id <log-group-ocid> --query 'data[*].{name:"display-name", isEnabled:"is-enabled", source:configuration.source.resource}'
+        ```
+
+        A passing VCN has a log with `is-enabled` set to `true` whose `source.resource` matches one of its subnets. A failing VCN has none.
+      remediation:
+        - id: console
+          desc: |
+            To enable flow logs for a VCN subnet using the OCI Console:
+
+            1. Navigate to **Observability & Management > Logging > Log Groups** and create or select a log group.
+            2. Select **Logs**, then **Enable service log**.
+            3. For **Service**, choose **Flow Logs**; for **Resource**, select the subnet.
+            4. Choose the log group and set a log name.
+            5. Select **Enable Log**.
+        - id: cli
+          desc: |
+            To enable a flow log for a subnet using the OCI CLI:
+
+            ```bash
+            oci logging log create --log-group-id <log-group-ocid> \
+              --display-name "subnet-flow-log" \
+              --log-type SERVICE \
+              --is-enabled true \
+              --configuration '{"source": {"sourceType": "OCISERVICE", "service": "flowlogs", "resource": "<subnet-ocid>", "category": "all"}, "compartmentId": "<compartment-ocid>"}'
+            ```
+        - id: terraform
+          desc: |
+            To enable flow logs in Terraform, create a log group and a flow log that references the subnet:
+
+            ```hcl
+            resource "oci_logging_log_group" "example" {
+              compartment_id = var.compartment_ocid
+              display_name   = "vcn-flow-logs"
+            }
+
+            resource "oci_logging_log" "subnet_flow_log" {
+              display_name = "subnet-flow-log"
+              log_group_id = oci_logging_log_group.example.id
+              log_type     = "SERVICE"
+              is_enabled   = true
+
+              configuration {
+                compartment_id = var.compartment_ocid
+
+                source {
+                  category    = "all"
+                  resource    = oci_core_subnet.example.id
+                  service     = "flowlogs"
+                  source_type = "OCISERVICE"
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Network/Concepts/vcnflowlogs.htm
+        title: OCI VCN flow logs documentation
+  - uid: mondoo-oci-security-compute-vnic-source-dest-check
+    title: Ensure compute instance VNICs enforce source/destination check
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: vda-isa-5-5-2-6
+    variants:
+      - uid: mondoo-oci-security-compute-vnic-source-dest-check-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-compute-vnic-source-dest-check-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-compute-vnic-source-dest-check-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-compute-vnic-source-dest-check-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that compute instance VNICs keep the source/destination check enabled, meaning the VNIC may only send and receive traffic addressed to its own IP address. Disabling the check lets an instance forward arbitrary traffic and is required only for purpose-built network appliances such as NAT instances or firewalls. Leaving it disabled on a general-purpose instance enables IP spoofing and unauthorized routing.
+
+        **Why this matters**
+
+        - **Anti-spoofing:** With the check enabled, a compromised instance cannot impersonate other hosts by sending packets with forged source addresses.
+        - **Traffic containment:** The check prevents an instance from silently routing or relaying traffic between subnets outside the intended network design.
+        - **Reduced lateral movement:** Blocking arbitrary forwarding limits an attacker's ability to pivot through a compromised host.
+
+        **Risk mitigation**
+
+        - **Keep the check enabled by default:** Only disable source/destination checking on instances that are explicitly designed to route or forward traffic.
+        - **Audit appliances separately:** Where forwarding is required, document the instance as a network appliance and compensate with strict security lists and NSGs.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console and navigate to **Compute > Instances**.
+        2. Open each instance and select **Attached VNICs**.
+        3. Open each VNIC and review the **Skip Source/Destination Check** setting.
+
+        A passing VNIC has **Skip Source/Destination Check** disabled (source/destination check enforced). A failing VNIC has it enabled.
+
+        ### Audit via CLI
+
+        1. List the VNIC attachments for an instance, then inspect each VNIC:
+
+        ```bash
+        oci network vnic get --vnic-id <vnic-ocid> --query 'data.{name:"display-name", skipSourceDestCheck:"skip-source-dest-check"}'
+        ```
+
+        A passing VNIC returns `false` for `skipSourceDestCheck`. A failing VNIC returns `true`.
+      remediation:
+        - id: console
+          desc: |
+            To re-enable the source/destination check on a VNIC using the OCI Console:
+
+            1. Navigate to **Compute > Instances** and open the instance.
+            2. Select **Attached VNICs** and open the VNIC.
+            3. Select **Edit**.
+            4. Clear **Skip Source/Destination Check**.
+            5. Select **Save Changes**.
+        - id: cli
+          desc: |
+            To re-enable the source/destination check on a VNIC using the OCI CLI:
+
+            ```bash
+            oci network vnic update --vnic-id <vnic-ocid> --skip-source-dest-check false
+            ```
+        - id: terraform
+          desc: |
+            To enforce the source/destination check in Terraform, set `skip_source_dest_check` to `false` in the instance `create_vnic_details` block:
+
+            ```hcl
+            resource "oci_core_instance" "example" {
+              compartment_id      = var.compartment_ocid
+              availability_domain = var.availability_domain
+              shape               = "VM.Standard.E4.Flex"
+              display_name        = "example-instance"
+
+              create_vnic_details {
+                subnet_id              = var.subnet_ocid
+                skip_source_dest_check = false
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Network/Tasks/managingVNICs.htm
+        title: OCI VNIC management documentation
+  - uid: mondoo-oci-security-compute-vnic-source-dest-check-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.compute.instances.all(
+        vnics.all(skipSourceDestCheck == false)
+      )
+  - uid: mondoo-oci-security-compute-vnic-source-dest-check-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_core_instance')
+    mql: |
+      terraform.resources('oci_core_instance').all(
+        blocks.where(type == 'create_vnic_details').all(
+          arguments['skip_source_dest_check'] != true
+        )
+      )
+  - uid: mondoo-oci-security-compute-vnic-source-dest-check-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_core_instance')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_core_instance').all(
+        change.after['create_vnic_details'][0]['skip_source_dest_check'] != true
+      )
+  - uid: mondoo-oci-security-compute-vnic-source-dest-check-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_core_instance')
+    mql: |
+      terraform.state.resources.where(type == 'oci_core_instance').all(
+        values['create_vnic_details'][0]['skip_source_dest_check'] != true
       )
