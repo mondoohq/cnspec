@@ -50,7 +50,7 @@ func VulnReportToCSV(data *mvd.VulnReport, out iox.OutputHelper) error {
 
 	for i := range pkgs {
 		pkg := pkgs[i]
-		err := w.Write(pkg.toSlice())
+		err := w.Write(escapeCSVRow(pkg.toSlice()))
 		if err != nil {
 			return err
 		}
@@ -58,6 +58,28 @@ func VulnReportToCSV(data *mvd.VulnReport, out iox.OutputHelper) error {
 
 	w.Flush()
 	return w.Error()
+}
+
+// escapeCSVRow neutralizes any cell that a spreadsheet application would
+// interpret as a formula. Package fields come from the scanned target, so a
+// value such as "=HYPERLINK(...)" must not execute when the report is opened in
+// Excel, LibreOffice, or Sheets. See OWASP "CSV Injection".
+func escapeCSVRow(row []string) []string {
+	for i := range row {
+		row[i] = escapeCSVCell(row[i])
+	}
+	return row
+}
+
+func escapeCSVCell(value string) string {
+	if value == "" {
+		return value
+	}
+	switch value[0] {
+	case '=', '+', '-', '@', '\t', '\r':
+		return "'" + value
+	}
+	return value
 }
 
 func renderVulnerabilitiesAsCSV(r *mvd.VulnReport) []*csvStruct {
