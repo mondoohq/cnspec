@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-linux-security
     name: Mondoo Linux Security
-    version: 2.6.0
+    version: 2.7.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -194,6 +194,17 @@ policies:
           - uid: mondoo-linux-security-shadow-group-is-empty
           - uid: mondoo-linux-security-system-accounts-are-non-login
           - uid: mondoo-linux-security-uid-min-is-set-to-1000
+      - title: Time Synchronization
+        filters: |
+          asset.family.contains('linux')
+        checks:
+          - uid: mondoo-linux-security-chrony-time-source-is-configured
+      - title: Package Management
+        filters: |
+          asset.family.contains('linux')
+        checks:
+          - uid: mondoo-linux-security-gpgcheck-is-globally-activated
+          - uid: mondoo-linux-security-apt-repositories-enforce-signature-verification
     scoring_system: highest impact
 queries:
   - uid: mondoo-linux-security-aide-is-installed
@@ -14158,3 +14169,309 @@ queries:
     refs:
       - url: https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/9/html/using_selinux/changing-selinux-states-and-modes_using-selinux
         title: Red Hat - Changing SELinux states and modes
+  - uid: mondoo-linux-security-chrony-time-source-is-configured
+    title: Ensure a time source is configured in chrony
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-06
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-17
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-45
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-7
+      compliance/pci-dss-4: pcidss-requirement-10-6-1
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    filters: |
+      package('chrony').installed
+    mql: |
+      chrony.conf.servers != [] || chrony.conf.pools != []
+    docs:
+      desc: |
+        This check ensures that chrony, the time synchronization daemon, is configured with at least one upstream time source so the system clock is kept accurate. By default a chrony installation may ship without an active `server` or `pool` directive, leaving the host with an unsynchronized clock.
+
+        **Why this matters**
+
+        - **Reliable audit trails:** Security events recorded across many hosts can only be correlated and ordered when every clock agrees on the current time.
+        - **Certificate and ticket validity:** TLS certificate expiry and Kerberos ticket lifetimes are evaluated against the local clock, so drift can break authentication or silently accept expired credentials.
+        - **Forensic integrity:** Accurate timestamps are essential when reconstructing the sequence of an incident.
+
+        **Risk mitigation**
+
+        - **Detect tampering:** A synchronized clock makes it harder for an attacker to disguise the timing of malicious activity.
+        - **Consistent enforcement:** Time-based access controls and scheduled jobs behave predictably when the clock is trustworthy.
+      audit: |
+        Run this command to confirm chrony is tracking at least one time source:
+
+        ```bash
+        chronyc sources
+        ```
+
+        Then inspect the configuration for a configured source:
+
+        ```bash
+        grep -E '^\s*(server|pool)\s' /etc/chrony.conf /etc/chrony/chrony.conf 2>/dev/null
+        ```
+
+        A passing result lists one or more `server` or `pool` entries and shows reachable sources in `chronyc sources`. A failing result returns no `server` or `pool` directives.
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
+
+            Add an authorized time source to the chrony configuration, then restart the daemon:
+
+            ```bash
+            echo "pool 2.pool.ntp.org iburst" >> /etc/chrony.conf
+            systemctl restart chronyd
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Use this Bash script to add a pool directive if none is configured and restart chrony:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            CONF=/etc/chrony.conf
+            [ -f "$CONF" ] || CONF=/etc/chrony/chrony.conf
+
+            if ! grep -qE '^\s*(server|pool)\s' "$CONF"; then
+              echo "pool 2.pool.ntp.org iburst" >> "$CONF"
+            fi
+
+            systemctl restart chronyd
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to ensure a time source is configured and chrony is running:
+
+            ```yaml
+            ---
+            - name: Configure a chrony time source
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Ensure a pool directive is present
+                  ansible.builtin.lineinfile:
+                    path: /etc/chrony.conf
+                    line: "pool 2.pool.ntp.org iburst"
+                    regexp: '^\s*pool\s'
+                    state: present
+                  notify: Restart chrony
+
+              handlers:
+                - name: Restart chrony
+                  ansible.builtin.service:
+                    name: chronyd
+                    state: restarted
+            ```
+    refs:
+      - url: https://chrony-project.org/documentation.html
+        title: chrony - Documentation
+  - uid: mondoo-linux-security-gpgcheck-is-globally-activated
+    title: Ensure gpgcheck is globally activated
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-uem-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-19
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ds-6
+      compliance/nist-csf-2: nist-csf-2-id-ra-09
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-14
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-8
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc6-8-1
+      compliance/vda-isa-5: vda-isa-5-5-2-3
+    filters: |
+      asset.family.contains('redhat') || asset.platform == 'amazonlinux'
+    mql: |
+      yum.config.gpgcheck == true
+    docs:
+      desc: |
+        This check ensures that the system-wide `gpgcheck` option is enabled in the yum or dnf configuration so that the package manager verifies the cryptographic signature of every package before installing it. When `gpgcheck` is disabled the system will install packages whose authenticity and integrity have not been verified.
+
+        **Why this matters**
+
+        - **Authenticity:** Signature verification confirms that a package was produced by the expected vendor and not substituted by an attacker.
+        - **Integrity:** A valid signature guarantees the package was not modified in transit between the repository and the host.
+        - **Supply-chain protection:** A compromised mirror or a manipulated download cannot deliver unsigned malicious software when verification is enforced.
+
+        **Risk mitigation**
+
+        - **Prevent malicious installs:** Tampered or forged packages are rejected before any code runs.
+        - **Consistent enforcement:** Setting the option in the global `[main]` section applies the control to every repository rather than relying on per-repository settings.
+      audit: |
+        Run this command to confirm `gpgcheck` is enabled in the global configuration:
+
+        ```bash
+        grep -E '^gpgcheck' /etc/yum.conf /etc/dnf/dnf.conf 2>/dev/null
+        ```
+
+        A passing result reports `gpgcheck=1`. A failing result reports `gpgcheck=0` or omits the directive entirely.
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
+
+            Enable `gpgcheck` in the global package manager configuration:
+
+            ```bash
+            sed -i 's/^gpgcheck\s*=.*/gpgcheck=1/' /etc/yum.conf
+            grep -q '^gpgcheck' /etc/yum.conf || echo 'gpgcheck=1' >> /etc/yum.conf
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Use this Bash script to enforce `gpgcheck` in whichever global configuration file is present:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            CONF=/etc/yum.conf
+            [ -f "$CONF" ] || CONF=/etc/dnf/dnf.conf
+
+            if grep -qE '^gpgcheck' "$CONF"; then
+              sed -i 's/^gpgcheck\s*=.*/gpgcheck=1/' "$CONF"
+            else
+              echo 'gpgcheck=1' >> "$CONF"
+            fi
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to set `gpgcheck` in the global `[main]` section:
+
+            ```yaml
+            ---
+            - name: Enforce global gpgcheck
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Ensure gpgcheck is enabled in yum.conf
+                  ansible.builtin.ini_file:
+                    path: /etc/yum.conf
+                    section: main
+                    option: gpgcheck
+                    value: "1"
+                    no_extra_spaces: true
+            ```
+    refs:
+      - url: https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/9/html/managing_software_with_the_dnf_tool/
+        title: Red Hat - Managing software with the DNF tool
+  - uid: mondoo-linux-security-apt-repositories-enforce-signature-verification
+    title: Ensure APT repositories enforce signature verification
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-uem-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-19
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ds-6
+      compliance/nist-csf-2: nist-csf-2-id-ra-09
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-14
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-8
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc6-8-1
+      compliance/vda-isa-5: vda-isa-5-5-2-3
+    filters: |
+      asset.family.contains('debian')
+    mql: |
+      apt.repos.where(enabled).all(trusted == false)
+    docs:
+      desc: |
+        This check ensures that no enabled APT repository is marked as trusted, which would bypass cryptographic signature verification. An entry carrying `[trusted=yes]` in a one-line sources file, or `Trusted: yes` in a deb822 `.sources` file, tells APT to install packages from that repository without checking their signatures.
+
+        **Why this matters**
+
+        - **Authenticity:** Signature verification confirms that packages originate from the expected repository owner rather than an impostor.
+        - **Integrity:** A valid signature guarantees that packages were not altered between the repository and the host.
+        - **Supply-chain protection:** A trusted repository accepts packages from a compromised mirror or a manipulated download without objection.
+
+        **Risk mitigation**
+
+        - **Prevent malicious installs:** Removing the trusted flag forces APT to reject unsigned or tampered packages.
+        - **Key pinning:** Replacing `[trusted=yes]` with a `signed-by` keyring restricts the repository to a specific signing key.
+      audit: |
+        Run this command to list any repository that bypasses signature verification:
+
+        ```bash
+        grep -rEi 'trusted\s*=\s*yes|^\s*Trusted:\s*yes' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null
+        ```
+
+        A passing result returns no matches, meaning every enabled repository enforces signature verification. A failing result lists one or more entries marked trusted.
+      remediation:
+        - id: cli
+          desc: |
+            **Using CLI**
+
+            Remove the `[trusted=yes]` option from the offending entry and pin the repository to its signing key instead. For a one-line entry, replace the trusted flag with a `signed-by` keyring:
+
+            ```bash
+            sed -i 's/\[trusted=yes\]/[signed-by=\/usr\/share\/keyrings\/example-archive-keyring.gpg]/' /etc/apt/sources.list.d/example.list
+            apt-get update
+            ```
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Use this Bash script to strip the trusted flag from every one-line sources file so APT enforces signature verification:
+
+            ```bash
+            #!/bin/bash
+            set -e
+
+            for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do
+              [ -f "$f" ] || continue
+              sed -i -E 's/\[[^]]*trusted=yes[^]]*\]//I; s/  +/ /g' "$f"
+            done
+
+            apt-get update
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Use this Ansible playbook to remove trusted overrides from one-line sources files:
+
+            ```yaml
+            ---
+            - name: Enforce APT signature verification
+              hosts: all
+              become: true
+
+              tasks:
+                - name: Find one-line APT sources files
+                  ansible.builtin.find:
+                    paths: /etc/apt/sources.list.d
+                    patterns: "*.list"
+                  register: apt_sources
+
+                - name: Remove trusted=yes overrides
+                  ansible.builtin.replace:
+                    path: "{{ item.path }}"
+                    regexp: '\[[^]]*trusted=yes[^]]*\]'
+                    replace: ""
+                  loop: "{{ apt_sources.files }}"
+            ```
+    refs:
+      - url: https://manpages.debian.org/stable/apt/sources.list.5.en.html
+        title: Debian - sources.list manual page
