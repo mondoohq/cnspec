@@ -913,6 +913,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-eks-cluster-private-controlplane-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       refs:
         - url: https://docs.aws.amazon.com/eks/latest/userguide/pod-networking.html
@@ -1011,7 +1015,7 @@ queries:
                 Properties:
                   Name: example-cluster
                   RoleArn: !GetAtt eksRole.Arn
-                  VpcConfig:
+                  ResourcesVpcConfig:
                     SubnetIds:
                       - !Ref eksSubnet
                     EndpointPrivateAccess: true
@@ -1047,6 +1051,13 @@ queries:
       eksState = terraform.state.resources.where(type == "aws_eks_cluster").map(values.vpc_config).flat
       eksState.all(_['endpoint_private_access'] == true)
       eksState.all(_['endpoint_public_access'] == false)
+  - uid: mondoo-aws-security-eks-cluster-private-controlplane-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EKS::Cluster")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::EKS::Cluster").all(
+        properties['ResourcesVpcConfig']['EndpointPrivateAccess'] == true &&
+        properties['ResourcesVpcConfig']['EndpointPublicAccess'] == false
+      )
   - uid: mondoo-aws-security-iam-root-access-key-check
     title: Ensure no root user account access key exists
     impact: 90
@@ -5099,6 +5110,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-rds-cluster-parameter-group-ssl-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that the cluster parameter group associated with an Amazon RDS cluster sets the `ssl` parameter to `1`, which mandates TLS for all connections to every instance in the cluster. Without this cluster-level enforcement, individual instances or applications can establish unencrypted database connections even when TLS is available.
@@ -5318,6 +5333,15 @@ queries:
       )
       terraform.state.resources.where(type == "aws_rds_cluster_parameter_group" && values.family == /postgres/).all(
         values.parameter.where(name == 'ssl').map(value).first == 1
+      )
+  - uid: mondoo-aws-security-rds-cluster-parameter-group-ssl-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::RDS::DBClusterParameterGroup")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::RDS::DBClusterParameterGroup" && properties['Family'] == /mysql/).all(
+        properties['Parameters']['require_secure_transport'] == "ON"
+      )
+      cloudformation.template.resources.where(type == "AWS::RDS::DBClusterParameterGroup" && properties['Family'] == /postgres/).all(
+        properties['Parameters']['ssl'] == 1 || properties['Parameters']['ssl'] == "1"
       )
   # No Terraform variants: Pending OS upgrades are runtime telemetry queried from the AWS API (`aws.rds.allPendingMaintenanceActions`), not configuration. There is no Terraform attribute that represents pending maintenance actions.
   - uid: mondoo-aws-security-rds-cluster-no-pending-os-upgrades
@@ -25243,6 +25267,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-eks-nodegroup-encrypted-volumes-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that EKS managed node group EBS volumes are encrypted by verifying that EBS encryption by default is enabled in each region where node groups are deployed. By default, AWS does not enable EBS encryption by default, meaning node group volumes provisioned through auto-scaling are created unencrypted unless explicitly configured otherwise.
@@ -25375,6 +25403,16 @@ queries:
         values.block_device_mappings.all(
           _['ebs'] != empty &&
           _['ebs'].all(_['encrypted'] == true)
+        )
+      )
+  - uid: mondoo-aws-security-eks-nodegroup-encrypted-volumes-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::LaunchTemplate")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::EC2::LaunchTemplate").all(
+        properties['LaunchTemplateData']['BlockDeviceMappings'] != empty &&
+        properties['LaunchTemplateData']['BlockDeviceMappings'].all(
+          _['Ebs'] != empty &&
+          _['Ebs']['Encrypted'] == true
         )
       )
   - uid: mondoo-aws-security-eks-cluster-iam-auth-mode
@@ -49534,6 +49572,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-ecr-no-public-access-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that Amazon ECR private repository policies do not grant access to the wildcard principal (`*`), which would make the repository publicly accessible to any AWS account or unauthenticated caller. By default, ECR repositories have no resource policy and are private; a policy granting `Principal: "*"` explicitly opens the repository to the public.
@@ -49691,6 +49733,15 @@ queries:
       terraform.state.resources.where(type == "aws_ecr_repository_policy").all(
         values["policy"]["Statement"].none(
           _["Principal"] == "*" || _["Principal"]["AWS"] == "*"
+        )
+      )
+  - uid: mondoo-aws-security-ecr-no-public-access-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::ECR::Repository")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::ECR::Repository").all(
+        properties['RepositoryPolicyText'] == empty ||
+        properties['RepositoryPolicyText']['Statement'].none(
+          _['Principal'] == "*" || _['Principal']['AWS'] == "*"
         )
       )
   - uid: mondoo-aws-security-ec2-launch-template-no-secrets
@@ -52378,6 +52429,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-cloudfront-sni-only-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that CloudFront distributions use SNI-only (Server Name Indication) for SSL/TLS certificate serving rather than dedicated IP SSL. SNI-only is the modern, recommended approach for HTTPS on CloudFront.
@@ -52475,7 +52530,7 @@ queries:
                   DistributionConfig:
                     ViewerCertificate:
                       AcmCertificateArn: !Ref Certificate
-                      SSLSupportMethod: sni-only
+                      SslSupportMethod: sni-only
                       MinimumProtocolVersion: TLSv1.2_2021
             ```
     refs:
@@ -52507,6 +52562,12 @@ queries:
       terraform.state.resources.where(type == "aws_cloudfront_distribution").all(
         values['viewer_certificate'] != empty &&
         values['viewer_certificate'].all(_['ssl_support_method'] == "sni-only")
+      )
+  - uid: mondoo-aws-security-cloudfront-sni-only-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::CloudFront::Distribution")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::CloudFront::Distribution").all(
+        properties['DistributionConfig']['ViewerCertificate']['SslSupportMethod'] == "sni-only"
       )
   - uid: mondoo-aws-security-cloudfront-access-logging-enabled
     title: Ensure CloudFront distributions have access logging enabled
@@ -69065,7 +69126,7 @@ queries:
         values.connection_properties == null ||
         values.connection_properties["PASSWORD"] == null
       )
-  # No runtime variant: the cnquery aws provider does not expose aws.cloud9
+  # No runtime variant: the mql aws provider does not expose aws.cloud9
   # resources. Revisit if a Cloud9 resource set is added.
   - uid: mondoo-aws-security-cloud9-environment-no-ingress
     title: Ensure Cloud9 EC2 environments use no-ingress SSM connections
@@ -69359,9 +69420,6 @@ queries:
           _['value'] == "true"
         ) != empty
       )
-  # No runtime variant: the cnquery aws provider does not expose Route 53
-  # Resolver query log configurations or their VPC associations. Revisit when
-  # the provider adds aws.route53resolver resources.
   - uid: mondoo-aws-security-route53-resolver-query-logging-enabled
     title: Ensure Route 53 Resolver query logging is associated with VPCs
     impact: 50
@@ -69380,6 +69438,10 @@ queries:
       compliance/soc2-2017: soc2-control-cc7-2-1
       compliance/vda-isa-5: vda-isa-5-5-2-4
     variants:
+      - uid: mondoo-aws-security-route53-resolver-query-logging-enabled-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
       - uid: mondoo-aws-security-route53-resolver-query-logging-enabled-terraform-hcl
         tags:
           mondoo.com/filter-title: Terraform HCL
@@ -69392,6 +69454,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-route53-resolver-query-logging-enabled-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that Route 53 Resolver query logging is configured and associated with VPCs. Resolver query logs capture every DNS lookup made by EC2 instances, ECS tasks, and Lambda functions within a VPC through the Route 53 Resolver, providing the visibility needed to detect DNS-based exfiltration and command-and-control activity. Without this logging, DNS traffic inside the VPC is invisible to security tooling.
@@ -69468,9 +69534,31 @@ queries:
               resource_id                  = aws_vpc.example.id
             }
             ```
+        - id: cloudformation
+          desc: |
+            To enable Resolver query logging and associate it with a VPC in CloudFormation, create both the configuration and an association:
+
+            ```yaml
+            Resources:
+              ResolverQueryLogConfig:
+                Type: AWS::Route53Resolver::ResolverQueryLoggingConfig
+                Properties:
+                  Name: vpc-dns-logs
+                  DestinationArn: !GetAtt ResolverLogGroup.Arn
+
+              ResolverQueryLogConfigAssociation:
+                Type: AWS::Route53Resolver::ResolverQueryLoggingConfigAssociation
+                Properties:
+                  ResolverQueryLogConfigId: !Ref ResolverQueryLogConfig
+                  ResourceId: !Ref MyVpc
+            ```
     refs:
       - url: https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/resolver-query-logs.html
         title: Resolver query logging
+  - uid: mondoo-aws-security-route53-resolver-query-logging-enabled-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.route53.resolver.queryLogConfigAssociations.length > 0
   - uid: mondoo-aws-security-route53-resolver-query-logging-enabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_route53_resolver_query_log_config")
     mql: |
@@ -69483,6 +69571,10 @@ queries:
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_route53_resolver_query_log_config")
     mql: |
       terraform.state.resources.where(type == "aws_route53_resolver_query_log_config_association").length > 0
+  - uid: mondoo-aws-security-route53-resolver-query-logging-enabled-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Route53Resolver::ResolverQueryLoggingConfig")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::Route53Resolver::ResolverQueryLoggingConfigAssociation").length > 0
   - uid: mondoo-aws-security-dynamodb-pitr-cmk-encryption
     title: Ensure DynamoDB PITR backups are encrypted with a customer-managed key
     impact: 70
@@ -69858,8 +69950,9 @@ queries:
         properties['SnapshotRetentionLimit'] == 0 ||
         properties['AtRestEncryptionEnabled'] == true && properties['KmsKeyId'] != empty
       )
-  # No runtime variant: the cnquery aws provider does not expose Kinesis Video
-  # Streams. Revisit when an aws.kinesisvideo resource set is added.
+  # No runtime variant: the mql aws.kinesis resource exposes only Kinesis Data
+  # Streams and Firehose, not Kinesis Video Streams (a separate kinesisvideo
+  # API). Revisit when an aws.kinesis.videoStreams resource set is added.
   - uid: mondoo-aws-security-kinesis-video-stream-cmk-encryption
     title: Ensure Kinesis Video Streams use a customer-managed KMS key
     impact: 60
@@ -70171,7 +70264,7 @@ queries:
       cloudformation.template.resources.where(type == "AWS::EMR::Studio").all(
         properties['EncryptionKeyArn'] != empty
       )
-  # No runtime variant: the cnquery aws provider does not expose DataSync
+  # No runtime variant: the mql aws provider does not expose DataSync
   # tasks. Revisit when an aws.datasync resource set is added.
   - uid: mondoo-aws-security-datasync-task-cloudwatch-logging-encryption
     title: Ensure DataSync tasks log to an encrypted CloudWatch log group
@@ -70203,6 +70296,10 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform State
           mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-datasync-task-cloudwatch-logging-encryption-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
         This check ensures that AWS DataSync tasks are configured with a CloudWatch log group ARN so that transfer telemetry is captured and retained. DataSync task logs record object paths, source and destination metadata, and transfer errors, information that often reveals the structure of regulated data and must be retained under data-protection controls consistent with the data being moved.
@@ -70282,6 +70379,26 @@ queries:
               cloudwatch_log_group_arn = aws_cloudwatch_log_group.datasync.arn
             }
             ```
+        - id: cloudformation
+          desc: |
+            To configure a DataSync task with CloudWatch logging in CloudFormation, set `CloudWatchLogGroupArn` on the task and ensure the referenced log group uses a CMK:
+
+            ```yaml
+            Resources:
+              DataSyncLogGroup:
+                Type: AWS::Logs::LogGroup
+                Properties:
+                  LogGroupName: /aws/datasync/example
+                  KmsKeyId: !GetAtt DataSyncLogKey.Arn
+
+              DataSyncTask:
+                Type: AWS::DataSync::Task
+                Properties:
+                  Name: example
+                  SourceLocationArn: !Ref SourceLocation
+                  DestinationLocationArn: !Ref DestinationLocation
+                  CloudWatchLogGroupArn: !GetAtt DataSyncLogGroup.Arn
+            ```
     refs:
       - url: https://docs.aws.amazon.com/datasync/latest/userguide/monitor-datasync.html
         title: Monitoring AWS DataSync
@@ -70302,6 +70419,12 @@ queries:
     mql: |
       terraform.state.resources.where(type == "aws_datasync_task").all(
         values.cloudwatch_log_group_arn != empty
+      )
+  - uid: mondoo-aws-security-datasync-task-cloudwatch-logging-encryption-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::DataSync::Task")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::DataSync::Task").all(
+        properties['CloudWatchLogGroupArn'] != empty
       )
   - uid: mondoo-aws-security-cloudfront-s3-origin-oac-with-encryption
     title: Ensure CloudFront S3 origins are reached via origin access control
@@ -71642,7 +71765,7 @@ queries:
           _['TLS']['Mode'] == "PERMISSIVE"
         )
       )
-  # No runtime variant: cnquery aws provider does not expose AWS IoT Core
+  # No runtime variant: the mql aws provider does not expose AWS IoT Core
   # domain configurations. Revisit when an aws.iot resource set is added.
   - uid: mondoo-aws-security-iot-domain-configuration-tls-1-2-minimum
     title: Ensure IoT Core domain configurations require TLS 1.2 or higher
@@ -71935,7 +72058,7 @@ queries:
         values.vpc_config != empty &&
         values.vpc_config.all(_['subnet_ids'] != empty)
       )
-  # No runtime variant: cnquery aws provider does not expose AWS CodeArtifact
+  # No runtime variant: the mql aws provider does not expose AWS CodeArtifact
   # domains. Revisit when an aws.codeartifact resource set is added.
   - uid: mondoo-aws-security-codeartifact-domain-cmk-encryption
     title: Ensure CodeArtifact domains use a customer-managed KMS key
