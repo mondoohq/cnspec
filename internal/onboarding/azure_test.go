@@ -88,7 +88,7 @@ data "azurerm_subscriptions" "available" {
 }
 
 locals {
-  active_subscriptions = [for sub in data.azurerm_subscriptions.available.subscriptions : sub if sub.state == "Enabled" ]
+  active_subscriptions = [for sub in data.azurerm_subscriptions.available.subscriptions : sub if sub.state == "Enabled" && !startswith(coalesce(sub.quota_id, "none"), "MSDN") && !startswith(coalesce(sub.quota_id, "none"), "MPN") ]
 }
 
 resource "azurerm_role_assignment" "reader" {
@@ -448,7 +448,7 @@ data "azurerm_subscriptions" "available" {
 }
 
 locals {
-  active_subscriptions = [for sub in data.azurerm_subscriptions.available.subscriptions : sub if sub.state == "Enabled" ]
+  active_subscriptions = [for sub in data.azurerm_subscriptions.available.subscriptions : sub if sub.state == "Enabled" && !startswith(coalesce(sub.quota_id, "none"), "MSDN") && !startswith(coalesce(sub.quota_id, "none"), "MPN") ]
 }
 
 resource "azurerm_role_assignment" "reader" {
