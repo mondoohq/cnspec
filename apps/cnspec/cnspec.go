@@ -18,6 +18,11 @@ import (
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/health"
 
 	_ "github.com/glebarez/go-sqlite"
+
+	// Link in all vault backends (AWS, GCP, HashiCorp, keyring) so they
+	// self-register with the vault registry. The in-memory backend is always
+	// available via the SDK.
+	_ "go.mondoo.com/mql/v13/vault/register"
 )
 
 func main() {
