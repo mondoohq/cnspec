@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-docker-best-practices
     name: Mondoo Dockerfile Best Practices
-    version: 1.1.0
+    version: 1.2.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: best-practices
@@ -69,11 +69,7 @@ queries:
     title: Use `apt-get` instead of `apt` for consistent package management
     impact: 40
     mql: |
-      docker.file.stages.all(run.none(script.contains("apt install")))
-      docker.file.stages.all(run.none(script.contains("apt update")))
-      docker.file.stages.all(run.none(script.contains("apt upgrade")))
-      docker.file.stages.all(run.none(script.contains("apt remove")))
-      docker.file.stages.all(run.none(script.contains("apt purge")))
+      docker.file.stages.all(run.all(commands.none(binary == "apt" && subcommand.in(["install", "update", "upgrade", "remove", "purge"]))))
     docs:
       desc: |
         Dockerfile `RUN` instructions should invoke the `apt-get` CLI rather than `apt` for package management operations.
@@ -112,8 +108,8 @@ queries:
     title: Don't use package update instructions alone in a RUN statement
     impact: 60
     mql: |
-      docker.file.stages.all(run.where(script.contains("apt-get update")).all(script.contains("apt-get install")))
-      docker.file.stages.all(run.where(script.contains("apk update")).all(script.contains("apk add")))
+      docker.file.stages.all(run.where(commands.any(binary == "apt-get" && subcommand == "update")).all(commands.any(binary == "apt-get" && subcommand == "install")))
+      docker.file.stages.all(run.where(commands.any(binary == "apk" && subcommand == "update")).all(commands.any(binary == "apk" && subcommand == "add")))
     docs:
       desc: |
         Package manager update commands (`apt-get update`, `apk update`) should run in the same `RUN` instruction as the corresponding install command, never alone in a separate layer.
@@ -160,7 +156,7 @@ queries:
     title: Use --no-cache with apk add
     impact: 40
     mql: |
-      docker.file.stages.all(run.where(script.contains("apk add")).all(script.contains("--no-cache")))
+      docker.file.stages.all(run.all(commands.where(binary == "apk" && subcommand == "add").all(flags.contains("--no-cache"))))
     docs:
       desc: |
         Alpine's `apk add` command should always include the `--no-cache` flag in Dockerfile `RUN` instructions.
@@ -199,7 +195,7 @@ queries:
     title: Clean apt-get cache after installing packages
     impact: 40
     mql: |
-      docker.file.stages.all(run.where(script.contains("apt-get install")).all(script.contains("/var/lib/apt/lists")))
+      docker.file.stages.all(run.where(commands.any(binary == "apt-get" && subcommand == "install")).all(commands.any(binary == "rm" && args.any(_ == /\/var\/lib\/apt\/lists/))))
     docs:
       desc: |
         Dockerfile `RUN` instructions that use `apt-get install` should also clean up the apt package lists in the same layer.
@@ -241,7 +237,7 @@ queries:
     title: Clean yum cache after installing packages
     impact: 40
     mql: |
-      docker.file.stages.all(run.where(script.contains("yum install")).all(script.contains("yum clean all")))
+      docker.file.stages.all(run.where(commands.any(binary == "yum" && subcommand == "install")).all(commands.any(binary == "yum" && subcommand == "clean" && args.contains("all"))))
     docs:
       desc: |
         Dockerfile `RUN` instructions that use `yum install` should also run `yum clean all` in the same layer.
@@ -280,7 +276,7 @@ queries:
     title: Clean dnf cache after installing packages
     impact: 40
     mql: |
-      docker.file.stages.all(run.where(script.contains("dnf install")).all(script.contains("dnf clean all")))
+      docker.file.stages.all(run.where(commands.any(binary == "dnf" && subcommand == "install")).all(commands.any(binary == "dnf" && subcommand == "clean" && args.contains("all"))))
     docs:
       desc: |
         Dockerfile `RUN` instructions that use `dnf install` should also run `dnf clean all` in the same layer.
@@ -319,7 +315,7 @@ queries:
     title: Clean zypper cache after installing packages
     impact: 40
     mql: |
-      docker.file.stages.all(run.where(script.contains("zypper install")).all(script.contains("zypper clean")))
+      docker.file.stages.all(run.where(commands.any(binary == "zypper" && subcommand == "install")).all(commands.any(binary == "zypper" && subcommand == "clean")))
     docs:
       desc: |
         Dockerfile `RUN` instructions that use `zypper install` should also run `zypper clean` in the same layer.
@@ -357,7 +353,7 @@ queries:
     title: Use --no-cache-dir with pip install
     impact: 40
     mql: |
-      docker.file.stages.all(run.where(script.contains("pip install")).all(script.contains("--no-cache-dir")))
+      docker.file.stages.all(run.all(commands.where(binary == "pip" && subcommand == "install").all(flags.contains("--no-cache-dir"))))
     docs:
       desc: |
         `pip install` commands in Dockerfile `RUN` instructions should include the `--no-cache-dir` flag.
@@ -399,7 +395,7 @@ queries:
     title: Clean yarn cache after installing packages
     impact: 40
     mql: |
-      docker.file.stages.all(run.where(script.contains("yarn install")).all(script.contains("yarn cache clean")))
+      docker.file.stages.all(run.where(commands.any(binary == "yarn" && subcommand == "install")).all(commands.any(binary == "yarn" && subcommand == "cache" && args.contains("clean"))))
     docs:
       desc: |
         Dockerfile `RUN` instructions that use `yarn install` should also run `yarn cache clean` in the same layer.
@@ -438,8 +434,8 @@ queries:
     title: Clean npm cache after installing packages
     impact: 40
     mql: |
-      docker.file.stages.all(run.where(script.contains("npm install")).all(script.contains("npm cache clean")))
-      docker.file.stages.all(run.where(script.contains("npm ci")).all(script.contains("npm cache clean")))
+      docker.file.stages.all(run.where(commands.any(binary == "npm" && subcommand == "install")).all(commands.any(binary == "npm" && subcommand == "cache" && args.contains("clean"))))
+      docker.file.stages.all(run.where(commands.any(binary == "npm" && subcommand == "ci")).all(commands.any(binary == "npm" && subcommand == "cache" && args.contains("clean"))))
     docs:
       desc: |
         Dockerfile `RUN` instructions that use `npm install` or `npm ci` should also run `npm cache clean` in the same layer.
@@ -480,7 +476,7 @@ queries:
     title: Use --no-install-recommends with apt-get install
     impact: 60
     mql: |
-      docker.file.stages.all(run.where(script.contains("apt-get install")).all(script.contains("--no-install-recommends")))
+      docker.file.stages.all(run.all(commands.where(binary == "apt-get" && subcommand == "install").all(flags.contains("--no-install-recommends"))))
     docs:
       desc: |
         `apt-get install` commands in Dockerfile `RUN` instructions should include the `--no-install-recommends` flag.
@@ -521,7 +517,7 @@ queries:
     title: Use -y flag with apt-get install
     impact: 40
     mql: |
-      docker.file.stages.all(run.where(script.contains("apt-get install")).all(script.contains("-y")))
+      docker.file.stages.all(run.all(commands.where(binary == "apt-get" && subcommand == "install").all(flags.any(_ == "--yes" || _ == "--assume-yes" || _ == /^-[a-z]*y/))))
     docs:
       desc: |
         `apt-get install` commands in Dockerfile `RUN` instructions should include the `-y` (or `--yes`) flag.
@@ -557,7 +553,7 @@ queries:
     title: Use -y flag with yum install
     impact: 40
     mql: |
-      docker.file.stages.all(run.where(script.contains("yum install")).all(script.contains("-y")))
+      docker.file.stages.all(run.all(commands.where(binary == "yum" && subcommand == "install").all(flags.any(_ == "--assumeyes" || _ == /^-[a-z]*y/))))
     docs:
       desc: |
         `yum install` commands in Dockerfile `RUN` instructions should include the `-y` (or `--assumeyes`) flag.
@@ -593,7 +589,7 @@ queries:
     title: Use -y flag with dnf install
     impact: 40
     mql: |
-      docker.file.stages.all(run.where(script.contains("dnf install")).all(script.contains("-y")))
+      docker.file.stages.all(run.all(commands.where(binary == "dnf" && subcommand == "install").all(flags.any(_ == "--assumeyes" || _ == /^-[a-z]*y/))))
     docs:
       desc: |
         `dnf install` commands in Dockerfile `RUN` instructions should include the `-y` (or `--assumeyes`) flag.
@@ -629,7 +625,7 @@ queries:
     title: Use --non-interactive flag with zypper install
     impact: 40
     mql: |
-      docker.file.stages.all(run.where(script.contains("zypper install")).all(script.contains("--non-interactive")))
+      docker.file.stages.all(run.all(commands.where(binary == "zypper" && subcommand == "install").all(flags.contains("--non-interactive"))))
     docs:
       desc: |
         `zypper install` commands in Dockerfile `RUN` instructions should include the `--non-interactive` flag.
@@ -790,7 +786,7 @@ queries:
     title: Use WORKDIR instead of `cd` in RUN instructions
     impact: 40
     mql: |
-      docker.file.stages.all(run.none(script == /\bcd\s/))
+      docker.file.stages.all(run.all(commands.none(binary == "cd")))
     docs:
       desc: |
         Dockerfile `RUN` instructions should use the WORKDIR instruction to change directories rather than calling `cd`.
@@ -839,7 +835,7 @@ queries:
     title: Clean microdnf cache after installing packages
     impact: 40
     mql: |
-      docker.file.stages.all(run.where(script.contains("microdnf install")).all(script.contains("microdnf clean all")))
+      docker.file.stages.all(run.where(commands.any(binary == "microdnf" && subcommand == "install")).all(commands.any(binary == "microdnf" && subcommand == "clean" && args.contains("all"))))
     docs:
       desc: |
         Dockerfile `RUN` instructions that use `microdnf install` should also run `microdnf clean all` in the same layer. microdnf is a minimal DNF implementation used in Red Hat UBI micro images, and like other package managers it caches downloaded packages and metadata.
