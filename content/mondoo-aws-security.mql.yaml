@@ -1579,22 +1579,13 @@ queries:
   - uid: mondoo-aws-security-iam-password-policy-aws
     filters: asset.platform == "aws"
     mql: |
-      // Ensure properties do exist.
-      aws.iam.accountPasswordPolicy.RequireUppercaseCharacters != empty
-      aws.iam.accountPasswordPolicy.RequireLowercaseCharacters != empty
-      aws.iam.accountPasswordPolicy.RequireSymbols != empty
-      aws.iam.accountPasswordPolicy.RequireNumbers != empty
-      aws.iam.accountPasswordPolicy.MinimumPasswordLength != empty
-      aws.iam.accountPasswordPolicy.PasswordReusePrevention != empty
-      aws.iam.accountPasswordPolicy.MaxPasswordAge != empty
-      // Validate each policy setting against props
-      aws.iam.accountPasswordPolicy.where(RequireUppercaseCharacters != empty).all(RequireUppercaseCharacters == props.mondooAWSSecurityIamPasswordPolicyRequireUppercaseCharacters)
-      aws.iam.accountPasswordPolicy.where(RequireLowercaseCharacters != empty).all(RequireLowercaseCharacters == props.mondooAWSSecurityIamPasswordPolicyRequireLowercaseCharacters)
-      aws.iam.accountPasswordPolicy.where(RequireSymbols != empty).all(RequireSymbols == props.mondooAWSSecurityIamPasswordPolicyRequireSymbols)
-      aws.iam.accountPasswordPolicy.where(RequireNumbers != empty).all(RequireNumbers == props.mondooAWSSecurityIamPasswordPolicyRequireNumbers)
-      aws.iam.accountPasswordPolicy.where(MinimumPasswordLength != empty).all(MinimumPasswordLength >= props.mondooAWSSecurityIamPasswordPolicyMinimumPasswordLength)
-      aws.iam.accountPasswordPolicy.where(PasswordReusePrevention != empty).all(PasswordReusePrevention >= props.mondooAWSSecurityIamPasswordPolicyPasswordReusePrevention)
-      aws.iam.accountPasswordPolicy.where(MaxPasswordAge != empty).all(MaxPasswordAge <= props.mondooAWSSecurityIamPasswordPolicyMaxPasswordAge)
+      aws.iam.passwordPolicy.requireUppercaseCharacters == props.mondooAWSSecurityIamPasswordPolicyRequireUppercaseCharacters
+      aws.iam.passwordPolicy.requireLowercaseCharacters == props.mondooAWSSecurityIamPasswordPolicyRequireLowercaseCharacters
+      aws.iam.passwordPolicy.requireSymbols == props.mondooAWSSecurityIamPasswordPolicyRequireSymbols
+      aws.iam.passwordPolicy.requireNumbers == props.mondooAWSSecurityIamPasswordPolicyRequireNumbers
+      aws.iam.passwordPolicy.minimumPasswordLength >= props.mondooAWSSecurityIamPasswordPolicyMinimumPasswordLength
+      aws.iam.passwordPolicy.passwordReusePrevention >= props.mondooAWSSecurityIamPasswordPolicyPasswordReusePrevention
+      aws.iam.passwordPolicy.maxPasswordAge <= props.mondooAWSSecurityIamPasswordPolicyMaxPasswordAge
   - uid: mondoo-aws-security-iam-password-policy-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_iam_account_password_policy")
     mql: |
@@ -4644,29 +4635,7 @@ queries:
     filters: |
       asset.platform == "aws-lambda-function"
     mql: |
-      # Null covers functions without a resource policy; empty covers empty policy documents.
-      # MQL short-circuits before Statement access when the policy is absent.
-      aws.lambda.function.policy == null ||
-      aws.lambda.function.policy == empty ||
-      aws.lambda.function.policy.Statement == null ||
-      aws.lambda.function.policy.Statement == empty ||
-      aws.lambda.function.policy.Statement.where(Effect == "Allow").where(
-        # AWS principals can be encoded as a string or a list; contains(/^\*$/) covers list entries exactly equal to "*".
-        Principal == "*" ||
-        Principal['AWS'] == "*" ||
-        Principal['AWS'].contains(/^\*$/) ||
-        Principal['Service'] == "*" ||
-        Principal['Service'].contains(/^\*$/)
-      ).all(
-        # Require at least one recognized source condition without a bare wildcard value.
-        Condition != null &&
-        Condition.values.any(
-          _.where(key == /aws:(SourceArn|SourceAccount|PrincipalOrgID)/i) != empty &&
-          # values.contains catches scalar values; values.any catches list-valued condition values.
-          _.where(key == /aws:(SourceArn|SourceAccount|PrincipalOrgID)/i).values.contains(/^\*$/) == false &&
-          _.where(key == /aws:(SourceArn|SourceAccount|PrincipalOrgID)/i).values.any(_.contains(/^\*$/)) == false
-        )
-      )
+      aws.lambda.function.allowsPublicAccess == false
   - uid: mondoo-aws-security-lambda-function-public-access-prohibited-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_lambda_permission")
     mql: |
@@ -24743,22 +24712,13 @@ queries:
     filters: asset.platform == "aws"
     mql: |
       aws.ec2.networkAcls.all(
-        entries.none(egress == false && ruleAction == "allow" && cidrBlock == "0.0.0.0/0" && protocol == "-1")
+        entries.none(egress == false && ruleAction == "allow" && isPublic && protocol == "-1")
       ) &&
       aws.ec2.networkAcls.all(
-        entries.none(egress == false && ruleAction == "allow" && ipv6CidrBlock == "::/0" && protocol == "-1")
+        entries.none(egress == false && ruleAction == "allow" && isPublic && portRange.from <= 22 && portRange.to >= 22)
       ) &&
       aws.ec2.networkAcls.all(
-        entries.none(egress == false && ruleAction == "allow" && portRange.from <= 22 && portRange.to >= 22 && cidrBlock == "0.0.0.0/0")
-      ) &&
-      aws.ec2.networkAcls.all(
-        entries.none(egress == false && ruleAction == "allow" && portRange.from <= 22 && portRange.to >= 22 && ipv6CidrBlock == "::/0")
-      ) &&
-      aws.ec2.networkAcls.all(
-        entries.none(egress == false && ruleAction == "allow" && portRange.from <= 3389 && portRange.to >= 3389 && cidrBlock == "0.0.0.0/0")
-      ) &&
-      aws.ec2.networkAcls.all(
-        entries.none(egress == false && ruleAction == "allow" && portRange.from <= 3389 && portRange.to >= 3389 && ipv6CidrBlock == "::/0")
+        entries.none(egress == false && ruleAction == "allow" && isPublic && portRange.from <= 3389 && portRange.to >= 3389)
       )
   - uid: mondoo-aws-security-nacl-no-unrestricted-ssh-rdp-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_network_acl_rule")
@@ -39101,19 +39061,7 @@ queries:
   - uid: mondoo-aws-security-sagemaker-monitoring-job-network-config-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.sagemaker.dataQualityJobDefinitions.all(
-        networkConfig.enableNetworkIsolation == true &&
-        networkConfig.enableInterContainerTrafficEncryption == true
-      ) &&
-      aws.sagemaker.modelQualityJobDefinitions.all(
-        networkConfig.enableNetworkIsolation == true &&
-        networkConfig.enableInterContainerTrafficEncryption == true
-      ) &&
-      aws.sagemaker.modelBiasJobDefinitions.all(
-        networkConfig.enableNetworkIsolation == true &&
-        networkConfig.enableInterContainerTrafficEncryption == true
-      ) &&
-      aws.sagemaker.modelExplainabilityJobDefinitions.all(
+      aws.sagemaker.monitoringJobDefinitions.all(
         networkConfig.enableNetworkIsolation == true &&
         networkConfig.enableInterContainerTrafficEncryption == true
       )
@@ -41328,9 +41276,12 @@ queries:
   - uid: mondoo-aws-security-cloudwatch-unauthorized-api-alarm-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
-          filterPattern.contains("AccessDenied") || filterPattern.contains("UnauthorizedAccess")
+      aws.cloudtrail.trails.any(
+        capturesAllManagementEvents &&
+        logGroup != null &&
+        logGroup.metricsFilters.any(
+          filterPattern.contains(["AccessDenied", "UnauthorizedAccess"]) &&
+          hasActiveAlarm
         )
       )
   - uid: mondoo-aws-security-cloudwatch-unauthorized-api-alarm-terraform-hcl
@@ -41540,9 +41491,12 @@ queries:
   - uid: mondoo-aws-security-cloudwatch-no-mfa-login-alarm-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
-          filterPattern.contains("ConsoleLogin") && filterPattern.contains("MFAUsed")
+      aws.cloudtrail.trails.any(
+        capturesAllManagementEvents &&
+        logGroup != null &&
+        logGroup.metricsFilters.any(
+          filterPattern.contains("ConsoleLogin") && filterPattern.contains("MFAUsed") &&
+          hasActiveAlarm
         )
       )
   - uid: mondoo-aws-security-cloudwatch-no-mfa-login-alarm-terraform-hcl
@@ -41753,9 +41707,12 @@ queries:
   - uid: mondoo-aws-security-cloudwatch-root-usage-alarm-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
-          filterPattern.contains("Root") && filterPattern.contains("userIdentity")
+      aws.cloudtrail.trails.any(
+        capturesAllManagementEvents &&
+        logGroup != null &&
+        logGroup.metricsFilters.any(
+          filterPattern.contains("Root") && filterPattern.contains("userIdentity") &&
+          hasActiveAlarm
         )
       )
   - uid: mondoo-aws-security-cloudwatch-root-usage-alarm-terraform-hcl
@@ -41967,9 +41924,12 @@ queries:
   - uid: mondoo-aws-security-cloudwatch-iam-policy-change-alarm-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
-          filterPattern.contains("CreatePolicy") || filterPattern.contains("DeletePolicy") || filterPattern.contains("AttachRolePolicy")
+      aws.cloudtrail.trails.any(
+        capturesAllManagementEvents &&
+        logGroup != null &&
+        logGroup.metricsFilters.any(
+          monitoredEventNames.contains(_ == "CreatePolicy" || _ == "DeletePolicy" || _ == "AttachRolePolicy") &&
+          hasActiveAlarm
         )
       )
   - uid: mondoo-aws-security-cloudwatch-iam-policy-change-alarm-terraform-hcl
@@ -42180,9 +42140,12 @@ queries:
   - uid: mondoo-aws-security-cloudwatch-cloudtrail-config-alarm-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
-          filterPattern.contains("CreateTrail") || filterPattern.contains("UpdateTrail") || filterPattern.contains("DeleteTrail") || filterPattern.contains("StartLogging") || filterPattern.contains("StopLogging")
+      aws.cloudtrail.trails.any(
+        capturesAllManagementEvents &&
+        logGroup != null &&
+        logGroup.metricsFilters.any(
+          monitoredEventNames.contains(_ == "CreateTrail" || _ == "UpdateTrail" || _ == "DeleteTrail" || _ == "StartLogging" || _ == "StopLogging") &&
+          hasActiveAlarm
         )
       )
   - uid: mondoo-aws-security-cloudwatch-cloudtrail-config-alarm-terraform-hcl
@@ -42393,9 +42356,12 @@ queries:
   - uid: mondoo-aws-security-cloudwatch-console-auth-failure-alarm-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
-          filterPattern.contains("ConsoleLogin") && filterPattern.contains(/Failed|Failure/)
+      aws.cloudtrail.trails.any(
+        capturesAllManagementEvents &&
+        logGroup != null &&
+        logGroup.metricsFilters.any(
+          filterPattern.contains("ConsoleLogin") && filterPattern.contains(/Failed|Failure/) &&
+          hasActiveAlarm
         )
       )
   - uid: mondoo-aws-security-cloudwatch-console-auth-failure-alarm-terraform-hcl
@@ -42606,9 +42572,12 @@ queries:
   - uid: mondoo-aws-security-cloudwatch-cmk-disable-delete-alarm-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
-          filterPattern.contains("DisableKey") || filterPattern.contains("ScheduleKeyDeletion")
+      aws.cloudtrail.trails.any(
+        capturesAllManagementEvents &&
+        logGroup != null &&
+        logGroup.metricsFilters.any(
+          monitoredEventNames.contains(_ == "DisableKey" || _ == "ScheduleKeyDeletion") &&
+          hasActiveAlarm
         )
       )
   - uid: mondoo-aws-security-cloudwatch-cmk-disable-delete-alarm-terraform-hcl
@@ -42819,9 +42788,12 @@ queries:
   - uid: mondoo-aws-security-cloudwatch-s3-policy-change-alarm-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
-          filterPattern.contains("PutBucketAcl") || filterPattern.contains("PutBucketPolicy")
+      aws.cloudtrail.trails.any(
+        capturesAllManagementEvents &&
+        logGroup != null &&
+        logGroup.metricsFilters.any(
+          monitoredEventNames.contains(_ == "PutBucketAcl" || _ == "PutBucketPolicy") &&
+          hasActiveAlarm
         )
       )
   - uid: mondoo-aws-security-cloudwatch-s3-policy-change-alarm-terraform-hcl
@@ -43032,9 +43004,12 @@ queries:
   - uid: mondoo-aws-security-cloudwatch-config-change-alarm-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
-          filterPattern.contains("StopConfigurationRecorder") || filterPattern.contains("DeleteDeliveryChannel")
+      aws.cloudtrail.trails.any(
+        capturesAllManagementEvents &&
+        logGroup != null &&
+        logGroup.metricsFilters.any(
+          monitoredEventNames.contains(_ == "StopConfigurationRecorder" || _ == "DeleteDeliveryChannel") &&
+          hasActiveAlarm
         )
       )
   - uid: mondoo-aws-security-cloudwatch-config-change-alarm-terraform-hcl
@@ -43245,9 +43220,12 @@ queries:
   - uid: mondoo-aws-security-cloudwatch-security-group-change-alarm-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
-          filterPattern.contains("AuthorizeSecurityGroupIngress") || filterPattern.contains("AuthorizeSecurityGroupEgress")
+      aws.cloudtrail.trails.any(
+        capturesAllManagementEvents &&
+        logGroup != null &&
+        logGroup.metricsFilters.any(
+          monitoredEventNames.contains(_ == "AuthorizeSecurityGroupIngress" || _ == "AuthorizeSecurityGroupEgress") &&
+          hasActiveAlarm
         )
       )
   - uid: mondoo-aws-security-cloudwatch-security-group-change-alarm-terraform-hcl
@@ -43458,9 +43436,12 @@ queries:
   - uid: mondoo-aws-security-cloudwatch-nacl-change-alarm-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
-          filterPattern.contains("CreateNetworkAcl") || filterPattern.contains("DeleteNetworkAcl")
+      aws.cloudtrail.trails.any(
+        capturesAllManagementEvents &&
+        logGroup != null &&
+        logGroup.metricsFilters.any(
+          monitoredEventNames.contains(_ == "CreateNetworkAcl" || _ == "DeleteNetworkAcl") &&
+          hasActiveAlarm
         )
       )
   - uid: mondoo-aws-security-cloudwatch-nacl-change-alarm-terraform-hcl
@@ -43671,9 +43652,12 @@ queries:
   - uid: mondoo-aws-security-cloudwatch-network-gw-change-alarm-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
-          filterPattern.contains("CreateCustomerGateway") || filterPattern.contains("AttachInternetGateway")
+      aws.cloudtrail.trails.any(
+        capturesAllManagementEvents &&
+        logGroup != null &&
+        logGroup.metricsFilters.any(
+          monitoredEventNames.contains(_ == "CreateCustomerGateway" || _ == "AttachInternetGateway") &&
+          hasActiveAlarm
         )
       )
   - uid: mondoo-aws-security-cloudwatch-network-gw-change-alarm-terraform-hcl
@@ -43884,9 +43868,12 @@ queries:
   - uid: mondoo-aws-security-cloudwatch-route-table-change-alarm-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
-          filterPattern.contains("CreateRoute") || filterPattern.contains("CreateRouteTable")
+      aws.cloudtrail.trails.any(
+        capturesAllManagementEvents &&
+        logGroup != null &&
+        logGroup.metricsFilters.any(
+          monitoredEventNames.contains(_ == "CreateRoute" || _ == "CreateRouteTable") &&
+          hasActiveAlarm
         )
       )
   - uid: mondoo-aws-security-cloudwatch-route-table-change-alarm-terraform-hcl
@@ -44097,9 +44084,12 @@ queries:
   - uid: mondoo-aws-security-cloudwatch-vpc-change-alarm-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
-          filterPattern.contains("CreateVpc") || filterPattern.contains("DeleteVpc")
+      aws.cloudtrail.trails.any(
+        capturesAllManagementEvents &&
+        logGroup != null &&
+        logGroup.metricsFilters.any(
+          monitoredEventNames.contains(_ == "CreateVpc" || _ == "DeleteVpc") &&
+          hasActiveAlarm
         )
       )
   - uid: mondoo-aws-security-cloudwatch-vpc-change-alarm-terraform-hcl
@@ -44310,9 +44300,12 @@ queries:
   - uid: mondoo-aws-security-cloudwatch-org-change-alarm-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
-          filterPattern.contains("organizations.amazonaws.com")
+      aws.cloudtrail.trails.any(
+        capturesAllManagementEvents &&
+        logGroup != null &&
+        logGroup.metricsFilters.any(
+          monitoredEventSources.contains(_ == "organizations.amazonaws.com") &&
+          hasActiveAlarm
         )
       )
   - uid: mondoo-aws-security-cloudwatch-org-change-alarm-terraform-hcl
@@ -45028,35 +45021,15 @@ queries:
   - uid: mondoo-aws-security-iam-unused-credentials-disabled-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.iam.credentialReport.where(
-        passwordEnabled == true &&
-        properties['user'] != "<root_account>" &&
-        passwordLastUsed == null
-      ).length == 0
-      aws.iam.credentialReport.where(
-        passwordEnabled == true &&
-        properties['user'] != "<root_account>" &&
-        passwordLastUsed != null &&
-        time.now - passwordLastUsed > props.mondooAWSSecurityCredentialInactivityThreshold * time.day
-      ).length == 0
-      aws.iam.credentialReport.where(
-        accessKey1Active == true &&
-        accessKey1LastUsedDate == null
-      ).length == 0
-      aws.iam.credentialReport.where(
-        accessKey1Active == true &&
-        accessKey1LastUsedDate != null &&
-        time.now - accessKey1LastUsedDate > props.mondooAWSSecurityCredentialInactivityThreshold * time.day
-      ).length == 0
-      aws.iam.credentialReport.where(
-        accessKey2Active == true &&
-        accessKey2LastUsedDate == null
-      ).length == 0
-      aws.iam.credentialReport.where(
-        accessKey2Active == true &&
-        accessKey2LastUsedDate != null &&
-        time.now - accessKey2LastUsedDate > props.mondooAWSSecurityCredentialInactivityThreshold * time.day
-      ).length == 0
+      aws.iam.credentialReport.where(passwordEnabled && isRoot == false).all(
+        passwordInactiveDays <= props.mondooAWSSecurityCredentialInactivityThreshold
+      )
+      aws.iam.credentialReport.where(accessKey1Active).all(
+        accessKey1InactiveDays <= props.mondooAWSSecurityCredentialInactivityThreshold
+      )
+      aws.iam.credentialReport.where(accessKey2Active).all(
+        accessKey2InactiveDays <= props.mondooAWSSecurityCredentialInactivityThreshold
+      )
   - uid: mondoo-aws-security-iam-instance-role-no-admin-access
     title: Ensure EC2 instance roles do not grant administrator access
     impact: 85
@@ -65046,13 +65019,7 @@ queries:
       aws.transfer.connectors.all(
         accessRole != null &&
         accessRole.inlinePolicies.length == 0 &&
-        accessRole.attachedPolicies.all(
-          defaultVersion.document['Statement'].all(
-            _['Effect'].upcase == "DENY" ||
-            [_['Resource']].flat.none(_ == "*") &&
-            [_['Action']].flat.none(_ == "*" || _ == "s3:*")
-          )
-        )
+        accessRole.attachedPolicies.none(hasWildcardAllow)
       )
   - uid: mondoo-aws-security-transfer-connector-logging-role
     title: Ensure Transfer Family connectors have a loggingRole configured
