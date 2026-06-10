@@ -68,7 +68,18 @@ func (em *executionManager) Start() {
 	em.wg.Add(1)
 	go func() {
 		defer em.wg.Done()
-		defer health.ReportPanic("cnspec", cnspec.Version, cnspec.Build)
+		// current is the code bundle being executed; the deferred panic
+		// reporter snapshots it at crash time so the report carries WHICH
+		// query was running, not just where the engine died. The recover
+		// stays at the goroutine top — recovering closer to the query and
+		// re-panicking would truncate the stacktrace.
+		var current *llx.CodeBundle
+		defer health.ReportPanicWithTags("cnspec", cnspec.Version, cnspec.Build, func() map[string]string {
+			if current == nil {
+				return nil
+			}
+			return health.QueryPanicTags(current.CodeV2.GetId(), current.Source)
+		})
 		for {
 			// Prioritize stopChan
 			select {
@@ -98,7 +109,10 @@ func (em *executionManager) Start() {
 					props[k] = r.Data
 				}
 
-				if err := em.executeCodeBundle(item.codeBundle, props, errMsg); err != nil {
+				current = item.codeBundle
+				err := em.executeCodeBundle(item.codeBundle, props, errMsg)
+				current = nil
+				if err != nil {
 					// an error is returned if we cannot execute a query. This happens
 					// if the lumi runtime doesn't report back expected data, there is
 					// a problem with the lumi runtime, or the query is somehow invalid.
