@@ -1028,9 +1028,13 @@ queries:
   - uid: mondoo-aws-security-eks-cluster-private-controlplane-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_eks_cluster")
     mql: |
-      eksState = terraform.resources("aws_eks_cluster").map(values.vpc_config).flat
-      eksState.all(_['endpoint_private_access'] == true)
-      eksState.all(_['endpoint_public_access'] == false)
+      terraform.resources("aws_eks_cluster").all(
+        values.vpc_config != empty &&
+        values.vpc_config.all(
+          _['endpoint_private_access'] == true &&
+          _['endpoint_public_access'] == false
+        )
+      )
   - uid: mondoo-aws-security-eks-cluster-private-controlplane-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_eks_cluster")
     mql: |
@@ -3694,8 +3698,10 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains( nameLabel == "aws_instance")
     mql: |
       terraform.resources("aws_instance").all(
-        values.metadata_options != empty && values.metadata_options[0].http_endpoint == "disabled" ||
-        values.metadata_options != empty && values.metadata_options[0].http_tokens == "required"
+        values.metadata_options != empty &&
+        values.metadata_options.all(
+          _['http_endpoint'] == "disabled" || _['http_tokens'] == "required"
+        )
       )
   - uid: mondoo-aws-security-ec2-imdsv2-check-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains( type == "aws_instance")
@@ -12467,7 +12473,8 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_s3_bucket_server_side_encryption_configuration")
     mql: |
       terraform.resources("aws_s3_bucket_server_side_encryption_configuration").all(
-        values.rule[0].apply_server_side_encryption_by_default != empty
+        values.rule.length == 1 &&
+        values.rule.all(_['apply_server_side_encryption_by_default'].length == 1)
       )
   - uid: mondoo-aws-security-s3-bucket-server-side-encryption-enabled-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_s3_bucket_server_side_encryption_configuration")
@@ -13127,7 +13134,10 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudfront_distribution")
     mql: |
       terraform.resources("aws_cloudfront_distribution").all(
-        values.default_cache_behavior.all(_['viewer_protocol_policy'] != "allow-all")
+        values.default_cache_behavior == empty ||
+        values.default_cache_behavior.all(
+          _['viewer_protocol_policy'] == "redirect-to-https" || _['viewer_protocol_policy'] == "https-only"
+        )
       )
   - uid: mondoo-aws-security-cloudfront-viewer-policy-https-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_cloudfront_distribution")
@@ -14411,7 +14421,8 @@ queries:
     mql: |
       terraform.resources("aws_opensearch_domain").all(
         values.log_publishing_options != empty &&
-        values.log_publishing_options.any(log_type == "AUDIT_LOGS")
+        values.log_publishing_options.where(_['log_type'] == "AUDIT_LOGS") != empty &&
+        values.log_publishing_options.where(_['log_type'] == "AUDIT_LOGS").all(_['enabled'] != false)
       )
   - uid: mondoo-aws-security-opensearch-audit-logging-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_opensearch_domain")
@@ -20403,8 +20414,8 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudfront_distribution")
     mql: |
       terraform.resources("aws_cloudfront_distribution").all(
-        values.viewer_certificate != empty &&
-        values.viewer_certificate.all(minimum_protocol_version == /TLSv1\.2/)
+        values.viewer_certificate == empty ||
+        values.viewer_certificate.all(_['minimum_protocol_version'] == /TLSv1\.2/)
       )
   - uid: mondoo-aws-security-cloudfront-minimum-tls-version-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_cloudfront_distribution")
@@ -21928,7 +21939,9 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_instance")
     mql: |
       terraform.resources("aws_instance").all(
-        values.metadata_options != empty && values.metadata_options[0].http_put_response_hop_limit == 1
+        values.metadata_options == empty || values.metadata_options.all(
+          _['http_put_response_hop_limit'] == null || _['http_put_response_hop_limit'] == 1
+        )
       )
   - uid: mondoo-aws-security-ec2-imds-hop-limit-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_instance")
@@ -22973,7 +22986,7 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_codebuild_project")
     mql: |
       terraform.resources("aws_codebuild_project").all(
-        values.source[0].insecure_ssl != true
+        values.source == empty || values.source.all(_['insecure_ssl'] != true)
       )
   - uid: mondoo-aws-security-codebuild-source-ssl-verification-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_codebuild_project")
@@ -24563,7 +24576,8 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_timestreaminfluxdb_db_instance")
     mql: |
       terraform.resources("aws_timestreaminfluxdb_db_instance").all(
-      values.log_delivery_configuration != empty
+      values.log_delivery_configuration != empty &&
+      values.log_delivery_configuration.all(_ != empty)
       )
   - uid: mondoo-aws-security-timestream-influxdb-logging-enabled-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_timestreaminfluxdb_db_instance")
@@ -26324,7 +26338,7 @@ queries:
     mql: |
       terraform.resources("aws_lambda_function").all(
         values.environment == empty ||
-        values.kms_key_arn != ""
+        values.kms_key_arn != empty
       )
   - uid: mondoo-aws-security-lambda-env-encryption-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_lambda_function")
@@ -35526,9 +35540,12 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_glue_data_catalog_encryption_settings")
     mql: |
       terraform.resources("aws_glue_data_catalog_encryption_settings").all(
-        values.data_catalog_encryption_settings != empty &&
+        values.data_catalog_encryption_settings == empty ||
         values.data_catalog_encryption_settings.all(
-          _['encryption_at_rest'] != empty
+          _['encryption_at_rest'] == empty ||
+          _['encryption_at_rest'].all(
+            _['catalog_encryption_mode'] == /SSE-KMS/
+          )
         )
       )
   - uid: mondoo-aws-security-glue-catalog-encryption-enabled-terraform-plan
@@ -37690,7 +37707,8 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_sagemaker_model")
     mql: |
       terraform.resources("aws_sagemaker_model").all(
-      values.vpc_config != empty
+      values.vpc_config != empty &&
+      values.vpc_config.all(_['subnets'] != empty)
       )
   - uid: mondoo-aws-security-sagemaker-model-vpc-configured-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_sagemaker_model")
@@ -40184,7 +40202,7 @@ queries:
     mql: |
       terraform.resources("aws_msk_cluster").all(
       values.encryption_info != empty &&
-      values.encryption_info.all(_['encryption_at_rest_kms_key_arn'] != empty)
+      values.encryption_info.all(_['encryption_at_rest_config'] != empty && _['encryption_at_rest_config'].all(_['kms_key_arn'] != empty))
       )
   - uid: mondoo-aws-security-msk-encryption-at-rest-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_msk_cluster")
@@ -40534,7 +40552,8 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_msk_cluster")
     mql: |
       terraform.resources("aws_msk_cluster").all(
-      values.logging_info != empty
+      values.logging_info != empty &&
+      values.logging_info.all(_['broker_logs'] != empty)
       )
   - uid: mondoo-aws-security-msk-logging-enabled-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_msk_cluster")
@@ -46151,7 +46170,8 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_elasticsearch_domain")
     mql: |
       terraform.resources("aws_elasticsearch_domain").all(
-      values.log_publishing_options != empty
+      values.log_publishing_options != empty &&
+      values.log_publishing_options.all(_['log_type'] == "AUDIT_LOGS")
       )
   - uid: mondoo-aws-security-elasticsearch-audit-logging-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_elasticsearch_domain")
@@ -49442,8 +49462,10 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_config_configuration_aggregator")
     mql: |
       terraform.resources("aws_config_configuration_aggregator").all(
-        values['account_aggregation_source'].all(_['all_regions'] == true) ||
-        values['organization_aggregation_source'] != null && values['organization_aggregation_source']['all_regions'] == true
+        values['account_aggregation_source'] == empty || values['account_aggregation_source'].all(_['all_regions'] == true)
+      )
+      terraform.resources("aws_config_configuration_aggregator").all(
+        values['organization_aggregation_source'] == empty || values['organization_aggregation_source'].all(_['all_regions'] == true)
       )
   - uid: mondoo-aws-security-config-aggregator-all-regions-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_config_configuration_aggregator")
