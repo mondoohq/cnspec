@@ -70,9 +70,8 @@ func (em *executionManager) Start() {
 		defer em.wg.Done()
 		// current is the code bundle being executed; the deferred panic
 		// reporter snapshots it at crash time so the report carries WHICH
-		// query was running, not just where the engine died (the gap that
-		// slowed down INC-2026-06-10-client-panic-k8s). The recover stays
-		// at the goroutine top — recovering closer to the query and
+		// query was running, not just where the engine died. The recover
+		// stays at the goroutine top — recovering closer to the query and
 		// re-panicking would truncate the stacktrace.
 		var current *llx.CodeBundle
 		defer health.ReportPanicWithTags("cnspec", cnspec.Version, cnspec.Build, func() map[string]string {
