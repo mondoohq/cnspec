@@ -111,7 +111,9 @@ func (em *executionManager) Start() {
 				}
 
 				current = item.codeBundle
-				if err := em.executeCodeBundle(item.codeBundle, props, errMsg); err != nil {
+				err := em.executeCodeBundle(item.codeBundle, props, errMsg)
+				current = nil
+				if err != nil {
 					// an error is returned if we cannot execute a query. This happens
 					// if the lumi runtime doesn't report back expected data, there is
 					// a problem with the lumi runtime, or the query is somehow invalid.
