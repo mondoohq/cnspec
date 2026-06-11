@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-docker-best-practices
     name: Mondoo Dockerfile Best Practices
-    version: 1.2.0
+    version: 1.2.1
     license: BUSL-1.1
     tags:
       mondoo.com/category: best-practices
@@ -694,6 +694,14 @@ queries:
             HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
               CMD pg_isready -U postgres || exit 1
             ```
+
+            The health check command must exist inside the final image. Minimal bases such as slim, Alpine, and distroless images often ship without `curl`. If the test command is missing, every probe fails and the container reports unhealthy even when the application works correctly. Either install the tool in the image, use one the base already provides, or build a small health command into the application itself:
+
+            ```dockerfile
+            # Alpine and other BusyBox-based images provide wget:
+            HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+              CMD wget -q --spider http://localhost:8080/health || exit 1
+            ```
     refs:
       - url: https://docs.docker.com/reference/dockerfile/#healthcheck
         title: Dockerfile Reference - HEALTHCHECK
@@ -821,10 +829,12 @@ queries:
             RUN npm install
             ```
 
-            If you need to run a command in a specific directory without changing the persistent working directory, use a subshell:
+            If a build step needs to run in a temporary directory, set WORKDIR for that step and reset it afterward. The size cost is at most an empty directory in the image:
 
             ```dockerfile
-            RUN (cd /tmp/build && make install)
+            WORKDIR /tmp/build
+            RUN make && make install
+            WORKDIR /app
             ```
     refs:
       - url: https://docs.docker.com/reference/dockerfile/#workdir
@@ -882,7 +892,7 @@ queries:
         **Why this matters**
 
         - **Build failures:** With multiple source files, Docker expects the destination to be a directory indicated by a trailing slash. Without it, the build may fail with an ambiguous error.
-        - **Accidental overwrites:** If only two arguments are provided and the destination does not end with `/`, Docker treats it as a file path, overwriting the destination with the last source file rather than copying both files into a directory.
+        - **Required by Docker:** When a COPY instruction lists multiple sources, Docker requires the destination to be a directory ending with `/` and rejects the instruction with a build error otherwise.
         - **Clarity:** A trailing slash explicitly communicates that the destination is a directory, making the Dockerfile easier to understand and maintain.
       audit: |
         Inspect the Dockerfile to confirm multi-source COPY destinations end with `/`:
@@ -898,7 +908,7 @@ queries:
             Add a trailing slash to COPY destinations when copying multiple files:
 
             ```dockerfile
-            # Instead of: ambiguous, may fail or overwrite
+            # Instead of: the build fails because Docker requires a directory destination
             COPY file1.txt file2.txt /app
 
             # Use: clearly copies into the /app/ directory
