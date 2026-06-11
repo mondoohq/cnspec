@@ -385,13 +385,19 @@ queries:
                 aide --init
                 ```
 
-            2. Edit the root crontab:
+            2. Copy the newly created database into place so scheduled checks can use it:
+
+                ```bash
+                mv /var/lib/aide/aide.db.new.gz /var/lib/aide/aide.db.gz
+                ```
+
+            3. Edit the root crontab:
 
                 ```bash
                 crontab -u root -e
                 ```
 
-                Add the following line to the crontab:
+                Add the following line to the crontab. On Debian and Ubuntu systems the AIDE binary is `/usr/bin/aide`; adjust the path accordingly:
 
                 ```crontab
                 0 5 * * * /usr/sbin/aide --check
@@ -405,7 +411,13 @@ queries:
                 aide --init
                 ```
 
-            2. Create the systemd service by creating the file `/etc/systemd/system/aidecheck.service` and adding the following lines:
+            2. Copy the newly created database into place so scheduled checks can use it:
+
+                ```bash
+                mv /var/lib/aide/aide.db.new.gz /var/lib/aide/aide.db.gz
+                ```
+
+            3. Create the systemd service by creating the file `/etc/systemd/system/aidecheck.service` and adding the following lines. On Debian and Ubuntu systems use `/usr/bin/aide` in `ExecStart`:
 
                 ```ini
                 [Unit]
@@ -419,7 +431,7 @@ queries:
                 WantedBy=multi-user.target
                 ```
 
-            3. Create the systemd timer by creating or editing the file `/etc/systemd/system/aidecheck.timer` and add the following lines:
+            4. Create the systemd timer by creating or editing the file `/etc/systemd/system/aidecheck.timer` and add the following lines:
 
                 ```ini
                 [Unit]
@@ -433,7 +445,7 @@ queries:
                 WantedBy=multi-user.target
                 ```
 
-            4. Configure the service and timer to run:
+            5. Configure the service and timer to run:
 
                 ```bash
                 chown root:root /etc/systemd/system/aidecheck.*
@@ -484,8 +496,13 @@ queries:
             fi
 
             # Add cron job for daily check at 5AM if not already present
-            CRON_LINE="0 5 * * * /usr/sbin/aide --check"
-            (crontab -l 2>/dev/null | grep -v -F "$CRON_LINE" ; echo "$CRON_LINE") | crontab -
+            AIDE_BIN="$(command -v aide || true)"
+            if [ -z "$AIDE_BIN" ]; then
+              echo "ERROR: aide not found" >&2
+              exit 1
+            fi
+            CRON_LINE="0 5 * * * $AIDE_BIN --check"
+            (crontab -l 2>/dev/null | grep -v -F "aide --check" ; echo "$CRON_LINE") | crontab -
 
             echo "AIDE daily check scheduled at 5AM via cron."
             ```
@@ -493,7 +510,7 @@ queries:
           desc: |
             **Using Ansible**
 
-            Use this Ansible playbook to run AIDE using a systemd timer:
+            Use this Ansible playbook to install AIDE, initialize its database, and run the check using a systemd timer. On Debian and Ubuntu systems change `ExecStart` to `/usr/bin/aide`:
 
             ```yaml
             ---
@@ -502,6 +519,26 @@ queries:
               become: true
 
               tasks:
+                - name: Ensure AIDE is installed
+                  ansible.builtin.package:
+                    name: aide
+                    state: present
+
+                - name: Check whether the AIDE database exists
+                  ansible.builtin.stat:
+                    path: /var/lib/aide/aide.db.gz
+                  register: aide_db
+
+                - name: Initialize the AIDE database
+                  ansible.builtin.command: aide --init
+                  when: not aide_db.stat.exists
+
+                - name: Copy the new AIDE database into place
+                  ansible.builtin.command:
+                    cmd: mv /var/lib/aide/aide.db.new.gz /var/lib/aide/aide.db.gz
+                    creates: /var/lib/aide/aide.db.gz
+                  when: not aide_db.stat.exists
+
                 - name: Create systemd service unit for AIDE check
                   ansible.builtin.copy:
                     dest: /etc/systemd/system/aidecheck.service
@@ -640,6 +677,22 @@ queries:
 
                 ```bash
                 sysctl -w fs.suid_dumpable=0
+                ```
+
+            3. Configure systemd-coredump if present:
+
+                If the file `/etc/systemd/coredump.conf` exists, set these options in the `[Coredump]` section:
+
+                ```ini
+                [Coredump]
+                Storage=none
+                ProcessSizeMax=0
+                ```
+
+                Run this command to apply the change:
+
+                ```bash
+                systemctl daemon-reload
                 ```
         - id: bash
           desc: |
@@ -1696,7 +1749,7 @@ queries:
                     owner: root
                     group: root
                     mode: '0644'
-                    content:
+                    content: |
                       blacklist dccp
                       install dccp /bin/false
             ```
@@ -2053,7 +2106,13 @@ queries:
           desc: |
             **Using the CLI**
 
-            Run this command to remove the prelink package:
+            Run this command to restore binaries to their original state before removing the package. Prelinked binaries remain modified on disk after the package is removed, which keeps corrupting AIDE baselines and weakening ASLR:
+
+            ```bash
+            prelink -ua
+            ```
+
+            Then remove the prelink package:
 
             ### RHEL/Fedora/Amazon Linux and derivatives
 
@@ -2066,6 +2125,12 @@ queries:
             ```bash
             apt-get purge prelink
             ```
+
+            ### SLES and openSUSE
+
+            ```bash
+            zypper remove prelink
+            ```
         - id: bash
           desc: |
             **Using a Bash Script**
@@ -2076,6 +2141,11 @@ queries:
             #!/bin/bash
             set -e
 
+            if command -v prelink >/dev/null 2>&1; then
+              echo "Restoring prelinked binaries to their original state..."
+              prelink -ua
+            fi
+
             if command -v yum >/dev/null 2>&1; then
               echo "Detected yum-based system. Removing prelink..."
               yum remove -y prelink
@@ -2085,6 +2155,9 @@ queries:
             elif command -v apt-get >/dev/null 2>&1; then
               echo "Detected apt-based system. Removing prelink..."
               apt-get purge -y prelink
+            elif command -v zypper >/dev/null 2>&1; then
+              echo "Detected zypper-based system. Removing prelink..."
+              zypper remove -y prelink
             else
               echo "No supported package manager found. Please remove prelink manually."
               exit 1
@@ -2104,6 +2177,15 @@ queries:
               become: true
 
               tasks:
+                - name: Check whether prelink is installed
+                  ansible.builtin.stat:
+                    path: /usr/sbin/prelink
+                  register: prelink_bin
+
+                - name: Restore prelinked binaries to their original state
+                  ansible.builtin.command: prelink -ua
+                  when: prelink_bin.stat.exists
+
                 - name: Remove prelink on RHEL/Fedora/Amazon Linux
                   ansible.builtin.yum:
                     name: prelink
@@ -2115,6 +2197,12 @@ queries:
                     name: prelink
                     state: absent
                   when: ansible_os_family == "Debian"
+
+                - name: Remove prelink on SLES/openSUSE
+                  ansible.builtin.zypper:
+                    name: prelink
+                    state: absent
+                  when: ansible_os_family == "Suse"
             ```
     refs:
       - url: https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/9/html/security_hardening/index
@@ -2177,8 +2265,10 @@ queries:
 
             ### Debian/Ubuntu and derivatives
 
+            Purge every package whose name starts with `xserver`, because removing only `xserver-xorg` and `xserver-common` leaves dependencies such as `xserver-xorg-core` and the video and input driver packages installed:
+
             ```bash
-            apt-get purge xserver-xorg xserver-common
+            apt-get purge '^xserver'
             ```
 
             ### SLES and openSUSE
@@ -2204,7 +2294,7 @@ queries:
               dnf remove -y xorg-x11*
             elif command -v apt-get >/dev/null 2>&1; then
               echo "Detected apt-based system. Removing X Window System packages..."
-              apt-get purge -y xserver-xorg xserver-common
+              apt-get purge -y '^xserver'
             elif command -v zypper >/dev/null 2>&1; then
               echo "Detected zypper-based system. Removing X Window System packages..."
               zypper remove -y xorg-x11-server
@@ -2217,7 +2307,7 @@ queries:
           desc: |
             **Using Ansible**
 
-            Use this Ansible playbook to remove the X Windows System packages:
+            Use this Ansible playbook to remove the X Windows System packages. The `xserver*` pattern relies on the fnmatch wildcard support that the apt module documents for its `name` parameter:
 
             ```yaml
             ---
@@ -2234,9 +2324,7 @@ queries:
 
                 - name: Remove X Window System packages on Debian/Ubuntu
                   ansible.builtin.apt:
-                    name:
-                      - xserver-xorg
-                      - xserver-common
+                    name: xserver*
                     state: absent
                     purge: yes
                   when: ansible_os_family == "Debian"
@@ -2298,11 +2386,11 @@ queries:
           desc: |
             **Using the CLI**
 
-            Run this command to stop and disable `avahi-daemon`:
+            Run these commands to stop and disable the `avahi-daemon` service and its activation socket. The socket must be included because it restarts the daemon on the next mDNS request:
 
             ```bash
-            systemctl stop avahi-daemon
-            systemctl disable avahi-daemon
+            systemctl stop avahi-daemon.socket avahi-daemon.service
+            systemctl disable avahi-daemon.socket avahi-daemon.service
             ```
 
             Note: Since the `avahi-daemon` service is often interdependent with other services, it might not be enough to disable the service because other services will likely restart the service automatically.
@@ -2310,7 +2398,7 @@ queries:
             To make the service `avahi-daemon` invisible to other services run this command:
 
             ```bash
-            systemctl mask avahi-daemon
+            systemctl mask avahi-daemon.socket avahi-daemon.service
             ```
         - id: bash
           desc: |
@@ -2323,9 +2411,9 @@ queries:
             set -e
 
             echo "Stopping, disabling, and masking Avahi daemon..."
-            systemctl stop avahi-daemon
-            systemctl disable avahi-daemon
-            systemctl mask avahi-daemon
+            systemctl stop avahi-daemon.socket avahi-daemon.service
+            systemctl disable avahi-daemon.socket avahi-daemon.service
+            systemctl mask avahi-daemon.socket avahi-daemon.service
             ```
         - id: ansible
           desc: |
@@ -2340,12 +2428,15 @@ queries:
               become: true
 
               tasks:
-                - name: Ensure Avahi daemon is stopped and disabled
+                - name: Ensure the Avahi daemon and its activation socket are stopped and disabled
                   ansible.builtin.systemd:
-                    name: avahi-daemon
+                    name: "{{ item }}"
                     state: stopped
                     enabled: no
                     masked: true
+                  loop:
+                    - avahi-daemon.socket
+                    - avahi-daemon.service
             ```
     refs:
       - url: https://www.freedesktop.org/wiki/Software/systemd/
@@ -2398,11 +2489,11 @@ queries:
           desc: |
             **Using the CLI**
 
-            Run this command to stop and disable `cups`:
+            Run these commands to stop and disable the `cups` service together with its activation socket and path units. The socket and path units must be included because they restart the service on the next print or socket event:
 
             ```bash
-            systemctl stop cups
-            systemctl disable cups
+            systemctl stop cups.socket cups.path cups.service
+            systemctl disable cups.socket cups.path cups.service
             ```
 
             Note: Since the `cups` service is often interdependent with other services, it might not be enough to disable the service because other services will likely restart the service automatically.
@@ -2410,7 +2501,7 @@ queries:
             To make the service `cups` invisible to other services run this command:
 
             ```bash
-            systemctl mask cups
+            systemctl mask cups.socket cups.path cups.service
             ```
         - id: bash
           desc: |
@@ -2423,9 +2514,9 @@ queries:
             set -e
 
             echo "Stopping, disabling, and masking CUPS service..."
-            systemctl stop cups
-            systemctl disable cups
-            systemctl mask cups
+            systemctl stop cups.socket cups.path cups.service
+            systemctl disable cups.socket cups.path cups.service
+            systemctl mask cups.socket cups.path cups.service
             ```
         - id: ansible
           desc: |
@@ -2440,12 +2531,16 @@ queries:
               become: true
 
               tasks:
-                - name: Ensure CUPS service is stopped and disabled
+                - name: Ensure CUPS units are stopped and disabled
                   ansible.builtin.systemd:
-                    name: cups
+                    name: "{{ item }}"
                     state: stopped
                     enabled: no
                     masked: true
+                  loop:
+                    - cups.socket
+                    - cups.path
+                    - cups.service
             ```
     refs:
       - url: https://www.freedesktop.org/wiki/Software/systemd/
@@ -2694,20 +2789,17 @@ queries:
           desc: |
             **Using the CLI**
 
-            1. Run this command to stop and disable `nfs` and `rpcbind`:
+            1. Run these commands to stop and disable `nfs-server` and `rpcbind`, including the `rpcbind.socket` unit that would otherwise restart `rpcbind` on the next RPC connection. A unit that is not installed reports an error that can be ignored:
 
                 ```bash
-                systemctl stop nfs-server
-                systemctl stop rpcbind
+                systemctl stop nfs-server rpcbind.socket rpcbind
 
-                systemctl disable nfs-server
-                systemctl disable rpcbind
+                systemctl disable nfs-server rpcbind.socket rpcbind
                 ```
 
-            2. To make the service `nfs-server` and `rpcbind` invisible to other services run this command:
+            2. To make the `nfs-server` and `rpcbind` units invisible to other services run this command:
                 ```bash
-                systemctl mask nfs-server
-                systemctl mask rpcbind
+                systemctl mask nfs-server rpcbind.socket rpcbind
                 ```
         - id: bash
           desc: |
@@ -2719,11 +2811,14 @@ queries:
             #!/bin/bash
             set -e
 
-            echo "Stopping and disabling NFS and RPC services..."
-            systemctl stop nfs-server
-            systemctl stop rpcbind
-            systemctl disable nfs-server
-            systemctl disable rpcbind
+            echo "Stopping, disabling, and masking NFS and RPC services..."
+            for unit in nfs-server.service rpcbind.socket rpcbind.service; do
+              if [ -n "$(systemctl list-unit-files "$unit" --no-legend 2>/dev/null)" ]; then
+                systemctl stop "$unit"
+                systemctl disable "$unit"
+                systemctl mask "$unit"
+              fi
+            done
             ```
         - id: ansible
           desc: |
@@ -2738,7 +2833,7 @@ queries:
               become: true
 
               tasks:
-                - name: Ensure NFS and RPC services are stopped and disabled
+                - name: Ensure NFS and RPC units are stopped and disabled
                   ansible.builtin.systemd:
                     name: "{{ item }}"
                     state: stopped
@@ -2746,7 +2841,12 @@ queries:
                     masked: true
                   loop:
                     - nfs-server
+                    - rpcbind.socket
                     - rpcbind
+                  register: nfs_units
+                  failed_when:
+                    - nfs_units.failed
+                    - "'Could not find the requested service' not in (nfs_units.msg | default(''))"
             ```
     refs:
       - url: https://www.freedesktop.org/wiki/Software/systemd/
@@ -2841,16 +2941,23 @@ queries:
               become: true
 
               tasks:
-                - name: Replace no_root_squash with root_squash in /etc/exports
+                - name: Find export definition files in /etc/exports.d
+                  ansible.builtin.find:
+                    paths: /etc/exports.d
+                    patterns: '*.exports'
+                  register: exports_d_files
+
+                - name: Replace no_root_squash with root_squash in export definitions
                   ansible.builtin.replace:
-                    path: /etc/exports
+                    path: "{{ item }}"
                     regexp: '\bno_root_squash\b'
                     replace: root_squash
+                  loop: "{{ ['/etc/exports'] + (exports_d_files.files | map(attribute='path') | list) }}"
                   register: exports_updated
 
                 - name: Reapply the NFS export table
                   ansible.builtin.command: exportfs -ra
-                  when: exports_updated.changed
+                  when: exports_updated.results | selectattr('changed') | list | length > 0
             ```
     refs:
       - url: https://man7.org/linux/man-pages/man5/exports.5.html
@@ -2910,12 +3017,11 @@ queries:
             Run this command to stop and disable `named` and `bind9`:
 
             ```bash
-            systemctl stop named
-            systemctl stop bind9
-
-            systemctl disable named
-            systemctl disable bind9
+            systemctl stop named bind9
+            systemctl disable named bind9
             ```
+
+            Typically only one of these alternative units is installed. A unit that is not installed reports an error that can be ignored; the commands still apply to the units that exist.
         - id: bash
           desc: |
             **Using a Bash Script**
@@ -2927,10 +3033,12 @@ queries:
             set -e
 
             echo "Stopping and disabling DNS server services..."
-            systemctl stop named
-            systemctl stop bind9
-            systemctl disable named
-            systemctl disable bind9
+            for unit in named.service bind9.service; do
+              if [ -n "$(systemctl list-unit-files "$unit" --no-legend 2>/dev/null)" ]; then
+                systemctl stop "$unit"
+                systemctl disable "$unit"
+              fi
+            done
             ```
         - id: ansible
           desc: |
@@ -2953,6 +3061,10 @@ queries:
                   loop:
                     - named
                     - bind9
+                  register: dns_units
+                  failed_when:
+                    - dns_units.failed
+                    - "'Could not find the requested service' not in (dns_units.msg | default(''))"
             ```
     refs:
       - url: https://www.freedesktop.org/wiki/Software/systemd/
@@ -3012,15 +3124,11 @@ queries:
             Run this command to stop and disable `vsftpd`, `proftpd`, and `pure-ftpd`:
 
             ```bash
-            systemctl stop vsftpd
-            systemctl disable vsftpd
-
-            systemctl stop proftpd
-            systemctl disable proftpd
-
-            systemctl stop pure-ftpd
-            systemctl disable pure-ftpd
+            systemctl stop vsftpd proftpd pure-ftpd
+            systemctl disable vsftpd proftpd pure-ftpd
             ```
+
+            Typically only one of these alternative units is installed. A unit that is not installed reports an error that can be ignored; the commands still apply to the units that exist.
         - id: bash
           desc: |
             **Using a Bash Script**
@@ -3032,12 +3140,12 @@ queries:
             set -e
 
             echo "Stopping and disabling FTP server services..."
-            systemctl stop vsftpd
-            systemctl stop proftpd
-            systemctl stop pure-ftpd
-            systemctl disable vsftpd
-            systemctl disable proftpd
-            systemctl disable pure-ftpd
+            for unit in vsftpd.service proftpd.service pure-ftpd.service; do
+              if [ -n "$(systemctl list-unit-files "$unit" --no-legend 2>/dev/null)" ]; then
+                systemctl stop "$unit"
+                systemctl disable "$unit"
+              fi
+            done
             ```
         - id: ansible
           desc: |
@@ -3061,6 +3169,10 @@ queries:
                     - vsftpd
                     - proftpd
                     - pure-ftpd
+                  register: ftp_units
+                  failed_when:
+                    - ftp_units.failed
+                    - "'Could not find the requested service' not in (ftp_units.msg | default(''))"
             ```
     refs:
       - url: https://www.freedesktop.org/wiki/Software/systemd/
@@ -3122,15 +3234,11 @@ queries:
             Run this command to stop and disable `httpd`, `apache2`, and `nginx`:
 
             ```bash
-            systemctl stop httpd
-            systemctl disable httpd
-
-            systemctl stop apache2
-            systemctl disable apache2
-
-            systemctl stop nginx
-            systemctl disable nginx
+            systemctl stop httpd apache2 nginx
+            systemctl disable httpd apache2 nginx
             ```
+
+            Typically only one of these alternative units is installed. A unit that is not installed reports an error that can be ignored; the commands still apply to the units that exist.
         - id: bash
           desc: |
             **Using a Bash Script**
@@ -3142,12 +3250,12 @@ queries:
             set -e
 
             echo "Stopping and disabling HTTP server services..."
-            systemctl stop httpd
-            systemctl stop apache2
-            systemctl stop nginx
-            systemctl disable httpd
-            systemctl disable apache2
-            systemctl disable nginx
+            for unit in httpd.service apache2.service nginx.service; do
+              if [ -n "$(systemctl list-unit-files "$unit" --no-legend 2>/dev/null)" ]; then
+                systemctl stop "$unit"
+                systemctl disable "$unit"
+              fi
+            done
             ```
         - id: ansible
           desc: |
@@ -3171,6 +3279,10 @@ queries:
                     - httpd
                     - apache2
                     - nginx
+                  register: http_units
+                  failed_when:
+                    - http_units.failed
+                    - "'Could not find the requested service' not in (http_units.msg | default(''))"
             ```
     refs:
       - url: https://www.freedesktop.org/wiki/Software/systemd/
@@ -3230,12 +3342,11 @@ queries:
             Run this command to stop and disable `dovecot` and `cyrus-imapd`:
 
             ```bash
-            systemctl stop dovecot
-            systemctl disable dovecot
-
-            systemctl stop cyrus-imapd
-            systemctl disable cyrus-imapd
+            systemctl stop dovecot cyrus-imapd
+            systemctl disable dovecot cyrus-imapd
             ```
+
+            Typically only one of these alternative units is installed. A unit that is not installed reports an error that can be ignored; the commands still apply to the units that exist.
         - id: bash
           desc: |
             **Using a Bash Script**
@@ -3247,10 +3358,12 @@ queries:
             set -e
 
             echo "Stopping and disabling IMAP and POP3 server services..."
-            systemctl stop dovecot
-            systemctl stop cyrus-imapd
-            systemctl disable dovecot
-            systemctl disable cyrus-imapd
+            for unit in dovecot.service cyrus-imapd.service; do
+              if [ -n "$(systemctl list-unit-files "$unit" --no-legend 2>/dev/null)" ]; then
+                systemctl stop "$unit"
+                systemctl disable "$unit"
+              fi
+            done
             ```
         - id: ansible
           desc: |
@@ -3273,6 +3386,10 @@ queries:
                   loop:
                     - dovecot
                     - cyrus-imapd
+                  register: mail_units
+                  failed_when:
+                    - mail_units.failed
+                    - "'Could not find the requested service' not in (mail_units.msg | default(''))"
             ```
     refs:
       - url: https://www.freedesktop.org/wiki/Software/systemd/
@@ -3332,12 +3449,11 @@ queries:
             Run these commands to stop and disable `smb` and `smbd`:
 
             ```bash
-            systemctl stop smb
-            systemctl stop smbd
-
-            systemctl disable smb
-            systemctl disable smbd
+            systemctl stop smb smbd
+            systemctl disable smb smbd
             ```
+
+            Typically only one of these alternative units is installed. A unit that is not installed reports an error that can be ignored; the commands still apply to the units that exist.
         - id: bash
           desc: |
             **Using a Bash Script**
@@ -3349,10 +3465,12 @@ queries:
             set -e
 
             echo "Stopping and disabling Samba services..."
-            systemctl stop smb
-            systemctl stop smbd
-            systemctl disable smb
-            systemctl disable smbd
+            for unit in smb.service smbd.service; do
+              if [ -n "$(systemctl list-unit-files "$unit" --no-legend 2>/dev/null)" ]; then
+                systemctl stop "$unit"
+                systemctl disable "$unit"
+              fi
+            done
             ```
         - id: ansible
           desc: |
@@ -3375,6 +3493,10 @@ queries:
                   loop:
                     - smb
                     - smbd
+                  register: samba_units
+                  failed_when:
+                    - samba_units.failed
+                    - "'Could not find the requested service' not in (samba_units.msg | default(''))"
             ```
     refs:
       - url: https://www.freedesktop.org/wiki/Software/systemd/
@@ -3434,12 +3556,11 @@ queries:
             Run these commands to stop and disable `squid` and `tinyproxy`:
 
             ```bash
-            systemctl stop squid
-            systemctl stop tinyproxy
-
-            systemctl disable squid
-            systemctl disable tinyproxy
+            systemctl stop squid tinyproxy
+            systemctl disable squid tinyproxy
             ```
+
+            Typically only one of these alternative units is installed. A unit that is not installed reports an error that can be ignored; the commands still apply to the units that exist.
         - id: bash
           desc: |
             **Using a Bash Script**
@@ -3451,10 +3572,12 @@ queries:
             set -e
 
             echo "Stopping and disabling HTTP proxy services..."
-            systemctl stop squid
-            systemctl stop tinyproxy
-            systemctl disable squid
-            systemctl disable tinyproxy
+            for unit in squid.service tinyproxy.service; do
+              if [ -n "$(systemctl list-unit-files "$unit" --no-legend 2>/dev/null)" ]; then
+                systemctl stop "$unit"
+                systemctl disable "$unit"
+              fi
+            done
             ```
         - id: ansible
           desc: |
@@ -3477,6 +3600,10 @@ queries:
                   loop:
                     - squid
                     - tinyproxy
+                  register: proxy_units
+                  failed_when:
+                    - proxy_units.failed
+                    - "'Could not find the requested service' not in (proxy_units.msg | default(''))"
             ```
     refs:
       - url: https://www.freedesktop.org/wiki/Software/systemd/
@@ -3675,6 +3802,19 @@ queries:
                 update-exim4.conf
                 systemctl restart exim4
                 ```
+
+            7. For Sendmail, edit `/etc/mail/sendmail.mc` and ensure the daemon binds only to the loopback address:
+
+                ```text
+                DAEMON_OPTIONS(`Port=smtp,Addr=127.0.0.1, Name=MTA')dnl
+                ```
+
+            8. Rebuild the Sendmail configuration and restart the service:
+
+                ```bash
+                make -C /etc/mail
+                systemctl restart sendmail
+                ```
         - id: bash
           desc: |
             **Using a Bash Script**
@@ -3685,23 +3825,25 @@ queries:
             #!/bin/bash
             set -e
 
-            if [[ -f /etc/postfix/main.cf ]]; then
+            if command -v postconf >/dev/null 2>&1; then
               echo "Configuring Postfix for local-only mode..."
-              sed -i 's/^inet_interfaces = .*/inet_interfaces = loopback-only/' /etc/postfix/main.cf
+              postconf -e 'inet_interfaces = loopback-only'
               systemctl restart postfix
             else
-              echo "Postfix configuration file not found. Skipping Postfix configuration."
+              echo "Postfix not found. Skipping Postfix configuration."
             fi
 
             if [[ -f /etc/exim4/update-exim4.conf.conf ]]; then
               echo "Configuring Exim4 for local-only mode..."
-              sed -i "s/^dc_local_interfaces = .*/dc_local_interfaces='127.0.0.1 ; ::1'/" /etc/exim4/update-exim4.conf.conf
+              sed -i "s/^dc_local_interfaces=.*/dc_local_interfaces='127.0.0.1 ; ::1'/" /etc/exim4/update-exim4.conf.conf
               update-exim4.conf
               systemctl restart exim4
             else
               echo "Exim4 configuration file not found. Skipping Exim4 configuration."
             fi
             ```
+
+            The Postfix portion uses `postconf -e` because it updates `inet_interfaces` whether or not the directive already exists in `main.cf`. The Exim sed pattern matches the `dc_local_interfaces='...'` format that `update-exim4.conf.conf` uses, which has no spaces around the equals sign.
         - id: ansible
           desc: |
             **Using Ansible**
@@ -3811,12 +3953,11 @@ queries:
             Run these commands to stop and disable `ypserv` and `nis`:
 
             ```bash
-            systemctl stop ypserv
-            systemctl stop nis
-
-            systemctl disable ypserv
-            systemctl disable nis
+            systemctl stop ypserv nis
+            systemctl disable ypserv nis
             ```
+
+            Typically only one of these alternative units is installed. A unit that is not installed reports an error that can be ignored; the commands still apply to the units that exist.
         - id: bash
           desc: |
             **Using a Bash Script**
@@ -3828,10 +3969,12 @@ queries:
             set -e
 
             echo "Stopping and disabling NIS server services..."
-            systemctl stop ypserv
-            systemctl stop nis
-            systemctl disable ypserv
-            systemctl disable nis
+            for unit in ypserv.service nis.service; do
+              if [ -n "$(systemctl list-unit-files "$unit" --no-legend 2>/dev/null)" ]; then
+                systemctl stop "$unit"
+                systemctl disable "$unit"
+              fi
+            done
             ```
         - id: ansible
           desc: |
@@ -3854,6 +3997,10 @@ queries:
                   loop:
                     - ypserv
                     - nis
+                  register: nis_units
+                  failed_when:
+                    - nis_units.failed
+                    - "'Could not find the requested service' not in (nis_units.msg | default(''))"
             ```
     refs:
       - url: https://www.freedesktop.org/wiki/Software/systemd/
@@ -4204,9 +4351,11 @@ queries:
             Run these commands to stop and disable `rsync`:
 
             ```bash
-            systemctl stop rsyncd
-            systemctl disable rsyncd
+            systemctl stop rsyncd.socket rsyncd.service
+            systemctl disable rsyncd.socket rsyncd.service
             ```
+
+            The `rsyncd.socket` unit is included because it restarts the daemon on the next inbound connection when socket activation is enabled. A unit that is not installed reports an error that can be ignored.
         - id: bash
           desc: |
             **Using a Bash Script**
@@ -4217,9 +4366,13 @@ queries:
             #!/bin/bash
             set -e
 
-            echo "Stopping and disabling rsyncd service..."
-            systemctl stop rsyncd
-            systemctl disable rsyncd
+            echo "Stopping and disabling rsyncd units..."
+            for unit in rsyncd.socket rsyncd.service; do
+              if [ -n "$(systemctl list-unit-files "$unit" --no-legend 2>/dev/null)" ]; then
+                systemctl stop "$unit"
+                systemctl disable "$unit"
+              fi
+            done
             ```
         - id: ansible
           desc: |
@@ -4234,11 +4387,18 @@ queries:
               become: true
 
               tasks:
-                - name: Ensure rsync service is stopped and disabled
+                - name: Ensure rsync units are stopped and disabled
                   ansible.builtin.systemd:
-                    name: rsyncd
+                    name: "{{ item }}"
                     state: stopped
                     enabled: no
+                  loop:
+                    - rsyncd.socket
+                    - rsyncd
+                  register: rsync_units
+                  failed_when:
+                    - rsync_units.failed
+                    - "'Could not find the requested service' not in (rsync_units.msg | default(''))"
             ```
     refs:
       - url: https://www.freedesktop.org/wiki/Software/systemd/
@@ -4298,12 +4458,11 @@ queries:
             Run these commands to stop and disable `ntalk` and `talkd`:
 
             ```bash
-            systemctl stop ntalk
-            systemctl stop talkd
-
-            systemctl disable ntalk
-            systemctl disable talkd
+            systemctl stop ntalk talkd
+            systemctl disable ntalk talkd
             ```
+
+            Typically only one of these alternative units is installed. A unit that is not installed reports an error that can be ignored; the commands still apply to the units that exist.
         - id: bash
           desc: |
             **Using a Bash Script**
@@ -4315,10 +4474,12 @@ queries:
             set -e
 
             echo "Stopping and disabling talk server services..."
-            systemctl stop ntalk
-            systemctl stop talkd
-            systemctl disable ntalk
-            systemctl disable talkd
+            for unit in ntalk.service talkd.service; do
+              if [ -n "$(systemctl list-unit-files "$unit" --no-legend 2>/dev/null)" ]; then
+                systemctl stop "$unit"
+                systemctl disable "$unit"
+              fi
+            done
             ```
         - id: ansible
           desc: |
@@ -4341,6 +4502,10 @@ queries:
                   loop:
                     - ntalk
                     - talkd
+                  register: talk_units
+                  failed_when:
+                    - talk_units.failed
+                    - "'Could not find the requested service' not in (talk_units.msg | default(''))"
             ```
     refs:
       - url: https://www.freedesktop.org/wiki/Software/systemd/
@@ -4474,8 +4639,6 @@ queries:
                   loop:
                     - { name: 'net.ipv4.ip_forward', value: '0' }
                     - { name: 'net.ipv6.conf.all.forwarding', value: '0' }
-                    - { name: 'net.ipv4.route.flush', value: '1' }
-                    - { name: 'net.ipv6.route.flush', value: '1' }
             ```
     refs:
       - url: https://www.kernel.org/doc/html/latest/admin-guide/sysctl/
@@ -4603,7 +4766,6 @@ queries:
                   loop:
                     - { name: 'net.ipv4.conf.all.send_redirects', value: '0' }
                     - { name: 'net.ipv4.conf.default.send_redirects', value: '0' }
-                    - { name: 'net.ipv4.route.flush', value: '1' }
             ```
     refs:
       - url: https://www.kernel.org/doc/html/latest/admin-guide/sysctl/
@@ -4767,8 +4929,6 @@ queries:
                     - { name: 'net.ipv4.conf.default.accept_source_route', value: '0' }
                     - { name: 'net.ipv6.conf.all.accept_source_route', value: '0' }
                     - { name: 'net.ipv6.conf.default.accept_source_route', value: '0' }
-                    - { name: 'net.ipv4.route.flush', value: '1' }
-                    - { name: 'net.ipv6.route.flush', value: '1' }
             ```
     refs:
       - url: https://www.kernel.org/doc/html/latest/admin-guide/sysctl/
@@ -4931,8 +5091,6 @@ queries:
                     - { name: 'net.ipv4.conf.default.accept_redirects', value: '0' }
                     - { name: 'net.ipv6.conf.all.accept_redirects', value: '0' }
                     - { name: 'net.ipv6.conf.default.accept_redirects', value: '0' }
-                    - { name: 'net.ipv4.route.flush', value: '1' }
-                    - { name: 'net.ipv6.route.flush', value: '1' }
             ```
     refs:
       - url: https://www.kernel.org/doc/html/latest/admin-guide/sysctl/
@@ -5035,10 +5193,6 @@ queries:
             sysctl -w net.ipv4.conf.all.secure_redirects=0
             sysctl -w net.ipv4.conf.default.secure_redirects=0
             sysctl -w net.ipv4.route.flush=1
-
-            sysctl -w net.ipv6.conf.all.secure_redirects=0
-            sysctl -w net.ipv6.conf.default.secure_redirects=0
-            sysctl -w net.ipv6.route.flush=1
             ```
         - id: ansible
           desc: |
@@ -5064,7 +5218,6 @@ queries:
                   loop:
                     - { name: 'net.ipv4.conf.all.secure_redirects', value: '0' }
                     - { name: 'net.ipv4.conf.default.secure_redirects', value: '0' }
-                    - { name: 'net.ipv4.route.flush', value: '1' }
             ```
     refs:
       - url: https://www.kernel.org/doc/html/latest/admin-guide/sysctl/
@@ -5188,7 +5341,6 @@ queries:
                   loop:
                     - { name: 'net.ipv4.conf.all.log_martians', value: '1' }
                     - { name: 'net.ipv4.conf.default.log_martians', value: '1' }
-                    - { name: 'net.ipv4.route.flush', value: '1' }
             ```
     refs:
       - url: https://www.kernel.org/doc/html/latest/admin-guide/sysctl/
@@ -5298,7 +5450,6 @@ queries:
                     reload: yes
                   loop:
                     - { name: 'net.ipv4.icmp_echo_ignore_broadcasts', value: '1' }
-                    - { name: 'net.ipv4.route.flush', value: '1' }
             ```
     refs:
       - url: https://www.kernel.org/doc/html/latest/admin-guide/sysctl/
@@ -5408,7 +5559,6 @@ queries:
                     reload: yes
                   loop:
                     - { name: 'net.ipv4.icmp_ignore_bogus_error_responses', value: '1' }
-                    - { name: 'net.ipv4.route.flush', value: '1' }
             ```
     refs:
       - url: https://www.kernel.org/doc/html/latest/admin-guide/sysctl/
@@ -5532,7 +5682,6 @@ queries:
                   loop:
                     - { name: 'net.ipv4.conf.all.rp_filter', value: '1' }
                     - { name: 'net.ipv4.conf.default.rp_filter', value: '1' }
-                    - { name: 'net.ipv4.route.flush', value: '1' }
             ```
     refs:
       - url: https://www.kernel.org/doc/html/latest/admin-guide/sysctl/
@@ -5617,15 +5766,6 @@ queries:
               echo "net.ipv4.tcp_syncookies = 1" >> /etc/sysctl.d/99-enable-tcp-syncookies.conf
             fi
 
-            # Set net.ipv4.route.flush
-            if grep -q '^net.ipv4.route.flush' /etc/sysctl.conf 2>/dev/null; then
-              echo "Setting net.ipv4.route.flush to 1 in /etc/sysctl.conf"
-              sed -i 's/^net.ipv4.route.flush.*/net.ipv4.route.flush = 1/' /etc/sysctl.conf
-            else
-              echo "Setting net.ipv4.route.flush to 1 in /etc/sysctl.d/99-enable-tcp-syncookies.conf"
-              echo "net.ipv4.route.flush = 1" >> /etc/sysctl.d/99-enable-tcp-syncookies.conf
-            fi
-
             sysctl -w net.ipv4.tcp_syncookies=1
             sysctl -w net.ipv4.route.flush=1
             ```
@@ -5652,7 +5792,6 @@ queries:
                     reload: yes
                   loop:
                     - { name: 'net.ipv4.tcp_syncookies', value: '1' }
-                    - { name: 'net.ipv4.route.flush', value: '1' }
             ```
     refs:
       - url: https://www.kernel.org/doc/html/latest/admin-guide/sysctl/
@@ -5752,15 +5891,6 @@ queries:
               echo "net.ipv6.conf.default.accept_ra = 0" >> /etc/sysctl.d/99-disable-ipv6-router-advertisements.conf
             fi
 
-            # Set net.ipv6.route.flush
-            if grep -q '^net.ipv6.route.flush' /etc/sysctl.conf 2>/dev/null; then
-              echo "Setting net.ipv6.route.flush to 1 in /etc/sysctl.conf"
-              sed -i 's/^net.ipv6.route.flush.*/net.ipv6.route.flush = 1/' /etc/sysctl.conf
-            else
-              echo "Setting net.ipv6.route.flush to 1 in /etc/sysctl.d/99-disable-ipv6-router-advertisements.conf"
-              echo "net.ipv6.route.flush = 1" >> /etc/sysctl.d/99-disable-ipv6-router-advertisements.conf
-            fi
-
             sysctl -w net.ipv6.conf.all.accept_ra=0
             sysctl -w net.ipv6.conf.default.accept_ra=0
             sysctl -w net.ipv6.route.flush=1
@@ -5789,7 +5919,6 @@ queries:
                   loop:
                     - { name: 'net.ipv6.conf.all.accept_ra', value: '0' }
                     - { name: 'net.ipv6.conf.default.accept_ra', value: '0' }
-                    - { name: 'net.ipv6.route.flush', value: '1' }
             ```
     refs:
       - url: https://www.kernel.org/doc/html/latest/admin-guide/sysctl/
@@ -6010,10 +6139,10 @@ queries:
           desc: |
             **Using CLI**
 
-            1. Edit the GRUB configuration file at `/etc/default/grub` to include the `audit=1` parameter in addition to any previous values it may have:
+            1. Edit the GRUB configuration file at `/etc/default/grub` to include the `audit=1` parameter in the `GRUB_CMDLINE_LINUX` value, keeping any previous values it may have:
 
                 ```bash
-                GRUB_CMDLINE_LINUX_DEFAULT="audit=1"
+                GRUB_CMDLINE_LINUX="audit=1"
                 ```
 
             2. Update the GRUB configuration:
@@ -6034,6 +6163,12 @@ queries:
 
                 Replace `<distribution>` with your distribution's directory name (e.g., `centos`, `redhat`, `fedora`).
 
+                On RHEL 8 and later, also update the kernel command line for the installed kernels, because the active boot entries read their parameters from `grubenv` and the BLS entries rather than the regenerated `grub.cfg`:
+
+                ```bash
+                grubby --update-kernel=ALL --args="audit=1"
+                ```
+
                 **Debian/Ubuntu and derivatives**
 
                 ```bash
@@ -6049,8 +6184,6 @@ queries:
             #!/bin/bash
             set -e
 
-            EFI_DIR="/boot/efi/EFI"
-
             # Check if GRUB configuration file exists
             if [ -f /etc/default/grub ]; then
               if grep -q "audit=1" /etc/default/grub; then
@@ -6064,11 +6197,12 @@ queries:
             if command -v update-grub >/dev/null 2>&1; then
               echo "Running update-grub"
               update-grub
-            elif [ -d "$EFI_DIR" ]; then
-              echo "EFI directory found at $EFI_DIR. Updating any grub.cfg files under it."
-              find "$EFI_DIR" -type f -name "grub.cfg" -exec grub2-mkconfig -o {} \;
+            elif command -v grubby >/dev/null 2>&1; then
+              echo "Updating GRUB configuration and the kernel command line"
+              grub2-mkconfig -o /boot/grub2/grub.cfg
+              grubby --update-kernel=ALL --args="audit=1"
             else
-              echo "Running grub2-mkconfig for BIOS install"
+              echo "Running grub2-mkconfig"
               grub2-mkconfig -o /boot/grub2/grub.cfg
             fi
             ```
@@ -6099,6 +6233,10 @@ queries:
                 - name: Regenerate GRUB configuration (RHEL/SUSE BIOS)
                   ansible.builtin.command: grub2-mkconfig -o /boot/grub2/grub.cfg
                   when: ansible_os_family in ["RedHat", "Suse"]
+
+                - name: Update the kernel command line for installed kernels (RHEL 8 and later)
+                  ansible.builtin.command: grubby --update-kernel=ALL --args="audit=1"
+                  when: ansible_os_family == "RedHat"
             ```
     refs:
       - url: https://man7.org/linux/man-pages/man8/auditd.8.html
@@ -6160,8 +6298,10 @@ queries:
             2. Restart the auditd service to apply the new configuration:
 
                 ```bash
-                systemctl restart auditd
+                systemctl restart auditd 2>/dev/null || service auditd restart
                 ```
+
+                On RHEL-based systems `systemctl restart auditd` is refused because the auditd unit disallows manual stops, so the `service auditd restart` fallback performs the restart.
 
             3. Check if a reboot is required, in case the running configuration is set to be immutable:
 
@@ -6189,7 +6329,7 @@ queries:
             fi
 
             echo "Restarting auditd service to apply changes"
-            systemctl restart auditd
+            systemctl restart auditd 2>/dev/null || service auditd restart
 
             if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
               echo "Reboot required to load rules because auditd is in immutable mode"
@@ -6199,13 +6339,16 @@ queries:
           desc: |
             **Using Ansible**
 
-            Use this Ansible playbook to set the maximum log file size for audit logs:
+            Use this Ansible playbook to set the maximum log file size for audit logs. Set `max_log_file_mb` to the maximum log file size in megabytes required by your site policy:
 
             ```yaml
             ---
             - name: Configure audit log storage size
               hosts: all
               become: true
+
+              vars:
+                max_log_file_mb: 500
 
               tasks:
                 - name: Check if auditd is in immutable mode
@@ -6219,18 +6362,26 @@ queries:
                   ansible.builtin.lineinfile:
                     path: /etc/audit/auditd.conf
                     regexp: '^max_log_file ='
-                    line: 'max_log_file = <MB>'
+                    line: 'max_log_file = {{ max_log_file_mb }}'
                     create: yes
                     state: present
                   register: auditd_logsize_changed
 
                 - name: Restart auditd service to apply changes if not immutable
-                  ansible.builtin.systemd:
+                  ansible.builtin.service:
                     name: auditd
                     state: restarted
                   when:
                     - immutable_check.rc != 0
                     - auditd_logsize_changed.changed
+                    - ansible_facts['os_family'] != 'RedHat'
+
+                - name: Restart auditd on RHEL-based systems where systemd refuses manual restarts
+                  ansible.builtin.command: /usr/libexec/initscripts/legacy-actions/auditd/restart
+                  when:
+                    - immutable_check.rc != 0
+                    - auditd_logsize_changed.changed
+                    - ansible_facts['os_family'] == 'RedHat'
 
                 - name: Warn if reboot is required due to immutable audit config
                   ansible.builtin.debug:
@@ -6296,8 +6447,10 @@ queries:
             2. Restart the service to load the new configuration values:
 
                 ```bash
-                systemctl restart auditd
+                systemctl restart auditd 2>/dev/null || service auditd restart
                 ```
+
+                On RHEL-based systems `systemctl restart auditd` is refused because the auditd unit disallows manual stops, so the `service auditd restart` fallback performs the restart.
 
             3. Check if a reboot is required, in case the running configuration is set to be immutable:
 
@@ -6322,7 +6475,7 @@ queries:
             fi
 
             echo "Restarting auditd service to apply changes"
-            systemctl restart auditd
+            systemctl restart auditd 2>/dev/null || service auditd restart
 
             if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
               echo "Reboot required to load rules because auditd is in immutable mode"
@@ -6358,12 +6511,20 @@ queries:
                   register: auditd_logfile_action_changed
 
                 - name: Restart auditd service to apply changes if not immutable
-                  ansible.builtin.systemd:
+                  ansible.builtin.service:
                     name: auditd
                     state: restarted
                   when:
                     - immutable_check.rc != 0
                     - auditd_logfile_action_changed.changed
+                    - ansible_facts['os_family'] != 'RedHat'
+
+                - name: Restart auditd on RHEL-based systems where systemd refuses manual restarts
+                  ansible.builtin.command: /usr/libexec/initscripts/legacy-actions/auditd/restart
+                  when:
+                    - immutable_check.rc != 0
+                    - auditd_logfile_action_changed.changed
+                    - ansible_facts['os_family'] == 'RedHat'
 
                 - name: Warn if reboot is required due to immutable audit config
                   ansible.builtin.debug:
@@ -6435,8 +6596,10 @@ queries:
             2. Restart the service to load the new configuration values:
 
                 ```bash
-                systemctl restart auditd
+                systemctl restart auditd 2>/dev/null || service auditd restart
                 ```
+
+                On RHEL-based systems `systemctl restart auditd` is refused because the auditd unit disallows manual stops, so the `service auditd restart` fallback performs the restart.
 
             3. Check if a reboot is required, in case the running configuration is set to be immutable:
 
@@ -6478,7 +6641,7 @@ queries:
             fi
 
             echo "Restarting auditd service to apply changes"
-            systemctl restart auditd
+            systemctl restart auditd 2>/dev/null || service auditd restart
 
             if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
               echo "Reboot required to load rules because auditd is in immutable mode"
@@ -6498,14 +6661,16 @@ queries:
 
               tasks:
                 - name: Ensure auditd parameters are configured in auditd.conf
-                  ansible.builtin.blockinfile:
+                  ansible.builtin.lineinfile:
                     path: /etc/audit/auditd.conf
-                    block: |
-                      space_left_action = email
-                      action_mail_acct = root
-                      admin_space_left_action = halt
+                    regexp: '^{{ item.key }} ='
+                    line: '{{ item.key }} = {{ item.value }}'
                     create: yes
                     state: present
+                  loop:
+                    - { key: space_left_action, value: email }
+                    - { key: action_mail_acct, value: root }
+                    - { key: admin_space_left_action, value: halt }
                   register: auditd_params_changed
 
                 - name: Check if auditd is in immutable mode
@@ -6516,12 +6681,20 @@ queries:
                   changed_when: false
 
                 - name: Restart auditd service to apply changes if not immutable and config changed
-                  ansible.builtin.systemd:
+                  ansible.builtin.service:
                     name: auditd
                     state: restarted
                   when:
                     - immutable_check.rc != 0
                     - auditd_params_changed.changed
+                    - ansible_facts['os_family'] != 'RedHat'
+
+                - name: Restart auditd on RHEL-based systems where systemd refuses manual restarts
+                  ansible.builtin.command: /usr/libexec/initscripts/legacy-actions/auditd/restart
+                  when:
+                    - immutable_check.rc != 0
+                    - auditd_params_changed.changed
+                    - ansible_facts['os_family'] == 'RedHat'
 
                 - name: Warn if reboot is required due to immutable audit config
                   ansible.builtin.debug:
@@ -6655,7 +6828,7 @@ queries:
               become: true
 
               tasks:
-                - name: Ensure audit rules for sudoers are configured in auditd.conf
+                - name: Ensure audit rules for sudoers are configured
                   ansible.builtin.blockinfile:
                     path: /etc/audit/rules.d/50-scope.rules
                     block: |
@@ -6664,10 +6837,23 @@ queries:
                     marker: "# {mark} ANSIBLE MANAGED - sudoers scope audit rules"
                     create: yes
                     state: present
-                - name: Reload auditd service to apply changes
-                  ansible.builtin.systemd:
-                    name: auditd
-                    state: reloaded
+                  register: scope_rules_updated
+
+                - name: Load audit rules if updated
+                  ansible.builtin.command: augenrules --load
+                  when: scope_rules_updated.changed
+
+                - name: Check if auditd is in immutable mode
+                  ansible.builtin.shell: |
+                    auditctl -s | grep -q '^enabled.*2$'
+                  register: immutable_check
+                  failed_when: false
+                  changed_when: false
+
+                - name: Warn if reboot is required due to immutable audit config
+                  ansible.builtin.debug:
+                    msg: "Reboot required to load audit rules because auditd is in immutable mode"
+                  when: immutable_check.rc == 0
             ```
     refs:
       - url: https://man7.org/linux/man-pages/man8/auditd.8.html
@@ -6783,12 +6969,10 @@ queries:
             -w /var/log/tallylog -p wa -k logins
             EOF
 
-            if [[ -d /var/log/faillog ]]; then
+            if [ -f /etc/debian_version ]; then
               echo "Adding auditing for faillog in $RULES_FILE"
               echo "-w /var/log/faillog -p wa -k logins" >> "$RULES_FILE"
-            fi
-
-            if [[ -d /var/run/faillock ]]; then
+            elif [ -f /etc/redhat-release ] || grep -qi '^ID.*amzn' /etc/os-release 2>/dev/null; then
               echo "Adding auditing for faillock in $RULES_FILE"
               echo "-w /var/run/faillock -p wa -k logins" >> "$RULES_FILE"
             fi
@@ -6852,7 +7036,7 @@ queries:
               handlers:
                 - name: Load audit rules
                   ansible.builtin.command: augenrules --load
-              ```
+            ```
     refs:
       - url: https://man7.org/linux/man-pages/man8/auditd.8.html
         title: Linux Audit System
@@ -7436,7 +7620,7 @@ queries:
 
                 Example: `vi /etc/audit/rules.d/50-network.rules`
 
-            2. Add the following lines, for SELinux:
+            2. Add the following lines to the configuration file:
 
                 ```
                 -a always,exit -F arch=b64 -S sethostname -S setdomainname -k system-locale
@@ -7559,15 +7743,23 @@ queries:
                     group: root
                     mode: '0600'
 
-                - name: Reload audit rules with proper error handling
+                - name: Reload audit rules if the rules file was updated
                   ansible.builtin.command: augenrules --load
-                  register: augenrules_result
-                  failed_when:
-                    - augenrules_result.rc != 0
-                    - not audit_immutable
                   when: >
                     base_audit_rules.changed or
                     conditional_audit_rules.changed
+
+                - name: Check if auditd is in immutable mode
+                  ansible.builtin.shell: |
+                    auditctl -s | grep -q '^enabled.*2$'
+                  register: immutable_check
+                  failed_when: false
+                  changed_when: false
+
+                - name: Warn if reboot is required due to immutable audit config
+                  ansible.builtin.debug:
+                    msg: "Reboot required to load audit rules because auditd is in immutable mode"
+                  when: immutable_check.rc == 0
             ```
     refs:
       - url: https://man7.org/linux/man-pages/man8/auditd.8.html
@@ -9218,7 +9410,7 @@ queries:
 
             ```bash
             chown root:root /etc/ssh/sshd_config
-            chmod og-rwx /etc/ssh/sshd_config
+            chmod u-x,og-rwx /etc/ssh/sshd_config
             ```
         - id: bash
           desc: |
@@ -9232,7 +9424,7 @@ queries:
 
             echo "Setting ownership and permissions for /etc/ssh/sshd_config..."
             chown root:root /etc/ssh/sshd_config
-            chmod og-rwx /etc/ssh/sshd_config
+            chmod u-x,og-rwx /etc/ssh/sshd_config
             ```
         - id: ansible
           desc: |
@@ -9454,6 +9646,7 @@ queries:
 
             # Update all /etc/rsyslog.d/*.conf files
             for file in /etc/rsyslog.d/*.conf; do
+              [ -e "$file" ] || continue
               if grep -q '^\$FileCreateMode' "$file"; then
                 sed -i 's/^\$FileCreateMode.*/\$FileCreateMode 0640/' "$file"
               else
@@ -9555,7 +9748,7 @@ queries:
           desc: |
             **Using the CLI**
 
-            1. To configure journald to forward logs to rsyslog, edit the `/etc/systemd/journald.conf` file and add the following line:
+            1. To configure journald to forward logs to rsyslog, edit the `/etc/systemd/journald.conf` file and add the following line in the `[Journal]` section. Settings placed outside that section are ignored:
 
                 ```ini
                 ForwardToSyslog=yes
@@ -9577,6 +9770,8 @@ queries:
             set -e
 
             echo "Configuring journald to forward logs to rsyslog..."
+
+            grep -q '^\[Journal\]' /etc/systemd/journald.conf 2>/dev/null || echo '[Journal]' >> /etc/systemd/journald.conf
 
             if grep -q '^ForwardToSyslog=' /etc/systemd/journald.conf; then
               sed -i 's/^ForwardToSyslog=.*/ForwardToSyslog=yes/' /etc/systemd/journald.conf
@@ -9600,12 +9795,19 @@ queries:
               become: true
 
               tasks:
+                - name: Ensure the Journal section header exists in journald.conf
+                  ansible.builtin.lineinfile:
+                    path: /etc/systemd/journald.conf
+                    regexp: '^\[Journal\]'
+                    line: '[Journal]'
+                    create: yes
+
                 - name: Ensure ForwardToSyslog=yes is set in journald.conf
                   ansible.builtin.lineinfile:
                     path: /etc/systemd/journald.conf
                     regexp: '^#?ForwardToSyslog='
                     line: 'ForwardToSyslog=yes'
-                    create: yes
+                    insertafter: '^\[Journal\]'
                     backup: yes
 
                 - name: Restart systemd-journald to apply changes
@@ -9661,7 +9863,7 @@ queries:
           desc: |
             **Using the CLI**
 
-            1. To configure journald to compress large log files, edit the `/etc/systemd/journald.conf` file and add the following line:
+            1. To configure journald to compress large log files, edit the `/etc/systemd/journald.conf` file and add the following line in the `[Journal]` section. Settings placed outside that section are ignored:
 
                 ```ini
                 Compress=yes
@@ -9683,6 +9885,8 @@ queries:
             set -e
 
             echo "Configuring journald to compress large log files..."
+
+            grep -q '^\[Journal\]' /etc/systemd/journald.conf 2>/dev/null || echo '[Journal]' >> /etc/systemd/journald.conf
 
             if grep -q '^Compress=' /etc/systemd/journald.conf; then
               sed -i 's/^Compress=.*/Compress=yes/' /etc/systemd/journald.conf
@@ -9706,12 +9910,19 @@ queries:
               become: true
 
               tasks:
+                - name: Ensure the Journal section header exists in journald.conf
+                  ansible.builtin.lineinfile:
+                    path: /etc/systemd/journald.conf
+                    regexp: '^\[Journal\]'
+                    line: '[Journal]'
+                    create: yes
+
                 - name: Ensure Compress=yes is set in journald.conf
                   ansible.builtin.lineinfile:
                     path: /etc/systemd/journald.conf
                     regexp: '^#?Compress='
                     line: 'Compress=yes'
-                    create: yes
+                    insertafter: '^\[Journal\]'
                     backup: yes
 
                 - name: Restart systemd-journald to apply compression setting
@@ -9767,7 +9978,7 @@ queries:
           desc: |
             **Using the CLI**
 
-            1. To configure journald to write log files to a persistent disk, edit the `/etc/systemd/journald.conf` file and add the following line:
+            1. To configure journald to write log files to a persistent disk, edit the `/etc/systemd/journald.conf` file and add the following line in the `[Journal]` section. Settings placed outside that section are ignored:
 
                 ```ini
                 Storage=persistent
@@ -9789,6 +10000,8 @@ queries:
             set -e
 
             echo "Configuring journald to write logs to persistent storage..."
+
+            grep -q '^\[Journal\]' /etc/systemd/journald.conf 2>/dev/null || echo '[Journal]' >> /etc/systemd/journald.conf
 
             if grep -q '^Storage=' /etc/systemd/journald.conf; then
               sed -i 's/^Storage=.*/Storage=persistent/' /etc/systemd/journald.conf
@@ -9812,12 +10025,19 @@ queries:
               become: true
 
               tasks:
+                - name: Ensure the Journal section header exists in journald.conf
+                  ansible.builtin.lineinfile:
+                    path: /etc/systemd/journald.conf
+                    regexp: '^\[Journal\]'
+                    line: '[Journal]'
+                    create: yes
+
                 - name: Ensure Storage=persistent is set in journald.conf
                   ansible.builtin.lineinfile:
                     path: /etc/systemd/journald.conf
                     regexp: '^#?Storage='
                     line: 'Storage=persistent'
-                    create: yes
+                    insertafter: '^\[Journal\]'
                     backup: yes
 
                 - name: Restart systemd-journald to apply storage setting
@@ -10073,7 +10293,7 @@ queries:
             To set the ownership and permissions on the SSH host private key files, run the following commands:
 
             ```bash
-            find /etc/ssh -xdev -type f -name 'ssh_host_*_key' -exec chown root:ssh_keys {} \; -exec chmod 0600 {} \;
+            find /etc/ssh -xdev -type f -name 'ssh_host_*_key' -exec chown root:root {} \; -exec chmod 0600 {} \;
             ```
         - id: bash
           desc: |
@@ -10085,7 +10305,7 @@ queries:
             #!/bin/bash
             set -e
 
-            find /etc/ssh -xdev -type f -name 'ssh_host_*_key' -exec chown root:ssh_keys {} \; -exec chmod 0600 {} \;
+            find /etc/ssh -xdev -type f -name 'ssh_host_*_key' -exec chown root:root {} \; -exec chmod 0600 {} \;
             ```
         - id: ansible
           desc: |
@@ -10100,7 +10320,7 @@ queries:
               become: true
 
               tasks:
-                - name: Set ownership to root:ssh_keys for SSH private key files
+                - name: Find SSH host private key files
                   ansible.builtin.find:
                     paths: /etc/ssh
                     patterns: 'ssh_host_*_key'
@@ -10113,10 +10333,9 @@ queries:
                   ansible.builtin.file:
                     path: "{{ item.path }}"
                     owner: root
-                    group: ssh_keys
+                    group: root
                     mode: '0600'
                   loop: "{{ ssh_private_keys.files }}"
-                  when: ssh_private_keys.matched > 0
             ```
     refs:
       - url: https://man.openbsd.org/sshd_config
@@ -10279,6 +10498,18 @@ queries:
             Protocol 2
             ```
 
+            If the system uses configuration snippets in `/etc/ssh/sshd_config.d/`, check for a conflicting `Protocol` directive there. The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads these snippets first:
+
+            ```bash
+            grep -ri 'Protocol' /etc/ssh/sshd_config.d/
+            ```
+
+            Validate the configuration before restarting:
+
+            ```bash
+            sshd -t
+            ```
+
             Restart the SSH service to apply the changes:
 
             Debian/Ubuntu distros:
@@ -10398,6 +10629,18 @@ queries:
             LogLevel INFO
             ```
 
+            If the system uses configuration snippets in `/etc/ssh/sshd_config.d/`, check for a conflicting `LogLevel` directive there. The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads these snippets first:
+
+            ```bash
+            grep -ri 'LogLevel' /etc/ssh/sshd_config.d/
+            ```
+
+            Validate the configuration before restarting:
+
+            ```bash
+            sshd -t
+            ```
+
             Restart the SSH service to apply the changes:
 
             Debian/Ubuntu distros:
@@ -10510,6 +10753,18 @@ queries:
 
             ```bash
             X11Forwarding no
+            ```
+
+            If the system uses configuration snippets in `/etc/ssh/sshd_config.d/`, check for a conflicting `X11Forwarding` directive there. The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads these snippets first:
+
+            ```bash
+            grep -ri 'X11Forwarding' /etc/ssh/sshd_config.d/
+            ```
+
+            Validate the configuration before restarting:
+
+            ```bash
+            sshd -t
             ```
 
             Restart the SSH service to apply the changes:
@@ -10627,6 +10882,18 @@ queries:
             MaxAuthTries 4
             ```
 
+            If the system uses configuration snippets in `/etc/ssh/sshd_config.d/`, check for a conflicting `MaxAuthTries` directive there. The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads these snippets first:
+
+            ```bash
+            grep -ri 'MaxAuthTries' /etc/ssh/sshd_config.d/
+            ```
+
+            Validate the configuration before restarting:
+
+            ```bash
+            sshd -t
+            ```
+
             Restart the SSH service to apply the changes:
 
             Debian/Ubuntu distros:
@@ -10742,6 +11009,18 @@ queries:
             IgnoreRhosts yes
             ```
 
+            If the system uses configuration snippets in `/etc/ssh/sshd_config.d/`, check for a conflicting `IgnoreRhosts` directive there. The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads these snippets first:
+
+            ```bash
+            grep -ri 'IgnoreRhosts' /etc/ssh/sshd_config.d/
+            ```
+
+            Validate the configuration before restarting:
+
+            ```bash
+            sshd -t
+            ```
+
             Restart the SSH service to apply the changes:
 
             Debian/Ubuntu distros:
@@ -10855,6 +11134,18 @@ queries:
 
             ```bash
             HostbasedAuthentication no
+            ```
+
+            If the system uses configuration snippets in `/etc/ssh/sshd_config.d/`, check for a conflicting `HostbasedAuthentication` directive there. The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads these snippets first:
+
+            ```bash
+            grep -ri 'HostbasedAuthentication' /etc/ssh/sshd_config.d/
+            ```
+
+            Validate the configuration before restarting:
+
+            ```bash
+            sshd -t
             ```
 
             Restart the SSH service to apply the changes:
@@ -10978,6 +11269,18 @@ queries:
             PermitRootLogin prohibit-password
             ```
 
+            If the system uses configuration snippets in `/etc/ssh/sshd_config.d/`, check for a conflicting `PermitRootLogin` directive there. Cloud images often set it in a snippet such as `50-cloud-init.conf`. The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads these snippets first:
+
+            ```bash
+            grep -ri 'PermitRootLogin' /etc/ssh/sshd_config.d/
+            ```
+
+            Validate the configuration before restarting:
+
+            ```bash
+            sshd -t
+            ```
+
             Restart the SSH service to apply the changes:
 
             Debian/Ubuntu distros:
@@ -11093,6 +11396,18 @@ queries:
             PermitEmptyPasswords no
             ```
 
+            If the system uses configuration snippets in `/etc/ssh/sshd_config.d/`, check for a conflicting `PermitEmptyPasswords` directive there. The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads these snippets first:
+
+            ```bash
+            grep -ri 'PermitEmptyPasswords' /etc/ssh/sshd_config.d/
+            ```
+
+            Validate the configuration before restarting:
+
+            ```bash
+            sshd -t
+            ```
+
             Restart the SSH service to apply the changes:
 
             Debian/Ubuntu distros:
@@ -11206,6 +11521,18 @@ queries:
 
             ```bash
             PermitUserEnvironment no
+            ```
+
+            If the system uses configuration snippets in `/etc/ssh/sshd_config.d/`, check for a conflicting `PermitUserEnvironment` directive there. The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads these snippets first:
+
+            ```bash
+            grep -ri 'PermitUserEnvironment' /etc/ssh/sshd_config.d/
+            ```
+
+            Validate the configuration before restarting:
+
+            ```bash
+            sshd -t
             ```
 
             Restart the SSH service to apply the changes:
@@ -11329,22 +11656,54 @@ queries:
 
             To configure SSH to use only strong ciphers, edit the `/etc/ssh/sshd_config` file and add or modify the `Ciphers` parameter to include a comma-separated list of approved ciphers.
 
-            Example:
+            On OpenSSH 7.0 or later:
 
             ```bash
             Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr
+            ```
+
+            On OpenSSH 6.x, which does not support the chacha20 and GCM ciphers, use only the CTR ciphers:
+
+            ```bash
+            Ciphers aes256-ctr,aes192-ctr,aes128-ctr
+            ```
+
+            Validate the configuration and restart the SSH service to apply the changes:
+
+            ```bash
+            sshd -t
+            ```
+
+            Debian/Ubuntu distros:
+
+            ```bash
+            systemctl restart ssh
+            ```
+
+            OR
+
+            All other Linux distros:
+
+            ```bash
+            systemctl restart sshd
             ```
         - id: bash
           desc: |
             **Using a Bash Script**
 
-            To ensure that only strong ciphers are used in SSH, you can run the following bash script:
+            To ensure that only strong ciphers are used in SSH, you can run the following bash script. It selects the cipher list supported by the installed OpenSSH version:
 
             ```bash
             #!/bin/bash
             set -e
 
-            CIPHER_LINE="Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr"
+            openssh_version=$(ssh -V 2>&1 | grep -oP 'OpenSSH_\K\d+')
+
+            if [ "$openssh_version" -lt 7 ]; then
+              CIPHER_LINE="Ciphers aes256-ctr,aes192-ctr,aes128-ctr"
+            else
+              CIPHER_LINE="Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr"
+            fi
 
             if grep -q '^Ciphers' /etc/ssh/sshd_config; then
               echo "Updating Ciphers in sshd_config..."
@@ -11354,13 +11713,14 @@ queries:
               echo "$CIPHER_LINE" >> /etc/ssh/sshd_config
             fi
 
+            sshd -t
             systemctl restart sshd
             ```
         - id: ansible
           desc: |
             **Using Ansible**
 
-            To configure SSH to use only strong ciphers, use the following Ansible playbook:
+            To configure SSH to use only strong ciphers, use the following Ansible playbook. On hosts running OpenSSH 6.x, change the `Ciphers` line to `Ciphers aes256-ctr,aes192-ctr,aes128-ctr` because the chacha20 and GCM ciphers are not supported there:
 
             ```yaml
             ---
@@ -11376,12 +11736,13 @@ queries:
                     line: 'Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr'
                     create: yes
                     state: present
-                    register: ssh_ciphers_config_change
+                  register: ssh_ciphers_config_change
+
                 - name: Restart SSH service to apply changes
                   ansible.builtin.systemd:
                     name: sshd
                     state: restarted
-                    when: ssh_ciphers_config_change.changed
+                  when: ssh_ciphers_config_change.changed
             ```
     refs:
       - url: https://man.openbsd.org/sshd_config
@@ -11445,6 +11806,26 @@ queries:
             ```bash
             MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256
             ```
+
+            Validate the configuration and restart the SSH service to apply the changes:
+
+            ```bash
+            sshd -t
+            ```
+
+            Debian/Ubuntu distros:
+
+            ```bash
+            systemctl restart ssh
+            ```
+
+            OR
+
+            All other Linux distros:
+
+            ```bash
+            systemctl restart sshd
+            ```
         - id: bash
           desc: |
             **Using a Bash Script**
@@ -11487,12 +11868,13 @@ queries:
                     line: 'MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256'
                     create: yes
                     state: present
-                    register: ssh_mac_config_change
+                  register: ssh_mac_config_change
+
                 - name: Restart SSH service if config changed
                   ansible.builtin.systemd:
                     name: sshd
                     state: restarted
-                    when: ssh_mac_config_change.changed
+                  when: ssh_mac_config_change.changed
             ```
     refs:
       - url: https://man.openbsd.org/sshd_config
@@ -11619,7 +12001,7 @@ queries:
             fi
 
             echo "Configuring SSH with strong KexAlgorithms"
-            openssh_version=$(sshd -v 2>&1 | grep -oP 'OpenSSH_\K\d+\.\d+')
+            openssh_version=$(ssh -V 2>&1 | grep -oP 'OpenSSH_\K\d+\.\d+')
 
             if (( $(echo "$openssh_version < 7.0" | bc -l) )); then
               kex_algos="curve25519-sha256@libssh.org"
@@ -11653,9 +12035,9 @@ queries:
               become: true
               gather_facts: true
               tasks:
-                - name: Get OpenSSH version from sshd binary
+                - name: Get OpenSSH version
                   ansible.builtin.shell: |
-                    /usr/sbin/sshd -v 2>&1 | grep -oP 'OpenSSH_\K\d+\.\d+'
+                    ssh -V 2>&1 | grep -oP 'OpenSSH_\K\d+\.\d+'
                   register: sshd_version
                   changed_when: false
                   failed_when: sshd_version.rc != 0 or sshd_version.stdout == ""
@@ -11681,16 +12063,16 @@ queries:
                   ansible.builtin.lineinfile:
                     path: /etc/ssh/sshd_config
                     regexp: '^KexAlgorithms'
-                    line: "KexAlgorithms {{ kexalgos }}"
+                    line: "KexAlgorithms {{ kexalgos | trim }}"
                     create: yes
                     state: present
-                    register: kexalgos_config_change
+                  register: kexalgos_config_change
 
                 - name: Restart SSHD to apply configuration
                   ansible.builtin.systemd:
                     name: sshd
                     state: restarted
-                    when: kexalgos_config_change.changed
+                  when: kexalgos_config_change.changed
             ```
     refs:
       - url: https://man.openbsd.org/sshd_config
@@ -11769,11 +12151,31 @@ queries:
             ClientAliveInterval 300
             ClientAliveCountMax 2
             ```
+
+            Validate the configuration and restart the SSH service to apply the changes:
+
+            ```bash
+            sshd -t
+            ```
+
+            Debian/Ubuntu distros:
+
+            ```bash
+            systemctl restart ssh
+            ```
+
+            OR
+
+            All other Linux distros:
+
+            ```bash
+            systemctl restart sshd
+            ```
         - id: bash
           desc: |
             **Using a Bash Script**
 
-            To ensure that SSH LoginGraceTime is set to one minute or less, you can run the following bash script:
+            To set the SSH idle timeout interval, you can run the following bash script:
 
             ```bash
             #!/bin/bash
@@ -11886,6 +12288,26 @@ queries:
             ```bash
             LoginGraceTime 60
             ```
+
+            Validate the configuration and restart the SSH service to apply the changes:
+
+            ```bash
+            sshd -t
+            ```
+
+            Debian/Ubuntu distros:
+
+            ```bash
+            systemctl restart ssh
+            ```
+
+            OR
+
+            All other Linux distros:
+
+            ```bash
+            systemctl restart sshd
+            ```
         - id: bash
           desc: |
             **Using a Bash Script**
@@ -11984,41 +12406,46 @@ queries:
           desc: |
             **Using the CLI**
 
-            To limit SSH access, edit the `/etc/ssh/sshd_config` file and add or modify the `AllowUsers`, `AllowGroups`, `DenyUsers`, or `DenyGroups` parameters as needed.
+            To limit SSH access, edit the `/etc/ssh/sshd_config` file and add or modify one or more of the `AllowUsers`, `AllowGroups`, `DenyUsers`, or `DenyGroups` parameters as needed. Configure only the directives your site policy requires. Once `AllowUsers` or `AllowGroups` is set, every account not matched is denied SSH access, so make sure the list covers all administrative accounts before applying it.
 
-            Example:
+            Example restricting access to one group:
 
             ```bash
-            AllowUsers user1 user2
             AllowGroups sshusers
-            DenyUsers user3
-            DenyGroups nogroup
+            ```
+
+            Validate the configuration and restart the SSH service to apply the changes:
+
+            ```bash
+            sshd -t
+            ```
+
+            Debian/Ubuntu distros:
+
+            ```bash
+            systemctl restart ssh
+            ```
+
+            OR
+
+            All other Linux distros:
+
+            ```bash
+            systemctl restart sshd
             ```
         - id: bash
           desc: |
             **Using a Bash Script**
 
-            To ensure that SSH access is limited, you can run the following bash script:
+            To limit SSH access, you can run the following bash script. Before running it, replace the example group with a group that contains every account that must retain SSH access, including your administrative accounts. Once `AllowGroups` is set, any account outside the listed groups is denied SSH access.
 
             ```bash
             #!/bin/bash
             set -e
 
-            # Define variables for users and groups
-            ALLOW_USERS="user1 user2"
+            # Replace with the group that should retain SSH access
             ALLOW_GROUPS="sshusers"
-            DENY_USERS="user3"
-            DENY_GROUPS="nogroup"
 
-            if grep -q '^AllowUsers' /etc/ssh/sshd_config; then
-              echo "Updating existing AllowUsers configuration value"
-              sed -i "s/^AllowUsers.*/AllowUsers $ALLOW_USERS/" /etc/ssh/sshd_config
-            else
-              echo "Adding AllowUsers configuration value to SSH config"
-              echo "AllowUsers $ALLOW_USERS" >> /etc/ssh/sshd_config
-            fi
-
-            # Set or update AllowGroups
             if grep -q '^AllowGroups' /etc/ssh/sshd_config; then
               echo "Updating existing AllowGroups configuration value"
               sed -i "s/^AllowGroups.*/AllowGroups $ALLOW_GROUPS/" /etc/ssh/sshd_config
@@ -12027,24 +12454,7 @@ queries:
               echo "AllowGroups $ALLOW_GROUPS" >> /etc/ssh/sshd_config
             fi
 
-            # Set or update DenyUsers
-            if grep -q '^DenyUsers' /etc/ssh/sshd_config; then
-              echo "Updating existing DenyUsers configuration value"
-              sed -i "s/^DenyUsers.*/DenyUsers $DENY_USERS/" /etc/ssh/sshd_config
-            else
-              echo "Adding DenyUsers configuration value to SSH config"
-              echo "DenyUsers $DENY_USERS" >> /etc/ssh/sshd_config
-            fi
-
-            # Set or update DenyGroups
-            if grep -q '^DenyGroups' /etc/ssh/sshd_config; then
-              echo "Updating existing DenyGroups configuration value"
-              sed -i "s/^DenyGroups.*/DenyGroups $DENY_GROUPS/" /etc/ssh/sshd_config
-            else
-              echo "Adding DenyGroups configuration value to SSH config"
-              echo "DenyGroups $DENY_GROUPS" >> /etc/ssh/sshd_config
-            fi
-
+            sshd -t
             systemctl restart sshd
             ```
         - id: ansible
@@ -12130,6 +12540,26 @@ queries:
 
             ```bash
             Banner /etc/issue.net
+            ```
+
+            Validate the configuration and restart the SSH service to apply the changes:
+
+            ```bash
+            sshd -t
+            ```
+
+            Debian/Ubuntu distros:
+
+            ```bash
+            systemctl restart ssh
+            ```
+
+            OR
+
+            All other Linux distros:
+
+            ```bash
+            systemctl restart sshd
             ```
         - id: bash
           desc: |
@@ -12336,11 +12766,20 @@ queries:
           desc: |
             **Using the CLI**
 
-            To set the ownership and permissions on the `/etc/shadow` file, run the following commands:
+            To set the ownership and permissions on the `/etc/shadow` file, run the commands for your distribution.
+
+            ### Debian/Ubuntu and derivatives
 
             ```bash
             chown root:shadow /etc/shadow
             chmod 640 /etc/shadow
+            ```
+
+            ### RHEL/Fedora/Amazon Linux and derivatives
+
+            ```bash
+            chown root:root /etc/shadow
+            chmod 0000 /etc/shadow
             ```
         - id: bash
           desc: |
@@ -12352,16 +12791,24 @@ queries:
             #!/bin/bash
             set -e
 
-            echo "Setting ownership and permissions on /etc/shadow"
-            chown root:shadow /etc/shadow
-            chmod 0640 /etc/shadow
+            if getent group shadow >/dev/null; then
+              GROUP=shadow
+              MODE=0640
+            else
+              GROUP=root
+              MODE=0000
+            fi
 
-            if grep -qE '^[[:space:]]*f /etc/shadow' /etc/tmpfiles.d/etc.conf; then
+            echo "Setting ownership and permissions on /etc/shadow"
+            chown root:"$GROUP" /etc/shadow
+            chmod "$MODE" /etc/shadow
+
+            if grep -qE '^[[:space:]]*f /etc/shadow ' /etc/tmpfiles.d/etc.conf 2>/dev/null; then
               echo "Modifying existing /etc/tmpfiles.d/etc.conf entry to maintain permissions"
-              sed -i -E 's|^[[:space:]]*f /etc/shadow.*|f /etc/shadow 0640 root shadow -|' /etc/tmpfiles.d/etc.conf
+              sed -i -E "s|^[[:space:]]*f /etc/shadow .*|f /etc/shadow $MODE root $GROUP -|" /etc/tmpfiles.d/etc.conf
             else
               echo "Adding entry to /etc/tmpfiles.d/etc.conf to maintain permissions"
-              echo 'f /etc/shadow 0640 root shadow -' >> /etc/tmpfiles.d/etc.conf
+              echo "f /etc/shadow $MODE root $GROUP -" >> /etc/tmpfiles.d/etc.conf
             fi
             ```
         - id: ansible
@@ -12381,8 +12828,8 @@ queries:
                   ansible.builtin.file:
                     path: /etc/shadow
                     owner: root
-                    group: shadow
-                    mode: '0640'
+                    group: "{{ 'shadow' if ansible_facts['os_family'] == 'Debian' else 'root' }}"
+                    mode: "{{ '0640' if ansible_facts['os_family'] == 'Debian' else '0000' }}"
             ```
     refs:
       - url: https://man7.org/linux/man-pages/man5/shadow.5.html
@@ -12536,11 +12983,20 @@ queries:
           desc: |
             **Using the CLI**
 
-            To set the ownership and permissions on the `/etc/gshadow` file, run the following commands:
+            To set the ownership and permissions on the `/etc/gshadow` file, run the commands for your distribution.
+
+            ### Debian/Ubuntu and derivatives
 
             ```bash
             chown root:shadow /etc/gshadow
             chmod 640 /etc/gshadow
+            ```
+
+            ### RHEL/Fedora/Amazon Linux and derivatives
+
+            ```bash
+            chown root:root /etc/gshadow
+            chmod 0000 /etc/gshadow
             ```
         - id: bash
           desc: |
@@ -12552,10 +13008,18 @@ queries:
             #!/bin/bash
             set -e
 
+            if getent group shadow >/dev/null; then
+              GROUP=shadow
+              MODE=0640
+            else
+              GROUP=root
+              MODE=0000
+            fi
+
             echo "Setting ownership and permissions on /etc/gshadow"
-            chown root:shadow /etc/gshadow
-            chmod 0640 /etc/gshadow
-            echo "f /etc/gshadow 0640 root shadow -" >> /etc/tmpfiles.d/etc.conf
+            chown root:"$GROUP" /etc/gshadow
+            chmod "$MODE" /etc/gshadow
+            echo "f /etc/gshadow $MODE root $GROUP -" >> /etc/tmpfiles.d/etc.conf
             ```
         - id: ansible
           desc: |
@@ -12574,8 +13038,8 @@ queries:
                   ansible.builtin.file:
                     path: /etc/gshadow
                     owner: root
-                    group: root
-                    mode: '0640'
+                    group: "{{ 'shadow' if ansible_facts['os_family'] == 'Debian' else 'root' }}"
+                    mode: "{{ '0640' if ansible_facts['os_family'] == 'Debian' else '0000' }}"
             ```
     refs:
       - url: https://man7.org/linux/man-pages/man5/gshadow.5.html
@@ -12744,17 +13208,32 @@ queries:
           desc: |
             **Using the CLI**
 
-            1. To set the ownership and permissions on the `/etc/shadow-` file, run the following commands:
+            1. To set the ownership and permissions on the `/etc/shadow-` file, run the commands for your distribution.
+
+                Debian/Ubuntu and derivatives:
 
                 ```bash
                 chown root:shadow /etc/shadow-
                 chmod 640 /etc/shadow-
                 ```
 
-            2. To ensure these permissions are not reverted by automated actions, add the following line to `/etc/tmpfiles.d/etc.conf`:
+                RHEL/Fedora/Amazon Linux and derivatives:
+
+                ```bash
+                chown root:root /etc/shadow-
+                chmod 0000 /etc/shadow-
+                ```
+
+            2. To ensure these permissions are not reverted by automated actions, add a matching line to `/etc/tmpfiles.d/etc.conf`. On Debian-based systems use:
 
                 ```text
                 f /etc/shadow- 0640 root shadow -
+                ```
+
+                On Red Hat-based systems use:
+
+                ```text
+                f /etc/shadow- 0000 root root -
                 ```
         - id: bash
           desc: |
@@ -12766,10 +13245,18 @@ queries:
             #!/bin/bash
             set -e
 
+            if getent group shadow >/dev/null; then
+              GROUP=shadow
+              MODE=0640
+            else
+              GROUP=root
+              MODE=0000
+            fi
+
             echo "Setting ownership and permissions on /etc/shadow-"
-            chown root:shadow /etc/shadow-
-            chmod 0640 /etc/shadow-
-            echo "f /etc/shadow- 0640 root shadow -" >> /etc/tmpfiles.d/etc.conf
+            chown root:"$GROUP" /etc/shadow-
+            chmod "$MODE" /etc/shadow-
+            echo "f /etc/shadow- $MODE root $GROUP -" >> /etc/tmpfiles.d/etc.conf
             ```
         - id: ansible
           desc: |
@@ -12788,12 +13275,13 @@ queries:
                   ansible.builtin.file:
                     path: /etc/shadow-
                     owner: root
-                    group: shadow
-                    mode: '0640'
+                    group: "{{ 'shadow' if ansible_facts['os_family'] == 'Debian' else 'root' }}"
+                    mode: "{{ '0640' if ansible_facts['os_family'] == 'Debian' else '0000' }}"
                 - name: Ensure /etc/shadow- is not reverted
                   ansible.builtin.lineinfile:
                     path: /etc/tmpfiles.d/etc.conf
-                    line: 'f /etc/shadow- 0640 root shadow -'
+                    line: "f /etc/shadow- {{ '0640 root shadow' if ansible_facts['os_family'] == 'Debian' else '0000 root root' }} -"
+                    create: yes
                     state: present
             ```
     refs:
@@ -12997,7 +13485,7 @@ queries:
             chmod 0640 /etc/gshadow-
 
             if grep -qE '^[[:space:]]*f /etc/gshadow-' /etc/tmpfiles.d/etc.conf; then
-              echo "Modifying existing /etc/tmpfiles.d/etc.conf to entry to maintain permissions"
+              echo "Modifying existing /etc/tmpfiles.d/etc.conf entry to maintain permissions"
               sed -i -E 's|^[[:space:]]*f /etc/gshadow-.*|f /etc/gshadow- 0640 root root -|' /etc/tmpfiles.d/etc.conf
             else
               echo "Adding entry to /etc/tmpfiles.d/etc.conf to maintain permissions"
@@ -13632,13 +14120,17 @@ queries:
             echo "Removing users from shadow group"
             for user in $(getent group shadow | cut -d: -f4 | tr ',' ' '); do
               echo "Removing $user from shadow group"
-              gpasswd -d "$user" shadow || true
+              gpasswd -d "$user" shadow
             done
 
-            echo "Changing primary group for users in shadow group"
-            for user in $(getent passwd | awk -F: '$4 == 42 {print $1}'); do
-              usermod -g NEWGROUP "$user" || true  # Replace NEWGROUP with the desired primary group
-            done
+            SHADOW_GID=$(getent group shadow | cut -d: -f3)
+            echo "Changing primary group for users whose primary group is shadow"
+            while IFS=: read -r user _ _ gid _; do
+              if [ "$gid" = "$SHADOW_GID" ]; then
+                # Replace users with the desired primary group before running this loop
+                usermod -g users "$user"
+              fi
+            done < /etc/passwd
             ```
         - id: ansible
           desc: |
@@ -13653,18 +14145,15 @@ queries:
               become: true
 
               tasks:
-                - name: Remove users from shadow group
-                  ansible.builtin.user:
-                    name: "{{ item }}"
-                    groups: shadow
-                    state: absent
-                  loop: "{{ ansible_users | selectattr('groups', 'contains', 'shadow') | map(attribute='name') | list }}"
+                - name: Read shadow group membership
+                  ansible.builtin.command: getent group shadow
+                  register: shadow_group
+                  changed_when: false
+                  failed_when: false
 
-                - name: Change primary group for users in shadow group
-                  ansible.builtin.user:
-                    name: "{{ item }}"
-                    group: <new_group>
-                  loop: "{{ ansible_users | selectattr('gid', 'eq', 42) | map(attribute='name') | list }}"
+                - name: Remove users from shadow group
+                  ansible.builtin.command: "gpasswd -d {{ item }} shadow"
+                  loop: "{{ (shadow_group.stdout.split(':')[3].split(',') | select | list) if shadow_group.rc == 0 else [] }}"
             ```
     refs:
       - url: https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/9/html/security_hardening/index
@@ -13745,10 +14234,11 @@ queries:
               fi
             done
 
-            echo "Changing primary group for users in root group"
+            echo "Changing primary group for users whose primary group is root"
             for user in $(getent passwd | awk -F: '$4 == 0 {print $1}'); do
               if [ "$user" != "root" ]; then
-                usermod -g NEWGROUP "$user" || true  # Replace NEWGROUP with the desired primary group
+                # Replace users with the desired primary group before running this loop
+                usermod -g users "$user"
               fi
             done
             ```
@@ -13765,18 +14255,14 @@ queries:
               become: true
 
               tasks:
-                - name: Remove users from root group
-                  ansible.builtin.user:
-                    name: "{{ item }}"
-                    groups: root
-                    state: absent
-                  loop: "{{ ansible_users | selectattr('name', 'ne', 'root') | map(attribute='name') | list }}"
+                - name: Read root group membership
+                  ansible.builtin.command: getent group root
+                  register: root_group
+                  changed_when: false
 
-                - name: Change primary group for users in root group
-                  ansible.builtin.user:
-                    name: "{{ item }}"
-                    group: <new_group>
-                  loop: "{{ ansible_users | selectattr('gid', 'eq', 0) | map(attribute='name') | list }}"
+                - name: Remove users from root group
+                  ansible.builtin.command: "gpasswd -d {{ item }} root"
+                  loop: "{{ (root_group.stdout.split(':')[3] | default('')).split(',') | select | reject('eq', 'root') | list }}"
             ```
     refs:
       - url: https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/9/html/security_hardening/index
@@ -13828,16 +14314,16 @@ queries:
           desc: |
             **Using the CLI**
 
-            1. To list all system accounts (UID < 1000, excluding root) where /sbin/nologin is not the shell, run:
+            1. To list all system accounts with a UID below 1000, other than `root`, `sync`, `shutdown`, and `halt`, that still have a login shell, run:
 
                 ```bash
-                awk -F: '($3 < 1000 && $1 != "root" && $7 != "/sbin/nologin") {print $1}' /etc/passwd
+                awk -F: '($3 < 1000 && $1 !~ /^(root|sync|shutdown|halt)$/ && $7 !~ /nologin|false/) {print $1}' /etc/passwd
                 ```
 
-            2. To set the shell for each system account to `/sbin/nologin`, run:
+            2. To set the shell for each listed system account to `/usr/sbin/nologin`, run:
 
                 ```bash
-                usermod -s /sbin/nologin <user>
+                usermod -s /usr/sbin/nologin <user>
                 ```
 
             3. Lock the `sync`, `shutdown`, and `halt` users to prevent login:
@@ -13857,11 +14343,12 @@ queries:
             #!/bin/bash
             set -e
 
-            echo "Setting shell for system accounts to /sbin/nologin"
+            echo "Setting shell for system accounts to nologin"
             while IFS=: read -r user _ uid _ _ _ _; do
-              if [ "$uid" -lt 1000 ] && [ "$user" != "root" ]; then
+              case "$user" in root|sync|shutdown|halt) continue ;; esac
+              if [ "$uid" -lt 1000 ]; then
                 echo "Setting nologin shell for user: $user"
-                usermod -s /sbin/nologin "$user"
+                usermod -s /usr/sbin/nologin "$user"
               fi
             done < /etc/passwd
 
@@ -13883,16 +14370,22 @@ queries:
               become: true
 
               tasks:
-                - name: Set shell for system accounts to /sbin/nologin
+                - name: Find system accounts with a login shell
+                  ansible.builtin.shell: |
+                    awk -F: '($3 < 1000 && $1 !~ /^(root|sync|shutdown|halt)$/ && $7 !~ /nologin|false/) {print $1}' /etc/passwd
+                  register: system_accounts
+                  changed_when: false
+
+                - name: Set shell for system accounts to nologin
                   ansible.builtin.user:
                     name: "{{ item }}"
-                    shell: /sbin/nologin
-                  loop: "{{ ansible_users | selectattr('uid', 'lt', 1000) | map(attribute='name') | list }}"
+                    shell: /usr/sbin/nologin
+                  loop: "{{ system_accounts.stdout_lines }}"
 
                 - name: Lock sync, shutdown, and halt users
                   ansible.builtin.user:
                     name: "{{ item }}"
-                    state: locked
+                    password_lock: true
                   loop:
                     - sync
                     - shutdown
@@ -13970,10 +14463,10 @@ queries:
             echo "auth required pam_wheel.so use_uid" >> /etc/pam.d/su
             ```
 
-            If users need `su` access, add their username to the comma-separated list of users in the `wheel` group within the `/etc/group` file:
+            If users need `su` access, add them to the `wheel` group:
 
             ```bash
-            sed -i 's/^wheel:x:10:root/wheel:x:10:root,<user list>/' /etc/group
+            usermod -aG wheel <user>
             ```
 
             If you want to lock down the use of the command `su` entirely instead, you need to create an empty group, for example `sugroup`:
@@ -13990,17 +14483,25 @@ queries:
         - id: bash
           desc: |
             **Using a Bash Script**
-            To restrict access to the `su` command, you can run the following bash script:
+
+            To restrict access to the `su` command to members of the `wheel` group, run the following bash script:
 
             ```bash
             #!/bin/bash
             set -e
 
             echo "Restricting access to su command"
-            echo "auth required pam_wheel.so use_uid" >> /etc/pam.d/su
-            echo "wheel:x:10:root,<user list>" >> /etc/group
+            if ! grep -qE '^\s*auth\s+required\s+pam_wheel\.so\s+use_uid' /etc/pam.d/su; then
+              echo "auth required pam_wheel.so use_uid" >> /etc/pam.d/su
+            fi
 
-            echo "Adding a group named sugroup and configuring it for su access"
+            # Grant su access to each authorized user:
+            # usermod -aG wheel <user>
+            ```
+
+            To lock down use of the `su` command entirely instead, create an empty group and reference it in the PAM configuration in place of the line above:
+
+            ```bash
             groupadd sugroup
             echo "auth required pam_wheel.so use_uid group=sugroup" >> /etc/pam.d/su
             ```
@@ -14231,11 +14732,13 @@ queries:
           desc: |
             **Using CLI**
 
-            Add an authorized time source to the chrony configuration, then restart the daemon:
+            Add an authorized time source to the chrony configuration for your distribution, then restart the daemon. Red Hat-based systems use `/etc/chrony.conf`; Debian-based systems use `/etc/chrony/chrony.conf`:
 
             ```bash
-            echo "pool 2.pool.ntp.org iburst" >> /etc/chrony.conf
-            systemctl restart chronyd
+            CONF=/etc/chrony.conf
+            [ -f "$CONF" ] || CONF=/etc/chrony/chrony.conf
+            echo "pool 2.pool.ntp.org iburst" >> "$CONF"
+            systemctl restart chronyd 2>/dev/null || systemctl restart chrony
             ```
         - id: bash
           desc: |
@@ -14254,7 +14757,7 @@ queries:
               echo "pool 2.pool.ntp.org iburst" >> "$CONF"
             fi
 
-            systemctl restart chronyd
+            systemctl restart chronyd 2>/dev/null || systemctl restart chrony
             ```
         - id: ansible
           desc: |
@@ -14269,9 +14772,14 @@ queries:
               become: true
 
               tasks:
+                - name: Check for the Debian chrony configuration path
+                  ansible.builtin.stat:
+                    path: /etc/chrony/chrony.conf
+                  register: debian_chrony
+
                 - name: Ensure a pool directive is present
                   ansible.builtin.lineinfile:
-                    path: /etc/chrony.conf
+                    path: "{{ debian_chrony.stat.exists | ternary('/etc/chrony/chrony.conf', '/etc/chrony.conf') }}"
                     line: "pool 2.pool.ntp.org iburst"
                     regexp: '^\s*pool\s'
                     state: present
@@ -14280,7 +14788,7 @@ queries:
               handlers:
                 - name: Restart chrony
                   ansible.builtin.service:
-                    name: chronyd
+                    name: "{{ debian_chrony.stat.exists | ternary('chrony', 'chronyd') }}"
                     state: restarted
             ```
     refs:
@@ -14340,10 +14848,15 @@ queries:
           desc: |
             **Using CLI**
 
-            Set an authorized NTP server in the timesyncd configuration and restart the service:
+            Set an authorized NTP server in the timesyncd configuration and restart the service. The `NTP=` setting must be added if the file does not already contain one:
 
             ```bash
-            sed -i 's/^#\?NTP=.*/NTP=2.pool.ntp.org/' /etc/systemd/timesyncd.conf
+            CONF=/etc/systemd/timesyncd.conf
+            if grep -qE '^#?NTP=' "$CONF"; then
+              sed -i 's/^#\?NTP=.*/NTP=2.pool.ntp.org/' "$CONF"
+            else
+              printf '[Time]\nNTP=2.pool.ntp.org\n' >> "$CONF"
+            fi
             systemctl restart systemd-timesyncd
             ```
         - id: bash
@@ -14540,24 +15053,26 @@ queries:
           desc: |
             **Using CLI**
 
-            Enable `gpgcheck` in the global package manager configuration:
+            Enable `gpgcheck` in the global package manager configuration. On dnf-based systems edit `/etc/dnf/dnf.conf` because `/etc/yum.conf` is a symlink to it that in-place edits would break; on yum-based systems edit `/etc/yum.conf`:
 
             ```bash
-            sed -i 's/^gpgcheck\s*=.*/gpgcheck=1/' /etc/yum.conf
-            grep -q '^gpgcheck' /etc/yum.conf || echo 'gpgcheck=1' >> /etc/yum.conf
+            CONF=/etc/dnf/dnf.conf
+            [ -f "$CONF" ] || CONF=/etc/yum.conf
+            sed -i 's/^gpgcheck\s*=.*/gpgcheck=1/' "$CONF"
+            grep -q '^gpgcheck' "$CONF" || echo 'gpgcheck=1' >> "$CONF"
             ```
         - id: bash
           desc: |
             **Using a Bash Script**
 
-            Use this Bash script to enforce `gpgcheck` in whichever global configuration file is present:
+            Use this Bash script to enforce `gpgcheck` in whichever global configuration file is present. It prefers `/etc/dnf/dnf.conf` because `/etc/yum.conf` is a symlink to it on dnf-based systems and an in-place edit of the symlink would break it:
 
             ```bash
             #!/bin/bash
             set -e
 
-            CONF=/etc/yum.conf
-            [ -f "$CONF" ] || CONF=/etc/dnf/dnf.conf
+            CONF=/etc/dnf/dnf.conf
+            [ -f "$CONF" ] || CONF=/etc/yum.conf
 
             if grep -qE '^gpgcheck' "$CONF"; then
               sed -i 's/^gpgcheck\s*=.*/gpgcheck=1/' "$CONF"
@@ -14578,9 +15093,14 @@ queries:
               become: true
 
               tasks:
-                - name: Ensure gpgcheck is enabled in yum.conf
+                - name: Check for the dnf configuration file
+                  ansible.builtin.stat:
+                    path: /etc/dnf/dnf.conf
+                  register: dnf_conf
+
+                - name: Ensure gpgcheck is enabled in the global configuration
                   ansible.builtin.ini_file:
-                    path: /etc/yum.conf
+                    path: "{{ dnf_conf.stat.exists | ternary('/etc/dnf/dnf.conf', '/etc/yum.conf') }}"
                     section: main
                     option: gpgcheck
                     value: "1"
@@ -14643,11 +15163,18 @@ queries:
             sed -i 's/\[trusted=yes\]/[signed-by=\/usr\/share\/keyrings\/example-archive-keyring.gpg]/' /etc/apt/sources.list.d/example.list
             apt-get update
             ```
+
+            For a deb822 entry in a `.sources` file, remove the `Trusted: yes` line and declare the signing key with a `Signed-By:` field:
+
+            ```bash
+            sed -i -E '/^\s*Trusted:\s*yes\s*$/Id' /etc/apt/sources.list.d/example.sources
+            apt-get update
+            ```
         - id: bash
           desc: |
             **Using a Bash Script**
 
-            Use this Bash script to strip the trusted flag from every one-line sources file so APT enforces signature verification:
+            Use this Bash script to strip the trusted flag from every one-line sources file and every deb822 sources file so APT enforces signature verification. It removes only the `trusted=yes` option and keeps other options such as `arch=` and `signed-by=` intact:
 
             ```bash
             #!/bin/bash
@@ -14655,7 +15182,12 @@ queries:
 
             for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do
               [ -f "$f" ] || continue
-              sed -i -E 's/\[[^]]*trusted=yes[^]]*\]//I; s/  +/ /g' "$f"
+              sed -i -E 's/\btrusted=yes\b[[:space:]]*//I; s/\[[[:space:]]*\][[:space:]]*//; s/  +/ /g' "$f"
+            done
+
+            for f in /etc/apt/sources.list.d/*.sources; do
+              [ -f "$f" ] || continue
+              sed -i -E '/^[[:space:]]*Trusted:[[:space:]]*yes[[:space:]]*$/Id' "$f"
             done
 
             apt-get update
@@ -14664,7 +15196,7 @@ queries:
           desc: |
             **Using Ansible**
 
-            Use this Ansible playbook to remove trusted overrides from one-line sources files:
+            Use this Ansible playbook to remove trusted overrides from one-line sources files and deb822 sources files. It removes only the `trusted=yes` option and keeps other options such as `arch=` and `signed-by=` intact:
 
             ```yaml
             ---
@@ -14675,16 +15207,39 @@ queries:
               tasks:
                 - name: Find one-line APT sources files
                   ansible.builtin.find:
-                    paths: /etc/apt/sources.list.d
+                    paths:
+                      - /etc/apt
+                      - /etc/apt/sources.list.d
                     patterns: "*.list"
+                    recurse: no
                   register: apt_sources
 
                 - name: Remove trusted=yes overrides
                   ansible.builtin.replace:
                     path: "{{ item.path }}"
-                    regexp: '\[[^]]*trusted=yes[^]]*\]'
+                    regexp: '\btrusted=yes\b\s*'
                     replace: ""
                   loop: "{{ apt_sources.files }}"
+
+                - name: Remove option brackets left empty
+                  ansible.builtin.replace:
+                    path: "{{ item.path }}"
+                    regexp: '\[\s*\]\s*'
+                    replace: ""
+                  loop: "{{ apt_sources.files }}"
+
+                - name: Find deb822 APT sources files
+                  ansible.builtin.find:
+                    paths: /etc/apt/sources.list.d
+                    patterns: "*.sources"
+                  register: deb822_sources
+
+                - name: Remove Trusted yes lines from deb822 sources files
+                  ansible.builtin.lineinfile:
+                    path: "{{ item.path }}"
+                    regexp: '^\s*Trusted:\s*yes\s*$'
+                    state: absent
+                  loop: "{{ deb822_sources.files }}"
             ```
     refs:
       - url: https://manpages.debian.org/stable/apt/sources.list.5.en.html
