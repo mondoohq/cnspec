@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-arista-eos-security
     name: Mondoo Arista EOS Security
-    version: 1.2.1
+    version: 1.2.2
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -523,12 +523,17 @@ queries:
           desc: |
             **Using the CLI**
 
-            Configure an admin account with SHA-512 password encryption:
+            Set SHA-512 as the default secret hashing algorithm, then configure the admin account. Do not place a cleartext password after the `sha512` keyword, because that keyword expects an already computed hash and a cleartext value stored there makes the account unusable. Supply the password with the cleartext marker `0` and let EOS hash it:
 
             ```
             configure
-            username admin privilege 15 role network-admin secret sha512 <strong-password>
+            management defaults
+            secret hash sha512
+            exit
+            username admin privilege 15 role network-admin secret 0 <strong-password>
             ```
+
+            Verify with `show running-config section username` that the admin entry shows `secret sha512` followed by a hash.
     refs:
       - url: https://www.arista.com/en/um-eos/eos-user-security
         title: Arista EOS User Security Configuration Guide
@@ -550,10 +555,10 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-4
       compliance/vda-isa-5: vda-isa-5-4-1-3
     mql: |
-      arista.eos.runningConfig.content.lines.one(_ == /absolute-timeout/)
+      arista.eos.runningConfig.section(name: "management console").content.lines.any(_ == /^\s+idle-timeout [1-9]/)
     docs:
       desc: |
-        This check verifies that console sessions have a timeout configured. An absolute timeout ensures that idle console sessions are automatically disconnected, reducing the risk of unauthorized physical access.
+        This check verifies that console sessions have a timeout configured. An idle timeout ensures that inactive console sessions are automatically disconnected, reducing the risk of unauthorized physical access.
 
         **Why this matters**
 
@@ -568,22 +573,24 @@ queries:
         Verify the console session timeout from the Arista EOS CLI:
 
         1. Connect to the switch and enter privileged EXEC mode.
-        2. Run `show running-config | include absolute-timeout` to display configured session timeouts.
-        3. Confirm an `absolute-timeout` line is present under the console line configuration.
+        2. Run `show running-config section management console` to display the console configuration.
+        3. Confirm an `idle-timeout` line with a nonzero value is present under the `management console` block.
 
-        If an `absolute-timeout` line is configured, the check passes. If no `absolute-timeout` line exists, the check fails.
+        If a nonzero `idle-timeout` is configured, the check passes. If the `idle-timeout` line is absent or set to 0, the check fails.
       remediation:
         - id: cli
           desc: |
             **Using the CLI**
 
-            Configure absolute timeout for console sessions:
+            Configure an idle timeout for console sessions. EOS expresses the timeout in minutes under the `management console` block:
 
             ```
             configure
-            line console
-            absolute-timeout 10
+            management console
+            idle-timeout 10
             ```
+
+            A value of 0 disables the timeout, so choose a nonzero value that matches your security policy.
     refs:
       - url: https://www.arista.com/en/um-eos/eos-user-security
         title: Arista EOS User Security Configuration Guide
@@ -634,12 +641,14 @@ queries:
           desc: |
             **Using the CLI**
 
-            Configure the IP domain name:
+            Configure the DNS domain name:
 
             ```
             configure
-            ip domain-name <your-domain.com>
+            dns domain <your-domain.com>
             ```
+
+            Verify with `show hostname` that the fully qualified domain name now includes the domain suffix.
     refs:
       - url: https://www.arista.com/en/um-eos/eos-system-configuration
         title: Arista EOS System Configuration Guide
@@ -661,7 +670,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-4
       compliance/vda-isa-5: vda-isa-5-4-1-3
     mql: |
-      arista.eos.runningConfig.content.lines.one(_ == /exec-timeout/)
+      arista.eos.sshSettings.idleTimeout > 0
     docs:
       desc: |
         This check verifies that an exec timeout is configured to automatically disconnect idle sessions. Exec timeouts ensure that forgotten or unattended sessions are terminated before they can be exploited.
@@ -677,25 +686,27 @@ queries:
 
         Configuring exec timeouts ensures that idle sessions are automatically closed, reducing the attack surface and freeing resources for active users.
       audit: |
-        Verify the exec session timeout from the Arista EOS CLI:
+        Verify the remote session idle timeout from the Arista EOS CLI:
 
         1. Connect to the switch and enter privileged EXEC mode.
-        2. Run `show running-config | include exec-timeout` to display configured session timeouts.
-        3. Confirm an `exec-timeout` line is present under the VTY line configuration.
+        2. Run `show management ssh` to display the SSH service configuration.
+        3. Confirm the idle timeout is set to a nonzero value.
 
-        If an `exec-timeout` line is configured, the check passes. If no `exec-timeout` line exists, the check fails.
+        If a nonzero idle timeout is configured for the SSH service, the check passes. If the idle timeout is 0, the check fails.
       remediation:
         - id: cli
           desc: |
             **Using the CLI**
 
-            Configure exec timeout (10 minutes recommended):
+            Configure an idle timeout for remote management sessions. EOS expresses the timeout in minutes under the `management ssh` block:
 
             ```
             configure
-            line vty
-            exec-timeout 10
+            management ssh
+            idle-timeout 10
             ```
+
+            A value of 0 disables the timeout, so choose a nonzero value that matches your security policy.
     refs:
       - url: https://www.arista.com/en/um-eos/eos-user-security
         title: Arista EOS User Security Configuration Guide
@@ -720,6 +731,7 @@ queries:
       arista.eos.hostname != ""
       arista.eos.hostname.downcase != "switch"
       arista.eos.hostname.downcase != "arista"
+      arista.eos.hostname.downcase != "localhost"
     docs:
       desc: |
         This check verifies that a unique, descriptive hostname is configured. A meaningful hostname is essential for identifying the device in logs, alerts, and management systems.
@@ -739,7 +751,7 @@ queries:
 
         1. Connect to the switch and enter privileged EXEC mode.
         2. Run `show hostname` to display the configured hostname.
-        3. Confirm the hostname is set and is not a generic default such as `switch` or `arista`.
+        3. Confirm the hostname is set and is not a generic default such as `localhost`, `switch`, or `arista`.
 
         If a unique, descriptive hostname is configured, the check passes. If the hostname is empty or left at a generic default, the check fails.
       remediation:
@@ -805,14 +817,16 @@ queries:
           desc: |
             **Using the CLI**
 
-            Disable HTTP and enable HTTPS for the management API:
+            Enable HTTPS for the management API first, then disable HTTP. Commands take effect immediately, so removing the HTTP listener before HTTPS is running can cut off any management session or automation that currently uses HTTP:
 
             ```
             configure
             management api http-commands
-            no protocol http
             protocol https
+            no protocol http
             ```
+
+            Verify with `show management api http-commands` that the HTTPS server is running before closing your session.
     refs:
       - url: https://www.arista.com/en/um-eos/eos-management-api
         title: Arista EOS Management API Configuration Guide
@@ -1006,7 +1020,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc7-2-1
       compliance/vda-isa-5: vda-isa-5-5-2-4
     mql: |
-      arista.eos.runningConfig.content.lines.one(_ == "logging on")
+      arista.eos.runningConfig.content.contains("no logging on") == false
     docs:
       desc: |
         This check verifies that system logging is enabled on the switch. Logging captures authentication failures, configuration changes, security events, and other system activities that are critical for monitoring and auditing.
@@ -1026,10 +1040,10 @@ queries:
         Verify that logging is enabled from the Arista EOS CLI:
 
         1. Connect to the switch and enter privileged EXEC mode.
-        2. Run `show running-config | include logging on` to display the logging state.
-        3. Confirm a `logging on` line is present.
+        2. Run `show running-config | include logging` to display the logging state.
+        3. Confirm no `no logging on` line is present. Logging is enabled by default, so a compliant device shows no disable entry.
 
-        If the `logging on` line is present, the check passes. If it is absent, the check fails.
+        If no `no logging on` line is present, the check passes. If logging has been disabled with `no logging on`, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -1444,15 +1458,20 @@ queries:
           desc: |
             **Using the CLI**
 
-            Remove the `nopassword` configuration from all user accounts:
+            Assign a password to every account configured with `nopassword`. Setting a secret replaces the `nopassword` attribute in the running-config:
 
             ```
             configure
-            no username <username> nopassword
-            username <username> secret <strong-password>
+            username <username> secret 0 <strong-password>
             ```
 
-            Ensure all accounts use strong, encrypted passwords (preferably SHA-512).
+            Remove accounts that are no longer needed:
+
+            ```
+            no username <username>
+            ```
+
+            Verify with `show running-config section username` that no entry still contains the `nopassword` keyword.
     refs:
       - url: https://www.arista.com/en/um-eos/eos-user-security
         title: Arista EOS User Security Configuration Guide
@@ -1649,42 +1668,43 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-9
       compliance/vda-isa-5: vda-isa-5-4-1-3
     mql: |
-      arista.eos.runningConfig.content.lines.one(_ == "service password-encryption")
+      arista.eos.users.all(format == "sha512" || nopassword == true)
     docs:
       desc: |
-        This check verifies that password encryption service is enabled to protect passwords in configuration. When enabled, this service encrypts passwords that would otherwise appear in plain text in the running configuration.
+        This check verifies that local user passwords are stored as SHA-512 hashes rather than in cleartext or with weak, reversible encodings. Hashing stored credentials protects them whenever the configuration is viewed, shared, or backed up.
 
         **Why this matters**
 
-        Without password encryption enabled, some passwords appear in clear text in the device configuration. If this service is not turned on:
+        Without strong hashing of stored credentials, passwords in the device configuration are exposed. If user secrets are stored in cleartext or with weak encodings:
 
         - Passwords in the configuration can be read by anyone who views the configuration file.
-        - Configuration backups contain plain-text passwords that could be exposed.
+        - Configuration backups contain recoverable passwords that could be exposed.
         - Security standards requiring credential protection in configuration files are not met.
         - An additional layer of defense-in-depth protection is missing.
 
-        Enabling service password encryption prevents casual observation of passwords in configuration files. Note that this uses Type 7 encryption, which can be reversed, so stronger hashing such as SHA-512 should still be used for user passwords.
+        Setting SHA-512 as the default secret hashing algorithm ensures that every local user secret is stored as a strong one-way hash.
       audit: |
-        Verify password encryption service from the Arista EOS CLI:
+        Verify stored password hashing from the Arista EOS CLI:
 
         1. Connect to the switch and enter privileged EXEC mode.
-        2. Run `show running-config | include service password-encryption` to display the setting.
-        3. Confirm a `service password-encryption` line is present.
+        2. Run `show running-config section username` to list configured local users.
+        3. Confirm every account with a secret shows `secret sha512` followed by a hash.
 
-        If the `service password-encryption` line is present, the check passes. If it is absent, the check fails.
+        If every stored secret uses the SHA-512 format, the check passes. If any account stores its secret in cleartext or with a weaker encoding, the check fails.
       remediation:
         - id: cli
           desc: |
             **Using the CLI**
 
-            Enable service password encryption:
+            EOS does not store local user passwords in cleartext when the `secret` keyword is used. To ensure all secrets are hashed with the strongest available algorithm, set SHA-512 as the default hashing algorithm:
 
             ```
             configure
-            service password-encryption
+            management defaults
+            secret hash sha512
             ```
 
-            This encrypts passwords that would otherwise be stored in plain text in the configuration.
+            Re-enter any existing user secrets afterward so they are stored with the new algorithm, and verify with `show running-config section username` that each entry shows `secret sha512`.
     refs:
       - url: https://www.arista.com/en/um-eos/eos-user-security
         title: Arista EOS User Security Configuration Guide
@@ -1748,7 +1768,7 @@ queries:
             Consider using SNMPv3 with authentication and encryption instead of community strings:
 
             ```
-            snmp-server user <username> <group> v3 auth sha <password> priv aes128 <privpassword>
+            snmp-server user <username> <group> v3 auth sha <password> priv aes <privpassword>
             ```
     refs:
       - url: https://www.arista.com/en/um-eos/eos-snmp
@@ -1772,9 +1792,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-9
       compliance/vda-isa-5: vda-isa-5-4-1-3
     mql: |
-      arista.eos.snmp.notifications.all(
-        _['enabled'] == false || _['name'] != /public|private/
-      )
+      arista.eos.runningConfig.content.lines.none(_ == /^snmp-server host \S+.* (public|private)( |$)/)
     docs:
       desc: |
         This check verifies that SNMP trap notifications don't use default community strings. SNMP traps send device status and event information to monitoring servers, and using default strings exposes this data to interception.
@@ -1792,21 +1810,24 @@ queries:
         Verify SNMP trap configuration from the Arista EOS CLI:
 
         1. Connect to the switch and enter privileged EXEC mode.
-        2. Run `show snmp host` to display configured SNMP trap destinations and their community strings.
-        3. Confirm no enabled trap destination uses the default `public` or `private` community string.
+        2. Run `show running-config | include snmp-server host` to display configured SNMP trap destinations and their community strings.
+        3. Confirm no trap destination uses the default `public` or `private` community string.
 
-        If every enabled trap destination uses a non-default community string, the check passes. If any enabled trap uses `public` or `private`, the check fails.
+        If every trap destination uses a non-default community string, the check passes. If any destination uses `public` or `private`, the check fails.
       remediation:
         - id: cli
           desc: |
             **Using the CLI**
 
-            Configure SNMP traps with secure community strings:
+            Remove trap destinations that use default community strings, then re-add them with a secure community string:
 
             ```
             configure
+            no snmp-server host <server-ip>
             snmp-server host <server-ip> version 2c <secure-community-string>
             ```
+
+            Verify with `show running-config | include snmp-server host` that no destination uses the `public` or `private` community string.
     refs:
       - url: https://www.arista.com/en/um-eos/eos-snmp
         title: Arista EOS SNMP Configuration Guide
@@ -1864,10 +1885,10 @@ queries:
             no shutdown
             ```
 
-            Configure SSH server settings for enhanced security:
+            Harden the SSH service while in the same configuration block, for example by setting an idle timeout:
 
             ```
-            ip ssh version 2
+            idle-timeout 10
             ```
     refs:
       - url: https://www.arista.com/en/um-eos/eos-user-security
@@ -1918,19 +1939,20 @@ queries:
           desc: |
             **Using the CLI**
 
-            Disable Telnet management access:
+            Verify SSH access works before disabling Telnet. If your current session runs over Telnet, the `shutdown` command disconnects it immediately, so establish and test an SSH session first:
+
+            ```
+            configure
+            management ssh
+            no shutdown
+            ```
+
+            After confirming you can log in over SSH, disable Telnet:
 
             ```
             configure
             management telnet
             shutdown
-            ```
-
-            Ensure SSH is enabled as a secure alternative:
-
-            ```
-            management ssh
-            no shutdown
             ```
     refs:
       - url: https://www.arista.com/en/um-eos/eos-user-security
@@ -2127,10 +2149,10 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-9
       compliance/vda-isa-5: vda-isa-5-4-1-3
     mql: |
-      arista.eos.users.where(secret != "").all(format.in(["sha512", "sha256"]))
+      arista.eos.users.where(secret != "").all(format == "sha512")
     docs:
       desc: |
-        This check verifies that all user accounts use strong password encryption algorithms (SHA-512 or SHA-256). These cryptographically secure hash algorithms protect stored credentials from being recovered if the configuration is exposed.
+        This check verifies that all user accounts use the strong SHA-512 password hashing algorithm. This cryptographically secure hash algorithm protects stored credentials from being recovered if the configuration is exposed.
 
         **Why this matters**
 
@@ -2141,28 +2163,31 @@ queries:
         - Compliance with security standards that require strong cryptographic algorithms is violated.
         - A single exposed configuration file could compromise every account on the device.
 
-        Using SHA-512 or SHA-256 for all user passwords ensures that credentials remain protected even if the device configuration is inadvertently exposed or backed up insecurely.
+        Using SHA-512 for all user passwords ensures that credentials remain protected even if the device configuration is inadvertently exposed or backed up insecurely.
       audit: |
         Verify user password hashing from the Arista EOS CLI:
 
         1. Connect to the switch and enter privileged EXEC mode.
         2. Run `show running-config section username` to list configured local users and their secret hash format.
-        3. Confirm every account with a secret uses a `sha512` or `sha256` hash.
+        3. Confirm every account with a secret uses a `sha512` hash.
 
-        If every account secret uses SHA-512 or SHA-256, the check passes. If any account uses a weaker hash, the check fails.
+        If every account secret uses SHA-512, the check passes. If any account uses a weaker hash, the check fails.
       remediation:
         - id: cli
           desc: |
             **Using the CLI**
 
-            Update all user accounts to use SHA-512 password encryption:
+            Set SHA-512 as the default secret hashing algorithm, then re-enter each user password. Do not place a cleartext password after the `sha512` keyword, because that keyword expects an already computed hash. Supply the password with the cleartext marker `0` and let EOS hash it:
 
             ```
             configure
-            username <username> secret sha512 <password>
+            management defaults
+            secret hash sha512
+            exit
+            username <username> secret 0 <strong-password>
             ```
 
-            SHA-512 is preferred over SHA-256 for maximum security.
+            Verify with `show running-config section username` that every entry shows `secret sha512` followed by a hash.
     refs:
       - url: https://www.arista.com/en/um-eos/eos-user-security
         title: Arista EOS User Security Configuration Guide
@@ -2185,7 +2210,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-5
       compliance/vda-isa-5: vda-isa-5-5-2-6
     mql: |
-      arista.eos.vlans.any(name.downcase != /^vlan/)
+      arista.eos.vlans.where(id != "1").all(name.downcase != /^vlan\d+$/)
     docs:
       desc: |
         This check verifies that VLANs have descriptive names rather than default names. Descriptive VLAN names make the network configuration self-documenting, which is important for both operations and security.
@@ -2205,9 +2230,9 @@ queries:
 
         1. Connect to the switch and enter privileged EXEC mode.
         2. Run `show vlan` to list every VLAN with its name.
-        3. Confirm VLANs carry descriptive names rather than the default `VLANxxxx` form.
+        3. Confirm every VLAN other than VLAN 1 carries a descriptive name rather than the default `VLANxxxx` form.
 
-        If VLANs have descriptive names, the check passes. If all VLANs use only default names, the check fails.
+        If every VLAN other than VLAN 1 has a descriptive name, the check passes. If any VLAN keeps a default `VLANxxxx` name, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -2598,15 +2623,15 @@ queries:
           desc: |
             **Using the CLI**
 
-            Add an explicit deny entry at the end of each ACL:
+            Add an explicit deny entry at the end of each standard ACL. Use a sequence number higher than every existing entry so the deny stays last:
 
             ```
             configure
-            ip access-list <acl-name>
-            <high-sequence-number> deny ip any any log
+            ip access-list standard <acl-name>
+            <high-sequence-number> deny any log
             ```
 
-            The `log` keyword ensures denied traffic is recorded for security monitoring.
+            The `log` keyword ensures denied traffic is recorded for security monitoring. This entry matches the same traffic as the implicit deny, so it does not change forwarding behavior for ACLs already ending in the implicit deny.
     refs:
       - url: https://www.arista.com/en/um-eos/eos-access-control-lists
         title: Arista EOS Access Control Lists Configuration Guide
@@ -2660,15 +2685,15 @@ queries:
           desc: |
             **Using the CLI**
 
-            Add the `log` keyword to all deny entries in each ACL:
+            Re-enter each deny entry with its existing sequence number and append the `log` keyword. Standard ACL entries take only a source address:
 
             ```
             configure
-            ip access-list <acl-name>
-            <sequence-number> deny ip <source> <destination> log
+            ip access-list standard <acl-name>
+            <sequence-number> deny <source> log
             ```
 
-            Review existing deny entries and update them to include logging:
+            List the current entries first to capture each sequence number and source:
 
             ```
             show ip access-lists
