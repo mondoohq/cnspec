@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-freebsd-security
     name: Mondoo FreeBSD Security
-    version: 1.0.2
+    version: 1.0.3
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -1076,6 +1076,12 @@ queries:
             sed -i '' 's/^ftp/#ftp/' /etc/inetd.conf
             ```
 
+            Reload inetd so the change takes effect:
+
+            ```bash
+            service inetd reload
+            ```
+
             If `inetd` is not needed at all, disable it:
 
             ```bash
@@ -1093,6 +1099,7 @@ queries:
             echo "Disabling FTP server..."
             if [ -f /etc/inetd.conf ]; then
               sed -i '' 's/^ftp/#ftp/' /etc/inetd.conf
+              service inetd reload 2>/dev/null || true
               echo "FTP entries commented out in /etc/inetd.conf."
             fi
 
@@ -1111,6 +1118,12 @@ queries:
                 path: /etc/inetd.conf
                 regexp: '^ftp'
                 replace: '#ftp'
+
+            - name: Reload inetd to apply the change
+              ansible.builtin.service:
+                name: inetd
+                state: reloaded
+              failed_when: false
             ```
   - uid: mondoo-freebsd-security-telnet-server-is-not-enabled
     title: Ensure telnet server is not enabled
@@ -1159,6 +1172,12 @@ queries:
             ```bash
             sed -i '' 's/^telnet/#telnet/' /etc/inetd.conf
             ```
+
+            Reload inetd so the change takes effect:
+
+            ```bash
+            service inetd reload
+            ```
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -1170,6 +1189,7 @@ queries:
             echo "Disabling telnet server..."
             if [ -f /etc/inetd.conf ]; then
               sed -i '' 's/^telnet/#telnet/' /etc/inetd.conf
+              service inetd reload 2>/dev/null || true
               echo "Telnet entries commented out in /etc/inetd.conf."
             fi
 
@@ -1188,6 +1208,12 @@ queries:
                 path: /etc/inetd.conf
                 regexp: '^telnet'
                 replace: '#telnet'
+
+            - name: Reload inetd to apply the change
+              ansible.builtin.service:
+                name: inetd
+                state: reloaded
+              failed_when: false
             ```
   - uid: mondoo-freebsd-security-nis-server-is-not-enabled
     title: Ensure NIS server is not enabled
@@ -1574,6 +1600,12 @@ queries:
             ```bash
             sed -i '' 's/^tftp/#tftp/' /etc/inetd.conf
             ```
+
+            Reload inetd so the change takes effect:
+
+            ```bash
+            service inetd reload
+            ```
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -1585,6 +1617,7 @@ queries:
             echo "Disabling TFTP server..."
             if [ -f /etc/inetd.conf ]; then
               sed -i '' 's/^tftp/#tftp/' /etc/inetd.conf
+              service inetd reload 2>/dev/null || true
               echo "TFTP entries commented out in /etc/inetd.conf."
             fi
 
@@ -1603,6 +1636,12 @@ queries:
                 path: /etc/inetd.conf
                 regexp: '^tftp'
                 replace: '#tftp'
+
+            - name: Reload inetd to apply the change
+              ansible.builtin.service:
+                name: inetd
+                state: reloaded
+              failed_when: false
             ```
   - uid: mondoo-freebsd-security-imap-and-pop3-server-is-not-enabled
     title: Ensure IMAP and POP3 server is not enabled
@@ -1624,8 +1663,8 @@ queries:
     mql: |
       service("dovecot").running == false
       service("dovecot").enabled == false
-      service("cyrus_imapd").running == false
-      service("cyrus_imapd").enabled == false
+      service("imapd").running == false
+      service("imapd").enabled == false
     docs:
       refs:
         - url: https://man.freebsd.org/cgi/man.cgi?query=rc.conf&sektion=5
@@ -1657,8 +1696,10 @@ queries:
             sysrc dovecot_enable="NO"
             service dovecot stop
             sysrc cyrus_imapd_enable="NO"
-            service cyrus_imapd stop
+            service imapd stop
             ```
+
+            The cyrus-imapd port installs its rc script as `imapd` while keeping `cyrus_imapd_enable` as the rc.conf variable, so the two names differ by design.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -1671,7 +1712,7 @@ queries:
             sysrc dovecot_enable="NO" 2>/dev/null || true
             service dovecot onestop 2>/dev/null || true
             sysrc cyrus_imapd_enable="NO" 2>/dev/null || true
-            service cyrus_imapd onestop 2>/dev/null || true
+            service imapd onestop 2>/dev/null || true
 
             echo "IMAP and POP3 services disabled."
             ```
@@ -1697,7 +1738,7 @@ queries:
                 state: stopped
               loop:
                 - dovecot
-                - cyrus_imapd
+                - imapd
               failed_when: false
             ```
   - uid: mondoo-freebsd-security-web-proxy-server-is-not-enabled
@@ -4018,7 +4059,13 @@ queries:
             awk -F: '$3 == 0 { print $1 }' /etc/passwd
             ```
 
-            Remove or change the UID of any account other than `root` that has UID 0.
+            FreeBSD ships a `toor` account that shares UID 0 with `root`. If it is not needed, remove it:
+
+            ```bash
+            pw userdel toor
+            ```
+
+            Remove any other UID 0 account with `pw userdel`, or assign it a unique UID with `pw usermod -u`.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -4102,7 +4149,7 @@ queries:
             Identify duplicate UIDs and assign unique UIDs to each user:
 
             ```bash
-            awk -F: '{print $3}' /etc/passwd | sort -n | uniq -d
+            awk -F: '$3 != 0 { print $3 }' /etc/passwd | sort -n | uniq -d
             ```
         - id: sh
           desc: |
@@ -4113,7 +4160,7 @@ queries:
             set -e
 
             echo "Checking for duplicate UIDs..."
-            DUPES=$(awk -F: '{print $3}' /etc/passwd | sort -n | uniq -d)
+            DUPES=$(awk -F: '$3 != 0 { print $3 }' /etc/passwd | sort -n | uniq -d)
 
             if [ -n "$DUPES" ]; then
               echo "WARNING: Duplicate UIDs found:"
@@ -4135,7 +4182,7 @@ queries:
 
             ```yaml
             - name: Find duplicate UIDs
-              ansible.builtin.shell: "awk -F: '{print $3}' /etc/passwd | sort -n | uniq -d"
+              ansible.builtin.shell: "awk -F: '$3 != 0 { print $3 }' /etc/passwd | sort -n | uniq -d"
               register: dup_uids
               changed_when: false
 
@@ -4436,20 +4483,22 @@ queries:
         To verify that every user's primary group exists in `/etc/group`, run the following command:
 
         ```bash
-        pwck -r
+        awk -F: 'NR==FNR { gids[$3]; next } !($4 in gids) { print $1 " GID " $4 }' /etc/group /etc/passwd
         ```
 
-        If `pwck` reports no missing groups, the check passes. If it reports a primary group that does not exist in `/etc/group`, the check fails.
+        If the command returns no output, the check passes. If it lists a user whose primary group does not exist in `/etc/group`, the check fails.
       remediation:
         - id: cli
           desc: |
             **Using the CLI**
 
-            Identify users with missing groups and create the missing groups or reassign users:
+            Identify users whose primary group is missing from `/etc/group`:
 
             ```bash
-            pwck -r
+            awk -F: 'NR==FNR { gids[$3]; next } !($4 in gids) { print $1 " GID " $4 }' /etc/group /etc/passwd
             ```
+
+            Create each missing group with `pw groupadd -g <gid> <name>` or reassign the user's primary group with `pw usermod`.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -4483,16 +4532,15 @@ queries:
             2. Run the playbook, then create the missing groups or reassign the reported users.
 
             ```yaml
-            - name: Check passwd consistency
-              ansible.builtin.command: pwck -r
-              register: pwck_result
+            - name: Find users whose primary group is missing
+              ansible.builtin.shell: "awk -F: 'NR==FNR { gids[$3]; next } !($4 in gids) { print $1 }' /etc/group /etc/passwd"
+              register: missing_groups
               changed_when: false
-              failed_when: false
 
             - name: Fail when a primary group is missing
               ansible.builtin.fail:
-                msg: "pwck reported missing primary groups: {{ pwck_result.stdout }}"
-              when: "'no group' in pwck_result.stdout"
+                msg: "Users with missing primary groups: {{ missing_groups.stdout }}"
+              when: missing_groups.stdout | length > 0
             ```
   - uid: mondoo-freebsd-security-syslogd-is-enabled-and-running
     title: Ensure syslogd is enabled and running
@@ -4621,7 +4669,7 @@ queries:
             Enable secure mode for syslogd:
 
             ```bash
-            sysrc syslogd_flags="-s"
+            sysrc syslogd_flags+=" -s"
             service syslogd restart
             ```
         - id: sh
@@ -4637,7 +4685,7 @@ queries:
             if echo "$CURRENT_FLAGS" | grep -q -- '-s'; then
               echo "syslogd_flags already contains -s."
             else
-              sysrc syslogd_flags="-s"
+              sysrc syslogd_flags+=" -s"
             fi
 
             service syslogd restart
@@ -4656,6 +4704,7 @@ queries:
               community.general.sysrc:
                 name: syslogd_flags
                 value: '-s'
+                state: value_present
 
             - name: Restart the syslogd service
               ansible.builtin.service:
@@ -4801,12 +4850,12 @@ queries:
             echo "Configuring sudo to use pty..."
             # Check if use_pty is already configured
             HAS_USE_PTY=false
-            if grep -q 'use_pty' "$SUDOERS" 2>/dev/null; then
+            if grep -Eq '^[^#!]*Defaults[^#]*[[:space:],]use_pty' "$SUDOERS" 2>/dev/null; then
               HAS_USE_PTY=true
             fi
             if [ -d "$SUDOERS_D" ]; then
               for f in "$SUDOERS_D"/*; do
-                if [ -f "$f" ] && grep -q 'use_pty' "$f" 2>/dev/null; then
+                if [ -f "$f" ] && grep -Eq '^[^#!]*Defaults[^#]*[[:space:],]use_pty' "$f" 2>/dev/null; then
                   HAS_USE_PTY=true
                 fi
               done
@@ -4983,15 +5032,19 @@ queries:
           desc: |
             **Using the CLI**
 
+            Warning: Starting a firewall on a remote system can terminate your SSH session and lock you out. Run these commands from the system console, and confirm the rule set allows SSH before starting the firewall.
+
             Enable `ipfw`:
 
             ```bash
             sysrc firewall_enable="YES"
             sysrc firewall_type="workstation"
+            sysrc firewall_myservices="22/tcp"
+            sysrc firewall_allowservices="any"
             service ipfw start
             ```
 
-            Or enable `pf`:
+            Or enable `pf` after creating an `/etc/pf.conf` rule set that allows SSH:
 
             ```bash
             sysrc pf_enable="YES"
@@ -5000,6 +5053,8 @@ queries:
         - id: sh
           desc: |
             **Using a Shell Script**
+
+            Warning: Starting a firewall on a remote system can terminate your SSH session and lock you out. Run this script from the system console, and confirm the rule set allows SSH before starting the firewall.
 
             ```sh
             #!/bin/sh
@@ -5015,6 +5070,8 @@ queries:
               echo "No firewall enabled. Enabling ipfw in workstation mode..."
               sysrc firewall_enable="YES"
               sysrc firewall_type="workstation"
+              sysrc firewall_myservices="22/tcp"
+              sysrc firewall_allowservices="any"
               service ipfw start
 
               echo "ipfw firewall enabled in workstation mode."
@@ -5035,6 +5092,8 @@ queries:
               loop:
                 - { name: firewall_enable, value: 'YES' }
                 - { name: firewall_type, value: 'workstation' }
+                - { name: firewall_myservices, value: '22/tcp' }
+                - { name: firewall_allowservices, value: 'any' }
 
             - name: Start the ipfw service
               ansible.builtin.service:
