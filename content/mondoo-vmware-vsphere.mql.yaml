@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-vmware-vsphere-security-baseline
     name: Mondoo VMware vSphere Security Baseline
-    version: 2.1.1
+    version: 2.1.2
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -1340,6 +1340,15 @@ queries:
 
         The check passes only when the parameter is present and set to `1048576` for every virtual machine. It fails if the parameter is absent or set to any other value.
       remediation:
+        - id: vsphere-client
+          desc: |
+            To limit informational messages from the VM to the VMX file using the vSphere Client:
+
+            1. Select the VM then select `Actions` followed by `Edit Settings`.
+            2. Select `VM Options` tab then expand `Advanced`.
+            3. Select `EDIT CONFIGURATION`.
+            4. Select `ADD CONFIGURATION PARAMS` then input `tools.setInfo.sizeLimit` with a value of `1048576`.
+            5. Select `OK`, then `OK` again.
         - id: powershell
           desc: |
             To limit informational messages from the VM to the VMX file using PowerCLI, run the following command for each VM:
@@ -1522,11 +1531,10 @@ queries:
       remediation:
         - id: powershell
           desc: |
-            To limit the use of nonpersistent disk mode using PowerCLI, run the following command:
+            To convert nonpersistent disks to persistent mode using PowerCLI, run the following command. The VM must be powered off before changing disk persistence:
 
-            ```
-            #Add the parameters for the following cmdlet to set the VM Disk Type:
-            Get-VM | Get-HardDisk | Set-HardDisk
+            ```powershell
+            Get-VM | Get-HardDisk | Where-Object { $_.Persistence -eq "IndependentNonPersistent" } | Set-HardDisk -Persistence Persistent
             ```
         # No Terraform remediation: the vsphere_virtual_machine disk block exposes no disk-mode or independent-nonpersistent argument.
     refs:
@@ -1610,18 +1618,10 @@ queries:
             5. Select `OK`, then `OK` again.
         - id: powershell
           desc: |
-            To limit a VM to one remote console connection using PowerCLI, run the following command for VMs that do not specify the setting:
+            To limit a VM to one remote console connection using PowerCLI, run the following command for each VM. The `-Force` flag overwrites the value on VMs where the parameter already exists:
 
-            ```
-            Add the setting to all VMs
-            Get-VM | New-AdvancedSetting -Name "RemoteDisplay.maxConnections" -value 1
-            ```
-
-            Run the following PowerCLI command for VMs that specify the setting but have the wrong value for it:
-
-            ```
-            Add the setting to all VMs
-            Get-VM | New-AdvancedSetting -Name "RemoteDisplay.maxConnections" -value 1 -Force
+            ```powershell
+            Get-VM | New-AdvancedSetting -Name "RemoteDisplay.maxConnections" -Value 1 -Force
             ```
         - id: terraform
           desc: |
@@ -1689,12 +1689,13 @@ queries:
       remediation:
         - id: powershell
           desc: |
-            To disable PCI and PCIe device pass-through using PowerCLI, run the following command:
+            To disable PCI and PCIe device pass-through using PowerCLI, remove all `pciPassthru` advanced parameters from each VM:
 
+            ```powershell
+            Get-VM | Get-AdvancedSetting -Name "pciPassthru*" | Remove-AdvancedSetting -Confirm:$false
             ```
-            Add the setting to all VMs
-            Get-VM | New-AdvancedSetting -Name "pciPassthru*.present" -value ""
-            ```
+
+            Also remove any `PCI device` entries from the VM hardware list using `Edit Settings` in the vSphere Client.
         # No Terraform remediation: the vsphere_virtual_machine resource exposes PCI passthrough only as a pci_device_id list, with no advanced-setting key to assert against.
     refs:
       - url: https://docs.vmware.com/en/VMware-vSphere/8.0/vsphere-security/GUID-20D8B362-E96F-4F78-B7C3-660C7C2F773D.html
@@ -3008,11 +3009,10 @@ queries:
       remediation:
         - id: powershell
           desc: |
-            To disconnect all CD/DVD drives from VMs using PowerCLI, run the following command:
+            To remove all CD/DVD drives from VMs using PowerCLI, run the following command:
 
-            ```
-            Remove all CD/DVD Drives attached to VMs
-            Get-VM | Get-CDDrive | Remove-CDDrive
+            ```powershell
+            Get-VM | Get-CDDrive | Remove-CDDrive -Confirm:$false
             ```
 
             The VM will need to be powered off for this change to take effect.
@@ -3072,11 +3072,10 @@ queries:
       remediation:
         - id: powershell
           desc: |
-            To disconnect all floppy drives from VMs using PowerCLI, run the following command:
+            To remove all floppy drives from VMs using PowerCLI, run the following command:
 
-            ```
-            Remove all Floppy drives attached to VMs
-            Get-VM | Get-FloppyDrive | Remove-FloppyDrive
+            ```powershell
+            Get-VM | Get-FloppyDrive | Remove-FloppyDrive -Confirm:$false
             ```
 
             The VM will need to be powered off for this change to take effect.
@@ -3136,12 +3135,22 @@ queries:
       remediation:
         - id: powershell
           desc: |
-            To disconnect all parallel ports from VMs using PowerCLI, run the following command:
+            To remove all parallel ports from VMs using PowerCLI, run the following script:
 
-            ```
-            In this Example you will need to add the functions from this post: http://blogs.vmware.com/vipowershell/2012/05/working-with-vm-devices-in-powercli.html
-            Remove all Parallel Ports attached to VMs
-            Get-VM | Get-ParallelPort | Remove-ParallelPort
+            ```powershell
+            Get-VM | ForEach-Object {
+              $vm = $_
+              $vm.ExtensionData.Config.Hardware.Device |
+                Where-Object { $_ -is [VMware.Vim.VirtualParallelPort] } |
+                ForEach-Object {
+                  $spec = New-Object VMware.Vim.VirtualMachineConfigSpec
+                  $change = New-Object VMware.Vim.VirtualDeviceConfigSpec
+                  $change.Operation = 'remove'
+                  $change.Device = $_
+                  $spec.DeviceChange = @($change)
+                  $vm.ExtensionData.ReconfigVM_Task($spec)
+                }
+            }
             ```
 
             The VM will need to be powered off for this change to take effect.
@@ -3201,12 +3210,22 @@ queries:
       remediation:
         - id: powershell
           desc: |
-            To disconnect all serial ports from VMs using PowerCLI, run the following command:
+            To remove all serial ports from VMs using PowerCLI, run the following script:
 
-            ```
-            In this Example you will need to add the functions from this post: http://blogs.vmware.com/vipowershell/2012/05/working-with-vm-devices-in-powercli.html
-            Remove all Serial Ports attached to VMs
-            Get-VM | Get-SerialPort | Remove-SerialPort
+            ```powershell
+            Get-VM | ForEach-Object {
+              $vm = $_
+              $vm.ExtensionData.Config.Hardware.Device |
+                Where-Object { $_ -is [VMware.Vim.VirtualSerialPort] } |
+                ForEach-Object {
+                  $spec = New-Object VMware.Vim.VirtualMachineConfigSpec
+                  $change = New-Object VMware.Vim.VirtualDeviceConfigSpec
+                  $change.Operation = 'remove'
+                  $change.Device = $_
+                  $spec.DeviceChange = @($change)
+                  $vm.ExtensionData.ReconfigVM_Task($spec)
+                }
+            }
             ```
 
             The VM will need to be powered off for this change to take effect.
@@ -3266,11 +3285,10 @@ queries:
       remediation:
         - id: powershell
           desc: |
-            To disconnect all USB devices from VMs using PowerCLI, run the following command:
+            To remove all USB devices from VMs using PowerCLI, run the following command:
 
-            ```
-            Remove all USB Devices attached to VMs
-            Get-VM | Get-USBDevice | Remove-USBDevice
+            ```powershell
+            Get-VM | Get-UsbDevice | Remove-UsbDevice -Confirm:$false
             ```
 
             The VM will need to be powered off for this change to take effect.
@@ -4122,7 +4140,7 @@ queries:
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'vsphere_virtual_machine')
     mql: |
       terraform.resources('vsphere_virtual_machine').all(
-        arguments['vtpm'] != empty
+        blocks.contains(type == 'vtpm')
       )
   - uid: mondoo-vmware-vsphere-security-baseline-ensure-a-virtual-trusted-platform-module-is-present-terraform-plan
     filters: |
@@ -5087,8 +5105,9 @@ queries:
             To enable vSAN data-at-rest encryption using PowerCLI:
 
             ```powershell
+            $kms = Get-KmsCluster -Name "KMS_CLUSTER_NAME"
             Get-Cluster -Name "CLUSTER_NAME" |
-              Set-VsanClusterConfiguration -DataEncryptionEnabled $true -KmsCluster "KMS_CLUSTER_NAME"
+              Set-VsanClusterConfiguration -EncryptionEnabled $true -KmsCluster $kms
             ```
     refs:
       - url: https://docs.vmware.com/en/VMware-vSphere/8.0/vsan-security/GUID-F3B2714F-3406-48E7-AC2D-3677355C94D3.html
