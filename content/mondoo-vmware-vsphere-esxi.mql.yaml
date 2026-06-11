@@ -1932,7 +1932,7 @@ queries:
         title: VMware ESXi SLP Service Security Advisory
   # No Terraform variants: the vsphere Terraform provider does not manage ESXi host services such as the snmpd daemon.
   - uid: mondoo-vmware-vsphere-esxi-security-baseline-ensure-the-snmp-service-is-disabled
-    title: Ensure the SNMP service is disabled
+    title: Ensure SNMP is disabled or restricted to SNMPv3
     impact: 70
     tags:
       compliance/bsi-sys-1-5: bsi-sys-1-5-a22
@@ -1949,11 +1949,19 @@ queries:
       compliance/soc2-2017: soc2-control-cc7-1-1
       compliance/vda-isa-5: vda-isa-5-5-2-3
     mql: |
-      vsphere.host.services.where( key == "snmpd" ).all( running == false )
-      vsphere.host.services.where( key == "snmpd" ).all( policy == "off" )
+      if (vsphere.host.snmp["Enable"] == "true") {
+        vsphere.host.snmp["Communities"] == null || vsphere.host.snmp["Communities"] == ""
+        vsphere.host.snmp["Targets"] == null || vsphere.host.snmp["Targets"] == ""
+        vsphere.host.snmp["Users"] != null && vsphere.host.snmp["Users"] != "" || vsphere.host.snmp["V3targets"] != null && vsphere.host.snmp["V3targets"] != ""
+      } else {
+        vsphere.host.services.where( key == "snmpd" ).all( running == false )
+        vsphere.host.services.where( key == "snmpd" ).all( policy == "off" )
+      }
     docs:
       desc: |-
-        This check ensures that the SNMP daemon, `snmpd`, is stopped and set to start manually unless monitoring explicitly requires it. SNMP v1 and v2c rely on community strings sent in clear text, which can be sniffed and replayed to read host data or change settings.
+        This check ensures that the SNMP agent is either disabled or restricted to SNMPv3. SNMP v1 and v2c rely on community strings sent in clear text, which can be sniffed and replayed to read host data or change settings. SNMPv3 authenticates users and encrypts traffic, so hosts that require SNMP monitoring can keep the agent enabled when only SNMPv3 is configured.
+
+        The host passes when the SNMP agent is disabled and the `snmpd` service is stopped with a manual startup policy. It also passes when the agent is enabled with no v1 or v2c community strings or trap targets, and at least one SNMPv3 user or SNMPv3 notification target is configured.
 
         **Why this matters**
 
@@ -1982,7 +1990,15 @@ queries:
              Select-Object VMHost, Key, Running, Policy
            ```
 
-        The host passes when the `snmpd` service is not running and its `Policy` is `off`. A running service or a policy of `on` is a failing result.
+        ### Audit via the ESXi shell
+
+        1. Inspect the SNMP agent configuration:
+
+           ```bash
+           esxcli system snmp get
+           ```
+
+        The host passes when the SNMP agent is disabled and the `snmpd` service is not running with its `Policy` set to `off`. A host that keeps SNMP enabled passes only when `Communities` and `Targets` are empty and `Users` or `V3targets` is configured.
       remediation:
         - id: vsphere-client
           desc: |
@@ -2001,12 +2017,16 @@ queries:
             esxcli system snmp set --enable false
             ```
 
-            If SNMP monitoring is required, configure SNMPv3 with authentication and privacy instead of SNMP v1 or v2c, and record the host as an approved exception to this check because the check requires the `snmpd` service to be stopped:
+            If SNMP monitoring is required, configure SNMPv3 with authentication and privacy instead of SNMP v1 or v2c. Community and target settings overwrite the previous values, so setting them to an empty string removes any v1 and v2c configuration:
 
             ```bash
+            esxcli system snmp set --communities ""
+            esxcli system snmp set --targets ""
             esxcli system snmp set --v3targets monitor.example.com@161/poller/priv --authentication SHA1 --privacy AES128
             esxcli system snmp set --enable true
             ```
+
+            The check passes for hosts that keep SNMP enabled with an SNMPv3-only configuration.
         # No Terraform remediation: SNMP service state and startup policy are runtime host configuration with no Terraform resource.
   - uid: mondoo-vmware-vsphere-esxi-security-baseline-ensure-the-vswitch-forged-transmits-policy-is-set-to-reject
     title: Ensure the vSwitch Forged Transmits policy is set to reject
