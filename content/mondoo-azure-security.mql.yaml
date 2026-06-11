@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-azure-security
     name: Mondoo Microsoft Azure Security
-    version: 9.2.0
+    version: 9.2.1
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -483,17 +483,22 @@ queries:
             5. Save the changes.
         - id: cli
           desc: |
-            To ensure Azure VM OS disks are encrypted with CMK using the Azure CLI:
+            To ensure Azure VM OS disks are encrypted with CMK using the Azure CLI, attach a disk encryption set to the OS disk. The VM must be deallocated first:
 
             ```bash
-            az vm encryption enable --resource-group <ResourceGroupName> --name <VMName> --disk-encryption-keyvault <KeyVaultName> --key-encryption-key <KeyName> --volume-type OS
+            az vm deallocate --resource-group <ResourceGroupName> --name <VMName>
+            az disk update --resource-group <ResourceGroupName> --name <OsDiskName> --disk-encryption-set <DiskEncryptionSetName>
+            az vm start --resource-group <ResourceGroupName> --name <VMName>
             ```
         - id: powershell
           desc: |
-            To ensure Azure VM OS disks are encrypted with CMK using PowerShell:
+            To ensure Azure VM OS disks are encrypted with CMK using PowerShell, attach a disk encryption set to the OS disk. The VM must be stopped first:
 
             ```powershell
-            Set-AzVMDiskEncryptionExtension -ResourceGroupName <ResourceGroupName> -VMName <VMName> -KeyVaultUrl <KeyVaultUrl> -VolumeType OS
+            Stop-AzVM -ResourceGroupName <ResourceGroupName> -Name <VMName> -Force
+            $des = Get-AzDiskEncryptionSet -ResourceGroupName <ResourceGroupName> -Name <DiskEncryptionSetName>
+            New-AzDiskUpdateConfig -EncryptionType "EncryptionAtRestWithCustomerKey" -DiskEncryptionSetId $des.Id | Update-AzDisk -ResourceGroupName <ResourceGroupName> -DiskName <OsDiskName>
+            Start-AzVM -ResourceGroupName <ResourceGroupName> -Name <VMName>
             ```
         - id: terraform
           desc: |
@@ -760,17 +765,21 @@ queries:
               - Ensure that the `destination_port_range` does not include TCP port 22 unless absolutely necessary and from a secure source.
         - id: cli
           desc: |
-            To restrict SSH access on disallowed TCP ports using the Azure CLI, update or create a new NSG rule to restrict SSH access:
+            To restrict SSH access using the Azure CLI, change the source of the offending allow rule to a trusted address range, or delete the rule entirely:
 
             ```bash
-            az network nsg rule create --resource-group <ResourceGroupName> --nsg-name <NSGName> --name RestrictSSH --priority 1001 --direction Inbound --access Deny --protocol Tcp --source-address-prefixes <YourSecureIPRange> --destination-port-ranges 22
+            az network nsg rule update --resource-group <ResourceGroupName> --nsg-name <NSGName> --name <ExistingSSHRuleName> --source-address-prefixes 203.0.113.0/24
+
+            az network nsg rule delete --resource-group <ResourceGroupName> --nsg-name <NSGName> --name <ExistingSSHRuleName>
             ```
         - id: powershell
           desc: |
-            To restrict SSH access on disallowed TCP ports using PowerShell:
+            To restrict SSH access using PowerShell, update the offending rule's source to a trusted address range and apply the change:
 
             ```powershell
-            New-AzNetworkSecurityRuleConfig -Name RestrictSSH -Protocol Tcp -Direction Inbound -Priority 1001 -SourceAddressPrefix <YourSecureIPRange> -SourcePortRange * -DestinationAddressPrefix * -DestinationPortRange 22 -Access Allow
+            $nsg = Get-AzNetworkSecurityGroup -ResourceGroupName <ResourceGroupName> -Name <NSGName>
+            Set-AzNetworkSecurityRuleConfig -NetworkSecurityGroup $nsg -Name <ExistingSSHRuleName> -Protocol Tcp -Direction Inbound -Priority 1001 -SourceAddressPrefix "203.0.113.0/24" -SourcePortRange * -DestinationAddressPrefix * -DestinationPortRange 22 -Access Allow
+            $nsg | Set-AzNetworkSecurityGroup
             ```
         - id: terraform
           desc: |
@@ -989,17 +998,21 @@ queries:
             4. Preferably, change the `source_address_prefix` to more restrictive settings, such as a specific IP range or a secure VPN gateway.
         - id: cli
           desc: |
-            To restrict RDP access on disallowed TCP ports using the Azure CLI, update or create a new NSG rule to restrict RDP access:
+            To restrict RDP access using the Azure CLI, change the source of the offending allow rule to a trusted address range, or delete the rule entirely:
 
             ```bash
-            az network nsg rule create --resource-group <ResourceGroupName> --nsg-name <NSGName> --name RestrictRDP --priority 1001 --direction Inbound --access Deny --protocol Tcp --source-address-prefixes <YourSecureIPRange> --destination-port-ranges 3389
+            az network nsg rule update --resource-group <ResourceGroupName> --nsg-name <NSGName> --name <ExistingRDPRuleName> --source-address-prefixes 203.0.113.0/24
+
+            az network nsg rule delete --resource-group <ResourceGroupName> --nsg-name <NSGName> --name <ExistingRDPRuleName>
             ```
         - id: powershell
           desc: |
-            To restrict RDP access on disallowed TCP ports using PowerShell:
+            To restrict RDP access using PowerShell, update the offending rule's source to a trusted address range and apply the change:
 
             ```powershell
-            New-AzNetworkSecurityRuleConfig -Name RestrictRDP -Protocol Tcp -Direction Inbound -Priority 1001 -SourceAddressPrefix <YourSecureIPRange> -SourcePortRange * -DestinationAddressPrefix * -DestinationPortRange 3389 -Access Allow
+            $nsg = Get-AzNetworkSecurityGroup -ResourceGroupName <ResourceGroupName> -Name <NSGName>
+            Set-AzNetworkSecurityRuleConfig -NetworkSecurityGroup $nsg -Name <ExistingRDPRuleName> -Protocol Tcp -Direction Inbound -Priority 1001 -SourceAddressPrefix "203.0.113.0/24" -SourcePortRange * -DestinationAddressPrefix * -DestinationPortRange 3389 -Access Allow
+            $nsg | Set-AzNetworkSecurityGroup
             ```
         - id: terraform
           desc: |
@@ -1218,17 +1231,21 @@ queries:
             4. Preferably, change the `source_address_prefix` to more restrictive settings, such as a specific IP range or a secure VPN gateway.
         - id: cli
           desc: |
-            To restrict VNC access on disallowed TCP ports using the Azure CLI, update or create a new NSG rule to restrict VNC access:
+            To restrict VNC access using the Azure CLI, change the source of the offending allow rule to a trusted address range, or delete the rule entirely:
 
             ```bash
-            az network nsg rule create --resource-group <ResourceGroupName> --nsg-name <NSGName> --name RestrictVNC --priority 1001 --direction Inbound --access Deny --protocol Tcp --source-address-prefixes <YourSecureIPRange> --destination-port-ranges 5900
+            az network nsg rule update --resource-group <ResourceGroupName> --nsg-name <NSGName> --name <ExistingVNCRuleName> --source-address-prefixes 203.0.113.0/24
+
+            az network nsg rule delete --resource-group <ResourceGroupName> --nsg-name <NSGName> --name <ExistingVNCRuleName>
             ```
         - id: powershell
           desc: |
-            To restrict VNC access on disallowed TCP ports using PowerShell:
+            To restrict VNC access using PowerShell, update the offending rule's source to a trusted address range and apply the change:
 
             ```powershell
-            New-AzNetworkSecurityRuleConfig -Name RestrictVNC -Protocol Tcp -Direction Inbound -Priority 1001 -SourceAddressPrefix <YourSecureIPRange> -SourcePortRange * -DestinationAddressPrefix * -DestinationPortRange 5900 -Access Allow
+            $nsg = Get-AzNetworkSecurityGroup -ResourceGroupName <ResourceGroupName> -Name <NSGName>
+            Set-AzNetworkSecurityRuleConfig -NetworkSecurityGroup $nsg -Name <ExistingVNCRuleName> -Protocol Tcp -Direction Inbound -Priority 1001 -SourceAddressPrefix "203.0.113.0/24" -SourcePortRange * -DestinationAddressPrefix * -DestinationPortRange 5900 -Access Allow
+            $nsg | Set-AzNetworkSecurityGroup
             ```
         - id: terraform
           desc: |
@@ -1600,6 +1617,12 @@ queries:
               az storage account update --name <storage-account> --resource-group <resource-group> --public-network-access Disabled
               ```
 
+            - Disable blob anonymous access at the account level:
+
+              ```bash
+              az storage account update --name <storage-account> --resource-group <resource-group> --allow-blob-public-access false
+              ```
+
             - Set blob containers to private access:
 
               ```bash
@@ -1613,6 +1636,12 @@ queries:
 
               ```powershell
               Set-AzStorageAccount -Name <storage-account> -ResourceGroupName <resource-group> -PublicNetworkAccess Disabled
+              ```
+
+            - Disable blob anonymous access at the account level:
+
+              ```powershell
+              Set-AzStorageAccount -Name <storage-account> -ResourceGroupName <resource-group> -AllowBlobPublicAccess $false
               ```
 
             - Set blob containers to private access:
@@ -1773,19 +1802,19 @@ queries:
             6. Save your changes to enforce that all unrecognized network traffic is blocked by default.
         - id: cli
           desc: |
-            To enforce Deny as Default Network Access for Azure Storage Accounts using the Azure CLI, set the default network access rule to "Deny" for a new storage account, use the following Azure CLI command:
+            To enforce Deny as Default Network Access for Azure Storage Accounts using the Azure CLI, set the default network access rule to "Deny" with the following Azure CLI command:
 
             ```bash
-            az storage account create --name <StorageAccountName> --resource-group <ResourceGroupName> --location <Location> --default-action Deny
+            az storage account update --name <StorageAccountName> --resource-group <ResourceGroupName> --default-action Deny
             ```
 
             This command updates the storage account to deny all traffic by default, significantly enhancing the security posture by limiting access to only configured exceptions.
         - id: powershell
           desc: |
-            To enforce Deny as Default Network Access for Azure Storage Accounts using PowerShell, set the default network access rule to "Deny" for a new storage account, use the following PowerShell command:
+            To enforce Deny as Default Network Access for Azure Storage Accounts using PowerShell, set the default network access rule to "Deny" with the following PowerShell command:
 
             ```powershell
-            New-AzStorageAccount -ResourceGroupName <ResourceGroupName> -Name <StorageAccountName> -Location <Location> -SkuName Standard_LRS -Kind StorageV2 -DefaultAction Deny
+            Update-AzStorageAccountNetworkRuleSet -ResourceGroupName <ResourceGroupName> -Name <StorageAccountName> -DefaultAction Deny
             ```
 
             This command updates the storage account to deny all traffic by default, significantly enhancing the security posture by limiting access to only configured exceptions.
@@ -1954,14 +1983,14 @@ queries:
             To ensure "Trusted Microsoft Services" have access to Azure storage accounts using the Azure CLI, enable trusted Microsoft services for a storage account:
 
             ```bash
-            az storage account update --name <StorageAccountName> --resource-group <ResourceGroupName> --bypass AzureServices
+            az storage account update --name <StorageAccountName> --resource-group <ResourceGroupName> --bypass AzureServices --default-action Deny
             ```
         - id: powershell
           desc: |
             To ensure "Trusted Microsoft Services" have access to Azure storage accounts using PowerShell:
 
             ```powershell
-            Set-AzStorageAccount -Name <StorageAccountName> -ResourceGroupName <ResourceGroupName> -NetworkRuleSetBypass AzureServices
+            Update-AzStorageAccountNetworkRuleSet -ResourceGroupName <ResourceGroupName> -Name <StorageAccountName> -Bypass AzureServices -DefaultAction Deny
             ```
         - id: terraform
           desc: |
@@ -1969,11 +1998,10 @@ queries:
 
             ```hcl
             resource "azurerm_storage_account" "example" {
-                ...
+              ...
               network_rules {
-                ...
-                bypass = ["AzureServices"]
-                ...
+                default_action = "Deny"
+                bypass         = ["AzureServices"]
               }
             }
             ```
@@ -2278,28 +2306,38 @@ queries:
             az sql server firewall-rule create --resource-group <resource-group> --server <server-name> --name <rule-name> --start-ip-address <secure-start-ip> --end-ip-address <secure-end-ip>
 
             # PostgreSQL
-            az postgres flexible-server firewall-rule create --resource-group <resource-group> --name <server-name> --rule-name <rule-name> --start-ip-address <secure-start-ip> --end-ip-address <secure-end-ip>
+            az postgres flexible-server firewall-rule create --resource-group <resource-group> --server-name <server-name> --name <rule-name> --start-ip-address <secure-start-ip> --end-ip-address <secure-end-ip>
 
             # MySQL
-            az mysql flexible-server firewall-rule create --resource-group <resource-group> --name <server-name> --rule-name <rule-name> --start-ip-address <secure-start-ip> --end-ip-address <secure-end-ip>
+            az mysql flexible-server firewall-rule create --resource-group <resource-group> --server-name <server-name> --name <rule-name> --start-ip-address <secure-start-ip> --end-ip-address <secure-end-ip>
 
+            ```
+
+            Then delete any rules that still allow ingress from 0.0.0.0:
+
+            ```bash
+            az sql server firewall-rule delete --resource-group <resource-group> --server <server-name> --name <offending-rule-name>
+            az postgres flexible-server firewall-rule delete --resource-group <resource-group> --server-name <server-name> --name <offending-rule-name>
+            az mysql flexible-server firewall-rule delete --resource-group <resource-group> --server-name <server-name> --name <offending-rule-name>
             ```
         - id: powershell
           desc: |
-            To ensure no SQL Databases allow ingress 0.0.0.0/0 (ANY IP) using PowerShell:
+            To ensure no SQL Databases allow ingress 0.0.0.0/0 (ANY IP) using PowerShell, remove any rule that allows ingress from 0.0.0.0 and create rules limited to secure IP ranges:
 
             ```powershell
             # Replace <server-name>, <resource-group>, and <rule-name> with your specific details
 
             # Azure SQL
+            Remove-AzSqlServerFirewallRule -ResourceGroupName <resource-group> -ServerName <server-name> -FirewallRuleName <offending-rule-name>
             New-AzSqlServerFirewallRule -ResourceGroupName <resource-group> -ServerName <server-name> -FirewallRuleName <rule-name> -StartIpAddress <secure-start-ip> -EndIpAddress <secure-end-ip>
 
-            # PostgreSQL
-            New-AzPostgreSqlServerFirewallRule -ResourceGroupName <resource-group> -ServerName <server-name> -FirewallRuleName <rule-name> -StartIpAddress <secure-start-ip> -EndIpAddress <secure-end-ip>
+            # PostgreSQL Flexible Server
+            Remove-AzPostgreSqlFlexibleServerFirewallRule -ResourceGroupName <resource-group> -ServerName <server-name> -Name <offending-rule-name>
+            New-AzPostgreSqlFlexibleServerFirewallRule -ResourceGroupName <resource-group> -ServerName <server-name> -Name <rule-name> -StartIpAddress <secure-start-ip> -EndIpAddress <secure-end-ip>
 
-            # MySQL
-            New-AzMySqlServerFirewallRule -ResourceGroupName <resource-group> -ServerName <server-name> -FirewallRuleName <rule-name> -StartIpAddress <secure-start-ip> -EndIpAddress <secure-end-ip>
-
+            # MySQL Flexible Server
+            Remove-AzMySqlFlexibleServerFirewallRule -ResourceGroupName <resource-group> -ServerName <server-name> -Name <offending-rule-name>
+            New-AzMySqlFlexibleServerFirewallRule -ResourceGroupName <resource-group> -ServerName <server-name> -Name <rule-name> -StartIpAddress <secure-start-ip> -EndIpAddress <secure-end-ip>
             ```
         - id: terraform
           desc: |
@@ -2465,9 +2503,7 @@ queries:
             To ensure App Service managed identities are enabled for Entra ID using PowerShell:
 
             ```powershell
-            $app = Get-AzWebApp -ResourceGroupName <RESOURCE_GROUP_NAME> -Name <APP_NAME>
-            $app.Identity.Type = "SystemAssigned"
-            Set-AzWebApp -ResourceGroupName <RESOURCE_GROUP_NAME> -Name <APP_NAME> -Identity $app.Identity
+            Set-AzWebApp -ResourceGroupName <RESOURCE_GROUP_NAME> -Name <APP_NAME> -AssignIdentity $true
             ```
         - id: terraform
           desc: |
@@ -2657,9 +2693,7 @@ queries:
             To ensure Key Vaults are configured with Recovery features using PowerShell:
 
             ```powershell
-            $vault = Get-AzKeyVault -VaultName <VaultName> -ResourceGroupName <ResourceGroupName>
-            $vault.EnablePurgeProtection = $true
-            Set-AzKeyVault -KeyVault $vault
+            Update-AzKeyVault -VaultName <VaultName> -ResourceGroupName <ResourceGroupName> -EnablePurgeProtection
             ```
         - id: terraform
           desc: |
@@ -2782,10 +2816,10 @@ queries:
               d. Select **Save**.
         - id: cli
           desc: |
-            To ensure that Web Apps use the latest available version of TLS encryption using the Azure CLI, set the minimum TLS version to 1.2 for a new app service:
+            To ensure that Web Apps use the latest available version of TLS encryption using the Azure CLI, set the minimum TLS version to 1.2 for the app service:
 
             ```bash
-            az webapp create --name <APP_NAME> --resource-group <RESOURCE_GROUP_NAME> --plan <APP_SERVICE_PLAN> --min-tls-version 1.2
+            az webapp config set --resource-group <RESOURCE_GROUP_NAME> --name <APP_NAME> --min-tls-version 1.2
             ```
         - id: powershell
           desc: |
@@ -3007,17 +3041,13 @@ queries:
             - For keys:
 
               ```powershell
-              $key = Get-AzKeyVaultKey -VaultName <VaultName> -Name <KeyName>
-              $key.Expires = (Get-Date).AddYears(1)
-              Update-AzKeyVaultKey -VaultName <VaultName> -Key $key
+              Update-AzKeyVaultKey -VaultName <VaultName> -Name <KeyName> -Expires (Get-Date).AddYears(1)
               ```
 
             - For secrets:
 
               ```powershell
-              $secret = Get-AzKeyVaultSecret -VaultName <VaultName> -Name <SecretName>
-              $secret.Expires = (Get-Date).AddYears(1)
-              Update-AzKeyVaultSecret -VaultName <VaultName> -Secret $secret
+              Update-AzKeyVaultSecret -VaultName <VaultName> -Name <SecretName> -Expires (Get-Date).AddYears(1)
               ```
         - id: terraform
           desc: |
@@ -3176,19 +3206,19 @@ queries:
             Send logs to a Storage Account:
 
             ```bash
-            az monitor diagnostic-settings create --name "defaultLogs" --resource <Key Vault Resource ID> --logs '[{"category": "audit", "enabled": true}, {"category": "allLogs", "enabled": true}]' --storage-account <Storage Account ID>
+            az monitor diagnostic-settings create --name "defaultLogs" --resource <Key Vault Resource ID> --logs '[{"categoryGroup": "audit", "enabled": true}, {"categoryGroup": "allLogs", "enabled": true}]' --storage-account <Storage Account ID>
             ```
 
             Send logs to a Log Analytics workspace:
 
             ```bash
-            az monitor diagnostic-settings create --name "defaultLogs" --resource <Key Vault Resource ID> --logs '[{"category": "audit", "enabled": true}, {"category": "allLogs", "enabled": true}]' --workspace <Log Analytics Workspace ID>
+            az monitor diagnostic-settings create --name "defaultLogs" --resource <Key Vault Resource ID> --logs '[{"categoryGroup": "audit", "enabled": true}, {"categoryGroup": "allLogs", "enabled": true}]' --workspace <Log Analytics Workspace ID>
             ```
 
             Send logs to an Event Hub:
 
             ```bash
-            az monitor diagnostic-settings create --name "defaultLogs" --resource <Key Vault Resource ID> --logs '[{"category": "audit", "enabled": true}, {"category": "allLogs", "enabled": true}]' --event-hub <Event Hub Name>
+            az monitor diagnostic-settings create --name "defaultLogs" --resource <Key Vault Resource ID> --logs '[{"categoryGroup": "audit", "enabled": true}, {"categoryGroup": "allLogs", "enabled": true}]' --event-hub <Event Hub Name>
             ```
         - id: powershell
           desc: |
@@ -3198,30 +3228,30 @@ queries:
 
             ```powershell
             $logs = @(
-                New-AzDiagnosticSettingLogConfig -Category "audit" -Enabled $true
-                New-AzDiagnosticSettingLogConfig -Category "allLogs" -Enabled $true
+                New-AzDiagnosticSettingLogSettingsObject -CategoryGroup "audit" -Enabled $true
+                New-AzDiagnosticSettingLogSettingsObject -CategoryGroup "allLogs" -Enabled $true
             )
-            Set-AzDiagnosticSetting -ResourceId <Key Vault Resource ID> -Log $logs -StorageAccountId <Storage Account ID>
+            New-AzDiagnosticSetting -Name "defaultLogs" -ResourceId <Key Vault Resource ID> -Log $logs -StorageAccountId <Storage Account ID>
             ```
 
             Send logs to a Log Analytics workspace:
 
             ```powershell
             $logs = @(
-                New-AzDiagnosticSettingLogConfig -Category "audit" -Enabled $true
-                New-AzDiagnosticSettingLogConfig -Category "allLogs" -Enabled $true
+                New-AzDiagnosticSettingLogSettingsObject -CategoryGroup "audit" -Enabled $true
+                New-AzDiagnosticSettingLogSettingsObject -CategoryGroup "allLogs" -Enabled $true
             )
-            Set-AzDiagnosticSetting -ResourceId <Key Vault Resource ID> -Log $logs -WorkspaceId <Log Analytics Workspace ID>
+            New-AzDiagnosticSetting -Name "defaultLogs" -ResourceId <Key Vault Resource ID> -Log $logs -WorkspaceId <Log Analytics Workspace ID>
             ```
 
             Send logs to an Event Hub:
 
             ```powershell
             $logs = @(
-                New-AzDiagnosticSettingLogConfig -Category "audit" -Enabled $true
-                New-AzDiagnosticSettingLogConfig -Category "allLogs" -Enabled $true
+                New-AzDiagnosticSettingLogSettingsObject -CategoryGroup "audit" -Enabled $true
+                New-AzDiagnosticSettingLogSettingsObject -CategoryGroup "allLogs" -Enabled $true
             )
-            Set-AzDiagnosticSetting -ResourceId <Key Vault Resource ID> -Log $logs -EventHubAuthorizationRuleId <Event Hub Authorization Rule ID> -EventHubName <Event Hub Name>
+            New-AzDiagnosticSetting -Name "defaultLogs" -ResourceId <Key Vault Resource ID> -Log $logs -EventHubAuthorizationRuleId <Event Hub Authorization Rule ID> -EventHubName <Event Hub Name>
             ```
         - id: terraform
           desc: |
@@ -3229,38 +3259,16 @@ queries:
 
             ```hcl
             resource "azurerm_monitor_diagnostic_setting" "example" {
-              name               = "kv-logging"
-              target_resource_id = azurerm_key_vault.example.id
+              name                       = "kv-logging"
+              target_resource_id         = azurerm_key_vault.example.id
               log_analytics_workspace_id = azurerm_log_analytics_workspace.example.id
 
-              log {
-                category = "audit"
-                enabled  = true
-
-                retention_policy {
-                  enabled = true
-                  days    = 0
-                }
+              enabled_log {
+                category_group = "audit"
               }
 
-              log {
-                category = "allLogs"
-                enabled  = true
-
-                retention_policy {
-                  enabled = true
-                  days    = 0
-                }
-              }
-
-              metric {
-                category = "AllMetrics"
-                enabled  = false
-
-                retention_policy {
-                  enabled = false
-                  days    = 0
-                }
+              enabled_log {
+                category_group = "allLogs"
               }
             }
             ```
@@ -3275,6 +3283,14 @@ queries:
               properties: {
                 workspaceId: logAnalyticsWorkspace.id
                 logs: [
+                  {
+                    categoryGroup: 'audit'
+                    enabled: true
+                    retentionPolicy: {
+                      enabled: true
+                      days: 90
+                    }
+                  }
                   {
                     categoryGroup: 'allLogs'
                     enabled: true
@@ -3433,26 +3449,32 @@ queries:
             To ensure activity log alerts exist for NSG create, update, and delete using the Azure CLI, create an activity log alert for network security group changes:
 
             ```bash
-            az monitor activity-log alert create --name <AlertName> --resource-group <ResourceGroupName> --scope <ResourceID> --condition "category == 'Administrative' and operationName == 'Microsoft.Network/networkSecurityGroups/write'" --action-group <ActionGroupID>
+            az monitor activity-log alert create --name <AlertName> --resource-group <ResourceGroupName> --scope <ResourceID> --condition "category=Administrative and operationName=Microsoft.Network/networkSecurityGroups/write" --action-group <ActionGroupID>
             ```
 
             To create an activity log alert for network security group deletions:
 
             ```bash
-            az monitor activity-log alert create --name <AlertName> --resource-group <ResourceGroupName> --scope <ResourceID> --condition "category == 'Administrative' and operationName == 'Microsoft.Network/networkSecurityGroups/delete'" --action-group <ActionGroupID>
+            az monitor activity-log alert create --name <AlertName> --resource-group <ResourceGroupName> --scope <ResourceID> --condition "category=Administrative and operationName=Microsoft.Network/networkSecurityGroups/delete" --action-group <ActionGroupID>
             ```
         - id: powershell
           desc: |
             To ensure activity log alerts exist for NSG create, update, and delete using PowerShell, create an activity log alert for network security group changes:
 
             ```powershell
-            New-AzActivityLogAlert -Name <AlertName> -ResourceGroupName <ResourceGroupName> -Location <Location> -Condition "category == 'Administrative' and operationName == 'Microsoft.Network/networkSecurityGroups/write'" -ActionGroupId <ActionGroupID>
+            $category = New-AzActivityLogAlertAlertRuleAnyOfOrLeafConditionObject -Field "category" -Equal "Administrative"
+            $operation = New-AzActivityLogAlertAlertRuleAnyOfOrLeafConditionObject -Field "operationName" -Equal "Microsoft.Network/networkSecurityGroups/write"
+            $action = New-AzActivityLogAlertActionGroupObject -Id <ActionGroupID>
+            New-AzActivityLogAlert -Name <AlertName> -ResourceGroupName <ResourceGroupName> -Location Global -Scope "/subscriptions/<SubscriptionID>" -Condition $category, $operation -Action $action
             ```
 
             To create an activity log alert for network security group deletions:
 
             ```powershell
-            New-AzActivityLogAlert -Name <AlertName> -ResourceGroupName <ResourceGroupName> -Location <Location> -Condition "category == 'Administrative' and operationName == 'Microsoft.Network/networkSecurityGroups/delete'" -ActionGroupId <ActionGroupID>
+            $category = New-AzActivityLogAlertAlertRuleAnyOfOrLeafConditionObject -Field "category" -Equal "Administrative"
+            $operation = New-AzActivityLogAlertAlertRuleAnyOfOrLeafConditionObject -Field "operationName" -Equal "Microsoft.Network/networkSecurityGroups/delete"
+            $action = New-AzActivityLogAlertActionGroupObject -Id <ActionGroupID>
+            New-AzActivityLogAlert -Name <AlertName> -ResourceGroupName <ResourceGroupName> -Location Global -Scope "/subscriptions/<SubscriptionID>" -Condition $category, $operation -Action $action
             ```
         - id: terraform
           desc: |
@@ -3471,6 +3493,25 @@ queries:
               criteria {
                 category = "Administrative"
                 operation_name = "Microsoft.Network/networkSecurityGroups/write"
+              }
+
+              action {
+                action_group_id = azurerm_monitor_action_group.example.id
+              }
+            }
+
+            resource "azurerm_monitor_activity_log_alert" "nsg_delete" {
+              name                = "example-nsg-delete-alert"
+              resource_group_name = azurerm_resource_group.example.name
+              location            = azurerm_resource_group.example.location
+
+              scopes = [
+                azurerm_network_security_group.example.id,
+              ]
+
+              criteria {
+                category       = "Administrative"
+                operation_name = "Microsoft.Network/networkSecurityGroups/delete"
               }
 
               action {
@@ -3651,49 +3692,45 @@ queries:
               6. Select `Save` to apply the changes.
         - id: cli
           desc: |
-            To ensure that "Notify about alerts with high severity" is enabled using the Azure CLI, use the following command to update the security contact settings to enable high severity alert notifications. Replace `<Your_Subscription_Id>` and `<validEmailAddress>` with the appropriate values.
+            To ensure that "Notify about alerts with high severity" is enabled using the Azure CLI, use the following command to update the security contact settings to enable high severity alert notifications:
 
-              ```bash
-              az account get-access-token --query "{subscription:subscription,accessToken:accessToken}" --output tsv | xargs -L1 bash -c 'curl -X PUT -H "Authorization: Bearer $1" -H "Content-Type: application/json" https://management.azure.com/subscriptions/<$0>/providers/Microsoft.Security/securityContacts/default1?api-version=2017-08-01-preview -d "@input.json"'
-              ```
+            ```bash
+            az account get-access-token --query "{subscription:subscription,accessToken:accessToken}" --output tsv | xargs -L1 bash -c 'curl -X PUT -H "Authorization: Bearer $1" -H "Content-Type: application/json" https://management.azure.com/subscriptions/$0/providers/Microsoft.Security/securityContacts/default?api-version=2023-12-01-preview -d "@input.json"'
+            ```
 
-              Ensure the `input.json` file contains the following data, with `<validEmailAddress>` replaced with your contact email:
+            Ensure the `input.json` file contains the following data, with `<validEmailAddress>` replaced with your contact email:
 
-              ```json
-              {
-                "id": "/subscriptions/<Your_Subscription_Id>/providers/Microsoft.Security/securityContacts/default1",
-                "name": "default1",
-                "type": "Microsoft.Security/securityContacts",
-                "properties": {
-                  "email": "<validEmailAddress>",
-                  "alertNotifications": "On",
-                  "alertsToAdmins": "On"
+            ```json
+            {
+              "name": "default",
+              "type": "Microsoft.Security/securityContacts",
+              "properties": {
+                "emails": "<validEmailAddress>",
+                "alertNotifications": {
+                  "state": "On",
+                  "minimalSeverity": "High"
+                },
+                "notificationsByRole": {
+                  "state": "On",
+                  "roles": ["Owner"]
                 }
               }
-              ```
+            }
+            ```
         - id: powershell
           desc: |
-            To ensure that "Notify about alerts with high severity" is enabled using PowerShell, enable high severity alert notifications, use the following PowerShell command. Replace `<Your_Subscription_Id>` and `<validEmailAddress>` with the appropriate values.
+            To ensure that "Notify about alerts with high severity" is enabled using PowerShell, enable high severity alert notifications with the following PowerShell command. Replace `<validEmailAddress>` with the appropriate value.
 
-              ```powershell
-              $securityContact = @{
-                id = "/subscriptions/<Your_Subscription_Id>/providers/Microsoft.Security/securityContacts/default1"
-                name = "default1"
-                type = "Microsoft.Security/securityContacts"
-                properties = @{
-                  email = "<validEmailAddress>"
-                  alertNotifications = "On"
-                  alertsToAdmins = "On"
-                }
-              }
-              New-AzSecurityContact -SecurityContact $securityContact
-              ```
+            ```powershell
+            New-AzSecurityContact -Name "default1" -Email "<validEmailAddress>" -AlertAdmin -NotifyOnAlert
+            ```
         - id: terraform
           desc: |
             To ensure that "Notify about alerts with high severity" is enabled in Terraform, enable high severity alert notifications, use the following Terraform configuration. Replace `<Your_Subscription_Id>` and `<validEmailAddress>` with the appropriate values.
 
             ```hcl
             resource "azurerm_security_center_contact" "example" {
+              name                = "default1"
               email               = "security@example.com"
               phone               = "+1-555-555-5555"
               alert_notifications = true
@@ -3859,16 +3896,13 @@ queries:
             Automate this process using scripts to iterate over all PostgreSQL servers in a subscription or resource group, ensuring no server is left without SSL enforcement.
         - id: powershell
           desc: |
-            To ensure SSL connection enabled for PostgreSQL database servers using PowerShell, enforce SSL connections across all PostgreSQL servers in a resource group, you can use the following PowerShell script:
+            To ensure SSL connection enabled for PostgreSQL database servers using PowerShell, enforce SSL connections by setting the `require_secure_transport` server parameter:
 
             ```powershell
-            $servers = Get-AzPostgreSqlServer -ResourceGroupName <ResourceGroupName>
-            foreach ($server in $servers) {
-                Set-AzPostgreSqlServer -ResourceGroupName <ResourceGroupName> -ServerName $server.Name -SslEnforcement Enabled
-            }
+            Update-AzPostgreSqlFlexibleServerConfiguration -ResourceGroupName <ResourceGroupName> -ServerName <ServerName> -Name require_secure_transport -Value on
             ```
 
-            This script iterates over all PostgreSQL servers in the specified resource group and sets SSL enforcement to `Enabled`. Regularly running such scripts can help maintain compliance over time, especially in dynamic environments where new servers are frequently deployed.
+            This command updates the specified PostgreSQL flexible server to require secure transport. Run it for every server to maintain compliance over time, especially in dynamic environments where new servers are frequently deployed.
         - id: terraform
           desc: |
             To ensure SSL connection enabled for PostgreSQL database servers in Terraform, enforce SSL by setting `require_secure_transport` to `ON` on the flexible server:
@@ -4024,16 +4058,14 @@ queries:
             These commands update the specified MySQL flexible server to enforce SSL connections and set the minimum TLS version to 1.2. Adjust the `tls_version` parameter value as needed.
         - id: powershell
           desc: |
-            To ensure SSL is enabled with latest TLS for MySQL Database Server using PowerShell, enforce SSL connections and set the latest TLS version for MySQL servers, use the following PowerShell command:
+            To ensure SSL is enabled with latest TLS for MySQL Database Server using PowerShell, enforce SSL connections and set the latest TLS version with the following PowerShell commands:
 
             ```powershell
-            $server = Get-AzMySqlServer -ResourceGroupName <resourceGroupName> -Name <serverName>
-            $server.SslEnforcement = "Enabled"
-            $server.MinimalTlsVersion = "TLS1_2"
-            Update-AzMySqlServer -MySqlServer $server
+            Update-AzMySqlFlexibleServerConfiguration -ResourceGroupName <resourceGroupName> -ServerName <serverName> -Name require_secure_transport -Value ON
+            Update-AzMySqlFlexibleServerConfiguration -ResourceGroupName <resourceGroupName> -ServerName <serverName> -Name tls_version -Value TLSv1.2
             ```
 
-            This command retrieves the specified MySQL server, updates the SSL enforcement and TLS version settings, and applies the changes.
+            These commands update the specified MySQL flexible server to require secure transport and set the minimum TLS version to 1.2.
         - id: terraform
           desc: |
             To ensure SSL is enabled with latest TLS for MySQL Database Server in Terraform, enforce SSL connections and set TLS 1.2 on the flexible server:
@@ -4201,12 +4233,10 @@ queries:
             To ensure SQL server public access is disabled or limited to selected networks using PowerShell, disable public network access for SQL servers, you can use the following PowerShell command:
 
             ```powershell
-            $server = Get-AzSqlServer -ResourceGroupName <ResourceGroupName> -ServerName <ServerName>
-            $server.PublicNetworkAccess = "Disabled"
-            Set-AzSqlServer -SqlServer $server
+            Set-AzSqlServer -ResourceGroupName <ResourceGroupName> -ServerName <ServerName> -PublicNetworkAccess "Disabled"
             ```
 
-            This command retrieves the specified SQL server, updates the public network access setting to disabled, and applies the changes. Regularly review and update these settings to ensure compliance with security best practices.
+            This command updates the public network access setting of the specified SQL server to disabled. Regularly review and update these settings to ensure compliance with security best practices.
         - id: terraform
           desc: |
             To ensure SQL server public access is disabled or limited to selected networks in Terraform, disable public network access for SQL servers, you can use the following Terraform configuration:
@@ -4342,12 +4372,10 @@ queries:
             To ensure Key Vault public access is disabled or limited to selected networks using PowerShell, disable public network access for key vaults, you can use the following PowerShell command:
 
             ```powershell
-            $keyVault = Get-AzKeyVault -ResourceGroupName <ResourceGroupName> -VaultName <KeyVaultName>
-            $keyVault.Properties.PublicNetworkAccess = "Disabled"
-            Set-AzKeyVault -KeyVault $keyVault
+            Update-AzKeyVault -VaultName <KeyVaultName> -ResourceGroupName <ResourceGroupName> -PublicNetworkAccess "Disabled"
             ```
 
-            This command retrieves the specified key vault, updates the public network access setting to disabled, and applies the changes. Regularly review and update these settings to ensure compliance with security best practices.
+            This command updates the public network access setting of the specified key vault to disabled. Regularly review and update these settings to ensure compliance with security best practices.
         - id: terraform
           desc: |
             To ensure Key Vault public access is disabled or limited to selected networks in Terraform, disable public network access for key vaults, you can use the following Terraform configuration:
@@ -4483,7 +4511,7 @@ queries:
             To ensure that all activities on SQL server are audited using PowerShell, enable auditing for SQL servers, you can use the following PowerShell command:
 
             ```powershell
-            Set-AzSqlServerAudit -ResourceGroupName <ResourceGroupName> -ServerName <ServerName> -State Enabled -StorageAccountName <StorageAccountName> -StorageAccountKey <StorageAccountKey> -RetentionDays 90
+            Set-AzSqlServerAudit -ResourceGroupName <ResourceGroupName> -ServerName <ServerName> -BlobStorageTargetState Enabled -StorageAccountResourceId <StorageAccountResourceId> -RetentionInDays 90
             ```
 
             This command enables auditing for the specified SQL server and configures the storage account and retention period. Regularly review and update these settings to ensure compliance with security best practices.
@@ -4751,7 +4779,7 @@ queries:
             To ensure that diagnostic settings exist for the subscription using the Azure CLI, create or update diagnostic settings for a subscription, use the following command:
 
             ```bash
-            az monitor diagnostic-settings create --name <NameOfSetting> --resource /subscriptions/{subscriptionId} --logs '[{"category": "Administrative", "enabled": true}, {"category": "Security", "enabled": true}, {"category": "Alert", "enabled": true}, {"category": "Policy", "enabled": true}]' --storage-account <StorageAccountId> --workspace <LogAnalyticsWorkspaceId> --event-hub <EventHubName>
+            az monitor diagnostic-settings create --name <NameOfSetting> --resource /subscriptions/{subscriptionId} --logs '[{"category": "Administrative", "enabled": true}, {"category": "Security", "enabled": true}, {"category": "Alert", "enabled": true}, {"category": "Policy", "enabled": true}]' --workspace <LogAnalyticsWorkspaceId>
             ```
 
             Replace the placeholders with your specific resource IDs and desired diagnostic setting name.
@@ -4760,13 +4788,13 @@ queries:
             To ensure that diagnostic settings exist for the subscription using PowerShell, configure diagnostic settings with PowerShell, use the following command:
 
             ```powershell
-            $subsId = "<SubscriptionId>"
-            $settingName = "<DiagnosticSettingName>"
-            $storageAccountId = "<StorageAccountId>"
-            $workspaceId = "<LogAnalyticsWorkspaceId>"
-            $eventHubAuthRuleId = "<EventHubAuthorizationRuleId>"
-
-            Set-AzDiagnosticSetting -ResourceId "/subscriptions/$subsId" -StorageAccountId $storageAccountId -WorkspaceId $workspaceId -Enabled $true -Name $settingName -Category @("Administrative", "Security", "Alert", "Policy")
+            $logs = @(
+                New-AzDiagnosticSettingLogSettingsObject -Category "Administrative" -Enabled $true
+                New-AzDiagnosticSettingLogSettingsObject -Category "Security" -Enabled $true
+                New-AzDiagnosticSettingLogSettingsObject -Category "Alert" -Enabled $true
+                New-AzDiagnosticSettingLogSettingsObject -Category "Policy" -Enabled $true
+            )
+            New-AzDiagnosticSetting -Name <DiagnosticSettingName> -ResourceId "/subscriptions/<SubscriptionId>" -Log $logs -WorkspaceId <LogAnalyticsWorkspaceId>
             ```
 
             Modify the script to match your specific resource IDs and configuration preferences. It's crucial to routinely review and update these settings to adapt to any changes in your Azure environment or organizational requirements.
@@ -4775,35 +4803,32 @@ queries:
             To ensure that diagnostic settings exist for the subscription in Terraform, configure diagnostic settings for a subscription, you can use the following Terraform configuration:
 
             ```hcl
+            data "azurerm_subscription" "current" {}
+
             resource "azurerm_monitor_diagnostic_setting" "example" {
               name               = "example-diagnostic-setting"
-              target_resource_id = azurerm_sql_server.example.id
-
-              log {
-                category = "Administrative"
-                enabled  = true
-              }
-
-              log {
-                category = "Security"
-                enabled  = true
-              }
-
-              log {
-                category = "Alert"
-                enabled  = true
-              }
-
-              log {
-                category = "Policy"
-                enabled  = true
-              }
-
+              target_resource_id = data.azurerm_subscription.current.id
               storage_account_id = azurerm_storage_account.example.id
+
+              enabled_log {
+                category = "Administrative"
+              }
+
+              enabled_log {
+                category = "Security"
+              }
+
+              enabled_log {
+                category = "Alert"
+              }
+
+              enabled_log {
+                category = "Policy"
+              }
             }
             ```
 
-            This configuration ensures that the specified log categories are collected for the Azure resource. Regularly review and update your Terraform configurations to ensure compliance with security best practices.
+            This configuration ensures that the specified log categories are collected for the subscription activity log. Regularly review and update your Terraform configurations to ensure compliance with security best practices.
         - id: bicep
           desc: |
             To ensure that diagnostic settings exist for the subscription in Bicep:
@@ -4949,7 +4974,7 @@ queries:
             To ensure that diagnostic settings collect essential security categories using the Azure CLI, create or update diagnostic settings for capturing essential log categories, use:
 
             ```bash
-            az monitor diagnostic-settings create --name <NameOfSetting> --resource /subscriptions/{subscriptionId} --logs '[{"category": "Administrative", "enabled": true}, {"category": "Security", "enabled": true}, {"category": "Alert", "enabled": true}, {"category": "Policy", "enabled": true}]' --storage-account <StorageAccountId> --workspace <LogAnalyticsWorkspaceId> --event-hub <EventHubName>
+            az monitor diagnostic-settings create --name <NameOfSetting> --resource /subscriptions/{subscriptionId} --logs '[{"category": "Administrative", "enabled": true}, {"category": "Security", "enabled": true}, {"category": "Alert", "enabled": true}, {"category": "Policy", "enabled": true}]' --workspace <LogAnalyticsWorkspaceId>
             ```
 
             Replace the placeholders with your specific resource IDs and desired diagnostic setting name.
@@ -4958,13 +4983,13 @@ queries:
             To ensure that diagnostic settings collect essential security categories using PowerShell, configure diagnostic settings with PowerShell, use the following command:
 
             ```powershell
-            $subsId = "<SubscriptionId>"
-            $settingName = "<DiagnosticSettingName>"
-            $storageAccountId = "<StorageAccountId>"
-            $workspaceId = "<LogAnalyticsWorkspaceId>"
-            $eventHubAuthRuleId = "<EventHubAuthorizationRuleId>"
-
-            Set-AzDiagnosticSetting -ResourceId "/subscriptions/$subsId" -StorageAccountId $storageAccountId -WorkspaceId $workspaceId -Enabled $true -Name $settingName -Category @("Administrative", "Security", "Alert", "Policy")
+            $logs = @(
+                New-AzDiagnosticSettingLogSettingsObject -Category "Administrative" -Enabled $true
+                New-AzDiagnosticSettingLogSettingsObject -Category "Security" -Enabled $true
+                New-AzDiagnosticSettingLogSettingsObject -Category "Alert" -Enabled $true
+                New-AzDiagnosticSettingLogSettingsObject -Category "Policy" -Enabled $true
+            )
+            New-AzDiagnosticSetting -Name <DiagnosticSettingName> -ResourceId "/subscriptions/<SubscriptionId>" -Log $logs -WorkspaceId <LogAnalyticsWorkspaceId>
             ```
 
             Modify the script to match your specific resource IDs and configuration preferences. It's crucial to routinely review and update these settings to adapt to any changes in your Azure environment or organizational requirements.
@@ -4973,35 +4998,32 @@ queries:
             To ensure that diagnostic settings collect essential security categories in Terraform, configure diagnostic settings for essential categories, you can use the following Terraform configuration:
 
             ```hcl
+            data "azurerm_subscription" "current" {}
+
             resource "azurerm_monitor_diagnostic_setting" "example" {
               name               = "example-diagnostic-setting"
-              target_resource_id = azurerm_sql_server.example.id
-
-              log {
-                category = "Administrative"
-                enabled  = true
-              }
-
-              log {
-                category = "Security"
-                enabled  = true
-              }
-
-              log {
-                category = "Alert"
-                enabled  = true
-              }
-
-              log {
-                category = "Policy"
-                enabled  = true
-              }
-
+              target_resource_id = data.azurerm_subscription.current.id
               storage_account_id = azurerm_storage_account.example.id
+
+              enabled_log {
+                category = "Administrative"
+              }
+
+              enabled_log {
+                category = "Security"
+              }
+
+              enabled_log {
+                category = "Alert"
+              }
+
+              enabled_log {
+                category = "Policy"
+              }
             }
             ```
 
-            This configuration ensures that the specified log categories are collected for the Azure resource. Regularly review and update your Terraform configurations to ensure compliance with security best practices.
+            This configuration ensures that the specified log categories are collected for the subscription activity log. Regularly review and update your Terraform configurations to ensure compliance with security best practices.
         - id: bicep
           desc: |
             To ensure that diagnostic settings collect essential security categories in Bicep:
@@ -5212,34 +5234,49 @@ queries:
             az network nsg rule list --resource-group <ResourceGroupName> --nsg-name <NSGName> --query "[].{Name:name, Protocol:protocol, Access:access, Direction:direction, SourceAddressPrefix:sourceAddressPrefix, DestinationPortRange:destinationPortRange}" -o table
             ```
 
-            Review the output and identify any rules allowing disallowed UDP ports. Then, either delete or update those rules as needed.
+            Review the output and identify any rules allowing disallowed UDP ports. Then, either delete those rules or restrict their source to a trusted range:
+
+            ```bash
+            az network nsg rule delete --resource-group <ResourceGroupName> --nsg-name <NSGName> --name <OffendingRuleName>
+
+            az network nsg rule update --resource-group <ResourceGroupName> --nsg-name <NSGName> --name <OffendingRuleName> --source-address-prefixes 10.0.0.0/16
+            ```
         - id: powershell
           desc: |
-            To restrict access on disallowed UDP ports using PowerShell, use the following command to list NSG rules:
+            To restrict access on disallowed UDP ports using PowerShell, list the offending NSG rules, remove them, and apply the change:
 
             ```powershell
-            Get-AzNetworkSecurityRuleConfig -NetworkSecurityGroup <NSGName> | Where-Object { $_.Access -eq "Allow" -and $_.Direction -eq "Inbound" -and $_.Protocol -match "UDP|*" }
+            $nsg = Get-AzNetworkSecurityGroup -ResourceGroupName <ResourceGroupName> -Name <NSGName>
+            Get-AzNetworkSecurityRuleConfig -NetworkSecurityGroup $nsg | Where-Object { $_.Access -eq "Allow" -and $_.Direction -eq "Inbound" -and $_.Protocol -match "Udp|\*" }
+            Remove-AzNetworkSecurityRuleConfig -NetworkSecurityGroup $nsg -Name <OffendingRuleName>
+            $nsg | Set-AzNetworkSecurityGroup
             ```
-
-            Review the output and identify any rules allowing disallowed UDP ports. Then, either delete or update those rules as needed.
         - id: terraform
           desc: |
             To restrict access on disallowed UDP ports in Terraform, modify the NSG rules in your configuration:
 
             ```hcl
-            resource "azurerm_network_security_rule" "example" {
-              name                        = "example-nsg-rule"
-              network_security_group_name = azurerm_network_security_group.example.name
-              priority                    = 100
-              direction                   = "Inbound"
-              access                      = "Deny"
-              protocol                    = "Udp"
-              source_address_prefix      = "*"
-              destination_port_range     = "<DisallowedPort>"
+            # Restrict the source of any inbound UDP allow rules to a trusted range
+            resource "azurerm_network_security_group" "example" {
+              name                = "example-nsg"
+              location            = azurerm_resource_group.example.location
+              resource_group_name = azurerm_resource_group.example.name
+
+              security_rule {
+                name                       = "AllowDNSFromTrusted"
+                priority                   = 100
+                direction                  = "Inbound"
+                access                     = "Allow"
+                protocol                   = "Udp"
+                source_port_range          = "*"
+                destination_port_range     = "53"
+                source_address_prefix      = "10.0.0.0/16"
+                destination_address_prefix = "*"
+              }
             }
             ```
 
-            Replace `<DisallowedPort>` with the specific port you want to restrict. Regularly review and update your Terraform configurations to ensure compliance with security best practices.
+            Regularly review and update your Terraform configurations to ensure compliance with security best practices.
         - id: bicep
           desc: |
             To restrict access on disallowed UDP ports in Bicep:
@@ -5898,7 +5935,9 @@ queries:
             To ensure threat detection is enabled on Azure SQL servers using the Azure CLI:
 
             ```bash
-            az sql server advanced-threat-protection-setting update --resource-group <ResourceGroupName> --name <ServerName> --state Enabled
+            az rest --method put \
+              --url "https://management.azure.com/subscriptions/<SubscriptionId>/resourceGroups/<ResourceGroupName>/providers/Microsoft.Sql/servers/<ServerName>/securityAlertPolicies/Default?api-version=2021-11-01" \
+              --body '{"properties":{"state":"Enabled"}}'
             ```
         - id: terraform
           desc: |
@@ -6133,12 +6172,12 @@ queries:
 
             ```hcl
             resource "azurerm_key_vault" "example" {
-              name                        = "example-keyvault"
-              location                    = azurerm_resource_group.example.location
-              resource_group_name         = azurerm_resource_group.example.name
-              tenant_id                   = data.azurerm_client_config.current.tenant_id
-              sku_name                    = "standard"
-              enable_rbac_authorization   = true
+              name                       = "example-keyvault"
+              location                   = azurerm_resource_group.example.location
+              resource_group_name        = azurerm_resource_group.example.name
+              tenant_id                  = data.azurerm_client_config.current.tenant_id
+              sku_name                   = "standard"
+              rbac_authorization_enabled = true
             }
             ```
         - id: bicep
@@ -6237,7 +6276,21 @@ queries:
             6. Select **Save**.
         - id: cli
           desc: |
-            To ensure Key Vault keys have auto-rotation enabled using the Azure CLI:
+            To ensure Key Vault keys have auto-rotation enabled using the Azure CLI, create a `rotation-policy.json` file:
+
+            ```json
+            {
+              "lifetimeActions": [
+                {
+                  "trigger": { "timeAfterCreate": "P90D" },
+                  "action": { "type": "Rotate" }
+                }
+              ],
+              "attributes": { "expiryTime": "P1Y" }
+            }
+            ```
+
+            Then apply it:
 
             ```bash
             az keyvault key rotation-policy update --vault-name <VaultName> --name <KeyName> --value @rotation-policy.json
@@ -6520,10 +6573,12 @@ queries:
             5. Save the changes.
         - id: cli
           desc: |
-            To ensure Azure VM data disks are encrypted with CMK using the Azure CLI:
+            To ensure Azure VM data disks are encrypted with CMK using the Azure CLI, first deallocate the VM the disk is attached to, then update the disk and restart the VM:
 
             ```bash
+            az vm deallocate --resource-group <ResourceGroupName> --name <VMName>
             az disk update --resource-group <ResourceGroupName> --name <DiskName> --encryption-type EncryptionAtRestWithCustomerKey --disk-encryption-set <DiskEncryptionSetId>
+            az vm start --resource-group <ResourceGroupName> --name <VMName>
             ```
         - id: terraform
           desc: |
@@ -8246,10 +8301,22 @@ queries:
             2. Under **Networking**, select a **Network policy** option (Azure or Calico).
             3. Complete the cluster creation process.
 
-            For existing clusters, network policy cannot be changed. You must recreate the cluster with network policy enabled.
+            For existing clusters, enable a network policy engine with the Azure CLI:
+
+            ```bash
+            az aks update --resource-group <ResourceGroupName> --name <ClusterName> --network-policy azure
+            ```
+
+            This update reimages all node pools, similar to a Kubernetes version upgrade.
         - id: cli
           desc: |
-            To ensure AKS clusters have a network policy configured using the Azure CLI, when creating a new cluster:
+            To ensure AKS clusters have a network policy configured using the Azure CLI, enable a network policy engine on the existing cluster:
+
+            ```bash
+            az aks update --resource-group <ResourceGroupName> --name <ClusterName> --network-policy azure
+            ```
+
+            When creating a new cluster:
 
             ```bash
             az aks create --resource-group <ResourceGroupName> --name <ClusterName> --network-plugin azure --network-policy azure
@@ -8585,23 +8652,23 @@ queries:
               location            = azurerm_resource_group.example.location
               service_plan_id     = azurerm_service_plan.example.id
 
-              site_config {
-                ftps_state = "Disabled"
-              }
+              ftp_publish_basic_authentication_enabled = false
+
+              site_config {}
             }
             ```
 
-            For Windows web apps, use `azurerm_windows_web_app` with the same `site_config` block.
+            For Windows web apps, use `azurerm_windows_web_app` with the same argument.
         - id: bicep
           desc: |
             To ensure App Service FTP basic auth publishing credentials are disabled in Bicep:
 
             ```bicep
-            resource webAppConfig 'Microsoft.Web/sites/config@2024-04-01' = {
+            resource ftpBasicAuth 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@2024-04-01' = {
               parent: webApp
-              name: 'web'
+              name: 'ftp'
               properties: {
-                ftpsState: 'Disabled'
+                allow: false
               }
             }
             ```
@@ -8646,10 +8713,10 @@ queries:
         )
       }
   - uid: mondoo-azure-security-app-service-ftp-disabled-bicep
-    filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.Web/sites/config")
+    filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.Web/sites/basicPublishingCredentialsPolicies" && name == "ftp")
     mql: |
-      bicep.resources.where(type == "Microsoft.Web/sites/config").all(
-        properties["ftpsState"] == "Disabled"
+      bicep.resources.where(type == "Microsoft.Web/sites/basicPublishingCredentialsPolicies" && name == "ftp").all(
+        properties["allow"] == false
       )
   - uid: mondoo-azure-security-app-service-scm-disabled
     title: Ensure App Service SCM basic auth publishing credentials are disabled
@@ -8900,14 +8967,14 @@ queries:
 
             ```hcl
             resource "azurerm_redis_cache" "example" {
-              name                = "example-redis"
-              location            = azurerm_resource_group.example.location
-              resource_group_name = azurerm_resource_group.example.name
-              capacity            = 1
-              family              = "C"
-              sku_name            = "Standard"
-              enable_non_ssl_port = false
-              minimum_tls_version = "1.2"
+              name                  = "example-redis"
+              location              = azurerm_resource_group.example.location
+              resource_group_name   = azurerm_resource_group.example.name
+              capacity              = 1
+              family                = "C"
+              sku_name              = "Standard"
+              non_ssl_port_enabled  = false
+              minimum_tls_version   = "1.2"
             }
             ```
         - id: bicep
@@ -9148,7 +9215,7 @@ queries:
             To ensure AKS clusters are configured as private clusters using PowerShell:
 
             ```powershell
-            New-AzAksCluster -ResourceGroupName <ResourceGroupName> -Name <ClusterName> -EnablePrivateCluster
+            New-AzAksCluster -ResourceGroupName <ResourceGroupName> -Name <ClusterName> -EnableApiServerAccessPrivateCluster
             ```
         - id: terraform
           desc: |
@@ -9315,7 +9382,7 @@ queries:
             To ensure run command is disabled on AKS clusters using PowerShell:
 
             ```powershell
-            Set-AzAksCluster -ResourceGroupName <ResourceGroupName> -Name <ClusterName> -DisableRunCommand
+            Set-AzAksCluster -ResourceGroupName <ResourceGroupName> -Name <ClusterName> -DisableApiServerRunCommand
             ```
         - id: terraform
           desc: |
@@ -9482,7 +9549,7 @@ queries:
             To ensure Azure Policy add-on is enabled for AKS clusters using PowerShell:
 
             ```powershell
-            Set-AzAksCluster -ResourceGroupName <ResourceGroupName> -Name <ClusterName> -EnableAzurePolicy
+            Enable-AzAksAddOn -ResourceGroupName <ResourceGroupName> -ClusterName <ClusterName> -Name AzurePolicy
             ```
         - id: terraform
           desc: |
@@ -9652,7 +9719,7 @@ queries:
             To ensure private AKS clusters do not expose a public FQDN using PowerShell:
 
             ```powershell
-            Set-AzAksCluster -ResourceGroupName <ResourceGroupName> -Name <ClusterName> -DisablePublicFqdn
+            Set-AzAksCluster -ResourceGroupName <ResourceGroupName> -Name <ClusterName> -EnableApiServerAccessPrivateClusterPublicFQDN:$false
             ```
         - id: terraform
           desc: |
@@ -10106,7 +10173,7 @@ queries:
             To ensure workload identity is enabled for AKS clusters using the Azure CLI:
 
             ```bash
-            az aks update --name <ClusterName> --resource-group <ResourceGroupName> --enable-workload-identity
+            az aks update --name <ClusterName> --resource-group <ResourceGroupName> --enable-oidc-issuer --enable-workload-identity
             ```
         - id: terraform
           desc: |
@@ -10251,6 +10318,12 @@ queries:
 
             ```bash
             az aks nodepool add --cluster-name <ClusterName> --resource-group <ResourceGroupName> --name <NodePoolName> --enable-encryption-at-host
+            ```
+
+            Encryption at host cannot be enabled on an existing node pool. After adding the encrypted node pool, migrate workloads to it and delete each remaining unencrypted node pool:
+
+            ```bash
+            az aks nodepool delete --cluster-name <ClusterName> --resource-group <ResourceGroupName> --name <OldNodePoolName>
             ```
         - id: terraform
           desc: |
@@ -10403,13 +10476,20 @@ queries:
           desc: |
             To ensure AKS clusters use Azure CNI or overlay networking instead of kubenet using the Azure Portal:
 
-            1. Navigate to **Kubernetes services** in the Azure Portal.
-            2. Select the cluster.
-            3. Under **Networking**, verify **Network configuration** uses **Azure CNI**.
-            4. Network plugin is set at cluster creation.
+            1. Navigate to **Kubernetes services** and select **Create**.
+            2. Under **Networking**, set **Network configuration** to **Azure CNI**.
+            3. Complete the cluster creation process.
+
+            For existing kubenet clusters, upgrade to Azure CNI Overlay with the Azure CLI as shown in the CLI remediation.
         - id: cli
           desc: |
-            To ensure AKS clusters use Azure CNI or overlay networking instead of kubenet using the Azure CLI, the network plugin cannot be changed on existing clusters. Create a new cluster with Azure CNI:
+            To ensure AKS clusters use Azure CNI or overlay networking instead of kubenet using the Azure CLI, upgrade an existing kubenet cluster to Azure CNI Overlay:
+
+            ```bash
+            az aks update --name <ClusterName> --resource-group <ResourceGroupName> --network-plugin azure --network-plugin-mode overlay
+            ```
+
+            When creating a new cluster:
 
             ```bash
             az aks create --name <ClusterName> --resource-group <ResourceGroupName> --network-plugin azure
@@ -10867,7 +10947,10 @@ queries:
             To ensure client certificate auth is enabled for App Service web apps using PowerShell:
 
             ```powershell
-            Set-AzWebApp -ResourceGroupName <ResourceGroupName> -Name <WebAppName> -ClientCertEnabled $true
+            $app = Get-AzWebApp -ResourceGroupName <ResourceGroupName> -Name <WebAppName>
+            $app.ClientCertEnabled = $true
+            $app.ClientCertMode = "Required"
+            $app | Set-AzWebApp
             ```
         - id: terraform
           desc: |
@@ -11040,7 +11123,9 @@ queries:
             To ensure remote debugging is disabled for App Service web apps using PowerShell:
 
             ```powershell
-            Set-AzWebApp -ResourceGroupName <ResourceGroupName> -Name <WebAppName> -RemoteDebuggingEnabled $false
+            $app = Get-AzWebApp -ResourceGroupName <ResourceGroupName> -Name <WebAppName>
+            $app.SiteConfig.RemoteDebuggingEnabled = $false
+            $app | Set-AzWebApp
             ```
         - id: terraform
           desc: |
@@ -11216,7 +11301,9 @@ queries:
             To ensure HTTP 2.0 is enabled for App Service web apps using PowerShell:
 
             ```powershell
-            Set-AzWebApp -ResourceGroupName <ResourceGroupName> -Name <WebAppName> -Http20Enabled $true
+            $app = Get-AzWebApp -ResourceGroupName <ResourceGroupName> -Name <WebAppName>
+            $app.SiteConfig.Http20Enabled = $true
+            $app | Set-AzWebApp
             ```
         - id: terraform
           desc: |
@@ -11730,20 +11817,26 @@ queries:
 
             ```hcl
             resource "azurerm_linux_function_app" "example" {
-              name                = "example-function"
-              resource_group_name = azurerm_resource_group.example.name
-              location            = azurerm_resource_group.example.location
-              service_plan_id     = azurerm_service_plan.example.id
+              name                       = "example-function"
+              resource_group_name        = azurerm_resource_group.example.name
+              location                   = azurerm_resource_group.example.location
+              service_plan_id            = azurerm_service_plan.example.id
               storage_account_name       = azurerm_storage_account.example.name
               storage_account_access_key = azurerm_storage_account.example.primary_access_key
 
               site_config {}
 
-              auth_settings {
-                enabled = true
-                active_directory {
-                  client_id = "<ClientID>"
+              auth_settings_v2 {
+                auth_enabled           = true
+                require_authentication = true
+                unauthenticated_action = "RedirectToLoginPage"
+
+                active_directory_v2 {
+                  client_id            = "00000000-0000-0000-0000-000000000000"
+                  tenant_auth_endpoint = "https://login.microsoftonline.com/00000000-0000-0000-0000-000000000000/v2.0"
                 }
+
+                login {}
               }
             }
             ```
@@ -11864,7 +11957,7 @@ queries:
         **Automated Audit with Azure CLI:**
 
         ```bash
-        az functionapp show --resource-group-name <ResourceGroupName> --name <FunctionAppName> --query "privateEndpointConnections"
+        az functionapp show --resource-group <ResourceGroupName> --name <FunctionAppName> --query "privateEndpointConnections"
         ```
       remediation:
         - id: portal
@@ -12995,31 +13088,21 @@ queries:
     mql: |
       azure.subscription.compute.vm.publicIpAddresses.length == 0
   - uid: mondoo-azure-security-compute-vm-no-public-ip-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == /azurerm_(linux|windows)_virtual_machine/)
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_network_interface")
     mql: |
-      if (terraform.resources("azurerm_linux_virtual_machine").length > 0) {
-        terraform.resources("azurerm_linux_virtual_machine").all(
-          arguments['public_ip_address'] == null || arguments['public_ip_address'] == ""
+      terraform.resources("azurerm_network_interface").all(
+        blocks.where(type == "ip_configuration").all(
+          arguments['public_ip_address_id'] == null
         )
-      }
-      if (terraform.resources("azurerm_windows_virtual_machine").length > 0) {
-        terraform.resources("azurerm_windows_virtual_machine").all(
-          arguments['public_ip_address'] == null || arguments['public_ip_address'] == ""
-        )
-      }
+      )
   - uid: mondoo-azure-security-compute-vm-no-public-ip-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == /azurerm_(linux|windows)_virtual_machine/)
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_network_interface")
     mql: |
-      if (terraform.plan.resourceChanges.where(type == "azurerm_linux_virtual_machine").length > 0) {
-        terraform.plan.resourceChanges.where(type == "azurerm_linux_virtual_machine").all(
-          change.after['public_ip_address'] == null || change.after['public_ip_address'] == ""
+      terraform.plan.resourceChanges.where(type == "azurerm_network_interface").all(
+        change.after['ip_configuration'].all(
+          _['public_ip_address_id'] == null || _['public_ip_address_id'] == ""
         )
-      }
-      if (terraform.plan.resourceChanges.where(type == "azurerm_windows_virtual_machine").length > 0) {
-        terraform.plan.resourceChanges.where(type == "azurerm_windows_virtual_machine").all(
-          change.after['public_ip_address'] == null || change.after['public_ip_address'] == ""
-        )
-      }
+      )
   - uid: mondoo-azure-security-compute-vm-no-public-ip-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == /azurerm_(linux|windows)_virtual_machine/)
     mql: |
@@ -13199,12 +13282,12 @@ queries:
     mql: |
       if (terraform.resources("azurerm_linux_virtual_machine").length > 0) {
         terraform.resources("azurerm_linux_virtual_machine").all(
-          arguments['os_disk'] != null
+          blocks.any(type == "os_disk")
         )
       }
       if (terraform.resources("azurerm_windows_virtual_machine").length > 0) {
         terraform.resources("azurerm_windows_virtual_machine").all(
-          arguments['os_disk'] != null
+          blocks.any(type == "os_disk")
         )
       }
   - uid: mondoo-azure-security-compute-managed-disks-only-terraform-plan
@@ -13613,22 +13696,11 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-6-4
       compliance/vda-isa-5: vda-isa-5-5-2-7
     variants:
+      # No Terraform variants: the azurerm provider cannot express enableVmProtection on virtual networks
       - uid: mondoo-azure-security-network-vnet-vm-protection-enabled-azure
         tags:
           mondoo.com/filter-title: Azure Virtual Network
           mondoo.com/filter-icon: azure
-      - uid: mondoo-azure-security-network-vnet-vm-protection-enabled-terraform-hcl
-        tags:
-          mondoo.com/filter-title: Terraform HCL
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-azure-security-network-vnet-vm-protection-enabled-terraform-plan
-        tags:
-          mondoo.com/filter-title: Terraform Plan
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-azure-security-network-vnet-vm-protection-enabled-terraform-state
-        tags:
-          mondoo.com/filter-title: Terraform State
-          mondoo.com/filter-icon: terraform
       - uid: mondoo-azure-security-network-vnet-vm-protection-enabled-bicep
         tags:
           mondoo.com/filter-title: Bicep
@@ -13696,15 +13768,18 @@ queries:
             ```
         - id: terraform
           desc: |
-            To ensure VM protection is enabled on virtual networks in Terraform:
+            The azurerm provider does not expose VM protection on virtual networks. To ensure VM protection is enabled on virtual networks in Terraform, use the AzAPI provider:
 
             ```hcl
-            resource "azurerm_virtual_network" "example" {
-              name                = "example-vnet"
-              location            = azurerm_resource_group.example.location
-              resource_group_name = azurerm_resource_group.example.name
-              address_space       = ["10.0.0.0/16"]
-              vm_protection_enabled = true
+            resource "azapi_update_resource" "vnet_vm_protection" {
+              type        = "Microsoft.Network/virtualNetworks@2024-05-01"
+              resource_id = azurerm_virtual_network.example.id
+
+              body = {
+                properties = {
+                  enableVmProtection = true
+                }
+              }
             }
             ```
         - id: bicep
@@ -13733,24 +13808,6 @@ queries:
       asset.platform == "azure-virtual-network"
     mql: |
       azure.subscription.network.virtualNetwork.enableVmProtection == true
-  - uid: mondoo-azure-security-network-vnet-vm-protection-enabled-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_virtual_network")
-    mql: |
-      terraform.resources("azurerm_virtual_network").all(
-        arguments['vm_protection_enabled'] == true
-      )
-  - uid: mondoo-azure-security-network-vnet-vm-protection-enabled-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_virtual_network")
-    mql: |
-      terraform.plan.resourceChanges.where(type == "azurerm_virtual_network").all(
-        change.after.vm_protection_enabled == true
-      )
-  - uid: mondoo-azure-security-network-vnet-vm-protection-enabled-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_virtual_network")
-    mql: |
-      terraform.state.resources.where(type == "azurerm_virtual_network").all(
-        values.vm_protection_enabled == true
-      )
   - uid: mondoo-azure-security-network-vnet-vm-protection-enabled-bicep
     filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.Network/virtualNetworks")
     mql: |
@@ -13839,7 +13896,7 @@ queries:
             1. Navigate to **Virtual networks** in the Azure Portal.
             2. Select the virtual network.
             3. Go to **Subnets** and select the subnet.
-            4. Under subnet settings, set **Default outbound access** to **Disabled**.
+            4. Under the subnet settings, select the **Private subnet** option to remove default outbound access.
             5. Configure explicit outbound connectivity using a NAT gateway, Azure Firewall, or load balancer with outbound rules.
             6. Select **Save**.
         - id: cli
@@ -14017,17 +14074,26 @@ queries:
             4. Change the `source_address_prefix` to more restrictive settings, such as a specific IP range, virtual network, or private endpoint.
         - id: cli
           desc: |
-            To restrict access on disallowed TCP database ports using the Azure CLI, update or create NSG rules to restrict database port access:
+            To restrict access on disallowed TCP database ports using the Azure CLI, find and remove or restrict the NSG rules that allow inbound internet traffic to database ports:
 
             ```bash
-            az network nsg rule create --resource-group <ResourceGroupName> --nsg-name <NSGName> --name RestrictDBPorts --priority 1001 --direction Inbound --access Deny --protocol Tcp --source-address-prefixes "*" --destination-port-ranges 1433 3306 5432 27017
+            az network nsg rule list --resource-group <ResourceGroupName> --nsg-name <NSGName> --query "[?access=='Allow' && direction=='Inbound']" -o table
+            az network nsg rule update --resource-group <ResourceGroupName> --nsg-name <NSGName> --name <RuleName> --source-address-prefixes <TrustedCIDR>
+            ```
+
+            To remove an offending rule entirely:
+
+            ```bash
+            az network nsg rule delete --resource-group <ResourceGroupName> --nsg-name <NSGName> --name <RuleName>
             ```
         - id: powershell
           desc: |
-            To restrict access on disallowed TCP database ports using PowerShell:
+            To restrict access on disallowed TCP database ports using PowerShell, remove the NSG rules that allow inbound internet traffic to database ports:
 
             ```powershell
-            New-AzNetworkSecurityRuleConfig -Name RestrictDBPorts -Protocol Tcp -Direction Inbound -Priority 1001 -SourceAddressPrefix * -SourcePortRange * -DestinationAddressPrefix * -DestinationPortRange 1433,3306,5432,27017 -Access Deny
+            $nsg = Get-AzNetworkSecurityGroup -Name <NSGName> -ResourceGroupName <ResourceGroupName>
+            Remove-AzNetworkSecurityRuleConfig -NetworkSecurityGroup $nsg -Name <RuleName>
+            Set-AzNetworkSecurityGroup -NetworkSecurityGroup $nsg
             ```
         - id: terraform
           desc: |
@@ -14848,14 +14914,7 @@ queries:
       remediation:
         - id: portal
           desc: |
-            To ensure local authentication is disabled for Azure Cosmos DB accounts using the Azure Portal:
-
-            1. Navigate to **Azure Cosmos DB** in the Azure Portal.
-            2. Select the Cosmos DB account.
-            3. Go to **Keys** under **Settings**.
-            4. Set **Disable local authentication** to **Enabled**.
-            5. Ensure Entra ID role assignments are configured for all users and applications.
-            6. Select **Save**.
+            The Azure Portal does not expose a setting for disabling local authentication on Cosmos DB accounts. Use the Azure CLI, PowerShell, or an ARM template to set the disableLocalAuth property to true, and ensure Entra ID role assignments are configured for all users and applications before doing so.
         - id: cli
           desc: |
             To ensure local authentication is disabled for Azure Cosmos DB accounts using the Azure CLI:
@@ -14868,7 +14927,7 @@ queries:
             To ensure local authentication is disabled for Azure Cosmos DB accounts using PowerShell:
 
             ```powershell
-            Update-AzCosmosDBAccount -ResourceGroupName <ResourceGroupName> -Name <CosmosDBAccountName> -DisableLocalAuth $true
+            Update-AzResource -ResourceGroupName <ResourceGroupName> -ResourceType "Microsoft.DocumentDB/databaseAccounts" -ResourceName <CosmosDBAccountName> -ApiVersion "2023-04-15" -PropertyObject @{ disableLocalAuth = $true } -Force
             ```
         - id: terraform
           desc: |
@@ -15010,7 +15069,7 @@ queries:
             1. Navigate to **Azure Cosmos DB** in the Azure Portal.
             2. Select the Cosmos DB account.
             3. Go to **Networking** under **Settings**.
-            4. Enable **Accept connections from within public Azure datacenters** or add specific virtual network rules.
+            4. Under **Public network access**, select **Selected networks**.
             5. Add the approved virtual networks and subnets.
             6. Select **Save**.
         - id: cli
@@ -15357,11 +15416,11 @@ queries:
 
             ```hcl
             resource "azurerm_cosmosdb_account" "example" {
-              name                      = "example-cosmosdb"
-              location                  = azurerm_resource_group.example.location
-              resource_group_name       = azurerm_resource_group.example.name
-              offer_type                = "Standard"
-              enable_automatic_failover = true
+              name                       = "example-cosmosdb"
+              location                   = azurerm_resource_group.example.location
+              resource_group_name        = azurerm_resource_group.example.name
+              offer_type                 = "Standard"
+              automatic_failover_enabled = true
 
               geo_location {
                 location          = "eastus"
@@ -15680,11 +15739,11 @@ queries:
 
             ```hcl
             resource "azurerm_cosmosdb_account" "example" {
-              name                = "example-cosmosdb"
-              location            = azurerm_resource_group.example.location
-              resource_group_name = azurerm_resource_group.example.name
-              offer_type          = "Standard"
-              network_acl_bypass  = "None"
+              name                                  = "example-cosmosdb"
+              location                              = azurerm_resource_group.example.location
+              resource_group_name                   = azurerm_resource_group.example.name
+              offer_type                            = "Standard"
+              network_acl_bypass_for_azure_services = false
             }
             ```
         - id: bicep
@@ -15811,15 +15870,11 @@ queries:
           desc: |
             To ensure Azure Cosmos DB accounts use customer-managed keys for encryption using the Azure Portal:
 
-            1. Navigate to **Azure Cosmos DB** in the Azure Portal.
-            2. Select the Cosmos DB account.
-            3. Go to **Encryption** under **Settings**.
-            4. Select **Customer-managed key**.
-            5. Configure the Azure Key Vault, key, and version.
-            6. Assign a managed identity with access to the Key Vault.
-            7. Select **Save**.
-
-            **Note**: Customer-managed key encryption must be configured at account creation time. Existing accounts using Microsoft-managed keys may need to be recreated.
+            1. Begin creating a new Azure Cosmos DB account.
+            2. On the **Encryption** tab, select **Customer-managed key**.
+            3. Specify the Key Vault key URI and a managed identity with access to the Key Vault.
+            4. Complete the account creation.
+            5. Migrate data from accounts that use Microsoft-managed keys to the new account.
         - id: cli
           desc: |
             To ensure Azure Cosmos DB accounts use customer-managed keys for encryption using the Azure CLI:
@@ -16108,7 +16163,14 @@ queries:
             ```bash
             az cosmosdb update --name <CosmosDBAccountName> --resource-group <ResourceGroupName> --public-network-access DISABLED
 
-            az network private-endpoint create               --name example-cosmosdb-pe               --resource-group <ResourceGroupName>               --vnet-name <VNetName>               --subnet <SubnetName>               --private-connection-resource-id <CosmosDBResourceId>               --group-id Sql               --connection-name example-cosmosdb-psc
+            az network private-endpoint create \
+              --name example-cosmosdb-pe \
+              --resource-group <ResourceGroupName> \
+              --vnet-name <VNetName> \
+              --subnet <SubnetName> \
+              --private-connection-resource-id <CosmosDBResourceId> \
+              --group-id Sql \
+              --connection-name example-cosmosdb-psc
             ```
         - id: bicep
           desc: |
@@ -17000,22 +17062,23 @@ queries:
 
             1. Navigate to **Firewalls** in the Azure Portal.
             2. Select the Azure Firewall instance.
-            3. Note: Upgrading from Standard to Premium requires redeployment. Create a new firewall with Premium SKU and migrate rules.
-            4. Select **Premium** as the SKU tier during creation.
-            5. Migrate existing firewall rules and policies to the new Premium firewall.
+            3. If the firewall still uses classic rules, migrate them to a firewall policy first.
+            4. Ensure the associated firewall policy is Premium tier, then use the SKU upgrade option on the firewall to change the tier to **Premium**.
         - id: cli
           desc: |
-            To ensure Azure Firewall uses Premium SKU for advanced threat protection using the Azure CLI:
+            To ensure Azure Firewall uses Premium SKU for advanced threat protection using the Azure CLI, upgrade the existing firewall in place. The firewall must be associated with a Premium-tier firewall policy:
 
             ```bash
-            az network firewall create --name <FirewallName> --resource-group <ResourceGroupName> --location <Location> --sku AZFW_VNet --tier Premium
+            az resource update --resource-type Microsoft.Network/azureFirewalls --name <FirewallName> --resource-group <ResourceGroupName> --set sku.tier=Premium
             ```
         - id: powershell
           desc: |
-            To ensure Azure Firewall uses Premium SKU for advanced threat protection using PowerShell:
+            To ensure Azure Firewall uses Premium SKU for advanced threat protection using PowerShell, upgrade the existing firewall in place:
 
             ```powershell
-            New-AzFirewall -Name <FirewallName> -ResourceGroupName <ResourceGroupName> -Location <Location> -SkuName "AZFW_VNet" -SkuTier "Premium"
+            $firewall = Get-AzFirewall -Name <FirewallName> -ResourceGroupName <ResourceGroupName>
+            $firewall.Sku.Tier = "Premium"
+            Set-AzFirewall -AzureFirewall $firewall
             ```
         - id: terraform
           desc: |
@@ -17670,7 +17733,7 @@ queries:
             To ensure Azure Batch accounts use Entra ID authentication using the Azure CLI:
 
             ```bash
-            az resource update --ids $(az batch account show --name <BatchAccountName> --resource-group <ResourceGroupName> --query id -o tsv) --set properties.allowedAuthenticationModes="['AAD']"
+            az resource update --ids $(az batch account show --name <BatchAccountName> --resource-group <ResourceGroupName> --query id -o tsv) --set properties.allowedAuthenticationModes='["AAD"]'
             ```
         - id: powershell
           desc: |
@@ -17856,6 +17919,11 @@ queries:
               location            = azurerm_resource_group.example.location
               resource_group_name = azurerm_resource_group.example.name
 
+              identity {
+                type         = "UserAssigned"
+                identity_ids = [azurerm_user_assigned_identity.example.id]
+              }
+
               encryption {
                 key_vault_key_id = azurerm_key_vault_key.example.id
               }
@@ -18016,7 +18084,9 @@ queries:
             To ensure Azure Batch accounts have diagnostic settings enabled using PowerShell:
 
             ```powershell
-            Set-AzDiagnosticSetting -ResourceId <BatchAccountResourceId> -Name <SettingName> -WorkspaceId <LogAnalyticsWorkspaceId> -Enabled $true -Category "ServiceLog","AuditLog"
+            $serviceLog = New-AzDiagnosticSettingLogSettingsObject -Enabled $true -Category ServiceLog
+            $auditLog = New-AzDiagnosticSettingLogSettingsObject -Enabled $true -Category AuditLog
+            New-AzDiagnosticSetting -Name <SettingName> -ResourceId <BatchAccountResourceId> -WorkspaceId <LogAnalyticsWorkspaceId> -Log $serviceLog, $auditLog
             ```
         - id: terraform
           desc: |
@@ -18367,6 +18437,7 @@ queries:
               --id <PoolId> \
               --vm-size Standard_D2s_v3 \
               --image canonical:0001-com-ubuntu-server-focal:20_04-lts \
+              --node-agent-sku-id "batch.node.ubuntu 20.04" \
               --disk-encryption-targets OsDisk TemporaryDisk
             ```
         - id: terraform
@@ -18749,19 +18820,19 @@ queries:
           desc: |
             To ensure PostgreSQL flexible servers enforce customer-managed key encryption using the Azure Portal:
 
-            1. Navigate to **Azure Database for PostgreSQL flexible servers** in the Azure Portal.
-            2. Select the server instance.
-            3. Under **Security**, select **Data encryption**.
-            4. Select **Customer-managed key** as the encryption type.
-            5. Configure the Key Vault and key.
-            6. Select **Save**.
+            1. Begin creating a new Azure Database for PostgreSQL flexible server.
+            2. On the **Security** tab, select **Customer-managed key** as the data encryption key source.
+            3. Select the user-assigned managed identity and the Key Vault key.
+            4. Complete the server creation and migrate data from servers that use service-managed keys.
         - id: cli
           desc: |
-            To ensure PostgreSQL flexible servers enforce customer-managed key encryption using the Azure CLI, configure customer-managed key encryption when creating or updating the server:
+            To ensure PostgreSQL flexible servers enforce customer-managed key encryption using the Azure CLI, configure customer-managed key encryption when creating the server:
 
             ```bash
-            az postgres flexible-server update --name <ServerName> --resource-group <ResourceGroupName> --key <KeyIdentifier> --identity <UserAssignedIdentityId>
+            az postgres flexible-server create --name <ServerName> --resource-group <ResourceGroupName> --key <KeyIdentifier> --identity <UserAssignedIdentityId>
             ```
+
+            Existing servers that use service-managed keys must be replaced by a new CMK-enabled server and the data migrated.
         - id: terraform
           desc: |
             To ensure PostgreSQL flexible servers enforce customer-managed key encryption in Terraform:
@@ -18887,8 +18958,12 @@ queries:
             To ensure PostgreSQL servers enforce minimum TLS version 1.2 using the Azure CLI:
 
             ```bash
-            az postgres flexible-server parameter set --server-name <ServerName> --resource-group <ResourceGroupName> --name ssl_min_protocol_version --value TLSv1.2
+            az rest --method patch \
+              --url "https://management.azure.com/subscriptions/<SubscriptionId>/resourceGroups/<ResourceGroupName>/providers/Microsoft.DBforPostgreSQL/servers/<ServerName>?api-version=2017-12-01" \
+              --body '{"properties":{"minimalTlsVersion":"TLS1_2"}}'
             ```
+
+            Azure Database for PostgreSQL Single Server is retired and current Azure CLI releases no longer manage it, so the REST API is used directly. Plan a migration to Flexible Server, which enforces TLS 1.2 by default.
         - id: terraform
           desc: |
             To ensure PostgreSQL servers enforce minimum TLS version 1.2 in Terraform:
@@ -19099,7 +19174,7 @@ queries:
             1. Navigate to **Azure Database for PostgreSQL** in the Azure Portal.
             2. Select the server instance.
             3. Under **Settings**, select **Connection security**.
-            4. Set **Public network access** to **No**.
+            4. Set **Deny public network access** to **Yes**.
             5. Configure a private endpoint for connectivity.
             6. Select **Save**.
         - id: cli
@@ -19229,6 +19304,8 @@ queries:
               # ...
             }
             ```
+
+            Applying this change to an existing server forces Terraform to destroy and recreate it. Back up and migrate your data before applying.
         - id: bicep
           desc: |
             To ensure PostgreSQL servers enable infrastructure double encryption in Bicep:
@@ -20319,7 +20396,7 @@ queries:
             1. Navigate to **Azure Database for MySQL** in the Azure Portal.
             2. Select the server instance.
             3. Under **Settings**, select **Connection security**.
-            4. Set **Allow access to Azure services** to **No** and remove any public firewall rules.
+            4. Set **Deny public network access** to **Yes**.
             5. Configure a private endpoint for connectivity.
             6. Select **Save**.
         - id: cli
@@ -20449,6 +20526,8 @@ queries:
               # ...
             }
             ```
+
+            Applying this change to an existing server forces Terraform to destroy and recreate it. Back up and migrate your data before applying.
         - id: bicep
           desc: |
             To ensure MySQL servers enable infrastructure double encryption in Bicep:
@@ -20771,24 +20850,14 @@ queries:
       remediation:
         - id: portal
           desc: |
-            To ensure AKS clusters have disk CSI driver enabled for node pool encryption using the Azure Portal:
-
-            1. Navigate to **Kubernetes services** in the Azure Portal.
-            2. Select the AKS cluster.
-            3. Under **Settings**, select **Node pools**.
-            4. Select the node pool to view its configuration.
-            5. Review the **Disk encryption set** setting.
-
-            Note: Disk encryption set must be configured at cluster or node pool creation time and cannot be changed afterward.
-        - id: cli
-          desc: |
-            To ensure AKS clusters have disk CSI driver enabled for node pool encryption using the Azure CLI, enable encryption at host when creating or adding a node pool:
+            The disk CSI driver setting is not configurable through the Azure Portal. Use the Azure CLI to enable it on the cluster:
 
             ```bash
-            az aks nodepool add --cluster-name <ClusterName> --resource-group <ResourceGroupName> --name <PoolName> --enable-encryption-at-host
+            az aks update --name <ClusterName> --resource-group <ResourceGroupName> --enable-disk-driver
             ```
-
-            Enable disk CSI driver on the cluster:
+        - id: cli
+          desc: |
+            To ensure AKS clusters have disk CSI driver enabled for node pool encryption using the Azure CLI:
 
             ```bash
             az aks update --name <ClusterName> --resource-group <ResourceGroupName> --enable-disk-driver
@@ -20939,7 +21008,7 @@ queries:
             To ensure Application Gateways enforce TLS 1.2 or higher using the Azure CLI:
 
             ```bash
-            az network application-gateway ssl-policy set --gateway-name <GatewayName> --resource-group <ResourceGroupName> --min-protocol-version TLSv1_2 --policy-type Custom
+            az network application-gateway ssl-policy set --gateway-name <GatewayName> --resource-group <ResourceGroupName> --policy-type Custom --min-protocol-version TLSv1_2 --cipher-suites TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384 TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
             ```
 
             Or use a predefined policy that enforces TLS 1.2:
@@ -20989,7 +21058,8 @@ queries:
     filters: asset.platform == "azure-application-gateway"
     mql: |
       azure.subscription.networkService.applicationGateway.properties["sslPolicy"] != null
-      azure.subscription.networkService.applicationGateway.properties["sslPolicy"]["minProtocolVersion"].in(["TLSv1_2", "TLSv1_3"])
+      azure.subscription.networkService.applicationGateway.properties["sslPolicy"]["minProtocolVersion"].in(["TLSv1_2", "TLSv1_3"]) ||
+        azure.subscription.networkService.applicationGateway.properties["sslPolicy"]["policyName"] == /AppGwSslPolicy2022/
   - uid: mondoo-azure-security-appgw-ssl-policy-tls12-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_application_gateway")
     mql: |
@@ -21283,11 +21353,12 @@ queries:
 
             ```hcl
             resource "azurerm_databricks_workspace" "example" {
-              name                        = "example-workspace"
-              resource_group_name         = azurerm_resource_group.example.name
-              location                    = azurerm_resource_group.example.location
-              sku                         = "premium"
-              public_network_access_enabled = false
+              name                                  = "example-workspace"
+              resource_group_name                   = azurerm_resource_group.example.name
+              location                              = azurerm_resource_group.example.location
+              sku                                   = "premium"
+              public_network_access_enabled         = false
+              network_security_group_rules_required = "NoAzureDatabricksRules"
             }
             ```
         - id: bicep
@@ -21300,6 +21371,7 @@ queries:
               location: resourceGroup().location
               properties: {
                 publicNetworkAccess: 'Disabled'
+                requiredNsgRules: 'NoAzureDatabricksRules'
                 // ...
               }
               sku: {
@@ -21423,7 +21495,7 @@ queries:
             To ensure Microsoft Defender for Endpoint integration is enabled using the Azure CLI:
 
             ```bash
-            az security setting create --name WDATP --data-export-settings '{"enabled": true}'
+            az security setting update --name WDATP --data-export-settings enabled=true
             ```
         - id: terraform
           desc: |
@@ -21859,8 +21931,10 @@ queries:
               name: 'example-webapp'
               location: resourceGroup().location
               properties: {
-                httpsOnly: true
                 serverFarmId: appServicePlan.id
+                siteConfig: {
+                  endToEndEncryptionEnabled: true
+                }
               }
             }
             ```
@@ -22255,27 +22329,26 @@ queries:
       remediation:
         - id: portal
           desc: |
-            To ensure public network access is disabled on AKS clusters using the Azure Portal:
+            The Azure Portal does not expose a public network access toggle for existing AKS clusters. Private API server connectivity is selected when the cluster is created:
 
-            1. Navigate to **Kubernetes services** in the Azure Portal.
-            2. Select the AKS cluster.
-            3. Under **Settings**, select **Networking**.
-            4. Set **Public network access** to **Disabled**.
-            5. Configure private endpoint access for the cluster.
-            6. Select **Save**.
+            1. Navigate to **Kubernetes services** in the Azure Portal and select **Create**.
+            2. On the **Networking** tab, select **Private access** for API server connectivity.
+            3. Complete the configuration and select **Review + create**.
         - id: cli
           desc: |
-            To ensure public network access is disabled on AKS clusters using the Azure CLI:
+            To ensure public network access is disabled on AKS clusters using the Azure CLI, create the cluster as a private cluster:
 
             ```bash
-            az aks update --name <ClusterName> --resource-group <ResourceGroupName> --enable-private-cluster --disable-public-fqdn
+            az aks create --resource-group <ResourceGroupName> --name <ClusterName> --enable-private-cluster --disable-public-fqdn
             ```
 
-            To fully disable public network access on an existing private cluster:
+            For an existing cluster that uses API Server VNet Integration, convert it in place:
 
             ```bash
-            az aks update --name <ClusterName> --resource-group <ResourceGroupName> --api-server-authorized-ip-ranges ""
+            az aks update --resource-group <ResourceGroupName> --name <ClusterName> --enable-private-cluster --disable-public-fqdn
             ```
+
+            Clusters without API Server VNet Integration cannot be converted in place and must be recreated as private clusters.
         - id: terraform
           desc: |
             To ensure public network access is disabled on AKS clusters in Terraform:
@@ -22289,7 +22362,6 @@ queries:
 
               private_cluster_enabled             = true
               private_cluster_public_fqdn_enabled = false
-              public_network_access_enabled       = false
 
               default_node_pool {
                 name       = "default"
@@ -22334,19 +22406,19 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_kubernetes_cluster")
     mql: |
       terraform.resources("azurerm_kubernetes_cluster").all(
-        arguments['public_network_access_enabled'] == false
+        arguments['private_cluster_enabled'] == true
       )
   - uid: mondoo-azure-security-aks-public-network-access-disabled-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_kubernetes_cluster")
     mql: |
       terraform.plan.resourceChanges.where(type == "azurerm_kubernetes_cluster").all(
-        change.after.public_network_access_enabled == false
+        change.after['private_cluster_enabled'] == true
       )
   - uid: mondoo-azure-security-aks-public-network-access-disabled-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_kubernetes_cluster")
     mql: |
       terraform.state.resources.where(type == "azurerm_kubernetes_cluster").all(
-        values.public_network_access_enabled == false
+        values['private_cluster_enabled'] == true
       )
   - uid: mondoo-azure-security-aks-public-network-access-disabled-bicep
     filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.ContainerService/managedClusters")
@@ -23371,18 +23443,21 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_key_vault")
     mql: |
       terraform.resources("azurerm_key_vault").all(
+        arguments['rbac_authorization_enabled'] == true ||
         arguments['enable_rbac_authorization'] == true
       )
   - uid: mondoo-azure-security-keyvault-rbac-enabled-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_key_vault")
     mql: |
       terraform.plan.resourceChanges.where(type == "azurerm_key_vault").all(
+        change.after['rbac_authorization_enabled'] == true ||
         change.after['enable_rbac_authorization'] == true
       )
   - uid: mondoo-azure-security-keyvault-rbac-enabled-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_key_vault")
     mql: |
       terraform.state.resources.where(type == "azurerm_key_vault").all(
+        values['rbac_authorization_enabled'] == true ||
         values['enable_rbac_authorization'] == true
       )
   - uid: mondoo-azure-security-keyvault-rbac-enabled-bicep
@@ -23468,19 +23543,19 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_redis_cache")
     mql: |
       terraform.resources("azurerm_redis_cache").all(
-        arguments['enable_non_ssl_port'] == false
+        arguments['enable_non_ssl_port'] != true && arguments['non_ssl_port_enabled'] != true
       )
   - uid: mondoo-azure-security-redis-ssl-only-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_redis_cache")
     mql: |
       terraform.plan.resourceChanges.where(type == "azurerm_redis_cache").all(
-        change.after['enable_non_ssl_port'] == false
+        change.after['enable_non_ssl_port'] != true && change.after['non_ssl_port_enabled'] != true
       )
   - uid: mondoo-azure-security-redis-ssl-only-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_redis_cache")
     mql: |
       terraform.state.resources.where(type == "azurerm_redis_cache").all(
-        values['enable_non_ssl_port'] == false
+        values['enable_non_ssl_port'] != true && values['non_ssl_port_enabled'] != true
       )
   - uid: mondoo-azure-security-redis-ssl-only-bicep
     filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.Cache/redis")
@@ -24526,6 +24601,10 @@ queries:
       bicep.resources.where(type == "Microsoft.DBforPostgreSQL/flexibleServers").all(
         properties["authConfig"]["passwordAuth"] == "Disabled"
       )
+  # No Terraform variants: the node resource group restriction level is controlled by the
+  # nodeResourceGroupProfile property, which the azurerm_kubernetes_cluster resource does not
+  # expose. The setting can only be managed through the Azure CLI, the ARM API, or the azapi
+  # provider.
   - uid: mondoo-azure-security-aks-node-resource-group-restricted
     title: Ensure AKS node resource group access is restricted
     impact: 70
@@ -24548,18 +24627,6 @@ queries:
         tags:
           mondoo.com/filter-title: Azure AKS Cluster
           mondoo.com/filter-icon: azure
-      - uid: mondoo-azure-security-aks-node-resource-group-restricted-terraform-hcl
-        tags:
-          mondoo.com/filter-title: Terraform HCL
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-azure-security-aks-node-resource-group-restricted-terraform-plan
-        tags:
-          mondoo.com/filter-title: Terraform Plan
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-azure-security-aks-node-resource-group-restricted-terraform-state
-        tags:
-          mondoo.com/filter-title: Terraform State
-          mondoo.com/filter-icon: terraform
       - uid: mondoo-azure-security-aks-node-resource-group-restricted-bicep
         tags:
           mondoo.com/filter-title: Bicep
@@ -24611,7 +24678,16 @@ queries:
             3. Under **Properties**, review the node resource group name, but note that the restriction level is not visible in the Portal.
         - id: cli
           desc: |
-            To ensure AKS node resource group access is restricted using the Azure CLI, create a new cluster with node resource group restrictions:
+            To ensure AKS node resource group access is restricted using the Azure CLI, create a new cluster with node resource group restrictions.
+
+            Node resource group lockdown requires the aks-preview extension and feature registration:
+
+            ```bash
+            az extension add --name aks-preview
+            az feature register --namespace Microsoft.ContainerService --name NRGLockdownPreview
+            ```
+
+            Create the cluster:
 
             ```bash
             az aks create --resource-group <ResourceGroupName> --name <ClusterName> --nrg-lockdown-restriction-level ReadOnly
@@ -24624,16 +24700,19 @@ queries:
             ```
         - id: terraform
           desc: |
-            To ensure AKS node resource group access is restricted in Terraform:
+            To ensure AKS node resource group access is restricted in Terraform, the azurerm provider does not expose the node resource group restriction level on the cluster resource. Use the Azure CLI to set it, or manage the property with the azapi provider:
 
             ```hcl
-            resource "azurerm_kubernetes_cluster" "example" {
-              name                = "example-aks"
-              location            = azurerm_resource_group.example.location
-              resource_group_name = azurerm_resource_group.example.name
+            resource "azapi_update_resource" "nrg_lockdown" {
+              type        = "Microsoft.ContainerService/managedClusters@2024-09-02-preview"
+              resource_id = azurerm_kubernetes_cluster.example.id
 
-              node_resource_group_profile {
-                restrictions = "ReadOnly"
+              body = {
+                properties = {
+                  nodeResourceGroupProfile = {
+                    restrictionLevel = "ReadOnly"
+                  }
+                }
               }
             }
             ```
@@ -24642,7 +24721,7 @@ queries:
             To ensure AKS node resource group access is restricted in Bicep:
 
             ```bicep
-            resource aksCluster 'Microsoft.ContainerService/managedClusters@2024-01-01' = {
+            resource aksCluster 'Microsoft.ContainerService/managedClusters@2024-09-02-preview' = {
               name: 'example-aks'
               location: resourceGroup().location
               properties: {
@@ -24661,27 +24740,6 @@ queries:
       asset.platform == "azure-aks-cluster"
     mql: |
       azure.subscription.aksService.cluster.nodeResourceGroupRestrictionLevel == "ReadOnly"
-  - uid: mondoo-azure-security-aks-node-resource-group-restricted-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_kubernetes_cluster")
-    mql: |
-      terraform.resources("azurerm_kubernetes_cluster").all(
-        blocks.where(type == "node_resource_group_profile") != empty &&
-        blocks.where(type == "node_resource_group_profile").all(arguments['restrictions'] == "ReadOnly")
-      )
-  - uid: mondoo-azure-security-aks-node-resource-group-restricted-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_kubernetes_cluster")
-    mql: |
-      terraform.plan.resourceChanges.where(type == "azurerm_kubernetes_cluster").all(
-        change.after['node_resource_group_profile'] != empty &&
-        change.after['node_resource_group_profile'].all(_['restrictions'] == "ReadOnly")
-      )
-  - uid: mondoo-azure-security-aks-node-resource-group-restricted-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_kubernetes_cluster")
-    mql: |
-      terraform.state.resources.where(type == "azurerm_kubernetes_cluster").all(
-        values['node_resource_group_profile'] != empty &&
-        values['node_resource_group_profile'].all(_['restrictions'] == "ReadOnly")
-      )
   - uid: mondoo-azure-security-aks-node-resource-group-restricted-bicep
     filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.ContainerService/managedClusters")
     mql: |
@@ -24759,16 +24817,11 @@ queries:
             Note: WireGuard transit encryption is only configurable via Azure CLI or API. It cannot be enabled through the Azure Portal.
         - id: cli
           desc: |
-            To ensure AKS uses WireGuard for transit encryption using the Azure CLI, enable WireGuard transit encryption when creating a new cluster:
+            To ensure AKS uses WireGuard for transit encryption using the Azure CLI, enable Advanced Container Networking Services with WireGuard transit encryption. The cluster must use the Cilium data plane, and the aks-preview extension is required:
 
             ```bash
-            az aks create --resource-group <ResourceGroupName> --name <ClusterName> --network-plugin azure --network-plugin-mode overlay --network-dataplane cilium --pod-cidr 192.168.0.0/16
-            ```
-
-            Enable on an existing cluster:
-
-            ```bash
-            az aks update --resource-group <ResourceGroupName> --name <ClusterName> --network-dataplane cilium
+            az extension add --name aks-preview
+            az aks update --resource-group <ResourceGroupName> --name <ClusterName> --enable-acns --acns-transit-encryption-type WireGuard
             ```
         - id: bicep
           desc: |
@@ -26255,18 +26308,31 @@ queries:
             To ensure PostgreSQL Flexible Server uses CMK encryption using the Azure Portal:
 
             1. Navigate to **Azure Database for PostgreSQL flexible servers** in the Azure Portal.
-            2. Select the server instance.
-            3. Under **Security**, select **Data encryption**.
-            4. Select **Customer-managed key**.
-            5. Configure the Key Vault and key.
-            6. Select **Save**.
+            2. When creating a new server, go to the **Security** tab.
+            3. Under **Data encryption key**, select **Service-managed key** > **Customer-managed key**.
+            4. Select the user-assigned managed identity, Key Vault, and key.
+            5. Complete the server creation.
+
+            Note: Data encryption with a customer-managed key can only be configured at server creation time. To remediate an existing server, create a new server with CMK enabled and migrate the data.
         - id: cli
           desc: |
-            To ensure PostgreSQL Flexible Server uses CMK encryption using the Azure CLI:
+            To ensure PostgreSQL Flexible Server uses CMK encryption using the Azure CLI, the key must be configured at server creation:
+
+            ```bash
+            az postgres flexible-server create \
+              --resource-group <ResourceGroupName> \
+              --name <ServerName> \
+              --key <KeyVaultKeyId> \
+              --identity <UserAssignedIdentityId>
+            ```
+
+            To rotate the key on a server already using CMK:
 
             ```bash
             az postgres flexible-server update --resource-group <ResourceGroupName> --name <ServerName> --key <KeyVaultKeyId> --identity <UserAssignedIdentityId>
             ```
+
+            Note: An existing server using service-managed keys cannot be converted to CMK. Create a new server with CMK enabled and migrate the data.
         - id: bicep
           desc: |
             To ensure PostgreSQL Flexible Server uses CMK encryption in Bicep:
@@ -26690,22 +26756,6 @@ queries:
         tags:
           mondoo.com/filter-title: Azure Cache for Redis
           mondoo.com/filter-icon: azure
-      - uid: mondoo-azure-security-redis-cmk-encryption-terraform-hcl
-        tags:
-          mondoo.com/filter-title: Terraform HCL
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-azure-security-redis-cmk-encryption-terraform-plan
-        tags:
-          mondoo.com/filter-title: Terraform Plan
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-azure-security-redis-cmk-encryption-terraform-state
-        tags:
-          mondoo.com/filter-title: Terraform State
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-azure-security-redis-cmk-encryption-bicep
-        tags:
-          mondoo.com/filter-title: Bicep
-          mondoo.com/filter-icon: bicep
     docs:
       desc: |
         This check ensures that Azure Cache for Redis uses customer-managed keys for encryption, providing key lifecycle control for cached data at rest.
@@ -26745,63 +26795,44 @@ queries:
       remediation:
         - id: portal
           desc: |
-            To ensure Azure Cache for Redis uses CMK encryption using the Azure Portal:
+            Customer-managed key encryption requires the Azure Cache for Redis Enterprise tier. The Basic, Standard, and Premium tiers do not support CMK. To configure CMK using the Azure Portal:
 
-            1. Navigate to **Azure Cache for Redis** in the Azure Portal.
-            2. Select the cache instance.
-            3. Under **Settings**, select **Encryption**.
-            4. Select **Customer-managed key**.
-            5. Configure the Key Vault and key.
-            6. Select **Save**.
+            1. Navigate to **Azure Cache for Redis** in the Azure Portal and select **Create**.
+            2. Select an **Enterprise** tier cache.
+            3. On the **Advanced** tab, under **Encryption**, select **Use a customer-managed key**.
+            4. Select the user-assigned managed identity, Key Vault, and key.
+            5. Complete the cache creation.
 
-            Note: CMK encryption must be configured at cache creation time. To enable CMK on an existing cache, the cache must be recreated with CMK enabled.
+            Note: CMK encryption must be configured when the Enterprise cluster is created. To remediate an existing cache, create a new Enterprise cluster with CMK enabled and migrate the data.
         - id: cli
           desc: |
-            To ensure Azure Cache for Redis uses CMK encryption using the Azure CLI:
+            Customer-managed key encryption requires the Azure Cache for Redis Enterprise tier, and the Azure CLI does not provide a command to configure Enterprise CMK. Create the Enterprise cluster and configure encryption through the Azure Portal or the REST API:
 
             ```bash
-            az redis create \
+            az redisenterprise create \
               --resource-group <ResourceGroupName> \
-              --name <CacheName> \
+              --cluster-name <ClusterName> \
               --location <Location> \
-              --sku Premium \
-              --vm-size p1 \
-              --mi-user-assigned <UserAssignedIdentityResourceId> \
-              --redis-configuration '{"customer-managed-key-encryption": {"identity-type": "userAssignedIdentity", "key-encryption-key-url": "<KeyVaultKeyUrl>", "user-assigned-identity-resource-id": "<IdentityResourceId>"}}'
+              --sku Enterprise_E10 \
+              --capacity 2
             ```
 
-            Note: CMK encryption must be configured at cache creation time. To update an existing cache, recreate it with CMK enabled.
+            Configure the customer-managed key encryption settings on the cluster through the Azure Portal at creation time or with the REST API.
         - id: terraform
           desc: |
-            To ensure Azure Cache for Redis uses CMK encryption in Terraform:
-
-            ```hcl
-            resource "azurerm_redis_cache" "example" {
-              name                = "example-redis"
-              location            = azurerm_resource_group.example.location
-              resource_group_name = azurerm_resource_group.example.name
-              capacity            = 1
-              family              = "P"
-              sku_name            = "Premium"
-
-              redis_configuration {
-                customer_managed_key_id = azurerm_key_vault_key.example.id
-              }
-
-              identity {
-                type         = "UserAssigned"
-                identity_ids = [azurerm_user_assigned_identity.example.id]
-              }
-            }
-            ```
+            Customer-managed key encryption requires the Azure Cache for Redis Enterprise tier. The `azurerm_redis_cache` resource cannot express CMK encryption because the standard cache tiers do not support it. Manage Enterprise-tier CMK encryption through the REST API or the azapi provider.
         - id: bicep
           desc: |
-            To ensure Azure Cache for Redis uses CMK encryption in Bicep:
+            Customer-managed key encryption requires the Azure Cache for Redis Enterprise tier. To configure CMK in Bicep:
 
             ```bicep
-            resource redisCache 'Microsoft.Cache/redis@2023-08-01' = {
+            resource redisEnterprise 'Microsoft.Cache/redisEnterprise@2024-02-01' = {
               name: 'example-redis'
               location: resourceGroup().location
+              sku: {
+                name: 'Enterprise_E10'
+                capacity: 2
+              }
               identity: {
                 type: 'UserAssigned'
                 userAssignedIdentities: {
@@ -26809,16 +26840,13 @@ queries:
                 }
               }
               properties: {
-                sku: {
-                  name: 'Premium'
-                  family: 'P'
-                  capacity: 1
-                }
-                redisConfiguration: {
-                  'customer-managed-key-encryption': {
-                    identityType: 'userAssignedIdentity'
+                encryption: {
+                  customerManagedKeyEncryption: {
+                    keyEncryptionKeyIdentity: {
+                      identityType: 'userAssignedIdentity'
+                      userAssignedIdentityResourceId: managedIdentity.id
+                    }
                     keyEncryptionKeyUrl: keyVaultKey.properties.keyUriWithVersion
-                    userAssignedIdentityResourceId: managedIdentity.id
                   }
                 }
               }
@@ -26832,33 +26860,6 @@ queries:
       asset.platform == "azure-cache-redis-instance"
     mql: |
       azure.subscription.cacheService.redisInstance.encryptionKey != empty
-  - uid: mondoo-azure-security-redis-cmk-encryption-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_redis_cache")
-    mql: |
-      terraform.resources("azurerm_redis_cache").all(
-        blocks.where(type == "redis_configuration") != empty &&
-        blocks.where(type == "redis_configuration").all(arguments['customer_managed_key_id'] != empty)
-      )
-  - uid: mondoo-azure-security-redis-cmk-encryption-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_redis_cache")
-    mql: |
-      terraform.plan.resourceChanges.where(type == "azurerm_redis_cache").all(
-        change.after['redis_configuration'] != empty &&
-        change.after['redis_configuration'].all(_['customer_managed_key_id'] != empty)
-      )
-  - uid: mondoo-azure-security-redis-cmk-encryption-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_redis_cache")
-    mql: |
-      terraform.state.resources.where(type == "azurerm_redis_cache").all(
-        values['redis_configuration'] != empty &&
-        values['redis_configuration'].all(_['customer_managed_key_id'] != empty)
-      )
-  - uid: mondoo-azure-security-redis-cmk-encryption-bicep
-    filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.Cache/redis")
-    mql: |
-      bicep.resources.where(type == "Microsoft.Cache/redis").all(
-        properties["redisConfiguration"]["customer-managed-key-encryption"] != empty
-      )
   - uid: mondoo-azure-security-appgw-min-tls-version
     title: Ensure Application Gateway enforces TLS 1.2+
     impact: 80
@@ -27525,9 +27526,23 @@ queries:
             ```
         - id: terraform
           desc: |
-            To ensure NSG rules do not allow unrestricted egress in Terraform:
+            To ensure NSG rules do not allow unrestricted egress in Terraform, remove the unrestricted outbound allow rule or restrict it to specific destinations and ports:
 
             ```hcl
+            resource "azurerm_network_security_rule" "allow_https_outbound" {
+              name                        = "AllowHttpsOutbound"
+              priority                    = 100
+              direction                   = "Outbound"
+              access                      = "Allow"
+              protocol                    = "Tcp"
+              source_port_range           = "*"
+              destination_port_range      = "443"
+              source_address_prefix       = "*"
+              destination_address_prefix  = "Internet"
+              resource_group_name         = azurerm_resource_group.example.name
+              network_security_group_name = azurerm_network_security_group.example.name
+            }
+
             resource "azurerm_network_security_rule" "deny_all_outbound" {
               name                        = "DenyAllOutbound"
               priority                    = 4096
@@ -27724,7 +27739,7 @@ queries:
               location            = azurerm_resource_group.example.location
               resource_group_name = azurerm_resource_group.example.name
 
-              enable_ip_forwarding = false
+              ip_forwarding_enabled = false
 
               ip_configuration {
                 name                          = "internal"
@@ -27745,19 +27760,22 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_network_interface")
     mql: |
       terraform.resources("azurerm_network_interface").all(
-        arguments['enable_ip_forwarding'] != true
+        arguments['enable_ip_forwarding'] != true &&
+        arguments['ip_forwarding_enabled'] != true
       )
   - uid: mondoo-azure-security-network-interface-ip-forwarding-disabled-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_network_interface")
     mql: |
       terraform.plan.resourceChanges.where(type == "azurerm_network_interface").all(
-        change.after['enable_ip_forwarding'] != true
+        change.after['enable_ip_forwarding'] != true &&
+        change.after['ip_forwarding_enabled'] != true
       )
   - uid: mondoo-azure-security-network-interface-ip-forwarding-disabled-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_network_interface")
     mql: |
       terraform.state.resources.where(type == "azurerm_network_interface").all(
-        values['enable_ip_forwarding'] != true
+        values['enable_ip_forwarding'] != true &&
+        values['ip_forwarding_enabled'] != true
       )
   - uid: mondoo-azure-security-network-interface-ip-forwarding-disabled-bicep
     filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.Network/networkInterfaces")
@@ -27905,18 +27923,18 @@ queries:
             ```
         - id: terraform
           desc: |
-            To ensure sensitive ports are not exposed to the entire network in Terraform:
+            To ensure sensitive ports are not exposed to the entire network in Terraform, restrict the source of the inbound allow rule to trusted address ranges instead of `*`, or remove the rule:
 
             ```hcl
-            resource "azurerm_network_security_rule" "deny_sensitive_ports" {
-              name                        = "DenyInternetSensitivePorts"
+            resource "azurerm_network_security_rule" "allow_mssql_internal" {
+              name                        = "AllowMssqlFromInternal"
               priority                    = 100
               direction                   = "Inbound"
-              access                      = "Deny"
-              protocol                    = "*"
+              access                      = "Allow"
+              protocol                    = "Tcp"
               source_port_range           = "*"
-              destination_port_ranges     = ["23", "135", "445", "1433", "3306", "5432"]
-              source_address_prefix       = "Internet"
+              destination_port_range      = "1433"
+              source_address_prefix       = "10.0.0.0/8"
               destination_address_prefix  = "*"
               resource_group_name         = azurerm_resource_group.example.name
               network_security_group_name = azurerm_network_security_group.example.name
@@ -28868,15 +28886,15 @@ queries:
       remediation:
         - id: cli
           desc: |
-            To ensure SQL threat alert email addresses are configured using the Azure CLI, first enable advanced threat protection:
+            To ensure SQL threat alert email addresses are configured using the Azure CLI:
 
             ```bash
-            az sql server advanced-threat-protection-setting update \
-              --resource-group <rg> --name <server> \
-              --state Enabled
+            az rest --method put \
+              --url "https://management.azure.com/subscriptions/<SubscriptionId>/resourceGroups/<ResourceGroupName>/providers/Microsoft.Sql/servers/<ServerName>/securityAlertPolicies/Default?api-version=2021-11-01" \
+              --body '{"properties":{"state":"Enabled","emailAddresses":["security@example.com"],"emailAccountAdmins":true}}'
             ```
 
-            Email notification recipients for threat alerts are configured through the Azure Portal under the server's Microsoft Defender for SQL settings, or via the `securityAlertPolicies` ARM API.
+            Current Azure CLI releases no longer ship a command for the server security alert policy, so the REST API is used directly.
         - id: bicep
           desc: |
             To ensure SQL threat alert email addresses are configured in Bicep:
@@ -29030,13 +29048,15 @@ queries:
       remediation:
         - id: cli
           desc: |
-            To ensure SQL threat detection types are configured using the Azure CLI, enable all threat detection types:
+            To ensure SQL threat detection types are configured using the Azure CLI, enable the policy and clear the disabled alerts list:
 
             ```bash
-            az sql server advanced-threat-protection-setting update \
-              --resource-group <rg> --name <server> \
-              --state Enabled
+            az rest --method put \
+              --url "https://management.azure.com/subscriptions/<SubscriptionId>/resourceGroups/<ResourceGroupName>/providers/Microsoft.Sql/servers/<ServerName>/securityAlertPolicies/Default?api-version=2021-11-01" \
+              --body '{"properties":{"state":"Enabled","disabledAlerts":[]}}'
             ```
+
+            Current Azure CLI releases no longer ship a command for the server security alert policy, so the REST API is used directly.
         - id: bicep
           desc: |
             To ensure SQL threat detection types are configured in Bicep:
@@ -29780,6 +29800,7 @@ queries:
 
             ```hcl
             resource "azurerm_security_center_contact" "example" {
+              name                = "default"
               email               = "security@example.com"
               alert_notifications = true
               alerts_to_admins    = true
@@ -29936,6 +29957,7 @@ queries:
 
             ```hcl
             resource "azurerm_security_center_contact" "example" {
+              name                = "default"
               email               = "security@example.com"
               alert_notifications = true
               alerts_to_admins    = true
@@ -30759,7 +30781,7 @@ queries:
             6. Configure a **User-Assigned Managed Identity** to access the Key Vault.
             7. Select **Save**.
 
-            Note: CMK encryption must be configured during Data Factory creation. To enable CMK on an existing factory, it must be recreated with CMK enabled.
+            Note: A customer-managed key can only be configured on an empty data factory that contains no pipelines, datasets, or linked services. Configure CMK before creating any entities. If the factory already contains entities, create a new empty factory with CMK enabled and migrate the content.
         - id: cli
           desc: |
             To ensure Data Factory uses customer-managed key encryption using the Azure CLI:
@@ -31431,17 +31453,19 @@ queries:
             To ensure Synapse uses Azure AD-only authentication using the Azure CLI:
 
             ```bash
-            # Set Azure AD admin
+            # Set the Microsoft Entra admin
             az synapse sql ad-admin create \
-              --resource-group-name <resource-group-name> \
+              --resource-group <resource-group-name> \
               --workspace-name <workspace-name> \
-              --login-name <admin-display-name> \
+              --display-name <admin-display-name> \
               --object-id <admin-object-id>
 
-            # Enable Azure AD-only authentication
-            az synapse ad-only-auth enable \
-              --resource-group-name <resource-group-name> \
-              --workspace-name <workspace-name>
+            # Enable Microsoft Entra-only authentication. Current Azure CLI
+            # releases have no synapse command for this setting, so the REST
+            # API is used directly.
+            az rest --method put \
+              --url "https://management.azure.com/subscriptions/<SubscriptionId>/resourceGroups/<ResourceGroupName>/providers/Microsoft.Synapse/workspaces/<WorkspaceName>/azureADOnlyAuthentications/default?api-version=2021-06-01" \
+              --body '{"properties":{"azureADOnlyAuthentication":true}}'
             ```
         - id: terraform
           desc: |
@@ -31456,11 +31480,18 @@ queries:
               sql_administrator_login              = "sqladminuser"
               sql_administrator_login_password     = var.sql_admin_password
 
-              aad_admin {
-                login     = "AzureAD Admin"
-                object_id = "00000000-0000-0000-0000-000000000000"
-                tenant_id = "00000000-0000-0000-0000-000000000000"
+              azuread_authentication_only = true
+
+              identity {
+                type = "SystemAssigned"
               }
+            }
+
+            resource "azurerm_synapse_workspace_aad_admin" "example" {
+              synapse_workspace_id = azurerm_synapse_workspace.example.id
+              login                = "AzureAD Admin"
+              object_id            = "00000000-0000-0000-0000-000000000000"
+              tenant_id            = "00000000-0000-0000-0000-000000000000"
             }
             ```
         - id: bicep
@@ -31497,22 +31528,19 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_synapse_workspace")
     mql: |
       terraform.resources("azurerm_synapse_workspace").all(
-        blocks.where(type == "aad_admin") != empty &&
-        arguments['sql_aad_authentication_only'] == true
+        arguments['azuread_authentication_only'] == true
       )
   - uid: mondoo-azure-security-synapse-aad-only-auth-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_synapse_workspace")
     mql: |
       terraform.plan.resourceChanges.where(type == "azurerm_synapse_workspace").all(
-        change.after['aad_admin'] != empty &&
-        change.after['sql_aad_authentication_only'] == true
+        change.after['azuread_authentication_only'] == true
       )
   - uid: mondoo-azure-security-synapse-aad-only-auth-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_synapse_workspace")
     mql: |
       terraform.state.resources.where(type == "azurerm_synapse_workspace").all(
-        values['aad_admin'] != empty &&
-        values['sql_aad_authentication_only'] == true
+        values['azuread_authentication_only'] == true
       )
   - uid: mondoo-azure-security-synapse-aad-only-auth-bicep
     filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.Synapse/workspaces")
@@ -31613,15 +31641,16 @@ queries:
 
             ```bash
             az synapse workspace key create \
-              --resource-group-name <resource-group-name> \
+              --resource-group <resource-group-name> \
               --workspace-name <workspace-name> \
-              --key-name "cmk" \
-              --key-identifier "https://<key-vault-name>.vault.azure.net/keys/<key-name>/<key-version>"
+              --name cmk \
+              --key-identifier "https://<key-vault-name>.vault.azure.net/keys/<key-name>"
 
             az synapse workspace activate \
-              --resource-group-name <resource-group-name> \
+              --resource-group <resource-group-name> \
               --workspace-name <workspace-name> \
-              --key-name "cmk"
+              --name cmk \
+              --key-identifier "https://<key-vault-name>.vault.azure.net/keys/<key-name>"
             ```
         - id: terraform
           desc: |
@@ -31784,7 +31813,7 @@ queries:
             To ensure the ACR admin user is disabled using the Azure CLI:
 
             ```bash
-            az acr update --registry-name <RegistryName> --admin-enabled false
+            az acr update --name <RegistryName> --admin-enabled false
             ```
         - id: terraform
           desc: |
@@ -31928,7 +31957,7 @@ queries:
             To disable public network access using the Azure CLI:
 
             ```bash
-            az acr update --registry-name <RegistryName> --public-network-enabled false
+            az acr update --name <RegistryName> --public-network-enabled false
             ```
         - id: terraform
           desc: |
@@ -32395,7 +32424,7 @@ queries:
             To set the network rule default action to Deny using the Azure CLI:
 
             ```bash
-            az acr update --registry-name <RegistryName> --default-action Deny
+            az acr update --name <RegistryName> --default-action Deny
             ```
         - id: terraform
           desc: |
@@ -32729,12 +32758,15 @@ queries:
       remediation:
         - id: portal
           desc: |
-            To enable the quarantine policy using the Azure Portal:
+            The quarantine policy is a preview feature and cannot be configured in the Azure Portal. Use the Azure CLI to patch the registry resource directly:
 
-            1. Navigate to **Container registries** in the Azure Portal.
-            2. Select the container registry (must be Premium SKU).
-            3. Go to **Policies** under **Settings**.
-            4. Set **Quarantine policy** to **Enabled**.
+            ```bash
+            az resource update \
+              --resource-type Microsoft.ContainerRegistry/registries \
+              --name <RegistryName> \
+              --resource-group <ResourceGroupName> \
+              --set properties.policies.quarantinePolicy.status=enabled
+            ```
         - id: cli
           desc: |
             The quarantine policy is a preview feature without a dedicated CLI flag. Enable it on a Premium ACR by patching the resource directly:
@@ -32890,12 +32922,14 @@ queries:
       remediation:
         - id: portal
           desc: |
-            To disable the export policy using the Azure Portal:
+            The export policy cannot be configured in the Azure Portal. Use the Azure CLI to disable image export on a Premium registry:
 
-            1. Navigate to **Container registries** in the Azure Portal.
-            2. Select the container registry (must be Premium SKU).
-            3. Go to **Policies** under **Settings**.
-            4. Set **Export policy** to **Disabled**.
+            ```bash
+            az acr update \
+              --name <RegistryName> \
+              --resource-group <ResourceGroupName> \
+              --allow-exports false
+            ```
         - id: cli
           desc: |
             To disable image export on a Premium ACR using the Azure CLI:
@@ -32912,17 +32946,14 @@ queries:
 
             ```hcl
             resource "azurerm_container_registry" "example" {
-              name                    = "exampleregistry"
-              resource_group_name     = azurerm_resource_group.example.name
-              location                = azurerm_resource_group.example.location
-              sku                     = "Premium"
-              export_policy_enabled   = false
+              name                  = "exampleregistry"
+              resource_group_name   = azurerm_resource_group.example.name
+              location              = azurerm_resource_group.example.location
+              sku                   = "Premium"
+              export_policy_enabled = false
 
-              # Disabling export requires the registry to be a zone-redundant Premium SKU
-              # with public network access disabled and quarantine policy enabled.
+              # Disabling exports requires public network access to be disabled as well
               public_network_access_enabled = false
-              zone_redundancy_enabled       = true
-              quarantine_policy_enabled     = true
             }
             ```
         - id: bicep
@@ -33887,7 +33918,7 @@ queries:
               name                      = "example-des"
               resource_group_name       = azurerm_resource_group.example.name
               location                  = azurerm_resource_group.example.location
-              key_vault_key_id          = azurerm_key_vault_key.example.id
+              key_vault_key_id          = azurerm_key_vault_key.example.versionless_id
               auto_key_rotation_enabled = true
 
               identity {
@@ -33895,6 +33926,8 @@ queries:
               }
             }
             ```
+
+            Use `versionless_id` rather than `id`. Auto key rotation requires the key reference to omit the key version.
         - id: bicep
           desc: |
             To enable auto key rotation in Bicep:
@@ -33908,7 +33941,7 @@ queries:
               }
               properties: {
                 activeKey: {
-                  keyUrl: keyVaultKey.properties.keyUriWithVersion
+                  keyUrl: keyVaultKey.properties.keyUri
                 }
                 rotationToLatestKeyVersionEnabled: true
               }
@@ -34182,7 +34215,10 @@ queries:
             To enable purge protection using the Azure CLI:
 
             ```bash
-            az keyvault update-hsm --name <HSMName> --enable-purge-protection true
+            az keyvault update-hsm \
+              --hsm-name <HSMName> \
+              --resource-group <ResourceGroupName> \
+              --enable-purge-protection true
             ```
         - id: terraform
           desc: |
@@ -35291,13 +35327,15 @@ queries:
       remediation:
         - id: portal
           desc: |
-            To enforce CMK for queries using the Azure Portal:
+            Enforcing CMK for queries cannot be configured in the Azure Portal. Link the workspace to a dedicated cluster with CMK configured, then set the property with the Azure CLI:
 
-            1. Navigate to **Log Analytics workspaces** in the Azure Portal.
-            2. Select the workspace.
-            3. Go to **Properties** under **Settings**.
-            4. Enable **Customer-managed key for queries**.
-            5. Link a dedicated cluster with CMK configured.
+            ```bash
+            az resource update \
+              --resource-type Microsoft.OperationalInsights/workspaces \
+              --name <WorkspaceName> \
+              --resource-group <ResourceGroupName> \
+              --set properties.features.forceCmkForQuery=true
+            ```
         - id: cli
           desc: |
             Enforcing CMK for queries requires the workspace to be linked to a dedicated Log Analytics cluster with CMK configured. There is no dedicated CLI flag for `forceCmkForQuery`; patch the workspace property directly:
@@ -37279,7 +37317,7 @@ queries:
         **Automated Audit with Azure CLI:**
 
         ```bash
-        az functionapp show --name <FunctionAppName> --resource-group-name <ResourceGroupName> --query "httpsOnly"
+        az functionapp show --name <FunctionAppName> --resource-group <ResourceGroupName> --query "httpsOnly"
         ```
       remediation:
         - id: portal
@@ -37294,7 +37332,7 @@ queries:
         - id: cli
           desc: |
             ```bash
-            az functionapp update --name <FunctionAppName> --resource-group-name <ResourceGroupName> --set httpsOnly=true
+            az functionapp update --name <FunctionAppName> --resource-group <ResourceGroupName> --set httpsOnly=true
             ```
         - id: terraform
           desc: |
@@ -37421,7 +37459,7 @@ queries:
         **Automated Audit with Azure CLI:**
 
         ```bash
-        az functionapp show --name <FunctionAppName> --resource-group-name <ResourceGroupName> --query "{clientCertEnabled: clientCertEnabled, clientCertMode: clientCertMode}"
+        az functionapp show --name <FunctionAppName> --resource-group <ResourceGroupName> --query "{clientCertEnabled: clientCertEnabled, clientCertMode: clientCertMode}"
         ```
       remediation:
         - id: portal
@@ -37436,7 +37474,7 @@ queries:
         - id: cli
           desc: |
             ```bash
-            az functionapp update --name <FunctionAppName> --resource-group-name <ResourceGroupName> --set clientCertEnabled=true clientCertMode=Required
+            az functionapp update --name <FunctionAppName> --resource-group <ResourceGroupName> --set clientCertEnabled=true clientCertMode=Required
             ```
         - id: terraform
           desc: |
@@ -37566,7 +37604,7 @@ queries:
         **Automated Audit with Azure CLI:**
 
         ```bash
-        az functionapp identity show --name <FunctionAppName> --resource-group-name <ResourceGroupName>
+        az functionapp identity show --name <FunctionAppName> --resource-group <ResourceGroupName>
         ```
       remediation:
         - id: portal
@@ -37581,7 +37619,7 @@ queries:
         - id: cli
           desc: |
             ```bash
-            az functionapp identity assign --name <FunctionAppName> --resource-group-name <ResourceGroupName>
+            az functionapp identity assign --name <FunctionAppName> --resource-group <ResourceGroupName>
             ```
         - id: terraform
           desc: |
@@ -37851,31 +37889,34 @@ queries:
       remediation:
         - id: portal
           desc: |
-            To configure Front Door origins for HTTPS only:
+            To configure Front Door routes to forward traffic to origins over HTTPS only:
 
             1. Navigate to **Front Door and CDN profiles** in the Azure Portal.
             2. Select the Front Door profile.
-            3. Go to **Origin groups** under **Settings**.
-            4. Select the origin group, then select the origin.
-            5. Set the **HTTPS port** to **443**.
-            6. Remove or disable the **HTTP port** by setting it to **0** or removing HTTP from the origin configuration.
-            7. Click **Update**.
+            3. Select **Front Door manager**.
+            4. Open the route.
+            5. Set **Forwarding protocol** to **HTTPS only**.
+            6. Select **Update**.
         - id: cli
           desc: |
             ```bash
-            az afd origin update --resource-group <ResourceGroupName> --profile-name <ProfileName> --origin-group-name <OriginGroupName> --origin-name <OriginName> --https-port 443 --http-port 0
+            az afd route update --resource-group <ResourceGroupName> --profile-name <ProfileName> --endpoint-name <EndpointName> --route-name <RouteName> --forwarding-protocol HttpsOnly
             ```
         - id: bicep
           desc: |
             ```bicep
-            resource origin 'Microsoft.Cdn/profiles/originGroups/origins@2024-02-01' = {
-              parent: originGroup
-              name: 'example-origin'
+            resource route 'Microsoft.Cdn/profiles/afdEndpoints/routes@2024-02-01' = {
+              parent: endpoint
+              name: 'example-route'
               properties: {
-                hostName: 'example.azurewebsites.net'
-                httpsPort: 443
-                httpPort: 0
-                enforceCertificateNameCheck: true
+                originGroup: {
+                  id: originGroup.id
+                }
+                forwardingProtocol: 'HttpsOnly'
+                httpsRedirect: 'Enabled'
+                supportedProtocols: [
+                  'Https'
+                ]
               }
             }
             ```
@@ -37888,8 +37929,10 @@ queries:
     filters: |
       asset.platform == "azure"
     mql: |
+      // The AFD origin API constrains httpPort to 1-65535, so a port of 0 is not
+      // configurable; encrypted traffic to origins is enforced on the route.
       azure.subscription.frontDoor.profiles.all(
-        originGroups.all(origins.all(httpPort == 0))
+        endpoints.all(routes.all(forwardingProtocol == "HttpsOnly"))
       )
   - uid: mondoo-azure-security-sql-server-audit-destination-configured
     title: Ensure Azure SQL Server auditing has a log destination configured
@@ -38258,8 +38301,8 @@ queries:
             To enable DevOps auditing using the Azure Portal:
 
             1. Navigate to **SQL servers** and select the server.
-            2. Under **Security**, open **Auditing** and review any DevOps / Microsoft support auditing toggle exposed by the portal.
-            3. Enable the setting and pick a destination (Storage, Log Analytics, or Event Hub).
+            2. Under **Security**, open **Auditing**.
+            3. Enable **Auditing of Microsoft support operations** and pick a destination (Storage, Log Analytics, or Event Hub).
             4. Select **Save**.
         - id: cli
           desc: |
@@ -38267,9 +38310,9 @@ queries:
 
             ```bash
             az sql server ms-support audit-policy update \
-              --resource-group-name <rg> --server-name <server> \
+              --resource-group <ResourceGroupName> --name <ServerName> \
               --state Enabled --blob-storage-target-state Enabled \
-              --storage-account <storage-account-id>
+              --storage-account <StorageAccountName>
             ```
         - id: terraform
           desc: |
@@ -39224,7 +39267,7 @@ queries:
 
               container {
                 name   = "app"
-                image  = "${azurerm_container_registry.example.login_server}/app@sha256:abcdef"
+                image  = "myacr.azurecr.io/app@sha256:abcdef"
                 cpu    = "1"
                 memory = "1.5"
 
@@ -40581,11 +40624,18 @@ queries:
             To configure CMK on a Service Bus namespace using the Azure CLI:
 
             ```bash
+            az servicebus namespace identity assign \
+              --resource-group <ResourceGroupName> \
+              --namespace-name <NamespaceName> \
+              --system-assigned
+
             az servicebus namespace encryption add \
               --resource-group <ResourceGroupName> \
               --namespace-name <NamespaceName> \
               --encryption-config key-name=<KeyName> key-vault-uri=<KeyVaultUri>
             ```
+
+            Grant the namespace identity the Key Vault Crypto Service Encryption User role on the Key Vault before running the second command.
         - id: terraform
           desc: |
             To configure CMK on a Service Bus namespace in Terraform:
@@ -40599,12 +40649,13 @@ queries:
               capacity            = 1
 
               identity {
-                type = "SystemAssigned"
+                type         = "UserAssigned"
+                identity_ids = [azurerm_user_assigned_identity.example.id]
               }
 
               customer_managed_key {
-                key_vault_key_id              = azurerm_key_vault_key.example.id
-                infrastructure_encryption_enabled = false
+                key_vault_key_id = azurerm_key_vault_key.example.id
+                identity_id      = azurerm_user_assigned_identity.example.id
               }
             }
             ```
@@ -40753,6 +40804,11 @@ queries:
             To configure CMK on an Event Hubs namespace using the Azure CLI:
 
             ```bash
+            az eventhubs namespace identity assign \
+              --resource-group <ResourceGroupName> \
+              --namespace-name <NamespaceName> \
+              --system-assigned
+
             az eventhubs namespace encryption add \
               --resource-group <ResourceGroupName> \
               --namespace-name <NamespaceName> \
@@ -41194,7 +41250,7 @@ queries:
 
         **Risk mitigation**
 
-        - Set `key_vault_reference_identity` on `azurerm_linux_function_app` or `azurerm_windows_function_app` to a user-assigned managed identity with `Key Vault Secrets User` on the secrets Key Vault.
+        - Set `key_vault_reference_identity_id` on `azurerm_linux_function_app` or `azurerm_windows_function_app` to a user-assigned managed identity with `Key Vault Secrets User` on the secrets Key Vault.
         - Ensure the storage account in `storage_account_name` is itself configured with CMK using `azurerm_storage_account.customer_managed_key`.
       audit: |
         **Manual Audit via Azure Portal:**
@@ -41226,7 +41282,7 @@ queries:
             az functionapp update \
               --resource-group <ResourceGroupName> \
               --name <FunctionAppName> \
-              --set properties.keyVaultReferenceIdentity=<UserAssignedIdentityResourceId>
+              --set keyVaultReferenceIdentity=<UserAssignedIdentityResourceId>
             ```
         - id: terraform
           desc: |
@@ -41234,13 +41290,13 @@ queries:
 
             ```hcl
             resource "azurerm_linux_function_app" "example" {
-              name                          = "example-funcapp"
-              resource_group_name           = azurerm_resource_group.example.name
-              location                      = azurerm_resource_group.example.location
-              service_plan_id               = azurerm_service_plan.example.id
-              storage_account_name          = azurerm_storage_account.example.name
-              storage_account_access_key    = azurerm_storage_account.example.primary_access_key
-              key_vault_reference_identity  = azurerm_user_assigned_identity.example.id
+              name                            = "example-funcapp"
+              resource_group_name             = azurerm_resource_group.example.name
+              location                        = azurerm_resource_group.example.location
+              service_plan_id                 = azurerm_service_plan.example.id
+              storage_account_name            = azurerm_storage_account.example.name
+              storage_account_access_key      = azurerm_storage_account.example.primary_access_key
+              key_vault_reference_identity_id = azurerm_user_assigned_identity.example.id
 
               identity {
                 type         = "UserAssigned"
@@ -41283,22 +41339,22 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == /azurerm_(linux|windows)_function_app/)
     mql: |
       terraform.resources(/azurerm_(linux|windows)_function_app/).all(
-        arguments['key_vault_reference_identity'] != null &&
-        arguments['key_vault_reference_identity'] != ""
+        arguments['key_vault_reference_identity_id'] != null &&
+        arguments['key_vault_reference_identity_id'] != ""
       )
   - uid: mondoo-azure-security-function-app-cmk-encryption-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == /azurerm_(linux|windows)_function_app/)
     mql: |
       terraform.plan.resourceChanges.where(type == /azurerm_(linux|windows)_function_app/).all(
-        change.after['key_vault_reference_identity'] != null &&
-        change.after['key_vault_reference_identity'] != ""
+        change.after['key_vault_reference_identity_id'] != null &&
+        change.after['key_vault_reference_identity_id'] != ""
       )
   - uid: mondoo-azure-security-function-app-cmk-encryption-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == /azurerm_(linux|windows)_function_app/)
     mql: |
       terraform.state.resources.where(type == /azurerm_(linux|windows)_function_app/).all(
-        values['key_vault_reference_identity'] != null &&
-        values['key_vault_reference_identity'] != ""
+        values['key_vault_reference_identity_id'] != null &&
+        values['key_vault_reference_identity_id'] != ""
       )
   - uid: mondoo-azure-security-function-app-cmk-encryption-bicep
     filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.Web/sites")
@@ -41430,7 +41486,7 @@ queries:
             resource "azurerm_log_analytics_linked_service" "example" {
               resource_group_name = azurerm_resource_group.example.name
               workspace_id        = azurerm_log_analytics_workspace.example.id
-              read_access_id      = azurerm_log_analytics_cluster.example.id
+              write_access_id     = azurerm_log_analytics_cluster.example.id
             }
             ```
         - id: bicep
@@ -41851,11 +41907,9 @@ queries:
             To disable TLS 1.0 and 1.1 on an API Management gateway using the Azure CLI:
 
             ```bash
-            az apim update --resource-group <ResourceGroupName> --name <ApiManagementServiceName> \
-              --set customProperties."Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls10"=False \
-                    customProperties."Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls11"=False \
-                    customProperties."Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Backend.Protocols.Tls10"=False \
-                    customProperties."Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Backend.Protocols.Tls11"=False
+            az rest --method patch \
+              --url "https://management.azure.com/subscriptions/<SubscriptionId>/resourceGroups/<ResourceGroupName>/providers/Microsoft.ApiManagement/service/<ApiManagementServiceName>?api-version=2023-05-01-preview" \
+              --body '{"properties":{"customProperties":{"Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls10":"False","Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls11":"False","Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Backend.Protocols.Tls10":"False","Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Backend.Protocols.Tls11":"False"}}}'
             ```
         - id: terraform
           desc: |
@@ -41871,10 +41925,10 @@ queries:
               sku_name            = "Premium_1"
 
               security {
-                enable_backend_tls10  = false
-                enable_backend_tls11  = false
-                enable_frontend_tls10 = false
-                enable_frontend_tls11 = false
+                backend_tls10_enabled  = false
+                backend_tls11_enabled  = false
+                frontend_tls10_enabled = false
+                frontend_tls11_enabled = false
               }
             }
             ```
@@ -41921,10 +41975,10 @@ queries:
       terraform.resources("azurerm_api_management").all(
         blocks.where(type == "security") != empty &&
         blocks.where(type == "security").all(
-          arguments['enable_frontend_tls10'] != true &&
-          arguments['enable_frontend_tls11'] != true &&
-          arguments['enable_backend_tls10'] != true &&
-          arguments['enable_backend_tls11'] != true
+          arguments['frontend_tls10_enabled'] != true &&
+          arguments['frontend_tls11_enabled'] != true &&
+          arguments['backend_tls10_enabled'] != true &&
+          arguments['backend_tls11_enabled'] != true
         )
       )
   - uid: mondoo-azure-security-api-management-gateway-min-tls-1-2-terraform-plan
@@ -41933,10 +41987,10 @@ queries:
       terraform.plan.resourceChanges.where(type == "azurerm_api_management").all(
         change.after['security'] != empty &&
         change.after['security'].all(
-          _['enable_frontend_tls10'] != true &&
-          _['enable_frontend_tls11'] != true &&
-          _['enable_backend_tls10'] != true &&
-          _['enable_backend_tls11'] != true
+          _['frontend_tls10_enabled'] != true &&
+          _['frontend_tls11_enabled'] != true &&
+          _['backend_tls10_enabled'] != true &&
+          _['backend_tls11_enabled'] != true
         )
       )
   - uid: mondoo-azure-security-api-management-gateway-min-tls-1-2-terraform-state
@@ -41945,10 +41999,10 @@ queries:
       terraform.state.resources.where(type == "azurerm_api_management").all(
         values['security'] != empty &&
         values['security'].all(
-          _['enable_frontend_tls10'] != true &&
-          _['enable_frontend_tls11'] != true &&
-          _['enable_backend_tls10'] != true &&
-          _['enable_backend_tls11'] != true
+          _['frontend_tls10_enabled'] != true &&
+          _['frontend_tls11_enabled'] != true &&
+          _['backend_tls10_enabled'] != true &&
+          _['backend_tls11_enabled'] != true
         )
       )
   - uid: mondoo-azure-security-api-management-gateway-min-tls-1-2-bicep
@@ -42246,7 +42300,7 @@ queries:
             To disable shared access key authentication for an IoT Hub using the Azure CLI:
 
             ```bash
-            az iot hub update --hub-name <HubName> --resource-group-name <ResourceGroupName> --disable-local-auth true
+            az iot hub update --name <HubName> --resource-group <ResourceGroupName> --disable-local-auth true
             ```
         - id: terraform
           desc: |
@@ -42399,7 +42453,7 @@ queries:
             To disable public network access for an Azure IoT Hub using the Azure CLI:
 
             ```bash
-            az iot hub update --hub-name <HubName> --resource-group-name <ResourceGroupName> --set properties.publicNetworkAccess=Disabled
+            az iot hub update --name <HubName> --resource-group <ResourceGroupName> --set properties.publicNetworkAccess=Disabled
             ```
         - id: terraform
           desc: |
@@ -42553,7 +42607,7 @@ queries:
             To enforce a minimum TLS version of 1.2 using the Azure CLI, create a new IoT hub with the value set, because the setting cannot be changed on an existing hub:
 
             ```bash
-            az iot hub create --hub-name <HubName> --resource-group-name <ResourceGroupName> --location <Region> --sku S1 --min-tls-version 1.2
+            az iot hub create --name <HubName> --resource-group <ResourceGroupName> --location <Region> --sku S1 --min-tls-version 1.2
             ```
         - id: terraform
           desc: |
@@ -42845,13 +42899,16 @@ queries:
             Secure Boot requires a Trusted Launch capable virtual machine size and a generation 2 image. Virtual machines created with a standard security type may need to be upgraded to Trusted Launch before Secure Boot can be applied.
         - id: cli
           desc: |
-            To enable Secure Boot on an Azure virtual machine using the Azure CLI:
+            To enable Secure Boot on an Azure virtual machine using the Azure CLI, deallocate the virtual machine, update its security profile, and start it again:
 
             ```bash
-            az vm update --resource-group-name <ResourceGroupName> --vm-name <VMName> --security-type TrustedLaunch --enable-secure-boot true --enable-vtpm true
-            ```
+            az vm deallocate --resource-group <ResourceGroupName> --name <VMName>
 
-            Restart the virtual machine after the update so the new boot policy takes effect.
+            az vm update --resource-group <ResourceGroupName> --name <VMName> \
+              --security-type TrustedLaunch --enable-secure-boot true --enable-vtpm true
+
+            az vm start --resource-group <ResourceGroupName> --name <VMName>
+            ```
         - id: terraform
           desc: |
             To enable Secure Boot on an Azure virtual machine in Terraform, set `secure_boot_enabled` to `true` on each virtual machine resource:
@@ -42861,7 +42918,7 @@ queries:
               name                  = "example-linux-vm"
               resource_group_name   = azurerm_resource_group.example.name
               location              = azurerm_resource_group.example.location
-              size                  = "Standard_DC2s_v2"
+              size                  = "Standard_D2s_v5"
               admin_username        = "azureuser"
               network_interface_ids = [azurerm_network_interface.example.id]
 
@@ -42885,7 +42942,7 @@ queries:
               name                  = "example-win-vm"
               resource_group_name   = azurerm_resource_group.example.name
               location              = azurerm_resource_group.example.location
-              size                  = "Standard_DC2s_v2"
+              size                  = "Standard_D2s_v5"
               admin_username        = "azureuser"
               admin_password        = var.admin_password
               network_interface_ids = [azurerm_network_interface.example.id]
@@ -42916,7 +42973,7 @@ queries:
               location: resourceGroup().location
               properties: {
                 hardwareProfile: {
-                  vmSize: 'Standard_DC2s_v2'
+                  vmSize: 'Standard_D2s_v5'
                 }
                 securityProfile: {
                   securityType: 'TrustedLaunch'
@@ -43063,10 +43120,15 @@ queries:
             6. Select **Save** and restart the virtual machine if prompted.
         - id: cli
           desc: |
-            To enable vTPM on an Azure virtual machine using the Azure CLI:
+            To enable vTPM on an Azure virtual machine using the Azure CLI, deallocate the virtual machine, update its security profile, and start it again:
 
             ```bash
-            az vm update --resource-group-name <ResourceGroupName> --vm-name <VMName> --security-type TrustedLaunch --enable-vtpm true
+            az vm deallocate --resource-group <ResourceGroupName> --name <VMName>
+
+            az vm update --resource-group <ResourceGroupName> --name <VMName> \
+              --security-type TrustedLaunch --enable-vtpm true
+
+            az vm start --resource-group <ResourceGroupName> --name <VMName>
             ```
         - id: terraform
           desc: |
@@ -43694,7 +43756,12 @@ queries:
             To create a WAF policy in Prevention mode and then associate it with the Application Gateway:
 
             ```bash
-            az network application-gateway waf-policy create --name <PolicyName> --resource-group <ResourceGroupName> --policy-settings mode=Prevention state=Enabled
+            az network application-gateway waf-policy create --name <PolicyName> --resource-group <ResourceGroupName>
+
+            az network application-gateway waf-policy policy-setting update --policy-name <PolicyName> --resource-group <ResourceGroupName> --mode Prevention --state Enabled
+
+            az network application-gateway update --name <AppGatewayName> --resource-group <ResourceGroupName> \
+              --set firewallPolicy='{"id":"<WafPolicyResourceId>"}'
             ```
         - id: terraform
           desc: |
@@ -43717,6 +43784,15 @@ queries:
                   version = "3.2"
                 }
               }
+            }
+            ```
+
+            Attach the policy to the Application Gateway so it takes effect:
+
+            ```hcl
+            resource "azurerm_application_gateway" "example" {
+              # ... existing configuration ...
+              firewall_policy_id = azurerm_web_application_firewall_policy.example.id
             }
             ```
         - id: bicep
@@ -43743,6 +43819,8 @@ queries:
               }
             }
             ```
+
+            Attach the policy to the Application Gateway by setting `firewallPolicy: { id: wafPolicy.id }` in the application gateway properties.
     refs:
       - url: https://learn.microsoft.com/en-us/azure/web-application-firewall/ag/ag-overview
         title: Azure Web Application Firewall on Azure Application Gateway
@@ -44031,16 +44109,17 @@ queries:
           desc: |
             To enable secure cluster connectivity for an Azure Databricks workspace using the Azure Portal:
 
-            1. Create a new **Azure Databricks** workspace, because secure cluster connectivity cannot be changed on an existing workspace.
-            2. On the **Networking** tab, set **Deploy Azure Databricks workspace with Secure Cluster Connectivity (No Public IP)** to **Yes**.
-            3. Select the virtual network and subnets for VNet injection.
-            4. Complete creation and migrate workloads from the old workspace.
+            1. Navigate to **Azure Databricks** in the Azure Portal.
+            2. Select the workspace.
+            3. Go to **Networking**.
+            4. Set **Deploy Azure Databricks workspace with Secure Cluster Connectivity (No Public IP)** to **Yes**.
+            5. Select **Save** and wait for the workspace update to complete.
         - id: cli
           desc: |
             To enable secure cluster connectivity for an Azure Databricks workspace using the Azure CLI:
 
             ```bash
-            az databricks workspace create --name <WorkspaceName> --resource-group <ResourceGroupName> --location <Location> --sku premium --enable-no-public-ip true --vnet <VNetResourceId> --public-subnet <PublicSubnetName> --private-subnet <PrivateSubnetName>
+            az databricks workspace update --name <WorkspaceName> --resource-group <ResourceGroupName> --enable-no-public-ip true
             ```
         - id: terraform
           desc: |
