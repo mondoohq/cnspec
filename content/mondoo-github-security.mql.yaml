@@ -215,16 +215,11 @@ queries:
               3. Under "Two-factor authentication," enable the option to require two-factor authentication for all members of the organization.
               4. Save the changes.
 
+            Warning: When you require two-factor authentication, members, outside collaborators, and billing managers who have not enabled two-factor authentication are removed from the organization. Confirm your own account has two-factor authentication enabled and notify affected users before turning on enforcement.
+
             For more details, see [Enforcing two-factor authentication for your organization](https://docs.github.com/en/authentication/securing-your-account-with-two-factor-authentication-2fa/enforcing-two-factor-authentication-for-your-organization) in the GitHub documentation.
         # No Terraform remediation: github_organization_settings has no two-factor-enforcement argument. Earlier versions of this remediation referenced `enforce_two_factor_authentication`, which is not a real argument and would fail terraform plan with "Unsupported argument".
-        - id: cli
-          desc: |
-            **Using GitHub CLI**
-
-            ```bash
-            gh api --method PATCH /orgs/ORG \
-              -f two_factor_requirement_enabled=true
-            ```
+        # No CLI remediation: the update-an-organization endpoint (PATCH /orgs/{org}) does not accept a two_factor_requirement_enabled parameter; the field is read-only in the REST API. Two-factor enforcement can only be enabled by an owner in the web UI.
     refs:
       - url: https://docs.github.com/en/authentication/securing-your-account-with-two-factor-authentication-2fa
         title: Securing your account with two-factor authentication (2FA)
@@ -289,23 +284,14 @@ queries:
           desc: |
             **Using the GitHub web UI**
 
-            To achieve verified status for your GitHub organization, see [Verifying or approving a domain for your organization](https://docs.github.com/en/enterprise-cloud@latest/organizations/managing-organization-settings/verifying-or-approving-a-domain-for-your-organization) in the GitHub documentation site.
-        - id: cli
-          desc: |
-            **Using GitHub CLI**
+            1. Navigate to your organization on GitHub.
+            2. Go to **Settings**. In the sidebar under **Security**, click **Verified and approved domains**.
+            3. Click **Add a domain**, enter the domain you want to verify, and click **Add domain**.
+            4. Create the DNS TXT record that GitHub displays with your DNS provider. DNS changes can take up to 72 hours to propagate.
+            5. Return to **Verified and approved domains**, select **Continue verifying** next to the domain, and click **Verify**.
 
-            Initiate domain verification:
-
-            ```bash
-            gh api --method POST /orgs/ORG/domains \
-              -f domain="example.com"
-            ```
-
-            After adding the DNS TXT records, verify the domain:
-
-            ```bash
-            gh api --method POST /orgs/ORG/domains/DOMAIN_ID/verify
-            ```
+            For more details, see [Verifying or approving a domain for your organization](https://docs.github.com/en/enterprise-cloud@latest/organizations/managing-organization-settings/verifying-or-approving-a-domain-for-your-organization) in the GitHub documentation.
+        # No CLI remediation: GitHub does not provide a REST API for organization domain verification. Earlier versions of this remediation referenced POST /orgs/{org}/domains endpoints that do not exist. Domains are added and verified in the web UI after DNS TXT validation.
     refs:
       - url: https://docs.github.com/en/enterprise-cloud@latest/organizations/managing-organization-settings/verifying-or-approving-a-domain-for-your-organization
         title: Verifying or approving a domain for your organization
@@ -384,7 +370,7 @@ queries:
 
             1. Navigate to your organization on GitHub.
             2. Go to **Settings** > **Member privileges**.
-            3. Under "Base permissions," select the appropriate default permission level for members (e.g., "Read").
+            3. Under "Base permissions," select the appropriate default permission level for members, such as "Read."
             4. Save the changes.
 
             For more details, see [Setting base permissions for an organization](https://docs.github.com/en/organizations/managing-access-to-your-organizations-repositories/setting-base-permissions-for-an-organization) in the GitHub documentation.
@@ -392,10 +378,11 @@ queries:
           desc: |
             **Using Terraform**
 
-            To configure base permissions for your GitHub organization using Terraform, you can use the `github_organization_settings` resource. Here is an example configuration:
+            To configure base permissions for your GitHub organization using Terraform, use the `github_organization_settings` resource. The `billing_email` argument is required by this resource:
 
             ```hcl
             resource "github_organization_settings" "example" {
+              billing_email                 = "billing@example.com"
               default_repository_permission = "read"
             }
             ```
@@ -497,21 +484,22 @@ queries:
           desc: |
             **Using the GitHub web UI**
 
-            1. Navigate to your repository on GitHub.
-            2. Go to **Settings** > **Security** > **Security policy**.
-            3. Follow the prompts to create or edit your security policy.
-            4. Save the changes.
+            1. Navigate to your organization's `.github` repository, or create it if it does not exist. A `SECURITY.md` file in this repository applies to every repository in the organization that has no security policy of its own.
+            2. Click the **Security and quality** tab. If the tab is not visible, open the dropdown menu and select it.
+            3. In the sidebar under "Reporting," click **Security policy**.
+            4. Click **Start setup**.
+            5. Add information about supported versions and how to report vulnerabilities, then commit the new `SECURITY.md` file.
 
-            For more details, see [Adding a security policy to your repository](https://docs.github.com/en/code-security/getting-started/adding-a-security-policy-to-your-repository#adding-a-security-policy-to-your-repository) in the GitHub documentation.
+            For more details, see [Adding a security policy to your repository](https://docs.github.com/en/code-security/getting-started/adding-a-security-policy-to-your-repository) in the GitHub documentation.
         - id: terraform
           desc: |
             **Using Terraform**
 
-            To define a security policy for your GitHub repository using Terraform, you can use the `github_repository_file` resource. Here is an example configuration:
+            To define an organization-wide security policy using Terraform, manage a `SECURITY.md` file in the organization's `.github` repository with the `github_repository_file` resource:
 
             ```hcl
             resource "github_repository_file" "security_policy" {
-              repository = "<REPO_NAME>"
+              repository = ".github"
               file       = "SECURITY.md"
               content    = <<EOF
             # Security Policy
@@ -532,12 +520,12 @@ queries:
           desc: |
             **Using GitHub CLI**
 
-            Create or update the SECURITY.md in the `.github` repository:
+            Create the SECURITY.md in the `.github` repository. When updating an existing file, the contents endpoint also requires the current file's `sha`:
 
             ```bash
             gh api --method PUT /repos/ORG/.github/contents/SECURITY.md \
               -f message="Add security policy" \
-              -f content="$(cat <<'CONTENT' | base64
+              -f content="$(base64 <<'CONTENT'
             # Security Policy
 
             ## Reporting a Vulnerability
@@ -620,9 +608,9 @@ queries:
 
             1. Navigate to your repository on GitHub.
             2. Go to **Settings** > **Branches**.
-            3. Under "Branch protection rules," add or edit a rule for your default branch (e.g., `main` or `master`).
+            3. Under "Branch protection rules," add or edit a rule for your default branch, such as `main` or `master`.
             4. Ensure **Protect matching branches** is enabled.
-            5. In the rule settings, configure the desired protection options (e.g., require pull request reviews, status checks).
+            5. In the rule settings, configure the desired protection options, such as required pull request reviews and status checks.
             6. Save the branch protection rule.
 
             For more details, see [About protected branches](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches) in the GitHub documentation.
@@ -630,19 +618,20 @@ queries:
           desc: |
             **Using Terraform**
 
-            To enforce branch protection for the default branch of your GitHub repository using Terraform, you can use the `github_branch_protection` resource. Here is an example configuration:
+            To enforce branch protection for the default branch of your GitHub repository using Terraform, use the `github_branch_protection` resource:
 
             ```hcl
             resource "github_branch_protection" "default" {
-              repository = "<REPO_NAME>"
-              branch     = "main"
+              repository_id = github_repository.example.node_id
+              pattern       = "main"
 
               required_pull_request_reviews {
-                dismiss_stale_reviews = true
+                dismiss_stale_reviews      = true
                 require_code_owner_reviews = true
               }
 
               enforce_admins = true
+
               required_status_checks {
                 strict   = true
                 contexts = ["ci/circleci"]
@@ -742,9 +731,9 @@ queries:
 
             1. Navigate to your repository on GitHub.
             2. Go to **Settings** > **Branches**.
-            3. Under "Branch protection rules," add or edit a rule for your release branches (e.g., branches matching `release/*`).
+            3. Under "Branch protection rules," add or edit a rule covering your release branches, for example the pattern `release/*`.
             4. Ensure **Protect matching branches** is enabled.
-            5. In the rule settings, configure the desired protection options (e.g., require pull request reviews, status checks).
+            5. In the rule settings, configure the desired protection options, such as required pull request reviews and status checks.
             6. Save the branch protection rule.
 
             For more details, see [About protected branches](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches) in the GitHub documentation.
@@ -752,19 +741,20 @@ queries:
           desc: |
             **Using Terraform**
 
-            To enforce branch protection for release branches of your GitHub repository using Terraform, you can use the `github_branch_protection` resource. Here is an example configuration:
+            To enforce branch protection for release branches of your GitHub repository using Terraform, use the `github_branch_protection` resource with a release pattern:
 
             ```hcl
             resource "github_branch_protection" "release" {
-              repository = "<REPO_NAME>"
-              branch     = "release/*"
+              repository_id = github_repository.example.node_id
+              pattern       = "release/*"
 
               required_pull_request_reviews {
-                dismiss_stale_reviews = true
+                dismiss_stale_reviews      = true
                 require_code_owner_reviews = true
               }
 
               enforce_admins = true
+
               required_status_checks {
                 strict   = true
                 contexts = ["ci/circleci"]
@@ -777,10 +767,10 @@ queries:
           desc: |
             **Using GitHub CLI**
 
-            Note: This endpoint replaces the entire branch protection configuration. Include all desired settings in the request.
+            Run this for each release branch. Replace RELEASE_BRANCH with the branch name and URL-encode any slashes, for example `release%2F1.2`. Note: This endpoint replaces the entire branch protection configuration. Include all desired settings in the request.
 
             ```bash
-            gh api --method PUT /repos/OWNER/REPO/branches/release/protection \
+            gh api --method PUT /repos/OWNER/REPO/branches/RELEASE_BRANCH/protection \
               -F "required_pull_request_reviews[required_approving_review_count]=1" \
               -F "required_status_checks=null" \
               -F "enforce_admins=true" \
@@ -868,9 +858,9 @@ queries:
 
             1. Navigate to your repository on GitHub.
             2. Go to **Settings** > **Branches**.
-            3. Under "Branch protection rules," add or edit a rule for your default branch (e.g., `main` or `master`).
+            3. Under "Branch protection rules," add or edit a rule for your default branch, such as `main` or `master`.
             4. Ensure **Protect matching branches** is enabled.
-            5. In the rule settings, make sure **Allow force pushes** is **not** enabled (unchecked).
+            5. In the rule settings, make sure **Allow force pushes** is unchecked.
             6. Save the branch protection rule.
 
             For more details, see [About protected branches](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches) and [Allow force pushes](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches#allow-force-pushes) in the GitHub documentation.
@@ -878,15 +868,13 @@ queries:
           desc: |
             **Using Terraform**
 
-            If you are using Terraform to manage your GitHub repository settings, you can disable force pushes on the default branch by updating your branch protection rules in your Terraform configuration.
-
-            Here is an example of how to configure branch protection for the default branch:
+            If you are using Terraform to manage your GitHub repository settings, disable force pushes on the default branch with the `allows_force_pushes` argument of the `github_branch_protection` resource:
 
             ```hcl
             resource "github_branch_protection" "default" {
-              repository = github_repository.my_repo.name
-              branch     = "main"
-              allow_force_pushes = false
+              repository_id       = github_repository.example.node_id
+              pattern             = "main"
+              allows_force_pushes = false
             }
             ```
         - id: cli
@@ -1007,9 +995,9 @@ queries:
 
             1. Navigate to your repository on GitHub.
             2. Go to **Settings** > **Branches**.
-            3. Under "Branch protection rules," add or edit a rule for your release branches (e.g., branches matching `release/*`).
+            3. Under "Branch protection rules," add or edit a rule covering your release branches, for example the pattern `release/*`.
             4. Ensure **Protect matching branches** is enabled.
-            5. In the rule settings, make sure **Allow force pushes** is **not** enabled (unchecked).
+            5. In the rule settings, make sure **Allow force pushes** is unchecked.
             6. Save the branch protection rule.
 
             For more details, see [About protected branches](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches) and [Allow force pushes](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches#allow-force-pushes) in the GitHub documentation.
@@ -1017,25 +1005,23 @@ queries:
           desc: |
             **Using Terraform**
 
-            If you are using Terraform to manage your GitHub repository settings, you can disable force pushes on the release branches by updating your branch protection rules in your Terraform configuration.
-
-            Here is an example of how to configure branch protection for the release branches:
+            If you are using Terraform to manage your GitHub repository settings, disable force pushes on release branches with the `allows_force_pushes` argument of the `github_branch_protection` resource:
 
             ```hcl
             resource "github_branch_protection" "release" {
-              repository = github_repository.my_repo.name
-              branch     = "release/*"
-              allow_force_pushes = false
+              repository_id       = github_repository.example.node_id
+              pattern             = "release/*"
+              allows_force_pushes = false
             }
             ```
         - id: cli
           desc: |
             **Using GitHub CLI**
 
-            Note: This endpoint replaces the entire branch protection configuration. Include all desired settings in the request.
+            Run this for each release branch. Replace RELEASE_BRANCH with the branch name and URL-encode any slashes. Note: This endpoint replaces the entire branch protection configuration. Include all desired settings in the request.
 
             ```bash
-            gh api --method PUT /repos/OWNER/REPO/branches/release/protection \
+            gh api --method PUT /repos/OWNER/REPO/branches/RELEASE_BRANCH/protection \
               -F "allow_force_pushes=false" \
               -F "required_pull_request_reviews[required_approving_review_count]=1" \
               -F "required_status_checks=null" \
@@ -1122,7 +1108,7 @@ queries:
 
             1. Navigate to your repository on GitHub.
             2. Go to **Settings** > **Branches**.
-            3. Under "Branch protection rules," add or edit a rule for your default branch (e.g., `main` or `master`).
+            3. Under "Branch protection rules," add or edit a rule for your default branch, such as `main` or `master`.
             4. Ensure **Protect matching branches** is enabled.
             5. In the rule settings, check the box for **Require conversation resolution before merging**.
             6. Save the branch protection rule.
@@ -1132,15 +1118,13 @@ queries:
           desc: |
             **Using Terraform**
 
-            If you are using Terraform to manage your GitHub repository settings, you can require conversation resolution before merging pull requests by updating your branch protection rules in your Terraform configuration.
-
-            Here is an example of how to configure branch protection for the default branch:
+            If you are using Terraform to manage your GitHub repository settings, require conversation resolution before merging with the `require_conversation_resolution` argument of the `github_branch_protection` resource:
 
             ```hcl
             resource "github_branch_protection" "default" {
-              repository = github_repository.my_repo.name
-              branch     = "main"
-              required_conversation_resolution = true
+              repository_id                   = github_repository.example.node_id
+              pattern                         = "main"
+              require_conversation_resolution = true
             }
             ```
         - id: cli
@@ -1260,9 +1244,9 @@ queries:
 
             1. Navigate to your repository on GitHub.
             2. Go to **Settings** > **Branches**.
-            3. Under "Branch protection rules," add or edit a rule for your default branch (e.g., `main` or `master`).
+            3. Under "Branch protection rules," add or edit a rule for your default branch, such as `main` or `master`.
             4. Ensure **Protect matching branches** is enabled.
-            5. In the rule settings, check the box for **Require status checks to pass before merging**.
+            5. In the rule settings, check the box for **Require status checks to pass before merging** and select the status checks to require.
             6. Save the branch protection rule.
 
             For more details, see [About protected branches](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches) and [Require status checks before merging](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches#require-status-checks-before-merging) in the GitHub documentation.
@@ -1270,15 +1254,15 @@ queries:
           desc: |
             **Using Terraform**
 
-            If you are using Terraform to manage your GitHub repository settings, you can require status checks to pass before merging pull requests by updating your branch protection rules in your Terraform configuration.
-
-            Here is an example of how to configure branch protection for the default branch with the requirement that certain status checks must pass:
+            If you are using Terraform to manage your GitHub repository settings, require status checks to pass before merging with the `required_status_checks` block of the `github_branch_protection` resource:
 
             ```hcl
             resource "github_branch_protection" "default" {
-              repository = github_repository.my_repo.name
-              branch     = "main"
+              repository_id = github_repository.example.node_id
+              pattern       = "main"
+
               required_status_checks {
+                strict   = true
                 contexts = ["ci/circleci", "ci/gh_action_1"]
               }
             }
@@ -1642,11 +1626,12 @@ queries:
             **Using the GitHub web UI**
 
             1. Navigate to your repository on GitHub.
-            2. Go to **Settings** > **Security** > **Security policy**.
-            3. Follow the prompts to create or edit your security policy.
-            4. Save the changes.
+            2. Click the **Security and quality** tab. If the tab is not visible, open the dropdown menu and select it.
+            3. In the sidebar under "Reporting," click **Security policy**.
+            4. Click **Start setup**.
+            5. Add information about supported versions and how to report vulnerabilities, then commit the new `SECURITY.md` file.
 
-            For more details, see [Adding a security policy to your repository](https://docs.github.com/en/code-security/getting-started/adding-a-security-policy-to-your-repository#adding-a-security-policy-to-your-repository) in the GitHub documentation.
+            For more details, see [Adding a security policy to your repository](https://docs.github.com/en/code-security/getting-started/adding-a-security-policy-to-your-repository) in the GitHub documentation.
         - id: terraform
           desc: |
             **Using Terraform**
@@ -1663,12 +1648,12 @@ queries:
           desc: |
             **Using GitHub CLI**
 
-            Create or update SECURITY.md in the repository:
+            Create the SECURITY.md in the repository. When updating an existing file, the contents endpoint also requires the current file's `sha`:
 
             ```bash
             gh api --method PUT /repos/OWNER/REPO/contents/SECURITY.md \
               -f message="Add security policy" \
-              -f content="$(cat <<'CONTENT' | base64
+              -f content="$(base64 <<'CONTENT'
             # Security Policy
 
             Report vulnerabilities to security@example.com
@@ -1744,11 +1729,26 @@ queries:
           desc: |
             **Using the GitHub web UI**
 
-            1. Remove any generated executable artifacts from the repository.
-            2. Ensure that the build process generates artifacts outside of the source repository.
-            3. Use a secure and reproducible build process to generate artifacts.
+            1. Browse the repository file tree and identify committed binary artifacts, such as `.exe`, `.dll`, `.jar`, `.so`, or `.pyc` files.
+            2. Delete each binary file through the web editor, or remove them locally as described in the CLI steps.
+            3. Move artifact production into your CI pipeline and publish build outputs as GitHub release assets or to a package registry instead of committing them to the repository.
 
             For more details, see [Binary Artifacts](https://github.com/ossf/scorecard/blob/main/docs/checks.md#binary-artifacts) in the OSSF Scorecard documentation.
+        - id: cli
+          desc: |
+            **Using the Git CLI**
+
+            Remove tracked binaries from version control, keep them ignored going forward, and push the change:
+
+            ```bash
+            git rm --cached app.exe
+            echo "*.exe" >> .gitignore
+            git add .gitignore
+            git commit -m "Remove binary artifact from source control"
+            git push
+            ```
+
+            If a binary contains sensitive data, also rewrite history with a tool such as git filter-repo and rotate any embedded credentials, because the file remains reachable in prior commits.
     refs:
       - url: https://github.com/ossf/scorecard/blob/main/docs/checks.md#binary-artifacts
         title: OSSF Scorecard - Binary Artifacts
@@ -1951,10 +1951,11 @@ queries:
           desc: |
             **Using Terraform**
 
-            To prevent members from forking private repositories using Terraform, you can use the `github_organization_settings` resource. Here is an example configuration:
+            To prevent members from forking private repositories using Terraform, use the `github_organization_settings` resource. The `billing_email` argument is required by this resource:
 
             ```hcl
             resource "github_organization_settings" "example" {
+              billing_email                          = "billing@example.com"
               members_can_fork_private_repositories = false
             }
             ```
@@ -1966,7 +1967,7 @@ queries:
 
             ```bash
             gh api --method PATCH /orgs/ORG \
-              -f members_can_fork_private_repositories=false
+              -F members_can_fork_private_repositories=false
             ```
     refs:
       - url: https://docs.github.com/en/organizations/managing-organization-settings/managing-the-forking-policy-for-your-organization
@@ -2060,28 +2061,32 @@ queries:
           desc: |
             **Using the GitHub web UI**
 
-            1. Navigate to your organization on GitHub.
-            2. Go to **Settings** > **Code security and analysis**.
-            3. Under "Secret scanning," enable the option to automatically enable for new repositories.
-            4. Save the changes.
+            GitHub manages organization-wide security defaults through security configurations, which replaced the former "Code security and analysis" settings page.
 
-            For more details, see [Managing security and analysis settings for your organization](https://docs.github.com/en/organizations/keeping-your-organization-secure/managing-security-settings-for-your-organization/managing-security-and-analysis-settings-for-your-organization) in the GitHub documentation.
+            1. Navigate to your organization on GitHub.
+            2. Go to **Settings**. In the sidebar under **Security**, select **Advanced Security** > **Configurations**.
+            3. Create a new security configuration or edit an existing one, and set **Secret scanning** to **Enabled**.
+            4. Save the configuration.
+            5. Apply the configuration to your repositories and mark it as the default for newly created repositories.
+
+            For more details, see [Applying a custom security configuration](https://docs.github.com/en/code-security/securing-your-organization/enabling-security-features-in-your-organization/applying-a-custom-security-configuration) in the GitHub documentation.
         - id: terraform
           desc: |
             **Using Terraform**
 
-            ```hcl
-            resource "github_organization_security_manager" "example" {
-              team_slug = "security-team"
-            }
+            The `billing_email` argument is required by this resource:
 
+            ```hcl
             resource "github_organization_settings" "example" {
+              billing_email                                = "billing@example.com"
               secret_scanning_enabled_for_new_repositories = true
             }
             ```
         - id: cli
           desc: |
             **Using GitHub CLI**
+
+            GitHub has deprecated this organization-level field in favor of code security configurations, but it remains functional:
 
             ```bash
             gh api --method PATCH /orgs/ORG \
@@ -2179,24 +2184,32 @@ queries:
           desc: |
             **Using the GitHub web UI**
 
-            1. Navigate to your organization on GitHub.
-            2. Go to **Settings** > **Code security and analysis**.
-            3. Under "Secret scanning," enable push protection and the option to automatically enable for new repositories.
-            4. Save the changes.
+            GitHub manages organization-wide security defaults through security configurations, which replaced the former "Code security and analysis" settings page.
 
-            For more details, see [Managing security and analysis settings for your organization](https://docs.github.com/en/organizations/keeping-your-organization-secure/managing-security-settings-for-your-organization/managing-security-and-analysis-settings-for-your-organization) in the GitHub documentation.
+            1. Navigate to your organization on GitHub.
+            2. Go to **Settings**. In the sidebar under **Security**, select **Advanced Security** > **Configurations**.
+            3. Create a new security configuration or edit an existing one. Set **Secret scanning** to **Enabled** and set its **Push protection** option to **Enabled**.
+            4. Save the configuration.
+            5. Apply the configuration to your repositories and mark it as the default for newly created repositories.
+
+            For more details, see [Applying a custom security configuration](https://docs.github.com/en/code-security/securing-your-organization/enabling-security-features-in-your-organization/applying-a-custom-security-configuration) in the GitHub documentation.
         - id: terraform
           desc: |
             **Using Terraform**
 
+            The `billing_email` argument is required by this resource:
+
             ```hcl
             resource "github_organization_settings" "example" {
+              billing_email                                                = "billing@example.com"
               secret_scanning_push_protection_enabled_for_new_repositories = true
             }
             ```
         - id: cli
           desc: |
             **Using GitHub CLI**
+
+            GitHub has deprecated this organization-level field in favor of code security configurations, but it remains functional:
 
             ```bash
             gh api --method PATCH /orgs/ORG \
@@ -2294,24 +2307,32 @@ queries:
           desc: |
             **Using the GitHub web UI**
 
-            1. Navigate to your organization on GitHub.
-            2. Go to **Settings** > **Code security and analysis**.
-            3. Under "Dependabot alerts," enable the option to automatically enable for new repositories.
-            4. Save the changes.
+            GitHub manages organization-wide security defaults through security configurations, which replaced the former "Code security and analysis" settings page.
 
-            For more details, see [Managing security and analysis settings for your organization](https://docs.github.com/en/organizations/keeping-your-organization-secure/managing-security-settings-for-your-organization/managing-security-and-analysis-settings-for-your-organization) in the GitHub documentation.
+            1. Navigate to your organization on GitHub.
+            2. Go to **Settings**. In the sidebar under **Security**, select **Advanced Security** > **Configurations**.
+            3. Create a new security configuration or edit an existing one, and set **Dependabot alerts** to **Enabled**.
+            4. Save the configuration.
+            5. Apply the configuration to your repositories and mark it as the default for newly created repositories.
+
+            For more details, see [Applying a custom security configuration](https://docs.github.com/en/code-security/securing-your-organization/enabling-security-features-in-your-organization/applying-a-custom-security-configuration) in the GitHub documentation.
         - id: terraform
           desc: |
             **Using Terraform**
 
+            The `billing_email` argument is required by this resource:
+
             ```hcl
             resource "github_organization_settings" "example" {
+              billing_email                                  = "billing@example.com"
               dependabot_alerts_enabled_for_new_repositories = true
             }
             ```
         - id: cli
           desc: |
             **Using GitHub CLI**
+
+            GitHub has deprecated this organization-level field in favor of code security configurations, but it remains functional:
 
             ```bash
             gh api --method PATCH /orgs/ORG \
@@ -2409,24 +2430,32 @@ queries:
           desc: |
             **Using the GitHub web UI**
 
-            1. Navigate to your organization on GitHub.
-            2. Go to **Settings** > **Code security and analysis**.
-            3. Under "Dependabot security updates," enable the option to automatically enable for new repositories.
-            4. Save the changes.
+            GitHub manages organization-wide security defaults through security configurations, which replaced the former "Code security and analysis" settings page.
 
-            For more details, see [Managing security and analysis settings for your organization](https://docs.github.com/en/organizations/keeping-your-organization-secure/managing-security-settings-for-your-organization/managing-security-and-analysis-settings-for-your-organization) in the GitHub documentation.
+            1. Navigate to your organization on GitHub.
+            2. Go to **Settings**. In the sidebar under **Security**, select **Advanced Security** > **Configurations**.
+            3. Create a new security configuration or edit an existing one, and set **Security updates** to **Enabled** under the Dependabot options.
+            4. Save the configuration.
+            5. Apply the configuration to your repositories and mark it as the default for newly created repositories.
+
+            For more details, see [Applying a custom security configuration](https://docs.github.com/en/code-security/securing-your-organization/enabling-security-features-in-your-organization/applying-a-custom-security-configuration) in the GitHub documentation.
         - id: terraform
           desc: |
             **Using Terraform**
 
+            The `billing_email` argument is required by this resource:
+
             ```hcl
             resource "github_organization_settings" "example" {
+              billing_email                                            = "billing@example.com"
               dependabot_security_updates_enabled_for_new_repositories = true
             }
             ```
         - id: cli
           desc: |
             **Using GitHub CLI**
+
+            GitHub has deprecated this organization-level field in favor of code security configurations, but it remains functional:
 
             ```bash
             gh api --method PATCH /orgs/ORG \
@@ -2519,15 +2548,7 @@ queries:
 
             For more details, see [Restricting repository visibility changes in your organization](https://docs.github.com/en/organizations/managing-organization-settings/restricting-repository-visibility-changes-in-your-organization) in the GitHub documentation.
         # No Terraform remediation: github_organization_settings has no members_can_change_repo_visibility argument. Earlier versions of this remediation referenced that field, which is not a real argument and would fail terraform plan with "Unsupported argument".
-        - id: cli
-          desc: |
-            **Using GitHub CLI**
-
-            ```bash
-            gh api --method PATCH /orgs/ORG \
-              -F members_allowed_repository_creation_type=none \
-              -F members_can_change_repository_visibility=false
-            ```
+        # No CLI remediation: the update-an-organization endpoint (PATCH /orgs/{org}) does not accept a members_can_change_repo_visibility parameter; the field is read-only in the REST API. This setting can only be changed in the web UI.
     refs:
       - url: https://docs.github.com/en/organizations/managing-organization-settings/restricting-repository-visibility-changes-in-your-organization
         title: Restricting repository visibility changes in your organization
@@ -2600,14 +2621,7 @@ queries:
 
             For more details, see [Setting permissions for deleting or transferring repositories](https://docs.github.com/en/organizations/managing-organization-settings/setting-permissions-for-deleting-or-transferring-repositories) in the GitHub documentation.
         # No Terraform remediation: github_organization_settings has no members_can_delete_repositories argument. Earlier versions of this remediation referenced that field, which is not a real argument and would fail terraform plan with "Unsupported argument".
-        - id: cli
-          desc: |
-            **Using GitHub CLI**
-
-            ```bash
-            gh api --method PATCH /orgs/ORG \
-              -F members_can_delete_repositories=false
-            ```
+        # No CLI remediation: the update-an-organization endpoint (PATCH /orgs/{org}) does not accept a members_can_delete_repositories parameter; the field is read-only in the REST API. This setting can only be changed in the web UI.
     refs:
       - url: https://docs.github.com/en/organizations/managing-organization-settings/setting-permissions-for-deleting-or-transferring-repositories
         title: Setting permissions for deleting or transferring repositories
@@ -2806,10 +2820,18 @@ queries:
           desc: |
             **Using GitHub CLI**
 
-            Update an existing webhook to enable SSL verification:
+            Updating a webhook replaces its entire config object, so include the webhook's existing URL and content type along with the SSL setting. Read the current values first:
+
+            ```bash
+            gh api /repos/OWNER/REPO/hooks/HOOK_ID --jq '.config'
+            ```
+
+            Then update the webhook with SSL verification enabled:
 
             ```bash
             gh api --method PATCH /repos/OWNER/REPO/hooks/HOOK_ID \
+              -F "config[url]=https://example.com/webhook" \
+              -F "config[content_type]=json" \
               -F "config[insecure_ssl]=0"
             ```
     refs:
@@ -2910,7 +2932,7 @@ queries:
 
             1. Navigate to your repository on GitHub.
             2. Go to **Settings** > **Actions** > **General**.
-            3. Under "Actions permissions," enable **Require SHA pinning for actions**.
+            3. Under "Actions permissions," enable **Require actions to be pinned to a full-length commit SHA**.
             4. Save the changes.
 
             To manually pin actions in workflow files, replace tag references with full SHA hashes:
@@ -2928,20 +2950,26 @@ queries:
           desc: |
             **Using GitHub CLI**
 
-            Download a workflow file and inspect it for unpinned actions:
+            Enable the SHA pinning requirement on the repository. The endpoint requires the `enabled` field; if your repository restricts allowed actions, also resend your existing `allowed_actions` value because this endpoint overwrites the Actions permissions:
+
+            ```bash
+            gh api --method PUT /repos/OWNER/REPO/actions/permissions \
+              -F "enabled=true" \
+              -F "sha_pinning_required=true"
+            ```
+
+            To find existing unpinned action references, download a workflow file and inspect it:
 
             ```bash
             gh api /repos/OWNER/REPO/contents/.github/workflows/ci.yml \
               --jq '.content' | base64 -d | grep 'uses:'
             ```
 
-            For each action using a tag (e.g., `@v4`), resolve it to a full commit SHA:
+            For each action using a tag, resolve it to a full commit SHA and update the workflow file:
 
             ```bash
             gh api /repos/actions/checkout/commits/v4 --jq '.sha'
             ```
-
-            Then update the workflow file to use the full SHA (e.g., `actions/checkout@<full-sha>`).
         - id: terraform
           desc: |
             **Using Terraform**
@@ -3144,7 +3172,7 @@ queries:
             List open critical Dependabot alerts:
 
             ```bash
-            gh api /repos/OWNER/REPO/dependabot/alerts?state=open&severity=critical
+            gh api '/repos/OWNER/REPO/dependabot/alerts?state=open&severity=critical'
             ```
 
             Dismiss an alert after review:
@@ -3373,32 +3401,24 @@ queries:
             1. Navigate to your repository on GitHub.
             2. Go to **Settings** > **Branches**.
             3. Under "Branch protection rules," click **Edit** next to the default branch rule.
-            4. Check **Block creations** to prevent creation of matching branches.
-            5. Click **Save changes**.
+            4. Check **Restrict who can push to matching branches**.
+            5. Check **Restrict pushes that create matching branches**.
+            6. Click **Save changes**.
 
-            For more details, see [Managing a branch protection rule](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-a-branch-protection-rule/managing-a-branch-protection-rule) in the GitHub documentation.
+            For more details, see [About protected branches](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches#restrict-who-can-push-to-matching-branches) in the GitHub documentation.
         - id: terraform
           desc: |
             **Using Terraform**
 
-            Use a repository ruleset to block direct creations on the default branch:
+            Use the `restrict_pushes` block of the `github_branch_protection` resource. The `blocks_creations` argument prevents creation of branches that match the rule:
 
             ```hcl
-            resource "github_repository_ruleset" "default" {
-              name        = "default-branch-protection"
-              repository  = github_repository.example.name
-              target      = "branch"
-              enforcement = "active"
+            resource "github_branch_protection" "default" {
+              repository_id = github_repository.example.node_id
+              pattern       = "main"
 
-              conditions {
-                ref_name {
-                  include = ["~DEFAULT_BRANCH"]
-                  exclude = []
-                }
-              }
-
-              rules {
-                creation = true
+              restrict_pushes {
+                blocks_creations = true
               }
             }
             ```
@@ -3406,24 +3426,15 @@ queries:
           desc: |
             **Using GitHub CLI**
 
-            Create a ruleset that blocks direct creations on the default branch:
+            Note: This endpoint replaces the entire branch protection configuration. Include all desired settings in the request.
 
             ```bash
-            gh api --method POST /repos/OWNER/REPO/rulesets \
-              --input - <<'EOF'
-            {
-              "name": "block-creations",
-              "target": "branch",
-              "enforcement": "active",
-              "conditions": {
-                "ref_name": {
-                  "include": ["~DEFAULT_BRANCH"],
-                  "exclude": []
-                }
-              },
-              "rules": [{"type": "creation"}]
-            }
-            EOF
+            gh api --method PUT /repos/OWNER/REPO/branches/main/protection \
+              -F "block_creations=true" \
+              -F "required_pull_request_reviews[required_approving_review_count]=1" \
+              -F "required_status_checks=null" \
+              -F "enforce_admins=true" \
+              -F "restrictions=null"
             ```
     refs:
       - url: https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-a-branch-protection-rule/managing-a-branch-protection-rule
@@ -3560,12 +3571,18 @@ queries:
           desc: |
             **Using GitHub CLI**
 
+            Reviewer entries are objects, so send the request body as JSON. Replace the team ID with the numeric ID of your reviewing team:
+
             ```bash
-            gh api --method PUT \
-              /repos/OWNER/REPO/environments/production \
-              -F "prevent_self_review=true" \
-              -F "reviewers[][type]=Team" \
-              -F "reviewers[][id]=TEAM_ID"
+            gh api --method PUT /repos/OWNER/REPO/environments/production \
+              --input - <<'EOF'
+            {
+              "prevent_self_review": true,
+              "reviewers": [
+                { "type": "Team", "id": 123456 }
+              ]
+            }
+            EOF
             ```
     refs:
       - url: https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment
@@ -3662,24 +3679,32 @@ queries:
           desc: |
             **Using the GitHub web UI**
 
-            1. Navigate to your organization on GitHub.
-            2. Go to **Settings** > **Code security and analysis**.
-            3. Under "GitHub Advanced Security," enable **Automatically enable for new repositories**.
-            4. Save the changes.
+            GitHub manages organization-wide security defaults through security configurations, which replaced the former "Code security and analysis" settings page.
 
-            For more details, see [Managing security and analysis settings for your organization](https://docs.github.com/en/organizations/keeping-your-organization-secure/managing-security-settings-for-your-organization/managing-security-and-analysis-settings-for-your-organization) in the GitHub documentation.
+            1. Navigate to your organization on GitHub.
+            2. Go to **Settings**. In the sidebar under **Security**, select **Advanced Security** > **Configurations**.
+            3. Create a new security configuration or edit an existing one, and set **GitHub Advanced Security features** to **Include**.
+            4. Save the configuration.
+            5. Apply the configuration to your repositories and mark it as the default for newly created repositories.
+
+            For more details, see [Applying a custom security configuration](https://docs.github.com/en/code-security/securing-your-organization/enabling-security-features-in-your-organization/applying-a-custom-security-configuration) in the GitHub documentation.
         - id: terraform
           desc: |
             **Using Terraform**
 
+            The `billing_email` argument is required by this resource:
+
             ```hcl
             resource "github_organization_settings" "example" {
+              billing_email                                  = "billing@example.com"
               advanced_security_enabled_for_new_repositories = true
             }
             ```
         - id: cli
           desc: |
             **Using GitHub CLI**
+
+            GitHub has deprecated this organization-level field in favor of code security configurations. It remains functional for organizations with legacy GitHub Advanced Security licensing; organizations on the newer unbundled Advanced Security products should use a security configuration instead:
 
             ```bash
             gh api --method PATCH /orgs/ORG \
@@ -3778,24 +3803,32 @@ queries:
           desc: |
             **Using the GitHub web UI**
 
-            1. Navigate to your organization on GitHub.
-            2. Go to **Settings** > **Code security and analysis**.
-            3. Under "Dependency graph," enable **Automatically enable for new repositories**.
-            4. Save the changes.
+            GitHub manages organization-wide security defaults through security configurations, which replaced the former "Code security and analysis" settings page.
 
-            For more details, see [Managing security and analysis settings for your organization](https://docs.github.com/en/organizations/keeping-your-organization-secure/managing-security-settings-for-your-organization/managing-security-and-analysis-settings-for-your-organization) in the GitHub documentation.
+            1. Navigate to your organization on GitHub.
+            2. Go to **Settings**. In the sidebar under **Security**, select **Advanced Security** > **Configurations**.
+            3. Create a new security configuration or edit an existing one, and set **Dependency graph** to **Enabled**.
+            4. Save the configuration.
+            5. Apply the configuration to your repositories and mark it as the default for newly created repositories.
+
+            For more details, see [Applying a custom security configuration](https://docs.github.com/en/code-security/securing-your-organization/enabling-security-features-in-your-organization/applying-a-custom-security-configuration) in the GitHub documentation.
         - id: terraform
           desc: |
             **Using Terraform**
 
+            The `billing_email` argument is required by this resource:
+
             ```hcl
             resource "github_organization_settings" "example" {
+              billing_email                                 = "billing@example.com"
               dependency_graph_enabled_for_new_repositories = true
             }
             ```
         - id: cli
           desc: |
             **Using GitHub CLI**
+
+            GitHub has deprecated this organization-level field in favor of code security configurations, but it remains functional:
 
             ```bash
             gh api --method PATCH /orgs/ORG \
