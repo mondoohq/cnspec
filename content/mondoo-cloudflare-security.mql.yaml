@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-cloudflare-security
     name: Mondoo Cloudflare Security
-    version: 1.1.0
+    version: 1.1.1
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -721,11 +721,13 @@ queries:
       audit: |
         ### Audit via Dashboard
 
-        1. Log in to the Cloudflare dashboard and select the zone.
-        2. Navigate to **Security** > **WAF**.
-        3. Verify that the WAF is active and managed rule sets are shown as enabled.
+        This check reads the previous-generation `waf` zone setting. Zones migrated to the current WAF no longer expose this toggle in the dashboard; the API audit below is authoritative for this check.
 
-        A passing zone shows the WAF as **Enabled** with at least one managed rule set active. A failing zone shows the WAF as **Disabled**.
+        1. Log in to the Cloudflare dashboard and select the zone.
+        2. Navigate to **Security** > **WAF** > **Managed rules**.
+        3. On zones still running the previous-generation WAF, verify the WAF toggle is enabled. On migrated zones, verify that the **Cloudflare Managed Ruleset** is deployed.
+
+        A passing zone has the legacy `waf` setting enabled. A failing zone has it disabled, even when managed rulesets provide protection on a migrated zone.
 
         ### Audit via API
 
@@ -740,16 +742,18 @@ queries:
       remediation:
         - id: console
           desc: |
-            To fix this in the Cloudflare dashboard:
+            The zone setting this check inspects is the previous-generation WAF toggle. Zones migrated to the current WAF no longer expose this toggle in the dashboard; protection there is configured through managed rulesets:
 
             1. Log in and select the affected zone.
-            2. Navigate to **Security** > **WAF**.
-            3. Enable the WAF and review the managed rule sets.
+            2. Navigate to **Security** > **WAF** > **Managed rules**.
+            3. Deploy the **Cloudflare Managed Ruleset** and review its configuration.
             4. Configure any necessary exceptions for legitimate traffic that may be flagged.
-            5. Monitor WAF logs to tune rules and reduce false positives.
+            5. Monitor WAF activity under **Security** > **Events** to tune rules and reduce false positives.
+
+            On zones that still run the previous-generation WAF, also use the API or Terraform method to set the legacy `waf` zone setting to `on` so the setting reflects the active protection.
         - id: cli
           desc: |
-            To fix this on the command line using the Cloudflare API, enable the legacy `waf` zone setting:
+            To fix this on the command line using the Cloudflare API, enable the legacy `waf` zone setting. This call succeeds only on zones that still carry the previous-generation WAF entitlement; migrated zones reject changes to this setting:
 
             ```bash
             curl -X PATCH "https://api.cloudflare.com/client/v4/zones/<zone-id>/settings/waf" \
@@ -759,7 +763,7 @@ queries:
             ```
         - id: terraform
           desc: |
-            To enable the legacy WAF with Terraform, manage the zone's `waf` setting with the `cloudflare_zone_setting` resource and set `value` to `on`:
+            To enable the legacy WAF with Terraform, manage the zone's `waf` setting with the `cloudflare_zone_setting` resource and set `value` to `on`. This applies only on zones that still carry the previous-generation WAF entitlement:
 
             ```hcl
             resource "cloudflare_zone_setting" "waf" {
@@ -1354,7 +1358,7 @@ queries:
             5. Notify all team members to set up 2FA on their individual accounts before enforcement takes effect.
         - id: cli
           desc: |
-            To fix this on the command line using the Cloudflare API, set `settings.enforce_twofactor` to `true` on the account. The account `name` is required by the API on `PUT /accounts/{account_id}`:
+            To fix this on the command line using the Cloudflare API, set `settings.enforce_twofactor` to `true` on the account. The account `name` is required by the API on `PUT /accounts/{account_id}`. Confirm every member has enrolled a second factor first; once enforcement is active, members without two-factor authentication lose access to the account until they enroll:
 
             ```bash
             curl -X PUT "https://api.cloudflare.com/client/v4/accounts/<account-id>" \
@@ -1364,7 +1368,7 @@ queries:
             ```
         - id: terraform
           desc: |
-            To enforce two-factor authentication with Terraform, manage the account with the `cloudflare_account` resource and set `settings.enforce_twofactor` to `true`:
+            To enforce two-factor authentication with Terraform, manage the account with the `cloudflare_account` resource and set `settings.enforce_twofactor` to `true`. Confirm every member has enrolled a second factor before applying; once enforcement is active, members without two-factor authentication lose access to the account until they enroll:
 
             ```hcl
             resource "cloudflare_account" "this" {
@@ -1555,20 +1559,24 @@ queries:
             2. Navigate to **SSL/TLS** > **Edge Certificates**.
             3. Scroll to **HTTP Strict Transport Security (HSTS)** and click **Enable HSTS**.
             4. Acknowledge the warning that all subdomains served over HTTP will become unreachable for the duration of `max-age`.
-            5. Set **Max Age Header** to at least 6 months (12 months recommended), enable **Apply HSTS to subdomains**, and **No-Sniff Header**.
+            5. Set **Max Age Header** to at least 6 months, with 12 months recommended, and enable **No-Sniff Header**.
+            6. Once you have confirmed that every subdomain serves HTTPS, also enable **Apply HSTS to subdomains** and **Preload**.
         - id: cli
           desc: |
-            To enable HSTS via the Cloudflare API:
+            To enable HSTS via the Cloudflare API. The PATCH replaces the entire `strict_transport_security` object, so retrieve the current value first and preserve any directives already set. Keep `include_subdomains` and `preload` set to `false` until you have confirmed that every subdomain serves HTTPS; both extend enforcement in ways that are hard to reverse:
 
             ```bash
+            curl -s -X GET "https://api.cloudflare.com/client/v4/zones/<zone-id>/settings/security_header" \
+              -H "Authorization: Bearer <api-token>"
+
             curl -X PATCH "https://api.cloudflare.com/client/v4/zones/<zone-id>/settings/security_header" \
               -H "Authorization: Bearer <api-token>" \
               -H "Content-Type: application/json" \
-              --data '{"value":{"strict_transport_security":{"enabled":true,"max_age":31536000,"include_subdomains":true,"preload":true,"nosniff":true}}}'
+              --data '{"value":{"strict_transport_security":{"enabled":true,"max_age":31536000,"include_subdomains":false,"preload":false,"nosniff":true}}}'
             ```
         - id: terraform
           desc: |
-            To enable HSTS with Terraform, manage the zone's `security_header` setting with the `cloudflare_zone_setting` resource and set `enabled` to `true` in the `strict_transport_security` block:
+            To enable HSTS with Terraform, manage the zone's `security_header` setting with the `cloudflare_zone_setting` resource and set `enabled` to `true` in the `strict_transport_security` block. Keep `include_subdomains` and `preload` set to `false` until you have confirmed that every subdomain serves HTTPS; both extend enforcement in ways that are hard to reverse:
 
             ```hcl
             resource "cloudflare_zone_setting" "security_header" {
@@ -1578,8 +1586,8 @@ queries:
                 strict_transport_security = {
                   enabled            = true
                   max_age            = 31536000
-                  include_subdomains = true
-                  preload            = true
+                  include_subdomains = false
+                  preload            = false
                   nosniff            = true
                 }
               }
@@ -1644,7 +1652,7 @@ queries:
         2. Navigate to **SSL/TLS** > **Edge Certificates** > **HTTP Strict Transport Security (HSTS)**.
         3. Inspect the **Max Age Header** value.
 
-        A passing zone shows **12 months** (31,536,000 seconds) or longer. A failing zone shows a value below 12 months, or HSTS is disabled.
+        A passing zone shows a **Max Age Header** of **12 months**, which is 31,536,000 seconds and the highest value the dashboard offers. A failing zone shows a lower value, or HSTS is disabled.
 
         ### Audit via API
 
@@ -1663,13 +1671,16 @@ queries:
 
             1. Log in and select the affected zone.
             2. Navigate to **SSL/TLS** > **Edge Certificates** > **HTTP Strict Transport Security (HSTS)**.
-            3. Set **Max Age Header** to at least **12 months** (the dashboard exposes 6 / 12 / 24 month options).
+            3. Set **Max Age Header** to **12 months**.
             4. Save.
         - id: cli
           desc: |
-            To raise HSTS `max-age` via the Cloudflare API:
+            To raise HSTS `max-age` via the Cloudflare API. The PATCH replaces the entire `strict_transport_security` object, so retrieve the current value first and carry over the zone's existing `include_subdomains`, `preload`, and `nosniff` values, changing only `max_age`:
 
             ```bash
+            curl -s -X GET "https://api.cloudflare.com/client/v4/zones/<zone-id>/settings/security_header" \
+              -H "Authorization: Bearer <api-token>"
+
             curl -X PATCH "https://api.cloudflare.com/client/v4/zones/<zone-id>/settings/security_header" \
               -H "Authorization: Bearer <api-token>" \
               -H "Content-Type: application/json" \
@@ -1677,7 +1688,7 @@ queries:
             ```
         - id: terraform
           desc: |
-            To raise the HSTS `max-age` with Terraform, manage the zone's `security_header` setting with the `cloudflare_zone_setting` resource and set `max_age` to at least `31536000` (one year) in the `strict_transport_security` block:
+            To raise the HSTS `max-age` with Terraform, manage the zone's `security_header` setting with the `cloudflare_zone_setting` resource and set `max_age` to at least `31536000`, one year, in the `strict_transport_security` block. Set the other directives to match the zone's current configuration so applying this change does not alter them:
 
             ```hcl
             resource "cloudflare_zone_setting" "security_header" {
@@ -1779,17 +1790,20 @@ queries:
             5. Save.
         - id: cli
           desc: |
-            To enable `includeSubDomains` via the Cloudflare API:
+            To enable `includeSubDomains` via the Cloudflare API. Confirm every subdomain serves HTTPS first; once browsers cache the directive, plaintext subdomains become unreachable for the duration of `max-age`. The PATCH replaces the entire `strict_transport_security` object, so retrieve the current value first and carry over the zone's existing `max_age`, `preload`, and `nosniff` values:
 
             ```bash
+            curl -s -X GET "https://api.cloudflare.com/client/v4/zones/<zone-id>/settings/security_header" \
+              -H "Authorization: Bearer <api-token>"
+
             curl -X PATCH "https://api.cloudflare.com/client/v4/zones/<zone-id>/settings/security_header" \
               -H "Authorization: Bearer <api-token>" \
               -H "Content-Type: application/json" \
-              --data '{"value":{"strict_transport_security":{"enabled":true,"max_age":31536000,"include_subdomains":true,"preload":true,"nosniff":true}}}'
+              --data '{"value":{"strict_transport_security":{"enabled":true,"max_age":31536000,"include_subdomains":true,"preload":false,"nosniff":true}}}'
             ```
         - id: terraform
           desc: |
-            To extend HSTS to subdomains with Terraform, manage the zone's `security_header` setting with the `cloudflare_zone_setting` resource and set `include_subdomains` to `true` in the `strict_transport_security` block:
+            To extend HSTS to subdomains with Terraform, manage the zone's `security_header` setting with the `cloudflare_zone_setting` resource and set `include_subdomains` to `true` in the `strict_transport_security` block. Confirm every subdomain serves HTTPS first, and set the other directives to match the zone's current configuration so applying this change does not alter them:
 
             ```hcl
             resource "cloudflare_zone_setting" "security_header" {
@@ -1800,7 +1814,7 @@ queries:
                   enabled            = true
                   max_age            = 31536000
                   include_subdomains = true
-                  preload            = true
+                  preload            = false
                   nosniff            = true
                 }
               }
@@ -2101,30 +2115,26 @@ queries:
       remediation:
         - id: console
           desc: |
-            Cloudflare API tokens cannot have an expiration added after creation; tokens without `expiresOn` must be re-issued.
+            To set an expiration on an existing token in the Cloudflare dashboard:
 
             1. Log in and open **My Profile** > **API Tokens**.
-            2. Identify tokens without an expiration.
-            3. For each, choose **Roll** to issue a replacement, then in the create form set **TTL** to a finite end date (typically 1 year).
-            4. Update consumers with the new token value before the original is revoked.
-            5. Once consumers have rotated, revoke the original non-expiring token.
+            2. Identify tokens whose **Expiration** column shows no expiration.
+            3. For each, choose **Edit**, scroll to the **TTL** section, and set a finite end date, typically one year out.
+            4. Save the token. The token secret is unchanged, so consumers do not need to rotate.
         - id: cli
           desc: |
-            Roll an existing token to a fresh value, then update its `expires_on`. The roll operation invalidates the old secret and returns a new one.
+            The token update endpoint replaces the full token definition, so retrieve the current token, add `expires_on`, and send the complete object back:
 
             ```bash
-            curl -X PUT "https://api.cloudflare.com/client/v4/user/tokens/<token-id>/value" \
+            curl -s -X GET "https://api.cloudflare.com/client/v4/user/tokens/<token-id>" \
               -H "Authorization: Bearer <api-token>" \
-              -H "Content-Type: application/json"
-            ```
+              | jq '.result | {name, policies, condition, status, expires_on: "2027-01-01T00:00:00Z"}' \
+              > token.json
 
-            Then set an expiration on the rolled token:
-
-            ```bash
             curl -X PUT "https://api.cloudflare.com/client/v4/user/tokens/<token-id>" \
               -H "Authorization: Bearer <api-token>" \
               -H "Content-Type: application/json" \
-              --data '{"expires_on":"2027-01-01T00:00:00Z"}'
+              --data @token.json
             ```
         - id: terraform
           desc: |
@@ -2139,9 +2149,9 @@ queries:
                 permission_groups = [{
                   id = "1a71c399035b4950a1bd1466b1e4f420"
                 }]
-                resources = jsonencode({
-                  "com.cloudflare.api.account.<account-id>" = "*"
-                })
+                resources = {
+                  "com.cloudflare.api.account.0123456789abcdef0123456789abcdef" = "*"
+                }
               }]
 
               expires_on = "2027-01-01T00:00:00Z"
@@ -2225,17 +2235,22 @@ queries:
 
             1. Log in and open **My Profile** > **API Tokens**.
             2. Select the token to edit.
-            3. Under **Client IP Address Filtering**, choose **Is in** and add the CIDRs from which the token should be usable (typically the calling system's egress NAT / VPN ranges).
+            3. Under **Client IP Address Filtering**, choose **Is in** and add the CIDRs from which the token should be usable, typically the calling system's egress NAT or VPN ranges.
             4. Save.
         - id: cli
           desc: |
-            To add an IP allowlist via the Cloudflare API. The `condition.request_ip.in` array accepts CIDRs.
+            The token update endpoint replaces the full token definition, so retrieve the current token, add the `condition.request_ip.in` allowlist, and send the complete object back. The `in` array accepts CIDRs:
 
             ```bash
+            curl -s -X GET "https://api.cloudflare.com/client/v4/user/tokens/<token-id>" \
+              -H "Authorization: Bearer <api-token>" \
+              | jq '.result | {name, policies, status, expires_on, condition: {request_ip: {in: ["198.51.100.0/24", "203.0.113.10/32"]}}}' \
+              > token.json
+
             curl -X PUT "https://api.cloudflare.com/client/v4/user/tokens/<token-id>" \
               -H "Authorization: Bearer <api-token>" \
               -H "Content-Type: application/json" \
-              --data '{"condition":{"request_ip":{"in":["198.51.100.0/24","203.0.113.10/32"]}}}'
+              --data @token.json
             ```
         - id: terraform
           desc: |
@@ -2250,9 +2265,9 @@ queries:
                 permission_groups = [{
                   id = "1a71c399035b4950a1bd1466b1e4f420"
                 }]
-                resources = jsonencode({
-                  "com.cloudflare.api.account.<account-id>" = "*"
-                })
+                resources = {
+                  "com.cloudflare.api.account.0123456789abcdef0123456789abcdef" = "*"
+                }
               }]
 
               condition = {
@@ -2420,12 +2435,13 @@ queries:
             4. Update consumers with the new value, then revoke the prior version once they have rotated.
         - id: cli
           desc: |
-            Roll the token's secret to a fresh value via the Cloudflare API. The roll operation invalidates the old secret and returns a new one with the same policies.
+            Roll the token's secret to a fresh value via the Cloudflare API. The roll operation invalidates the old secret immediately and returns a new one with the same policies, so coordinate the change with every consumer of the token. The endpoint requires an empty JSON string as the request body:
 
             ```bash
             curl -X PUT "https://api.cloudflare.com/client/v4/user/tokens/<token-id>/value" \
               -H "Authorization: Bearer <api-token>" \
-              -H "Content-Type: application/json"
+              -H "Content-Type: application/json" \
+              --data '""'
             ```
         # No Terraform remediation: rotating a token's secret is an imperative API operation (POST .../tokens/{id}/value) with no representation in cloudflare_api_token HCL — the resource declares token configuration, not a rotation action.
     refs:
