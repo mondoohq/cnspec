@@ -2034,6 +2034,12 @@ def _cf_validate_body(
         props = schema.get("properties")
         if isinstance(props, dict):
             additional = schema.get("additionalProperties")
+            # JSON Schema treats an absent additionalProperties as "allow
+            # anything"; we deliberately flag unknown keys anyway. The spec
+            # documents every accepted field for these endpoints, and a
+            # typo'd field name the API would silently ignore is exactly
+            # the bug this validator exists to catch. Only an explicit
+            # additionalProperties (true or a schema) relaxes the check.
             if not (additional is True or isinstance(additional, dict)):
                 for key in value:
                     if key not in props:
@@ -2097,22 +2103,38 @@ def _cf_request_body_schema(spec: dict, tmpl: str, method: str):
     return schema, bool(request_body.get("required"))
 
 
-def _cf_known_setting(setting_id: str, components: dict) -> bool:
-    """True if the spec has a value/enabled component for a zone setting id.
+def _cf_setting_request_schema(setting_id: str, components: dict) -> dict | None:
+    """Return the narrowed request-body schema for a zone setting id, or
+    None when the spec has no per-setting component (an unknown setting).
 
-    Most settings follow the `zones_<setting_id>_value` convention; a few
-    embed a service prefix (`zones_cache-rules_aegis_value`) or use
-    `_enabled` (`zones_ssl_recommender_enabled`).
+    Most settings follow the `zones_<setting_id>_value` convention with a
+    {"value": ...} body; a few embed a service prefix in the component
+    name (`zones_cache-rules_aegis_value` for `settings/aegis`), and
+    ssl_recommender uses an `_enabled` component with an
+    {"enabled": ...} body instead.
     """
-    if f"zones_{setting_id}_value" in components:
-        return True
-    if f"zones_{setting_id}_enabled" in components:
-        return True
-    suffix = f"_{setting_id}_value"
-    return any(
-        name.startswith("zones_") and name.endswith(suffix)
-        for name in components
-    )
+    prop = "value"
+    name = f"zones_{setting_id}_value"
+    if name not in components:
+        suffix = f"_{setting_id}_value"
+        matches = sorted(
+            n for n in components
+            if n.startswith("zones_") and n.endswith(suffix)
+        )
+        if matches:
+            # Unambiguous in the pinned spec; sorted() keeps the pick
+            # deterministic should a future spec bump introduce a collision.
+            name = matches[0]
+        elif f"zones_{setting_id}_enabled" in components:
+            prop = "enabled"
+            name = f"zones_{setting_id}_enabled"
+        else:
+            return None
+    return {
+        "type": "object",
+        "properties": {prop: {"$ref": f"#/components/schemas/{name}"}},
+        "required": [prop],
+    }
 
 
 def validate_cloudflare_curl(
@@ -2142,14 +2164,14 @@ def validate_cloudflare_curl(
 
     # The settings path template matches any {setting_id}, so a misspelled
     # setting id would otherwise pass path validation.
-    setting_id = None
+    setting_schema = None
     if matched == "/zones/{zone_id}/settings/{setting_id}":
         last_segment = path.rsplit("/", 1)[-1]
         if not _CF_PLACEHOLDER_RE.match(last_segment):
-            if not _cf_known_setting(last_segment, components):
+            setting_schema = _cf_setting_request_schema(last_segment, components)
+            if setting_schema is None:
                 errors.append(f"unknown zone setting '{last_segment}'")
                 return False, errors
-            setting_id = last_segment
 
     exemption = CLOUDFLARE_BODY_EXEMPTIONS.get((method, matched))
     if exemption == "body":
@@ -2182,16 +2204,8 @@ def validate_cloudflare_curl(
     # For the generic settings endpoint, narrow the oneOf-over-everything
     # request schema down to the specific setting named in the URL so enum
     # and field-name mistakes are actually caught.
-    if setting_id is not None and f"zones_{setting_id}_value" in components:
-        schema = {
-            "type": "object",
-            "properties": {
-                "value": {
-                    "$ref": f"#/components/schemas/zones_{setting_id}_value"
-                }
-            },
-            "required": ["value"],
-        }
+    if setting_schema is not None:
+        schema = setting_schema
 
     _cf_validate_body(
         value, schema, spec, "body", errors,
