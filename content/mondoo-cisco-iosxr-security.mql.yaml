@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-cisco-iosxr-security
     name: Mondoo Cisco IOS-XR Security
-    version: 1.0.0
+    version: 1.0.1
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -113,7 +113,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-7-2
       compliance/vda-isa-5: vda-isa-5-5-1-2
     mql: |
-      cisco.iosxr.ssh.version == "2"
+      cisco.iosxr.ssh.version == "v2"
     docs:
       desc: |
         This check verifies that SSH version 2 is enforced on the device. SSH version 1 contains known cryptographic vulnerabilities and must not be used for secure management access.
@@ -176,19 +176,19 @@ queries:
       cisco.iosxr.ssh.timeout <= 120
     docs:
       desc: |
-        This check verifies that an SSH session timeout is configured to automatically disconnect idle sessions. The timeout should be set to a reasonable value (120 seconds or less) to minimize the window for unauthorized access through unattended sessions.
+        This check verifies that an SSH timeout is configured to limit how long an SSH connection may spend in user authentication before the device drops it. The timeout should be set to a reasonable value of 120 seconds or less to minimize the window available for authentication attempts.
 
         **Why this matters**
 
-        Without an SSH session timeout, idle sessions remain open indefinitely. If the timeout is not configured:
+        Without an SSH timeout, connections can remain in the authentication phase indefinitely. If the timeout is not configured:
 
-        - Unattended SSH sessions can be exploited by unauthorized users who gain access to the workstation.
-        - Resources are consumed by idle connections, potentially blocking legitimate access.
+        - Attackers can hold unauthenticated connections open while probing or brute-forcing credentials.
+        - Resources are consumed by stalled connections, potentially blocking legitimate access.
         - Compliance requirements for session management cannot be met.
 
-        Configuring an SSH timeout ensures that idle sessions are automatically terminated, reducing the attack surface.
+        Configuring an SSH timeout ensures that connections that fail to authenticate promptly are dropped, reducing the attack surface. Disconnecting sessions that go idle after authentication requires an exec timeout on the console and line templates.
       audit: |-
-        To verify that an SSH session timeout is configured:
+        To verify that an SSH timeout is configured:
 
         1. Open an authenticated session to the device CLI.
         2. Display the running configuration for the SSH timeout:
@@ -203,13 +203,15 @@ queries:
           desc: |
             **Using the CLI**
 
-            Configure SSH timeout (in seconds, 60 recommended):
+            Configure the SSH timeout in seconds. This value limits how long an SSH connection may take to complete user authentication before the device drops it. Values up to 120 seconds are accepted and 60 is a reasonable value:
 
             ```
             configure terminal
             ssh timeout 60
             commit
             ```
+
+            To disconnect sessions that go idle after authentication, also configure an exec timeout on the console and line templates.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/routers/asr9000/software/security/configuration/guide/b-system-security-cg-asr9000/implementing-secure-shell.html
         title: Cisco IOS-XR SSH Configuration Guide
@@ -261,11 +263,15 @@ queries:
           desc: |
             **Using the CLI**
 
-            Generate a new RSA key pair with at least 2048 bits:
+            Generate a new RSA key pair from EXEC mode. The command prompts for the modulus size; enter 2048 or larger:
 
             ```
-            crypto key generate rsa general-keys modulus 2048
+            crypto key generate rsa
             ```
+
+            This command runs outside configuration mode and takes effect immediately without a commit.
+
+            Generating a new key pair replaces the device's SSH host key. Administrators and automation systems must accept the new host key on their next connection, so notify operators and update known-hosts entries before regenerating the key.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/routers/asr9000/software/security/configuration/guide/b-system-security-cg-asr9000/implementing-secure-shell.html
         title: Cisco IOS-XR SSH Configuration Guide
@@ -561,15 +567,23 @@ queries:
           desc: |
             **Using the CLI**
 
-            Configure users with encrypted secrets:
+            Replace clear-text passwords with hashed secrets. Enter the password in clear text with type 0 and the device stores only a hash:
 
             ```
             configure terminal
-            username <user> secret 10 <encrypted-password>
+            username <user> secret 0 <password>
             commit
             ```
 
-            Use type 10 (SHA-512) encryption for the strongest password protection.
+            To supply a pre-computed SHA-512 crypt hash instead, use type 10:
+
+            ```
+            configure terminal
+            username <user> secret 10 <sha512-crypt-hash>
+            commit
+            ```
+
+            Remove any remaining `username <user> password ...` entries so credentials are stored only as secrets.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/routers/asr9000/software/security/configuration/guide/b-system-security-cg-asr9000/configuring-aaa-services.html
         title: Cisco IOS-XR AAA Configuration Guide
@@ -622,11 +636,11 @@ queries:
           desc: |
             **Using the CLI**
 
-            Configure a password policy:
+            Create a password policy:
 
             ```
             configure terminal
-            aaa password-policy strong-policy
+            aaa password-policy <policy-name>
             min-length 15
             min-char-change 4
             special-char 1
@@ -635,10 +649,12 @@ queries:
             commit
             ```
 
-            Apply the policy to users:
+            Assign the policy to each local user together with the user's password:
 
             ```
-            username <user> password-policy strong-policy
+            configure terminal
+            username <user> password-policy <policy-name> password <password>
+            commit
             ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/routers/asr9000/software/security/configuration/guide/b-system-security-cg-asr9000/configuring-aaa-services.html
@@ -691,14 +707,19 @@ queries:
           desc: |
             **Using the CLI**
 
-            Enable Type 6 encryption:
+            Enable the Type 6 AES password encryption feature in configuration mode:
 
             ```
             configure terminal
-            key config-key password-encryption
-            <enter-master-key>
             password6 encryption aes
             commit
+            end
+            ```
+
+            Then create the primary key from EXEC mode. The command prompts for the new key; enter a value of 6 to 64 characters:
+
+            ```
+            key config-key password-encryption
             ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/routers/asr9000/software/security/configuration/guide/b-system-security-cg-asr9000/implementing-type6-password-encryption.html
@@ -1060,15 +1081,17 @@ queries:
           desc: |
             **Using the CLI**
 
-            Remove default community strings and configure secure ones:
+            Remove the default community strings and configure a unique community string restricted by an ACL:
 
             ```
             configure terminal
             no snmp-server community public
             no snmp-server community private
-            snmp-server community <unique-complex-string> RO <acl-name>
+            snmp-server community <unique-complex-string> RO IPv4 <acl-name>
             commit
             ```
+
+            Update monitoring systems that still poll with the removed community strings, or they lose SNMP access when this change commits.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/routers/asr9000/software/system-management/configuration/guide/b-sysman-cg-asr9000/implementing-snmp.html
         title: Cisco IOS-XR SNMP Configuration Guide
@@ -1125,9 +1148,11 @@ queries:
             ```
             configure terminal
             snmp-server group <group-name> v3 priv
-            snmp-server user <username> <group-name> v3 auth sha <auth-password> priv aes 128 <priv-password>
+            snmp-server user <username> <group-name> v3 auth sha clear <auth-password> priv aes 128 clear <priv-password>
             commit
             ```
+
+            The device stores both passwords in encrypted form in the running configuration.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/routers/asr9000/software/system-management/configuration/guide/b-sysman-cg-asr9000/implementing-snmp.html
         title: Cisco IOS-XR SNMP Configuration Guide
@@ -1187,9 +1212,11 @@ queries:
 
             ```
             configure terminal
-            snmp-server community <community-string> RO <acl-name>
+            snmp-server community <community-string> RO IPv4 <acl-name>
             commit
             ```
+
+            Confirm the ACL permits your SNMP management stations before committing, or monitoring systems lose access to the device.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/routers/asr9000/software/system-management/configuration/guide/b-sysman-cg-asr9000/implementing-snmp.html
         title: Cisco IOS-XR SNMP Configuration Guide
@@ -1546,7 +1573,18 @@ queries:
           desc: |
             **Using the CLI**
 
-            Configure VTY lines for SSH-only transport:
+            Restrict each line template that serves VTY pools to SSH transport. Verify that SSH access to the device works before committing, because this change drops telnet management access.
+
+            For the built-in default template:
+
+            ```
+            configure terminal
+            line default
+            transport input ssh
+            commit
+            ```
+
+            For a named template:
 
             ```
             configure terminal
@@ -1607,14 +1645,25 @@ queries:
           desc: |
             **Using the CLI**
 
-            Apply ACLs to VTY line templates:
+            Create an ACL that permits only your management stations. Confirm it includes the address you currently manage the device from before applying it, because an ACL that omits it cuts off your own remote access:
 
             ```
             configure terminal
-            line template <template-name>
+            ipv4 access-list <acl-name>
+            10 permit ipv4 host <management-station-ip> any
+            commit
+            ```
+
+            Apply the ACL to the built-in default template:
+
+            ```
+            configure terminal
+            line default
             access-class ingress <acl-name>
             commit
             ```
+
+            For named templates, enter `line template <template-name>` instead of `line default`.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/routers/asr9000/software/security/configuration/guide/b-system-security-cg-asr9000/configuring-aaa-services.html
         title: Cisco IOS-XR Line Configuration Guide
@@ -1670,15 +1719,17 @@ queries:
           desc: |
             **Using the CLI**
 
-            Configure BGP neighbor authentication:
+            Configure a password on each BGP neighbor. Adding or changing a session password resets the BGP session and interrupts routing through that peer until both sides match, so apply this during a maintenance window and coordinate with the peer operator:
 
             ```
             configure terminal
             router bgp <as-number>
             neighbor <neighbor-ip>
-            password encrypted <password>
+            password clear <password>
             commit
             ```
+
+            The device stores the password in encrypted form in the running configuration.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/routers/asr9000/software/routing/configuration/guide/b-routing-cg-asr9000/implementing-bgp.html
         title: Cisco IOS-XR BGP Configuration Guide
@@ -1734,7 +1785,20 @@ queries:
           desc: |
             **Using the CLI**
 
-            Configure OSPF area authentication using a key chain:
+            Create the key chain first. Choose a cryptographic algorithm supported by your software release, such as MD5 or HMAC-SHA-256:
+
+            ```
+            configure terminal
+            key chain <keychain-name>
+            key 1
+            key-string <key-value>
+            cryptographic-algorithm MD5
+            send-lifetime 00:00:00 january 01 2026 infinite
+            accept-lifetime 00:00:00 january 01 2026 infinite
+            commit
+            ```
+
+            Then apply the key chain to the OSPF area. Authentication must match on every router in the area, so stage this change on all area routers during a maintenance window to avoid dropping adjacencies:
 
             ```
             configure terminal
