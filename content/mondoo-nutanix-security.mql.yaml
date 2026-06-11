@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-nutanix-security
     name: Mondoo Nutanix Security
-    version: 1.0.0
+    version: 1.0.1
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -151,24 +151,22 @@ queries:
       remediation:
         - id: console
           desc: |
+            Software data-at-rest encryption cannot be disabled after it is enabled. Configure key management first and confirm the choice of software, SED, or hardware encryption before proceeding.
+
             To enable data-at-rest encryption using Prism:
 
             1. Open Settings, then Data-at-Rest Encryption.
-            2. Choose the encryption type (software, SED, or hardware) and the key management server.
-            3. Click Enable Encryption and confirm.
+            2. Click Edit Configuration and select the key management option, either the cluster's local key manager or an external key management server with the required certificates.
+            3. Choose the encryption scope, click Enable Encryption, and confirm.
         - id: cli
           desc: |
-            To enable software data-at-rest encryption using the CLI, run on a Controller VM:
-
-            ```bash
-            ncli data-at-rest-encryption enable
-            ```
-
-            Confirm the new status:
+            Enabling encryption is performed in Prism. To confirm the resulting status using the CLI, run on a Controller VM:
 
             ```bash
             ncli data-at-rest-encryption get-status
             ```
+
+            A status of enabled with the expected scope confirms the change.
 
   - uid: mondoo-nutanix-security-cluster-encryption-in-transit-enabled
     title: Ensure encryption-in-transit is enabled on clusters
@@ -207,35 +205,39 @@ queries:
         ### Audit via Console
 
         1. Log in to Prism Element for the cluster.
-        2. Open Settings, then Encryption (or Network Configuration).
+        2. Open Settings, then Data-in-Transit Encryption.
         3. Confirm that encryption-in-transit is enabled.
 
         A passing result shows in-transit encryption enabled; a failing result shows it disabled.
 
-        ### Audit via CLI
+        ### Audit via API
 
-        Run on a Controller VM:
+        Query the clustermgmt v4 API and review `encryptionInTransitStatus`:
 
         ```bash
-        ncli cluster get-params
+        curl -fsS -u admin \
+          "https://prism-central.example.com:9440/api/clustermgmt/v4.0/config/clusters"
         ```
 
-        A passing result reports the encryption-in-transit status as enabled.
+        A passing result reports `encryptionInTransitStatus` as ENABLED.
       remediation:
         - id: console
           desc: |
-            To enable encryption-in-transit using Prism:
+            To enable encryption-in-transit using Prism Element:
 
-            1. Open Settings, then Encryption.
-            2. Enable encryption-in-transit for the cluster.
-            3. Confirm and allow the cluster to apply the setting to all nodes.
-        - id: cli
+            1. Log in to Prism Element for the cluster.
+            2. Open Settings, then Data-in-Transit Encryption.
+            3. Select Enable Encryption and save, then allow the cluster to apply the setting to all nodes.
+        - id: api
           desc: |
-            To enable encryption-in-transit using the CLI, run on a Controller VM:
+            To confirm the setting using the clustermgmt v4 API, query the cluster configuration and review `encryptionInTransitStatus`:
 
             ```bash
-            ncli cluster edit-params enable-encryption-in-transit=true
+            curl -fsS -u admin \
+              "https://prism-central.example.com:9440/api/clustermgmt/v4.0/config/clusters"
             ```
+
+            A value of ENABLED confirms the change.
 
   - uid: mondoo-nutanix-security-cluster-external-key-management
     title: Ensure clusters use an external key management server
@@ -291,18 +293,21 @@ queries:
       remediation:
         - id: console
           desc: |
-            To configure an external key management server using Prism:
+            To switch the cluster to an external key management server using Prism:
 
-            1. Open Settings, then Key Management Server.
-            2. Add the external KMS endpoint and upload the client and CA certificates.
-            3. Re-key the cluster to use the external KMS.
+            1. Open Settings, then Key Management Server, and add the external KMS with its address and port, typically 5696.
+            2. Upload the client certificate and the CA certificate for the KMS and verify the connection test passes.
+            3. Open Settings, then Data-at-Rest Encryption, click Edit Configuration, and change the key manager from the local key manager to the external KMS.
+            4. Rekey the cluster so the data encryption keys are protected by the external KMS.
         - id: cli
           desc: |
-            To add an external key management server using the CLI, run on a Controller VM:
+            To confirm the configured key management servers using the CLI, run on a Controller VM:
 
             ```bash
-            ncli key-management-server add name=kms1 address=kms.example.com:5696 server-type=EXTERNAL
+            ncli key-management-server list
             ```
+
+            Adding a server alone does not change the key manager type; the cluster must also be switched to the external KMS in the Data-at-Rest Encryption settings.
 
   - uid: mondoo-nutanix-security-cluster-ssh-password-login-disabled
     title: Ensure password-based SSH login to clusters is disabled
@@ -797,7 +802,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-3
       compliance/vda-isa-5: vda-isa-5-5-2-7
     mql: |
-      nutanix.clusters.all(network.nfsSubnetWhitelist.all(_ != "0.0.0.0/0" && _ != "0.0.0.0"))
+      nutanix.clusters.all(network.nfsSubnetWhitelist.all(_ != "0.0.0.0/0" && _ != "0.0.0.0" && _ != "0.0.0.0/0.0.0.0"))
     docs:
       desc: |
         This check ensures that the cluster-wide NFS allowlist does not include a wide-open entry such as `0.0.0.0/0`. The global NFS allowlist controls which clients may mount cluster storage; an open entry lets any host on the network mount exported file systems and read or write the data they contain.
@@ -836,14 +841,15 @@ queries:
             To restrict the NFS allowlist using Prism:
 
             1. Open Settings, then Filesystem Whitelists.
-            2. Remove any `0.0.0.0/0` entry.
+            2. Remove any open entry such as `0.0.0.0/0.0.0.0`.
             3. Add only the specific subnets that require storage access.
         - id: cli
           desc: |
-            To set a restricted filesystem allowlist using the CLI, run on a Controller VM:
+            To remove an open entry and allow only specific subnets using the CLI, run on a Controller VM:
 
             ```bash
-            ncli cluster edit-filesystem-whitelist test-subnet=10.20.0.0/255.255.0.0
+            ncli cluster remove-from-nfs-whitelist ip-subnet-masks="0.0.0.0/0.0.0.0"
+            ncli cluster add-to-nfs-whitelist ip-subnet-masks="10.20.0.0/255.255.0.0"
             ```
 
   - uid: mondoo-nutanix-security-cluster-runs-lts-release
@@ -902,15 +908,16 @@ queries:
           desc: |
             To move to a long-term-support release using Prism:
 
-            1. Open Settings, then Upgrade Software (Life Cycle Manager).
-            2. Select a long-term-support AOS target version.
+            1. Open the Life Cycle Manager from the Prism menu.
+            2. Run an inventory, then select a long-term-support AOS target version.
             3. Run the pre-upgrade checks and apply the upgrade.
         - id: cli
           desc: |
-            To upgrade AOS using the CLI, run on a Controller VM after downloading the target LTS release:
+            To upgrade AOS using the CLI, run on a Controller VM after downloading the target LTS release, passing the release by name:
 
             ```bash
-            ncli software upgrade software-type=nos
+            ncli software ls software-type=nos
+            ncli software upgrade software-type=nos name="6.10.1.5"
             ```
 
   # =================================================================
@@ -971,23 +978,31 @@ queries:
       remediation:
         - id: console
           desc: |
-            Enabling Secure Boot requires UEFI firmware support and host downtime. Using Prism and the host firmware:
+            Enabling Secure Boot requires UEFI firmware support and host downtime. Work on one host at a time and confirm the cluster reports OK data resiliency before starting each host. Using Prism and the host firmware:
 
-            1. Place the host into maintenance mode and migrate its VMs.
-            2. Enable UEFI and Secure Boot in the host firmware (BIOS) settings.
-            3. Boot the host and confirm Prism reports Secure Boot as enabled.
+            1. Confirm the Data Resiliency Status widget reports OK.
+            2. Place the host into maintenance mode so its VMs migrate off.
+            3. Shut down the Controller VM on that host, then reboot the host into its firmware setup.
+            4. Enable UEFI and Secure Boot in the firmware settings and boot the host.
+            5. Exit maintenance mode and confirm Prism reports Secure Boot as enabled before moving to the next host.
         - id: cli
           desc: |
-            To place a host into maintenance mode for the firmware change using the CLI, run on a Controller VM:
+            To place a host into maintenance mode for the firmware change, run on a Controller VM:
 
             ```bash
-            acli host.enter_maintenance_mode <host-uuid> wait=true
+            acli host.enter_maintenance_mode "<host-uuid>" wait=true
             ```
 
-            Enable Secure Boot in the host firmware, then exit maintenance mode:
+            Then shut down the Controller VM that runs on the affected host by running this command on that Controller VM:
 
             ```bash
-            acli host.exit_maintenance_mode <host-uuid>
+            cvm_shutdown -P now
+            ```
+
+            Enable Secure Boot in the host firmware, boot the host, confirm the Controller VM is back up and resiliency is OK, then exit maintenance mode:
+
+            ```bash
+            acli host.exit_maintenance_mode "<host-uuid>"
             ```
 
   - uid: mondoo-nutanix-security-host-ipmi-not-default-user
@@ -1037,7 +1052,7 @@ queries:
         From a Controller VM, query the BMC of each host:
 
         ```bash
-        ipmitool -I lanplus -H <ipmi-ip> -U <user> -P <pass> user list 1
+        ipmitool -I lanplus -H "<ipmi-ip>" -U "<user>" -P "<password>" user list 1
         ```
 
         A passing result shows no default `ADMIN` account in active use.
@@ -1048,16 +1063,26 @@ queries:
 
             1. Log in to the host's IPMI/BMC web interface.
             2. Create a new administrative user with a unique name and a strong password.
-            3. Disable or rename the default `ADMIN` account.
+            3. Log out and confirm you can log in with the new account.
+            4. Disable or rename the default `ADMIN` account.
+
+            Changing only the password of the default account is not sufficient; the default username must no longer be in use.
         - id: cli
           desc: |
-            To replace the default IPMI account using ipmitool, set a new account and disable the default:
+            To replace the default IPMI account using ipmitool, list the user slots first because slot numbers vary by BMC vendor, then create the new account:
 
             ```bash
-            ipmitool -I lanplus -H <ipmi-ip> -U ADMIN -P <pass> user set name 3 nutanixadmin
-            ipmitool -I lanplus -H <ipmi-ip> -U ADMIN -P <pass> user set password 3
-            ipmitool -I lanplus -H <ipmi-ip> -U ADMIN -P <pass> user priv 3 4
-            ipmitool -I lanplus -H <ipmi-ip> -U ADMIN -P <pass> user disable 2
+            ipmitool -I lanplus -H "<ipmi-ip>" -U ADMIN -P "<password>" user list 1
+            ipmitool -I lanplus -H "<ipmi-ip>" -U ADMIN -P "<password>" user set name 3 nutanixadmin
+            ipmitool -I lanplus -H "<ipmi-ip>" -U ADMIN -P "<password>" user set password 3
+            ipmitool -I lanplus -H "<ipmi-ip>" -U ADMIN -P "<password>" user priv 3 4
+            ```
+
+            Verify the new account works before disabling the default, so you cannot lock yourself out of the BMC:
+
+            ```bash
+            ipmitool -I lanplus -H "<ipmi-ip>" -U nutanixadmin -P "<new-password>" user list 1
+            ipmitool -I lanplus -H "<ipmi-ip>" -U nutanixadmin -P "<new-password>" user disable 2
             ```
 
   - uid: mondoo-nutanix-security-host-not-degraded
@@ -1117,21 +1142,17 @@ queries:
             To resolve a degraded host using Prism:
 
             1. Open the alert for the degraded node and review the root cause.
-            2. Address the underlying issue (network link, hardware component, or service).
-            3. Once resolved, clear the degraded status from the node's actions menu.
+            2. Address the underlying issue such as a failing network link, hardware component, or unresponsive service.
+            3. Open Hardware, select the degraded node, and choose Mark as Fixed to clear the degraded state.
         - id: cli
           desc: |
-            To investigate and clear a degraded node using the CLI, run on a Controller VM:
+            To identify the degraded node using the CLI, run on a Controller VM:
 
             ```bash
-            ncli host list
+            ncli host ls
             ```
 
-            After resolving the root cause, fix the node's degraded marker:
-
-            ```bash
-            ncli host edit id=<host-id> enable-degraded-node-fixer=true
-            ```
+            Resolve the root cause, then clear the degraded state from the Prism Hardware view with Mark as Fixed. If the node repeatedly returns to a degraded state, engage Nutanix Support before returning it to service.
 
   # =================================================================
   # Virtual Machine Security
@@ -1328,15 +1349,21 @@ queries:
           desc: |
             To update Nutanix Guest Tools using Prism:
 
-            1. Select the VMs with outdated NGT.
-            2. Choose Upgrade NGT (or Manage Guest Tools, then upgrade).
+            1. In the Prism Element VM table, select the VMs with outdated NGT.
+            2. Choose Upgrade NGT from the actions menu and confirm.
             3. Confirm the agent reports the current version after the upgrade.
         - id: cli
           desc: |
-            To upgrade NGT using the CLI, run on a Controller VM:
+            To update NGT from the CLI, mount the current NGT installer on the VM, then rerun the installer inside the guest:
 
             ```bash
-            ncli ngt upgrade vm-id=<vm-id>
+            ncli ngt mount vm-id="<vm-id>"
+            ```
+
+            After the installer completes inside the guest, confirm the reported version:
+
+            ```bash
+            ncli ngt list vm-names="<vm-name>"
             ```
 
   - uid: mondoo-nutanix-security-vm-protected
@@ -1533,15 +1560,26 @@ queries:
           desc: |
             To restrict directory access to specific groups using Prism Central:
 
-            1. Open Settings, then Role Mapping.
-            2. Add role mappings that grant access only to named directory groups.
-            3. Remove any broad or default mappings that grant access without a group restriction.
-        - id: cli
+            1. Open Settings, then Authentication, and edit the directory service.
+            2. Add the directory groups that should be allowed to authenticate to the directory's allowed groups.
+            3. Open Role Mapping and confirm roles are granted only to those named groups, removing any broad or default mappings.
+        - id: api
           desc: |
-            To add an allowlisted group mapping using the CLI, run on a Controller VM:
+            To set the group allowlist on the directory service using the IAM v4 API, read the directory service, add the allowed groups to `whiteListedGroups`, and update it. The update must send the full object and the ETag returned by the read:
 
             ```bash
-            ncli authconfig add-role-mapping directory-name=<directory-name> role=ROLE_CLUSTER_VIEWER entity-type=GROUP entity-values="Nutanix-Admins"
+            curl -fsS -u admin -D - -o directory.json \
+              "https://prism-central.example.com:9440/api/iam/v4.0/authn/directory-services/<directory-ext-id>"
+            ```
+
+            Edit `directory.json` so the object under `data` lists the allowed groups in `whiteListedGroups`, then send that object as the request body:
+
+            ```bash
+            curl -fsS -u admin -X PUT \
+              "https://prism-central.example.com:9440/api/iam/v4.0/authn/directory-services/<directory-ext-id>" \
+              -H "If-Match: <etag-from-get-response>" \
+              -H "Content-Type: application/json" \
+              -d @directory.json
             ```
 
   - uid: mondoo-nutanix-security-saml-signed-authn-requests
@@ -1591,7 +1629,8 @@ queries:
         Query the IAM v4 API from a host with API access:
 
         ```bash
-        curl -sk -u <user> https://<pc-ip>:9440/api/iam/v4.0/authn/saml-identity-providers
+        curl -fsS -u admin \
+          "https://prism-central.example.com:9440/api/iam/v4.0/authn/saml-identity-providers"
         ```
 
         A passing result shows `isSignedAuthnReqEnabled` set to true for each provider.
@@ -1605,13 +1644,21 @@ queries:
             3. Enable signed authn requests and save, updating the IdP metadata if required.
         - id: api
           desc: |
-            To enable signed authn requests using the IAM v4 API, update the identity provider with `isSignedAuthnReqEnabled` set to true:
+            To enable signed authn requests using the IAM v4 API, read the identity provider, set `isSignedAuthnReqEnabled` to true in the returned object, and update it. The update must send the full object and the ETag returned by the read:
 
             ```bash
-            curl -sk -u <user> -X PUT \
-              https://<pc-ip>:9440/api/iam/v4.0/authn/saml-identity-providers/<idp-ext-id> \
-              -H 'Content-Type: application/json' \
-              -d '{"isSignedAuthnReqEnabled": true}'
+            curl -fsS -u admin -D - -o idp.json \
+              "https://prism-central.example.com:9440/api/iam/v4.0/authn/saml-identity-providers/<idp-ext-id>"
+            ```
+
+            Edit `idp.json` so the object under `data` has `isSignedAuthnReqEnabled` set to true, then send that object as the request body:
+
+            ```bash
+            curl -fsS -u admin -X PUT \
+              "https://prism-central.example.com:9440/api/iam/v4.0/authn/saml-identity-providers/<idp-ext-id>" \
+              -H "If-Match: <etag-from-get-response>" \
+              -H "Content-Type: application/json" \
+              -d @idp.json
             ```
 
   - uid: mondoo-nutanix-security-inactive-local-users-removed
@@ -1658,13 +1705,14 @@ queries:
 
         ### Audit via CLI
 
-        Query the IAM v4 API from a host with API access:
+        Query the IAM v4 API from a host with API access and review the local users:
 
         ```bash
-        curl -sk -u <user> "https://<pc-ip>:9440/api/iam/v4.0/authn/users?\$filter=userType eq 'LOCAL'"
+        curl -fsS -u admin \
+          "https://prism-central.example.com:9440/api/iam/v4.0/authn/users"
         ```
 
-        A passing result shows no local user with a status of INACTIVE.
+        A passing result shows no user with a `userType` of LOCAL and a status of INACTIVE.
       remediation:
         - id: console
           desc: |
@@ -1675,11 +1723,14 @@ queries:
             3. Delete the account.
         - id: api
           desc: |
-            To delete an inactive local user using the IAM v4 API:
+            To delete an inactive local user using the IAM v4 API, read the user to obtain its ETag, then delete it with the ETag in the If-Match header:
 
             ```bash
-            curl -sk -u <user> -X DELETE \
-              https://<pc-ip>:9440/api/iam/v4.0/authn/users/<user-ext-id>
+            curl -fsS -u admin -D - -o /dev/null \
+              "https://prism-central.example.com:9440/api/iam/v4.0/authn/users/<user-ext-id>"
+            curl -fsS -u admin -X DELETE \
+              "https://prism-central.example.com:9440/api/iam/v4.0/authn/users/<user-ext-id>" \
+              -H "If-Match: <etag-from-get-response>"
             ```
 
   - uid: mondoo-nutanix-security-no-stale-user-accounts
@@ -1726,13 +1777,14 @@ queries:
 
         ### Audit via CLI
 
-        Query the IAM v4 API from a host with API access:
+        Query the IAM v4 API from a host with API access and review the local users:
 
         ```bash
-        curl -sk -u <user> "https://<pc-ip>:9440/api/iam/v4.0/authn/users?\$filter=userType eq 'LOCAL'"
+        curl -fsS -u admin \
+          "https://prism-central.example.com:9440/api/iam/v4.0/authn/users"
         ```
 
-        Review `lastLoginTime` for each active account; a passing result shows recent activity within 90 days.
+        Review `lastLoginTime` for each active local account; a passing result shows recent activity within 90 days.
       remediation:
         - id: console
           desc: |
@@ -1740,14 +1792,17 @@ queries:
 
             1. Open Settings, then Users.
             2. Identify active accounts with no login in the last 90 days.
-            3. Confirm whether each is still required; disable or delete those that are not.
+            3. Confirm whether each is still required and delete those that are not. Disabled accounts remain on the system as inactive local accounts and still require removal, so prefer deletion for accounts that are no longer needed.
         - id: api
           desc: |
-            To delete a stale local user using the IAM v4 API after confirming it is unneeded:
+            To delete a stale local user using the IAM v4 API after confirming it is unneeded, read the user to obtain its ETag, then delete it with the ETag in the If-Match header:
 
             ```bash
-            curl -sk -u <user> -X DELETE \
-              https://<pc-ip>:9440/api/iam/v4.0/authn/users/<user-ext-id>
+            curl -fsS -u admin -D - -o /dev/null \
+              "https://prism-central.example.com:9440/api/iam/v4.0/authn/users/<user-ext-id>"
+            curl -fsS -u admin -X DELETE \
+              "https://prism-central.example.com:9440/api/iam/v4.0/authn/users/<user-ext-id>" \
+              -H "If-Match: <etag-from-get-response>"
             ```
 
   # =================================================================
@@ -1802,25 +1857,27 @@ queries:
 
         ```bash
         acli vg.list
-        acli vg.get <volume-group-name>
+        acli vg.get "<volume-group-name>"
         ```
 
         A passing result shows the volume group's external attachment requiring CHAP.
       remediation:
         - id: console
           desc: |
-            To require CHAP on a volume group using Prism:
+            Enabling CHAP rejects initiators that have not yet been configured with the secret, so plan a maintenance window and update every connecting client. To require CHAP on a volume group using Prism:
 
             1. Open Storage, then Volume Groups, and edit the volume group.
-            2. Enable CHAP authentication and set a strong secret.
-            3. Update the connecting initiators with the matching CHAP credentials.
+            2. Enable CHAP authentication and set a strong secret of 12 to 16 characters.
+            3. Update the connecting initiators with the matching CHAP credentials and confirm they reconnect.
         - id: cli
           desc: |
-            To enable CHAP on a volume group using the CLI, run on a Controller VM:
+            To confirm the volume group requires CHAP using the CLI, run on a Controller VM:
 
             ```bash
-            acli vg.update <volume-group-name> chap_auth=true target_password=<chap-secret>
+            acli vg.get "<volume-group-name>"
             ```
+
+            The target authentication settings show whether CHAP is required. Configure the CHAP secret itself in Prism or through the Volumes API.
 
   - uid: mondoo-nutanix-security-storage-container-encrypted
     title: Ensure storage containers are encrypted
@@ -1876,18 +1933,20 @@ queries:
       remediation:
         - id: console
           desc: |
-            To enable encryption on a storage container using Prism:
+            Encryption cannot be disabled on a container after it is enabled. To enable encryption for storage containers using Prism:
 
-            1. Ensure cluster data-at-rest encryption and a key management server are configured.
-            2. Open Storage, then Storage Containers, and edit the container.
-            3. Enable encryption and save.
+            1. Ensure a key management configuration is in place under Settings, then Key Management Server, or use the local key manager.
+            2. Open Settings, then Data-at-Rest Encryption, and click Edit Configuration.
+            3. Enable encryption for the cluster, or for the specific containers where per-container encryption is supported, and save.
         - id: cli
           desc: |
-            To enable encryption on a storage container using the CLI, run on a Controller VM:
+            To confirm the result using the CLI, run on a Controller VM:
 
             ```bash
-            ncli container edit name=<container-name> enable-software-encryption=true
+            ncli container ls
             ```
+
+            Each user container should report encryption as enabled.
 
   - uid: mondoo-nutanix-security-storage-container-nfs-allowlist
     title: Ensure storage container NFS allowlists are restricted
@@ -1907,7 +1966,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-3
       compliance/vda-isa-5: vda-isa-5-5-2-7
     mql: |
-      nutanix.storageContainers.where(isInternal == false).all(nfsWhitelistAddresses.all(_ != "0.0.0.0" && _ != "0.0.0.0/0"))
+      nutanix.storageContainers.where(isInternal == false).all(nfsWhitelistAddresses.all(_ != "0.0.0.0" && _ != "0.0.0.0/0" && _ != "0.0.0.0/0.0.0.0"))
     docs:
       desc: |
         This check ensures that a storage container's NFS allowlist does not include a wide-open entry such as `0.0.0.0`. A per-container NFS allowlist controls which clients may mount that container directly; an open entry exposes the container's virtual disks and files to any host that can reach the data-services IP, regardless of the cluster-wide allowlist.
@@ -1945,16 +2004,18 @@ queries:
           desc: |
             To restrict a container's NFS allowlist using Prism:
 
-            1. Open Storage, then Storage Containers, and edit the container.
-            2. Remove any `0.0.0.0` entry from the filesystem allowlist.
-            3. Add only the specific subnets that require access, or inherit the restricted global allowlist.
+            1. Open Storage, then Storage Containers, and update the container's advanced settings.
+            2. Remove any open entry such as `0.0.0.0/0.0.0.0` from the container's filesystem allowlist.
+            3. Add only the specific subnets that require access, or clear the per-container list so the container inherits the restricted global allowlist.
         - id: cli
           desc: |
-            To set a restricted filesystem allowlist on a container using the CLI, run on a Controller VM:
+            To confirm the container allowlist using the CLI, run on a Controller VM:
 
             ```bash
-            ncli container edit name=<container-name> filesystem-whitelist=10.20.0.0/255.255.0.0
+            ncli container ls
             ```
+
+            Each user container should show its NFS allowlist limited to specific subnets or inherited from the restricted global allowlist.
 
   - uid: mondoo-nutanix-security-storage-container-replication-factor
     title: Ensure storage containers use a replication factor of at least 2
