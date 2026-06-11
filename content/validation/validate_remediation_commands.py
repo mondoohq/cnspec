@@ -1381,8 +1381,10 @@ DO_POLICY_FILE = SCRIPT_DIR / ".." / "mondoo-digitalocean-security.mql.yaml"
 _DOCTL_SECTION_HEADER = re.compile(r"^[A-Z][^:\n]*:\s*$")
 
 # Subcommand line: "  <name>   <description>" — two-space indent, then a
-# lowercase identifier, then at least two spaces before the description.
-_DOCTL_SUBCOMMAND_LINE = re.compile(r"^  ([a-z][a-z0-9-]*)\s{2,}")
+# lowercase identifier, then whitespace before the description. Cobra pads
+# names to the longest one plus a single space, so the longest subcommand in
+# a group has exactly one space before its description.
+_DOCTL_SUBCOMMAND_LINE = re.compile(r"^  ([a-z][a-z0-9-]*)\s+\S")
 
 # Flag line: "      --flag-name <type>   <description>" or
 # "  -X, --flag-name <type>   <description>". We only capture the long form.
@@ -1415,7 +1417,9 @@ def _parse_doctl_help(text: str) -> tuple[list[str], list[str]]:
             continue
         if _DOCTL_SECTION_HEADER.match(line):
             in_flags = False
-            in_cmds = True
+            # Example invocations are indented like subcommand lines but
+            # start with "doctl"; don't mine the Examples/Usage sections.
+            in_cmds = not line.startswith(("Examples:", "Usage:"))
             continue
         if line.strip() == "":
             continue

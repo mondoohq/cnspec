@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-digitalocean-security
     name: Mondoo DigitalOcean Security
-    version: 1.4.0
+    version: 1.4.1
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -237,10 +237,10 @@ queries:
         1. List all Droplets and note any that lack a VPC UUID:
 
         ```bash
-        doctl compute droplet list --format ID,Name,VpcUUID,Region
+        doctl compute droplet list --format ID,Name,VPCUUID,Region
         ```
 
-        A passing Droplet returns a non-empty `VpcUUID`. A failing Droplet returns an empty `VpcUUID` field.
+        A passing Droplet returns a non-empty `VPCUUID`. A failing Droplet returns an empty `VPCUUID` field.
       remediation:
         - id: console
           desc: |
@@ -464,12 +464,12 @@ queries:
             3. Save the firewall.
         - id: cli
           desc: |
-            To fix this on the command line using the `doctl` CLI, replace the unrestricted SSH rule with one scoped to a trusted CIDR:
+            To fix this on the command line using the `doctl` CLI, remove the unrestricted SSH rule for both the IPv4 and IPv6 catch-all sources, then add a replacement rule scoped to a trusted CIDR:
 
             ```bash
-            doctl compute firewall remove-rules <firewall-id> \
-              --inbound-rules "protocol:tcp,ports:22,address:0.0.0.0/0"
-            doctl compute firewall add-rules <firewall-id> \
+            doctl compute firewall remove-rules "<firewall-id>" \
+              --inbound-rules "protocol:tcp,ports:22,address:0.0.0.0/0 protocol:tcp,ports:22,address:::/0"
+            doctl compute firewall add-rules "<firewall-id>" \
               --inbound-rules "protocol:tcp,ports:22,address:<your-trusted-cidr>"
             ```
         - id: terraform
@@ -603,11 +603,11 @@ queries:
             3. Save the firewall.
         - id: cli
           desc: |
-            To fix this on the command line using the `doctl` CLI, remove the unrestricted RDP rule:
+            To fix this on the command line using the `doctl` CLI, remove the unrestricted RDP rule for both the IPv4 and IPv6 catch-all sources:
 
             ```bash
-            doctl compute firewall remove-rules <firewall-id> \
-              --inbound-rules "protocol:tcp,ports:3389,address:0.0.0.0/0"
+            doctl compute firewall remove-rules "<firewall-id>" \
+              --inbound-rules "protocol:tcp,ports:3389,address:0.0.0.0/0 protocol:tcp,ports:3389,address:::/0"
             ```
         - id: terraform
           desc: |
@@ -738,14 +738,14 @@ queries:
 
             1. Navigate to **Networking** > **Firewalls** and open the affected firewall.
             2. Remove the wide-open inbound rule for the offending database port, or restrict its source to a specific trusted CIDR, tag, or Droplet ID.
-            3. Repeat for each offending port. For managed databases, prefer the database's built-in **Trusted Sources** restriction (see the `db-firewall-configured` check).
+            3. Repeat for each offending port. For managed databases, prefer the database's built-in **Trusted Sources** restriction over Droplet-level firewall rules.
         - id: cli
           desc: |
-            To fix this on the command line using the `doctl` CLI, remove or restrict the offending inbound rule so the source is a trusted CIDR, tag, or Droplet ID:
+            To fix this on the command line using the `doctl` CLI, remove the offending inbound rule for both the IPv4 and IPv6 catch-all sources, or restrict the source to a trusted CIDR, tag, or Droplet ID:
 
             ```bash
-            doctl compute firewall remove-rules <firewall-id> \
-              --inbound-rules "protocol:tcp,ports:5432,address:0.0.0.0/0"
+            doctl compute firewall remove-rules "<firewall-id>" \
+              --inbound-rules "protocol:tcp,ports:5432,address:0.0.0.0/0 protocol:tcp,ports:5432,address:::/0"
             ```
 
             Repeat for each offending port (`3306`, `5432`, `27017`, `6379`, `9092`, `9200`).
@@ -885,12 +885,15 @@ queries:
             4. Save the firewall.
         - id: cli
           desc: |
-            To fix this on the command line using the `doctl` CLI, remove the wide-open rule and replace it with narrow rules that expose only the specific ports required by the workload, scoped to trusted source CIDRs:
+            To fix this on the command line using the `doctl` CLI, first read the rule exactly as the firewall stores it, then remove it for both the IPv4 and IPv6 catch-all sources. Match the `ports` value the firewall reports, which may be `0`, `all`, `1-65535`, or `0-65535`, and repeat for `udp` rules if present:
 
             ```bash
-            doctl compute firewall remove-rules <firewall-id> \
-              --inbound-rules "protocol:tcp,ports:0,address:0.0.0.0/0"
+            doctl compute firewall get "<firewall-id>" --format InboundRules
+            doctl compute firewall remove-rules "<firewall-id>" \
+              --inbound-rules "protocol:tcp,ports:all,address:0.0.0.0/0 protocol:tcp,ports:all,address:::/0"
             ```
+
+            Replace the removed rule with narrow rules that expose only the specific ports required by the workload, scoped to trusted source CIDRs.
         - id: terraform
           desc: |
             To avoid a catch-all rule in Terraform, define `inbound_rule` blocks that name only the specific ports the workload needs instead of `port_range = "all"` (or the full range), and scope `source_addresses`:
@@ -1086,13 +1089,13 @@ queries:
 
         ### Audit via CLI
 
-        1. List all database clusters and inspect the `PrivateNetworkUUID` field:
+        1. List all database clusters and inspect each cluster's private network UUID:
 
         ```bash
-        doctl databases list --format ID,Name,Engine,PrivateNetworkUUID,Region
+        doctl databases list --output json | jq -r '.[] | [.id, .name, .engine, .private_network_uuid] | @tsv'
         ```
 
-        A passing database cluster returns a non-empty `PrivateNetworkUUID`. A failing database cluster returns an empty `PrivateNetworkUUID`.
+        A passing database cluster returns a non-empty `private_network_uuid`. A failing database cluster returns an empty value.
       remediation:
         - id: console
           desc: |
@@ -1210,7 +1213,7 @@ queries:
         1. List all clusters with their engine and version, then check available supported versions for comparison:
 
         ```bash
-        doctl databases list --format ID,Name,Engine,EngineVersion,Region
+        doctl databases list --format ID,Name,Engine,Version,Region
         doctl databases options versions --engine pg
         doctl databases options versions --engine mysql
         doctl databases options versions --engine redis
@@ -1230,12 +1233,12 @@ queries:
             3. Follow the prompts; otherwise, create a new cluster on a supported version and migrate data using `pg_dump`/`mysqldump`/native replication.
         - id: cli
           desc: |
-            `doctl` does not perform an in-place major-version upgrade — `doctl databases migrate` only changes regions. Spin up a replacement cluster on a supported version and cut over with engine-native tools.
+            `doctl` does not perform an in-place major-version upgrade; `doctl databases migrate` only changes regions. Spin up a replacement cluster on a supported version and cut over with engine-native tools.
 
             1. Identify affected clusters and list supported versions for each engine:
 
                 ```bash
-                doctl databases list --format ID,Name,Engine,EngineVersion,Region,Size
+                doctl databases list --format ID,Name,Engine,Version,Region,Size
                 doctl databases options versions --engine pg
                 doctl databases options versions --engine mysql
                 doctl databases options versions --engine redis
@@ -1377,7 +1380,7 @@ queries:
         2. Download each cluster's CA and inspect the validity window with `openssl`:
 
         ```bash
-        doctl databases get-ca <database-id> --format Certificate --no-header | base64 -d \
+        doctl databases get-ca "<database-id>" --format Certificate --no-header \
           | openssl x509 -noout -enddate
         ```
 
@@ -1395,11 +1398,10 @@ queries:
             If the download still returns an expired certificate, open a DigitalOcean support ticket from the cluster page so the platform can issue a replacement.
         - id: cli
           desc: |
-            Pull the new CA with `doctl` and roll it out to every consumer:
+            Pull the new CA with `doctl` and roll it out to every consumer. The command prints the PEM-encoded certificate directly:
 
             ```bash
-            doctl databases get-ca <database-id> --format Certificate --no-header \
-              | base64 -d > ca-certificate.crt
+            doctl databases get-ca "<database-id>" --format Certificate --no-header > ca-certificate.crt
             ```
 
             Verify the new validity window before distribution:
@@ -1474,13 +1476,13 @@ queries:
 
         ### Audit via CLI
 
-        1. List all load balancers and inspect the `HttpRedirect` field:
+        1. List all load balancers and inspect the `RedirectHttpToHttps` field:
 
         ```bash
-        doctl compute load-balancer list --format ID,Name,HttpRedirect,ForwardingRules
+        doctl compute load-balancer list --format ID,Name,RedirectHttpToHttps,ForwardingRules
         ```
 
-        A passing load balancer returns `true` for `HttpRedirect` or has no HTTP forwarding rule. A failing load balancer returns `false` for `HttpRedirect` while an HTTP forwarding rule is present.
+        A passing load balancer returns `true` for `RedirectHttpToHttps` or has no HTTP forwarding rule. A failing load balancer returns `false` for `RedirectHttpToHttps` while an HTTP forwarding rule is present.
       remediation:
         - id: console
           desc: |
@@ -1491,12 +1493,20 @@ queries:
             3. Enable **Redirect HTTP to HTTPS**. Confirm that an HTTPS forwarding rule and TLS certificate are configured.
         - id: cli
           desc: |
-            To fix this on the command line using the `doctl` CLI, enable the redirect on the affected load balancer:
+            The `doctl compute load-balancer update` command sends a full replacement of the load balancer configuration: any attribute you do not pass is reset to its default value. First read the current configuration, then repeat it in the update call together with the redirect flag:
 
             ```bash
-            doctl compute load-balancer update <lb-id> \
+            doctl compute load-balancer get "<lb-id>" \
+              --format Name,Region,ForwardingRules,DropletIDs --no-header
+            doctl compute load-balancer update "<lb-id>" \
+              --name "<name>" \
+              --region "<region>" \
+              --forwarding-rules "<current-forwarding-rules>" \
+              --droplet-ids "<droplet-ids>" \
               --redirect-http-to-https
             ```
+
+            If the load balancer targets Droplets by tag, pass `--tag-name` instead of `--droplet-ids`.
         - id: terraform
           desc: |
             To enforce the HTTP-to-HTTPS redirect in Terraform, set `redirect_http_to_https = true` on the `digitalocean_loadbalancer` resource alongside an HTTPS forwarding rule:
@@ -1889,7 +1899,7 @@ queries:
             ```
         - id: terraform
           desc: |
-            Terraform manages the cluster version through the `version` argument on `digitalocean_kubernetes_cluster`. Set it to a supported minor release (1.30 or newer). Use the `digitalocean_kubernetes_versions` data source to resolve the latest patch for a prefix:
+            Terraform manages the cluster version through the `version` argument on `digitalocean_kubernetes_cluster`. Use the `digitalocean_kubernetes_versions` data source to resolve the latest patch release for a minor version, and keep the prefix pointed at a release DigitalOcean still supports, 1.30 or newer:
 
             ```hcl
             data "digitalocean_kubernetes_versions" "example" {
@@ -1986,14 +1996,13 @@ queries:
 
         ### Audit via CLI
 
-        1. Query the DOKS SSO configuration for each cluster using the DigitalOcean API:
+        1. Inspect the cluster's SSO configuration:
 
         ```bash
-        curl -s -H "Authorization: Bearer $DIGITALOCEAN_TOKEN" \
-          https://api.digitalocean.com/v2/kubernetes/clusters/<cluster-id>/sso
+        doctl kubernetes cluster get "<cluster-id>" --output json | jq '.[0].sso'
         ```
 
-        A passing cluster returns a response with `"enabled": true`. A failing cluster returns `"enabled": false` or an empty SSO configuration.
+        A passing cluster returns an `sso` object with `"enabled": true`. A failing cluster returns `"enabled": false` or no `sso` object.
       remediation:
         - id: console
           desc: |
@@ -2001,18 +2010,17 @@ queries:
 
             1. Navigate to **Kubernetes** and open the affected cluster.
             2. Go to **Settings** > **Single Sign-On**.
-            3. Configure the OIDC identity provider (issuer URL, client ID, client secret).
+            3. Configure the OIDC identity provider issuer URL and client ID.
             4. Save. Plan a follow-up to enable **Require SSO for cluster access** once users are migrated.
         - id: cli
           desc: |
-            DOKS SSO configuration is managed through the DigitalOcean API and Cloud Control Panel; `doctl` does not expose `sso` flags on `kubernetes cluster update`. Configure SSO in the Cloud Control Panel as described above, or call the DigitalOcean API directly:
+            To fix this on the command line using the `doctl` CLI, configure the OIDC identity provider and enable SSO on the cluster:
 
             ```bash
-            curl -X PUT \
-              -H "Authorization: Bearer $DIGITALOCEAN_TOKEN" \
-              -H "Content-Type: application/json" \
-              -d '{"enabled":true,"required":false,"issuer_url":"<oidc-issuer-url>","client_id":"<client-id>","client_secret":"<client-secret>"}' \
-              https://api.digitalocean.com/v2/kubernetes/clusters/<cluster-id>/sso
+            doctl kubernetes cluster update "<cluster-id>" \
+              --sso-issuer-url "<oidc-issuer-url>" \
+              --sso-client-id "<client-id>" \
+              --sso-enabled
             ```
     refs:
       - url: https://docs.digitalocean.com/products/kubernetes/how-to/manage-cluster-access/
@@ -2067,14 +2075,13 @@ queries:
 
         ### Audit via CLI
 
-        1. Query the DOKS SSO configuration for each cluster using the DigitalOcean API:
+        1. Inspect the cluster's SSO configuration:
 
         ```bash
-        curl -s -H "Authorization: Bearer $DIGITALOCEAN_TOKEN" \
-          https://api.digitalocean.com/v2/kubernetes/clusters/<cluster-id>/sso
+        doctl kubernetes cluster get "<cluster-id>" --output json | jq '.[0].sso'
         ```
 
-        A passing cluster returns a response with both `"enabled": true` and `"required": true`. A failing cluster returns `"required": false` or has no SSO configured.
+        A passing cluster returns an `sso` object with both `"enabled": true` and `"required": true`. A failing cluster returns `"required": false` or has no SSO configured.
       remediation:
         - id: console
           desc: |
@@ -2082,18 +2089,18 @@ queries:
 
             1. Navigate to **Kubernetes** and open the affected cluster.
             2. Go to **Settings** > **Single Sign-On**.
-            3. Configure the OIDC identity provider (issuer URL, client ID, client secret) if not already done.
+            3. Configure the OIDC identity provider issuer URL and client ID if not already done.
             4. Enable **Require SSO for cluster access** so that token-based access is no longer permitted.
         - id: cli
           desc: |
-            DOKS SSO configuration is managed through the DigitalOcean API and Cloud Control Panel; `doctl` does not expose `sso` flags on `kubernetes cluster update`. Configure SSO in the Cloud Control Panel as described above, or call the DigitalOcean API directly:
+            To fix this on the command line using the `doctl` CLI, enable SSO and mark it as required so the cluster rejects non-SSO authentication:
 
             ```bash
-            curl -X PUT \
-              -H "Authorization: Bearer $DIGITALOCEAN_TOKEN" \
-              -H "Content-Type: application/json" \
-              -d '{"enabled":true,"required":true,"issuer_url":"<oidc-issuer-url>","client_id":"<client-id>","client_secret":"<client-secret>"}' \
-              https://api.digitalocean.com/v2/kubernetes/clusters/<cluster-id>/sso
+            doctl kubernetes cluster update "<cluster-id>" \
+              --sso-issuer-url "<oidc-issuer-url>" \
+              --sso-client-id "<client-id>" \
+              --sso-enabled \
+              --sso-required
             ```
     refs:
       - url: https://docs.digitalocean.com/products/kubernetes/how-to/manage-cluster-access/
@@ -2254,10 +2261,12 @@ queries:
             3. Save the CDN configuration.
         - id: cli
           desc: |
-            To fix this on the command line using the `doctl` CLI, attach a certificate to the affected CDN endpoint:
+            To fix this on the command line using the `doctl` CLI, attach a certificate to the affected CDN endpoint. The certificate must be passed together with the custom domain it covers, because `doctl` updates the domain and certificate as a pair:
 
             ```bash
-            doctl compute cdn update <cdn-id> --certificate-id <cert-id>
+            doctl compute cdn update "<cdn-id>" \
+              --domain "<custom-domain>" \
+              --certificate-id "<cert-id>"
             ```
         - id: terraform
           desc: |
@@ -2369,16 +2378,22 @@ queries:
             To fix this in the DigitalOcean Cloud Control Panel:
 
             1. Navigate to **API** > **Spaces Keys**.
-            2. Delete the unscoped key and create a replacement with specific bucket grants (for example, read-only on a single bucket).
-            3. Rotate the key in every application that consumed the old one.
+            2. Create a replacement key with specific bucket grants, for example read-only access to a single bucket.
+            3. Update every application that used the unscoped key to use the new scoped key.
+            4. Delete the unscoped key.
         - id: cli
           desc: |
-            To fix this on the command line using the `doctl` CLI, create a scoped replacement key and delete the unscoped one:
+            To fix this on the command line using the `doctl` CLI, create a scoped replacement key first:
 
             ```bash
-            doctl spaces keys create <new-name> \
+            doctl spaces keys create "<new-name>" \
               --grants "bucket=<bucket-name>;permission=read"
-            doctl spaces keys delete <old-key>
+            ```
+
+            Update every application that used the unscoped key, then delete it by its access key ID:
+
+            ```bash
+            doctl spaces keys delete "<old-access-key-id>"
             ```
         - id: terraform
           desc: |
@@ -2907,10 +2922,10 @@ queries:
         1. List all apps and inspect their live URLs:
 
         ```bash
-        doctl apps list --format ID,DefaultIngress,LiveURL
+        doctl apps list --output json | jq -r '.[] | [.id, .live_url] | @tsv'
         ```
 
-        A passing app returns a `LiveURL` that begins with `https://`. A failing app returns a `LiveURL` that begins with `http://`.
+        A passing app returns a `live_url` that begins with `https://`. A failing app returns a `live_url` that begins with `http://`.
       remediation:
         - id: console
           desc: |
@@ -2927,11 +2942,11 @@ queries:
             1. Locate the affected app and pull its spec:
 
                 ```bash
-                doctl apps list --format ID,DefaultIngress,LiveURL,Spec.Name
-                doctl apps spec get <app-id> > app.yaml
+                doctl apps list --output json | jq -r '.[] | [.id, .live_url, .spec.name] | @tsv'
+                doctl apps spec get "<app-id>" > app.yaml
                 ```
 
-            2. Edit `app.yaml` to remove or correct the misconfigured custom domain. Each entry under `domains:` must point at a domain whose CNAME or A record resolves to the app's `ondigitalocean.app` ingress so App Platform can issue a managed cert. If the custom domain is no longer needed, drop the entry — the default `*.ondigitalocean.app` URL is always served over HTTPS.
+            2. Edit `app.yaml` to remove or correct the misconfigured custom domain. Each entry under `domains:` must point at a domain whose CNAME or A record resolves to the app's `ondigitalocean.app` ingress so App Platform can issue a managed cert. If the custom domain is no longer needed, drop the entry; the default `*.ondigitalocean.app` URL is always served over HTTPS.
 
                 ```yaml
                 domains:
@@ -2950,7 +2965,7 @@ queries:
             4. Confirm the live URL is now HTTPS:
 
                 ```bash
-                doctl apps get <app-id> --format ID,LiveURL
+                doctl apps get "<app-id>" --output json | jq -r '.[0].live_url'
                 ```
         # No Terraform remediation: an HTTP live_url is caused by a custom domain
         # whose DNS does not resolve to the app's ingress, which Terraform cannot
@@ -3075,7 +3090,7 @@ queries:
         1. List the GradientAI agents and review their deployment visibility:
 
         ```bash
-        doctl genai agent list
+        doctl genai agent list --output json | jq -r '.[] | [.name, .uuid, .deployment.visibility] | @tsv'
         ```
 
         A passing account returns no agent with a public deployment visibility. A failing account returns one or more agents whose visibility is `VISIBILITY_PUBLIC`.
@@ -3088,8 +3103,15 @@ queries:
             2. Open the **GradientAI** platform and select the agent.
             3. Edit the deployment settings and change the visibility from **Public** to a private or organization-scoped option.
             4. Redeploy the agent.
-        # No CLI remediation: `doctl genai` exposes agent listing but no stable command to
-        # change an existing agent's deployment visibility; use the control panel above.
+        - id: cli
+          desc: |
+            Switch the agent deployment to private:
+
+            ```bash
+            doctl genai agent update-visibility "<agent-uuid>" --visibility VISIBILITY_PRIVATE
+            ```
+
+            Confirm the change by listing the agents again and checking that the deployment visibility is no longer `VISIBILITY_PUBLIC`.
         # No Terraform remediation: GradientAI agents have no digitalocean Terraform resource.
     refs:
       - url: https://docs.digitalocean.com/products/gradientai-platform/
