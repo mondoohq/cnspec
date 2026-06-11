@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-cisco-iosxe-security
     name: Mondoo Cisco IOS-XE Security
-    version: 1.0.0
+    version: 1.0.1
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -156,15 +156,17 @@ queries:
           desc: |
             **Using the CLI**
 
-            Enable SSH by configuring a hostname, domain name, and generating RSA keys:
+            SSH requires a hostname, a domain name, and an RSA key pair. Set the hostname and domain name only if they are not already configured, because changing them renames the device in logs and management systems:
 
             ```
             configure terminal
             hostname <hostname>
-            ip domain-name <domain.com>
+            ip domain name <domain.com>
             crypto key generate rsa modulus 2048
             ip ssh version 2
             ```
+
+            If an RSA key pair already exists, the key generation command asks for confirmation before replacing it. Replacing the key pair changes the SSH host identity, so clients that stored the old host key must accept the new one.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/sec_usr_ssh/configuration/xe-16/sec-usr-ssh-xe-16-book/sec-secure-shell-v2.html
         title: Cisco IOS-XE SSH Configuration Guide
@@ -335,6 +337,8 @@ queries:
             configure terminal
             crypto key generate rsa modulus 2048
             ```
+
+            The device asks for confirmation before replacing an existing key pair. Replacing the key pair changes the SSH host identity, so SSH clients that stored the old host key receive a host key change warning and must accept the new key. Existing sessions stay connected, but notify administrators and update any automation that verifies the host key.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/sec_usr_ssh/configuration/xe-16/sec-usr-ssh-xe-16-book/sec-secure-shell-v2.html
         title: Cisco IOS-XE SSH Configuration Guide
@@ -387,12 +391,16 @@ queries:
           desc: |
             **Using the CLI**
 
-            Enable the AAA new model:
+            Enabling the AAA new model immediately changes authentication on every line, including the VTY lines you use for remote management. If no local user and no default login method list exist, you can lose access to the device. Create a local user and a default login method list in the same session, and keep that session open until you verify access:
 
             ```
             configure terminal
+            username <admin-user> privilege 15 algorithm-type scrypt secret <strong-password>
             aaa new-model
+            aaa authentication login default local
             ```
+
+            Open a second session and confirm that you can still log in before closing your current session.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/sec_usr_aaa/configuration/xe-16/sec-usr-aaa-xe-16-book/sec-cfg-authentification.html
         title: Cisco IOS-XE AAA Configuration Guide
@@ -444,11 +452,16 @@ queries:
           desc: |
             **Using the CLI**
 
-            Configure AAA authentication login:
+            Define the TACACS+ server, then configure the default login method list with a local fallback. The default list takes effect on all lines as soon as it is entered, so create a local user first and keep your current session open until you verify login from a second session:
 
             ```
             configure terminal
+            username <admin-user> privilege 15 algorithm-type scrypt secret <strong-password>
             aaa new-model
+            tacacs server <server-name>
+             address ipv4 <tacacs-server-ip>
+             key <shared-secret>
+            exit
             aaa authentication login default group tacacs+ local
             ```
 
@@ -504,13 +517,15 @@ queries:
           desc: |
             **Using the CLI**
 
-            Configure AAA accounting:
+            AAA accounting requires the AAA new model and a configured TACACS+ server. With those prerequisites in place, enable accounting for EXEC sessions and privileged commands:
 
             ```
             configure terminal
             aaa accounting exec default start-stop group tacacs+
             aaa accounting commands 15 default start-stop group tacacs+
             ```
+
+            Verify that records arrive on the TACACS+ server after the next login.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/sec_usr_aaa/configuration/xe-16/sec-usr-aaa-xe-16-book/sec-cfg-acctng.html
         title: Cisco IOS-XE AAA Accounting Guide
@@ -564,18 +579,15 @@ queries:
           desc: |
             **Using the CLI**
 
-            Configure users with secret:
+            Cisco IOS XE does not allow a user account to have both a password and a secret, so accounts configured with `password` must be removed and recreated with `secret`. If you are converting the account you are logged in with, keep your session open and verify the new credential from a second session before closing:
 
             ```
             configure terminal
-            username <user> privilege <level> secret 0 <password>
+            no username <user>
+            username <user> privilege <level> algorithm-type scrypt secret <password>
             ```
 
-            Use type 9 (SCRYPT) for the strongest hashing:
-
-            ```
-            username <user> privilege <level> secret 9 <scrypt-hash>
-            ```
+            The `algorithm-type scrypt` keyword stores the credential as a type 9 hash, which is the strongest option. Repeat for every account that still uses `password`.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/sec_usr_aaa/configuration/xe-16/sec-usr-aaa-xe-16-book/sec-cfg-authentification.html
         title: Cisco IOS-XE User Configuration Guide
@@ -627,13 +639,15 @@ queries:
           desc: |
             **Using the CLI**
 
-            Configure enable secret:
+            Configure the enable secret first, then remove the legacy enable password so the device is never left without a privileged EXEC credential:
 
             ```
             configure terminal
-            no enable password
             enable secret 0 <strong-password>
+            no enable password
             ```
+
+            To store the credential as a type 9 hash, use `enable algorithm-type scrypt secret <strong-password>` instead of the `enable secret 0` form.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/sec_usr_aaa/configuration/xe-16/sec-usr-aaa-xe-16-book/sec-cfg-authentification.html
         title: Cisco IOS-XE Password Configuration Guide
@@ -861,6 +875,8 @@ queries:
             configure terminal
             no cdp run
             ```
+
+            Before disabling CDP, confirm that nothing depends on it. Cisco IP phones use CDP for voice VLAN assignment and power negotiation, and some monitoring and topology tools rely on CDP data. Plan the change with the teams that operate those systems.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/cdp/configuration/xe-16/cdp-xe-16-book/nm-cdp-discover.html
         title: Cisco IOS-XE CDP Configuration Guide
@@ -1377,14 +1393,17 @@ queries:
           desc: |
             **Using the CLI**
 
-            Remove default community strings:
+            Remove the default community strings, create an ACL that permits only your management stations, and configure a unique community string restricted by that ACL:
 
             ```
             configure terminal
             no snmp-server community public
             no snmp-server community private
-            snmp-server community <unique-string> RO <acl-number>
+            access-list 10 permit <nms-ip>
+            snmp-server community <unique-string> RO 10
             ```
+
+            Any monitoring system still polling with the removed community strings loses access immediately. Update all pollers to the new community string as part of the same change.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/snmp/configuration/xe-16/snmp-xe-16-book/nm-snmp-cfg-snmp-support.html
         title: Cisco IOS-XE SNMP Configuration Guide
@@ -1437,12 +1456,16 @@ queries:
           desc: |
             **Using the CLI**
 
-            Apply ACLs to SNMP community strings:
+            Create an ACL that permits only your management stations, then reapply each community string with the ACL. Re-entering a community string with the same name replaces the existing entry:
 
             ```
             configure terminal
-            snmp-server community <community-string> RO <acl-number>
+            access-list 10 permit <nms-ip-1>
+            access-list 10 permit <nms-ip-2>
+            snmp-server community <community-string> RO 10
             ```
+
+            Make sure the ACL permits every monitoring server before applying it. Servers not matched by the ACL lose SNMP access immediately.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/snmp/configuration/xe-16/snmp-xe-16-book/nm-snmp-cfg-snmp-support.html
         title: Cisco IOS-XE SNMP Configuration Guide
@@ -1497,13 +1520,17 @@ queries:
           desc: |
             **Using the CLI**
 
-            Configure VTY lines for SSH-only:
+            Before restricting transport to SSH, verify that SSH login to the device works. Once applied, telnet connections are refused immediately, including the session you may be using. Display all VTY lines with `show line` and apply the setting to every VTY range, not just lines 0 to 15:
 
             ```
             configure terminal
             line vty 0 15
             transport input ssh
+            line vty 16 31
+            transport input ssh
             ```
+
+            Adjust the second range to match the highest VTY line your platform provides.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/sec_usr_ssh/configuration/xe-16/sec-usr-ssh-xe-16-book/sec-secure-shell-v2.html
         title: Cisco IOS-XE SSH Configuration Guide
@@ -1616,13 +1643,18 @@ queries:
           desc: |
             **Using the CLI**
 
-            Apply ACLs to VTY lines:
+            Create an ACL that permits your management hosts, then apply it inbound on every VTY line. The ACL takes effect immediately, so make sure it includes the address you are connecting from, keep your current session open, and verify that a new session still succeeds before closing:
 
             ```
             configure terminal
+            access-list 11 permit <management-subnet> <wildcard-mask>
             line vty 0 15
-            access-class <acl-number> in
+            access-class 11 in
+            line vty 16 31
+            access-class 11 in
             ```
+
+            Display all VTY lines with `show line` and apply the access class to every range your platform provides.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/fundamentals/configuration/xe-16/fundamentals-xe-16-book.html
         title: Cisco IOS-XE Line Configuration Guide
@@ -1965,7 +1997,7 @@ queries:
 
             ```
             configure terminal
-            ip domain-name <your-domain.com>
+            ip domain name <your-domain.com>
             ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/fundamentals/configuration/xe-16/fundamentals-xe-16-book.html
@@ -2131,13 +2163,15 @@ queries:
           desc: |
             **Using the CLI**
 
-            Configure BGP neighbor authentication:
+            Configure MD5 authentication for each BGP neighbor. The same password must be configured on both peers, and adding or changing the password resets the BGP session until the two sides match. Coordinate the change with the peer operator and schedule it during a maintenance window:
 
             ```
             configure terminal
             router bgp <as-number>
             neighbor <neighbor-ip> password <password>
             ```
+
+            When neighbors belong to a peer group, set the password on the peer group so every member inherits it.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/iproute_bgp/configuration/xe-16/irg-xe-16-book.html
         title: Cisco IOS-XE BGP Configuration Guide
@@ -2193,13 +2227,18 @@ queries:
           desc: |
             **Using the CLI**
 
-            Configure OSPF area authentication:
+            Configure a message digest key on every OSPF interface in the area, then enable message digest authentication for the area. Routers drop adjacencies with neighbors whose authentication does not match, so apply the same key on all routers in the area and schedule the change during a maintenance window:
 
             ```
             configure terminal
+            interface <interface>
+            ip ospf message-digest-key 1 md5 <key>
+            exit
             router ospf <process-id>
             area <area-id> authentication message-digest
             ```
+
+            Repeat the interface step for each OSPF interface in the area, then verify adjacencies with `show ip ospf neighbor`.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/iproute_ospf/configuration/xe-16/iro-xe-16-book.html
         title: Cisco IOS-XE OSPF Configuration Guide
