@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright Mondoo, Inc. 2026
+# Copyright Mondoo, Inc. 2024, 2026
 # SPDX-License-Identifier: BUSL-1.1
 #
 # Dumps the full nCLI command grammar (entities, operations, operation
@@ -46,6 +46,7 @@ import concurrent.futures
 import html
 import json
 import re
+import ssl
 import sys
 import urllib.request
 from pathlib import Path
@@ -79,9 +80,14 @@ _TAG_RE = re.compile(r"<[^>]+>")
 _SYNTAX_PREFIX_RE = re.compile(r"^ncli>\s*([a-z0-9-]+)\s*\{([^}]*)\}")
 
 
+# Explicit context so certificate verification does not depend on how the
+# local Python build configured its default HTTPS handler.
+_SSL_CONTEXT = ssl.create_default_context()
+
+
 def fetch(url: str) -> bytes:
     req = urllib.request.Request(url, headers={"Accept": "application/json"})
-    with urllib.request.urlopen(req, timeout=60) as resp:
+    with urllib.request.urlopen(req, timeout=60, context=_SSL_CONTEXT) as resp:
         return resp.read()
 
 
@@ -174,6 +180,7 @@ def main():
     print(f"Found {len(pages)} nCLI entity pages in {NCLI_BOOK}", file=sys.stderr)
 
     entities: dict[str, dict] = {}
+    failed_entities = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
         futures = {
             pool.submit(parse_entity_page, entity, page): entity
@@ -181,9 +188,25 @@ def main():
         }
         for future in concurrent.futures.as_completed(futures):
             entity = futures[future]
-            operations = future.result()
+            try:
+                operations = future.result()
+            except Exception as exc:
+                print(f"Error parsing entity '{entity}': {exc}", file=sys.stderr)
+                failed_entities.append(entity)
+                continue
             if operations:
                 entities[entity] = {"operations": operations}
+
+    if failed_entities:
+        # Writing a grammar with missing entities would make the validator
+        # reject valid commands on the next run; fail instead of emitting
+        # incomplete data.
+        print(
+            f"Error: failed to parse {len(failed_entities)} entities "
+            f"({', '.join(sorted(failed_entities))}); not writing output.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     result = {
         "_meta": {

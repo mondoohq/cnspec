@@ -2013,6 +2013,9 @@ def validate_ncli_command(
                 f"unknown parameter '{param}' for 'ncli {entity} {operation}'"
             )
 
+    # Required parameters must appear even in template commands: a
+    # remediation that omits one fails when run as written, and placeholder
+    # values like name=<directory-name> satisfy this check.
     for req in op["required"]:
         if req not in params:
             errors.append(
