@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-cisco-nxos-security
     name: Mondoo Cisco NX-OS Security
-    version: 1.0.0
+    version: 1.0.1
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -153,18 +153,27 @@ queries:
           desc: |
             **Using the CLI**
 
+            Replacing the SSH host key requires temporarily disabling the SSH server. Perform this change from a console session, because disabling the SSH server drops all active SSH sessions.
+
             Generate an SSH key with a strong algorithm:
 
             ```
             configure terminal
-            ssh key rsa 2048
+            no feature ssh
+            ssh key rsa 2048 force
+            feature ssh
             ```
 
             Or for ECDSA:
 
             ```
-            ssh key ecdsa 256
+            configure terminal
+            no feature ssh
+            ssh key ecdsa 256 force
+            feature ssh
             ```
+
+            The new host key invalidates cached host keys on SSH clients. Update known hosts entries on management stations after the change.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/security/cisco-nexus-9000-nx-os-security-configuration-guide-105x/m-configuring-ssh-scp.html
         title: Cisco NX-OS SSH Configuration Guide
@@ -217,12 +226,18 @@ queries:
           desc: |
             **Using the CLI**
 
+            Replacing the SSH host key requires temporarily disabling the SSH server. Perform this change from a console session, because disabling the SSH server drops all active SSH sessions.
+
             Generate a 2048-bit RSA key:
 
             ```
             configure terminal
-            ssh key rsa 2048
+            no feature ssh
+            ssh key rsa 2048 force
+            feature ssh
             ```
+
+            The new host key invalidates cached host keys on SSH clients. Update known hosts entries on management stations after the change.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/security/cisco-nexus-9000-nx-os-security-configuration-guide-105x/m-configuring-ssh-scp.html
         title: Cisco NX-OS SSH Configuration Guide
@@ -263,13 +278,13 @@ queries:
         To verify that an SSH login attempts limit is configured:
 
         1. Open an authenticated session to the device CLI.
-        2. Display the running configuration for the SSH login attempts limit:
+        2. Display the effective SSH login attempts limit, including default values:
 
            ```
-           show running-config | include ssh login-attempts
+           show running-config security all | include "ssh login-attempts"
            ```
 
-        The device passes when `ssh login-attempts` is set to a value greater than 0 and 3 or fewer. A limit of 0 or greater than 3 is a failing result.
+        The device passes when `ssh login-attempts` is set to a value greater than 0 and 3 or fewer. The NX-OS default of 3 passes. A limit of 0 or greater than 3 is a failing result.
       remediation:
         - id: cli
           desc: |
@@ -333,12 +348,18 @@ queries:
           desc: |
             **Using the CLI**
 
-            Configure AAA authentication login:
+            Configure AAA authentication to use a TACACS+ or RADIUS server group with local fallback. The server group must already exist. For RADIUS, the predefined group named `radius` contains all globally configured RADIUS servers. For TACACS+, first enable `feature tacacs+` and create a named server group with `aaa group server tacacs+`. Keeping `local` as a fallback method and `local` on the console line prevents a lockout if the AAA servers become unreachable.
 
             ```
             configure terminal
-            aaa authentication login default group <tacacs+|radius> local
+            aaa authentication login default group <server-group-name> local
             aaa authentication login console local
+            ```
+
+            Verify the configuration from a second session before closing your current one:
+
+            ```
+            show running-config aaa | include "authentication login"
             ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/security/cisco-nexus-9000-nx-os-security-configuration-guide-105x/m-configuring-aaa.html
@@ -391,14 +412,19 @@ queries:
           desc: |
             **Using the CLI**
 
-            Configure a TACACS+ server group:
+            Enable the TACACS+ feature, define the server, and create a server group. The `feature tacacs+` command must come first; NX-OS rejects all TACACS+ configuration while the feature is disabled.
 
             ```
             configure terminal
+            feature tacacs+
             tacacs-server host <server-ip> key <shared-secret>
             aaa group server tacacs+ <group-name>
-            server <server-ip>
+              server <server-ip>
+              use-vrf management
+              source-interface mgmt0
             ```
+
+            Adjust the VRF and source interface to match how the device reaches the TACACS+ server.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/security/cisco-nexus-9000-nx-os-security-configuration-guide-105x/m-configuring-aaa.html
         title: Cisco NX-OS AAA Configuration Guide
@@ -508,12 +534,18 @@ queries:
           desc: |
             **Using the CLI**
 
-            Enable the encryption service:
+            Configure a master key and enable the AES password encryption feature. The `key config-key ascii` command prompts for the master key interactively; the key is not entered on the command line.
 
             ```
             configure terminal
+            key config-key ascii
             feature password encryption aes
-            key config-key ascii <master-key>
+            ```
+
+            To convert existing Type 7 encrypted secrets in the configuration to Type 6 AES encryption:
+
+            ```
+            encryption re-encrypt obfuscated
             ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/security/cisco-nexus-9000-nx-os-security-configuration-guide-105x/m-configuring-user-accounts-and-rbac.html
@@ -568,17 +600,17 @@ queries:
           desc: |
             **Using the CLI**
 
-            Configure users with encrypted passwords:
+            Reset the password for any user whose credential is stored in clear text. Enter the password in plain text; NX-OS hashes it before storing it in the configuration.
 
             ```
             configure terminal
-            username <user> password 5 <md5-hash> role <role>
+            username <user> password <strong-password> role <role>
             ```
 
-            Enable the encryption service for stronger protection:
+            Verify that no credential is stored with encryption type 0:
 
             ```
-            feature password encryption aes
+            show running-config | include ^username
             ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/security/cisco-nexus-9000-nx-os-security-configuration-guide-105x/m-configuring-user-accounts-and-rbac.html
@@ -696,7 +728,14 @@ queries:
             system login block-for 60 attempts 3 within 60
             ```
 
-            This blocks logins for 60 seconds after 3 failed attempts within 60 seconds.
+            This blocks logins for 60 seconds after 3 failed attempts within 60 seconds. During the block period the device denies all login attempts, which an attacker can abuse to lock out administrators. Permit trusted management hosts during the quiet period with an ACL:
+
+            ```
+            ip access-list LOGIN-QUIET-MODE
+              permit tcp <management-subnet> any eq 22
+            exit
+            system login quiet-mode access-class LOGIN-QUIET-MODE
+            ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/security/cisco-nexus-9000-nx-os-security-configuration-guide-105x/m-configuring-user-accounts-and-rbac.html
         title: Cisco NX-OS Login Configuration Guide
@@ -1155,11 +1194,14 @@ queries:
           desc: |
             **Using the CLI**
 
-            Apply ACLs to SNMP communities:
+            Create an ACL that permits only authorized management stations, then bind it to each SNMP community. The ACL must exist before it is referenced. Include every monitoring system in the ACL; any station not permitted loses SNMP access to the device as soon as the ACL is applied.
 
             ```
             configure terminal
-            snmp-server community <community> use-ipv4acl <acl-name>
+            ip access-list SNMP-MGMT
+              permit ip <nms-ip>/32 any
+            exit
+            snmp-server community <community> use-ipv4acl SNMP-MGMT
             ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/system-management/cisco-nexus-9000-nx-os-system-management-configuration-guide-105x/m-configuring-snmp.html
@@ -1317,13 +1359,13 @@ queries:
         To verify that VTY lines have an exec timeout configured:
 
         1. Open an authenticated session to the device CLI.
-        2. Display the running configuration for the VTY line:
+        2. Display the effective VTY line configuration, including default values:
 
            ```
-           show running-config | section "line vty"
+           show running-config all | section "line vty"
            ```
 
-        The device passes when the VTY line reports a non-zero `exec-timeout`. A VTY line with `exec-timeout 0` or no exec timeout is a failing result.
+        The device passes when the VTY line reports a non-zero `exec-timeout`. The NX-OS default of 30 minutes passes. A VTY line with `exec-timeout 0` is a failing result because a value of 0 disables the timeout.
       remediation:
         - id: cli
           desc: |
@@ -1376,13 +1418,13 @@ queries:
         To verify that the console line has an exec timeout configured:
 
         1. Open an authenticated session to the device CLI.
-        2. Display the running configuration for the console line:
+        2. Display the effective console line configuration, including default values:
 
            ```
-           show running-config | section "line console"
+           show running-config all | section "line console"
            ```
 
-        The device passes when the console line reports a non-zero `exec-timeout`. A console line with `exec-timeout 0` or no exec timeout is a failing result.
+        The device passes when the console line reports a non-zero `exec-timeout`. The NX-OS default of 30 minutes passes. A console line with `exec-timeout 0` is a failing result because a value of 0 disables the timeout.
       remediation:
         - id: cli
           desc: |
@@ -1447,13 +1489,18 @@ queries:
           desc: |
             **Using the CLI**
 
-            Apply ACLs to VTY lines:
+            Create the ACL before applying it to the VTY lines and make sure it permits the management hosts you connect from. Applying an inbound access class that does not match your management stations immediately cuts off remote SSH access, including the session you are working in. Keep a console session available until you have verified remote access still works.
 
             ```
             configure terminal
+            ip access-list VTY-MGMT
+              permit tcp <management-subnet> any eq 22
+            exit
             line vty
-            access-class <acl-name> in
+              access-class VTY-MGMT in
             ```
+
+            From a permitted management station, open a new SSH session to confirm access before closing your existing one.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/security/cisco-nexus-9000-nx-os-security-configuration-guide-105x/m-configuring-user-accounts-and-rbac.html
         title: Cisco NX-OS Line Configuration Guide
@@ -1795,13 +1842,21 @@ queries:
           desc: |
             **Using the CLI**
 
+            Coordinate this change with the operator of the remote peer. Setting a password on an established neighbor tears the BGP session down until the same password is configured on both sides, which interrupts routing through that peer.
+
             Configure BGP neighbor authentication:
 
             ```
             configure terminal
             router bgp <as-number>
-            neighbor <neighbor-ip>
-            password 7 <encrypted-password>
+              neighbor <neighbor-ip>
+                password <shared-secret>
+            ```
+
+            Enter the password in plain text; NX-OS stores it in encrypted form in the configuration. Verify the session returns to the established state:
+
+            ```
+            show bgp sessions
             ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/unicast-routing/cisco-nexus-9000-nx-os-unicast-routing-configuration-guide-105x/m-configuring-bgp.html
@@ -1920,19 +1975,33 @@ queries:
           desc: |
             **Using the CLI**
 
-            Configure OSPF interface authentication:
+            Enabling authentication on a live OSPF interface drops the adjacency until the neighboring router is configured with the same key. Schedule this change together with the neighbor or during a maintenance window.
+
+            Configure OSPF interface authentication with message digest keys:
 
             ```
             configure terminal
             interface <interface>
-            ip ospf authentication message-digest
-            ip ospf message-digest-key 1 md5 <key>
+              ip ospf authentication message-digest
+              ip ospf message-digest-key 1 md5 <key>
             ```
 
-            Or use a key chain:
+            Or create a key chain and reference it on the interface:
 
             ```
-            ip ospf authentication key-chain <keychain-name>
+            configure terminal
+            key chain <keychain-name>
+              key 1
+                key-string <key>
+            exit
+            interface <interface>
+              ip ospf authentication key-chain <keychain-name>
+            ```
+
+            Verify the adjacency reforms:
+
+            ```
+            show ip ospf neighbors
             ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/unicast-routing/cisco-nexus-9000-nx-os-unicast-routing-configuration-guide-105x/m-configuring-ospfv2.html
