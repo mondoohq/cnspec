@@ -270,7 +270,7 @@ For `aws`, `oci`, `gcp`, and `digitalocean`, the database is built **in-memory**
 - **oci**: walks the Click command tree from the `oci_cli` Python package
 - **gcp**: reads the Google Cloud SDK's static completion tree
 - **digitalocean**: walks the `doctl --help` Cobra tree breadth-first (parallelized; ~1s for the full ~475-command tree)
-- **cloudflare**: downloads Cloudflare's published OpenAPI spec from [`cloudflare/api-schemas`](https://github.com/cloudflare/api-schemas) at a pinned commit (no Cloudflare CLI required — the validator scans `curl` calls against `api.cloudflare.com/client/v4` and verifies each path + HTTP method against the spec). Bump `CLOUDFLARE_OPENAPI_SHA` in `validate_remediation_commands.py` when refreshing the spec.
+- **cloudflare**: downloads Cloudflare's published OpenAPI spec from [`cloudflare/api-schemas`](https://github.com/cloudflare/api-schemas) at a pinned commit (no Cloudflare CLI required — the validator scans `curl` calls against `api.cloudflare.com/client/v4` and verifies each path + HTTP method, plus the `--data` JSON payload against the operation's `requestBody` schema: field names, types, enums, and required properties; for `/zones/{zone_id}/settings/<setting>` calls it resolves the per-setting value schema from the setting id in the URL, and flags unknown setting ids). Angle-bracket placeholders like `"<account-name>"` act as wildcards. Known spec-vs-docs divergences are listed in `CLOUDFLARE_BODY_EXEMPTIONS`. Bump `CLOUDFLARE_OPENAPI_SHA` in `validate_remediation_commands.py` when refreshing the spec.
 
 If a required CLI is missing, the validator prints actionable install hints and exits non-zero.
 
