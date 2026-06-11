@@ -530,7 +530,9 @@ queries:
                   when: not aide_db.stat.exists
 
                 - name: Copy the new AIDE database into place
-                  ansible.builtin.command: mv /var/lib/aide/aide.db.new.gz /var/lib/aide/aide.db.gz
+                  ansible.builtin.command:
+                    cmd: mv /var/lib/aide/aide.db.new.gz /var/lib/aide/aide.db.gz
+                    creates: /var/lib/aide/aide.db.gz
                   when: not aide_db.stat.exists
 
                 - name: Create systemd service unit for AIDE check
@@ -6362,10 +6364,20 @@ queries:
                   register: auditd_logsize_changed
 
                 - name: Restart auditd service to apply changes if not immutable
-                  ansible.builtin.command: service auditd restart
+                  ansible.builtin.service:
+                    name: auditd
+                    state: restarted
                   when:
                     - immutable_check.rc != 0
                     - auditd_logsize_changed.changed
+                    - ansible_facts['os_family'] != 'RedHat'
+
+                - name: Restart auditd on RHEL-based systems where systemd refuses manual restarts
+                  ansible.builtin.command: /usr/libexec/initscripts/legacy-actions/auditd/restart
+                  when:
+                    - immutable_check.rc != 0
+                    - auditd_logsize_changed.changed
+                    - ansible_facts['os_family'] == 'RedHat'
 
                 - name: Warn if reboot is required due to immutable audit config
                   ansible.builtin.debug:
@@ -6495,10 +6507,20 @@ queries:
                   register: auditd_logfile_action_changed
 
                 - name: Restart auditd service to apply changes if not immutable
-                  ansible.builtin.command: service auditd restart
+                  ansible.builtin.service:
+                    name: auditd
+                    state: restarted
                   when:
                     - immutable_check.rc != 0
                     - auditd_logfile_action_changed.changed
+                    - ansible_facts['os_family'] != 'RedHat'
+
+                - name: Restart auditd on RHEL-based systems where systemd refuses manual restarts
+                  ansible.builtin.command: /usr/libexec/initscripts/legacy-actions/auditd/restart
+                  when:
+                    - immutable_check.rc != 0
+                    - auditd_logfile_action_changed.changed
+                    - ansible_facts['os_family'] == 'RedHat'
 
                 - name: Warn if reboot is required due to immutable audit config
                   ansible.builtin.debug:
@@ -6655,10 +6677,20 @@ queries:
                   changed_when: false
 
                 - name: Restart auditd service to apply changes if not immutable and config changed
-                  ansible.builtin.command: service auditd restart
+                  ansible.builtin.service:
+                    name: auditd
+                    state: restarted
                   when:
                     - immutable_check.rc != 0
                     - auditd_params_changed.changed
+                    - ansible_facts['os_family'] != 'RedHat'
+
+                - name: Restart auditd on RHEL-based systems where systemd refuses manual restarts
+                  ansible.builtin.command: /usr/libexec/initscripts/legacy-actions/auditd/restart
+                  when:
+                    - immutable_check.rc != 0
+                    - auditd_params_changed.changed
+                    - ansible_facts['os_family'] == 'RedHat'
 
                 - name: Warn if reboot is required due to immutable audit config
                   ansible.builtin.debug:
@@ -14089,10 +14121,12 @@ queries:
 
             SHADOW_GID=$(getent group shadow | cut -d: -f3)
             echo "Changing primary group for users whose primary group is shadow"
-            for user in $(awk -F: -v gid="$SHADOW_GID" '$4 == gid {print $1}' /etc/passwd); do
-              # Replace users with the desired primary group before running this loop
-              usermod -g users "$user"
-            done
+            while IFS=: read -r user _ _ gid _; do
+              if [ "$gid" = "$SHADOW_GID" ]; then
+                # Replace users with the desired primary group before running this loop
+                usermod -g users "$user"
+              fi
+            done < /etc/passwd
             ```
         - id: ansible
           desc: |
