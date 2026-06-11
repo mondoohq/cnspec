@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-oci-security
     name: Mondoo Oracle Cloud Infrastructure (OCI) Security
-    version: 4.1.1
+    version: 4.1.2
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -1630,13 +1630,14 @@ queries:
             oci iam user list --compartment-id TENANCY_OCID --all --query "data[?\"lifecycle-state\"=='ACTIVE'].{Name:name, LastLogin:\"last-successful-login-time\"}" --output table
             ```
 
-            Review the output for users whose last login exceeds 90 days. Disable stale accounts:
+            The OCI CLI does not support disabling a user directly. For each user whose last login exceeds 90 days, remove the credentials that grant access:
 
             ```bash
-            oci iam user update --user-id USER_OCID --defined-tags '{"Operations": {"Status": "PendingReview"}}'
+            oci iam user api-key delete --user-id USER_OCID --fingerprint KEY_FINGERPRINT
+            oci iam auth-token delete --user-id USER_OCID --auth-token-id TOKEN_OCID
             ```
 
-            NOTE: The OCI CLI does not support disabling users directly. Disable or delete stale users through the OCI Console or by removing all credentials (API keys, auth tokens, passwords) via the CLI.
+            Disable or delete the account itself through the OCI Console following your offboarding policy.
         # No Terraform remediation: last-login recency is runtime telemetry; the `oci_identity_user` Terraform resource has no field for `last-successful-login-time` and there is no HCL change that marks an account stale or active.
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Identity/Tasks/managingusers.htm
@@ -2907,7 +2908,7 @@ queries:
       )
   # No Terraform variants: auth-token expiry/created timestamps are runtime-only — `oci_identity_auth_token` exposes neither `expires` nor `time_created` as configurable arguments.
   - uid: mondoo-oci-security-iam-auth-tokens-short-lived
-    title: Ensure IAM auth tokens have an expiry no more than 90 days after creation
+    title: Ensure IAM auth tokens are rotated within 90 days of creation
     impact: 70
     filters: asset.platform == "oci-identity-user"
     tags:
@@ -2926,34 +2927,34 @@ queries:
       compliance/vda-isa-5: vda-isa-5-4-1-3
     mql: |
       oci.identity.user.authTokens.where(state == "ACTIVE").all(
-        expires != null && created != null && expires - created <= 90 * time.day
+        created > time.now - 90 * time.day
       )
     docs:
       desc: |
-        This check ensures that every active OCI IAM auth token is configured with an expiry date no more than 90 days after its creation date. Auth tokens authenticate to OCI APIs and services such as Container Registry and Autonomous Database, and a token with no expiry or a distant expiry behaves as a long-lived static credential that is impossible to rotate in practice.
+        This check ensures that every active OCI IAM auth token was created within the last 90 days. Auth tokens authenticate to OCI APIs and services such as Container Registry and Autonomous Database, and they never expire on their own, so a token that is not rotated behaves as a long-lived static credential.
 
         **Why this matters**
 
-        - **Extended exposure window:** A token without an expiry persists indefinitely until an administrator manually revokes it, meaning a token leaked into a source repository, CI log, or third-party service remains valid for years.
-        - **Offboarding risk:** When employees leave an organization, their tokens stay active unless explicitly deleted; a bounded 90-day lifetime limits the maximum residual access period.
+        - **Extended exposure window:** Auth tokens persist indefinitely until an administrator deletes them, meaning a token leaked into a source repository, CI log, or third-party service remains valid for years.
+        - **Offboarding risk:** When employees leave an organization, their tokens stay active unless explicitly deleted; a 90-day rotation cadence limits the maximum residual access period.
         - **Blast radius over time:** The longer a token exists, the more places a copy of it may reside, such as in code archives, container image layers, or incident logs, multiplying the effective blast radius of a single leaked credential.
-        - **Forced rotation cadence:** A capped lifetime enforces a predictable rotation schedule that keeps credentials fresh and encourages automation of token management.
+        - **Forced rotation cadence:** A 90-day rotation window enforces a predictable schedule that keeps credentials fresh and encourages automation of token management.
 
         **Risk mitigation**
 
-        - **Cap token lifetime at issuance:** When generating new auth tokens, always set an expiry date within 90 days of today.
+        - **Rotate tokens on a fixed schedule:** Record each token's creation date and replace the token before it is 90 days old.
         - **Revoke and reissue long-lived tokens:** Identify active tokens that exceed the 90-day window, delete them, and distribute replacements to the owning systems.
-        - **Automate token rotation:** Build rotation workflows that generate a replacement token, distribute it, verify it works, and then delete the old token before the expiry deadline.
+        - **Automate token rotation:** Build rotation workflows that generate a replacement token, distribute it, verify it works, and then delete the old token before the rotation deadline.
       audit: |
         ### Audit via Console
 
         1. Sign in to the OCI Console and navigate to **Identity & Security > Users**.
         2. Select the user you want to inspect.
         3. Under **Resources**, select **Auth Tokens**.
-        4. For each active token, check the **Expiration Date** column.
-        5. Verify that each token has an expiry date and that the expiry is no more than 90 days after the **Created** date.
+        4. For each active token, check the **Created** column.
+        5. Verify that each token was created within the last 90 days.
 
-        A passing user has all active auth tokens with expiry dates set within 90 days of their creation date. A failing user has one or more active tokens with no expiry or an expiry more than 90 days after the token was created.
+        A passing user has all active auth tokens created within the last 90 days. A failing user has one or more active tokens older than 90 days.
 
         ### Audit via CLI
 
@@ -2963,18 +2964,18 @@ queries:
         oci iam auth-token list --user-id <user-ocid>
         ```
 
-        2. For each token in `ACTIVE` state, compare `time-expires` with `time-created`. The difference must be 90 days or fewer.
+        2. For each token in `ACTIVE` state, check `time-created`. The token must be no more than 90 days old.
 
-        A passing user returns only tokens where `time-expires` is set and the difference between `time-expires` and `time-created` is 90 days (7776000 seconds) or less. A failing user returns one or more tokens where `time-expires` is `null` or where the expiry exceeds 90 days from creation.
+        A passing user returns only active tokens whose `time-created` is within the last 90 days. A failing user returns one or more active tokens created more than 90 days ago.
       remediation:
         - id: console
           desc: |
-            Revoke and reissue long-lived tokens with an explicit expiry:
+            Revoke and reissue long-lived tokens:
 
             1. Open **Identity & Security** → **Users** → select the user → **Auth Tokens**.
-            2. **Delete** any token whose expiry is unset or more than 90 days out.
-            3. Generate a replacement with an **expiration date** within 90 days of today.
-            4. Distribute the new token to the owning system and verify it works before deletion.
+            2. Delete any token that was created more than 90 days ago or is no longer needed.
+            3. Generate a replacement token and record its creation date.
+            4. Distribute the new token to the owning system and verify it works, then schedule the next rotation within 90 days.
         - id: cli
           desc: |
             Delete long-lived auth tokens via the OCI CLI:
@@ -2983,10 +2984,10 @@ queries:
             oci iam auth-token delete --user-id <user-ocid> --auth-token-id <token-ocid>
             ```
 
-            Issue a replacement with an expiry set by the admin-defined tenancy policy:
+            Issue a replacement token and record its creation date so it can be rotated again within 90 days:
 
             ```bash
-            oci iam auth-token create --user-id <user-ocid> --description "Rotated <date>"
+            oci iam auth-token create --user-id <user-ocid> --description "Rotated on $(date +%Y-%m-%d)"
             ```
         # No Terraform remediation: auth token expiry and creation timestamps are runtime-only fields; the `oci_identity_auth_token` Terraform resource exposes neither `expires` nor `time_created` as configurable arguments.
     refs:
@@ -3670,13 +3671,14 @@ queries:
             4. Replace the usage with Vault-backed configuration or a resource principal, neither of which leaves values visible in `GetInstance`.
         - id: cli
           desc: |
-            Rotate any exposed credential and remove it from metadata via instance update:
+            Rotate any exposed credential first. Then retrieve the current metadata, remove only the credential keys, and write the remaining map back. The update must include the `ssh_authorized_keys` and `user_data` values exactly as launched, because OCI rejects any update that adds, changes, or removes those keys:
 
             ```bash
-            oci compute instance update --instance-id <instance-ocid> --metadata '{}'
-            ```
+            oci compute instance get --instance-id <instance-ocid> --query 'data.metadata'
 
-            (Passing an empty metadata map clears user-supplied keys; existing OCI-managed keys like `ssh_authorized_keys` are preserved.)
+            oci compute instance update --instance-id <instance-ocid> \
+              --metadata file://metadata-without-credentials.json
+            ```
         - id: terraform
           desc: |
             Keep the `metadata` map free of credential-named keys and credential-shaped values; fetch secrets at runtime via the resource principal and OCI Vault instead of pinning them into the instance definition:
@@ -4263,25 +4265,24 @@ queries:
       remediation:
         - id: console
           desc: |
-            Private endpoints must be configured at cluster creation, so an existing public-endpoint cluster must be recreated:
+            Disable the public IP on the cluster's Kubernetes API endpoint:
 
-            1. Create a replacement OKE cluster with the same node pools but **Private API endpoint** selected under **Kubernetes API endpoint**.
-            2. Migrate workloads to the new cluster.
-            3. Delete the public-endpoint cluster once traffic has cut over.
-            4. Access the private endpoint via OCI Bastion, a VPN gateway, or a service gateway from peered VCNs.
+            1. Open **Developer Services** → **Kubernetes Clusters (OKE)** → select the cluster.
+            2. Select **Edit** on the cluster details page.
+            3. Under **Kubernetes API endpoint**, switch off **Assign a public IP address to the API endpoint**.
+            4. Select **Update** and wait for the cluster to become active again.
+            5. Access the private endpoint via OCI Bastion, a VPN gateway, or VCN peering. Clusters that are not VCN-native must be recreated with a VCN-native private endpoint.
         - id: cli
           desc: |
-            Create a replacement OKE cluster with a private API endpoint:
+            Disable the public IP on the cluster's API endpoint in place:
 
             ```bash
-            oci ce cluster create \
-              --compartment-id <compartment-ocid> \
-              --name <cluster> \
-              --vcn-id <vcn-ocid> \
-              --kubernetes-version <version> \
-              --endpoint-subnet-id <private-subnet-ocid> \
-              --endpoint-public-ip-enabled false
+            oci ce cluster update-endpoint-config \
+              --cluster-id <cluster-ocid> \
+              --is-public-ip-enabled false
             ```
+
+            This applies to VCN-native clusters. Clusters without a VCN-native endpoint must be recreated with a private endpoint subnet.
         - id: terraform
           desc: |
             Declare an `endpoint_config` block on every `oci_containerengine_cluster` and set `is_public_ip_enabled = false`, with the endpoint anchored in a private subnet:
@@ -4638,25 +4639,16 @@ queries:
 
             1. Identify or create subnets with **Prohibit public IP on VNIC** set to **Yes** in the cluster's VCN.
             2. Open **Developer Services** → **Kubernetes Clusters (OKE)** → select the cluster → **Node Pools** → select the node pool.
-            3. Node pool subnets cannot be changed in place, so create a replacement node pool that targets the private subnets.
-            4. Cordon and drain the existing node pool, then delete it once workloads have rescheduled.
+            3. Select **Edit** and update the **Placement configuration** to target subnets with **Prohibit public IP on VNIC** set to **Yes**.
+            4. Save the change. Existing worker nodes are terminated and replaced in the new subnets, so cordon and drain workloads before saving.
         - id: cli
           desc: |
-            Provision a replacement node pool in a private subnet, then drain and delete the public one:
+            Update the node pool placement configuration to a private subnet. Existing worker nodes are terminated and recreated in the new subnet, so cordon and drain workloads first:
 
             ```bash
-            # Create a replacement node pool in a private subnet
-            oci ce node-pool create \
-              --cluster-id <cluster-ocid> \
-              --compartment-id <compartment-ocid> \
-              --name <node-pool-name>-private \
-              --kubernetes-version <version> \
-              --node-shape <shape> \
-              --placement-configs '[{"availabilityDomain":"<AD>","subnetId":"<private-subnet-ocid>"}]' \
-              --size <count>
-
-            # Drain and delete the original (public-subnet) node pool
-            oci ce node-pool delete --node-pool-id <old-node-pool-ocid> --force
+            oci ce node-pool update \
+              --node-pool-id <node-pool-ocid> \
+              --placement-configs '[{"availabilityDomain":"<AD>","subnetId":"<private-subnet-ocid>"}]'
             ```
         - id: terraform
           desc: |
@@ -5074,29 +5066,24 @@ queries:
       remediation:
         - id: console
           desc: |
-            Re-provision the ADB with private endpoint access:
+            Switch the database to private endpoint access:
 
             1. Open **Oracle Database** → **Autonomous Database** → select the database.
-            2. Network access mode cannot be changed in place from public to private endpoint — provision a replacement ADB and migrate.
-            3. When provisioning the replacement, choose **Private endpoint access only** and select a subnet with **Prohibit public IP on VNIC** enabled.
-            4. Migrate using Data Pump or a refreshable clone, then terminate the original.
+            2. From **More actions**, select **Update network access**.
+            3. Choose **Private endpoint access only** and select a subnet with **Prohibit public IP on VNIC** enabled, plus any NSGs.
+            4. Select **Update**. The database is briefly unavailable while the endpoint switches, and clients must download new connection strings and wallets.
         - id: cli
           desc: |
-            Provision a replacement ADB in private-endpoint mode:
+            Switch the existing database to a private endpoint:
 
             ```bash
-            oci db autonomous-database create \
-              --compartment-id <compartment-ocid> \
-              --db-name appdb \
-              --display-name "appdb" \
-              --admin-password "$ADB_ADMIN_PASSWORD" \
-              --cpu-core-count 1 \
-              --data-storage-size-in-tbs 1 \
+            oci db autonomous-database update \
+              --autonomous-database-id <adb-ocid> \
               --subnet-id <private-subnet-ocid> \
               --nsg-ids '["<nsg-ocid>"]'
             ```
 
-            Migrate data with Data Pump or a refreshable clone, then delete the original public-mode ADB.
+            The database is briefly unavailable while the endpoint switches, and clients must download new connection strings and wallets.
         - id: terraform
           desc: |
             Provision Autonomous Databases with `subnet_id` set so the ADB is created in private-endpoint mode and surfaces no public management URLs:
@@ -5224,7 +5211,7 @@ queries:
             4. Terminate the DB system in the public subnet once traffic has cut over.
         - id: cli
           desc: |
-            Create a private subnet that DB systems can use:
+            Create a private subnet, launch a replacement DB system in it, then migrate and terminate the original:
 
             ```bash
             oci network subnet create \
@@ -5233,6 +5220,21 @@ queries:
               --cidr-block 10.0.10.0/24 \
               --prohibit-public-ip-on-vnic true \
               --display-name private-db-subnet
+
+            oci db system launch \
+              --compartment-id <compartment-ocid> \
+              --subnet-id <private-subnet-ocid> \
+              --availability-domain <AD> \
+              --shape <shape> \
+              --hostname <hostname> \
+              --cpu-core-count <count> \
+              --ssh-authorized-keys-file <public-key-file>
+            ```
+
+            Migrate data to the replacement via Data Pump, Data Guard, or RMAN, then terminate the DB system in the public subnet:
+
+            ```bash
+            oci db system terminate --db-system-id <old-db-system-ocid>
             ```
         # No Terraform remediation: this check requires cross-resource lookup from `oci_database_db_system` to its referenced `oci_core_subnet` to read `prohibit_public_ip_on_vnic`; cross-resource graph traversal is fragile in HCL/plan/state and unsupported by the patterns used elsewhere in this file.
     refs:
@@ -5414,12 +5416,12 @@ queries:
             4. Provide a rotation target (e.g., database auth function) that Vault invokes on the rotation schedule.
         - id: cli
           desc: |
-            Enable scheduled rotation on an existing Vault secret:
+            Enable scheduled rotation on an existing Vault secret by setting its rotation configuration:
 
             ```bash
             oci vault secret update \
               --secret-id <secret-ocid> \
-              --secret-rules '[{"ruleType":"SECRET_EXPIRY_RULE","secretVersionExpiryInterval":"P90D","isSecretContentRetrievalBlockedOnExpiry":true}]'
+              --rotation-config '{"isScheduledRotationEnabled":true,"rotationInterval":"P90D","targetSystemDetails":{"targetSystemType":"FUNCTION","functionId":"<function-ocid>"}}'
             ```
         - id: terraform
           desc: |
@@ -5660,13 +5662,14 @@ queries:
                ```
         - id: cli
           desc: |
-            Clear a sensitive key from a Functions application config:
+            Remove credential entries from a Functions application config. The `--config` parameter replaces the entire map, so retrieve the current config first and resubmit every key you intend to keep, omitting only the credential entries:
 
             ```bash
-            oci fn application update --application-id <app-ocid> --config '{}'
-            ```
+            oci fn application get --application-id <app-ocid> --query 'data.config'
 
-            Repopulate with only non-sensitive keys via subsequent updates.
+            oci fn application update --application-id <app-ocid> \
+              --config '{"DB_PASSWORD_SECRET_OCID":"ocid1.vaultsecret.oc1..example","LOG_LEVEL":"info"}'
+            ```
         - id: terraform
           desc: |
             Keep the Functions application `config` map free of credential-named keys and credential-shaped values; reference Vault secret OCIDs and let function code resolve them at runtime via the resource principal:
@@ -5849,6 +5852,7 @@ queries:
               --availability-domain <ad> \
               --shape CI.Standard.E4.Flex \
               --shape-config '{"ocpus":1,"memoryInGBs":2}' \
+              --vnics '[{"subnetId":"<subnet-ocid>"}]' \
               --containers '[{"displayName":"app","imageUrl":"<region>.ocir.io/<namespace>/<repo>:<tag>"}]'
             ```
         - id: terraform
@@ -5873,10 +5877,12 @@ queries:
 
               containers {
                 display_name = "app"
-                image_url    = "${var.region_key}.ocir.io/${var.tenancy_namespace}/app:${var.app_version}"
+                image_url    = "iad.ocir.io/examplenamespace/app:1.0.0"
               }
             }
             ```
+
+            Write the region key, namespace, and tag as literal values for your tenancy. Interpolated variables cannot be evaluated during static analysis and fail the check.
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/container-instances/overview.htm
         title: OCI Container Instances Overview
@@ -5999,7 +6005,7 @@ queries:
             1. Open **Storage** → **Buckets** → select the bucket → **Retention Rules**.
             2. For each unlocked rule, select **Edit** → set **Rule Locked Time** to a date no sooner than 14 days in the future (OCI enforces a 14-day grace period before the lock takes effect).
             3. Save. After the grace period passes, the rule becomes non-deletable for the duration of its lifetime.
-            4. Plan retention carefully — after lock, the rule can be shortened but not removed.
+            4. Plan retention carefully. After the lock takes effect, the duration can only be increased, and the rule can only be removed by deleting the bucket.
         - id: cli
           desc: |
             Lock an existing retention rule:
@@ -6009,8 +6015,10 @@ queries:
               --namespace-name <namespace> \
               --bucket-name <bucket> \
               --retention-rule-id <rule-ocid> \
-              --time-rule-locked 2026-05-01T00:00:00Z
+              --time-rule-locked 2030-01-01T00:00:00Z
             ```
+
+            Set the lock time to a real RFC 3339 timestamp at least 14 days in the future.
         - id: terraform
           desc: |
             Set `time_rule_locked` on every `retention_rules` block to an RFC 3339 timestamp at least 14 days in the future so the rule transitions to a non-deletable lock. Use a fixed value committed in your repository. Do not use `timeadd(timestamp(), ...)` directly on this attribute, because `timestamp()` evaluates on every plan and would produce a perpetual diff. Update the value when you intentionally roll the lock, and add `lifecycle.ignore_changes = [retention_rules]` after the first apply if you want Terraform to stop tracking drift on the locked rule:
@@ -6457,8 +6465,8 @@ queries:
 
             1. Open **Identity & Security** → **Policies** → select the flagged policy.
             2. For each `Endorse` or `Admit` statement, confirm the remote tenancy OCID is still an active partner and the grant matches the current business need.
-            3. Narrow the resource scope (prefer specific resource types over `all-resources`) and action set (prefer `read` or `inspect` over `manage`).
-            4. Remove any statement whose business justification can no longer be demonstrated.
+            3. Remove any statement whose business justification can no longer be demonstrated.
+            4. Where a cross-tenancy grant is still required, narrow the resource and action scope, document the justification, and record an exception for this check, because any policy containing an Endorse or Admit statement is reported as failing.
         - id: cli
           desc: |
             List policies and find cross-tenancy statements:
@@ -6469,18 +6477,19 @@ queries:
               --output json
             ```
 
-            Replace with narrower statements as needed:
+            Replace cross-tenancy statements with in-tenancy grants:
 
             ```bash
             oci iam policy update --policy-id <policy-ocid> \
-              --statements '["Admit group PartnerReaders of tenancy <partner-tenancy-ocid> to read objects in compartment SharedData where target.bucket.name = '"'"'shared'"'"'"]'
+              --statements '["Allow group AppReaders to read objects in compartment AppData"]'
             ```
+
+            The check reports a failure while any Endorse or Admit statement remains; retained cross-tenancy grants require a documented exception.
         - id: terraform
           desc: |
-            Avoid `Endorse` and `Admit` statements unless a specific cross-tenancy partnership requires them; when they are required, scope to a narrow resource and action set:
+            Prefer in-tenancy grants over cross-tenancy statements:
 
             ```hcl
-            # Prefer in-tenancy grants:
             resource "oci_identity_policy" "in_tenancy" {
               compartment_id = var.tenancy_ocid
               name           = "AppReaders"
@@ -6490,18 +6499,9 @@ queries:
                 "Allow group AppReaders to read objects in compartment AppData",
               ]
             }
-
-            # If a cross-tenancy grant is required, narrow the resource and action:
-            resource "oci_identity_policy" "partner_admit" {
-              compartment_id = var.tenancy_ocid
-              name           = "PartnerAdmit"
-              description    = "Read-only access for vetted partner tenancy"
-
-              statements = [
-                "Admit group PartnerReaders of tenancy ${var.partner_tenancy_ocid} to read objects in compartment SharedData where target.bucket.name='shared'",
-              ]
-            }
             ```
+
+            Any `oci_identity_policy` containing Endorse or Admit statements fails this check and must carry a documented exception.
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Identity/Concepts/policiesaccessingtenancies.htm
         title: OCI - Accessing Resources Across Tenancies
@@ -6618,7 +6618,7 @@ queries:
             4. If an application outside OCI needs DB access, provision an OCI Service Gateway, VPN, or FastConnect path rather than opening the port.
         - id: cli
           desc: |
-            Replace the ingress rules on the security list with a scoped set:
+            Replace the ingress rules on the security list with a scoped set. The `--ingress-security-rules` parameter replaces the entire ingress rule set. Export the current rules first with `oci network security-list get` and include every rule you intend to keep in the JSON array:
 
             ```bash
             oci network security-list update --security-list-id <security-list-ocid> \
@@ -6801,7 +6801,7 @@ queries:
             3. If file-sharing is actually required, provision a VPN or FastConnect path and scope the security-list rule to the resulting private CIDR block.
         - id: cli
           desc: |
-            Replace the security list's ingress rules with a set that omits these ports:
+            Replace the security list's ingress rules with a set that omits these ports. The `--ingress-security-rules` parameter replaces the entire ingress rule set. Export the current rules first with `oci network security-list get` and include every rule you intend to keep in the JSON array:
 
             ```bash
             oci network security-list update --security-list-id <security-list-ocid> \
@@ -6982,7 +6982,7 @@ queries:
             3. For monitoring use cases, limit the source to your NOC / monitoring subnet rather than `0.0.0.0/0`.
         - id: cli
           desc: |
-            Update the security list with a scoped ICMP rule:
+            Replace the security list's ingress rules with a set whose ICMP rule is scoped. The `--ingress-security-rules` parameter overwrites the full rule set, so include every rule you intend to keep alongside the scoped ICMP rule:
 
             ```bash
             oci network security-list update --security-list-id <security-list-ocid> \
@@ -7131,7 +7131,7 @@ queries:
             4. Consider disabling IPv6 entirely on the VCN if no workload on it uses IPv6.
         - id: cli
           desc: |
-            Replace the ingress rules with a scoped IPv6 set:
+            Replace the ingress rules with a scoped IPv6 set. The `--ingress-security-rules` parameter replaces the entire ingress rule set, including the IPv4 rules. Export the current rules first with `oci network security-list get` and include every rule you intend to keep in the JSON array:
 
             ```bash
             oci network security-list update --security-list-id <security-list-ocid> \
@@ -7331,20 +7331,27 @@ queries:
             4. Subsequent automatic and on-demand backups inherit the new key. Existing backups remain encrypted with the previous key — re-create critical long-term backups after the rotation.
         - id: cli
           desc: |
-            Rotate an Autonomous Database to a new version of its customer-managed KMS key. The vault association must already exist; if the database was created with Oracle-managed keys, recreate it from a backup with `--kms-key-id` and `--vault-id` set at create time.
+            Switch the parent database to a customer-managed KMS key so subsequent backups inherit it.
+
+            For an Autonomous Database:
 
             ```bash
-            oci db autonomous-database rotate-key \
+            oci db autonomous-database configure-key \
               --autonomous-database-id <adb-ocid> \
-              --key-version-id <key-version-ocid>
+              --kms-key-id <key-ocid> \
+              --vault-id <vault-ocid>
             ```
 
-            Rotate the encryption key for a database within a DB system:
+            For a database within a DB system:
 
             ```bash
-            oci db database rotate-vault-key \
-              --database-id <database-ocid>
+            oci db database migrate-vault-key \
+              --database-id <database-ocid> \
+              --kms-key-id <key-ocid> \
+              --vault-id <vault-ocid>
             ```
+
+            Existing backups remain encrypted with the previous key. Re-create critical long-term backups after the migration.
         - id: terraform
           desc: |
             Set `kms_key_id` (and `vault_id` for autonomous databases) on every database resource so its backups inherit customer-managed encryption:
@@ -8988,6 +8995,7 @@ queries:
 
             ```bash
             oci redis oci-cache-backup oci-cache-backup create \
+              --compartment-id <compartment-ocid> \
               --source-cluster-id <old-cluster-ocid> \
               --display-name pre-migration
 
@@ -9474,6 +9482,7 @@ queries:
             ```bash
             oci cloud-guard security-zone update \
               --security-zone-id <zone-ocid> \
+              --display-name <zone-display-name> \
               --is-inheritance-after-delete-enabled true
             ```
         - id: terraform
@@ -9592,6 +9601,7 @@ queries:
             3. Require **uppercase**, **lowercase**, **numeric**, and **special** characters.
             4. Disable **Allow username in password**.
             5. Select **Save changes**.
+            6. In tenancies where the legacy **Identity & Security > Authentication Settings** page is available, apply the same values there, because this check evaluates the tenancy authentication policy. If the page is not available, use the CLI command in the CLI remediation to update the authentication policy directly.
         - id: cli
           desc: |
             To strengthen the password policy using the OCI CLI, update the authentication policy:
@@ -9959,20 +9969,25 @@ queries:
             5. Select **Save Changes**.
         - id: cli
           desc: |
-            To enable automatic key rotation using the OCI CLI, update the key:
+            To enable automatic key rotation using the OCI CLI, update the key with both the rotation flag and the rotation schedule details:
 
             ```bash
-            oci kms management key update --key-id <key-ocid> --is-auto-rotation-enabled true --endpoint <vault-management-endpoint>
+            oci kms management key update --key-id <key-ocid> \
+              --is-auto-rotation-enabled true \
+              --auto-key-rotation-details '{"rotationIntervalInDays": 90}' \
+              --endpoint <vault-management-endpoint>
             ```
         - id: terraform
           desc: |
-            To enable automatic key rotation in Terraform, configure the `auto_key_rotation_details` block on the key:
+            To enable automatic key rotation in Terraform, set `is_auto_rotation_enabled = true` and configure the `auto_key_rotation_details` block on the key:
 
             ```hcl
             resource "oci_kms_key" "example" {
               compartment_id      = var.compartment_ocid
               display_name        = "example-key"
               management_endpoint = oci_kms_vault.example.management_endpoint
+
+              is_auto_rotation_enabled = true
 
               key_shape {
                 algorithm = "AES"
@@ -9998,21 +10013,24 @@ queries:
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_kms_key')
     mql: |
       terraform.resources('oci_kms_key').all(
-        blocks.where(type == 'auto_key_rotation_details') != empty
+        blocks.where(type == 'auto_key_rotation_details') != empty &&
+        arguments['is_auto_rotation_enabled'] == true
       )
   - uid: mondoo-oci-security-kms-keys-auto-rotation-enabled-terraform-plan
     filters: |
       asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_kms_key')
     mql: |
       terraform.plan.resourceChanges.where(type == 'oci_kms_key').all(
-        change.after['auto_key_rotation_details'] != empty
+        change.after['auto_key_rotation_details'] != empty &&
+        change.after['is_auto_rotation_enabled'] == true
       )
   - uid: mondoo-oci-security-kms-keys-auto-rotation-enabled-terraform-state
     filters: |
       asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_kms_key')
     mql: |
       terraform.state.resources.where(type == 'oci_kms_key').all(
-        values['auto_key_rotation_details'] != empty
+        values['auto_key_rotation_details'] != empty &&
+        values['is_auto_rotation_enabled'] == true
       )
   - uid: mondoo-oci-security-block-volume-customer-managed-encryption
     title: Ensure block volumes use customer-managed encryption keys
@@ -10460,8 +10478,8 @@ queries:
             To use a customer-managed encryption key for a DB system database using the OCI Console:
 
             1. Navigate to **Oracle Database > Bare Metal, VM, and Exadata** and open the DB system.
-            2. Open the database and locate the **Encryption** section.
-            3. Select **Rotate Encryption Key** or, at creation time, choose **Encrypt using customer-managed keys**.
+            2. Open the database and select **Administer Encryption Key**.
+            3. Select **Change Key Management Type**, then choose **Encrypt using customer-managed keys**.
             4. Select the vault and master encryption key.
             5. Confirm the change.
         - id: cli
