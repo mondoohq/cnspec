@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-windows-security
     name: Mondoo Microsoft Windows Security
-    version: 2.4.0
+    version: 2.4.1
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -588,7 +588,7 @@ queries:
             }
 
             # Now set the value
-            New-ItemProperty -Path $RegistryPath -Name $Name -Value $Value -PropertyType DWORD -Force
+            New-ItemProperty -Path $RegistryPath -Name $Name -Value $Value -PropertyType String -Force
             ```
         - id: ansible
           desc: |
@@ -602,8 +602,8 @@ queries:
                   ansible.windows.win_regedit:
                     path: HKLM:\Software\Policies\Microsoft\Windows\EventLog\Application
                     name: Retention
-                    data: 0
-                    type: dword
+                    data: "0"
+                    type: string
             ```
   - uid: mondoo-windows-security-application-specify-the-maximum-log-file-size-kb-is-set-to-enabled-32768
     title: "Ensure Application log file size is set to 32,768 KB or greater"
@@ -2807,7 +2807,7 @@ queries:
           }
     mql: |
       auditpol.where(subcategoryguid == "0CCE9234-69AE-11D9-BED3-505054503030").list != []
-      auditpol.where(subcategoryguid == "0CCE9234-69AE-11D9-BED3-505054503030").all(inclusionsetting == props.mondooWindowsSecurityAuditpolFailure15)
+      auditpol.where(subcategoryguid == "0CCE9234-69AE-11D9-BED3-505054503030").all(inclusionsetting == props.mondooWindowsSecurityAuditpolFailure15 || inclusionsetting == props.mondooWindowsSecurityAuditpolSuccessFailure16)
     docs:
       refs:
         - url: https://learn.microsoft.com/en-us/windows/security/threat-protection/auditing/basic-security-audit-policies
@@ -5411,7 +5411,7 @@ queries:
             ```powershell
             $Temp = [System.Environment]::GetEnvironmentVariable('TEMP','Machine')
             secedit /export /cfg $Temp\secpol-export.cfg
-            (gc $Temp\secpol-export.cfg) -replace("MaximumPasswordAge = \d+", "MaximumPasswordAge = 365") | Out-File $Temp\secpol-import.cfg
+            (gc $Temp\secpol-export.cfg) -replace("MaximumPasswordAge = -?\d+", "MaximumPasswordAge = 365") | Out-File $Temp\secpol-import.cfg
             secedit /import /db $Temp\secpol-db.sdb /cfg $Temp\secpol-import.cfg
             secedit /configure /db $Temp\secpol-db.sdb
             gpupdate /force
@@ -6299,7 +6299,7 @@ queries:
           desc: |
             **Using Group Policy**
 
-            To establish the recommended configuration via GP, set the following UI path to `<blank>`, which represents None:
+            On member servers, set the following UI path to `<blank>`, which represents None. On domain controllers, configure the list to contain only `LSARPC`, `NETLOGON`, and `SAMR`:
 
             ```text
             Computer Configuration\\Policies\\Windows Settings\\Security Settings\\Local Policies\\Security Options\\Network access: Named Pipes that can be accessed anonymously
@@ -6308,6 +6308,10 @@ queries:
             **Impact:**
 
             This configuration will disable null session access over named pipes, and applications that rely on this feature or on unauthenticated access to named pipes will no longer function.
+
+            **Warning:**
+
+            Do not clear this list on a domain controller. Domain controllers require the `LSARPC`, `NETLOGON`, and `SAMR` pipes to support legacy authentication operations.
         - id: powershell
           desc: |
             **Using PowerShell**
@@ -6317,7 +6321,12 @@ queries:
             ```powershell
             $RegistryPath = 'HKLM:\SYSTEM\CurrentControlSet\Services\LanManServer\Parameters'
             $Name         = 'NullSessionPipes'
-            $Value        = ''
+
+            # Member servers: allow no anonymous pipes
+            $Value = @()
+
+            # Domain controllers: allow only the required pipes
+            # $Value = @('LSARPC','NETLOGON','SAMR')
 
             # Create the key if it does not exist
             If (-NOT (Test-Path $RegistryPath)) {
@@ -6332,15 +6341,27 @@ queries:
             **Using Ansible**
 
             ```yaml
-            - name: Clear Named Pipes that can be accessed anonymously
+            - name: Configure Named Pipes that can be accessed anonymously
               hosts: windows
               tasks:
-                - name: Set NullSessionPipes to empty
+                - name: Clear NullSessionPipes on member servers
                   ansible.windows.win_regedit:
                     path: HKLM:\SYSTEM\CurrentControlSet\Services\LanManServer\Parameters
                     name: NullSessionPipes
                     data: []
                     type: multistring
+                  when: not is_domain_controller
+
+                - name: Allow only required pipes on domain controllers
+                  ansible.windows.win_regedit:
+                    path: HKLM:\SYSTEM\CurrentControlSet\Services\LanManServer\Parameters
+                    name: NullSessionPipes
+                    data:
+                      - LSARPC
+                      - NETLOGON
+                      - SAMR
+                    type: multistring
+                  when: is_domain_controller
             ```
   - uid: mondoo-windows-security-network-access-restrict-anonymous-access-to-named-pipes-and-shares
     title: "Ensure anonymous access to Named Pipes and Shares is restricted"
@@ -8299,7 +8320,7 @@ queries:
             }
 
             # Now set the value
-            New-ItemProperty -Path $RegistryPath -Name $Name -Value $Value -PropertyType DWORD -Force
+            New-ItemProperty -Path $RegistryPath -Name $Name -Value $Value -PropertyType String -Force
             ```
         - id: ansible
           desc: |
@@ -8313,8 +8334,8 @@ queries:
                   ansible.windows.win_regedit:
                     path: HKLM:\Software\Policies\Microsoft\Windows\EventLog\Security
                     name: Retention
-                    data: 0
-                    type: dword
+                    data: "0"
+                    type: string
             ```
   - uid: mondoo-windows-security-security-specify-the-maximum-log-file-size-kb-is-set-to-enabled-196608
     title: "Ensure Security log file size is set to 196,608 KB or greater"
@@ -8844,7 +8865,7 @@ queries:
             }
 
             # Now set the value
-            New-ItemProperty -Path $RegistryPath -Name $Name -Value $Value -PropertyType DWORD -Force
+            New-ItemProperty -Path $RegistryPath -Name $Name -Value $Value -PropertyType String -Force
             ```
         - id: ansible
           desc: |
@@ -8858,8 +8879,8 @@ queries:
                   ansible.windows.win_regedit:
                     path: HKLM:\Software\Policies\Microsoft\Windows\EventLog\Setup
                     name: Retention
-                    data: 0
-                    type: dword
+                    data: "0"
+                    type: string
             ```
   - uid: mondoo-windows-security-setup-specify-the-maximum-log-file-size-kb-is-set-to-enabled-32768
     title: "Ensure Setup log file size is set to 32,768 KB or greater"
@@ -9174,7 +9195,7 @@ queries:
             }
 
             # Now set the value
-            New-ItemProperty -Path $RegistryPath -Name $Name -Value $Value -PropertyType DWORD -Force
+            New-ItemProperty -Path $RegistryPath -Name $Name -Value $Value -PropertyType String -Force
             ```
         - id: ansible
           desc: |
@@ -9188,8 +9209,8 @@ queries:
                   ansible.windows.win_regedit:
                     path: HKLM:\Software\Policies\Microsoft\Windows\EventLog\System
                     name: Retention
-                    data: 0
-                    type: dword
+                    data: "0"
+                    type: string
             ```
   - uid: mondoo-windows-security-system-specify-the-maximum-log-file-size-kb-is-set-to-enabled-32768
     title: "Ensure System log file size is set to 32,768 KB or greater"
