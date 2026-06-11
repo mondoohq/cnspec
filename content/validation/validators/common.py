@@ -28,12 +28,21 @@ def policy_relpath(policy_file: Path) -> str:
 # Shared helpers
 # ---------------------------------------------------------------------------
 
-def extract_bash_blocks(content: str) -> list[tuple[str, int, str]]:
+def extract_bash_blocks(
+    content: str, include_audit: bool = False
+) -> list[tuple[str, int, str]]:
     """Extract bash code blocks from cli remediation sections.
 
     Returns a list of (block_text, line_number, uid) tuples where line_number
     is the 1-based line of the first code line in the block, and uid is the
     check UID that contains this remediation block.
+
+    With include_audit=True, bash blocks in `audit: |` sections are
+    extracted as well. The REST API validators use this — for API-first
+    products the verification path is also a curl call, and a wrong audit
+    command misleads users just like a wrong remediation. The CLI
+    validators don't enable it yet: that adds ~1,900 so-far-unvalidated
+    blocks repo-wide, which need to be cleaned up cloud by cloud first.
     """
     # Pre-compute a list of (line_number, uid) from all `- uid:` lines so we
     # can look up the enclosing check for any position in the file.
@@ -72,6 +81,26 @@ def extract_bash_blocks(content: str) -> list[tuple[str, int, str]]:
                 code_offset = desc_start + fence.start(1)
                 line_number = content[:code_offset].count("\n") + 1
                 blocks.append((block, line_number, uid))
+
+    if include_audit:
+        # An `audit: |` scalar runs until the next line at the same
+        # indentation (its sibling key, usually `remediation:`).
+        audit_pattern = re.compile(
+            r"\n(\s+)audit: \|\s*\n(.*?)(?=\n\1\S|\Z)", re.DOTALL
+        )
+        for match in audit_pattern.finditer(content):
+            audit_block = match.group(2)
+            audit_start = match.start(2)
+            audit_line = content[:match.start()].count("\n") + 2
+            uid = find_uid_for_line(audit_line)
+
+            for fence in re.finditer(r"```bash\s*\n(.*?)```", audit_block, re.DOTALL):
+                block = fence.group(1).strip()
+                if block:
+                    code_offset = audit_start + fence.start(1)
+                    line_number = content[:code_offset].count("\n") + 1
+                    blocks.append((block, line_number, uid))
+
     return blocks
 
 
@@ -98,11 +127,22 @@ def split_commands(block: str, prefix: str, block_start_line: int) -> list[tuple
         stripped = full_line.strip()
         if stripped and not stripped.startswith("#"):
             # Use shlex to handle quoted values containing | or ;
-            # then re-join and split on unquoted pipes/semicolons
-            try:
-                tokens = shlex.split(stripped)
-            except ValueError:
-                tokens = stripped.split()
+            # then re-join and split on unquoted pipes/semicolons.
+            # A command can also continue across lines inside an open
+            # quote — multi-line JSON --data payloads — which shlex
+            # reports as an unclosed-quote ValueError; keep appending
+            # lines until the quote closes (or the block ends, in which
+            # case fall back to a naive split of what we have).
+            while True:
+                try:
+                    tokens = shlex.split(stripped)
+                    break
+                except ValueError:
+                    if i + cont_lines + 1 >= len(lines):
+                        tokens = stripped.split()
+                        break
+                    cont_lines += 1
+                    stripped = stripped + "\n" + lines[i + cont_lines]
             rejoined = " ".join(tokens)
             # Split on pipe/semicolon boundaries
             for segment in re.split(r"\s*[|;]\s*", rejoined):

@@ -1,79 +1,100 @@
 # Copyright Mondoo, Inc. 2024, 2026
 # SPDX-License-Identifier: BUSL-1.1
 # REST API curl validation against vendor OpenAPI specs.
+#
+# Several SaaS products our policies cover have no usable CLI for the
+# settings the checks target — Cloudflare's `flarectl` is read-only,
+# Tailscale/Slack/Atlassian/Grafana admin surfaces are API-first — so the
+# realistic remediation path is `curl` against the vendor's REST API. For
+# every vendor that publishes an OpenAPI (or Swagger 2.0) spec, this
+# module scans the policy's bash blocks for curl calls against that
+# vendor's API host and verifies each call's URL path + HTTP method —
+# and, where the call sends a JSON payload, the request body — against
+# the spec.
+#
+# Body validation covers the subset of JSON Schema these specs actually
+# use for the endpoints in our policies: $ref, allOf, oneOf/anyOf, type,
+# enum, properties/required, and array items. Angle-bracket placeholders
+# (`"<account-name>"`) and environment-variable placeholders (`"$ORG_ID"`)
+# act as wildcards that satisfy any schema.
+#
+# Spec sources come in two flavors, mirroring how the CLI validators
+# source command data:
+#
+#   - "url" + "pin": downloaded at validation time from a URL pinned to
+#     an immutable ref (a git commit SHA baked into a raw GitHub URL) and
+#     cached under ~/.cache. Bumping the pin is a deliberate maintainer
+#     action, like bumping doctl or the AWS CLI version.
+#   - "file": checked into cmd_data/ because the vendor serves the spec
+#     from a live, unversioned endpoint that can change (or break)
+#     without notice. Regenerate with dump_api_specs.py; never hand-edit.
 
 import json
 import re
 import sys
 import urllib.error
 import urllib.request
-
 from pathlib import Path
+from urllib.parse import urlparse
 
-from .common import FAILURES, SCRIPT_DIR, extract_bash_blocks, policy_relpath, split_commands
-
-
-# ---------------------------------------------------------------------------
-# Cloudflare API validation
-# ---------------------------------------------------------------------------
-#
-# Cloudflare's `flarectl` is read-only for zone settings and `wrangler` does
-# not cover the surface area this policy targets (SSL/TLS, WAF, security
-# level, 2FA enforcement, etc.). The realistic CLI path is `curl` against
-# the Cloudflare REST API, so the validator scans for those calls and
-# verifies each path + HTTP method — and, where the call sends a JSON
-# payload, the request body — against the official OpenAPI spec published
-# at https://github.com/cloudflare/api-schemas.
-#
-# Body validation covers the subset of JSON Schema the Cloudflare spec
-# actually uses for the endpoints in this policy: $ref, allOf, oneOf/anyOf,
-# type, enum, properties/required, and array items. Angle-bracket
-# placeholders (`"<account-name>"`) act as wildcards that satisfy any
-# schema. For the generic `/zones/{zone_id}/settings/{setting_id}` PATCH —
-# whose spec body is a oneOf over every zone setting — the validator
-# resolves the per-setting component (`zones_<setting_id>_value`) from the
-# literal setting id in the URL, so wrong enum values and misspelled
-# payload fields fail instead of slipping through the union.
-#
-# The spec is large (~9 MB) and the upstream repo doesn't ship releases —
-# `main` is the only branch and it's auto-updated. We pin a known-good
-# commit SHA so validation is deterministic; bumping CLOUDFLARE_OPENAPI_SHA
-# is a deliberate maintainer action, like bumping doctl or the AWS CLI
-# version. The fetched spec is cached on disk under ~/.cache so we don't
-# re-download on every run.
-
-CLOUDFLARE_POLICY_FILE = SCRIPT_DIR / ".." / "mondoo-cloudflare-security.mql.yaml"
-
-CLOUDFLARE_OPENAPI_SHA = "a0e7cfa11b0d08b05a0b373f47ea722bd48ca7c4"
-CLOUDFLARE_OPENAPI_URL = (
-    f"https://raw.githubusercontent.com/cloudflare/api-schemas/"
-    f"{CLOUDFLARE_OPENAPI_SHA}/openapi.json"
+from .common import (
+    CMD_DATA_DIR,
+    FAILURES,
+    SCRIPT_DIR,
+    extract_bash_blocks,
+    policy_relpath,
+    split_commands,
 )
-CLOUDFLARE_API_PREFIX = "https://api.cloudflare.com/client/v4"
+
+# ---------------------------------------------------------------------------
+# Spec loading
+# ---------------------------------------------------------------------------
+
+# None of these upstream repos ship releases — `main`/`master` is the only
+# branch and it moves — so each raw URL pins a known-good commit SHA.
+CLOUDFLARE_OPENAPI_SHA = "a0e7cfa11b0d08b05a0b373f47ea722bd48ca7c4"
+SLACK_OPENAPI_SHA = "bc08db49625630e3585bf2f1322128ea04f2a7f3"
+GRAFANA_OPENAPI_SHA = "8c7e01c44c7afd14f7143589840bbd820a4195f9"
 
 
-def _cloudflare_cache_path() -> Path:
+def _spec_cache_path(name: str, pin: str) -> Path:
     cache_dir = Path.home() / ".cache" / "cnspec-validation"
     cache_dir.mkdir(parents=True, exist_ok=True)
-    return cache_dir / f"cloudflare-openapi-{CLOUDFLARE_OPENAPI_SHA[:12]}.json"
+    return cache_dir / f"{name}-openapi-{pin}.json"
 
 
-def _load_cloudflare_openapi() -> dict:
-    """Return the parsed Cloudflare OpenAPI spec, downloading and caching
-    on first use."""
-    cache = _cloudflare_cache_path()
+def _load_spec(source: dict) -> dict:
+    """Return a parsed spec document for one provider spec source.
+
+    source is either {"name", "file"} for a checked-in cmd_data spec or
+    {"name", "url", "pin"} for a pinned remote spec (downloaded once and
+    cached under ~/.cache).
+    """
+    if "file" in source:
+        path = CMD_DATA_DIR / source["file"]
+        if not path.exists():
+            print(
+                f"Error: checked-in API spec not found: {path}\n"
+                "Regenerate it with:\n"
+                f"  python3 {SCRIPT_DIR / 'dump_api_specs.py'}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        return json.loads(path.read_text())
+
+    cache = _spec_cache_path(source["name"], source["pin"][:12])
     if not cache.exists():
         print(
-            f"Fetching Cloudflare OpenAPI spec (sha {CLOUDFLARE_OPENAPI_SHA[:12]})...",
+            f"Fetching {source['name']} OpenAPI spec (pin {source['pin'][:12]})...",
             file=sys.stderr,
         )
         try:
-            with urllib.request.urlopen(CLOUDFLARE_OPENAPI_URL, timeout=60) as r:
+            with urllib.request.urlopen(source["url"], timeout=60) as r:
                 cache.write_bytes(r.read())
         except (urllib.error.URLError, TimeoutError) as e:
             print(
-                f"Error: failed to download Cloudflare OpenAPI spec from\n"
-                f"  {CLOUDFLARE_OPENAPI_URL}\n"
+                f"Error: failed to download {source['name']} OpenAPI spec from\n"
+                f"  {source['url']}\n"
                 f"  ({e})\n"
                 "\n"
                 "If you are behind a proxy or air-gapped, manually download the\n"
@@ -85,7 +106,7 @@ def _load_cloudflare_openapi() -> dict:
         return json.loads(cache.read_text())
     except json.JSONDecodeError as e:
         print(
-            f"Error: cached Cloudflare OpenAPI spec is corrupted\n"
+            f"Error: cached {source['name']} OpenAPI spec is corrupted\n"
             f"  ({cache}: {e})\n"
             "\n"
             "Delete the cache file and re-run to re-download:\n"
@@ -95,14 +116,24 @@ def _load_cloudflare_openapi() -> dict:
         sys.exit(1)
 
 
-def _index_cloudflare_paths(spec: dict) -> dict[str, set[str]]:
-    """Index OpenAPI paths so we can match a concrete URL path to a path
-    template and verify the HTTP method.
+def _spec_mount(spec: dict) -> str:
+    """Base path the spec's path templates are mounted under.
 
-    Returns {path_template: {http_method, ...}} where http_method is the
-    upper-cased verb. Path templates are stored verbatim from the spec
-    (e.g. "/zones/{zone_id}/settings/{setting_id}").
+    OpenAPI 3 declares it as the path component of servers[0].url (which
+    may be a relative URL like "/api"); Swagger 2.0 uses basePath. A curl
+    URL's path must start with the mount; the remainder is matched
+    against the spec's path templates.
     """
+    if "basePath" in spec:  # Swagger 2.0
+        return spec["basePath"].rstrip("/")
+    servers = spec.get("servers") or []
+    if servers and servers[0].get("url"):
+        return urlparse(servers[0]["url"]).path.rstrip("/")
+    return ""
+
+
+def _index_spec_paths(spec: dict) -> dict[str, set[str]]:
+    """Index a spec's paths as {path_template: {HTTP_METHOD, ...}}."""
     out: dict[str, set[str]] = {}
     for path, ops in spec.get("paths", {}).items():
         methods = {m.upper() for m in ops if m in (
@@ -113,19 +144,38 @@ def _index_cloudflare_paths(spec: dict) -> dict[str, set[str]]:
     return out
 
 
-# Placeholder tokens used in remediation examples (e.g. <zone-id>,
-# <account-id>). The validator treats these as wildcards that match any
-# OpenAPI path parameter ({zone_id}, {account_id}, ...).
-_CF_PLACEHOLDER_RE = re.compile(r"^<[a-z][a-z0-9-]*>$")
+# ---------------------------------------------------------------------------
+# Path matching
+# ---------------------------------------------------------------------------
+
+# A URL path segment that stands in for a concrete value in remediation
+# examples: <zone-id>, $ORG_ID, ${ORG_ID}, or a literal {param} copied
+# from vendor docs. These match any OpenAPI {param} template segment.
+_PLACEHOLDER_SEGMENT_RE = re.compile(
+    r"^(<[A-Za-z0-9_.-]+>|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|\{[A-Za-z0-9_.-]+\})$"
+)
 
 
-def _match_cloudflare_path(curl_path: str, openapi_paths: dict[str, set[str]]) -> str | None:
-    """Find an OpenAPI path template matching a concrete curl URL path.
+def _segment_matches(tmpl_seg: str, curl_seg: str) -> bool:
+    if tmpl_seg == curl_seg:
+        return True
+    if tmpl_seg.startswith("{") and tmpl_seg.endswith("}"):
+        # Templated segment matches any concrete value or placeholder in
+        # the curl URL.
+        return curl_seg != "" and "/" not in curl_seg
+    return False
 
-    A segment matches if:
-      - both segments are literally equal, or
-      - the OpenAPI segment is a `{param}` template and the curl segment
-        is either a placeholder like `<zone-id>` or a concrete literal.
+
+def _template_specificity(tmpl: str) -> int:
+    """Number of literal (non-{param}) segments in a path template."""
+    return sum(
+        1 for p in tmpl.split("/")
+        if p and not (p.startswith("{") and p.endswith("}"))
+    )
+
+
+def _match_spec_path(curl_path: str, paths_index: dict[str, set[str]]) -> str | None:
+    """Find a path template matching a concrete curl URL path.
 
     When multiple templates match, prefers the one with the most literal
     (non-`{param}`) segments — so e.g. `/zones/{id}/dns_records/import`
@@ -133,102 +183,73 @@ def _match_cloudflare_path(curl_path: str, openapi_paths: dict[str, set[str]]) -
     `/zones/<zone-id>/dns_records/import`. Returns the matched path
     template, or None.
     """
-    curl_parts = curl_path.split("/")
-
-    # Exact-literal match first.
-    if curl_path in openapi_paths:
+    if curl_path in paths_index:
         return curl_path
 
+    curl_parts = curl_path.split("/")
     best: str | None = None
     best_specificity = -1
-    for tmpl in openapi_paths:
+    for tmpl in paths_index:
         tmpl_parts = tmpl.split("/")
         if len(tmpl_parts) != len(curl_parts):
             continue
         if not all(_segment_matches(t, c) for t, c in zip(tmpl_parts, curl_parts)):
             continue
-        specificity = sum(
-            1 for p in tmpl_parts if p and not (p.startswith("{") and p.endswith("}"))
-        )
+        specificity = _template_specificity(tmpl)
         if specificity > best_specificity:
             best = tmpl
             best_specificity = specificity
     return best
 
 
-def _segment_matches(tmpl_seg: str, curl_seg: str) -> bool:
-    if tmpl_seg == curl_seg:
-        return True
-    if tmpl_seg.startswith("{") and tmpl_seg.endswith("}"):
-        # Templated segment matches any concrete value or angle-bracket
-        # placeholder in the curl URL.
-        return curl_seg != "" and "/" not in curl_seg
-    return False
+# ---------------------------------------------------------------------------
+# curl parsing
+# ---------------------------------------------------------------------------
 
+# -X / --request may appear before or after the URL.
+_CURL_METHOD_RE = re.compile(r"(?:^|\s)(?:-X|--request)(?:\s+|=)([A-Z]+)")
 
-# Match a curl invocation. The URL may be quoted or unquoted; -X / --request
-# may appear before or after it.
-_CF_CURL_URL_RE = re.compile(
-    r'https?://api\.cloudflare\.com/client/v4(/[^\s\'"]+)'
-)
-_CF_CURL_METHOD_RE = re.compile(
-    r'(?:^|\s)(?:-X|--request)(?:\s+|=)([A-Z]+)'
-)
 # Any curl flag that supplies a request body. split_commands() has already
 # shlex-tokenized and re-joined the command, so the payload appears after
 # the flag with its shell quoting stripped but its JSON quoting intact.
-_CF_CURL_DATA_RE = re.compile(
+_CURL_DATA_RE = re.compile(
     r"(?:^|\s)(?:--data(?:-raw|-binary|-ascii)?|--json|-d)(?:\s+|=)"
 )
 
-# A whole-string placeholder value like "<account-name>". During body
-# validation these act as wildcards that satisfy any schema.
-_CF_PLACEHOLDER_VALUE_RE = re.compile(r"^<[A-Za-z0-9_.-]+>$")
+# A whole-string placeholder value like "<account-name>" or "$ORG_ID".
+# During body validation these act as wildcards that satisfy any schema.
+_PLACEHOLDER_VALUE_RE = re.compile(
+    r"^(<[A-Za-z0-9_.-]+>|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?)$"
+)
 
 # Quote a bare (unquoted) placeholder so the payload parses as JSON, e.g.
 # {"max_age": <seconds>} -> {"max_age": "<seconds>"}. Placeholders already
 # inside JSON strings are excluded by the quote look-around.
-_CF_BARE_PLACEHOLDER_RE = re.compile(r'(?<![\w"<])<([A-Za-z0-9_.-]+)>(?![\w">])')
-
-# Known divergences between Cloudflare's OpenAPI spec and the documented
-# behavior of the API. Maps (METHOD, path_template) to the validation step
-# to skip:
-#   "body"     — skip request-body validation entirely.
-#   "required" — validate the body but skip required-property checks.
-CLOUDFLARE_BODY_EXEMPTIONS = {
-    # The token-roll endpoint declares its body as `type: object`, but the
-    # Cloudflare API docs (and the live API) require the literal JSON
-    # string "" as the request body.
-    ("PUT", "/user/tokens/{token_id}/value"): "body",
-    # Account update reuses the shared account schema, which marks `id` and
-    # `type` required because responses always carry them; the documented
-    # update payload sends only `name` (plus optional `settings`).
-    ("PUT", "/accounts/{account_id}"): "required",
-}
+_BARE_PLACEHOLDER_RE = re.compile(r'(?<![\w"<])<([A-Za-z0-9_.-]+)>(?![\w">])')
 
 
-def parse_cloudflare_curl(cmd: str) -> tuple[str, str, str | None] | None:
-    """Extract (HTTP_METHOD, URL_PATH, BODY) from a curl Cloudflare API call.
+def parse_api_curl(cmd: str, host: str) -> tuple[str, str, str | None] | None:
+    """Extract (HTTP_METHOD, URL_PATH, BODY) from a curl call against host.
 
-    Returns None if the command is not a Cloudflare API curl. The method
-    defaults to GET when -X / --request is absent (matches curl's default
-    when no body is supplied; for POST/PATCH/PUT we always require an
-    explicit -X in remediation snippets). BODY is the raw --data payload,
-    or None when the command sends no body.
+    Returns None if the command is not a curl call against the given API
+    host. The method defaults to GET when -X / --request is absent
+    (matches curl's default when no body is supplied; for POST/PATCH/PUT
+    we always require an explicit -X in remediation snippets). BODY is
+    the raw --data payload, or None when the command sends no body.
     """
-    if "api.cloudflare.com/client/v4" not in cmd:
+    if host not in cmd:
         return None
     if not cmd.lstrip().startswith("curl"):
         return None
 
-    url_match = _CF_CURL_URL_RE.search(cmd)
+    url_match = re.search(re.escape(host) + r"(/[^\s'\"]+)", cmd)
     if not url_match:
         return None
     path = url_match.group(1)
     # Drop a fragment or query string if present.
     path = path.split("?", 1)[0].split("#", 1)[0]
 
-    method_match = _CF_CURL_METHOD_RE.search(cmd)
+    method_match = _CURL_METHOD_RE.search(cmd)
     method = method_match.group(1).upper() if method_match else "GET"
 
     return method, path, _extract_curl_body(cmd)
@@ -239,10 +260,10 @@ def _extract_curl_body(cmd: str) -> str | None:
 
     The command string has been shlex-tokenized and space-joined, so the
     payload's shell quotes are gone. A JSON object/array payload may
-    therefore contain spaces; scan to its balanced closing brace instead of
-    splitting on whitespace.
+    therefore contain spaces; scan to its balanced closing brace instead
+    of splitting on whitespace.
     """
-    m = _CF_CURL_DATA_RE.search(cmd)
+    m = _CURL_DATA_RE.search(cmd)
     if not m:
         return None
     rest = cmd[m.end():]
@@ -271,7 +292,11 @@ def _extract_curl_body(cmd: str) -> str | None:
     return rest.split(None, 1)[0]
 
 
-def _cf_resolve_ref(node, spec: dict):
+# ---------------------------------------------------------------------------
+# JSON-Schema-subset body validation
+# ---------------------------------------------------------------------------
+
+def _resolve_ref(node, spec: dict):
     """Follow a chain of $ref JSON pointers within the spec document."""
     seen: set[str] = set()
     while isinstance(node, dict) and "$ref" in node:
@@ -287,9 +312,9 @@ def _cf_resolve_ref(node, spec: dict):
     return node
 
 
-def _cf_type_ok(value, t) -> bool:
+def _type_ok(value, t) -> bool:
     if isinstance(t, list):
-        return any(_cf_type_ok(value, x) for x in t)
+        return any(_type_ok(value, x) for x in t)
     if t == "object":
         return isinstance(value, dict)
     if t == "array":
@@ -307,7 +332,7 @@ def _cf_type_ok(value, t) -> bool:
     return True
 
 
-def _cf_json_type_name(value) -> str:
+def _json_type_name(value) -> str:
     if value is None:
         return "null"
     if isinstance(value, bool):
@@ -323,7 +348,7 @@ def _cf_json_type_name(value) -> str:
     return "object"
 
 
-def _cf_validate_body(
+def _validate_body(
     value,
     schema,
     spec: dict,
@@ -333,16 +358,16 @@ def _cf_validate_body(
 ) -> None:
     """Validate a parsed JSON value against a (subset of) JSON Schema.
 
-    Covers what the Cloudflare spec uses for the request bodies in this
-    policy: $ref, allOf, oneOf/anyOf, type, enum, object properties with
-    required/additionalProperties, and array items. Whole-string
+    Covers what the vendor specs use for the request bodies in our
+    policies: $ref, allOf, oneOf/anyOf, type, enum, object properties
+    with required/additionalProperties, and array items. Whole-string
     placeholders pass any schema. Errors are appended to `errors` with
     `loc` as the JSON-path-ish location prefix.
     """
-    schema = _cf_resolve_ref(schema, spec)
+    schema = _resolve_ref(schema, spec)
     if not isinstance(schema, dict) or not schema:
         return
-    if isinstance(value, str) and _CF_PLACEHOLDER_VALUE_RE.match(value):
+    if isinstance(value, str) and _PLACEHOLDER_VALUE_RE.match(value):
         return
 
     if "allOf" in schema:
@@ -350,7 +375,7 @@ def _cf_validate_body(
         # declared in one member isn't reported unknown by another.
         merged = {k: v for k, v in schema.items() if k != "allOf"}
         for member in schema["allOf"]:
-            member = _cf_resolve_ref(member, spec)
+            member = _resolve_ref(member, spec)
             if not isinstance(member, dict):
                 continue
             for key in ("type", "enum", "items", "additionalProperties"):
@@ -361,24 +386,22 @@ def _cf_validate_body(
             if "required" in member:
                 combined = merged.get("required", []) + member["required"]
                 merged["required"] = list(dict.fromkeys(combined))
-        _cf_validate_body(value, merged, spec, loc, errors, check_required)
+        _validate_body(value, merged, spec, loc, errors, check_required)
         return
 
     variants = schema.get("oneOf") or schema.get("anyOf")
     if variants:
         for variant in variants:
             variant_errors: list[str] = []
-            _cf_validate_body(
-                value, variant, spec, loc, variant_errors, check_required
-            )
+            _validate_body(value, variant, spec, loc, variant_errors, check_required)
             if not variant_errors:
                 return
         errors.append(f"{loc}: does not match any schema variant accepted here")
         return
 
     t = schema.get("type")
-    if t and not _cf_type_ok(value, t):
-        errors.append(f"{loc}: expected {t}, got {_cf_json_type_name(value)}")
+    if t and not _type_ok(value, t):
+        errors.append(f"{loc}: expected {t}, got {_json_type_name(value)}")
         return
 
     if "enum" in schema and value not in schema["enum"]:
@@ -391,11 +414,12 @@ def _cf_validate_body(
         if isinstance(props, dict):
             additional = schema.get("additionalProperties")
             # JSON Schema treats an absent additionalProperties as "allow
-            # anything"; we deliberately flag unknown keys anyway. The spec
-            # documents every accepted field for these endpoints, and a
-            # typo'd field name the API would silently ignore is exactly
-            # the bug this validator exists to catch. Only an explicit
-            # additionalProperties (true or a schema) relaxes the check.
+            # anything"; we deliberately flag unknown keys anyway. The
+            # specs document every accepted field for these endpoints,
+            # and a typo'd field name the API would silently ignore is
+            # exactly the bug this validator exists to catch. Only an
+            # explicit additionalProperties (true or a schema) relaxes
+            # the check.
             if not (additional is True or isinstance(additional, dict)):
                 for key in value:
                     if key not in props:
@@ -405,7 +429,7 @@ def _cf_validate_body(
                         )
             for key, val in value.items():
                 if key in props:
-                    _cf_validate_body(
+                    _validate_body(
                         val, props[key], spec, f"{loc}.{key}", errors, check_required
                     )
         if check_required:
@@ -416,7 +440,7 @@ def _cf_validate_body(
                 # `required` does not apply to request bodies.
                 req_schema = {}
                 if isinstance(props, dict) and req in props:
-                    req_schema = _cf_resolve_ref(props[req], spec)
+                    req_schema = _resolve_ref(props[req], spec)
                 if isinstance(req_schema, dict) and req_schema.get("readOnly"):
                     continue
                 errors.append(f"{loc}: missing required property '{req}'")
@@ -424,12 +448,10 @@ def _cf_validate_body(
         items = schema.get("items")
         if items:
             for i, val in enumerate(value):
-                _cf_validate_body(
-                    val, items, spec, f"{loc}[{i}]", errors, check_required
-                )
+                _validate_body(val, items, spec, f"{loc}[{i}]", errors, check_required)
 
 
-def _cf_parse_body_json(body: str):
+def _parse_body_json(body: str):
     """Parse a curl payload as JSON. Returns (value, error_message)."""
     try:
         return json.loads(body), None
@@ -437,27 +459,40 @@ def _cf_parse_body_json(body: str):
         pass
     # Retry with bare placeholders quoted, e.g. {"max_age": <seconds>}.
     try:
-        return json.loads(_CF_BARE_PLACEHOLDER_RE.sub(r'"<\1>"', body)), None
+        return json.loads(_BARE_PLACEHOLDER_RE.sub(r'"<\1>"', body)), None
     except json.JSONDecodeError as e:
         return None, f"request body is not valid JSON ({e.msg})"
 
 
-def _cf_request_body_schema(spec: dict, tmpl: str, method: str):
+def _request_body_schema(spec: dict, tmpl: str, method: str):
     """Return (schema, required) for an operation's JSON request body.
 
-    schema is None when the spec defines no request body for the operation.
+    schema is None when the spec defines no JSON request body for the
+    operation. Handles both OpenAPI 3 (requestBody) and Swagger 2.0
+    (parameters with in: body); Swagger formData parameters describe
+    form-encoded payloads, which we don't validate.
     """
     op = spec.get("paths", {}).get(tmpl, {}).get(method.lower(), {})
-    request_body = _cf_resolve_ref(op.get("requestBody"), spec)
-    if not isinstance(request_body, dict) or not request_body:
-        return None, False
-    schema = (
-        request_body.get("content", {})
-        .get("application/json", {})
-        .get("schema")
-    )
-    return schema, bool(request_body.get("required"))
+    request_body = _resolve_ref(op.get("requestBody"), spec)
+    if isinstance(request_body, dict) and request_body:
+        schema = (
+            request_body.get("content", {})
+            .get("application/json", {})
+            .get("schema")
+        )
+        return schema, bool(request_body.get("required"))
 
+    for param in op.get("parameters", []):  # Swagger 2.0
+        param = _resolve_ref(param, spec)
+        if isinstance(param, dict) and param.get("in") == "body":
+            return param.get("schema"), bool(param.get("required"))
+
+    return None, False
+
+
+# ---------------------------------------------------------------------------
+# Cloudflare quirks
+# ---------------------------------------------------------------------------
 
 def _cf_setting_request_schema(setting_id: str, components: dict) -> dict | None:
     """Return the narrowed request-body schema for a zone setting id, or
@@ -493,47 +528,189 @@ def _cf_setting_request_schema(setting_id: str, components: dict) -> dict | None
     }
 
 
-def validate_cloudflare_curl(
+def _cloudflare_path_hook(
+    matched: str, path: str, spec: dict
+) -> tuple[dict | None, str | None]:
+    """Cloudflare-specific path handling.
+
+    The `/zones/{zone_id}/settings/{setting_id}` template matches any
+    setting id, and its request schema is a oneOf over every zone
+    setting — so a misspelled setting id would pass path validation and
+    a wrong enum value could match some other setting's schema. When the
+    setting id in the URL is a literal, resolve the per-setting
+    component so both mistakes are caught.
+
+    Returns (narrowed_body_schema, error). A non-None error fails the
+    call; (None, None) means no quirk applies.
+    """
+    if matched != "/zones/{zone_id}/settings/{setting_id}":
+        return None, None
+    last_segment = path.rsplit("/", 1)[-1]
+    if _PLACEHOLDER_SEGMENT_RE.match(last_segment):
+        return None, None
+    components = spec.get("components", {}).get("schemas", {})
+    schema = _cf_setting_request_schema(last_segment, components)
+    if schema is None:
+        return None, f"unknown zone setting '{last_segment}'"
+    return schema, None
+
+
+# ---------------------------------------------------------------------------
+# Provider registry
+# ---------------------------------------------------------------------------
+#
+# Each provider entry:
+#   policies        — policy files (relative to content/) to scan
+#   host            — API host prefix curl calls are matched against
+#   specs           — spec sources (see _load_spec); a provider may span
+#                     multiple specs mounted at different base paths
+#                     (Atlassian's org and user-management APIs)
+#   body_exemptions — known divergences between a vendor's spec and the
+#                     documented behavior of its API. Maps
+#                     (METHOD, path_template) to the validation step to
+#                     skip: "body" skips request-body validation
+#                     entirely; "required" validates the body but skips
+#                     required-property checks.
+#   path_hook       — optional callback for provider-specific path
+#                     template handling (see _cloudflare_path_hook)
+
+API_PROVIDERS = {
+    "cloudflare": {
+        "policies": ["mondoo-cloudflare-security.mql.yaml"],
+        "host": "https://api.cloudflare.com",
+        "specs": [{
+            "name": "cloudflare",
+            "url": (
+                "https://raw.githubusercontent.com/cloudflare/api-schemas/"
+                f"{CLOUDFLARE_OPENAPI_SHA}/openapi.json"
+            ),
+            "pin": CLOUDFLARE_OPENAPI_SHA,
+        }],
+        "body_exemptions": {
+            # The token-roll endpoint declares its body as `type: object`,
+            # but the Cloudflare API docs (and the live API) require the
+            # literal JSON string "" as the request body.
+            ("PUT", "/user/tokens/{token_id}/value"): "body",
+            # Account update reuses the shared account schema, which marks
+            # `id` and `type` required because responses always carry
+            # them; the documented update payload sends only `name` (plus
+            # optional `settings`).
+            ("PUT", "/accounts/{account_id}"): "required",
+        },
+        "path_hook": _cloudflare_path_hook,
+    },
+    "tailscale": {
+        "policies": ["mondoo-tailscale-security.mql.yaml"],
+        "host": "https://api.tailscale.com",
+        # Tailscale serves its spec from a live endpoint
+        # (https://api.tailscale.com/api/v2?openapi) that it documents as
+        # unstable, so the spec is checked in via dump_api_specs.py.
+        "specs": [{"name": "tailscale", "file": "tailscale_openapi.json"}],
+    },
+    "slack": {
+        "policies": ["mondoo-slack-security.mql.yaml"],
+        "host": "https://slack.com",
+        "specs": [{
+            "name": "slack",
+            "url": (
+                "https://raw.githubusercontent.com/slackapi/slack-api-specs/"
+                f"{SLACK_OPENAPI_SHA}/web-api/slack_web_openapi_v2.json"
+            ),
+            "pin": SLACK_OPENAPI_SHA,
+        }],
+    },
+    "atlassian": {
+        "policies": ["mondoo-atlassian-security.mql.yaml"],
+        "host": "https://api.atlassian.com",
+        # Atlassian serves its admin API specs from dac-static.atlassian.com
+        # with no version pinning, so both specs are checked in via
+        # dump_api_specs.py. The org spec mounts at /admin, the
+        # user-management spec at the API root.
+        "specs": [
+            {"name": "atlassian-org", "file": "atlassian_org_openapi.json"},
+            {"name": "atlassian-um", "file": "atlassian_user_management_openapi.json"},
+        ],
+    },
+    "grafana": {
+        # Grafana is self-hosted; the policy's examples use the
+        # documentation placeholder host below.
+        "policies": ["mondoo-grafana-security.mql.yaml"],
+        "host": "https://grafana.example.com",
+        "specs": [{
+            "name": "grafana",
+            "url": (
+                "https://raw.githubusercontent.com/grafana/grafana/"
+                f"{GRAFANA_OPENAPI_SHA}/public/openapi3.json"
+            ),
+            "pin": GRAFANA_OPENAPI_SHA,
+        }],
+    },
+}
+
+
+# ---------------------------------------------------------------------------
+# Validation
+# ---------------------------------------------------------------------------
+
+def validate_api_curl(
     method: str,
     path: str,
     body: str | None,
-    spec: dict,
-    openapi_paths: dict[str, set[str]],
+    provider: dict,
+    loaded_specs: list[tuple[dict, str, dict[str, set[str]]]],
 ) -> tuple[bool, list[str]]:
-    """Validate a parsed Cloudflare curl call against the OpenAPI spec."""
+    """Validate one parsed curl call against a provider's specs.
+
+    loaded_specs is [(spec_doc, mount, paths_index), ...] in registry
+    order; the best (most literal) template match across all specs wins.
+    """
     errors: list[str] = []
 
-    matched = _match_cloudflare_path(path, openapi_paths)
-    if not matched:
-        errors.append(f"unknown Cloudflare API path '{path}'")
+    matched: str | None = None
+    matched_spec: dict | None = None
+    matched_index: dict[str, set[str]] | None = None
+    matched_sub_path = path
+    best_specificity = -1
+    for spec, mount, paths_index in loaded_specs:
+        if mount and not path.startswith(mount + "/"):
+            continue
+        sub_path = path[len(mount):] if mount else path
+        tmpl = _match_spec_path(sub_path, paths_index)
+        if tmpl is None:
+            continue
+        specificity = _template_specificity(tmpl)
+        if specificity > best_specificity:
+            matched = tmpl
+            matched_spec = spec
+            matched_index = paths_index
+            matched_sub_path = sub_path
+            best_specificity = specificity
+
+    if matched is None or matched_spec is None or matched_index is None:
+        errors.append(f"unknown API path '{path}'")
         return False, errors
 
-    if method not in openapi_paths[matched]:
-        allowed = sorted(openapi_paths[matched])
+    if method not in matched_index[matched]:
+        allowed = sorted(matched_index[matched])
         errors.append(
             f"method '{method}' not supported on '{matched}' "
             f"(supported: {', '.join(allowed)})"
         )
         return False, errors
 
-    components = spec.get("components", {}).get("schemas", {})
+    narrowed_schema = None
+    path_hook = provider.get("path_hook")
+    if path_hook is not None:
+        narrowed_schema, hook_error = path_hook(matched, matched_sub_path, matched_spec)
+        if hook_error is not None:
+            errors.append(hook_error)
+            return False, errors
 
-    # The settings path template matches any {setting_id}, so a misspelled
-    # setting id would otherwise pass path validation.
-    setting_schema = None
-    if matched == "/zones/{zone_id}/settings/{setting_id}":
-        last_segment = path.rsplit("/", 1)[-1]
-        if not _CF_PLACEHOLDER_RE.match(last_segment):
-            setting_schema = _cf_setting_request_schema(last_segment, components)
-            if setting_schema is None:
-                errors.append(f"unknown zone setting '{last_segment}'")
-                return False, errors
-
-    exemption = CLOUDFLARE_BODY_EXEMPTIONS.get((method, matched))
+    exemption = provider.get("body_exemptions", {}).get((method, matched))
     if exemption == "body":
         return True, errors
 
-    schema, body_required = _cf_request_body_schema(spec, matched, method)
+    schema, body_required = _request_body_schema(matched_spec, matched, method)
 
     if body is None:
         if schema is not None and body_required:
@@ -549,84 +726,87 @@ def validate_cloudflare_curl(
         return True, errors
 
     if schema is None:
-        errors.append(f"'{method} {matched}' does not accept a request body")
-        return False, errors
+        # The operation takes no JSON body (or, for Swagger 2.0, takes
+        # form-encoded parameters we don't validate).
+        return True, errors
 
-    value, parse_error = _cf_parse_body_json(body)
+    value, parse_error = _parse_body_json(body)
     if parse_error:
         errors.append(parse_error)
         return False, errors
 
-    # For the generic settings endpoint, narrow the oneOf-over-everything
-    # request schema down to the specific setting named in the URL so enum
-    # and field-name mistakes are actually caught.
-    if setting_schema is not None:
-        schema = setting_schema
+    if narrowed_schema is not None:
+        schema = narrowed_schema
 
-    _cf_validate_body(
-        value, schema, spec, "body", errors,
+    _validate_body(
+        value, schema, matched_spec, "body", errors,
         check_required=(exemption != "required"),
     )
     return (not errors), errors
 
 
-def validate_cloudflare() -> tuple[int, int]:
-    """Validate Cloudflare API curl commands. Returns (pass_count, fail_count)."""
-    if not CLOUDFLARE_POLICY_FILE.exists():
-        print(
-            f"Error: Policy file not found: {CLOUDFLARE_POLICY_FILE}",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    content = CLOUDFLARE_POLICY_FILE.read_text()
-    blocks = extract_bash_blocks(content)
-
-    # Skip the OpenAPI download entirely if there are no Cloudflare API
-    # curl calls in the policy.
-    has_cf_curl = any(
-        "api.cloudflare.com/client/v4" in b for b, _, _ in blocks
-    )
-    if not has_cf_curl:
-        return 0, 0
-
-    spec = _load_cloudflare_openapi()
-    openapi_paths = _index_cloudflare_paths(spec)
+def validate_api_provider(key: str) -> tuple[int, int]:
+    """Validate one provider's API curl commands. Returns (pass, fail)."""
+    provider = API_PROVIDERS[key]
+    host = provider["host"]
 
     pass_count = 0
     fail_count = 0
+    loaded_specs: list[tuple[dict, str, dict[str, set[str]]]] | None = None
 
-    relpath = policy_relpath(CLOUDFLARE_POLICY_FILE)
+    for policy_name in provider["policies"]:
+        policy_file = SCRIPT_DIR / ".." / policy_name
+        if not policy_file.exists():
+            print(f"Error: Policy file not found: {policy_file}", file=sys.stderr)
+            sys.exit(1)
 
-    for block_text, block_line, uid in blocks:
-        commands = split_commands(block_text, "curl", block_line)
-        for cmd, line_num in commands:
-            parsed = parse_cloudflare_curl(cmd)
-            if parsed is None:
-                continue
-            method, path, body = parsed
+        content = policy_file.read_text()
+        # For API-first products the audit path is also a curl call, so
+        # audit blocks are validated alongside cli remediation blocks.
+        blocks = extract_bash_blocks(content, include_audit=True)
 
-            is_valid, errors = validate_cloudflare_curl(
-                method, path, body, spec, openapi_paths
-            )
+        # Skip loading specs entirely if the policy has no curl calls
+        # against this provider's API.
+        if not any(host in b for b, _, _ in blocks):
+            continue
 
-            if is_valid:
-                print(f"[PASS] {uid}")
-                print(f"       {method} {path}")
-                pass_count += 1
-            else:
-                print(f"[FAIL] {uid}")
-                print(f"       {method} {path}")
-                for error in errors:
-                    print(f"       {error}")
-                fail_count += 1
-                FAILURES.append({
-                    "file": relpath,
-                    "line": line_num,
-                    "uid": uid,
-                    "command": f"{method} {path}",
-                    "errors": errors,
-                    "cloud": "cloudflare",
-                })
+        if loaded_specs is None:
+            loaded_specs = []
+            for source in provider["specs"]:
+                spec = _load_spec(source)
+                loaded_specs.append((spec, _spec_mount(spec), _index_spec_paths(spec)))
+
+        relpath = policy_relpath(policy_file)
+
+        for block_text, block_line, uid in blocks:
+            commands = split_commands(block_text, "curl", block_line)
+            for cmd, line_num in commands:
+                parsed = parse_api_curl(cmd, host)
+                if parsed is None:
+                    continue
+                method, path, body = parsed
+
+                is_valid, errors = validate_api_curl(
+                    method, path, body, provider, loaded_specs
+                )
+
+                if is_valid:
+                    print(f"[PASS] {uid}")
+                    print(f"       {method} {path}")
+                    pass_count += 1
+                else:
+                    print(f"[FAIL] {uid}")
+                    print(f"       {method} {path}")
+                    for error in errors:
+                        print(f"       {error}")
+                    fail_count += 1
+                    FAILURES.append({
+                        "file": relpath,
+                        "line": line_num,
+                        "uid": uid,
+                        "command": f"{method} {path}",
+                        "errors": errors,
+                        "cloud": key,
+                    })
 
     return pass_count, fail_count

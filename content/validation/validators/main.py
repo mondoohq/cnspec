@@ -11,9 +11,20 @@ from .digitalocean import validate_digitalocean
 from .gcloud import validate_gcloud
 from .nutanix import validate_nutanix
 from .oci import validate_oci
-from .openapi import validate_cloudflare
+from .openapi import API_PROVIDERS, validate_api_provider
 
-VALIDATORS = ["aws", "azure", "oci", "gcp", "digitalocean", "cloudflare", "nutanix"]
+# CLI validators, dispatched by name. The REST API validators come from
+# the openapi provider registry and are appended below.
+CLI_VALIDATORS = {
+    "aws": validate_aws,
+    "azure": validate_azure,
+    "oci": validate_oci,
+    "gcp": validate_gcloud,
+    "digitalocean": validate_digitalocean,
+    "nutanix": validate_nutanix,
+}
+
+VALIDATORS = list(CLI_VALIDATORS) + list(API_PROVIDERS)
 
 
 # ---------------------------------------------------------------------------
@@ -47,40 +58,17 @@ def main():
     total_pass = 0
     total_fail = 0
 
-    if target in ("all", "aws"):
-        p, f = validate_aws()
-        total_pass += p
-        total_fail += f
+    for name, validator in CLI_VALIDATORS.items():
+        if target in ("all", name):
+            p, f = validator()
+            total_pass += p
+            total_fail += f
 
-    if target in ("all", "azure"):
-        p, f = validate_azure()
-        total_pass += p
-        total_fail += f
-
-    if target in ("all", "oci"):
-        p, f = validate_oci()
-        total_pass += p
-        total_fail += f
-
-    if target in ("all", "gcp"):
-        p, f = validate_gcloud()
-        total_pass += p
-        total_fail += f
-
-    if target in ("all", "digitalocean"):
-        p, f = validate_digitalocean()
-        total_pass += p
-        total_fail += f
-
-    if target in ("all", "cloudflare"):
-        p, f = validate_cloudflare()
-        total_pass += p
-        total_fail += f
-
-    if target in ("all", "nutanix"):
-        p, f = validate_nutanix()
-        total_pass += p
-        total_fail += f
+    for name in API_PROVIDERS:
+        if target in ("all", name):
+            p, f = validate_api_provider(name)
+            total_pass += p
+            total_fail += f
 
     if github_actions:
         emit_github_annotations()
