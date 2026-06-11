@@ -348,6 +348,29 @@ def parse_aws_command(cmd: str) -> tuple[str, str, list[str]]:
     return service, subcommand, flags
 
 
+# The AWS CLI synthesizes these subcommands and flags at runtime; they are
+# real CLI surface but never appear in the botocore service-2.json model the
+# database is built from.
+AWS_CLI_CUSTOM_SUBCOMMANDS = {
+    # Every service with a waiters-2.json model gets an `aws <service> wait`
+    # subcommand whose own arguments are waiter names, not model operations.
+    "wait",
+}
+
+AWS_CLI_CUSTOM_FLAGS = {
+    # CLI customization that writes the seed material to a local file.
+    "iam create-virtual-mfa-device": ["--outfile", "--bootstrap-method"],
+    # Members typed as AttributeBooleanValue structures get boolean-style
+    # --flag/--no-flag forms in the CLI instead of a value argument.
+    "ec2 modify-subnet-attribute": [
+        "--map-public-ip-on-launch",
+        "--no-map-public-ip-on-launch",
+        "--assign-ipv6-address-on-creation",
+        "--no-assign-ipv6-address-on-creation",
+    ],
+}
+
+
 def validate_aws_command(
     service: str,
     subcommand: str,
@@ -365,6 +388,9 @@ def validate_aws_command(
         errors.append(f"missing subcommand for '{service}'")
         return False, errors
 
+    if subcommand in AWS_CLI_CUSTOM_SUBCOMMANDS:
+        return True, []
+
     valid_subcommands = commands_db[service]
     if subcommand not in valid_subcommands:
         errors.append(f"unknown subcommand '{service} {subcommand}'")
@@ -373,6 +399,7 @@ def validate_aws_command(
     key = f"{service} {subcommand}"
     if key in commands_db:
         valid_flags = set(commands_db[key])
+        valid_flags.update(AWS_CLI_CUSTOM_FLAGS.get(key, []))
         for flag in flags:
             if flag not in valid_flags:
                 errors.append(f"unknown flag '{flag}' for '{service} {subcommand}'")
