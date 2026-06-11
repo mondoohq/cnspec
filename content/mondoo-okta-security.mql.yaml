@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-okta-security
     name: Mondoo Okta Organization Security
-    version: 2.3.3
+    version: 2.3.4
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -153,13 +153,15 @@ queries:
       remediation:
         - id: console
           desc: |
-            ### Change admin privileges to a user or an Okta group
+            ### Reduce the number of super administrators
+
+            Super admin access in Okta can be granted to individual users and to groups. This check evaluates groups that hold the super admin role, so pay particular attention to group-based assignments.
 
             1. In the Admin Console, go to **Security > Administrators**.
-            2. Under **Admin Roles**, select the Super filter to display only super administrators.
-            3. Next to each user entry, select **Edit**. The Edit Administrator window is displayed.
-            4. From the list of administrator roles, assign a role other than super admin to the user.
-            5. Select **Update Administrator**.
+            2. Filter the admin list by the **Super Administrator** role to see every user and group that grants super admin access.
+            3. For each group that grants the super admin role, go to **Directory > Groups**, open the group, and remove members who do not require that level of access.
+            4. For users who still need administrative rights, assign a narrower standard role such as Organization Administrator, Application Administrator, or Read-Only Administrator instead of super admin.
+            5. Review super admin assignments on a recurring schedule so unneeded grants are revoked promptly.
     refs:
       - url: https://help.okta.com/en-us/Content/Topics/Security/healthinsight/healthinsight-security-task-recomendations.htm
         title: HealthInsight tasks and recommendations
@@ -237,7 +239,7 @@ queries:
 
         ```bash
         curl -s -H "Authorization: SSWS $OKTA_API_TOKEN" \
-          "https://$OKTA_ORG.okta.com/api/v1/trustedOrigins"
+          "https://$OKTA_ORG.okta.com/api/v1/zones"
         ```
 
         Network zones are returned by `GET /api/v1/zones`. A passing response includes at least one zone with `usage` set to `BLOCKLIST` and a non-empty `gateways` array; a failing response has no blocklist zone or a blocklist zone with no gateways.
@@ -250,36 +252,21 @@ queries:
               type     = "IP"
               usage    = "BLOCKLIST"
               gateways = ["1.2.3.4/24", "2.3.4.5-2.3.4.15"]
-              proxies  = ["2.2.3.4/24", "3.3.4.5-3.3.4.15"]
             }
             ```
+
+            Proxy entries describe trusted forwarding for policy zones and are not accepted on blocklist zones, so omit the proxies argument.
         - id: console
           desc: |
-            ### Block specific IP addresses
-            Block specific IP addresses to deny access to your Okta org.
+            ### Add blocked IP addresses to a blocklist network zone
 
             1. In the Admin Console, go to **Security > Networks**.
-            2. In the list of zones, select Edit for the BlockedIpZone network zone.
-            3. Select Block access from IPs matching conditions listed in this zone.
-            4. Select Save.
+            2. Open the default **BlockedIpZone**, or select **Add Zone > IP Zone** to create a dedicated blocklist zone.
+            3. In the **Gateway IPs** field, enter the IP addresses, CIDR ranges, or IP ranges to block.
+            4. Confirm the zone is set to block access from IPs matching the conditions listed in the zone.
+            5. Select **Save**.
 
-            ### Block IP addresses in a dynamic zone
-            Block IP addresses in a dynamic zone from accessing your Okta org.
-
-            1. In the Admin Console, go to **Security > Networks**.
-            2. Select Add Zone > Dynamic Zone.
-            3. Define a location or proxy type.
-            4. Select Block access from IPs matching conditions listed in this zone.
-            5. Select Save.
-
-            ### Block Tor anonymizer proxy IP addresses
-            Block IP addresses identified as a Tor anonymizer proxy from accessing your Okta org.
-
-            1. In the Admin Console, go to **Security > Networks**.
-            2. Select Add Zone > Dynamic Zone.
-            3. Select Tor anonymizer proxy for IP Type.
-            4. Select Block access from IPs matching conditions listed in this zone.
-            5. Select Save.
+            Dynamic zones that block locations or Tor anonymizer proxies add useful defense in depth, but at least one blocklist zone must contain explicit gateway IP entries to satisfy this control.
     refs:
       - url: https://help.okta.com/en-us/content/topics/security/threat-insight/ti-index.htm
         title: Okta ThreatInsight
@@ -374,26 +361,46 @@ queries:
       remediation:
         - id: console
           desc: |
-            ### Enable strong factors for factor enrollment
-            1. In the Admin Console, go to **Security > Multifactor**.
-            2. Select Factor Enrollment.
-            3. Select Edit.
-            4. Set the factor of your choice to Required, Optional, or Disabled.
+            ### Disable weak factors in factor enrollment policies
+
+            1. On Okta Identity Engine orgs, go to **Security > Authenticators** and select the **Enrollment** tab. On Okta Classic Engine orgs, go to **Security > Multifactor** and select **Factor Enrollment**.
+            2. For each enrollment policy, select **Edit**.
+            3. Set the **Email**, **SMS**, and **Phone** or **Voice Call** factors to **Disabled** so users cannot self-enroll them.
+            4. Keep stronger factors such as Okta Verify and WebAuthn set to **Required** or **Optional**.
+            5. Select **Update Policy**.
         - id: terraform
           desc: |
+            For orgs on Okta Identity Engine:
+
             ```hcl
-            resource "okta_policy_mfa_default" "classic_example" {
-              is_oie      = false
+            resource "okta_policy_mfa_default" "oie_example" {
+              is_oie = true
+
+              okta_password = {
+                enroll = "REQUIRED"
+              }
 
               okta_verify = {
                 enroll = "REQUIRED"
               }
 
-              okta_otp = {
-                enroll = "REQUIRED"
+              okta_email = {
+                enroll = "NOT_ALLOWED"
               }
 
-              google_otp = {
+              phone_number = {
+                enroll = "NOT_ALLOWED"
+              }
+            }
+            ```
+
+            For orgs on Okta Classic Engine:
+
+            ```hcl
+            resource "okta_policy_mfa_default" "classic_example" {
+              is_oie = false
+
+              okta_otp = {
                 enroll = "REQUIRED"
               }
 
@@ -402,10 +409,6 @@ queries:
               }
 
               okta_sms = {
-                enroll = "NOT_ALLOWED"
-              }
-
-              phone_number = {
                 enroll = "NOT_ALLOWED"
               }
             }
@@ -505,39 +508,47 @@ queries:
           "https://$OKTA_ORG.okta.com/api/v1/policies?type=MFA_ENROLL"
         ```
 
-        For each policy, inspect `settings.factors`. A passing response shows the `okta_otp` factor present and enabled in at least one policy; a failing response has no policy with Okta Verify enabled. The authenticator can also be confirmed with `GET /api/v1/authenticators`.
+        For each policy, inspect the settings. Orgs on Okta Classic Engine list factors under `settings.factors`; a passing response shows the `okta_otp` factor enabled in at least one policy. Orgs on Okta Identity Engine list authenticators under `settings.authenticators`; a passing response shows the `okta_verify` authenticator set to optional or required in at least one policy. A failing response has no policy with Okta Verify enabled. The authenticator can also be confirmed with `GET /api/v1/authenticators`.
       remediation:
         - id: console
           desc: |
-            See [Enable and configure Okta Verify](https://help.okta.com/en-us/Content/Topics/Mobile/okta-verify-overview.htm) in Okta's documentation site.
+            ### Enable Okta Verify with push for MFA
+
+            1. On Okta Identity Engine orgs, go to **Security > Authenticators**. If Okta Verify is not listed, select **Add authenticator** and add **Okta Verify**. Select **Edit** on Okta Verify and enable **Push notification** as a verification option.
+            2. On Okta Classic Engine orgs, go to **Security > Multifactor**, open the **Factor Types** tab, select **Okta Verify**, set it to **Active**, and enable **Okta Verify with Push**.
+            3. Open the factor enrollment policies: the **Enrollment** tab under **Security > Authenticators** on Identity Engine, or **Factor Enrollment** under **Security > Multifactor** on Classic Engine.
+            4. Set Okta Verify to **Required** or **Optional** in at least one active enrollment policy.
+            5. Select **Update Policy**.
         - id: terraform
           desc: |
+            For orgs on Okta Classic Engine:
+
             ```hcl
             resource "okta_policy_mfa_default" "classic_example" {
-              is_oie      = false
-
-              okta_verify = {
-                enroll = "REQUIRED"
-              }
+              is_oie = false
 
               okta_otp = {
                 enroll = "REQUIRED"
               }
 
-              google_otp = {
+              okta_push = {
+                enroll = "REQUIRED"
+              }
+            }
+            ```
+
+            For orgs on Okta Identity Engine, Okta Verify covers both push and one-time codes:
+
+            ```hcl
+            resource "okta_policy_mfa_default" "oie_example" {
+              is_oie = true
+
+              okta_password = {
                 enroll = "REQUIRED"
               }
 
-              okta_email = {
-                enroll = "NOT_ALLOWED"
-              }
-
-              okta_sms = {
-                enroll = "NOT_ALLOWED"
-              }
-
-              phone_number = {
-                enroll = "NOT_ALLOWED"
+              okta_verify = {
+                enroll = "REQUIRED"
               }
             }
             ```
@@ -546,18 +557,22 @@ queries:
         title: Okta Multifactor Authentication
   - uid: mondoo-okta-security-enable-okta-verify-with-push-for-mfa-api
     filters: asset.platform == "okta-org"
-    mql: okta.policies.mfaEnroll.any( _.settings['factors']['okta_otp'] )
+    mql: |
+      okta.policies.mfaEnroll.any(
+        _.settings['factors']['okta_otp']['enroll']['self'] == /(OPTIONAL|REQUIRED)/ ||
+        _.settings['authenticators'] != null && _.settings['authenticators'].any( _['key'] == "okta_verify" && _['enroll']['self'] == /(OPTIONAL|REQUIRED)/ )
+      )
   - uid: mondoo-okta-security-enable-okta-verify-with-push-for-mfa-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.providers.any( nameLabel == "okta" )
-    mql: terraform.resources("okta_policy_mfa_default").any( arguments['okta_otp']['enroll'] == /REQUIRED/)
+    mql: terraform.resources("okta_policy_mfa_default").any( arguments['okta_otp']['enroll'] == /REQUIRED/ || arguments['okta_verify']['enroll'] == /(REQUIRED|OPTIONAL)/ )
   - uid: mondoo-okta-security-enable-okta-verify-with-push-for-mfa-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains( providerName == /okta/ )
     mql: |
-      terraform.plan.resourceChanges.where( type == "okta_policy_mfa_default" ).any( change.after['okta_otp']['enroll'] == /REQUIRED/ )
+      terraform.plan.resourceChanges.where( type == "okta_policy_mfa_default" ).any( change.after['okta_otp']['enroll'] == /REQUIRED/ || change.after['okta_verify']['enroll'] == /(REQUIRED|OPTIONAL)/ )
   - uid: mondoo-okta-security-enable-okta-verify-with-push-for-mfa-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains( type == /okta_policy_mfa_default/ )
     mql: |
-      terraform.state.resources.where( type == 'okta_policy_mfa_default' ).any( values['okta_otp']['enroll'] == /REQUIRED/ )
+      terraform.state.resources.where( type == 'okta_policy_mfa_default' ).any( values['okta_otp']['enroll'] == /REQUIRED/ || values['okta_verify']['enroll'] == /(REQUIRED|OPTIONAL)/ )
   - uid: mondoo-okta-security-okta-mfa-access
     title: Require at least one factor in every MFA enrollment policy
     impact: 100
@@ -628,47 +643,26 @@ queries:
       remediation:
         - id: console
           desc: |
-            ### Set a required factor in an MFA enrollment policy
-            1. In the Admin Console, go to **Security > Multifactor**. The **Factor Types** page appears.
-            2. Select **Factor Enrollment** to switch to factor enrollment policies and rules.
-            3. Select a policy and select **Edit** to modify it.
-            4. From the list of eligible factors, set at least one factor to **Required**.
-            5. Select **Update Policy**.
+            ### Require a factor for all users in an MFA enrollment policy
 
-            ### Prompt an end user to enroll in a required factor
-            To prompt an end user to enroll in a required factor, you may do one of the following:
-
-            - Set an Okta sign-on policy rule that prompts a user for factor enrollment.
-            - Set a factor enrollment policy rule that allows a user to enroll in a factor when challenged for MFA.
-            - Set a factor enrollment policy rule that prompts the user to enroll in a factor the first time they sign in to their org.
-
-            ### Create an Okta sign-on policy rule that prompts for factor enrollment
-            1. From the Admin Console menu, select Security > Authentication. The Authentication policies page appears.
-            2. Select Sign On to access Sign-On Policies.
-            3. Select the policy and from the list of associated rules, select Edit to start modifying an existing policy rule. You can also create a rule.
-            4. From the Edit Rule window, select Prompt for Factor.
-            5. Select **Update Rule**.
-
-            ### Create a factor enrollment policy rule that allows users to enroll in a factor when challenged for MFA
-            1. In the Admin Console, go to **Security > Multifactor**. The **Factor Types** page appears.
-            2. Select **Factor Enrollment**.
-            3. Choose one of the active policy rules in the list and select Edit. The Edit Rule dialog appears.
-            4. Under the condition THEN Enroll in multi-factor, select the first time a user is challenged for MFA.
-            5. Select **Update Rule**.
-
-            ### Create a factor enrollment policy rule that prompts new users to enroll in a factor the first time they sign in to their org
-            1. In the Admin Console, go to **Security > Multifactor**. The **Factor Types** page appears.
-            2. Select **Factor Enrollment**.
-            3. Choose one of the active policy rules in the list and select Edit. The Edit Rule dialog appears.
-            4. Under the condition THEN Enroll in multi-factor, select the first time a user signs in.
-            5. Select **Update Rule**.
+            1. On Okta Identity Engine orgs, go to **Security > Authenticators** and select the **Enrollment** tab. On Okta Classic Engine orgs, go to **Security > Multifactor** and select **Factor Enrollment**.
+            2. Confirm that an active enrollment policy is assigned to the **Everyone** group. If none is, edit a policy and add the Everyone group under **Assigned to groups**.
+            3. Select **Edit** on that policy and set at least one factor, such as Okta Verify, to **Required**.
+            4. Select **Update Policy**.
+            5. To prompt users to enroll, edit the policy rule and choose to enroll users the first time they sign in or the first time they are challenged for MFA.
         - id: terraform
           desc: |
+            The default MFA enrollment policy applies to all users in the org:
+
             ```hcl
             resource "okta_policy_mfa_default" "default" {
               is_oie = true
 
-              okta_otp = {
+              okta_password = {
+                enroll = "REQUIRED"
+              }
+
+              okta_verify = {
                 enroll = "REQUIRED"
               }
             }
@@ -682,7 +676,7 @@ queries:
     filters: asset.platform == "okta-org"
     mql: |
       everyoneGroupId = okta.groups.where( profile['name'] == "Everyone" ).map(id)[0]
-      okta.policies.mfaEnroll.one( status == "ACTIVE" && conditions['people']['groups']['include'].contains(everyoneGroupId) )
+      okta.policies.mfaEnroll.any( status == "ACTIVE" && conditions['people']['groups']['include'].contains(everyoneGroupId) )
   - uid: mondoo-okta-security-okta-mfa-access-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.providers.any( nameLabel == "okta" )
     mql: |
@@ -765,18 +759,19 @@ queries:
       remediation:
         - id: console
           desc: |
-            ### Set the session lifetime for a policy
-            1. In the Admin Console, go to **Security > Authentication**.
-            2. Select **Sign On**.
-            3. Select **Add Rule** or **Edit** to modify an existing policy rule.
-            4. Under **Session expires after**, set the session lifetime duration in minutes, hours, or days.
-            5. Select **Create Rule** or **Save Rule** once your changes have been made.
+            ### Limit session idle time and session lifetime
+
+            1. On Okta Identity Engine orgs, go to **Security > Global Session Policy**. On Okta Classic Engine orgs, go to **Security > Authentication** and select the **Sign On** tab.
+            2. For each active policy rule, select **Edit**.
+            3. Set the maximum session idle time to 2 hours or less.
+            4. Set the maximum session lifetime to 24 hours or less.
+            5. Select **Update Rule**.
         - id: terraform
           desc: |
             ```hcl
             resource "okta_policy_rule_signon" "default" {
               policy_id        = okta_policy_signon.default.id
-              name             = "Require MFA"
+              name             = "Limit session lifetime"
               status           = "ACTIVE"
               session_idle     = 120
               session_lifetime = 1440
@@ -797,8 +792,8 @@ queries:
         title: Okta Security - Max session lifetime minutes
         mql: return 1440
     mql: |
-      okta.policies.signOn.where(_.rules.all(status == "ACTIVE")).all(_.rules.all(actions["signon"]["session"]["mondooOktaSecurityMaxSessionIdleMinutes"] <= props.mondooOktaSecurityMaxSessionIdleMinutes ))
-      okta.policies.signOn.where(_.rules.all(status == "ACTIVE")).all(_.rules.all(actions["signon"]["session"]["mondooOktaSecurityMaxSessionLifetimeMinutes"] <= props.mondooOktaSecurityMaxSessionLifetimeMinutes ))
+      okta.policies.signOn.where(_.rules.all(status == "ACTIVE")).all(_.rules.all(actions["signon"]["session"]["maxSessionIdleMinutes"] <= props.mondooOktaSecurityMaxSessionIdleMinutes ))
+      okta.policies.signOn.where(_.rules.all(status == "ACTIVE")).all(_.rules.all(actions["signon"]["session"]["maxSessionLifetimeMinutes"] <= props.mondooOktaSecurityMaxSessionLifetimeMinutes ))
   # The HCL variant accepts a `var.something` reference for session_idle /
   # session_lifetime as a static-analysis pass-through — the resolved value
   # isn't known at HCL-parse time. Plan and state variants below evaluate the
@@ -885,17 +880,17 @@ queries:
       remediation:
         - id: console
           desc: |
-            ### Use the Okta Admin Console
+            ### Replace SWA integrations with SAML or OIDC
 
-            1. Log into the organization as an administrator.
-            2. Select **Applications > Applications**.
-            3. Select **Create App Integration** or **Browse App Catalog** to see the available apps.
-            4. Assign OIDC or SAML.
+            1. In the Admin Console, go to **Applications > Applications** and identify active apps whose sign-on method is SWA.
+            2. For each such app, check the **Okta Integration Network** with **Browse App Catalog** for a SAML 2.0 or OIDC version of the integration, or select **Create App Integration** and choose **SAML 2.0** or **OIDC - OpenID Connect** for a custom app.
+            3. Configure the new integration with the application vendor, assign the same users and groups, and verify sign-in works.
+            4. Deactivate the old SWA integration once users have migrated.
         - id: terraform
           desc: |
             ### Configure a SAML application with Terraform
 
-            >Note: If you receive the error `You do not have permission to access the feature you are requesting` contact support and request feature flag `ADVANCED_SSO` be applied to your org.
+            >Note: If you receive the error `You do not have permission to access the feature you are requesting`, contact support and request the feature flag `ADVANCED_SSO` for your org.
 
             ```hcl
             resource "okta_app_saml" "example" {
@@ -911,34 +906,18 @@ queries:
               digest_algorithm         = "SHA256"
               honor_force_authn        = false
               authn_context_class_ref  = "urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport"
-
-              attribute_statements {
-                type         = "GROUP"
-                name         = "groups"
-                filter_type  = "REGEX"
-                filter_value = ".*"
-              }
             }
             ```
 
-            ### Configure an OIDC provider with Terraform
+            ### Configure an OIDC application with Terraform
 
             ```hcl
-            resource "okta_idp_oidc" "example" {
-              name                  = "example"
-              authorization_url     = "https://idp.example.com/authorize"
-              authorization_binding = "HTTP-REDIRECT"
-              token_url             = "https://idp.example.com/token"
-              token_binding         = "HTTP-POST"
-              user_info_url         = "https://idp.example.com/userinfo"
-              user_info_binding     = "HTTP-REDIRECT"
-              jwks_url              = "https://idp.example.com/keys"
-              jwks_binding          = "HTTP-REDIRECT"
-              scopes                = ["openid"]
-              client_id             = "efg456"
-              client_secret         = "efg456"
-              issuer_url            = "https://id.example.com"
-              username_template     = "idpuser.email"
+            resource "okta_app_oauth" "example" {
+              label          = "example"
+              type           = "web"
+              grant_types    = ["authorization_code"]
+              redirect_uris  = ["https://app.example.com/oauth2/callback"]
+              response_types = ["code"]
             }
             ```
     refs:
@@ -956,11 +935,11 @@ queries:
   - uid: mondoo-okta-security-okta-auth-openid-saml-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.providers.any( nameLabel == "okta" )
     mql: |
-      terraform.resources.any( nameLabel == "okta_idp_oidc" || nameLabel == "okta_app_saml" )
+      terraform.resources.any( nameLabel == "okta_idp_oidc" || nameLabel == "okta_app_saml" || nameLabel == "okta_app_oauth" )
   - uid: mondoo-okta-security-okta-auth-openid-saml-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains( providerName == /okta/ )
     mql: |
-      terraform.plan.resourceChanges.any( type == /okta_idp_oidc/ || type == /okta_app_saml/ )
+      terraform.plan.resourceChanges.any( type == /okta_idp_oidc/ || type == /okta_app_saml/ || type == /okta_app_oauth/ )
   - uid: mondoo-okta-security-enable-suspicious-activity-reporting
     title: Enable Suspicious Activity Reporting
     impact: 80
@@ -1031,28 +1010,14 @@ queries:
       remediation:
         - id: console
           desc: |
-            ### Enable or disable Security Notification emails
-            If you disable this feature, all valid links expire immediately.
+            ### Enable suspicious activity reporting
 
-            If you disable the Report suspicious activity via email option, the Report Suspicious Activity button is removed from the email templates that use it.
+            1. In the Admin Console, go to **Settings > Account**.
+            2. Scroll to the **Security notification emails** section and select **Edit**.
+            3. Set **Report suspicious activity via email** to **Enabled**. This adds a Report Suspicious Activity button to the new sign-on, authenticator enrolled, authenticator reset, and password changed notification emails.
+            4. Select **Save**.
 
-            When you enable the Report suspicious activity via email option, events reported when users select the Report Suspicious Activity button appear on the Admin Console. Select Review Security Event to view the event details in the System Log. The event name is:
-
-            ```
-            user.account.report_suspicious_activity_by_enduser
-            ```
-
-            The following email templates include the Report Suspicious Activity button:
-
-            - New Sign-On Notification
-            - Authenticator Enrolled
-            - Authenticator Reset
-            - Password Changed
-
-            1. In the Admin Console, go to **Security > General**.
-            2. In the Security notification emails section, select Edit.
-            3. Select either Enabled or Disabled from the dropdown beside the option that you want to enable or disable.
-            4. Select Save.
+            When an end user selects the button, Okta records a `user.account.report_suspicious_activity_by_enduser` event in the System Log and surfaces it in the Admin Console for review.
         - id: terraform
           desc: |
             ```hcl
@@ -1152,8 +1117,9 @@ queries:
         - id: console
           desc: |
             ### Enable sign-on notification emails for end users
-            1. In the Admin Console, go to **Security > General**.
-            2. Under **Security Notification Emails**, select **Edit**.
+
+            1. In the Admin Console, go to **Settings > Account**.
+            2. Scroll to the **Security notification emails** section and select **Edit**.
             3. Set **New sign-on notification email** to **Enabled**.
             4. Select **Save**.
         - id: terraform
@@ -1252,9 +1218,10 @@ queries:
       remediation:
         - id: console
           desc: |
-            ### Configure factor enrollment notifications for end users
-            1. In the Admin Console, go to **Security > General**.
-            2. Under **Security Notification Emails**, select **Edit**.
+            ### Enable factor enrollment notifications for end users
+
+            1. In the Admin Console, go to **Settings > Account**.
+            2. Scroll to the **Security notification emails** section and select **Edit**.
             3. Set **MFA enrolled notification email** to **Enabled**.
             4. Select **Save**.
         - id: terraform
@@ -1353,9 +1320,10 @@ queries:
       remediation:
         - id: console
           desc: |
-            ### Configure factor reset notifications
-            1. In the Admin Console, go to **Security > General**.
-            2. Under **Security Notification Emails**, select **Edit**.
+            ### Enable factor reset notifications for end users
+
+            1. In the Admin Console, go to **Settings > Account**.
+            2. Scroll to the **Security notification emails** section and select **Edit**.
             3. Set **MFA reset notification email** to **Enabled**.
             4. Select **Save**.
         - id: terraform
@@ -1454,9 +1422,10 @@ queries:
       remediation:
         - id: console
           desc: |
-            ### Configure password changed notifications
-            1. In the Admin Console, go to **Security > General**.
-            2. Under **Security Notification Emails**, select **Edit**.
+            ### Enable password changed notifications for end users
+
+            1. In the Admin Console, go to **Settings > Account**.
+            2. Scroll to the **Security notification emails** section and select **Edit**.
             3. Set **Password changed notification email** to **Enabled**.
             4. Select **Save**.
         - id: terraform
@@ -1558,17 +1527,17 @@ queries:
       remediation:
         - id: console
           desc: |
-            Configure password settings for password policies
+            ### Set a strong minimum password length
 
-            1. In the Admin Console menu, go to Security > Authentication.
-            2. In the Password tab, review each policy. To edit the policy, select Edit.
-            3. Edit the password settings based on the recommendations.
-            4. To enable each setting, select the checkboxes for Password History, Password Age, Lock out, and Common Password Check.
+            1. On Okta Identity Engine orgs, go to **Security > Authenticators** and select **Password**. On Okta Classic Engine orgs, go to **Security > Authentication** and select the **Password** tab.
+            2. Locate the policy and select **Edit**.
+            3. Under **Password settings**, set **Minimum length** to at least 15 characters.
+            4. Select **Update Policy**.
         - id: terraform
           desc: |
             ```hcl
             resource "okta_policy_password_default" "default" {
-              password_min_length            = var.password_minimum_length
+              password_min_length = 15
             }
             ```
     refs:
@@ -1665,12 +1634,12 @@ queries:
       remediation:
         - id: console
           desc: |
-            **Using the Okta Admin Console**
+            ### Limit failed sign-in attempts before lockout
 
-            1. In the Admin Console, go to **Security** → **Authentication**.
-            2. On the **Password** tab, locate the policy and select **Edit**.
-            3. Under **Password settings**, set **Lockout** → **Maximum number of attempts before lockout** to `5` (or your organization's threshold).
-            4. Select **Update Policy** to save.
+            1. On Okta Identity Engine orgs, go to **Security > Authenticators** and select **Password**. On Okta Classic Engine orgs, go to **Security > Authentication** and select the **Password** tab.
+            2. Locate the policy and select **Edit**.
+            3. Under **Password settings**, in **Lock out**, enable the option to lock out users after unsuccessful attempts and set the limit to 5 or fewer. Do not leave the value at 0, which disables lockout entirely.
+            4. Select **Update Policy**.
         - id: terraform
           desc: |
             ```hcl
@@ -1684,19 +1653,19 @@ queries:
   - uid: mondoo-okta-security-password-settings-max-lockout-attempts-api
     filters: asset.platform == "okta-org"
     mql: |
-      okta.policies.password.all( settings['password']['lockout']['maxAttempts'] <= 5 )
+      okta.policies.password.all( settings['password']['lockout']['maxAttempts'] > 0 && settings['password']['lockout']['maxAttempts'] <= 5 )
   - uid: mondoo-okta-security-password-settings-max-lockout-attempts-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.providers.any( nameLabel == "okta" )
     mql: |
-      terraform.resources(/okta_policy_password/).all( arguments['password_max_lockout_attempts'] == /var/ || arguments['password_max_lockout_attempts'] <= 5 )
+      terraform.resources(/okta_policy_password/).all( arguments['password_max_lockout_attempts'] == /var/ || arguments['password_max_lockout_attempts'] > 0 && arguments['password_max_lockout_attempts'] <= 5 )
   - uid: mondoo-okta-security-password-settings-max-lockout-attempts-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains( providerName == /okta/ )
     mql: |
-      terraform.plan.resourceChanges.where( type == /okta_policy_password/ ).all( change.after['password_max_lockout_attempts'] <= 5 )
+      terraform.plan.resourceChanges.where( type == /okta_policy_password/ ).all( change.after['password_max_lockout_attempts'] > 0 && change.after['password_max_lockout_attempts'] <= 5 )
   - uid: mondoo-okta-security-password-settings-max-lockout-attempts-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains( type == /okta_policy_password/ )
     mql: |
-      terraform.state.resources.where( type == /okta_policy_password/ ).all( values['password_max_lockout_attempts'] <= 5 )
+      terraform.state.resources.where( type == /okta_policy_password/ ).all( values['password_max_lockout_attempts'] > 0 && values['password_max_lockout_attempts'] <= 5 )
   - uid: mondoo-okta-security-password-settings-min-lowercase
     title: Enable strong password settings for password policies - minimum lowercase
     impact: 30
@@ -1770,12 +1739,12 @@ queries:
       remediation:
         - id: console
           desc: |
-            **Using the Okta Admin Console**
+            ### Require a lowercase character in passwords
 
-            1. In the Admin Console, go to **Security** → **Authentication**.
-            2. On the **Password** tab, locate the policy and select **Edit**.
-            3. Under **Password settings**, in **Complexity**, enable **Lowercase letter** so the policy requires at least one lowercase character.
-            4. Select **Update Policy** to save.
+            1. On Okta Identity Engine orgs, go to **Security > Authenticators** and select **Password**. On Okta Classic Engine orgs, go to **Security > Authentication** and select the **Password** tab.
+            2. Locate the policy and select **Edit**.
+            3. Under **Password settings**, in the complexity requirements, enable **Lower case letter**.
+            4. Select **Update Policy**.
         - id: terraform
           desc: |
             ```hcl
@@ -1875,12 +1844,12 @@ queries:
       remediation:
         - id: console
           desc: |
-            **Using the Okta Admin Console**
+            ### Require a numeric character in passwords
 
-            1. In the Admin Console, go to **Security** → **Authentication**.
-            2. On the **Password** tab, locate the policy and select **Edit**.
-            3. Under **Password settings**, in **Complexity**, enable **Number** so the policy requires at least one digit.
-            4. Select **Update Policy** to save.
+            1. On Okta Identity Engine orgs, go to **Security > Authenticators** and select **Password**. On Okta Classic Engine orgs, go to **Security > Authentication** and select the **Password** tab.
+            2. Locate the policy and select **Edit**.
+            3. Under **Password settings**, in the complexity requirements, enable **Number** so the policy requires at least one digit.
+            4. Select **Update Policy**.
         - id: terraform
           desc: |
             ```hcl
@@ -1980,12 +1949,12 @@ queries:
       remediation:
         - id: console
           desc: |
-            **Using the Okta Admin Console**
+            ### Require a symbol character in passwords
 
-            1. In the Admin Console, go to **Security** → **Authentication**.
-            2. On the **Password** tab, locate the policy and select **Edit**.
-            3. Under **Password settings**, in **Complexity**, enable **Symbol** so the policy requires at least one special character.
-            4. Select **Update Policy** to save.
+            1. On Okta Identity Engine orgs, go to **Security > Authenticators** and select **Password**. On Okta Classic Engine orgs, go to **Security > Authentication** and select the **Password** tab.
+            2. Locate the policy and select **Edit**.
+            3. Under **Password settings**, in the complexity requirements, enable **Symbol** so the policy requires at least one special character.
+            4. Select **Update Policy**.
         - id: terraform
           desc: |
             ```hcl
@@ -2086,12 +2055,12 @@ queries:
       remediation:
         - id: console
           desc: |
-            **Using the Okta Admin Console**
+            ### Enforce a minimum password age
 
-            1. In the Admin Console, go to **Security** → **Authentication**.
-            2. On the **Password** tab, locate the policy and select **Edit**.
-            3. Under **Password settings**, set **Age** → **Minimum password age** to at least `60` minutes so users cannot cycle through their password history immediately.
-            4. Select **Update Policy** to save.
+            1. On Okta Identity Engine orgs, go to **Security > Authenticators** and select **Password**. On Okta Classic Engine orgs, go to **Security > Authentication** and select the **Password** tab.
+            2. Locate the policy and select **Edit**.
+            3. Under **Password settings**, in **Age**, set the minimum password age to at least 1 hour so users cannot cycle through their password history immediately. The console expresses this value in hours, which corresponds to 60 minutes in the API.
+            4. Select **Update Policy**.
         - id: terraform
           desc: |
             ```hcl
@@ -2192,12 +2161,12 @@ queries:
       remediation:
         - id: console
           desc: |
-            **Using the Okta Admin Console**
+            ### Exclude the username from passwords
 
-            1. In the Admin Console, go to **Security** → **Authentication**.
-            2. On the **Password** tab, locate the policy and select **Edit**.
-            3. Under **Password settings**, in **Common password check**, enable **Restrict use of first name, last name, and parts of email address** so the user's own username cannot be embedded in the password.
-            4. Select **Update Policy** to save.
+            1. On Okta Identity Engine orgs, go to **Security > Authenticators** and select **Password**. On Okta Classic Engine orgs, go to **Security > Authentication** and select the **Password** tab.
+            2. Locate the policy and select **Edit**.
+            3. Under **Password settings**, in the complexity requirements, enable **Does not contain part of username**.
+            4. Select **Update Policy**.
         - id: terraform
           desc: |
             ```hcl
@@ -2298,12 +2267,12 @@ queries:
       remediation:
         - id: console
           desc: |
-            **Using the Okta Admin Console**
+            ### Exclude the first name from passwords
 
-            1. In the Admin Console, go to **Security** → **Authentication**.
-            2. On the **Password** tab, locate the policy and select **Edit**.
-            3. Under **Password settings**, in **Common password check**, enable **Restrict use of first name, last name, and parts of email address** so the user's first name cannot be embedded in the password.
-            4. Select **Update Policy** to save.
+            1. On Okta Identity Engine orgs, go to **Security > Authenticators** and select **Password**. On Okta Classic Engine orgs, go to **Security > Authentication** and select the **Password** tab.
+            2. Locate the policy and select **Edit**.
+            3. Under **Password settings**, in the complexity requirements, enable **Does not contain first name**.
+            4. Select **Update Policy**.
         - id: terraform
           desc: |
             ```hcl
@@ -2404,12 +2373,12 @@ queries:
       remediation:
         - id: console
           desc: |
-            **Using the Okta Admin Console**
+            ### Exclude the last name from passwords
 
-            1. In the Admin Console, go to **Security** → **Authentication**.
-            2. On the **Password** tab, locate the policy and select **Edit**.
-            3. Under **Password settings**, in **Common password check**, enable **Restrict use of first name, last name, and parts of email address** so the user's last name cannot be embedded in the password.
-            4. Select **Update Policy** to save.
+            1. On Okta Identity Engine orgs, go to **Security > Authenticators** and select **Password**. On Okta Classic Engine orgs, go to **Security > Authentication** and select the **Password** tab.
+            2. Locate the policy and select **Edit**.
+            3. Under **Password settings**, in the complexity requirements, enable **Does not contain last name**.
+            4. Select **Update Policy**.
         - id: terraform
           desc: |
             ```hcl
@@ -2510,12 +2479,12 @@ queries:
       remediation:
         - id: console
           desc: |
-            **Using the Okta Admin Console**
+            ### Screen passwords against a common password dictionary
 
-            1. In the Admin Console, go to **Security** → **Authentication**.
-            2. On the **Password** tab, locate the policy and select **Edit**.
-            3. Under **Password settings**, enable **Common password check** so passwords are screened against a list of commonly used and breached passwords.
-            4. Select **Update Policy** to save.
+            1. On Okta Identity Engine orgs, go to **Security > Authenticators** and select **Password**. On Okta Classic Engine orgs, go to **Security > Authentication** and select the **Password** tab.
+            2. Locate the policy and select **Edit**.
+            3. Under **Password settings**, in **Common password check**, enable **Restrict use of common passwords** so passwords are screened against a list of commonly used and breached passwords.
+            4. Select **Update Policy**.
         - id: terraform
           desc: |
             ```hcl
@@ -2616,12 +2585,12 @@ queries:
       remediation:
         - id: console
           desc: |
-            **Using the Okta Admin Console**
+            ### Set a maximum password age
 
-            1. In the Admin Console, go to **Security** → **Authentication**.
-            2. On the **Password** tab, locate the policy and select **Edit**.
-            3. Under **Password settings**, set **Age** → **Enforce password history** → **Maximum password age** to `90` days (or your organization's policy). Set to `0` to disable expiry, but keep in mind that disables the check.
-            4. Select **Update Policy** to save.
+            1. On Okta Identity Engine orgs, go to **Security > Authenticators** and select **Password**. On Okta Classic Engine orgs, go to **Security > Authentication** and select the **Password** tab.
+            2. Locate the policy and select **Edit**.
+            3. Under **Password settings**, in **Age**, enable **Password expires after** and set it to 90 days or fewer. A value of 0 disables expiry and leaves passwords valid indefinitely.
+            4. Select **Update Policy**.
         - id: terraform
           desc: |
             ```hcl
@@ -2722,12 +2691,12 @@ queries:
       remediation:
         - id: console
           desc: |
-            **Using the Okta Admin Console**
+            ### Warn users before password expiry
 
-            1. In the Admin Console, go to **Security** → **Authentication**.
-            2. On the **Password** tab, locate the policy and select **Edit**.
-            3. Under **Password settings**, set **Age** → **Prompt user to change password before password expires** to `15` days.
-            4. Select **Update Policy** to save.
+            1. On Okta Identity Engine orgs, go to **Security > Authenticators** and select **Password**. On Okta Classic Engine orgs, go to **Security > Authentication** and select the **Password** tab.
+            2. Locate the policy and select **Edit**.
+            3. Under **Password settings**, in **Age**, set the prompt that warns users before their password expires to exactly 15 days.
+            4. Select **Update Policy**.
         - id: terraform
           desc: |
             ```hcl
@@ -2828,12 +2797,12 @@ queries:
       remediation:
         - id: console
           desc: |
-            **Using the Okta Admin Console**
+            ### Enforce password history
 
-            1. In the Admin Console, go to **Security** → **Authentication**.
-            2. On the **Password** tab, locate the policy and select **Edit**.
-            3. Under **Password settings**, set **History** → **Enforce password history for last** to `24` passwords.
-            4. Select **Update Policy** to save.
+            1. On Okta Identity Engine orgs, go to **Security > Authenticators** and select **Password**. On Okta Classic Engine orgs, go to **Security > Authentication** and select the **Password** tab.
+            2. Locate the policy and select **Edit**.
+            3. Under **Password settings**, in **Age**, set **Enforce password history for last** to 24 or more passwords.
+            4. Select **Update Policy**.
         - id: terraform
           desc: |
             ```hcl
@@ -2934,12 +2903,12 @@ queries:
       remediation:
         - id: console
           desc: |
-            **Using the Okta Admin Console**
+            ### Delay automatic account unlock
 
-            1. In the Admin Console, go to **Security** → **Authentication**.
-            2. On the **Password** tab, locate the policy and select **Edit**.
-            3. Under **Password settings**, in **Lockout**, enable **Account auto-unlock after** and set it to at least `30` minutes.
-            4. Select **Update Policy** to save.
+            1. On Okta Identity Engine orgs, go to **Security > Authenticators** and select **Password**. On Okta Classic Engine orgs, go to **Security > Authentication** and select the **Password** tab.
+            2. Locate the policy and select **Edit**.
+            3. Under **Password settings**, in **Lock out**, enable automatic unlocking and set the unlock delay to at least 30 minutes.
+            4. Select **Update Policy**.
         - id: terraform
           desc: |
             ```hcl
@@ -3040,12 +3009,12 @@ queries:
       remediation:
         - id: console
           desc: |
-            **Using the Okta Admin Console**
+            ### Inform users when their account is locked
 
-            1. In the Admin Console, go to **Security** → **Authentication**.
-            2. On the **Password** tab, locate the policy and select **Edit**.
-            3. Under **Password settings**, in **Lockout**, enable **Show lockout failures**.
-            4. Select **Update Policy** to save.
+            1. On Okta Identity Engine orgs, go to **Security > Authenticators** and select **Password**. On Okta Classic Engine orgs, go to **Security > Authentication** and select the **Password** tab.
+            2. Locate the policy and select **Edit**.
+            3. Under **Password settings**, in **Lock out**, enable **Show lock out failures** so users see why sign-in is failing.
+            4. Select **Update Policy**.
         - id: terraform
           desc: |
             ```hcl
@@ -3146,12 +3115,12 @@ queries:
       remediation:
         - id: console
           desc: |
-            **Using the Okta Admin Console**
+            ### Enable email as a recovery factor
 
-            1. In the Admin Console, go to **Security** → **Authentication**.
-            2. On the **Password** tab, locate the policy and select **Edit**.
-            3. Under **Password settings**, in **User account recovery**, enable **Email** as a recovery factor.
-            4. Select **Update Policy** to save.
+            1. On Okta Identity Engine orgs, go to **Security > Authenticators** and select **Password**. On Okta Classic Engine orgs, go to **Security > Authentication** and select the **Password** tab.
+            2. Locate the policy and select **Edit**.
+            3. In the **Account recovery** section, enable **Email** as a self-service recovery option.
+            4. Select **Update Policy**.
         - id: terraform
           desc: |
             ```hcl
@@ -3252,17 +3221,18 @@ queries:
       remediation:
         - id: console
           desc: |
-            **Using the Okta Admin Console**
+            ### Disable SMS as a recovery factor
 
-            1. In the Admin Console, go to **Security** → **Authentication**.
-            2. On the **Password** tab, locate the policy and select **Edit**.
-            3. Under **Password settings**, in **User account recovery**, enable **SMS** as a recovery factor.
-            4. Select **Update Policy** to save.
+            1. On Okta Identity Engine orgs, go to **Security > Authenticators** and select **Password**. On Okta Classic Engine orgs, go to **Security > Authentication** and select the **Password** tab.
+            2. Locate the policy and select **Edit**.
+            3. In the **Account recovery** section, clear the **SMS** option so text messages cannot be used to recover a password.
+            4. Confirm a stronger recovery option such as email remains enabled so users are not locked out of self-service recovery.
+            5. Select **Update Policy**.
         - id: terraform
           desc: |
             ```hcl
             resource "okta_policy_password_default" "default" {
-              sms_recovery = "ACTIVE"
+              sms_recovery = "INACTIVE"
             }
             ```
     refs:
@@ -3271,19 +3241,19 @@ queries:
   - uid: mondoo-okta-security-password-settings-sms-recovery-api
     filters: asset.platform == "okta-org"
     mql: |
-      okta.policies.password.all( settings['recovery']['factors']['okta_sms']['status'] == "ACTIVE" )
+      okta.policies.password.all( settings['recovery']['factors']['okta_sms']['status'] == "INACTIVE" )
   - uid: mondoo-okta-security-password-settings-sms-recovery-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.providers.any( nameLabel == "okta" )
     mql: |
-      terraform.resources(/okta_policy_password/).all( arguments['sms_recovery'] == /var/ || arguments['sms_recovery'] == "ACTIVE" )
+      terraform.resources(/okta_policy_password/).all( arguments['sms_recovery'] == /var/ || arguments['sms_recovery'] == "INACTIVE" )
   - uid: mondoo-okta-security-password-settings-sms-recovery-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains( providerName == /okta/ )
     mql: |
-      terraform.plan.resourceChanges.where( type == /okta_policy_password/ ).all( change.after['sms_recovery'] == "ACTIVE" )
+      terraform.plan.resourceChanges.where( type == /okta_policy_password/ ).all( change.after['sms_recovery'] == "INACTIVE" )
   - uid: mondoo-okta-security-password-settings-sms-recovery-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains( type == /okta_policy_password/ )
     mql: |
-      terraform.state.resources.where( type == /okta_policy_password/ ).all( values['sms_recovery'] == "ACTIVE" )
+      terraform.state.resources.where( type == /okta_policy_password/ ).all( values['sms_recovery'] == "INACTIVE" )
   - uid: mondoo-okta-security-password-settings-password-question-recovery
     title: Enable strong password settings for password policies - question recovery
     impact: 30
@@ -3358,17 +3328,18 @@ queries:
       remediation:
         - id: console
           desc: |
-            **Using the Okta Admin Console**
+            ### Disable security questions as a recovery factor
 
-            1. In the Admin Console, go to **Security** → **Authentication**.
-            2. On the **Password** tab, locate the policy and select **Edit**.
-            3. Under **Password settings**, in **User account recovery**, enable **Security question** as a recovery factor.
-            4. Select **Update Policy** to save.
+            1. On Okta Identity Engine orgs, go to **Security > Authenticators** and select **Password**. On Okta Classic Engine orgs, go to **Security > Authentication** and select the **Password** tab.
+            2. Locate the policy and select **Edit**.
+            3. In the **Account recovery** section, clear the **Security question** option so knowledge questions cannot be used to recover a password.
+            4. Confirm a stronger recovery option such as email remains enabled so users are not locked out of self-service recovery.
+            5. Select **Update Policy**.
         - id: terraform
           desc: |
             ```hcl
             resource "okta_policy_password_default" "default" {
-              question_recovery = "ACTIVE"
+              question_recovery = "INACTIVE"
             }
             ```
     refs:
@@ -3377,19 +3348,19 @@ queries:
   - uid: mondoo-okta-security-password-settings-question-recovery-api
     filters: asset.platform == "okta-org"
     mql: |
-      okta.policies.password.all( settings['recovery']['factors']['recovery_question']['status'] == "ACTIVE" )
+      okta.policies.password.all( settings['recovery']['factors']['recovery_question']['status'] == "INACTIVE" )
   - uid: mondoo-okta-security-password-settings-question-recovery-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.providers.any( nameLabel == "okta" )
     mql: |
-      terraform.resources(/okta_policy_password/).all( arguments['question_recovery'] == /var/ || arguments['question_recovery'] == "ACTIVE" )
+      terraform.resources(/okta_policy_password/).all( arguments['question_recovery'] == /var/ || arguments['question_recovery'] == "INACTIVE" )
   - uid: mondoo-okta-security-password-settings-question-recovery-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains( providerName == /okta/ )
     mql: |
-      terraform.plan.resourceChanges.where( type == /okta_policy_password/ ).all( change.after['question_recovery'] == "ACTIVE" )
+      terraform.plan.resourceChanges.where( type == /okta_policy_password/ ).all( change.after['question_recovery'] == "INACTIVE" )
   - uid: mondoo-okta-security-password-settings-question-recovery-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains( type == /okta_policy_password/ )
     mql: |
-      terraform.state.resources.where( type == /okta_policy_password/ ).all( values['question_recovery'] == "ACTIVE" )
+      terraform.state.resources.where( type == /okta_policy_password/ ).all( values['question_recovery'] == "INACTIVE" )
   - uid: mondoo-okta-security-threatinsight-action-block
     title: Ensure ThreatInsight is configured to block suspicious login attempts
     impact: 100
@@ -3673,14 +3644,12 @@ queries:
           desc: |
             ### Require MFA in sign-on policy rules
 
-            1. In the Admin Console, go to **Security > Authentication**.
-            2. Select the **Sign On** tab.
-            3. For each active sign-on policy, review its rules.
-            4. Select **Edit** for each rule.
-            5. Under **Actions**, set **Prompt for factor** to require MFA.
-            6. Select **Save**.
+            1. On Okta Identity Engine orgs, go to **Security > Global Session Policy**. On Okta Classic Engine orgs, go to **Security > Authentication** and select the **Sign On** tab.
+            2. For each active policy, review its rules and select **Edit** on each rule.
+            3. On Identity Engine, set **Establish the user session with** to require a password and another factor. On Classic Engine, select **Prompt for Factor** and choose how often users are prompted.
+            4. Select **Update Rule**.
 
-            Repeat for all active sign-on policy rules to ensure comprehensive MFA enforcement.
+            Repeat for all active sign-on policy rules so no rule allows password-only sign-in.
         - id: terraform
           desc: |
             ```hcl
@@ -3688,7 +3657,7 @@ queries:
               policy_id    = okta_policy_signon.default.id
               name         = "Require MFA"
               status       = "ACTIVE"
-              mfa_required = true   # newer provider versions use `factor_required = true`
+              mfa_required = true
             }
             ```
     refs:
@@ -3782,13 +3751,13 @@ queries:
           desc: |
             ### Reduce the number of organization admins
 
+            Organization admin access in Okta can be granted to individual users and to groups. This check evaluates groups that hold the role, so pay particular attention to group-based assignments.
+
             1. In the Admin Console, go to **Security > Administrators**.
-            2. Under **Admin Roles**, filter by Organization Administrator to display only org admins.
-            3. For each user who does not require full org admin access:
-               a. Select **Edit** next to their entry.
-               b. Assign a more specific role such as Help Desk Admin, Application Admin, or Read-Only Admin based on their actual responsibilities.
-               c. Select **Update Administrator**.
-            4. Periodically review org admin assignments to ensure ongoing compliance with the principle of least privilege.
+            2. Filter the admin list by the **Organization Administrator** role to see every user and group that grants the role.
+            3. For each group that grants the role, go to **Directory > Groups**, open the group, and remove members who do not require full org admin access.
+            4. For users who still need administrative rights, assign a more specific role such as Help Desk Admin, Application Admin, or Read-Only Admin based on their actual responsibilities.
+            5. Periodically review org admin assignments to keep the role aligned with least privilege.
     refs:
       - url: https://help.okta.com/en-us/Content/Topics/Security/Administrators.htm
         title: Administrators
