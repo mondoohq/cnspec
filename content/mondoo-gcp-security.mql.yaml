@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-gcp-security
     name: Mondoo Google Cloud (GCP) Security
-    version: 9.3.1
+    version: 9.3.2
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -542,6 +542,11 @@ queries:
             To ensure that instances are not configured to use the default service account in Terraform, provision or update a compute instance with a custom service account:
 
             ```hcl
+            resource "google_service_account" "default" {
+              account_id   = "my-custom-sa"
+              display_name = "Custom SA for VM Instance"
+            }
+
             resource "google_compute_instance" "default" {
               name         = "secure-instance"
               machine_type = var.machine_type
@@ -549,8 +554,8 @@ queries:
               tags = ["terraform"]
 
               service_account {
-                email  = "example@example.com"
-                scopes = ["user-email", "compute-ro", "storage-ro"]
+                email  = google_service_account.default.email
+                scopes = ["userinfo-email", "compute-ro", "storage-ro"]
               }
             }
             ```
@@ -762,10 +767,10 @@ queries:
               gcloud compute instances stop INSTANCE_NAME
               ```
 
-            2. Update the instance:
+            2. Update the instance to use a custom service account, or keep the default service account but assign scopes that do not include `cloud-platform`:
 
               ```bash
-              gcloud compute instances set-service-account INSTANCE_NAME --service-account=SERVICE_ACCOUNT --scopes [SCOPE1,SCOPE2...]
+              gcloud compute instances set-service-account INSTANCE_NAME --service-account=SERVICE_ACCOUNT --scopes=logging-write,monitoring
               ```
 
             3. Restart the instance:
@@ -1094,11 +1099,12 @@ queries:
           desc: |
             To ensure Cloud Storage buckets are not anonymously or publicly accessible using the Google Cloud Console:
 
-            1. In the Google Cloud console, go to the **Cloud Storage Bucket** page.
-            2. For the bucket you want to enforce public access prevention on, select the more actions menu.
-            3. Select **Edit access** from the drop-down menu.
-            4. In the Public access card, select **Prevent public access** to enforce public access prevention.
-            5. Select **Confirm**.
+            1. In the Google Cloud console, go to the **Cloud Storage Buckets** page.
+            2. Select the name of the bucket you want to update.
+            3. Select the **Permissions** tab.
+            4. In the list of principals, locate any entries for `allUsers` or `allAuthenticatedUsers`.
+            5. Select the delete icon next to each of these entries to remove the binding.
+            6. Select **Confirm**.
         - id: cli
           desc: |
             To ensure Cloud Storage buckets are not anonymously or publicly accessible using the Google Cloud CLI, update public access configuration using the `gcloud` cli, ensure `allUsers` and `allAuthenticatedUsers` are not set by removing them:
@@ -2483,10 +2489,10 @@ queries:
             bq show --format=prettyjson PROJECT_ID:DATASET_ID.VIEW_ID
             ```
 
-            2. If `useLegacySql` is `true`, recreate the view with standard SQL:
+            2. If `useLegacySql` is `true`, update the view definition with standard SQL:
 
             ```bash
-            bq mk --use_legacy_sql=false --view "SELECT column1, column2 FROM \`project.dataset.table\`" PROJECT_ID:DATASET_ID.VIEW_ID
+            bq update --use_legacy_sql=false --view "SELECT column1, column2 FROM \`project.dataset.table\`" PROJECT_ID:DATASET_ID.VIEW_ID
             ```
     refs:
       - url: https://cloud.google.com/bigquery/docs/reference/standard-sql/migrating-from-legacy-sql
@@ -4627,14 +4633,14 @@ queries:
 
             To ensure Secure Boot is enabled for all VM instances using the Google Cloud CLI, ensure the instance uses a compatible image. You can list public Shielded VM images:
             ```bash
-            gcloud compute images list --project gce-UEFI-images --no-standard-images --filter="shieldedVmFeatures:(SECURE_BOOT)"
+            gcloud compute images list --project gce-uefi-images --no-standard-images --filter="shieldedVmFeatures:(SECURE_BOOT)"
             ```
 
             1. Stop the instance if it is running:
             ```bash
             gcloud compute instances stop INSTANCE_NAME --zone=ZONE
             ```
-            2. Update the instance to enable Secure Boot (this command implicitly enables vTPM and Integrity Monitoring as well):
+            2. Update the instance to enable Secure Boot:
             ```bash
             gcloud compute instances update INSTANCE_NAME --zone=ZONE --shielded-secure-boot
             ```
@@ -4824,7 +4830,7 @@ queries:
             ```bash
             gcloud compute instances update INSTANCE_NAME --zone=ZONE --shielded-vtpm
             ```
-            Note: This command specifically targets vTPM. If Secure Boot or Integrity Monitoring are desired, they might need separate flags (`--shielded-vm-secure-boot`, `--shielded-vm-integrity-monitoring`) or enabling them might implicitly enable vTPM.
+            Note: This command specifically targets vTPM. To also enable Secure Boot or Integrity Monitoring, add the `--shielded-secure-boot` and `--shielded-integrity-monitoring` flags to the same command.
             3. Start the instance:
             ```bash
             gcloud compute instances start INSTANCE_NAME --zone=ZONE
@@ -5012,9 +5018,9 @@ queries:
             gcloud compute instances stop INSTANCE_NAME --zone=ZONE
             ```
 
-            3. Update the instance to enable Integrity Monitoring. This command will also enable vTPM if it is not already enabled:
+            3. Update the instance to enable Integrity Monitoring. Integrity Monitoring requires vTPM, so enable both together:
             ```bash
-            gcloud compute instances update INSTANCE_NAME --zone=ZONE --shielded-integrity-monitoring
+            gcloud compute instances update INSTANCE_NAME --zone=ZONE --shielded-vtpm --shielded-integrity-monitoring
             ```
 
             4. Start the instance after the update:
@@ -5169,7 +5175,7 @@ queries:
                 Check the `ipAddresses` section in the output to confirm the absence of an entry with `type: PRIMARY`.
         - id: terraform
           desc: |
-            To ensure Cloud SQL PostgreSQL instances are not publicly exposed in Terraform, ensure the `ipv4_enabled` attribute within the `ip_configuration` block is set to `false` or omitted (defaults to false if private network is configured):
+            To ensure Cloud SQL PostgreSQL instances are not publicly exposed in Terraform, set the `ipv4_enabled` attribute within the `ip_configuration` block to `false` and configure a private network. Omitting `ipv4_enabled` is not sufficient because the attribute defaults to `true`:
 
             ```hcl
             resource "google_sql_database_instance" "default" {
@@ -5180,10 +5186,8 @@ queries:
               settings {
                 tier = "db-f1-micro"
                 ip_configuration {
-                  # Ensure private network is configured
-                  private_network = "projects/my-project/global/networks/my-vpc"
-                  # Set ipv4_enabled to false or omit it
                   ipv4_enabled    = false
+                  private_network = "projects/my-project/global/networks/my-vpc"
                 }
               }
             }
@@ -5332,7 +5336,7 @@ queries:
                 Check the `ipAddresses` section in the output to confirm the absence of an entry with `type: PRIMARY`.
         - id: terraform
           desc: |
-            To ensure Cloud SQL for SQL Server instances are not publicly exposed in Terraform, ensure the `ipv4_enabled` attribute within the `ip_configuration` block is set to `false` or omitted (defaults to false if private network is configured):
+            To ensure Cloud SQL for SQL Server instances are not publicly exposed in Terraform, set the `ipv4_enabled` attribute within the `ip_configuration` block to `false` and configure a private network. Omitting `ipv4_enabled` is not sufficient because the attribute defaults to `true`:
 
             ```hcl
             resource "google_sql_database_instance" "default" {
@@ -5341,12 +5345,10 @@ queries:
               region           = "us-central1"
 
               settings {
-                tier = "db-custom-2-7680" # Example tier
+                tier = "db-custom-2-7680"
                 ip_configuration {
-                  # Ensure private network is configured
-                  private_network = "projects/my-project/global/networks/my-vpc"
-                  # Set ipv4_enabled to false or omit it
                   ipv4_enabled    = false
+                  private_network = "projects/my-project/global/networks/my-vpc"
                 }
               }
             }
@@ -6472,14 +6474,14 @@ queries:
             5. Select **Save**.
         - id: cli
           desc: |
-            To ensure KMS ENCRYPT_DECRYPT crypto keys have automatic rotation configured using the Google Cloud CLI, configure automatic rotation for an existing crypto key:
+            To ensure KMS ENCRYPT_DECRYPT crypto keys have automatic rotation configured using the Google Cloud CLI, configure automatic rotation for an existing crypto key. Replace NEXT_ROTATION_TIME with an RFC 3339 timestamp within the next 90 days, for example the output of `date -u -d '+89 days' +%Y-%m-%dT%H:%M:%SZ` on Linux:
 
             ```bash
             gcloud kms keys update KEY_NAME \
               --keyring=KEY_RING \
               --location=LOCATION \
               --rotation-period=90d \
-              --next-rotation-time=$(date -u -v+90d +%Y-%m-%dT%H:%M:%SZ)
+              --next-rotation-time=NEXT_ROTATION_TIME
             ```
 
             For new keys, set rotation at creation time:
@@ -6490,7 +6492,7 @@ queries:
               --location=LOCATION \
               --purpose=encryption \
               --rotation-period=90d \
-              --next-rotation-time=$(date -u -v+90d +%Y-%m-%dT%H:%M:%SZ)
+              --next-rotation-time=NEXT_ROTATION_TIME
             ```
     refs:
       - url: https://cloud.google.com/kms/docs/reference
@@ -6763,7 +6765,6 @@ queries:
 
             | Algorithm | KSK Length | ZSK Length |
             |-----------|------------|------------|
-            | RSASHA1 | 1024,2048 | 1024,2048 |
             | RSASHA256 | 1024,2048 | 1024,2048 |
             | RSASHA512 | 1024,2048 | 1024,2048 |
             | ECDSAP256SHA256 | 256 | 256 |
@@ -6931,7 +6932,6 @@ queries:
 
             | Algorithm | KSK Length | ZSK Length |
             |-----------|------------|------------|
-            | RSASHA1 | 1024,2048 | 1024,2048 |
             | RSASHA256 | 1024,2048 | 1024,2048 |
             | RSASHA512 | 1024,2048 | 1024,2048 |
             | ECDSAP256SHA256 | 256 | 256 |
@@ -9210,12 +9210,14 @@ queries:
       remediation:
         - id: terraform
           desc: |
-            To ensure shielded GKE nodes are enabled in Terraform:
+            To ensure shielded GKE nodes are enabled in Terraform, set `enable_shielded_nodes = true` at the cluster level and enable Secure Boot and integrity monitoring on the node configuration:
 
             ```hcl
             resource "google_container_cluster" "primary" {
               name     = "my-cluster"
               location = "us-central1"
+
+              enable_shielded_nodes = true
 
               node_config {
                 shielded_instance_config {
@@ -9254,6 +9256,7 @@ queries:
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_container_cluster')
     mql: |
       terraform.resources('google_container_cluster').all(
+        arguments.enable_shielded_nodes != false ||
         blocks.where(type == 'node_config').any(
           blocks.where(type == 'shielded_instance_config').any(
             arguments.enable_secure_boot == true && arguments.enable_integrity_monitoring == true
@@ -9265,6 +9268,7 @@ queries:
       asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_container_cluster')
     mql: |
       terraform.plan.resourceChanges.where(type == 'google_container_cluster').all(
+        change.after['enable_shielded_nodes'] != false ||
         change.after.node_config != empty &&
         change.after.node_config.any(
           _['shielded_instance_config'] != empty &&
@@ -9276,6 +9280,7 @@ queries:
       asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_container_cluster')
     mql: |
       terraform.state.resources.where(type == 'google_container_cluster').all(
+        values['enable_shielded_nodes'] != false ||
         values.node_config != empty &&
         values.node_config.any(
           _['shielded_instance_config'] != empty &&
@@ -10184,6 +10189,22 @@ queries:
               key_ring = google_kms_key_ring.redis_ring.id
             }
             ```
+
+            For Memorystore Redis Clusters, use the `kms_key` attribute:
+
+            ```hcl
+            resource "google_redis_cluster" "cache_cluster" {
+              name        = "my-redis-cluster"
+              shard_count = 3
+              region      = "us-central1"
+
+              psc_configs {
+                network = google_compute_network.example.id
+              }
+
+              kms_key = google_kms_crypto_key.redis_key.id
+            }
+            ```
         - id: console
           desc: |
             To ensure Cloud Redis instances are encrypted with CMEK using the Google Cloud Console, note: CMEK must be configured at instance creation time and cannot be added to an existing instance.
@@ -10203,6 +10224,16 @@ queries:
               --tier=STANDARD_HA \
               --size=1 \
               --customer-managed-key=projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY
+            ```
+
+            For Memorystore Redis Clusters, use the `--kms-key` flag:
+
+            ```bash
+            gcloud redis clusters create CLUSTER_NAME \
+              --region=REGION \
+              --shard-count=3 \
+              --network=projects/PROJECT/global/networks/NETWORK \
+              --kms-key=projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY
             ```
     refs:
       - url: https://cloud.google.com/memorystore/docs/redis/about-cmek
@@ -10224,8 +10255,8 @@ queries:
         arguments.customer_managed_key != ""
       )
       terraform.resources('google_redis_cluster').all(
-        arguments.customer_managed_key != empty &&
-        arguments.customer_managed_key != ""
+        arguments.kms_key != empty &&
+        arguments.kms_key != ""
       )
   - uid: mondoo-gcp-security-cloud-redis-cmek-configured-terraform-plan
     filters: |
@@ -10236,8 +10267,8 @@ queries:
         change.after.customer_managed_key != ""
       )
       terraform.plan.resourceChanges.where(type == 'google_redis_cluster').all(
-        change.after.customer_managed_key != empty &&
-        change.after.customer_managed_key != ""
+        change.after.kms_key != empty &&
+        change.after.kms_key != ""
       )
   - uid: mondoo-gcp-security-cloud-redis-cmek-configured-terraform-state
     filters: |
@@ -10248,8 +10279,8 @@ queries:
         values.customer_managed_key != ""
       )
       terraform.state.resources.where(type == 'google_redis_cluster').all(
-        values.customer_managed_key != empty &&
-        values.customer_managed_key != ""
+        values.kms_key != empty &&
+        values.kms_key != ""
       )
   - uid: mondoo-gcp-security-iam-no-user-managed-service-account-keys
     title: Ensure user-managed service account keys are not created
@@ -10516,7 +10547,7 @@ queries:
             }
             ```
 
-            To enforce that default service accounts cannot be used, apply an organization policy:
+            To prevent default service accounts from automatically receiving the Editor role when they are created, apply an organization policy:
 
             ```hcl
             resource "google_project_organization_policy" "disable_default_sa" {
@@ -10526,6 +10557,15 @@ queries:
               boolean_policy {
                 enforced = true
               }
+            }
+            ```
+
+            This policy does not disable default service accounts that already exist. To disable them from Terraform, use the `google_project_default_service_accounts` resource:
+
+            ```hcl
+            resource "google_project_default_service_accounts" "disable_default" {
+              project = "example-project"
+              action  = "DISABLE"
             }
             ```
     refs:
@@ -10788,18 +10828,6 @@ queries:
         tags:
           mondoo.com/filter-title: GCP IAM Service Account
           mondoo.com/filter-icon: gcp
-      - uid: mondoo-gcp-security-iam-no-disabled-service-account-keys-terraform-hcl
-        tags:
-          mondoo.com/filter-title: Terraform HCL
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-gcp-security-iam-no-disabled-service-account-keys-terraform-plan
-        tags:
-          mondoo.com/filter-title: Terraform Plan
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-gcp-security-iam-no-disabled-service-account-keys-terraform-state
-        tags:
-          mondoo.com/filter-title: Terraform State
-          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that disabled service account keys are deleted rather than left in a disabled state. Disabled keys represent unnecessary credential material that can be re-enabled by anyone with sufficient IAM permissions, restoring access that was intentionally revoked.
@@ -10885,24 +10913,6 @@ queries:
     filters: asset.platform == 'gcp-iam-service-account'
     mql: |
       gcp.project.iam.serviceAccount.keys.none(disabled == true)
-  - uid: mondoo-gcp-security-iam-no-disabled-service-account-keys-terraform-hcl
-    filters: asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_service_account_key')
-    mql: |
-      terraform.resources('google_service_account_key').all(
-        arguments['disabled'] == null || arguments['disabled'] == false
-      )
-  - uid: mondoo-gcp-security-iam-no-disabled-service-account-keys-terraform-plan
-    filters: asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_service_account_key')
-    mql: |
-      terraform.plan.resourceChanges.where(type == 'google_service_account_key').all(
-        change.after.disabled == null || change.after.disabled == false
-      )
-  - uid: mondoo-gcp-security-iam-no-disabled-service-account-keys-terraform-state
-    filters: asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_service_account_key')
-    mql: |
-      terraform.state.resources.where(type == 'google_service_account_key').all(
-        values.disabled == null || values.disabled == false
-      )
   # No Terraform variants: the inactivity signal comes from Policy Intelligence last-authentication
   # telemetry, which has no Terraform configuration analog to assert against.
   - uid: mondoo-gcp-security-iam-no-stale-service-accounts
@@ -11209,12 +11219,16 @@ queries:
             Note: Once a bucket is locked, it cannot be unlocked or deleted.
         - id: console
           desc: |
-            To ensure Cloud Logging log buckets are locked to prevent tampering using the Google Cloud Console:
+            The Google Cloud console does not support locking a log bucket. Use the Google Cloud CLI instead:
 
-            1. Navigate to **Logging > Logs Storage** in the Google Cloud Console.
-            2. Select the log bucket you want to lock.
-            3. Select **Edit** and enable the **Lock bucket** option.
-            4. Confirm the action. Note: This action is irreversible.
+            1. Navigate to **Logging > Logs Storage** in the Google Cloud Console and confirm the bucket's retention settings are final, because they cannot be reduced after locking.
+            2. Lock the bucket with the Google Cloud CLI:
+
+            ```bash
+            gcloud logging buckets update BUCKET_ID --location=LOCATION --locked
+            ```
+
+            Note: This action is irreversible.
         - id: cli
           desc: |
             To ensure Cloud Logging log buckets are locked to prevent tampering using the Google Cloud CLI, lock a log bucket:
@@ -11346,14 +11360,16 @@ queries:
             ```
         - id: console
           desc: |
-            To ensure Cloud Logging log buckets are encrypted with CMEK using the Google Cloud Console:
+            The Google Cloud console does not support configuring CMEK on log buckets. Use the Google Cloud CLI instead:
 
-            1. Navigate to **Logging > Logs Storage** in the Google Cloud Console.
-            2. Select the log bucket to update.
-            3. Select **Edit**.
-            4. Under **Encryption**, select **Customer-managed encryption key**.
-            5. Select or create a Cloud KMS key.
-            6. Select **Update bucket**.
+            1. Grant the Logs Router service account the `roles/cloudkms.cryptoKeyEncrypterDecrypter` role on the Cloud KMS key.
+            2. Apply the key to the log bucket:
+
+            ```bash
+            gcloud logging buckets update BUCKET_ID \
+              --location=LOCATION \
+              --cmek-kms-key-name=projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY
+            ```
         - id: cli
           desc: |
             To ensure Cloud Logging log buckets are encrypted with CMEK using the Google Cloud CLI, update a log bucket with CMEK:
@@ -15322,6 +15338,18 @@ queries:
               transit_encryption_mode = "SERVER_AUTHENTICATION"
             }
             ```
+
+            For Memorystore Redis Clusters:
+
+            ```hcl
+            resource "google_redis_cluster" "cluster" {
+              name        = "my-redis-cluster"
+              region      = "us-central1"
+              shard_count = 3
+
+              transit_encryption_mode = "TRANSIT_ENCRYPTION_MODE_SERVER_AUTHENTICATION"
+            }
+            ```
         - id: console
           desc: |
             To ensure in-transit encryption is enabled for Cloud Memorystore for Redis using the Google Cloud Console, note: In-transit encryption must be configured at instance creation time and cannot be changed on an existing instance.
@@ -15340,6 +15368,14 @@ queries:
             gcloud redis instances create INSTANCE_NAME \
               --region=REGION \
               --transit-encryption-mode=SERVER_AUTHENTICATION
+            ```
+
+            For Memorystore Redis Clusters:
+
+            ```bash
+            gcloud redis clusters create CLUSTER_NAME \
+              --region=REGION \
+              --transit-encryption-mode=server-authentication
             ```
     refs:
       - url: https://cloud.google.com/memorystore/docs/redis/in-transit-encryption
@@ -15603,7 +15639,7 @@ queries:
             3. In the **Security** section, select **IAM Auth** as the authorization mode.
             4. Complete the cluster creation.
 
-            For existing clusters, update the authorization mode in the cluster settings.
+            The authorization mode is set at cluster creation time. To remediate an existing cluster, create a new cluster with IAM authentication enabled, migrate clients to it, and delete the old cluster.
         - id: cli
           desc: |
             To ensure IAM authentication is enabled for Memorystore Redis Cluster using the Google Cloud CLI:
@@ -15879,12 +15915,12 @@ queries:
             To ensure Secret Manager secrets are encrypted with CMEK using the Google Cloud Console:
 
             1. Navigate to **Security > Secret Manager** in the Google Cloud Console.
-            2. Select **Create Secret** or select an existing secret.
+            2. Select **Create Secret**.
             3. Under **Encryption**, select **Customer-managed encryption key (CMEK)**.
             4. Select or create a Cloud KMS key for each replication location.
-            5. Select **Create Secret** or **Update**.
+            5. Select **Create Secret**.
 
-            Note: Encryption configuration is set at secret creation time. To change encryption on an existing secret, you must create a new secret with CMEK and migrate the secret versions.
+            Encryption is set at secret creation time. To remediate an existing secret, create a new secret with CMEK, add the secret data as new versions, update consumers, and delete the old secret.
         - id: cli
           desc: |
             To ensure Secret Manager secrets are encrypted with CMEK using the Google Cloud CLI, create a secret with CMEK encryption:
@@ -16812,19 +16848,27 @@ queries:
             5. Save the configuration.
         - id: cli
           desc: |
-            To ensure external forwarding rules do not forward all ports using the Google Cloud CLI, forwarding rules cannot be modified in place. Create a new forwarding rule with specific ports:
+            To ensure external forwarding rules do not forward all ports using the Google Cloud CLI, forwarding rules cannot be modified in place. If the rule uses an ephemeral IP address, promote it to a static address first so clients keep the same endpoint:
 
             ```bash
-            gcloud compute forwarding-rules create NEW_RULE_NAME \
+            gcloud compute addresses create lb-address \
+              --addresses=CURRENT_IP \
+              --region=REGION
+            ```
+
+            Delete the old rule, then re-create it with specific ports on the same address:
+
+            ```bash
+            gcloud compute forwarding-rules delete RULE_NAME --region=REGION
+
+            gcloud compute forwarding-rules create RULE_NAME \
+              --region=REGION \
+              --address=lb-address \
               --ports=80,443 \
               --target-pool=TARGET_POOL
             ```
 
-            Then delete the old rule:
-
-            ```bash
-            gcloud compute forwarding-rules delete OLD_RULE_NAME
-            ```
+            The frontend is unreachable between deleting and re-creating the rule, so perform this change during a maintenance window.
     refs:
       - url: https://cloud.google.com/load-balancing/docs/forwarding-rule-concepts
         title: Google Cloud - Forwarding rule concepts
@@ -17072,10 +17116,6 @@ queries:
         tags:
           mondoo.com/filter-title: GCP Cloud SQL for PostgreSQL
           mondoo.com/filter-icon: gcp
-      - uid: mondoo-gcp-security-cloud-sql-password-policy-enabled-gcp-sqlserver
-        tags:
-          mondoo.com/filter-title: GCP Cloud SQL for SQL Server
-          mondoo.com/filter-icon: gcp
       - uid: mondoo-gcp-security-cloud-sql-password-policy-enabled-terraform-hcl
         tags:
           mondoo.com/filter-title: Terraform HCL
@@ -17176,10 +17216,6 @@ queries:
       gcp.sql.instance.settings.passwordValidationPolicy.enabledPasswordPolicy == true
   - uid: mondoo-gcp-security-cloud-sql-password-policy-enabled-gcp-postgresql
     filters: asset.platform == 'gcp-sql-postgresql'
-    mql: |
-      gcp.sql.instance.settings.passwordValidationPolicy.enabledPasswordPolicy == true
-  - uid: mondoo-gcp-security-cloud-sql-password-policy-enabled-gcp-sqlserver
-    filters: asset.platform == 'gcp-sql-sqlserver'
     mql: |
       gcp.sql.instance.settings.passwordValidationPolicy.enabledPasswordPolicy == true
   - uid: mondoo-gcp-security-cloud-sql-password-policy-enabled-terraform-hcl
@@ -17609,13 +17645,14 @@ queries:
             Note: Changing Shielded VM settings on a node pool requires re-creating nodes.
         - id: cli
           desc: |
-            To ensure GKE cluster node pools have Secure Boot enabled using the Google Cloud CLI, create a node pool with Secure Boot enabled (this setting cannot be changed on existing node pools):
+            To ensure GKE cluster node pools have Secure Boot enabled using the Google Cloud CLI, update each node pool. Both Shielded VM flags must be specified together, and the update re-creates the nodes in the pool:
 
             ```bash
-            gcloud container node-pools create NODE_POOL_NAME \
+            gcloud container node-pools update NODE_POOL_NAME \
               --cluster=CLUSTER_NAME \
               --zone=ZONE \
-              --shielded-secure-boot
+              --shielded-secure-boot \
+              --shielded-integrity-monitoring
             ```
     refs:
       - url: https://cloud.google.com/kubernetes-engine/docs/how-to/shielded-gke-nodes
@@ -19969,9 +20006,9 @@ queries:
             To ensure Bigtable clusters are encrypted with CMEK using the Google Cloud CLI, note: CMEK must be configured at cluster creation time.
 
             ```bash
-            cbt createinstance INSTANCE_ID DISPLAY_NAME \
-              CLUSTER_ID ZONE NUM_NODES SSD \
-              --kms-key=projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY
+            gcloud bigtable instances create INSTANCE_ID \
+              --display-name="DISPLAY_NAME" \
+              --cluster-config=id=CLUSTER_ID,zone=ZONE,nodes=3,kms-key=projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY
             ```
     refs:
       - url: https://cloud.google.com/bigtable/docs/cmek
@@ -20251,8 +20288,10 @@ queries:
             gcloud alloydb instances update INSTANCE_ID \
               --cluster=CLUSTER_ID \
               --region=REGION \
-              --assign-inbound-public-ip=ASSIGN_INBOUND_PUBLIC_IP_DISABLED
+              --assign-inbound-public-ip=NO_PUBLIC_IP
             ```
+
+            Note: Disabling public IP also clears the instance's list of authorized external networks.
     refs:
       - url: https://cloud.google.com/alloydb/docs/connect-overview
         title: AlloyDB connectivity overview
@@ -20799,7 +20838,26 @@ queries:
       remediation:
         - id: terraform
           desc: |
-            To ensure GKE node pools have an upgrade strategy configured in Terraform, configure a surge upgrade strategy for node pools:
+            To ensure GKE node pools have an upgrade strategy configured in Terraform, if node pools are declared inline on the cluster, set the upgrade strategy on each inline pool:
+
+            ```hcl
+            resource "google_container_cluster" "example" {
+              name     = "example-cluster"
+              location = "us-central1"
+
+              node_pool {
+                name = "example-pool"
+
+                upgrade_settings {
+                  strategy        = "SURGE"
+                  max_surge       = 1
+                  max_unavailable = 0
+                }
+              }
+            }
+            ```
+
+            For node pools managed as separate resources, configure a surge upgrade strategy:
 
             ```hcl
             resource "google_container_node_pool" "example" {
@@ -21446,19 +21504,15 @@ queries:
               name         = "example-endpoint"
               display_name = "Example Endpoint"
               location     = "us-central1"
-              network      = google_compute_network.example.id
 
               private_service_connect_config {
                 enable_private_service_connect = true
                 project_allowlist              = [var.project_id]
               }
             }
-
-            resource "google_compute_network" "example" {
-              name                    = "example-network"
-              auto_create_subnetworks = false
-            }
             ```
+
+            The network argument and the private_service_connect_config block are mutually exclusive. To satisfy this check with Private Service Connect, set only private_service_connect_config.
         - id: console
           desc: |
             To ensure Vertex AI endpoints use Private Service Connect using the Google Cloud Console, note: Private Service Connect must be configured at endpoint creation time.
@@ -21471,13 +21525,20 @@ queries:
             6. Complete the endpoint creation.
         - id: cli
           desc: |
-            To ensure Vertex AI endpoints use a VPC network using the Google Cloud CLI, note: the network must be configured at endpoint creation time. Use the `--network` flag to specify a VPC for private connectivity.
+            The gcloud CLI cannot enable Private Service Connect on a Vertex AI endpoint. Use the Vertex AI REST API to create the endpoint with Private Service Connect enabled. Note: Private Service Connect must be configured at endpoint creation time.
 
             ```bash
-            gcloud ai endpoints create \
-              --display-name=ENDPOINT_NAME \
-              --region=REGION \
-              --network=projects/PROJECT/global/networks/VPC_NAME
+            curl -X POST \
+              -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+              -H "Content-Type: application/json" \
+              "https://REGION-aiplatform.googleapis.com/v1/projects/PROJECT/locations/REGION/endpoints" \
+              -d '{
+                "displayName": "ENDPOINT_NAME",
+                "privateServiceConnectConfig": {
+                  "enablePrivateServiceConnect": true,
+                  "projectAllowlist": ["PROJECT"]
+                }
+              }'
             ```
     refs:
       - url: https://cloud.google.com/vertex-ai/docs/predictions/using-private-service-connect
@@ -21575,14 +21636,24 @@ queries:
       remediation:
         - id: terraform
           desc: |
-            Note: Vertex AI models cannot be created via Terraform. Use the Google Cloud Console or gcloud CLI to upload models with CMEK encryption:
+            Vertex AI models cannot be created via Terraform, and the gcloud CLI does not support setting a CMEK key at model upload. Use the Vertex AI REST API to upload models with CMEK encryption:
 
             ```bash
-            gcloud ai models upload \
-              --region=REGION \
-              --display-name=MODEL_NAME \
-              --encryption-kms-key-name=projects/PROJECT/locations/LOCATION/keyRings/KEYRING/cryptoKeys/KEY \
-              --container-image-uri=IMAGE_URI
+            curl -X POST \
+              -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+              -H "Content-Type: application/json" \
+              "https://REGION-aiplatform.googleapis.com/v1/projects/PROJECT/locations/REGION/models:upload" \
+              -d '{
+                "model": {
+                  "displayName": "MODEL_NAME",
+                  "containerSpec": {
+                    "imageUri": "IMAGE_URI"
+                  },
+                  "encryptionSpec": {
+                    "kmsKeyName": "projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY"
+                  }
+                }
+              }'
             ```
         - id: console
           desc: |
@@ -21845,41 +21916,7 @@ queries:
       remediation:
         - id: terraform
           desc: |
-            To ensure Vertex AI pipeline jobs are encrypted with CMEK in Terraform, vertex AI pipeline jobs are not directly managed as Terraform resources. Use `google_vertex_ai_custom_job` for Terraform-managed ML jobs with CMEK encryption, or submit pipeline jobs via the gcloud CLI or API with CMEK configured:
-
-            ```hcl
-            resource "google_vertex_ai_custom_job" "example" {
-              display_name = "example-custom-job"
-              location     = "us-central1"
-              project      = var.project_id
-
-              job_spec {
-                worker_pool_specs {
-                  replica_count = 1
-                  machine_spec {
-                    machine_type = "n1-standard-4"
-                  }
-                  container_spec {
-                    image_uri = "gcr.io/PROJECT/IMAGE:latest"
-                  }
-                }
-              }
-
-              encryption_spec {
-                kms_key_name = google_kms_crypto_key.example.id
-              }
-            }
-
-            resource "google_kms_crypto_key" "example" {
-              name     = "example-key"
-              key_ring = google_kms_key_ring.example.id
-            }
-
-            resource "google_kms_key_ring" "example" {
-              name     = "example-keyring"
-              location = "us-central1"
-            }
-            ```
+            Vertex AI pipeline jobs cannot be managed with Terraform, and the Terraform Google provider has no resource for pipeline jobs or custom jobs. Submit pipeline jobs through the Vertex AI REST API with an encryption specification configured, as shown in the CLI steps.
         - id: console
           desc: |
             To ensure Vertex AI pipeline jobs are encrypted with CMEK using the Google Cloud Console, note: CMEK must be configured at pipeline job creation time.
@@ -21901,11 +21938,14 @@ queries:
               "https://REGION-aiplatform.googleapis.com/v1/projects/PROJECT/locations/REGION/pipelineJobs" \
               -d '{
                 "displayName": "PIPELINE_JOB_NAME",
+                "pipelineSpec": PIPELINE_SPEC_JSON,
                 "encryptionSpec": {
                   "kmsKeyName": "projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY"
                 }
               }'
             ```
+
+            Replace PIPELINE_SPEC_JSON with the compiled pipeline definition produced by the Kubeflow Pipelines SDK.
     refs:
       - url: https://cloud.google.com/vertex-ai/docs/general/cmek
         title: Customer-managed encryption keys for Vertex AI
@@ -21916,8 +21956,8 @@ queries:
         encryptionSpec != empty
       )
   # No Terraform variants: Vertex AI pipeline jobs are imperative API executions with no
-  # Terraform resource analog (no google_vertex_ai_pipeline_job). google_vertex_ai_custom_job
-  # is a different resource, so a variant cannot be written against pipeline jobs.
+  # Terraform resource analog; the provider has no resource for pipeline jobs or custom
+  # jobs, so a variant cannot be written against pipeline jobs.
   - uid: mondoo-gcp-security-vertexai-pipeline-job-vpc-network
     title: Ensure Vertex AI pipeline jobs use a VPC network
     impact: 80
@@ -21982,34 +22022,7 @@ queries:
       remediation:
         - id: terraform
           desc: |
-            To ensure Vertex AI pipeline jobs use a VPC network in Terraform, vertex AI pipeline jobs are not directly managed as Terraform resources. Use `google_vertex_ai_custom_job` for Terraform-managed ML jobs with VPC networking, or submit pipeline jobs via the gcloud CLI or API with a network configured:
-
-            ```hcl
-            resource "google_vertex_ai_custom_job" "example" {
-              display_name = "example-custom-job"
-              location     = "us-central1"
-              project      = var.project_id
-
-              job_spec {
-                network = google_compute_network.example.id
-
-                worker_pool_specs {
-                  replica_count = 1
-                  machine_spec {
-                    machine_type = "n1-standard-4"
-                  }
-                  container_spec {
-                    image_uri = "gcr.io/PROJECT/IMAGE:latest"
-                  }
-                }
-              }
-            }
-
-            resource "google_compute_network" "example" {
-              name                    = "example-network"
-              auto_create_subnetworks = false
-            }
-            ```
+            Vertex AI pipeline jobs cannot be managed with Terraform, and the Terraform Google provider has no resource for pipeline jobs or custom jobs. Submit pipeline jobs through the Vertex AI REST API with a VPC network configured, as shown in the CLI steps.
         - id: console
           desc: |
             To ensure Vertex AI pipeline jobs use a VPC network using the Google Cloud Console:
@@ -22030,9 +22043,12 @@ queries:
               "https://REGION-aiplatform.googleapis.com/v1/projects/PROJECT/locations/REGION/pipelineJobs" \
               -d '{
                 "displayName": "PIPELINE_JOB_NAME",
+                "pipelineSpec": PIPELINE_SPEC_JSON,
                 "network": "projects/PROJECT/global/networks/VPC_NAME"
               }'
             ```
+
+            Replace PIPELINE_SPEC_JSON with the compiled pipeline definition produced by the Kubeflow Pipelines SDK.
     refs:
       - url: https://cloud.google.com/vertex-ai/docs/general/vpc-peering
         title: VPC Network Peering for Vertex AI
@@ -22109,37 +22125,17 @@ queries:
       remediation:
         - id: terraform
           desc: |
-            To ensure Vertex AI pipeline jobs don't use default SA in Terraform, vertex AI pipeline jobs are not directly managed as Terraform resources. Use `google_vertex_ai_custom_job` for Terraform-managed ML jobs with a custom service account, or submit pipeline jobs via the gcloud CLI or API with a custom service account configured:
+            Vertex AI pipeline jobs cannot be managed with Terraform, and the Terraform Google provider has no resource for pipeline jobs or custom jobs. Create the dedicated service account in Terraform and submit pipeline jobs with it via the REST API as shown in the CLI steps:
 
             ```hcl
-            resource "google_vertex_ai_custom_job" "example" {
-              display_name = "example-custom-job"
-              location     = "us-central1"
-              project      = var.project_id
-
-              job_spec {
-                service_account = google_service_account.pipeline_sa.email
-
-                worker_pool_specs {
-                  replica_count = 1
-                  machine_spec {
-                    machine_type = "n1-standard-4"
-                  }
-                  container_spec {
-                    image_uri = "gcr.io/PROJECT/IMAGE:latest"
-                  }
-                }
-              }
-            }
-
             resource "google_service_account" "pipeline_sa" {
               account_id   = "vertex-pipeline-sa"
               display_name = "Vertex AI Pipeline Service Account"
             }
 
-            resource "google_project_iam_member" "pipeline_sa_roles" {
+            resource "google_project_iam_member" "pipeline_sa_user" {
               project = var.project_id
-              role    = "roles/aiplatform.customCodeServiceAgent"
+              role    = "roles/aiplatform.user"
               member  = "serviceAccount:${google_service_account.pipeline_sa.email}"
             }
             ```
@@ -22163,9 +22159,12 @@ queries:
               "https://REGION-aiplatform.googleapis.com/v1/projects/PROJECT/locations/REGION/pipelineJobs" \
               -d '{
                 "displayName": "PIPELINE_JOB_NAME",
+                "pipelineSpec": PIPELINE_SPEC_JSON,
                 "serviceAccount": "CUSTOM_SA_EMAIL"
               }'
             ```
+
+            Replace PIPELINE_SPEC_JSON with the compiled pipeline definition produced by the Kubeflow Pipelines SDK.
     refs:
       - url: https://cloud.google.com/vertex-ai/docs/pipelines/configure-project#service-account
         title: Configure a service account for Vertex AI Pipelines
@@ -23317,11 +23316,23 @@ queries:
             **Note:** Existing node pools cannot have their service account changed. You must create a new node pool with the dedicated service account, migrate workloads to the new pool, and then delete the old node pool.
         - id: cli
           desc: |
-            To ensure GKE nodes use a dedicated service account using the gcloud CLI, create a dedicated service account and use it when creating a node pool (the service account cannot be changed on existing node pools):
+            To ensure GKE nodes use a dedicated service account using the gcloud CLI, create a dedicated service account, grant it the minimal node roles, and use it when creating a node pool. The service account cannot be changed on existing node pools.
 
             ```bash
             gcloud iam service-accounts create gke-nodes \
               --display-name="GKE Node Pool Service Account"
+
+            gcloud projects add-iam-policy-binding <project> \
+              --member="serviceAccount:gke-nodes@<project>.iam.gserviceaccount.com" \
+              --role=roles/logging.logWriter
+
+            gcloud projects add-iam-policy-binding <project> \
+              --member="serviceAccount:gke-nodes@<project>.iam.gserviceaccount.com" \
+              --role=roles/monitoring.metricWriter
+
+            gcloud projects add-iam-policy-binding <project> \
+              --member="serviceAccount:gke-nodes@<project>.iam.gserviceaccount.com" \
+              --role=roles/artifactregistry.reader
 
             gcloud container node-pools create <pool-name> \
               --cluster=<cluster-name> \
@@ -23892,6 +23903,8 @@ queries:
             gcloud sql instances patch <instance-name> \
               --database-flags="cross db ownership chaining=off"
             ```
+
+            Note: This command replaces all database flags currently set on the instance and may trigger a restart. Include every existing flag in the `--database-flags` list along with `cross db ownership chaining=off`.
         - id: terraform
           desc: |
             To ensure cross-database ownership chaining is disabled in Terraform, set the database flag in the settings block:
@@ -24049,6 +24062,8 @@ queries:
             gcloud sql instances patch <instance-name> \
               --database-flags="contained database authentication=off"
             ```
+
+            Note: This command replaces all database flags currently set on the instance and may trigger a restart. Include every existing flag in the `--database-flags` list along with `contained database authentication=off`.
         - id: terraform
           desc: |
             To ensure contained database authentication is disabled in Terraform, set the database flag in the settings block:
@@ -24206,6 +24221,8 @@ queries:
             gcloud sql instances patch <instance-name> \
               --database-flags=log_lock_waits=on
             ```
+
+            Note: This command replaces all database flags currently set on the instance and may trigger a restart. Include every existing flag in the `--database-flags` list along with `log_lock_waits=on`.
         - id: terraform
           desc: |
             To ensure 'log_lock_waits' is enabled for Cloud SQL PostgreSQL in Terraform, set the database flag in the settings block:
@@ -25671,11 +25688,9 @@ queries:
   # behavior is a separate feature and already covered by
   # mondoo-gcp-security-cloud-storage-bucket-retention-policy-locked.
   - uid: mondoo-gcp-security-cloud-storage-bucket-object-retention-locked
-    title: Ensure Cloud Storage buckets with object retention have it locked
+    title: Ensure Cloud Storage buckets have object retention enabled
     impact: 70
-    filters: |
-      asset.platform == 'gcp-storage-bucket' &&
-      gcp.storage.bucket.objectRetentionMode != empty
+    filters: asset.platform == 'gcp-storage-bucket'
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-bcr-08
@@ -25693,7 +25708,7 @@ queries:
     mql: gcp.storage.bucket.objectRetentionMode == "Enabled"
     docs:
       desc: |
-        This check ensures that Cloud Storage buckets with object retention enabled have that retention mode set to `Enabled` (locked). An unlocked object-retention configuration can be removed or shortened by any principal with bucket-admin permissions, defeating the write-once-read-many guarantee the bucket is intended to enforce. Buckets without object retention configured at all are out of scope for this check.
+        This check ensures that Cloud Storage buckets have object retention enabled. Without object retention, objects have no write-once-read-many protection and can be deleted or overwritten by any principal with sufficient permissions on the bucket.
 
         **Why this matters**
 
@@ -25712,10 +25727,10 @@ queries:
 
         1. Sign in to the Google Cloud Console and navigate to **Cloud Storage** > **Buckets**.
         2. Select a bucket, then go to the **Protection** tab.
-        3. Under **Object retention**, check whether the mode is set to **Enabled** (locked).
-        4. Repeat for each bucket that has object retention configured.
+        3. Under **Object retention**, check whether the mode is set to **Enabled**.
+        4. Repeat for each bucket.
 
-        A passing bucket with object retention shows the mode as **Enabled** (locked). A failing bucket shows object retention present but in an unlocked or removable state.
+        A passing bucket shows object retention as **Enabled**. A failing bucket shows no object retention configured.
 
         ### Audit via CLI
 
@@ -25726,7 +25741,7 @@ queries:
           --format="table(name,objectRetentionMode)"
         ```
 
-        A passing bucket with object retention returns `objectRetentionMode: Enabled`. A failing bucket returns an `objectRetentionMode` that is present but not `Enabled`, meaning the retention is not locked.
+        A passing bucket returns `objectRetentionMode: Enabled`. A failing bucket returns an empty or absent `objectRetentionMode`.
       remediation:
         - id: terraform
           desc: |
@@ -26271,9 +26286,24 @@ queries:
       remediation:
         - id: terraform
           desc: |
-            Define DB users via `google_sql_user` with `type = "CLOUD_IAM_USER"` (or `CLOUD_IAM_SERVICE_ACCOUNT`):
+            Define DB users via `google_sql_user` with `type = "CLOUD_IAM_USER"` or `CLOUD_IAM_SERVICE_ACCOUNT`. IAM database authentication requires the `cloudsql.iam_authentication` flag on the instance:
 
             ```hcl
+            resource "google_sql_database_instance" "app" {
+              name             = "app-instance"
+              database_version = "POSTGRES_15"
+              region           = "us-central1"
+
+              settings {
+                tier = "db-custom-2-8192"
+
+                database_flags {
+                  name  = "cloudsql.iam_authentication"
+                  value = "on"
+                }
+              }
+            }
+
             resource "google_sql_user" "app_iam_user" {
               instance = google_sql_database_instance.app.name
               name     = "app-user@my-project.iam"
@@ -26296,6 +26326,13 @@ queries:
             4. Delete the built-in user once the new IAM user is confirmed working.
         - id: cli
           desc: |
+            Enable IAM authentication on the instance first. This command replaces all database flags currently set on the instance, so include any existing flags:
+
+            ```bash
+            gcloud sql instances patch <instance> \
+              --database-flags=cloudsql.iam_authentication=on
+            ```
+
             Add a Cloud IAM user and delete the built-in replacement:
 
             ```bash
@@ -26576,13 +26613,19 @@ queries:
             3. Save. The add-on will be deployed and enforcement starts immediately.
         - id: cli
           desc: |
-            Update the cluster to use Calico for network policy enforcement:
+            Update the cluster to use Calico for network policy enforcement. First enable the add-on, then enable enforcement:
 
             ```bash
             gcloud container clusters update <cluster> \
               --zone=<zone> \
+              --update-addons=NetworkPolicy=ENABLED
+
+            gcloud container clusters update <cluster> \
+              --zone=<zone> \
               --enable-network-policy
             ```
+
+            Note: Enabling enforcement recreates all node pools in the cluster, which can disrupt running workloads. Clusters using GKE Dataplane V2 enforce network policy natively and do not require these steps.
     refs:
       - url: https://cloud.google.com/kubernetes-engine/docs/how-to/network-policy
         title: GKE - Configuring network policy
@@ -27077,7 +27120,7 @@ queries:
 
             1. Create a service account scoped to only the GCS buckets, Vertex AI resources, and Cloud Storage objects the training code needs.
             2. When launching custom jobs, set **Service account** in the advanced options to the dedicated SA.
-            3. Update any SDK-based submissions to pass `service_account` explicitly in the `worker_pool_specs`.
+            3. Update any SDK-based submissions to pass `service_account` explicitly when launching the job, for example `aiplatform.CustomJob(...).run(service_account="vertex-training@PROJECT.iam.gserviceaccount.com")`.
         - id: cli
           desc: |
             Submit a custom job with an explicit service account:
@@ -27456,13 +27499,14 @@ queries:
             4. Save.
         - id: cli
           desc: |
-            Update a DLP inspect template to include credential detectors via the REST API (DLP has no gcloud CLI surface). Save the template body as `inspect-template.json`:
+            Update a DLP inspect template to include credential detectors via the REST API, since DLP has no gcloud CLI surface. The update replaces the entire `infoTypes` list, so retrieve the template first and include every existing detector alongside the four credential detectors. Save the template body as `inspect-template.json`:
 
             ```json
             {
               "inspectTemplate": {
                 "inspectConfig": {
                   "infoTypes": [
+                    {"name": "EMAIL_ADDRESS"},
                     {"name": "AWS_CREDENTIALS"},
                     {"name": "GCP_CREDENTIALS"},
                     {"name": "JSON_WEB_TOKEN"},
@@ -28870,7 +28914,7 @@ queries:
             3. Save. The instance will restart to apply the flags.
         - id: cli
           desc: |
-            Update the AlloyDB instance with the audit flags:
+            Update the AlloyDB instance with the audit flags. The `--database-flags` list replaces every flag currently set on the instance, so include all existing flags you want to keep:
 
             ```bash
             gcloud alloydb instances update <instance-id> \
@@ -29055,6 +29099,12 @@ queries:
             ```bash
             gcloud sql backups list --instance=INSTANCE_NAME
             ```
+
+            Delete each backup run that pre-dates the CMEK configuration:
+
+            ```bash
+            gcloud sql backups delete BACKUP_ID --instance=INSTANCE_NAME
+            ```
     refs:
       - url: https://cloud.google.com/sql/docs/mysql/cmek
         title: Cloud SQL - Using customer-managed encryption keys
@@ -29150,7 +29200,8 @@ queries:
               connection_id = "azure-omni"
               location      = "azure-eastus2"
               azure {
-                customer_tenant_id = "AZURE_TENANT_ID"
+                customer_tenant_id              = "AZURE_TENANT_ID"
+                federated_application_client_id = "AZURE_APP_CLIENT_ID"
               }
             }
             ```
@@ -29180,6 +29231,8 @@ queries:
             bq mk --connection \
               --connection_type=AZURE \
               --tenant_id=AZURE_TENANT_ID \
+              --federated_azure=true \
+              --federated_app_client_id=AZURE_APP_CLIENT_ID \
               --location=LOCATION \
               CONNECTION_ID
             ```
@@ -29442,38 +29495,32 @@ queries:
       remediation:
         - id: terraform
           desc: |
-            Bind the connection to a dedicated service account, not the default Compute or App Engine SAs:
+            BigQuery auto-provisions the delegated service account for a Cloud Resource connection; it cannot be supplied in HCL. Declare the connection and grant the auto-provisioned account only the narrow roles it needs:
 
             ```hcl
-            resource "google_service_account" "bq_cloud_resource" {
-              account_id   = "bq-cloud-resource-sa"
-              display_name = "BigQuery Cloud Resource SA"
-            }
-
             resource "google_bigquery_connection" "cloud_resource" {
               connection_id = "cloud-resource"
               location      = "us-central1"
-              cloud_resource {
-                service_account_id = google_service_account.bq_cloud_resource.email
-              }
+              cloud_resource {}
             }
 
-            # Grant only the narrow roles the connection needs:
+            # BigQuery auto-provisions the delegated service account. Grant it only
+            # the narrow roles the connection needs:
             resource "google_storage_bucket_iam_member" "cloud_resource_reader" {
               bucket = google_storage_bucket.data.name
               role   = "roles/storage.objectViewer"
-              member = "serviceAccount:${google_service_account.bq_cloud_resource.email}"
+              member = "serviceAccount:${google_bigquery_connection.cloud_resource.cloud_resource[0].service_account_id}"
             }
             ```
         - id: console
           desc: |
-            Repoint the connection at a purpose-built service account:
+            Recreate the connection so BigQuery provisions a fresh Google-managed delegate service account:
 
-            1. Create a new service account in **IAM & Admin** → **Service Accounts**, such as `bq-cloud-resource-<feature>`.
-            2. Grant the new SA only the roles required for this connection's work — for example, `roles/storage.objectViewer` on a specific bucket or `roles/aiplatform.user` on a specific model.
-            3. Open **BigQuery** → **External connections** → select the flagged connection → **Edit**.
-            4. Replace the delegated service account with the new one. Save.
-            5. Remove the `roles/editor` grant from the default SA, or disable the default SA entirely if no other workload depends on it.
+            1. Open **BigQuery** → **External connections** and note the flagged connection's settings.
+            2. Select **+ Add** → **Connections to external data sources**, choose **Vertex AI remote models, remote functions and BigLake (Cloud Resource)**, and create a replacement connection. BigQuery provisions a dedicated delegate service account automatically.
+            3. Grant the new delegate service account only the narrow roles the connection needs, for example `roles/storage.objectViewer` on a specific bucket.
+            4. Update queries and remote functions to reference the new connection, then delete the flagged connection.
+            5. Remove the `roles/editor` grant from the default service account, or disable the default service account entirely if no other workload depends on it.
         - id: cli
           desc: |
             `bq mk --connection --connection_type=CLOUD_RESOURCE` auto-provisions a Google-managed delegated service account; you grant narrow roles to that SA rather than supplying your own.
@@ -31169,9 +31216,9 @@ queries:
               display_name          = "src"
 
               mysql_profile {
-                hostname = "10.0.0.10"
-                username = "datastream"
-                password = "<set via secret_manager_stored_password>"
+                hostname                       = "10.0.0.10"
+                username                       = "datastream"
+                secret_manager_stored_password = google_secret_manager_secret_version.src_pwd.name
               }
 
               private_connectivity {
@@ -31296,7 +31343,25 @@ queries:
       remediation:
         - id: terraform
           desc: |
-            Replace `forward_ssh_connectivity` with `private_connectivity` (see the staticServiceIp remediation for an example).
+            Replace the `forward_ssh_connectivity` block with `private_connectivity` on the connection profile:
+
+            ```hcl
+            resource "google_datastream_connection_profile" "src" {
+              connection_profile_id = "src"
+              location              = "us-central1"
+              display_name          = "src"
+
+              mysql_profile {
+                hostname                       = "10.0.0.10"
+                username                       = "datastream"
+                secret_manager_stored_password = google_secret_manager_secret_version.src_pwd.name
+              }
+
+              private_connectivity {
+                private_connection = google_datastream_private_connection.pc.id
+              }
+            }
+            ```
         - id: console
           desc: |
             Recreate the connection profile with **Private connectivity** selected and decommission the SSH bastion.
@@ -32169,9 +32234,22 @@ queries:
             3. If the discovery endpoint resolves to a public IP, recreate the instance attached to a private VPC.
         - id: cli
           desc: |
+            Confirm the discovery endpoint address:
+
             ```bash
             gcloud memcache instances describe INSTANCE_ID \
               --region=REGION --format="value(discoveryEndpoint)"
+            ```
+
+            If the endpoint resolves to a public IP, recreate the instance attached to a VPC that uses RFC1918 IP allocation:
+
+            ```bash
+            gcloud memcache instances create INSTANCE_ID \
+              --region=REGION \
+              --authorized-network=projects/PROJECT/global/networks/MY_VPC \
+              --node-count=1 \
+              --node-cpu=1 \
+              --node-memory=1GB
             ```
         # No Terraform remediation: the discovery endpoint IP is output-only (computed by GCP from the authorized network's IP allocation) and cannot be set directly in any Terraform resource argument.
     refs:
@@ -33287,7 +33365,7 @@ queries:
 
         **Risk mitigation**
 
-        - **Leave scanning at the default INHERITED setting or set it to SCANNING_ENABLED:** Never set `enablementConfig` to `SCANNING_DISABLED` on a shared registry unless a compensating control with equivalent coverage is in place.
+        - **Leave scanning at the default INHERITED setting with the Container Scanning API enabled:** Never set `enablementConfig` to `DISABLED` on a shared registry unless a compensating control with equivalent coverage is in place.
         - **Wire findings into the team's triage process:** Route high and critical Container Analysis findings to Security Command Center and the engineering on-call workflow so that affected images are rebuilt and redeployed promptly.
       audit: |
         ### Audit via Console
@@ -33309,11 +33387,11 @@ queries:
           --format="table(name,format,location,vulnerabilityScanningConfig.enablementConfig,vulnerabilityScanningConfig.enablementState)"
         ```
 
-        A passing repository returns `enablementConfig` of `INHERITED` or `SCANNING_ENABLED` and `enablementState` of `SCANNING_ACTIVE` or `PROJECT_SCANNING_DISABLED_BY_DEFAULT`. A failing repository returns `enablementConfig` of `SCANNING_DISABLED` or `enablementState` of `SCANNING_DISABLED`.
+        A passing repository returns `enablementConfig` of `INHERITED` and `enablementState` of `SCANNING_ACTIVE` or `PROJECT_SCANNING_DISABLED_BY_DEFAULT`. A failing repository returns `enablementConfig` of `DISABLED` or `enablementState` of `SCANNING_DISABLED`.
       remediation:
         - id: terraform
           desc: |
-            Leave the repository's `vulnerability_scanning_config.enablement_config` at the default `INHERITED` (which honors the project Container Scanning API setting), or set it to `SCANNING_ENABLED`. Never set it to `SCANNING_DISABLED`. Pair the repository with the Container Scanning API enabled at the project:
+            Leave the repository's `vulnerability_scanning_config.enablement_config` at the default `INHERITED`, which honors the project Container Scanning API setting. Never set it to `DISABLED`. Pair the repository with the Container Scanning API enabled at the project:
 
             ```hcl
             resource "google_project_service" "container_scanning" {
@@ -33327,7 +33405,7 @@ queries:
               format        = "DOCKER"
 
               vulnerability_scanning_config {
-                enablement_config = "SCANNING_ENABLED"
+                enablement_config = "INHERITED"
               }
             }
             ```
@@ -33338,7 +33416,7 @@ queries:
             1. Go to **Artifact Registry > Repositories** in the Google Cloud Console.
             2. Select the repository.
             3. Open the **Settings** tab.
-            4. Under **Vulnerability scanning**, set the configuration to **Inherited** or **Enabled**.
+            4. Under **Vulnerability scanning**, set the configuration to **Inherited**.
             5. Save the configuration.
 
             Confirm the **Container Scanning API** is enabled on the project so scan findings are produced.
@@ -33369,7 +33447,7 @@ queries:
     mql: |
       terraform.resources('google_artifact_registry_repository').where(arguments['format'] == 'DOCKER').all(
         blocks.where(type == 'vulnerability_scanning_config').all(
-          arguments['enablement_config'] != "SCANNING_DISABLED"
+          arguments['enablement_config'] != "DISABLED"
         )
       )
   - uid: mondoo-gcp-security-artifact-registry-repository-vulnerability-scanning-enabled-terraform-plan
@@ -33379,7 +33457,7 @@ queries:
       terraform.plan.resourceChanges.where(type == 'google_artifact_registry_repository' && change.after['format'] == 'DOCKER').all(
         change.after['vulnerability_scanning_config'] == null ||
         change.after['vulnerability_scanning_config'].all(
-          _['enablement_config'] != "SCANNING_DISABLED"
+          _['enablement_config'] != "DISABLED"
         )
       )
   - uid: mondoo-gcp-security-artifact-registry-repository-vulnerability-scanning-enabled-terraform-state
@@ -33389,7 +33467,7 @@ queries:
       terraform.state.resources.where(type == 'google_artifact_registry_repository' && values['format'] == 'DOCKER').all(
         values['vulnerability_scanning_config'] == null ||
         values['vulnerability_scanning_config'].all(
-          _['enablement_config'] != "SCANNING_DISABLED"
+          _['enablement_config'] != "DISABLED"
         )
       )
   - uid: mondoo-gcp-security-cloud-build-trigger-no-plaintext-secrets-in-substitutions
@@ -34876,7 +34954,13 @@ queries:
             3. Grant the **IAP-secured Web App User** role only to the principals that should reach the app.
         - id: cli
           desc: |
-            To restrict App Engine ingress using the Google Cloud CLI:
+            To enable IAP for the App Engine application using the Google Cloud CLI:
+
+            ```bash
+            gcloud iap web enable --resource-type=app-engine
+            ```
+
+            To additionally restrict App Engine ingress at the network level:
 
             ```bash
             gcloud app services update SERVICE_NAME --ingress=internal-only
@@ -35187,6 +35271,7 @@ queries:
               --key-file=KEY_FILE
 
             gcloud compute backend-services update BACKEND_SERVICE_NAME \
+              --global \
               --signed-url-cache-max-age=7200s
             ```
     refs:
@@ -35759,7 +35844,7 @@ queries:
       remediation:
         - id: terraform
           desc: |
-            To deploy a private Cloud Composer environment in Terraform, set `enable_private_environment` and restrict web-server access:
+            To deploy a private Cloud Composer 3 environment in Terraform, set `enable_private_environment` directly on the `config` block and restrict web-server access:
 
             ```hcl
             resource "google_composer_environment" "private" {
@@ -35767,10 +35852,7 @@ queries:
               region = "us-central1"
 
               config {
-                private_environment_config {
-                  enable_private_endpoint = true
-                  enable_private_environment = true
-                }
+                enable_private_environment = true
 
                 web_server_network_access_control {
                   allowed_ip_range {
@@ -35782,7 +35864,7 @@ queries:
             }
             ```
 
-            Networking type cannot be changed in place. A new private environment must be created and DAGs migrated.
+            For Composer 2, declare a `private_environment_config` block with `enable_private_endpoint = true` inside `config` instead. Networking type cannot be changed in place. A new private environment must be created and DAGs migrated.
         - id: console
           desc: |
             To deploy a private Cloud Composer environment using the Google Cloud Console:
@@ -35822,10 +35904,8 @@ queries:
       terraform.resources('google_composer_environment').all(
         blocks.where(type == 'config') != empty &&
         blocks.where(type == 'config').all(
-          blocks.where(type == 'private_environment_config') != empty &&
-          blocks.where(type == 'private_environment_config').all(
-            arguments.enable_private_environment == true
-          )
+          arguments['enable_private_environment'] == true ||
+          blocks.where(type == 'private_environment_config') != empty
         )
       )
   - uid: mondoo-gcp-security-composer-environment-private-terraform-plan
@@ -35835,8 +35915,8 @@ queries:
       terraform.plan.resourceChanges.where(type == 'google_composer_environment').all(
         change.after['config'] != empty &&
         change.after['config'].all(
-          _['private_environment_config'] != empty &&
-          _['private_environment_config'].all(_['enable_private_environment'] == true)
+          _['enable_private_environment'] == true ||
+          _['private_environment_config'] != null
         )
       )
   - uid: mondoo-gcp-security-composer-environment-private-terraform-state
@@ -35846,8 +35926,8 @@ queries:
       terraform.state.resources.where(type == 'google_composer_environment').all(
         values['config'] != empty &&
         values['config'].all(
-          _['private_environment_config'] != empty &&
-          _['private_environment_config'].all(_['enable_private_environment'] == true)
+          _['enable_private_environment'] == true ||
+          _['private_environment_config'] != null
         )
       )
   - uid: mondoo-gcp-security-dataflow-job-cmek-encryption
@@ -36225,13 +36305,17 @@ queries:
             ```
         - id: console
           desc: |
-            To require CMEK on a Cloud Logging log bucket using the Google Cloud Console:
+            Cloud Logging log bucket CMEK cannot be configured from the Google Cloud console. Use the Google Cloud CLI instead:
 
-            1. In the Google Cloud Console, go to **Logging** > **Logs Storage**.
-            2. Select the log bucket to update.
-            3. Select **Edit bucket**.
-            4. Under **Encryption**, select **Customer-managed encryption key (CMEK)** and pick the Cloud KMS key.
-            5. Select **Update bucket**.
+            1. In **Logging** > **Logs Storage**, identify the log bucket and its location.
+            2. Grant the Cloud Logging service account **Cloud KMS CryptoKey Encrypter/Decrypter** on the Cloud KMS key.
+            3. Apply the key with the CLI:
+
+            ```bash
+            gcloud logging buckets update BUCKET_ID \
+              --location=LOCATION \
+              --cmek-kms-key-name=projects/KMS_PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY
+            ```
         - id: cli
           desc: |
             To require CMEK on a Cloud Logging log bucket using the Google Cloud CLI:
@@ -36341,52 +36425,51 @@ queries:
       remediation:
         - id: terraform
           desc: |
-            To configure CMEK on the project's Log Router in Terraform, use `google_logging_project_cmek_settings` and grant the Log Router service account the encrypter/decrypter role:
+            Log Router CMEK is configured at the organization or folder scope and is inherited by child projects. In Terraform, set `kms_key_name` on the organization logging settings and grant the Log Router service account the encrypter/decrypter role:
 
             ```hcl
-            data "google_logging_project_cmek_settings" "current" {
-              project = var.project_id
+            data "google_logging_organization_settings" "current" {
+              organization = "123456789012"
             }
 
-            resource "google_kms_crypto_key_iam_binding" "log_router" {
+            resource "google_kms_crypto_key_iam_member" "log_router" {
               crypto_key_id = google_kms_crypto_key.log_router.id
               role          = "roles/cloudkms.cryptoKeyEncrypterDecrypter"
-              members       = [data.google_logging_project_cmek_settings.current.service_account_id]
+              member        = "serviceAccount:${data.google_logging_organization_settings.current.kms_service_account_id}"
             }
 
-            resource "google_logging_project_cmek_settings" "log_router" {
-              project     = var.project_id
+            resource "google_logging_organization_settings" "log_router" {
+              organization = "123456789012"
               kms_key_name = google_kms_crypto_key.log_router.id
 
-              depends_on = [google_kms_crypto_key_iam_binding.log_router]
+              depends_on = [google_kms_crypto_key_iam_member.log_router]
             }
             ```
         - id: console
           desc: |
-            To configure CMEK on the project's Log Router using the Google Cloud Console:
+            Log Router CMEK is applied at the organization scope and inherited by projects:
 
-            1. In Cloud KMS, create or identify a key ring and crypto key in the project's logging region (global is supported).
-            2. In Cloud Logging, go to **Settings** and copy the Logs Router service account email.
+            1. In Cloud KMS, create or identify a key ring and crypto key for log routing.
+            2. Select the organization in the Google Cloud Console resource picker and go to **Logging** > **Settings** to copy the Log Router service account email.
             3. Grant that service account **Cloud KMS CryptoKey Encrypter/Decrypter** on the chosen key.
-            4. Return to **Logging > Settings**, select **Edit CMEK settings**, and enter the key resource name.
-            5. Select **Update**.
+            4. Apply the key to the organization logging settings with the Google Cloud CLI, since the console does not expose this setting for projects.
         - id: cli
           desc: |
-            To configure CMEK on the project's Log Router using the Google Cloud CLI:
+            Log Router CMEK is configured at the organization or folder scope and is inherited by child projects:
 
             ```bash
-            # Grant the Logs Router service account access to the key
-            SA=$(gcloud logging cmek-settings describe --project=PROJECT_ID --format='value(serviceAccountId)')
+            # Grant the Log Router service account access to the key
+            SA=$(gcloud logging settings describe --organization=ORG_ID --format='value(kmsServiceAccountId)')
             gcloud kms keys add-iam-policy-binding KEY \
               --keyring=KEY_RING \
               --location=LOCATION \
               --member="serviceAccount:${SA}" \
               --role=roles/cloudkms.cryptoKeyEncrypterDecrypter
 
-            # Bind the CMEK key to the Log Router
-            gcloud logging cmek-settings update \
-              --project=PROJECT_ID \
-              --kms-key-name=projects/PROJECT_ID/locations/LOCATION/keyRings/KEY_RING/cryptoKeys/KEY
+            # Bind the CMEK key at the organization scope
+            gcloud logging settings update \
+              --organization=ORG_ID \
+              --kms-key-name=projects/KMS_PROJECT/locations/LOCATION/keyRings/KEY_RING/cryptoKeys/KEY
             ```
     refs:
       - url: https://cloud.google.com/logging/docs/routing/managed-encryption
@@ -36399,23 +36482,26 @@ queries:
       gcp.project.loggingservice.cmekKmsKeyName != ""
   - uid: mondoo-gcp-security-logging-log-router-cmek-encryption-terraform-hcl
     filters: |
-      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_logging_project_cmek_settings')
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_logging_organization_settings' || nameLabel == 'google_logging_folder_settings')
     mql: |
-      terraform.resources('google_logging_project_cmek_settings').all(
+      terraform.resources('google_logging_organization_settings').all(
+        arguments.kms_key_name != empty
+      ) &&
+      terraform.resources('google_logging_folder_settings').all(
         arguments.kms_key_name != empty
       )
   - uid: mondoo-gcp-security-logging-log-router-cmek-encryption-terraform-plan
     filters: |
-      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_logging_project_cmek_settings')
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_logging_organization_settings' || type == 'google_logging_folder_settings')
     mql: |
-      terraform.plan.resourceChanges.where(type == 'google_logging_project_cmek_settings').all(
+      terraform.plan.resourceChanges.where(type == 'google_logging_organization_settings' || type == 'google_logging_folder_settings').all(
         change.after['kms_key_name'] != empty
       )
   - uid: mondoo-gcp-security-logging-log-router-cmek-encryption-terraform-state
     filters: |
-      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_logging_project_cmek_settings')
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_logging_organization_settings' || type == 'google_logging_folder_settings')
     mql: |
-      terraform.state.resources.where(type == 'google_logging_project_cmek_settings').all(
+      terraform.state.resources.where(type == 'google_logging_organization_settings' || type == 'google_logging_folder_settings').all(
         values['kms_key_name'] != empty
       )
   - uid: mondoo-gcp-security-vertex-ai-job-cmek-encryption
@@ -36778,7 +36864,7 @@ queries:
     mql: |
       gcp.project.computeService.targetHttpsProxies.all(
         sslPolicy != null &&
-        sslPolicy.minTlsVersion == "TLS_1_2" &&
+        sslPolicy.minTlsVersion.in(["TLS_1_2", "TLS_1_3"]) &&
         sslPolicy.profile != "COMPATIBLE" &&
         sslPolicy.profile != "CUSTOM"
       )
@@ -37072,6 +37158,20 @@ queries:
             gcloud functions remove-iam-policy-binding FUNCTION_NAME \
               --member="allAuthenticatedUsers" \
               --role="roles/cloudfunctions.invoker"
+            ```
+
+            For gen2 functions, public invocation is granted on the underlying Cloud Run service; remove it there as well:
+
+            ```bash
+            gcloud run services remove-iam-policy-binding FUNCTION_NAME \
+              --region=REGION \
+              --member="allUsers" \
+              --role="roles/run.invoker"
+
+            gcloud run services remove-iam-policy-binding FUNCTION_NAME \
+              --region=REGION \
+              --member="allAuthenticatedUsers" \
+              --role="roles/run.invoker"
             ```
         - id: terraform
           desc: |
@@ -37514,14 +37614,13 @@ queries:
             ```
         - id: terraform
           desc: |
-            To avoid granting impersonation in Terraform, do not bind the token-creator, user, or workload-identity-user roles broadly; scope them to specific principals only when required:
+            Remove every `google_service_account_iam_member`, `google_service_account_iam_binding`, and `google_service_account_iam_policy` entry that grants `roles/iam.serviceAccountTokenCreator`, `roles/iam.serviceAccountUser`, or `roles/iam.workloadIdentityUser` on the service account, then apply the change so the bindings are deleted. Where delegated access is genuinely required, grant a non-impersonation role scoped to the task instead:
 
             ```hcl
-            # Grant impersonation only to a specific, named principal — never allUsers/allAuthenticatedUsers
-            resource "google_service_account_iam_member" "impersonation" {
+            resource "google_service_account_iam_member" "viewer" {
               service_account_id = google_service_account.target.name
-              role               = "roles/iam.serviceAccountTokenCreator"
-              member             = "serviceAccount:trusted-caller@example-project.iam.gserviceaccount.com"
+              role               = "roles/iam.serviceAccountViewer"
+              member             = "serviceAccount:auditor@example-project.iam.gserviceaccount.com"
             }
             ```
     refs:
@@ -39525,7 +39624,7 @@ queries:
       gcp.project.vertexaiService.customJob.enableWebAccess != true
     docs:
       desc: |
-        This check ensures that active Vertex AI custom jobs do not have interactive web access portals enabled. When `enableWebAccessPortals` is set to `true`, Vertex AI creates a publicly accessible web endpoint that allows anyone with the URL to interact with the training worker, potentially accessing training data, model artifacts, and the container environment directly.
+        This check ensures that active Vertex AI custom jobs do not have interactive web access portals enabled. When `enableWebAccess` is set to `true`, Vertex AI creates a publicly accessible web endpoint that allows anyone with the URL to interact with the training worker, potentially accessing training data, model artifacts, and the container environment directly.
 
         **Why this matters**
 
@@ -39535,7 +39634,7 @@ queries:
 
         **Risk mitigation**
 
-        - **Disable web access portals in all production job submissions:** Set `enableWebAccessPortals` to `false` or omit it from the job specification; it defaults to `false` and should remain so for all non-interactive training workloads.
+        - **Disable web access portals in all production job submissions:** Set `enableWebAccess` to `false` or omit it from the job specification; it defaults to `false` and should remain so for all non-interactive training workloads.
         - **Use Cloud Logging and Vertex AI Experiments for debugging:** Instead of enabling web portals, rely on structured logging via Cloud Logging and Vertex AI Experiments for post-hoc training diagnostics without exposing interactive access.
       audit: |
         ### Audit via Console
@@ -39548,16 +39647,16 @@ queries:
 
         ### Audit via CLI
 
-        1. List active custom jobs and inspect the `enableWebAccessPortals` field:
+        1. List active custom jobs and inspect the `enableWebAccess` field:
 
         ```bash
         gcloud ai custom-jobs list \
           --region=REGION \
           --filter="state:(JOB_STATE_RUNNING OR JOB_STATE_PENDING OR JOB_STATE_QUEUED)" \
-          --format="table(name,state,jobSpec.enableWebAccessPortals)"
+          --format="table(name,state,jobSpec.enableWebAccess)"
         ```
 
-        A passing job returns `False` or an empty value for `jobSpec.enableWebAccessPortals`. A failing job returns `True`.
+        A passing job returns `False` or an empty value for `jobSpec.enableWebAccess`. A failing job returns `True`.
       remediation:
         - id: console
           desc: |
@@ -39576,10 +39675,10 @@ queries:
               --config=config.yaml
             ```
 
-            Ensure your `config.yaml` does not include `enableWebAccessPortals: true`.
+            Ensure your `config.yaml` does not include `enableWebAccess: true` and that the job is not submitted with the `--enable-web-access` flag.
         # No Terraform remediation: Vertex AI custom jobs are short-lived imperative API
         # resources with no long-lived Terraform resource; use the CLI or SDK to submit
-        # jobs without enableWebAccessPortals at submission time.
+        # jobs without enableWebAccess at submission time.
     refs:
       - url: https://cloud.google.com/vertex-ai/docs/training/monitor-training#enable_web_access
         title: Vertex AI - Enable web access for custom training
