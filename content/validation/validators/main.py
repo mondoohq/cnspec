@@ -6,6 +6,7 @@ import sys
 
 from .aws import validate_aws
 from .azure import validate_azure
+from .cobra import COBRA_CLIS, validate_cobra_cli
 from .common import emit_github_annotations
 from .digitalocean import validate_digitalocean
 from .gcloud import validate_gcloud
@@ -13,8 +14,8 @@ from .nutanix import validate_nutanix
 from .oci import validate_oci
 from .openapi import API_PROVIDERS, validate_api_provider
 
-# CLI validators, dispatched by name. The REST API validators come from
-# the openapi provider registry and are appended below.
+# CLI validators, dispatched by name. The Cobra CLI and REST API
+# validators come from their registries and are appended below.
 CLI_VALIDATORS = {
     "aws": validate_aws,
     "azure": validate_azure,
@@ -24,7 +25,7 @@ CLI_VALIDATORS = {
     "nutanix": validate_nutanix,
 }
 
-VALIDATORS = list(CLI_VALIDATORS) + list(API_PROVIDERS)
+VALIDATORS = list(CLI_VALIDATORS) + list(COBRA_CLIS) + list(API_PROVIDERS)
 
 
 # ---------------------------------------------------------------------------
@@ -61,6 +62,12 @@ def main():
     for name, validator in CLI_VALIDATORS.items():
         if target in ("all", name):
             p, f = validator()
+            total_pass += p
+            total_fail += f
+
+    for name in COBRA_CLIS:
+        if target in ("all", name):
+            p, f = validate_cobra_cli(name)
             total_pass += p
             total_fail += f
 

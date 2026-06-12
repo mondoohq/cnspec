@@ -257,6 +257,12 @@ python3 content/validation/validate_remediation_commands.py gcp
 python3 content/validation/validate_remediation_commands.py digitalocean
 python3 content/validation/validate_remediation_commands.py nutanix
 
+# Validate a Cobra-based CLI (kubectl / gh / glab / hcloud)
+python3 content/validation/validate_remediation_commands.py kubernetes
+python3 content/validation/validate_remediation_commands.py github
+python3 content/validation/validate_remediation_commands.py gitlab
+python3 content/validation/validate_remediation_commands.py hetzner
+
 # Validate a specific REST API (curl commands against a vendor API)
 python3 content/validation/validate_remediation_commands.py cloudflare
 python3 content/validation/validate_remediation_commands.py tailscale
@@ -265,7 +271,7 @@ python3 content/validation/validate_remediation_commands.py atlassian
 python3 content/validation/validate_remediation_commands.py grafana
 ```
 
-The validator scans each `aws`/`az`/`oci`/`gcloud`/`doctl`/`ncli` CLI command — and `curl` calls against the registered vendor API hosts — in ```` ```bash ```` code blocks within `id: cli` remediation sections. For the REST API targets, ```` ```bash ```` blocks in `audit:` sections are validated too (for API-first products the verification path is also a curl call). Output shows `[PASS]` or `[FAIL]` with the check UID and the offending command.
+The validator scans each `aws`/`az`/`oci`/`gcloud`/`doctl`/`ncli`/`kubectl`/`gh`/`glab`/`hcloud` CLI command — and `curl` calls against the registered vendor API hosts — in ```` ```bash ```` code blocks within `id: cli` remediation sections. For the REST API and Cobra CLI targets, ```` ```bash ```` blocks in `audit:` sections are validated too (these products' verification paths use the same CLI/API surface, and the new validators have no backlog of unvalidated audit blocks). Output shows `[PASS]` or `[FAIL]` with the check UID and the offending command.
 
 The code lives in the `content/validation/validators/` package — one module per validator family (`aws.py`, `azure.py`, …, `openapi.py` for all REST APIs), shared helpers in `common.py` — with `validate_remediation_commands.py` as the entry-point shim.
 
@@ -279,6 +285,8 @@ For `aws`, `oci`, `gcp`, and `digitalocean`, the database is built **in-memory**
 - **oci**: walks the Click command tree from the `oci_cli` Python package
 - **gcp**: reads the Google Cloud SDK's static completion tree
 - **digitalocean**: walks the `doctl --help` Cobra tree breadth-first (parallelized; ~1s for the full ~475-command tree)
+- **kubernetes / github / gitlab / hetzner**: walk the CLI's hidden Cobra `__complete` command (`kubectl`/`gh`/`glab`/`hcloud` must be on PATH), which returns machine-readable subcommand and flag candidates regardless of each CLI's custom help layout. Valid flags are the union of flag completions and flag lines parsed from `--help` (hcloud filters its flag completions to required-only). The walk runs with cloud credentials stripped (`KUBECONFIG=/dev/null`, tokens unset) so positional-value completions stay empty, and only tab-described candidates count as subcommands (kubectl's `rollout restart` statically completes resource types as bare names). Each CLI is an entry in the `COBRA_CLIS` registry in `validators/cobra.py`.
+
 The REST API targets (**cloudflare**, **tailscale**, **slack**, **atlassian**, **grafana**) need no CLI: each provider is an entry in the `API_PROVIDERS` registry in `validators/openapi.py` that maps an API host to the vendor's OpenAPI (or Swagger 2.0) spec. The validator verifies each curl call's path + HTTP method, plus the `--data` JSON payload against the operation's `requestBody` schema: field names, types, enums, and required properties. Angle-bracket (`<account-name>`) and environment-variable (`$ORG_ID`) placeholders act as wildcards. Known spec-vs-docs divergences are listed per provider under `body_exemptions`; Cloudflare additionally narrows the generic `/zones/{zone_id}/settings/{setting_id}` schema to the per-setting component via its `path_hook`.
 
 API specs are sourced two ways:
