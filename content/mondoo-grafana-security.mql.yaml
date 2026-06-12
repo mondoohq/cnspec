@@ -4,7 +4,7 @@ policies:
   - summary: Secure Grafana organizations across service accounts, user roles, datasources, and alerting
     uid: mondoo-grafana-security
     name: Mondoo Grafana Security
-    version: 1.0.1
+    version: 1.0.2
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -89,7 +89,7 @@ queries:
       audit: |
         ### Audit via UI
 
-        1. Sign in to Grafana and open **Administration > Service Accounts**.
+        1. Sign in to Grafana and open **Administration > Users and access > Service accounts**.
         2. Review the **Role** column for each service account in the list.
         3. Note any service account showing the **Admin** role.
 
@@ -106,12 +106,13 @@ queries:
 
         A passing response lists every entry in `serviceAccounts[]` with a `role` of `Viewer` or `Editor`; a failing response includes at least one entry where `role` equals `Admin`.
       remediation: |
-        Review all service accounts and downgrade any with Admin role to Viewer or Editor:
+        Review all service accounts and downgrade any with the Admin role to Viewer or Editor:
 
-        1. Navigate to **Administration > Service Accounts** in the Grafana UI.
+        1. Navigate to **Administration > Users and access > Service accounts** in the Grafana UI.
         2. Identify service accounts with the **Admin** role.
         3. Change the role to **Viewer** or **Editor** depending on the service account's purpose.
-        4. If Admin access is required for automation, use a dedicated short-lived token with expiration and audit its usage.
+        4. Update any automation that depended on Admin-only API endpoints so it works with the reduced role.
+        5. If a workflow genuinely requires the Admin role, document it as an accepted exception. The service account continues to be reported by this check until its role is downgraded.
     refs:
       - url: https://grafana.com/docs/grafana/latest/administration/service-accounts/
         title: Grafana Service Accounts
@@ -153,7 +154,7 @@ queries:
       audit: |
         ### Audit via UI
 
-        1. Sign in to Grafana and open **Administration > Service Accounts**.
+        1. Sign in to Grafana and open **Administration > Users and access > Service accounts**.
         2. Select each service account and review its **Tokens** section.
         3. Check the **Expires** column for each token.
 
@@ -172,20 +173,20 @@ queries:
       remediation: |
         Replace non-expiring service account tokens with tokens that have a defined expiration:
 
-        1. Navigate to **Administration > Service Accounts** in the Grafana UI.
+        1. Navigate to **Administration > Users and access > Service accounts** in the Grafana UI.
         2. For each service account, review its tokens.
         3. Delete tokens without an expiration date.
-        4. Create new tokens with an appropriate expiration (recommended: 90 days or less).
+        4. Create new tokens that expire within 90 days or less.
         5. Update any systems that use the old token with the new token value.
 
         Via the API:
 
         ```bash
-        # Create a token with 90-day expiration
+        # Create a token with a 90-day expiration
         curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
           -H "Content-Type: application/json" \
           -d '{"name":"rotated-token","secondsToLive":7776000}' \
-          https://grafana.example.com/api/serviceaccounts/<SA_ID>/tokens
+          "https://grafana.example.com/api/serviceaccounts/$SA_ID/tokens"
         ```
     refs:
       - url: https://grafana.com/docs/grafana/latest/administration/service-accounts/#service-account-tokens
@@ -226,7 +227,7 @@ queries:
       audit: |
         ### Audit via UI
 
-        1. Sign in to Grafana and open **Administration > Service Accounts**.
+        1. Sign in to Grafana and open **Administration > Users and access > Service accounts**.
         2. Select each service account and review its **Tokens** section.
         3. Look for tokens marked as expired in the **Expires** column.
 
@@ -245,7 +246,7 @@ queries:
       remediation: |
         Remove expired service account tokens:
 
-        1. Navigate to **Administration > Service Accounts** in the Grafana UI.
+        1. Navigate to **Administration > Users and access > Service accounts** in the Grafana UI.
         2. For each service account, review its tokens and identify expired ones.
         3. Delete all expired tokens.
         4. If the associated integration is still active, create a new token with proper expiration and update the integration.
@@ -255,7 +256,7 @@ queries:
         ```bash
         # Delete an expired token
         curl -s -X DELETE -H "Authorization: Bearer $ADMIN_TOKEN" \
-          https://grafana.example.com/api/serviceaccounts/<SA_ID>/tokens/<TOKEN_ID>
+          "https://grafana.example.com/api/serviceaccounts/$SA_ID/tokens/$TOKEN_ID"
         ```
     refs:
       - url: https://grafana.com/docs/grafana/latest/administration/service-accounts/#service-account-tokens
@@ -299,7 +300,7 @@ queries:
       audit: |
         ### Audit via UI
 
-        1. Sign in to Grafana and open **Administration > Service Accounts**.
+        1. Sign in to Grafana and open **Administration > Users and access > Service accounts**.
         2. Filter or sort the list to find service accounts shown as disabled.
         3. Select each disabled account and review its **Tokens** section.
 
@@ -318,11 +319,22 @@ queries:
       remediation: |
         Delete all tokens from disabled service accounts:
 
-        1. Navigate to **Administration > Service Accounts** in the Grafana UI.
+        1. Navigate to **Administration > Users and access > Service accounts** in the Grafana UI.
         2. Filter for disabled service accounts.
         3. For each disabled account, delete all associated tokens.
+        4. If the service account is no longer needed, delete it entirely.
 
-        If the service account is no longer needed, delete it entirely.
+        Via the API:
+
+        ```bash
+        # List tokens still attached to a disabled service account
+        curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
+          "https://grafana.example.com/api/serviceaccounts/$SA_ID/tokens"
+
+        # Delete each remaining token
+        curl -s -X DELETE -H "Authorization: Bearer $ADMIN_TOKEN" \
+          "https://grafana.example.com/api/serviceaccounts/$SA_ID/tokens/$TOKEN_ID"
+        ```
     refs:
       - url: https://grafana.com/docs/grafana/latest/administration/service-accounts/
         title: Grafana Service Accounts
@@ -364,7 +376,7 @@ queries:
       audit: |
         ### Audit via UI
 
-        1. Sign in to Grafana and open **Administration > Users**.
+        1. Sign in to Grafana and open **Administration > Users and access > Users**.
         2. Review the **Role** column and count the users assigned the **Admin** role.
         3. Compare the count against your approved Admin threshold.
 
@@ -383,7 +395,7 @@ queries:
       remediation: |
         Review the list of organization administrators and downgrade users who do not require Admin access:
 
-        1. Navigate to **Administration > Users** in the Grafana UI.
+        1. Navigate to **Administration > Users and access > Users** in the Grafana UI.
         2. Identify users with the **Admin** role.
         3. For each user, evaluate whether Admin access is operationally required.
         4. Change unnecessary Admin users to **Editor** or **Viewer** roles.
@@ -429,7 +441,7 @@ queries:
       audit: |
         ### Audit via UI
 
-        1. Sign in to Grafana and open **Administration > Users**.
+        1. Sign in to Grafana and open **Administration > Users and access > Users**.
         2. Look for a user whose login name is `admin`.
         3. If that user exists, check whether it holds the **Admin** role.
 
@@ -446,20 +458,24 @@ queries:
 
         A passing response contains no entry where `login` equals `admin` and `role` equals `Admin`; a failing response includes an entry with `login` set to `admin` and `role` set to `Admin`.
       remediation: |
-        Change the default admin user login or create a new admin user and remove the default:
+        Replace or rename the default admin login so no Admin-role user signs in as `admin`:
 
-        1. Log in to Grafana as the default admin.
-        2. Create a new user with a unique login name and grant it the Admin role.
-        3. Log in as the new admin user.
-        4. Downgrade or delete the default `admin` user.
+        1. Sign in to Grafana with a server administrator account.
+        2. Navigate to **Administration > Users and access > Users** and create a new user with a unique login name.
+        3. Grant the new user the **Admin** organization role and enable the **Grafana Admin** server permission so server-level administration is preserved.
+        4. Sign out, then sign in as the new user and confirm both organization and server administration pages are accessible.
+        5. Edit the default `admin` user and change its login to a unique name, or delete the account once you confirm nothing depends on it.
 
-        Alternatively, configure the admin user at installation time:
+        > **Warning:** Never delete the default admin before the replacement account holds the Grafana Admin server permission and you have verified it in step 4, or you lose server-level administration.
 
-        ```ini
-        [security]
-        admin_user = your_unique_admin_name
-        admin_password = strong_random_password
+        For new installations, set a unique admin login and a strong password before first startup. Prefer environment variables over a plaintext password in `grafana.ini`:
+
+        ```bash
+        export GF_SECURITY_ADMIN_USER="your_unique_admin_name"
+        export GF_SECURITY_ADMIN_PASSWORD="strong_random_password"
         ```
+
+        These settings correspond to `admin_user` and `admin_password` in the `[security]` section and only take effect when Grafana initializes its database at first startup. Changing them later does not rename an existing admin user.
     refs:
       - url: https://grafana.com/docs/grafana/latest/setup-grafana/configure-security/configure-authentication/
         title: Grafana Authentication Configuration
@@ -520,8 +536,23 @@ queries:
 
         1. Navigate to **Connections > Data sources** in the Grafana UI.
         2. Select each datasource configured with direct access.
-        3. Change the **Access** setting to **Server (default)** which corresponds to proxy mode.
+        3. If the datasource still shows an **Access** setting, change it to **Server (default)**, which corresponds to proxy mode. Recent Grafana versions removed this setting from the UI for most datasource types, so use the API instead.
         4. Save and test the datasource connection.
+
+        Via the API, fetch the datasource definition, set `access` to `proxy`, and update it:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $GRAFANA_TOKEN" \
+          "https://grafana.example.com/api/datasources/uid/$DS_UID" > datasource.json
+
+        # Edit datasource.json and set "access": "proxy", then:
+        curl -s -X PUT -H "Authorization: Bearer $GRAFANA_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d @datasource.json \
+          "https://grafana.example.com/api/datasources/uid/$DS_UID"
+        ```
+
+        For datasources defined through provisioning files, set `access: proxy` in the provisioning YAML and restart Grafana to apply the change.
     refs:
       - url: https://grafana.com/docs/grafana/latest/datasources/
         title: Grafana Datasources
@@ -611,7 +642,7 @@ queries:
     filters: asset.platform == "grafana-org"
     mql: |
       grafana.datasources.where(url != "").all(
-        url.contains("https://") || url.contains("localhost") || url.contains("127.0.0.1")
+        isHttps == true || url == /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])([:\/]|$)/
       )
     docs:
       desc: |
@@ -652,17 +683,8 @@ queries:
         1. Navigate to **Connections > Data sources** in the Grafana UI.
         2. For each datasource with an HTTP URL, update it to HTTPS.
         3. Ensure the datasource endpoint has a valid TLS certificate.
-        4. If using self-signed certificates, configure the CA certificate in the datasource TLS settings.
+        4. If using self-signed certificates, add the issuing CA certificate under the datasource TLS settings instead of enabling Skip TLS Verify.
         5. Save and test the datasource connection.
-
-        ```ini
-        # In grafana.ini, you can also enforce TLS for the Grafana server itself
-        [server]
-        protocol = https
-        cert_file = /path/to/cert.pem
-        cert_key = /path/to/key.pem
-        min_tls_version = TLS1.2
-        ```
     refs:
       - url: https://grafana.com/docs/grafana/latest/setup-grafana/configure-security/configure-database-encryption/
         title: Grafana Security Configuration
@@ -722,8 +744,21 @@ queries:
         Configure a default receiver in the notification policy:
 
         1. Navigate to **Alerting > Notification policies** in the Grafana UI.
-        2. Set the **Default contact point** to an appropriate receiver (e.g., email, Slack, PagerDuty).
-        3. Verify that the selected contact point is properly configured and tested.
+        2. Edit the **Default policy** and set the **Default contact point** to a receiver such as email, Slack, or PagerDuty.
+        3. Verify that the selected contact point is properly configured and send a test notification.
+
+        Via the API, fetch the current policy tree, set the root `receiver`, and update it. The update replaces the entire policy tree, so always start from the current tree to preserve existing routes:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $GRAFANA_TOKEN" \
+          "https://grafana.example.com/api/v1/provisioning/policies" > policies.json
+
+        # Edit policies.json and set the top-level "receiver", then:
+        curl -s -X PUT -H "Authorization: Bearer $GRAFANA_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d @policies.json \
+          "https://grafana.example.com/api/v1/provisioning/policies"
+        ```
     refs:
       - url: https://grafana.com/docs/grafana/latest/alerting/fundamentals/notifications/notification-policies/
         title: Grafana Notification Policies
