@@ -225,7 +225,7 @@ queries:
 
             ```bash
             #!/bin/bash
-            set -u
+            set -eu
 
             for f in /boot/grub/grub.cfg /boot/grub/menu.lst /boot/grub2/grub.cfg /boot/grub2/user.cfg /boot/loader/loader.conf; do
               if [ -e "$f" ]; then
@@ -238,7 +238,7 @@ queries:
             if findmnt -n -t vfat /boot/efi > /dev/null; then
               if ! grep -Eq '^[^#]+[[:space:]]/boot/efi[[:space:]]+vfat[[:space:]]+\S*fmask=0077' /etc/fstab; then
                 cp -p /etc/fstab /etc/fstab.bak
-                sed -i -E 's|^(\S+\s+/boot/efi\s+vfat\s+)(\S+)|\1\2,fmask=0077,dmask=0077,uid=0,gid=0|' /etc/fstab
+                sed -i -E 's|^(\S+\s+/boot/efi\s+vfat\s+)\S+|\1defaults,fmask=0077,dmask=0077,uid=0,gid=0|' /etc/fstab
                 mount -o remount /boot/efi
                 echo "Updated /boot/efi mount options; a backup was saved to /etc/fstab.bak"
               fi
@@ -399,13 +399,18 @@ queries:
             2. Boot the distribution installer and select the encrypted disk or encrypted LVM layout option.
             3. Restore user data after the installation completes.
 
-            Alternatively, encrypt the existing filesystem in place from a live system. The filesystem must be unmounted and checked, and the partition must have free space at its end for the LUKS header:
+            Alternatively, encrypt the existing filesystem in place from a live system. The `--reduce-device-size` option shrinks the device by 32 MiB to make room for the LUKS header, so the filesystem inside it must first be shrunk by at least that amount or it is truncated and data is lost. For an ext4 filesystem:
 
             ```bash
             DEVICE=/dev/sdX2
+            e2fsck -f "$DEVICE"
+            resize2fs -M "$DEVICE"
             cryptsetup reencrypt --encrypt --type luks2 --cipher aes-xts-plain64 --key-size 512 --reduce-device-size 32m "$DEVICE"
             cryptsetup open "$DEVICE" root
+            resize2fs /dev/mapper/root
             ```
+
+            The final `resize2fs` grows the filesystem back to fill the encrypted volume. For other filesystem types, use that filesystem's shrink tooling before re-encrypting.
 
             Replace `/dev/sdX2` with the partition serving `/` or `/home`. After encrypting, update `/etc/crypttab` and `/etc/fstab` to reference the mapped device, then regenerate the initramfs with `update-initramfs -u -k all` on Debian and Ubuntu or `dracut -f --regenerate-all` on Red Hat and SUSE distributions so the system can unlock the volume at boot.
         # No bash or ansible remediation: encrypting existing volumes is an offline, interactive, data-destructive procedure that must not be automated against a running system.
