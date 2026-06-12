@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-bigip-security
     name: Mondoo F5 BIG-IP Security
-    version: 1.0.0
+    version: 1.0.1
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -113,7 +113,7 @@ queries:
             3. For each expired certificate, generate a new CSR or import a renewed certificate:
                - Click the certificate name
                - Click **Renew** to generate a new CSR, or **Import** to upload a renewed certificate
-            4. Update any SSL profiles referencing the expired certificate to use the new one
+            4. If you import the renewed certificate under the same name, existing SSL profiles continue to reference it automatically. If you import it under a new name, update every SSL profile that references the old certificate.
         - id: cli
           desc: |
             To replace expired certificates using tmsh:
@@ -124,10 +124,20 @@ queries:
                ```
                tmsh list sys crypto cert
                ```
-            3. Install a renewed certificate:
+            3. Install the renewed certificate over the existing object name so SSL profiles keep referencing it:
 
                ```
                tmsh install sys crypto cert <name> from-local-file <path>
+               ```
+            4. If the renewal was issued for a new key pair, install the new key as well:
+
+               ```
+               tmsh install sys crypto key <name> from-local-file <key-path>
+               ```
+            5. Save the configuration so the change persists across reboots and failovers:
+
+               ```
+               tmsh save sys config
                ```
     refs:
       - url: https://my.f5.com/manage/s/article/K14318
@@ -153,7 +163,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-7-2
       compliance/vda-isa-5: vda-isa-5-5-1-1
     mql: |
-      bigip.certificates.all(keySize >= 2048)
+      bigip.certificates.all(keySize >= 2048 || keyType.downcase.contains("ec") && keySize >= 256)
     docs:
       desc: |
         This check verifies that all SSL certificates installed on the BIG-IP device use a key size of at least 2048 bits. Certificates with smaller key sizes are vulnerable to brute-force attacks.
@@ -173,9 +183,9 @@ queries:
 
         1. Log in to the BIG-IP Configuration utility.
         2. Navigate to **System → Certificate Management → Traffic Certificate Management → SSL Certificate List**.
-        3. Click each certificate name and review the **Key Size** value on the certificate properties page.
+        3. Click each certificate name and review the **Key Type** and **Key Size** values on the certificate properties page.
 
-        If every certificate reports a key size of 2048 bits or higher, the device passes. If any certificate reports a key size below 2048 bits, the device fails.
+        If every certificate uses an RSA key of at least 2048 bits or an elliptic curve key of at least 256 bits, the device passes. If any certificate falls below these thresholds, the device fails.
 
         ### Audit via tmsh
 
@@ -185,33 +195,47 @@ queries:
            ```
            tmsh list sys crypto cert all-properties
            ```
-        3. Inspect the `key-size` value reported for each certificate.
+        3. Inspect the `key-size` and `key-type` values reported for each certificate.
 
-        If every certificate reports a key size of 2048 bits or higher, the device passes. If any certificate reports a key size below 2048 bits, the device fails.
+        If every certificate uses an RSA key of at least 2048 bits or an elliptic curve key of at least 256 bits, the device passes. If any certificate falls below these thresholds, the device fails.
       remediation:
         - id: console
           desc: |
             To re-issue certificates with strong keys using the BIG-IP Configuration utility:
 
             1. Navigate to **System → Certificate Management → Traffic Certificate Management → SSL Certificate List**
-            2. Identify certificates with key sizes below 2048 bits
-            3. For each weak certificate, generate a new key and CSR with a minimum 2048-bit key size:
+            2. Identify certificates with RSA key sizes below 2048 bits
+            3. For each weak certificate, generate a new key and CSR:
                - Click **Create**
-               - Set the **Key Size** to 2048 or higher
-               - Complete the CSR fields and submit to your certificate authority
-            4. Import the new certificate and update SSL profiles to reference it
+               - Set the **Key Type** to RSA with a **Key Size** of 2048 or higher, or to ECDSA with a curve of P-256 or stronger
+               - Complete the CSR fields and submit the CSR to your certificate authority
+            4. Import the issued certificate and update every SSL profile that references the weak certificate
         - id: cli
           desc: |
             To re-issue certificates with strong keys using tmsh:
 
             1. Open an SSH session to the BIG-IP and enter the tmsh shell.
-            2. Generate a new key and CSR with a 2048-bit key:
+            2. Identify weak certificates:
+
+               ```
+               tmsh list sys crypto cert all-properties
+               ```
+            3. Generate a new key and CSR with a 2048-bit key:
 
                ```
                tmsh create sys crypto key <name> key-size 2048
-               tmsh create sys crypto csr <name> key <key-name> common-name <cn>
+               tmsh create sys crypto csr <name> key <name> common-name <cn>
                ```
-            3. Submit the CSR to your certificate authority, then import the issued certificate and update the SSL profiles to reference it.
+            4. Submit the CSR to your certificate authority, then install the issued certificate:
+
+               ```
+               tmsh install sys crypto cert <name> from-local-file <path>
+               ```
+            5. Update every SSL profile that references the old certificate, then save the configuration:
+
+               ```
+               tmsh save sys config
+               ```
     refs:
       - url: https://my.f5.com/manage/s/article/K14318
         title: F5 - Managing SSL certificates
@@ -236,7 +260,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-7-2
       compliance/vda-isa-5: vda-isa-5-5-1-1
     mql: |
-      bigip.keys.all(keySize >= 2048)
+      bigip.keys.all(keySize >= 2048 || keyType.downcase.contains("ec") && keySize >= 256)
     docs:
       desc: |
         This check verifies that all SSL keys on the BIG-IP device use a key size of at least 2048 bits. Weak keys undermine the security of all certificates and SSL profiles that reference them.
@@ -255,9 +279,9 @@ queries:
 
         1. Log in to the BIG-IP Configuration utility.
         2. Navigate to **System → Certificate Management → Traffic Certificate Management → SSL Certificate List**.
-        3. Click the **Key** tab and review the **Size** value reported for each installed key.
+        3. Click each entry whose **Contents** column includes a key, then click the **Key** tab on the object's properties page and review the **Type** and **Size** values.
 
-        If every key reports a size of 2048 bits or higher, the device passes. If any key reports a size below 2048 bits, the device fails.
+        If every RSA key is at least 2048 bits and every elliptic curve key is at least 256 bits, the device passes. If any key falls below these thresholds, the device fails.
 
         ### Audit via tmsh
 
@@ -267,19 +291,19 @@ queries:
            ```
            tmsh list sys crypto key all-properties
            ```
-        3. Inspect the `key-size` value reported for each key.
+        3. Inspect the `key-size` and `key-type` values reported for each key.
 
-        If every key reports a size of 2048 bits or higher, the device passes. If any key reports a size below 2048 bits, the device fails.
+        If every RSA key is at least 2048 bits and every elliptic curve key is at least 256 bits, the device passes. If any key falls below these thresholds, the device fails.
       remediation:
         - id: console
           desc: |
             To replace weak SSL keys using the BIG-IP Configuration utility:
 
             1. Navigate to **System → Certificate Management → Traffic Certificate Management → SSL Certificate List**
-            2. Click the **Key** tab to review installed keys and their sizes
-            3. For each weak key, generate a replacement with a minimum 2048-bit key size
-            4. Re-issue associated certificates with the new key
-            5. Update all SSL profiles referencing the old key
+            2. Click each entry whose **Contents** column includes a key
+            3. Click the **Key** tab on the object's properties page and review the **Size** value
+            4. For each RSA key smaller than 2048 bits, create a replacement key and CSR with a key size of at least 2048 bits
+            5. Re-issue the associated certificate with the new key, import it, and update every SSL profile that references the old key
         - id: cli
           desc: |
             To replace weak SSL keys using tmsh:
@@ -290,12 +314,17 @@ queries:
                ```
                tmsh list sys crypto key
                ```
-            3. Generate a new 2048-bit key:
+            3. Generate a new 2048-bit key and a CSR for it:
 
                ```
                tmsh create sys crypto key <name> key-size 2048
+               tmsh create sys crypto csr <name> key <name> common-name <cn>
                ```
-            4. Re-issue the associated certificates with the new key and update all SSL profiles that reference the old key.
+            4. Re-issue the associated certificate with the new key, install it, update every SSL profile that references the old key, and save the configuration:
+
+               ```
+               tmsh save sys config
+               ```
     refs:
       - url: https://my.f5.com/manage/s/article/K14318
         title: F5 - Managing SSL certificates
@@ -321,10 +350,7 @@ queries:
       compliance/vda-isa-5: vda-isa-5-5-1-2
     mql: |
       bigip.clientSslProfiles.none(
-        ciphers.downcase.contains("rc4") ||
-        ciphers.downcase.contains("des") ||
-        ciphers.downcase.contains("null") ||
-        ciphers.downcase.contains("export")
+        ciphers.downcase.split(":").any(_ == /^(rc4|des|3des|null|export)/)
       )
     docs:
       desc: |
@@ -367,9 +393,12 @@ queries:
 
             1. Navigate to **Local Traffic → Profiles → SSL → Client**
             2. Click on the affected profile
-            3. In the **Ciphers** field, replace the cipher string with a secure configuration, for example:
-               `DEFAULT:!RC4:!DES:!3DES:!NULL:!EXPORT:!eNULL:!aNULL`
-            4. Click **Update**
+            3. Set the **Configuration** selector to **Advanced**
+            4. In the **Ciphers** setting, select **Cipher String** and enter a list built only from strong suites, for example:
+               `ECDHE+AES-GCM:DHE+AES-GCM:ECDHE+AES:DHE+AES`
+            5. Click **Update**
+
+            **Note**: Clients that support only the removed cipher suites can no longer connect to virtual servers using this profile. Validate the change against your client population in a maintenance window.
         - id: cli
           desc: |
             To remove weak ciphers from client SSL profiles using tmsh:
@@ -378,12 +407,17 @@ queries:
             2. Update the cipher string on the client SSL profile:
 
                ```
-               tmsh modify ltm profile client-ssl <profile-name> ciphers 'DEFAULT:!RC4:!DES:!3DES:!NULL:!EXPORT:!eNULL:!aNULL'
+               tmsh modify ltm profile client-ssl <profile-name> ciphers 'ECDHE+AES-GCM:DHE+AES-GCM:ECDHE+AES:DHE+AES'
                ```
-            3. Verify the effective cipher list:
+            3. From the advanced shell, list the cipher suites the string expands to and confirm no weak suites remain:
 
                ```
-               tmsh list ltm profile client-ssl <profile-name> ciphers
+               tmm --clientciphers 'ECDHE+AES-GCM:DHE+AES-GCM:ECDHE+AES:DHE+AES'
+               ```
+            4. Save the configuration:
+
+               ```
+               tmsh save sys config
                ```
     refs:
       - url: https://my.f5.com/manage/s/article/K13156
@@ -410,10 +444,7 @@ queries:
       compliance/vda-isa-5: vda-isa-5-5-1-2
     mql: |
       bigip.serverSslProfiles.none(
-        ciphers.downcase.contains("rc4") ||
-        ciphers.downcase.contains("des") ||
-        ciphers.downcase.contains("null") ||
-        ciphers.downcase.contains("export")
+        ciphers.downcase.split(":").any(_ == /^(rc4|des|3des|null|export)/)
       )
     docs:
       desc: |
@@ -455,9 +486,12 @@ queries:
 
             1. Navigate to **Local Traffic → Profiles → SSL → Server**
             2. Click on the affected profile
-            3. In the **Ciphers** field, replace the cipher string with a secure configuration, for example:
-               `DEFAULT:!RC4:!DES:!3DES:!NULL:!EXPORT:!eNULL:!aNULL`
-            4. Click **Update**
+            3. Set the **Configuration** selector to **Advanced**
+            4. In the **Ciphers** setting, select **Cipher String** and enter a list built only from strong suites, for example:
+               `ECDHE+AES-GCM:DHE+AES-GCM:ECDHE+AES:DHE+AES`
+            5. Click **Update**
+
+            **Note**: Backend pool members that support only the removed cipher suites can no longer complete TLS handshakes with the BIG-IP. Confirm backend cipher support before applying the change.
         - id: cli
           desc: |
             To remove weak ciphers from server SSL profiles using tmsh:
@@ -466,12 +500,17 @@ queries:
             2. Update the cipher string on the server SSL profile:
 
                ```
-               tmsh modify ltm profile server-ssl <profile-name> ciphers 'DEFAULT:!RC4:!DES:!3DES:!NULL:!EXPORT:!eNULL:!aNULL'
+               tmsh modify ltm profile server-ssl <profile-name> ciphers 'ECDHE+AES-GCM:DHE+AES-GCM:ECDHE+AES:DHE+AES'
                ```
-            3. Verify the effective cipher list:
+            3. From the advanced shell, list the cipher suites the string expands to and confirm no weak suites remain:
 
                ```
-               tmsh list ltm profile server-ssl <profile-name> ciphers
+               tmm --serverciphers 'ECDHE+AES-GCM:DHE+AES-GCM:ECDHE+AES:DHE+AES'
+               ```
+            4. Save the configuration:
+
+               ```
+               tmsh save sys config
                ```
     refs:
       - url: https://my.f5.com/manage/s/article/K13156
@@ -517,47 +556,56 @@ queries:
 
         1. Log in to the BIG-IP Configuration utility.
         2. Navigate to **Local Traffic → Profiles → SSL → Server**.
-        3. Click each server SSL profile and review the **Server Authentication** setting.
+        3. Click each server SSL profile, set the **Configuration** selector to **Advanced**, and review the **Server Certificate** setting in the **Server Authentication** section.
 
-        If no server SSL profile has server authentication set to **none**, the device passes. If any profile has it set to **none**, the device fails.
+        If every server SSL profile has **Server Certificate** set to **require**, the device passes. If any profile has it set to **ignore**, the device fails.
 
         ### Audit via tmsh
 
         1. Open an SSH session to the BIG-IP and enter the tmsh shell.
-        2. List the authentication setting configured on each server SSL profile:
+        2. List the peer certificate mode and CA bundle configured on each server SSL profile:
 
            ```
-           tmsh list ltm profile server-ssl authenticate
+           tmsh list ltm profile server-ssl <name> peer-cert-mode ca-file
            ```
-        3. Inspect the `authenticate` value reported for each profile.
+        3. Inspect the `peer-cert-mode` value reported for each profile.
 
-        If no server SSL profile has `authenticate` set to `none`, the device passes. If any profile has it set to `none`, the device fails.
+        If every server SSL profile reports `peer-cert-mode require` with a trusted CA bundle configured, the device passes. If any profile reports `peer-cert-mode ignore`, the device fails.
       remediation:
         - id: console
           desc: |
-            To enable backend server authentication using the BIG-IP Configuration utility:
+            To enable backend server certificate verification using the BIG-IP Configuration utility:
 
             1. Navigate to **Local Traffic → Profiles → SSL → Server**
             2. Click on the affected profile
-            3. Set **Server Authentication** to **require** (or **always**)
-            4. Configure the **Trusted Certificate Authorities** field to reference a CA bundle that includes the backend server's issuing CA
-            5. Click **Update**
+            3. Set the **Configuration** selector to **Advanced**
+            4. In the **Server Authentication** section, set **Server Certificate** to **require**
+            5. Set **Trusted Certificate Authorities** to a CA bundle that includes the issuing CA of your backend server certificates
+            6. Click **Update**
+
+            **Note**: With verification set to require, the BIG-IP drops connections to any pool member whose certificate fails validation. Confirm that every backend certificate chains to the configured CA bundle before applying this change, or traffic through the affected virtual servers stops.
         - id: cli
           desc: |
-            To enable backend server authentication using tmsh:
+            To enable backend server certificate verification using tmsh:
 
             1. Open an SSH session to the BIG-IP and enter the tmsh shell.
-            2. Enable server authentication on the server SSL profile:
+            2. Require backend certificate verification on the server SSL profile and point it at a trusted CA bundle:
 
                ```
-               tmsh modify ltm profile server-ssl <profile-name> authenticate require
-               tmsh modify ltm profile server-ssl <profile-name> ca-file <ca-bundle-name>
+               tmsh modify ltm profile server-ssl <profile-name> peer-cert-mode require ca-file <ca-bundle-name>
                ```
             3. Verify the configuration:
 
                ```
-               tmsh list ltm profile server-ssl <profile-name> authenticate ca-file
+               tmsh list ltm profile server-ssl <profile-name> peer-cert-mode ca-file
                ```
+            4. Save the configuration:
+
+               ```
+               tmsh save sys config
+               ```
+
+            **Note**: With peer-cert-mode set to require, the BIG-IP drops connections to any pool member whose certificate fails validation. Confirm that every backend certificate chains to the configured CA bundle before applying this change.
     refs:
       - url: https://my.f5.com/manage/s/article/K14783
         title: F5 - Configuring server certificate verification
@@ -622,8 +670,11 @@ queries:
 
             1. Navigate to **Network → VLANs → VLAN List**
             2. Click on the affected VLAN
-            3. Set **Source Checking** to **Enabled**
-            4. Click **Update**
+            3. Set the **Configuration** selector to **Advanced**
+            4. Check the **Source Check** box
+            5. Click **Update**
+
+            **Note**: Source checking verifies that the return route for an initial packet points back to the VLAN the packet arrived on, and it takes effect only when auto last hop is disabled. In environments with asymmetric routing this verification drops legitimate traffic, so validate routing symmetry before enabling it.
         - id: cli
           desc: |
             To enable VLAN source checking using tmsh:
@@ -639,6 +690,13 @@ queries:
                ```
                tmsh list net vlan <vlan-name> source-checking
                ```
+            4. Save the configuration:
+
+               ```
+               tmsh save sys config
+               ```
+
+            **Note**: Source checking takes effect only when auto last hop is disabled, and it drops traffic whose return route does not point back to the arrival VLAN. Validate routing symmetry before enabling it.
     refs:
       - url: https://my.f5.com/manage/s/article/K13520
         title: F5 - VLAN configuration
@@ -703,10 +761,10 @@ queries:
 
             1. Navigate to **Network → Route Domains**
             2. Click on the affected route domain
-            3. Set **Strict Isolation** to **Enabled**
+            3. Check the **Strict Isolation** box
             4. Click **Update**
 
-            **Note**: Enabling strict isolation may break existing cross-domain traffic flows. Review your network architecture before making this change.
+            **Note**: Enabling strict isolation removes cross-domain forwarding, including parent route domain lookups, and immediately breaks any traffic flows that cross route domain boundaries. Review your network architecture before making this change.
         - id: cli
           desc: |
             To enable strict isolation on route domains using tmsh:
@@ -715,13 +773,20 @@ queries:
             2. Enable strict isolation on the route domain:
 
                ```
-               tmsh modify net route-domain <id> strict enabled
+               tmsh modify net route-domain <name> strict enabled
                ```
             3. Verify the configuration:
 
                ```
-               tmsh list net route-domain <id> strict
+               tmsh list net route-domain <name> strict
                ```
+            4. Save the configuration:
+
+               ```
+               tmsh save sys config
+               ```
+
+            **Note**: Enabling strict isolation removes cross-domain forwarding, including parent route domain lookups, and immediately breaks any traffic flows that cross route domain boundaries. Review your network architecture before making this change.
     refs:
       - url: https://my.f5.com/manage/s/article/K14163
         title: F5 - Route domain configuration
@@ -763,8 +828,8 @@ queries:
         ### Audit via the BIG-IP Configuration utility
 
         1. Log in to the BIG-IP Configuration utility.
-        2. Navigate to **System → SNMP → Agent → Access Control**.
-        3. Review the **Allowed Addresses** list for overly broad entries such as `0.0.0.0/0`, `::/0`, or `ALL`.
+        2. Navigate to **System → SNMP → Agent → Properties**.
+        3. Review the **Client Allowlist** entries for overly broad values such as `0.0.0.0/0`, `::/0`, or `ALL`. On older versions this setting is labeled **SNMP Access**.
 
         If the allowed addresses list contains only specific hosts or subnets, the device passes. If it contains an unrestricted entry, the device fails.
 
@@ -784,26 +849,32 @@ queries:
           desc: |
             To restrict SNMP allowed addresses using the BIG-IP Configuration utility:
 
-            1. Navigate to **System → SNMP → Agent → Access Control**
-            2. Review the **Allowed Addresses** list
-            3. Remove any overly broad entries such as `0.0.0.0/0` or `ALL`
-            4. Add only the specific IP addresses or subnets of authorized SNMP management stations
-            5. Click **Update**
+            1. Navigate to **System → SNMP → Agent → Properties**
+            2. In the **Client Allowlist** setting, remove any overly broad entries such as `0.0.0.0/0`. On older versions this setting is labeled **SNMP Access**.
+            3. Add only the specific IP addresses or subnets of authorized SNMP management stations. Keep the default `127.0.0.0/8` entry so local processes on the device can still query the agent.
+            4. Click **Update**
         - id: cli
           desc: |
             To restrict SNMP allowed addresses using tmsh:
 
             1. Open an SSH session to the BIG-IP and enter the tmsh shell.
-            2. Restrict SNMP access to specific management hosts:
+            2. Restrict SNMP access to the loopback range and your specific management hosts:
 
                ```
-               tmsh modify sys snmp allowed-addresses replace-all-with { 10.0.1.100 10.0.1.101 }
+               tmsh modify sys snmp allowed-addresses replace-all-with { 127.0.0.0/8 10.0.1.100 10.0.1.101 }
                ```
             3. Verify the allowed addresses:
 
                ```
                tmsh list sys snmp allowed-addresses
                ```
+            4. Save the configuration:
+
+               ```
+               tmsh save sys config
+               ```
+
+            **Note**: The replace-all-with operation removes every existing entry. Any monitoring station missing from the new list loses SNMP access immediately, so compile the complete list of authorized stations before running the command.
     refs:
       - url: https://my.f5.com/manage/s/article/K13625
         title: F5 - Configuring SNMP access
