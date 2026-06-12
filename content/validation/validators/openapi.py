@@ -246,8 +246,12 @@ def parse_api_curl(cmd: str, host: str) -> tuple[str, str, str | None] | None:
     if not url_match:
         return None
     path = url_match.group(1)
-    # Drop a fragment or query string if present.
+    # Drop a fragment or query string if present, and a trailing slash —
+    # spec path templates never carry one, and the segment-wise matcher
+    # would otherwise see a spurious empty segment.
     path = path.split("?", 1)[0].split("#", 1)[0]
+    if len(path) > 1:
+        path = path.rstrip("/")
 
     method_match = _CURL_METHOD_RE.search(cmd)
     method = method_match.group(1).upper() if method_match else "GET"

@@ -136,14 +136,19 @@ def split_commands(block: str, prefix: str, block_start_line: int) -> list[tuple
             while True:
                 try:
                     tokens = shlex.split(stripped)
+                    rejoined = " ".join(tokens)
                     break
                 except ValueError:
                     if i + cont_lines + 1 >= len(lines):
-                        tokens = stripped.split()
+                        # The quote never closes (malformed snippet).
+                        # Keep the text intact rather than whitespace-
+                        # splitting it, which would mangle any JSON
+                        # payload structure; downstream parsing will
+                        # surface the malformation.
+                        rejoined = stripped
                         break
                     cont_lines += 1
                     stripped = stripped + "\n" + lines[i + cont_lines]
-            rejoined = " ".join(tokens)
             # Split on pipe/semicolon boundaries
             for segment in re.split(r"\s*[|;]\s*", rejoined):
                 segment = segment.strip()
@@ -167,6 +172,18 @@ def truncate_cmd(cmd: str, max_len: int = 120) -> str:
 # GitHub Actions annotations
 # ---------------------------------------------------------------------------
 
+def _encode_annotation(s: str, in_properties: bool = False) -> str:
+    """Encode workflow-command special characters.
+
+    Property values (like title=) additionally need ',' and '::' encoded
+    because they would otherwise terminate the property list.
+    """
+    s = s.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+    if in_properties:
+        s = s.replace(",", "%2C").replace("::", "%3A%3A")
+    return s
+
+
 def emit_github_annotations() -> None:
     """Print GitHub Actions workflow commands for each failure.
 
@@ -175,9 +192,8 @@ def emit_github_annotations() -> None:
     See https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/workflow-commands-for-github-actions#setting-an-error-message
     """
     for r in FAILURES:
-        msg = "; ".join(r["errors"]) + f" — {r['command']}"
-        title = f"{r['cloud'].upper()} CLI validation ({r['uid']})"
-        # Workflow command special characters must be encoded
-        msg = msg.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-        title = title.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A").replace(",", "%2C").replace("::", "%3A%3A")
+        msg = _encode_annotation("; ".join(r["errors"]) + f" — {r['command']}")
+        title = _encode_annotation(
+            f"{r['cloud'].upper()} CLI validation ({r['uid']})", in_properties=True
+        )
         print(f"::error file={r['file']},line={r['line']},title={title}::{msg}")
