@@ -3,7 +3,7 @@
 policies:
   - uid: linux-operational-policy
     name: Linux Server Operational Policy
-    version: 1.1.0
+    version: 1.1.1
     license: BUSL-1.1
     tags:
       mondoo.com/category: best-practices
@@ -22,7 +22,6 @@ policies:
 
         - Disk usage thresholds across mounted filesystems
         - Memory utilization and swap pressure
-        - Filesystem inode availability
 
         Learn more about scanning Linux in the [cnspec Linux documentation](https://mondoo.com/docs/cnspec/os/linux).
 
@@ -37,7 +36,7 @@ queries:
     title: Ensure disk usage is under 80%
     impact: 60
     mql: |
-      mount.list.where(fstype != "tmpfs" && fstype != "devtmpfs" && device != "udev" && device != /^loop/).where(size > 0).all(used * 100 / size < 80)
+      mount.list.where(fstype != "tmpfs" && fstype != "devtmpfs" && fstype != "squashfs" && fstype != "iso9660" && device != "udev" && device != /^\/dev\/loop/).where(size > 0).all(used * 100 / size < 80)
     docs:
       desc: |
         This check verifies that every mounted persistent filesystem is using less than 80 percent of its capacity. Pseudo-filesystems such as `tmpfs`, `devtmpfs`, and loopback mounts are excluded.
@@ -54,7 +53,7 @@ queries:
         Run this command to inspect filesystem usage:
 
         ```bash
-        df -hP -x tmpfs -x devtmpfs
+        df -hP -x tmpfs -x devtmpfs -x squashfs -x iso9660
         ```
 
         A passing result shows every persistent filesystem with a `Use%` value below 80 percent. A failing result shows one or more filesystems at 80 percent or higher.
@@ -69,20 +68,48 @@ queries:
             du -sh /* 2>/dev/null | sort -rh | head -20
             ```
 
-            Clean up common sources of disk usage:
+            Clean up common sources of disk usage. Before deleting from `/tmp`, run the find command with `-print` instead of `-delete` to review what will be removed, because applications may still reference files there:
 
             ```bash
-            # Remove old journal logs older than 7 days
+            # Remove journal logs older than 7 days
             journalctl --vacuum-time=7d
 
             # Clean package manager cache (Debian/Ubuntu)
             apt-get clean
 
             # Clean package manager cache (RHEL/CentOS)
-            yum clean all
+            dnf clean all
 
-            # Remove old temporary files
-            find /tmp -type f -atime +7 -delete
+            # Remove temporary files not accessed in 7 days
+            find /tmp -mindepth 1 -type f -atime +7 -delete
+            ```
+        - id: script
+          desc: |
+            **Using a bash script**
+
+            Run the following script as root to report filesystems over the threshold and reclaim space from common sources:
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            # Report filesystems at or above 80 percent usage
+            df -P -x tmpfs -x devtmpfs -x squashfs -x iso9660 | awk 'NR > 1 { gsub("%", "", $5); if ($5 >= 80) print $6 " is at " $5 "%" }'
+
+            # Reclaim space from journal logs older than 7 days
+            journalctl --vacuum-time=7d
+
+            # Clean the package manager cache
+            if command -v apt-get > /dev/null 2>&1; then
+              apt-get clean
+            elif command -v dnf > /dev/null 2>&1; then
+              dnf clean all
+            elif command -v yum > /dev/null 2>&1; then
+              yum clean all
+            fi
+
+            # Remove temporary files not accessed in 7 days
+            find /tmp -mindepth 1 -type f -atime +7 -delete
             ```
         - id: ansible
           desc: |
@@ -97,9 +124,10 @@ queries:
               become: true
 
               tasks:
-                - name: Remove old journal logs older than 7 days
+                - name: Remove journal logs older than 7 days
                   ansible.builtin.command: journalctl --vacuum-time=7d
                   changed_when: true
+                  when: ansible_service_mgr == "systemd"
 
                 - name: Clean apt cache (Debian/Ubuntu)
                   ansible.builtin.apt:
@@ -107,15 +135,16 @@ queries:
                     autoremove: true
                   when: ansible_os_family == "Debian"
 
-                - name: Clean yum cache (RHEL/CentOS)
-                  ansible.builtin.command: yum clean all
+                - name: Clean dnf cache (RHEL/CentOS)
+                  ansible.builtin.command: dnf clean all
                   changed_when: true
                   when: ansible_os_family == "RedHat"
 
-                - name: Remove temporary files older than 7 days
+                - name: Find temporary files not accessed in 7 days
                   ansible.builtin.find:
                     paths: /tmp
                     age: 7d
+                    age_stamp: atime
                     file_type: file
                   register: old_tmp_files
 
@@ -129,7 +158,7 @@ queries:
     title: Ensure memory usage is under 80%
     impact: 60
     mql: |
-      command("free | grep Mem | awk '{print $3/$2 * 100.0}'").stdout.trim < 80.0
+      command("LC_ALL=C free | awk '/^Mem:/ {print $3/$2 * 100.0}'").stdout.trim < 80.0
     docs:
       desc: |
         This check verifies that the system is using less than 80 percent of its total physical memory.
@@ -167,17 +196,65 @@ queries:
             free -h
             ```
 
-            Free up memory by addressing the largest consumers:
+            Restart the service that holds the most memory to release it. Substitute the unit that owns the top process for `myapp.service`. Restarting or stopping a service briefly interrupts what it serves, so schedule the action in a maintenance window:
 
             ```bash
-            # Restart a memory-leaking service to release retained memory
-            systemctl restart <service-name>
-
-            # Drop cached pages, dentries, and inodes (kernel will repopulate as needed)
-            sync && echo 3 > /proc/sys/vm/drop_caches
-
-            # Stop or remove non-essential workloads pinning memory
-            systemctl stop <service-name>
+            systemctl restart myapp.service
             ```
 
-            For persistent pressure, right-size the workload. Tune service memory limits with `MemoryHigh=` and `MemoryMax=` in systemd unit files, add swap, or scale the host's RAM.
+            For persistent pressure, right-size the workload: tune service memory limits with `MemoryHigh=` and `MemoryMax=` in systemd unit files, move workloads to another host, or scale the host's RAM.
+        - id: script
+          desc: |
+            **Using a bash script**
+
+            Run the following script as root to report utilization and the processes responsible, then restart or right-size the largest consumers:
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            # Show overall memory and swap utilization
+            free -h
+
+            # List the top 20 memory consumers
+            ps -eo pid,user,%mem,rss,command --sort=-%mem | head -20
+
+            # Print the current memory utilization percentage
+            LC_ALL=C free | awk '/^Mem:/ { printf "Memory usage: %.1f%%\n", $3 / $2 * 100 }'
+            ```
+        - id: ansible
+          desc: |
+            **Using Ansible**
+
+            Report memory utilization and the largest consumers, and restart an identified memory-leaking service, with the following Ansible playbook. Set `service_to_restart` to the offending unit name; restarting briefly interrupts the service:
+
+            ```yaml
+            ---
+            - name: Investigate and reduce memory usage
+              hosts: all
+              become: true
+              vars:
+                service_to_restart: ""
+
+              tasks:
+                - name: Report current memory utilization
+                  ansible.builtin.debug:
+                    msg: >-
+                      Memory usage is
+                      {{ (ansible_memory_mb.nocache.used / ansible_memory_mb.real.total * 100) | round(1) }}%
+
+                - name: List top memory consumers
+                  ansible.builtin.command: ps -eo pid,user,%mem,rss,command --sort=-%mem
+                  register: top_mem
+                  changed_when: false
+
+                - name: Show the top 20 memory consumers
+                  ansible.builtin.debug:
+                    msg: "{{ top_mem.stdout_lines[:21] }}"
+
+                - name: Restart the identified memory-leaking service
+                  ansible.builtin.systemd_service:
+                    name: "{{ service_to_restart }}"
+                    state: restarted
+                  when: service_to_restart | length > 0
+            ```
