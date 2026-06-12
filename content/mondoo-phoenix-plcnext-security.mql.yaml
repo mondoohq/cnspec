@@ -3,7 +3,7 @@
 policies:
   - uid: phoenix-plcnext
     name: Phoenix PLCnext Security Policy
-    version: 1.1.0
+    version: 1.1.1
     license: BUSL-1.1
     tags:
       benchmark: Mondoo Phoenix PLCnext
@@ -81,7 +81,13 @@ queries:
   - uid: phoenix-plcnext-01
     title: Ensure latest PLCnext Firmware is installed
     mql: |
-      file("/etc/plcnext/arpversion").content.contains("23.0.0.65")
+      // A missing or malformed arpversion file fails cleanly via the else
+      // branch instead of erroring inside version(null).
+      if (file("/etc/plcnext/arpversion").content.find(/\d+\.\d+\.\d+/) != empty) {
+        version(file("/etc/plcnext/arpversion").content.find(/\d+\.\d+\.\d+/).first) >= version("23.0.0")
+      } else {
+        false
+      }
     docs:
       desc: |
         Installing the latest firmware is important for several reasons:
@@ -94,8 +100,20 @@ queries:
 
         By installing the latest firmware, you can ensure that your device is secure, performs optimally, and is fully compatible with other systems. This can help reduce downtime, improve productivity, and extend the lifespan of your device.
       audit: |
-        Run the `cat /etc/plcnext/arpversion` command and verify that output Arpversion is greater than 23.0.0.65
-      remediation: Please follow the update instructions from [Firmware update page](https://www.plcnext.help/te/WBM/Administration_Firmware_Update.htm)
+        Run the `cat /etc/plcnext/arpversion` command and verify that the reported firmware version is 23.0.0 or later.
+      remediation: |-
+        Update the device firmware using the Web-based Management interface:
+
+        1. Download the latest firmware update file for your controller model from the Phoenix Contact product page.
+        2. Back up the device configuration and your PLCnext Engineer project before you start.
+        3. Log in to the WBM at `https://<device-ip>/wbm` with an administrative account.
+        4. Navigate to **Administration > Firmware Update**.
+        5. Upload the firmware update file and start the update.
+        6. Wait for the device to install the update and reboot, then verify the new version with `cat /etc/plcnext/arpversion`.
+
+        For details, follow the Phoenix Contact guide [Firmware Update](https://www.plcnext.help/te/WBM/Administration_Firmware_Update.htm).
+
+        > **Warning:** The firmware update reboots the controller and stops the running PLC program. Outputs change to their configured fail-safe state during the reboot. Perform the update only during a planned maintenance window after confirming the automation process is in a safe state.
     refs:
       - url: https://www.phoenixcontact.com/en-pc/products/controller-axc-f-2152-2404267#firmware-link-target
         title: PLCnext Firmware download page
@@ -121,7 +139,18 @@ queries:
         Here you see a set of firewall filter files that is present in the /etc/nftables directory on a PLCnext Control
       audit: |
         Run the `nft list tables` and `nft list table <table>` command and verify that output.
-      remediation: Please follow the update instructions from [PLCnext Firewall configuration](https://www.plcnext.help/te/WBM/Security_Firewall.htm)
+      remediation: |-
+        Activate the firewall using the Web-based Management interface:
+
+        1. Log in to the WBM at `https://<device-ip>/wbm` with an administrative account.
+        2. Navigate to **Security > Firewall**.
+        3. Select **Activate Firewall**.
+        4. Review the basic rules and confirm that required connections such as PLCnext Engineer, HMI clients, and SSH management access are still permitted.
+        5. Apply the configuration and verify with `nft list tables` on the device shell that the `plcnext_filter` and `plcnext_ip6_filter` tables are present.
+
+        For details, follow the Phoenix Contact guide [Firewall configuration](https://www.plcnext.help/te/WBM/Security_Firewall.htm).
+
+        > **Warning:** Activating the firewall with an incomplete rule set can cut off engineering stations, HMIs, and other clients that communicate with the controller. Verify the rules before applying them, perform the change during a maintenance window, and keep local access to the device available so you can revert the change if needed.
     refs:
       - url: https://www.plcnext.help/te/WBM/Security_Firewall.htm
         title: PLCnext Firewall configuration
@@ -140,11 +169,15 @@ queries:
     docs:
       desc: Key exchange is any method in cryptography by which cryptographic keys are exchanged between two parties, allowing use of a cryptographic algorithm. If the sender and receiver wish to exchange encrypted messages, each must be equipped to encrypt messages to be sent and decrypt messages received
       remediation: |-
-        Edit the `/etc/ssh/sshd_config` file to add or modify the `KexAlgorithms` parameter so that it contains a comma-separated list of the site approved key exchange algorithms
+        Edit the `/etc/ssh/sshd_config` file to add or modify the `KexAlgorithms` parameter so that it contains a comma-separated list of the site approved key exchange algorithms:
 
         ```
         KexAlgorithms sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,diffie-hellman-group-exchange-sha256
         ```
+
+        Run `ssh -Q kex` on the controller first and include only algorithm names the device firmware supports. Validate the configuration with `sshd -t`, then restart the SSH service to apply the change. Restarting SSH ends active shell sessions but does not affect the running PLC program.
+
+        > **Warning:** An unsupported algorithm name prevents the SSH daemon from starting, which cuts off shell access to the controller. Always validate with `sshd -t` before restarting and keep your current session open until you confirm a new login works.
     refs:
       - url: https://www.plcnext.help/te/About/Home.htm
         title: PLCnext Technology Documentation
@@ -163,13 +196,15 @@ queries:
     docs:
       desc: This variable limits the types of MAC algorithms that SSH can use during communication.
       remediation: |-
-        Edit the `/etc/ssh/sshd_config` file to add or modify the `MACs` parameter so that it contains a comma-separated list of the site approved MACs
-
-        Example:
+        Edit the `/etc/ssh/sshd_config` file to add or modify the `MACs` parameter so that it contains a comma-separated list of the site approved MACs:
 
         ```
-        MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256
+        MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,umac-128-etm@openssh.com,hmac-sha2-512,hmac-sha2-256
         ```
+
+        Run `ssh -Q mac` on the controller first and include only algorithm names the device firmware supports. Validate the configuration with `sshd -t`, then restart the SSH service to apply the change. Restarting SSH ends active shell sessions but does not affect the running PLC program.
+
+        > **Warning:** An unsupported algorithm name prevents the SSH daemon from starting, which cuts off shell access to the controller. Always validate with `sshd -t` before restarting and keep your current session open until you confirm a new login works.
     refs:
       - url: https://www.plcnext.help/te/About/Home.htm
         title: PLCnext Technology Documentation
@@ -188,13 +223,15 @@ queries:
     docs:
       desc: This variable limits the ciphers that SSH can use during communication.
       remediation: |-
-        Edit the `/etc/ssh/sshd_config` file to add or modify the `Ciphers` parameter so that it contains a comma-separated list of the site approved ciphers
-
-        Example:
+        Edit the `/etc/ssh/sshd_config` file to add or modify the `Ciphers` parameter so that it contains a comma-separated list of the site approved ciphers:
 
         ```
         Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr
         ```
+
+        Run `ssh -Q cipher` on the controller first and include only cipher names the device firmware supports. Validate the configuration with `sshd -t`, then restart the SSH service to apply the change. Restarting SSH ends active shell sessions but does not affect the running PLC program.
+
+        > **Warning:** An unsupported cipher name prevents the SSH daemon from starting, which cuts off shell access to the controller. Always validate with `sshd -t` before restarting and keep your current session open until you confirm a new login works.
     refs:
       - url: https://www.plcnext.help/te/About/Home.htm
         title: PLCnext Technology Documentation
@@ -203,27 +240,29 @@ queries:
   - uid: phoenix-plcnext-06
     title: Ensure current system time is synchronized
     mql: |
-      processes.one( executable == /ntp/)
-      command('date -u --date="$(curl -v install.mondoo.com 2>&1 | grep Date: | cut -d" " -f3-9)"').stdout.trim <= command('date --date "1 min" -u').stdout.trim
-      command('date -u --date="$(curl -v install.mondoo.com 2>&1 | grep Date: | cut -d" " -f3-9)"').stdout.trim >= command('date --date "1 min ago" -u').stdout.trim
+      processes.any(executable == /ntpd/)
+      file("/etc/ntp.conf").content == /(server|pool)\s+\S+/
     docs:
       desc: |
         A system's time should be synchronized between all systems in an environment. This is usually done by setting up an authoritative time server with which all systems in an environment synchronize their clocks.
       audit: |
-        Execute this command to get the actual system time in UTC:
+        Run the `ntpq -p` command and verify that an NTP peer is listed and selected. Inspect the `/etc/ntp.conf` file and verify that at least one `server` or `pool` entry is configured.
+      remediation: |-
+        Configure NTP time synchronization on the controller:
 
-        ```bash
-        date -u
-        ```
+        1. Log in to the controller over SSH with an administrative account.
+        2. Edit the `/etc/ntp.conf` file and add at least one reachable time server from your OT network:
 
-        To get the current upstream time execute this command:
+           ```text
+           server 192.0.2.10 iburst
+           ```
 
-        _curl:_
+        3. Restart the NTP service so the daemon picks up the new configuration.
+        4. Confirm synchronization with `ntpq -p` and verify that a peer is selected.
 
-        ```bash
-        date -u --date="$(curl -v --silent install.mondoo.com 2>&1 | grep Date: | cut -d" " -f3-9)"
-        ```
-      remediation: Please follow the Phoenix guide [NTP](https://www.plcnext.help/te/Operating_System/System_time.htm#XREF_68130_2_8_2_NTP_Network)
+        For details, follow the Phoenix Contact guide [System time](https://www.plcnext.help/te/Operating_System/System_time.htm).
+
+        > **Warning:** Large clock corrections can affect time-stamped process data, alarm ordering, and certificate validation. Apply time changes during a planned maintenance window.
     refs:
       - url: https://www.plcnext.help/te/Operating_System/System_time.htm
         title: PLCnext System Time Configuration
@@ -248,10 +287,10 @@ queries:
       remediation:
         - id: cli
           desc: |
-            Run this command to set permissions and ownership on the SSH host private key files:
+            Run this command to set restrictive permissions and root ownership on the SSH host private key files:
 
             ```bash
-            find /etc/ssh -xdev -type f -name 'ssh_host_*_key' -exec chmod 0640 {} \; -exec chown root:ssh_keys {} \;
+            find /etc/ssh -xdev -type f -name 'ssh_host_*_key' -exec chmod 0600 {} \; -exec chown root:root {} \;
             ```
     refs:
       - url: https://www.plcnext.help/te/About/Home.htm
@@ -290,11 +329,13 @@ queries:
     docs:
       desc: 'SSH supports two different and incompatible protocols: SSH1 and SSH2. SSH1 was the original protocol and was subject to security issues. SSH2 is more advanced and secure.'
       remediation: |-
-        Edit the `/etc/ssh/sshd_config` file to set the `Protocol`parameter as follows:
+        Edit the `/etc/ssh/sshd_config` file to set the `Protocol` parameter as follows:
 
         ```
         Protocol 2
         ```
+
+        OpenSSH 7.4 and later only implement protocol version 2 and treat this directive as deprecated, so on current firmware this setting documents the requirement rather than changing behavior. Restart the SSH service to apply the change.
     refs:
       - url: https://www.plcnext.help/te/About/Home.htm
         title: PLCnext Technology Documentation
@@ -466,8 +507,10 @@ queries:
 
         ```
         ClientAliveInterval 300
-        ClientAliveCountMax 0
+        ClientAliveCountMax 3
         ```
+
+        Do not set `ClientAliveCountMax` to 0. OpenSSH treats 0 as disabling the keepalive termination mechanism, so idle sessions would never be closed. Restart the SSH service to apply the change. Restarting SSH ends active shell sessions but does not affect the running PLC program.
     refs:
       - url: https://www.plcnext.help/te/About/Home.htm
         title: PLCnext Technology Documentation
@@ -496,8 +539,7 @@ queries:
   - uid: phoenix-plcnext-20
     title: Ensure SSH access is limited
     mql: |
-      sshd.config.params["AllowUsers"] != "" || sshd.config.params["DenyUsers"] != ""
-      sshd.config.params["AllowGroups"] != "" || sshd.config.params["DenyGroups"] != ""
+      sshd.config.params["AllowUsers"] != empty || sshd.config.params["AllowGroups"] != empty || sshd.config.params["DenyUsers"] != empty || sshd.config.params["DenyGroups"] != empty
     docs:
       desc: |-
         There are several options available to limit which users and groups can access the system via SSH. It is recommended that at least one of the following options be leveraged: `AllowUsers`
@@ -510,7 +552,7 @@ queries:
 
         The `DenyGroups` variable gives the system administrator the option of denying specific groups of users to `ssh` into the system. The list consists of space-separated group names. Numeric group IDs are not recognized with this variable.
       remediation: |-
-        Edit the `/etc/ssh/sshd_config` file and add one or more of these parameters:
+        Edit the `/etc/ssh/sshd_config` file and add at least one of these parameters:
 
         ```text
         AllowUsers <userlist>
@@ -519,6 +561,10 @@ queries:
         DenyUsers <userlist>
         DenyGroups <grouplist>
         ```
+
+        Restart the SSH service to apply the change.
+
+        > **Warning:** Once `AllowUsers` or `AllowGroups` is set, every account not on the list loses SSH access to the controller. Make sure the list includes the administrative account you use to manage the device, and keep your current SSH session open while you verify that a new login still succeeds.
     refs:
       - url: https://www.plcnext.help/te/About/Home.htm
         title: PLCnext Technology Documentation
@@ -527,15 +573,21 @@ queries:
   - uid: phoenix-plcnext-21
     title: Ensure SSH warning banner is configured
     mql: |
-      sshd.config.params["Banner"] != ""
+      sshd.config.params["Banner"] != empty
+      sshd.config.params["Banner"] != "none"
     docs:
       desc: The `Banner` parameter specifies a file whose contents must be sent to the remote user before authentication is permitted. By default, no banner is displayed.
       remediation: |-
-        Edit the `/etc/ssh/sshd_config` file to set the `Banner` parameter as follows:
+        Create a banner file containing your organization's system use notification, then point the SSH daemon at it:
 
-        ```text
-        Banner /opt/plcnext/config/System/Um/SystemUseNotification.txt
-        ```
+        1. Write the notification text to `/opt/plcnext/config/System/Um/SystemUseNotification.txt`. Do not include details about the device, firmware, or network in the banner.
+        2. Edit the `/etc/ssh/sshd_config` file to set the `Banner` parameter:
+
+           ```text
+           Banner /opt/plcnext/config/System/Um/SystemUseNotification.txt
+           ```
+
+        3. Restart the SSH service to apply the change.
     refs:
       - url: https://www.plcnext.help/te/About/Home.htm
         title: PLCnext Technology Documentation
@@ -562,12 +614,29 @@ queries:
 
         In summary, allowing only SSH key authentication can provide a more secure and convenient way to access remote systems, but it is important to manage your keys properly to ensure that the increased security is not compromised.
       remediation: |-
-        Edit the `/etc/ssh/sshd_config` file to set the `Banner` parameter as follows:
+        Set up key-based authentication for your administrative account before disabling password authentication. If you disable password authentication without a working key, you lose SSH access to the controller.
 
-        ```
-        PasswordAuthentication no
-        PubkeyAuthentication yes
-        ```
+        1. Generate an SSH key pair on your engineering workstation and install the public key for the management account on the controller:
+
+           ```bash
+           mkdir -p /home/admin/.ssh
+           chmod 700 /home/admin/.ssh
+           echo 'ssh-ed25519 AAAA...your-public-key... user@workstation' >> /home/admin/.ssh/authorized_keys
+           chmod 600 /home/admin/.ssh/authorized_keys
+           chown -R admin /home/admin/.ssh
+           ```
+
+        2. From a new terminal, confirm that key-based login works while keeping your current session open.
+        3. Edit the `/etc/ssh/sshd_config` file to set the `PasswordAuthentication` and `PubkeyAuthentication` parameters:
+
+           ```text
+           PasswordAuthentication no
+           PubkeyAuthentication yes
+           ```
+
+        4. Validate the configuration with `sshd -t`, restart the SSH service, and verify key-based login again before closing your session.
+
+        > **Warning:** Applying `PasswordAuthentication no` without a tested key locks all users out of SSH on the controller. Keep an active session open until you confirm key-based access works.
     refs:
       - url: https://pxc1.esc-eu-central-1.empolisservices.com/service-express/portal/project1_p/document/en-so-30b315c3-3e44-4292-97d4-6883672cd34c?context=%7B%7D
         title: How to set up key-based SSH authentication to a PLCnext Control device
