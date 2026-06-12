@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-mcp-security
     name: Mondoo Model Context Protocol (MCP) Security
-    version: 1.0.0
+    version: 1.0.1
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -112,7 +112,7 @@ queries:
             Update the offending tool or prompt definitions in your MCP server source to remove personally identifiable information from `name`, `title`, and `description` fields. Use generic placeholders instead of real names, addresses, or payment data.
 
             1. Identify the failing tool or prompt registrations.
-            2. Replace illustrative personal data with neutral language and synthetic identifiers such as `<customer-id>` or `example@example.com`.
+            2. Replace illustrative personal data with neutral language and synthetic identifiers such as `customer-id` or `example@example.com`. Avoid angle-bracket placeholders in tool names and descriptions, because `<` and `>` are Unicode symbol characters that Unicode safety screening of tool metadata rejects.
             3. If personal data must appear at runtime, document it in the input schema rather than in the description.
             4. Restart the MCP server so the registry re-emits the corrected metadata.
 
@@ -233,10 +233,15 @@ queries:
       compliance/vda-isa-5: false
     mql: |
       mcp.tools.none(regex.url == description)
+      mcp.tools.none(description == /https?:\/\//)
       mcp.tools.none(regex.url == name)
+      mcp.tools.none(name == /https?:\/\//)
       mcp.prompts.none(regex.url == description)
+      mcp.prompts.none(description == /https?:\/\//)
       mcp.prompts.none(regex.url == name)
+      mcp.prompts.none(name == /https?:\/\//)
       mcp.prompts.none(regex.url == title)
+      mcp.prompts.none(title == /https?:\/\//)
     docs:
       desc: |
         HTTP and HTTPS links placed in the `name`, `title`, or `description` fields of MCP tools and prompts flow into the model context window on every invocation. An agent may follow such a link or surface it to a user, turning static metadata into a delivery channel for phishing pages and attacker-controlled endpoints.
@@ -315,7 +320,6 @@ queries:
       mcp.tools.all(
         name != empty &&
         description != empty &&
-        inputSchema != empty &&
         inputSchema.type == "object"
       )
     docs:
@@ -414,6 +418,7 @@ queries:
       )
       mcp.prompts.all(
         explicit.content(description).results == empty &&
+        explicit.content(name).results == empty &&
         explicit.content(title).results == empty
       )
     docs:
@@ -506,7 +511,7 @@ queries:
         **Why this matters**
 
         - **Homograph deception:** Visually similar characters from outside the basic Latin set let an attacker disguise a tool as a trusted one.
-        - **Hidden instructions:** Symbol and control-class code points can smuggle invisible content into the model context.
+        - **Hidden instructions:** Format-class code points such as zero-width and bidirectional controls can smuggle invisible content into the model context, while symbol characters enable markup and instruction injection in rendered metadata.
         - **Malformed and ambiguous text:** Surrogate, private-use, and unassigned code points have no standard meaning and can break rendering or parsing.
 
         **Risk mitigation**
@@ -540,9 +545,9 @@ queries:
           desc: |
             **Sanitize tool metadata to a safe character set**
 
-            Restrict tool `name` and `description` to printable ASCII and a small set of well-known Unicode letters. The check fails on four categories that almost never appear in legitimate metadata:
+            Restrict tool `name` and `description` to printable ASCII and a small set of well-known Unicode letters. Four Unicode categories almost never appear in legitimate metadata and must be removed:
 
-            - **Symbol (S)**: math, currency, and dingbat symbols often used to smuggle invisible instructions.
+            - **Symbol (S)**: math, currency, and modifier symbols, including everyday characters such as `=`, `<`, `>`, `$`, and the backtick. Rewrite descriptions in plain prose so they do not rely on these characters, and avoid Markdown code spans and angle-bracket placeholders in metadata.
             - **Surrogate (Cs)**: lone surrogate code points that indicate malformed UTF-16.
             - **Private use (Co)**: vendor-defined code points with no standard meaning.
             - **Unassigned (Cn)**: code points not assigned in the current Unicode standard.
@@ -550,7 +555,7 @@ queries:
             Steps to remediate:
 
             1. Normalize all metadata strings to Unicode Normalization Form C before registering tools.
-            2. Strip or reject characters in the four categories above. Most languages provide a category lookup, for example Python's `unicodedata.category(ch)`.
+            2. Strip or reject characters in the four categories above. Most languages provide a category lookup, for example Python's `unicodedata.category(ch)`. Strip the Format category as well, because zero-width and bidirectional control characters in that category can hide instructions from human reviewers.
             3. For non-English tool names, prefer ASCII identifiers and place localized text in a dedicated `title` field after auditing it for homograph risk.
             4. Add a unit test that round-trips each registered tool's metadata through your sanitizer so the constraint is enforced at build time. Restart the MCP server once the sanitizer is in place.
 
@@ -559,7 +564,7 @@ queries:
             ```python
             import unicodedata
 
-            BAD_CATEGORIES = {"Cs", "Co", "Cn"}
+            BAD_CATEGORIES = {"Cs", "Co", "Cn", "Cf"}
             BAD_MAJOR = {"S"}
 
             def safe(text: str) -> str:
@@ -653,9 +658,21 @@ queries:
             4. If you list resources from a dynamic backend, validate `name` and `description` at registration time and skip resources that fail validation rather than emitting an empty placeholder.
             5. Restart the MCP server so the registry re-emits the corrected resources.
 
+            A static resource uses the `uri` field:
+
             ```json
             {
-              "uri": "file:///var/data/reports/{report_id}.json",
+              "uri": "file:///var/data/reports/summary.json",
+              "name": "report-summary",
+              "description": "JSON summary report for the analytics service."
+            }
+            ```
+
+            A parameterized resource is a resource template and uses the `uriTemplate` field instead:
+
+            ```json
+            {
+              "uriTemplate": "file:///var/data/reports/{report_id}.json",
               "name": "report",
               "description": "JSON report payload for a given report ID."
             }
