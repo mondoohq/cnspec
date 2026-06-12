@@ -3,7 +3,7 @@
 policies:
   - uid: terraform-deprecations
     name: Terraform HCL Deprecations Policy
-    version: 0.3.0
+    version: 0.3.1
     license: BUSL-1.1
     tags:
       mondoo.com/category: best-practices
@@ -36,14 +36,57 @@ queries:
   - uid: terraform-provider-deprecations-template
     title: Ensure Terraform template provider is not used
     mql: |
-      # ensure it is not used in required providers
-      terraform.settings.requiredProviders.none(name == "template")
-      # ensure it is not used in data sources
-      terraform.datasources.none ( nameLabel == "template_file")
+      # ensure it is not declared in required_providers, including under an aliased local name
+      terraform.settings.requiredProviders.none(name == "template" || source == "hashicorp/template" || source == "registry.terraform.io/hashicorp/template")
+      # ensure no provider block configures it
+      terraform.providers.none(nameLabel == "template")
+      # ensure its data sources are not used
+      terraform.datasources.none(nameLabel == "template_file" || nameLabel == "template_cloudinit_config")
+      # ensure the template_dir resource is not used
+      terraform.resources.none(nameLabel == "template_dir")
     docs:
       desc: |
-        The Terraform template provider is deprecated and should not be used anymore.
-      remediation: Remove the provider from your Terraform configuration
+        The Terraform template provider (hashicorp/template) was archived in 2020 and no longer receives updates, bug fixes, or security patches. Its final release, 2.2.0, predates Terraform 1.x and ships no builds for newer CPU architectures such as Apple silicon, so configurations that depend on it fail to initialize on modern machines. Terraform 0.12 introduced the built-in templatefile function, which replaces the template_file data source without requiring any provider.
+      audit: |
+        To verify that the template provider is not used:
+
+        1. Run `terraform providers` in the configuration directory and confirm that `registry.terraform.io/hashicorp/template` does not appear in the output.
+        2. Search the configuration for remaining usages of its data sources and resources:
+
+        ```bash
+        grep -rn 'template_file\|template_cloudinit_config\|template_dir' --include='*.tf' .
+        ```
+
+        The configuration passes if neither command reports the template provider or any of its data sources and resources.
+      remediation: |
+        Replace each usage of the template provider with its modern equivalent, then remove the provider from `required_providers`:
+
+        - Replace the `template_file` data source with the built-in `templatefile` function, available since Terraform 0.12.
+        - Replace the `template_cloudinit_config` data source with the `cloudinit_config` data source from the actively maintained `hashicorp/cloudinit` provider.
+        - Replace the `template_dir` resource with `templatefile` rendering over a `fileset` loop, or move directory templating into the tooling that consumes the rendered files.
+
+        For example, replace this deprecated data source:
+
+        ```hcl
+        data "template_file" "init" {
+          template = file("init.tpl")
+          vars = {
+            consul_address = "10.0.0.4"
+          }
+        }
+        ```
+
+        with the built-in function:
+
+        ```hcl
+        locals {
+          init = templatefile("init.tpl", {
+            consul_address = "10.0.0.4"
+          })
+        }
+        ```
     refs:
       - url: https://github.com/hashicorp/terraform-provider-template/issues/85
         title: Terraform template provider archival GitHub issue
+      - url: https://developer.hashicorp.com/terraform/language/functions/templatefile
+        title: Terraform templatefile function documentation
