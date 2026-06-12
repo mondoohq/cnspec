@@ -49745,8 +49745,12 @@ queries:
     mql: |
       // RepositoryPolicyText may also be supplied as a JSON string, which MQL
       // cannot key into; string-form policies pass through the Statement
-      // guard unevaluated. CloudFormation templates overwhelmingly inline
-      // the policy as an object (as the remediation example shows).
+      // guard unevaluated. Parsing the string instead is not reliable:
+      // templates that embed the policy as a string typically assemble it
+      // with Fn::Sub, Fn::Join, or parameter references that only resolve at
+      // deploy time, so static analysis cannot recover the final document.
+      // CloudFormation templates overwhelmingly inline the policy as an
+      // object (as the remediation example shows).
       cloudformation.template.resources.where(type == "AWS::ECR::Repository").all(
         properties['RepositoryPolicyText'] == empty ||
         properties['RepositoryPolicyText']['Statement'] == empty ||
@@ -69568,10 +69572,10 @@ queries:
   - uid: mondoo-aws-security-route53-resolver-query-logging-enabled-aws
     filters: asset.platform == "aws"
     mql: |
-      // Baseline: asserts query logging is in use in the account (at least
-      // one VPC association). Per-VPC coverage needs a VPC-to-association
-      // correlation the resolver resource does not expose yet.
-      aws.route53.resolver.queryLogConfigAssociations.length > 0
+      // Comma delimiters on both sides guard against one VPC ID matching as
+      // a substring of another in the joined list.
+      loggedVpcIds = "," + aws.route53.resolver.queryLogConfigAssociations.where(status == "ACTIVE").map(resourceId).join(",") + ","
+      aws.vpcs.all(loggedVpcIds.contains("," + id + ","))
   - uid: mondoo-aws-security-route53-resolver-query-logging-enabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_route53_resolver_query_log_config")
     mql: |
