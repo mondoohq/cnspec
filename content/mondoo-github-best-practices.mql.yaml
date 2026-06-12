@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-github-repository-best-practices
     name: Mondoo GitHub Repository Best Practices
-    version: 1.2.0
+    version: 1.2.1
     license: BUSL-1.1
     tags:
       mondoo.com/category: best-practices
@@ -70,10 +70,10 @@ queries:
         ### Audit via Console
 
         1. Navigate to the repository on GitHub.
-        2. Look for a `SUPPORT.md` file in the repository root, the `docs` directory, or the `.github` directory.
+        2. Look for a `SUPPORT.md` file in the repository root or the `.github` directory.
         3. Check the organization's `.github` repository for a shared `SUPPORT.md` that applies to all repositories.
 
-        If a `SUPPORT.md` file is present in any of these locations, the check passes. If none exists, the check fails.
+        If a `SUPPORT.md` file is present in any of these locations, the check passes. If none exists, the check fails. GitHub also displays a `SUPPORT.md` stored in the `docs` directory, but this check does not inspect that location, so keep the file in the repository root or the `.github` directory.
 
         ### Audit via CLI
 
@@ -160,10 +160,10 @@ queries:
         ### Audit via Console
 
         1. Navigate to the repository on GitHub.
-        2. Look for a `CODE_OF_CONDUCT.md` file in the repository root, the `docs` directory, or the `.github` directory.
+        2. Look for a `CODE_OF_CONDUCT.md` file in the repository root or the `.github` directory.
         3. Check the organization's `.github` repository for a shared `CODE_OF_CONDUCT.md` that applies to all repositories.
 
-        If a `CODE_OF_CONDUCT.md` file is present in any of these locations, the check passes. If none exists, the check fails.
+        If a `CODE_OF_CONDUCT.md` file is present in any of these locations, the check passes. If none exists, the check fails. GitHub also displays a `CODE_OF_CONDUCT.md` stored in the `docs` directory, but this check does not inspect that location, so keep the file in the repository root or the `.github` directory.
 
         ### Audit via CLI
 
@@ -221,7 +221,7 @@ queries:
   - uid: mondoo-github-repository-best-practices-description
     title: Ensure repository has a description
     impact: 30
-    mql: github.repository.description.length > 0
+    mql: github.repository.description != empty
     docs:
       desc: |
         Repositories should set a description so users can understand the purpose of the project at a glance.
@@ -328,12 +328,23 @@ queries:
           desc: |
             **Using Terraform**
 
-            Create a repository with a .gitignore template:
+            The `gitignore_template` attribute only takes effect when Terraform creates the repository:
 
             ```hcl
             resource "github_repository" "example" {
               name               = "example"
               gitignore_template = "Go"
+            }
+            ```
+
+            For an existing repository, manage the file directly with the `github_repository_file` resource:
+
+            ```hcl
+            resource "github_repository_file" "gitignore" {
+              repository     = github_repository.example.name
+              file           = ".gitignore"
+              content        = file("${path.module}/templates/gitignore")
+              commit_message = "Add .gitignore"
             }
             ```
         - id: cli
@@ -390,7 +401,20 @@ queries:
           desc: |
             **Using the GitHub web UI**
 
-            Update your repository's README.md with information about the project's authors.
+            1. Navigate to your repository on GitHub.
+            2. Open the `README.md` file and click the pencil icon to edit it.
+            3. Add a section that names the people or teams responsible for the project. For example:
+
+               ```markdown
+               ## Authors
+
+               - Jane Doe, maintainer
+               - Platform Team, platform-team@example.com
+               ```
+
+            4. Commit the changes to your repository.
+
+            Naming authors gives users a clear point of contact and signals that the project is actively stewarded.
         - id: cli
           desc: |
             **Using GitHub CLI**
@@ -414,6 +438,7 @@ queries:
             - Author Name
             " | base64)"
             ```
+        # No Terraform remediation: the fix appends an authors section to an existing README.md, and github_repository_file would overwrite the entire file with static content.
     refs:
       - url: https://docs.github.com/en/repositories/creating-and-managing-repositories/best-practices-for-repositories
         title: GitHub Repository Best Practices
@@ -434,19 +459,19 @@ queries:
         ### Audit via Console
 
         1. Navigate to the repository on GitHub.
-        2. Check the repository main page for a rendered README below the file list.
+        2. Check the file list on the repository main page for a file named `README.md`.
 
-        If a `README.md` file is present and rendered, the check passes. If no README is shown, the check fails.
+        If a `README.md` file is present in the repository root, the check passes. If the repository has no README, or only a README in another format such as `README.rst` or `README.txt`, the check fails.
 
         ### Audit via CLI
 
-        1. Query the repository for a README:
+        1. Query the repository contents for a `README.md` file:
 
            ```bash
-           gh api /repos/OWNER/REPO/readme --jq '.name'
+           gh api /repos/OWNER/REPO/contents/README.md --jq '.name'
            ```
 
-        If the command returns a README file name, the check passes. If it returns a `Not Found` error, the check fails.
+        If the command returns `README.md`, the check passes. If it returns a `Not Found` error, the check fails.
       remediation:
         - id: github
           desc: |
@@ -531,30 +556,51 @@ queries:
           desc: |
             **Using the GitHub web UI**
 
-            Update the README.md with a getting started guide. The getting started guide should include:
-            - A description of the project
-            - How to install the project
-            - How to use the project
-            - How to contribute to the project
+            1. Navigate to your repository on GitHub.
+            2. Open the `README.md` file and click the pencil icon to edit it.
+            3. Add a section titled "Getting started" that covers:
+               - A description of the project
+               - How to install the project
+               - How to use the project
+               - How to contribute to the project
+            4. Commit the changes to your repository.
+
+            A documented setup path gives new users a repeatable route from clone to first successful run and reduces repetitive support questions.
         - id: cli
           desc: |
             **Using GitHub CLI**
 
-            Verify that the README includes a getting started section:
+            Fetch the current README, append a getting started section, and update the file:
 
             ```bash
-            gh api /repos/OWNER/REPO/contents/README.md \
-              --jq '.content' | base64 -d | grep -i 'getting started'
+            # Get current content and SHA
+            README=$(gh api /repos/OWNER/REPO/contents/README.md)
+            SHA=$(echo "$README" | jq -r '.sha')
+            CONTENT=$(echo "$README" | jq -r '.content' | base64 -d)
+
+            # Append a getting started section and update
+            gh api --method PUT /repos/OWNER/REPO/contents/README.md \
+              -f message="Add getting started guide" \
+              -f sha="$SHA" \
+              -f content="$(echo "${CONTENT}
+
+            ## Getting started
+
+            1. Install the project.
+            2. Configure required settings.
+            3. Run the project.
+            " | base64)"
             ```
 
-            If missing, clone the repository and add a getting started section to README.md manually.
+            Replace the placeholder steps with real installation and usage instructions for your project.
+        # No Terraform remediation: the fix appends a getting started section to an existing README.md, and github_repository_file would overwrite the entire file with static content.
     refs:
       - url: https://docs.github.com/en/repositories/creating-and-managing-repositories/best-practices-for-repositories
         title: GitHub Repository Best Practices
   - uid: mondoo-github-repository-best-practices-license
     title: Ensure repository declares a license
     impact: 30
-    mql: github.repository.files.one( name == /LICENSE/ )
+    mql: github.repository.files.any(name == /^LICENSE/i)
     docs:
       desc: |
         Repositories should publish a license file so users know how the source code may be used, modified, and redistributed.
@@ -589,7 +635,7 @@ queries:
             1. Navigate to your repository on GitHub.
             2. Click on the "Add file" button.
             3. Select "Create new file".
-            4. Name the file according to common license conventions, such as `LICENSE`, `LICENSE.txt`, or `LICENSE.md`.
+            4. Name the file with the uppercase `LICENSE` prefix, such as `LICENSE`, `LICENSE.txt`, or `LICENSE.md`, so license detection tooling recognizes it.
             5. Add the content of the license you want to use.
             6. Commit the changes to your repository.
 
@@ -598,10 +644,23 @@ queries:
           desc: |
             **Using Terraform**
 
+            The `license_template` attribute only takes effect when Terraform creates the repository:
+
             ```hcl
             resource "github_repository" "example" {
               name             = "example"
               license_template = "apache-2.0"
+            }
+            ```
+
+            For an existing repository, manage the license file directly with the `github_repository_file` resource:
+
+            ```hcl
+            resource "github_repository_file" "license" {
+              repository     = github_repository.example.name
+              file           = "LICENSE"
+              content        = file("${path.module}/LICENSE")
+              commit_message = "Add license"
             }
             ```
         - id: cli
@@ -622,5 +681,5 @@ queries:
               -f content="$(gh api /licenses/apache-2.0 --jq '.body' | base64)"
             ```
     refs:
-      - url: https://docs.github.com/en/code-security/getting-started/adding-a-security-policy-to-your-repository
-        title: GitHub Docs - Adding a security policy to your repository
+      - url: https://docs.github.com/en/communities/setting-up-your-project-for-healthy-contributions/adding-a-license-to-a-repository
+        title: Adding a license to a repository
