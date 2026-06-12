@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-vllm-security
     name: Mondoo vLLM Security
-    version: 1.0.1
+    version: 1.0.2
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -83,7 +83,7 @@ queries:
       vllm.server.corsConfigured == false || vllm.server.corsAllowsAnyOrigin == false
     docs:
       desc: |
-        This check ensures that the vLLM server is configured to reject arbitrary browser origins during cross-origin resource sharing preflight negotiation. vLLM applies no CORS middleware by default, so a wildcard origin is only present when an operator explicitly enables it, and that setting should be scoped to a known list of trusted applications.
+        This check ensures that the vLLM server is configured to reject arbitrary browser origins during cross-origin resource sharing preflight negotiation. vLLM applies CORS middleware with a wildcard origin by default, so the allowed origins must be explicitly scoped to a known list of trusted applications.
 
         **Why this matters**
 
@@ -115,7 +115,14 @@ queries:
 
         A passing result shows CORS limited to a fixed list of trusted origins; a failing result shows a wildcard origin or reflected request origins.
       remediation: |
-        Restrict CORS to the exact origins that are allowed to call the vLLM API. When vLLM is exposed through a reverse proxy or API gateway, enforce CORS policy there and avoid wildcard origins.
+        Set the allowed origins to an explicit list when starting vLLM. The server applies CORS middleware with a wildcard origin by default, so every hardened deployment must override it:
+
+        ```bash
+        vllm serve meta-llama/Llama-3.1-8B-Instruct \
+          --allowed-origins '["https://app.example.com"]'
+        ```
+
+        Restarting the server to apply the flag cancels in-flight requests, so drain traffic at the load balancer or proxy first. When vLLM is exposed through a reverse proxy or API gateway, enforce the same origin allowlist there and strip any wildcard or reflected `Access-Control-Allow-Origin` headers so the rule holds on every path to the server.
     refs:
       - url: https://docs.vllm.ai/en/latest/serving/openai_compatible_server.html
         title: vLLM OpenAI-Compatible Server
@@ -142,11 +149,11 @@ queries:
       vllm.endpoints.where(category == "custom-inference").none(anonymousAccessible == true)
     docs:
       desc: |
-        This check ensures that non-`/v1` inference routes such as `/invocations`, `/inference/v1/generate`, `/pooling`, `/classify`, `/score`, and `/rerank` are configured to reject anonymous requests. vLLM API-key authentication is scoped to the OpenAI-compatible `/v1/*` routes, so these additional inference endpoints stay reachable unless an upstream control protects them.
+        This check ensures that non-`/v1` inference routes such as `/invocations`, `/inference/v1/generate`, `/pooling`, `/classify`, `/score`, and `/rerank` are configured to reject anonymous requests. vLLM API-key authentication covers the `/v1`, `/v2`, and `/inference` route prefixes on current releases and only `/v1` on older ones, so the root-level inference endpoints stay reachable unless an upstream control protects them.
 
         **Why this matters**
 
-        - **Authentication bypass:** Non-`/v1` routes sit outside the built-in API-key boundary, so anonymous access defeats the intended authentication model.
+        - **Authentication bypass:** Root-level routes sit outside the built-in API-key boundary on every release, so anonymous access defeats the intended authentication model.
         - **Unauthorized model use:** Open inference routes let anyone who can reach the endpoint generate completions, embeddings, or rankings without credentials.
         - **Capacity abuse:** Unauthenticated inference traffic consumes GPU and memory capacity reserved for sanctioned workloads.
 
@@ -167,12 +174,20 @@ queries:
 
         ### Audit via server configuration
 
-        1. Inspect the `vllm serve` launch command and confirm `--api-key` is set, while noting that this key only protects `/v1/*` routes.
+        1. Inspect the `vllm serve` launch command and confirm `--api-key` is set, while noting that the key protects the `/v1`, `/v2`, and `/inference` prefixes on current releases and only `/v1` on older ones.
         2. Review the reverse proxy, API gateway, ingress, or firewall configuration that fronts vLLM for an authentication or deny rule covering non-`/v1` inference paths.
 
         A passing result shows an upstream rule that authenticates or blocks these routes; a failing result shows the routes forwarded to vLLM with no authentication.
       remediation: |
-        Restrict non-`/v1` inference routes at a reverse proxy, API gateway, ingress controller, or firewall. If these routes are not required, deny them entirely. If they are required, enforce authentication and authorization before forwarding requests to vLLM.
+        Set an API key on the vLLM launch command so the `/v1`, `/v2`, and `/inference` route prefixes require a bearer token on current vLLM releases. The root-level routes `/invocations`, `/pooling`, `/classify`, `/score`, and `/rerank` sit outside the built-in authentication scope on every release, so deny or authenticate them at the reverse proxy, API gateway, ingress controller, or firewall that fronts vLLM. If the routes are not required, deny them entirely:
+
+        ```nginx
+        location ~ ^/(invocations|pooling|classify|score|rerank)$ {
+            deny all;
+        }
+        ```
+
+        On vLLM releases before v0.12, also deny the `/inference/` prefix upstream because the built-in API key does not cover it there. If client applications need any of these routes, require authentication and authorization at the proxy before forwarding requests to vLLM.
     refs:
       - url: https://docs.vllm.ai/en/latest/serving/security.html
         title: vLLM Security
@@ -224,12 +239,19 @@ queries:
 
         ### Audit via server configuration
 
-        1. Inspect the `vllm serve` launch command and environment for flags that enable development or debug endpoints.
+        1. Inspect the server environment for the `VLLM_SERVER_DEV_MODE` environment variable, which registers the development and debug endpoints.
         2. Review the reverse proxy, API gateway, ingress, or firewall rules for entries that block development and server-info paths.
 
         A passing result shows development routes disabled or blocked before they reach untrusted clients; a failing result shows them reachable anonymously.
       remediation: |
-        Disable development routes when possible and block them at the reverse proxy, API gateway, ingress controller, or firewall. Expose administrative or debug routes only on trusted internal networks.
+        Remove the `VLLM_SERVER_DEV_MODE` environment variable from the server environment; vLLM only registers `/server_info`, the cache reset routes, `/sleep`, `/wake_up`, `/is_sleeping`, and `/collective_rpc` when it is set. Delete the `Environment=VLLM_SERVER_DEV_MODE=1` line from systemd units, the corresponding `environment:` or `env:` entry from Docker Compose and Kubernetes manifests, then restart the server:
+
+        ```bash
+        unset VLLM_SERVER_DEV_MODE
+        vllm serve meta-llama/Llama-3.1-8B-Instruct
+        ```
+
+        Restarting vLLM cancels in-flight requests, so drain traffic at the load balancer or proxy first. If development routes are required for debugging, additionally block them at the reverse proxy, API gateway, ingress controller, or firewall and expose them only on trusted internal networks.
     refs:
       - url: https://docs.vllm.ai/en/latest/serving/security.html
         title: vLLM Security
@@ -284,7 +306,13 @@ queries:
 
         A passing result shows `--disable-fastapi-docs` set or the documentation paths restricted; a failing result shows the documentation served openly.
       remediation: |
-        Disable FastAPI documentation in vLLM when it is not explicitly required. If documentation must remain available, restrict it to trusted networks or authenticated administrative users through a proxy or gateway.
+        Start vLLM with the `--disable-fastapi-docs` flag, which removes the `/docs`, `/redoc`, and `/openapi.json` pages:
+
+        ```bash
+        vllm serve meta-llama/Llama-3.1-8B-Instruct --disable-fastapi-docs
+        ```
+
+        Restarting the server to apply the flag cancels in-flight requests, so drain traffic at the load balancer or proxy first. If documentation must remain available, restrict `/docs`, `/redoc`, and `/openapi.json` to trusted networks or authenticated administrative users at the reverse proxy or gateway instead.
     refs:
       - url: https://docs.vllm.ai/en/latest/serving/security.html
         title: vLLM Security
@@ -334,12 +362,19 @@ queries:
 
         ### Audit via server configuration
 
-        1. Inspect the `vllm serve` launch command and environment for settings that enable load tracking endpoints.
+        1. Inspect the `vllm serve` launch command for the `--enable-server-load-tracking` flag, which creates the `/load` endpoint.
         2. Review the reverse proxy, API gateway, ingress, or firewall configuration for a rule that restricts `/load` to trusted monitoring or autoscaling components.
 
         A passing result shows `/load` blocked or limited to trusted infrastructure; a failing result shows it reachable by anonymous clients.
       remediation: |
-        Block `/load` for untrusted clients. If load data is required for autoscaling or monitoring, expose it only to trusted infrastructure components over an authenticated or private path.
+        Remove the `--enable-server-load-tracking` flag from the vLLM launch command when load data is not required; the `/load` endpoint only exists while that flag is set. Restarting the server to change launch flags cancels in-flight requests, so drain traffic at the load balancer or proxy first. If load data is required for autoscaling or monitoring, keep the flag but restrict `/load` to trusted infrastructure at the reverse proxy, API gateway, ingress, or firewall:
+
+        ```nginx
+        location = /load {
+            allow 10.0.0.0/8;
+            deny all;
+        }
+        ```
     refs:
       - url: https://docs.vllm.ai/en/latest/serving/security.html
         title: vLLM Security
@@ -452,7 +487,14 @@ queries:
 
         A passing result shows `--api-key` set or gateway authentication enforced on every `/v1/*` route; a failing result shows the routes answering anonymous requests.
       remediation: |
-        Configure vLLM API-key authentication and place the server behind an authenticated gateway or reverse proxy. Verify that all externally reachable `/v1/*` routes reject anonymous requests and that the token is only distributed to trusted clients.
+        Start vLLM with an API key so the guarded route prefixes reject requests that lack the bearer token:
+
+        ```bash
+        vllm serve meta-llama/Llama-3.1-8B-Instruct \
+          --api-key "$(cat /etc/vllm/api-key)"
+        ```
+
+        The `VLLM_API_KEY` environment variable works as an alternative to the flag. Distribute the token to every trusted client before enabling enforcement: clients that do not send an `Authorization: Bearer` header lose access as soon as the server restarts, and the restart itself cancels in-flight requests, so schedule a maintenance window or drain traffic at the load balancer first. For defense in depth, also require authentication at the fronting gateway or reverse proxy so routes outside the built-in authentication scope are not left open.
     refs:
       - url: https://docs.vllm.ai/en/latest/serving/security.html
         title: vLLM Security
@@ -509,7 +551,13 @@ queries:
 
         A passing result shows `--disable-fastapi-docs` set or `/openapi.json` restricted; a failing result shows the specification served openly.
       remediation: |
-        Disable or block `/openapi.json` for untrusted clients. Serve API specifications only from an authenticated internal documentation system if they are needed by developers or operators.
+        Start vLLM with the `--disable-fastapi-docs` flag, which removes `/openapi.json` together with the `/docs` and `/redoc` pages:
+
+        ```bash
+        vllm serve meta-llama/Llama-3.1-8B-Instruct --disable-fastapi-docs
+        ```
+
+        Restarting the server to apply the flag cancels in-flight requests, so drain traffic at the load balancer or proxy first. If developers or operators need the specification, serve it from an authenticated internal documentation system instead of the public API, or restrict `/openapi.json` at the reverse proxy or gateway.
     refs:
       - url: https://docs.vllm.ai/en/latest/serving/security.html
         title: vLLM Security
@@ -614,12 +662,19 @@ queries:
 
         ### Audit via server configuration
 
-        1. Inspect the `vllm serve` launch command and environment for the `VLLM_TORCH_PROFILER_DIR` setting that enables the profiler endpoints.
+        1. Inspect the `vllm serve` launch command for the `--profiler-config` flag and the environment for the deprecated `VLLM_TORCH_PROFILER_DIR` variable used by older releases.
         2. Review the reverse proxy, API gateway, ingress, or firewall rules for entries that block `/start_profile` and `/stop_profile`.
 
         A passing result shows profiler routes disabled or blocked from untrusted clients; a failing result shows them reachable anonymously.
       remediation: |
-        Disable profiler routes outside controlled diagnostics windows. Restrict any required profiling access to authenticated operators on trusted administrative networks.
+        Remove profiler configuration from production launch commands. The `/start_profile` and `/stop_profile` routes only exist while profiling is enabled, so confirm that the `--profiler-config` flag is absent and that the deprecated `VLLM_TORCH_PROFILER_DIR` environment variable used by older releases is unset:
+
+        ```bash
+        unset VLLM_TORCH_PROFILER_DIR
+        vllm serve meta-llama/Llama-3.1-8B-Instruct
+        ```
+
+        Restarting vLLM cancels in-flight requests, so drain traffic at the load balancer or proxy first. If profiling is required for a controlled diagnostics window, enable it temporarily, restrict `/start_profile` and `/stop_profile` to authenticated operators on trusted administrative networks at the reverse proxy or firewall, and remove the profiler configuration when the window closes.
     refs:
       - url: https://docs.vllm.ai/en/latest/serving/security.html
         title: vLLM Security
@@ -701,7 +756,7 @@ queries:
       vllm.server.tokenizerInfoExposed == false
     docs:
       desc: |
-        This check ensures that the `/get_tokenizer_info` route is configured to be unreachable by anonymous clients. The endpoint returns tokenizer metadata that describes the deployed model family and serving configuration.
+        This check ensures that the `/tokenizer_info` route is configured to be unreachable by anonymous clients. The endpoint returns tokenizer metadata that describes the deployed model family and serving configuration.
 
         **Why this matters**
 
@@ -719,19 +774,19 @@ queries:
         Probe the running vLLM server and inspect the response:
 
         ```bash
-        curl -s -i https://vllm.example.com:8000/get_tokenizer_info
+        curl -s -i https://vllm.example.com:8000/tokenizer_info
         ```
 
         A passing result returns 401, 403, or 404; a failing result returns 200 with tokenizer metadata describing the deployed model.
 
         ### Audit via server configuration
 
-        1. Inspect the `vllm serve` launch command and environment for settings that enable the tokenizer information endpoint.
-        2. Review the reverse proxy, API gateway, ingress, or firewall configuration for an authentication or deny rule covering `/get_tokenizer_info`.
+        1. Inspect the `vllm serve` launch command for the `--enable-tokenizer-info-endpoint` flag, which creates the `/tokenizer_info` route.
+        2. Review the reverse proxy, API gateway, ingress, or firewall configuration for an authentication or deny rule covering `/tokenizer_info`.
 
         A passing result shows the endpoint disabled or restricted; a failing result shows tokenizer metadata returned to anonymous clients.
       remediation: |
-        Disable tokenizer information exposure unless a trusted client explicitly requires it. If the endpoint is required, restrict it with authentication and network controls.
+        Remove the `--enable-tokenizer-info-endpoint` flag from the vLLM launch command; the `/tokenizer_info` route only exists while that flag is set. Restarting the server to change launch flags cancels in-flight requests, so drain traffic at the load balancer or proxy first. If a trusted client requires tokenizer metadata, keep the flag but restrict `/tokenizer_info` to that client with authentication and network controls at the reverse proxy, API gateway, ingress, or firewall.
     refs:
       - url: https://docs.vllm.ai/en/latest/serving/security.html
         title: vLLM Security
@@ -786,7 +841,15 @@ queries:
 
         A passing result shows TLS configured on vLLM or on a fronting proxy with the plaintext listener isolated; a failing result shows the API answering over plain HTTP.
       remediation: |
-        Terminate TLS in front of the vLLM server with a reverse proxy, load balancer, API gateway, or service mesh. Expose only the HTTPS endpoint to clients and restrict direct access to the backend vLLM HTTP listener.
+        Serve the API over HTTPS using either native TLS or upstream termination. For native TLS, start vLLM with a key and certificate:
+
+        ```bash
+        vllm serve meta-llama/Llama-3.1-8B-Instruct \
+          --ssl-keyfile /etc/vllm/tls/server.key \
+          --ssl-certfile /etc/vllm/tls/server.crt
+        ```
+
+        Restarting the server to apply TLS flags cancels in-flight requests, so drain traffic first. Alternatively, terminate TLS in front of vLLM with a reverse proxy, load balancer, API gateway, or service mesh. In both layouts, expose only the HTTPS endpoint to clients and restrict direct network access to any plaintext backend listener so clients cannot bypass encryption.
     refs:
       - url: https://docs.vllm.ai/en/latest/serving/security.html
         title: vLLM Security
