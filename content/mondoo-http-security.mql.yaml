@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-http-security
     name: Mondoo HTTP Security
-    version: 1.2.1
+    version: 1.2.2
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -145,7 +145,7 @@ queries:
     refs:
       - url: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-Content-Type-Options
         title: MDN Web Docs X-Content-Type-Options
-      - url: https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Headers_Cheat_Sheet.html#x-xss-protection
+      - url: https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Headers_Cheat_Sheet.html#x-content-type-options
         title: OWASP HTTP Security Response Headers Cheat Sheet
   - uid: mondoo-http-security-content-security-policy
     title: Set Content Security Policy (CSP) HTTP header
@@ -196,14 +196,29 @@ queries:
           desc: |
             **Using NGINX**
 
-            1. Open your NGINX configuration file (typically found at `/etc/nginx/nginx.conf` or in a site-specific file under `/etc/nginx/sites-available/`).
-            2. Inside the `server` or `location` block, add the following line:
+            A Content Security Policy that is too strict can break legitimate scripts, styles, and images. Deploy it in report-only mode first, fix the violations it reports, and only then switch to the enforcing header. The check passes only once the enforcing `Content-Security-Policy` header is served.
+
+            1. Open your NGINX configuration file, typically `/etc/nginx/nginx.conf` or a site-specific file under `/etc/nginx/sites-available/`.
+            2. Inside the `server` or `location` block, add a report-only policy to observe violations without blocking content:
+
+                ```nginx
+                add_header Content-Security-Policy-Report-Only "default-src 'self';";
+                ```
+
+            3. Save the file and reload NGINX:
+
+                ```bash
+                nginx -s reload
+                ```
+
+            4. Browse the application and review CSP violation reports in the browser console or your reporting endpoint. Extend the policy with the sources your application legitimately needs.
+            5. Once the policy no longer reports violations for legitimate traffic, replace the report-only directive with the enforcing header:
 
                 ```nginx
                 add_header Content-Security-Policy "default-src 'self';";
                 ```
 
-            3. Save the file and reload NGINX:
+            6. Save the file and reload NGINX:
 
                 ```bash
                 nginx -s reload
@@ -212,32 +227,46 @@ queries:
           desc: |
             **Using Apache HTTPD**
 
+            A Content Security Policy that is too strict can break legitimate scripts, styles, and images. Deploy it in report-only mode first, fix the violations it reports, and only then switch to the enforcing header. The check passes only once the enforcing `Content-Security-Policy` header is served.
+
             1. Open your Apache configuration file or `.htaccess` file.
-            2. Add the following directive:
+            2. Add a report-only policy to observe violations without blocking content:
+
+                ```apache
+                Header set Content-Security-Policy-Report-Only "default-src 'self';"
+                ```
+
+            3. Make sure the headers module is enabled and restart Apache:
+
+                ```bash
+                a2enmod headers
+                systemctl restart apache2
+                ```
+
+            4. Browse the application and review CSP violation reports in the browser console or your reporting endpoint. Extend the policy with the sources your application legitimately needs.
+            5. Once the policy no longer reports violations for legitimate traffic, replace the report-only directive with the enforcing header:
 
                 ```apache
                 Header set Content-Security-Policy "default-src 'self';"
                 ```
 
-            3. Make sure the headers module is enabled:
+            6. Restart Apache:
 
                 ```bash
-                a2enmod headers
                 systemctl restart apache2
                 ```
         - id: iis
           desc: |
             **Using IIS**
 
+            A Content Security Policy that is too strict can break legitimate scripts, styles, and images. Deploy it in report-only mode first, fix the violations it reports, and only then switch to the enforcing header. The check passes only once the enforcing `Content-Security-Policy` header is served.
+
             1. Open the IIS Manager.
             2. Select your site and go to the `HTTP Response Headers` feature.
-            3. Click on `Add` in the right pane.
-            4. Set the name to `Content-Security-Policy` and the value to `default-src 'self';`.
-            5. Click OK and restart IIS:
-
-                ```bash
-                iisreset
-                ```
+            3. Click `Add` in the right pane and create a header named `Content-Security-Policy-Report-Only` with the value `default-src 'self';`.
+            4. Browse the application and review CSP violation reports in the browser console or your reporting endpoint. Extend the policy with the sources your application legitimately needs.
+            5. Once the policy no longer reports violations for legitimate traffic, remove the report-only header and add a header named `Content-Security-Policy` with the finished policy value.
+            6. Click OK. The change takes effect immediately.
     refs:
       - url: https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP
         title: MDN Web Docs Content Security Policy (CSP)
@@ -290,14 +319,17 @@ queries:
           desc: |
             **Using NGINX**
 
-            1. Open your NGINX configuration file (typically found at `/etc/nginx/nginx.conf` or in a site-specific file under `/etc/nginx/sites-available/`).
-            2. Inside the `server` block, add the following line:
+            1. Confirm the site and everything under its hostname is fully reachable over HTTPS. Browsers that receive this header refuse plain HTTP for the duration of `max-age`.
+            2. Open your NGINX configuration file, typically `/etc/nginx/nginx.conf` or a site-specific file under `/etc/nginx/sites-available/`.
+            3. Inside the `server` block that terminates TLS, add the following line. Start with a short `max-age` such as `300` during rollout and raise it to at least `31536000` once you have confirmed nothing breaks:
 
                 ```nginx
-                add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload";
+                add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
                 ```
 
-            3. Save the file and reload NGINX:
+                Add `includeSubDomains` only after verifying that every subdomain serves HTTPS. Add the `preload` directive only if you intend to submit the domain to browser preload lists; that is a long-term commitment that is slow to reverse.
+
+            4. Save the file and reload NGINX:
 
                 ```bash
                 nginx -s reload
@@ -306,14 +338,17 @@ queries:
           desc: |
             **Using Apache HTTPD**
 
-            1. Open your Apache configuration file or `.htaccess` file.
-            2. Add the following directive:
+            1. Confirm the site and everything under its hostname is fully reachable over HTTPS. Browsers that receive this header refuse plain HTTP for the duration of `max-age`.
+            2. Open your Apache configuration file or `.htaccess` file.
+            3. Add the following directive. Start with a short `max-age` such as `300` during rollout and raise it to at least `31536000` once you have confirmed nothing breaks:
 
                 ```apache
-                Header set Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+                Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
                 ```
 
-            3. Make sure the headers module is enabled:
+                Add `includeSubDomains` only after verifying that every subdomain serves HTTPS. Add the `preload` directive only if you intend to submit the domain to browser preload lists; that is a long-term commitment that is slow to reverse.
+
+            4. Make sure the headers module is enabled and restart Apache:
 
                 ```bash
                 a2enmod headers
@@ -323,15 +358,12 @@ queries:
           desc: |
             **Using IIS**
 
-            1. Open the IIS Manager.
-            2. Select your site and go to the `HTTP Response Headers` feature.
-            3. Click on `Add` in the right pane.
-            4. Set the name to `Strict-Transport-Security` and the value to `max-age=31536000; includeSubDomains; preload`.
-            5. Click OK and restart IIS:
-
-                ```bash
-                iisreset
-                ```
+            1. Confirm the site and everything under its hostname is fully reachable over HTTPS. Browsers that receive this header refuse plain HTTP for the duration of `max-age`.
+            2. Open the IIS Manager.
+            3. Select your site and go to the `HTTP Response Headers` feature.
+            4. Click `Add` in the right pane.
+            5. Set the name to `Strict-Transport-Security` and the value to `max-age=31536000; includeSubDomains`. Add `includeSubDomains` only after verifying that every subdomain serves HTTPS. Add the `preload` directive only if you intend to submit the domain to browser preload lists; that is a long-term commitment that is slow to reverse.
+            6. Click OK. The change takes effect immediately.
     refs:
       - url: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Strict-Transport-Security
         title: MDN Web Docs Strict-Transport-Security
@@ -352,7 +384,7 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-3-5-1
       compliance/soc2-2017: soc2-control-cc6-1-10
       compliance/vda-isa-5: vda-isa-5-5-1-1
-    mql: http.get.header.server == empty || http.get.header.server.downcase != /nginx|microsoft|apache|lsws|openresty/
+    mql: http.get.header.server == empty || http.get.header.server.downcase != /nginx|microsoft|apache|litespeed|lsws|openresty/
     docs:
       desc: |
         This check ensures that the Server header is removed or obfuscated to enhance security.
@@ -383,48 +415,88 @@ queries:
           desc: |
             **Using NGINX**
 
-            1. Open your NGINX configuration file (typically found at `/etc/nginx/nginx.conf` or in a site-specific file under `/etc/nginx/sites-available/`).
-            2. Inside the `http` block, add the following line:
+            The `server_tokens off;` directive only hides the version number. NGINX still sends `Server: nginx`, which discloses the server software. Removing or replacing the header requires the headers-more module.
 
-                ```nginx
-                server_tokens off;
-                ```
-
-            3. Save the file and reload NGINX:
+            1. Install the headers-more module. On Debian or Ubuntu:
 
                 ```bash
+                apt-get install libnginx-mod-http-headers-more-filter
+                ```
+
+            2. Open your NGINX configuration file, typically `/etc/nginx/nginx.conf`.
+            3. Make sure the module is loaded at the top of the main configuration if your distribution does not load it automatically:
+
+                ```nginx
+                load_module modules/ngx_http_headers_more_filter_module.so;
+                ```
+
+            4. Inside the `http` block, remove the Server header entirely:
+
+                ```nginx
+                more_clear_headers Server;
+                ```
+
+                To send a generic value instead, use:
+
+                ```nginx
+                more_set_headers "Server: webserver";
+                ```
+
+            5. Save the file, test, and reload NGINX:
+
+                ```bash
+                nginx -t
                 nginx -s reload
                 ```
         - id: apache
           desc: |
             **Using Apache HTTPD**
 
-            1. Open your Apache configuration file or `.htaccess` file.
-            2. Add the following directive:
+            `ServerTokens Prod` still sends `Server: Apache`, which discloses the server software, and `Header unset Server` has no effect because Apache adds the header after output filters run. Replacing the value requires ModSecurity.
 
-                ```apache
-                ServerSignature Off
-                ServerTokens Prod
-                ```
-
-            3. Make sure the headers module is enabled:
+            1. Install ModSecurity. On Debian or Ubuntu:
 
                 ```bash
-                a2enmod headers
+                apt-get install libapache2-mod-security2
+                ```
+
+            2. Open your Apache configuration file.
+            3. Add the following directives. ModSecurity can only overwrite the full server string when `ServerTokens` is set to `Full`:
+
+                ```apache
+                ServerTokens Full
+                SecServerSignature "webserver"
+                ```
+
+            4. Restart Apache:
+
+                ```bash
                 systemctl restart apache2
                 ```
         - id: iis
           desc: |
             **Using IIS**
 
-            1. Open the IIS Manager.
-            2. Select your site and go to the `HTTP Response Headers` feature.
-            3. Remove the `Server` header if it exists.
-            4. Restart IIS:
+            The IIS-generated `Server` header is not a custom response header, so it cannot be removed through the `HTTP Response Headers` feature. On IIS 10 and later, remove it with the request-filtering setting.
+
+            1. Open the `web.config` file for your site.
+            2. Add the `removeServerHeader` attribute:
+
+                ```xml
+                <system.webServer>
+                  <security>
+                    <requestFiltering removeServerHeader="true" />
+                  </security>
+                </system.webServer>
+                ```
+
+            3. Restart IIS:
 
                 ```bash
                 iisreset
                 ```
+
+            On IIS versions before 10, use the URL Rewrite module with an outbound rule that rewrites the `RESPONSE_Server` server variable to an empty value.
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Headers_Cheat_Sheet.html#server
         title: OWASP HTTP Security Response Headers Cheat Sheet
@@ -476,11 +548,12 @@ queries:
           desc: |
             **Using NGINX**
 
-            1. Open your NGINX configuration file (typically found at `/etc/nginx/nginx.conf` or in a site-specific file under `/etc/nginx/sites-available/`).
-            2. Inside the `http` block, add the following line:
+            1. Open your NGINX configuration file, typically `/etc/nginx/nginx.conf` or a site-specific file under `/etc/nginx/sites-available/`.
+            2. Inside the `http` block, hide the header for both proxied and FastCGI responses:
 
                 ```nginx
                 proxy_hide_header X-Powered-By;
+                fastcgi_hide_header X-Powered-By;
                 ```
 
             3. Save the file and reload NGINX:
@@ -488,6 +561,8 @@ queries:
                 ```bash
                 nginx -s reload
                 ```
+
+            4. Where possible, also stop emitting the header at the source. For PHP, set `expose_php = Off` in `php.ini`. For Express applications, call `app.disable('x-powered-by')`.
         - id: apache
           desc: |
             **Using Apache HTTPD**
@@ -599,12 +674,20 @@ queries:
                 ```
         - id: iis
           desc: |
-            **Using IIS**
+            **Using IIS with ASP.NET**
 
-            1. Open the IIS Manager.
-            2. Select your site and go to the `HTTP Response Headers` feature.
-            3. Remove the `X-AspNet-Version` header if it exists.
-            4. Restart IIS:
+            The `X-AspNet-Version` header is added by the ASP.NET runtime, so it does not appear in the IIS `HTTP Response Headers` feature. Disable it in the application configuration instead.
+
+            1. Open the `web.config` file for your application.
+            2. Disable the version header in the `httpRuntime` element:
+
+                ```xml
+                <system.web>
+                  <httpRuntime enableVersionHeader="false" />
+                </system.web>
+                ```
+
+            3. Restart IIS:
 
                 ```bash
                 iisreset
@@ -691,12 +774,21 @@ queries:
                 ```
         - id: iis
           desc: |
-            **Using IIS**
+            **Using IIS with ASP.NET MVC**
 
-            1. Open the IIS Manager.
-            2. Select your site and go to the `HTTP Response Headers` feature.
-            3. Remove the `X-AspNetMvc-Version` header if it exists.
-            4. Restart IIS:
+            The `X-AspNetMvc-Version` header is added by the ASP.NET MVC framework, so it does not appear in the IIS `HTTP Response Headers` feature. Disable it in application code instead.
+
+            1. Open the `Global.asax.cs` file for your application.
+            2. Disable the header in `Application_Start`:
+
+                ```csharp
+                protected void Application_Start()
+                {
+                    MvcHandler.DisableMvcResponseHeader = true;
+                }
+                ```
+
+            3. Rebuild and redeploy the application, then restart IIS:
 
                 ```bash
                 iisreset
@@ -732,7 +824,7 @@ queries:
 
         - **Risk of misconfiguration**: Incorrectly pinning keys can lead to websites becoming inaccessible if the pinned key is lost or compromised.
         - **Ease of abuse**: Attackers could maliciously pin keys to lock out legitimate site owners from their domains.
-        - **Better alternatives available**: Modern mechanisms like Certificate Transparency and the use of the Expect-CT header provide safer and more effective ways to achieve similar goals.
+        - **Better alternatives available**: Certificate Transparency is now enforced by browsers for all publicly trusted certificates, providing a safer way to achieve similar goals without any opt-in header. The Expect-CT header that once accompanied it is also deprecated and should not be deployed.
 
         By avoiding the use of the HPKP header, the system reduces the risk of misconfiguration, mitigates potential abuse, and aligns with current best practices for secure web communication.
       audit: |
@@ -771,13 +863,14 @@ queries:
             **Using Apache HTTPD**
 
             1. Open your Apache configuration file or `.htaccess` file.
-            2. Add the following directive:
+            2. Remove any existing `Header set Public-Key-Pins` directives from your configuration.
+            3. To strip the header from responses generated by applications or upstream servers, add:
 
                 ```apache
                 Header unset Public-Key-Pins
                 ```
 
-            3. Make sure the headers module is enabled:
+            4. Make sure the headers module is enabled:
 
                 ```bash
                 a2enmod headers
@@ -815,7 +908,7 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-1-3-1
       compliance/soc2-2017: soc2-control-cc6-6-4
       compliance/vda-isa-5: vda-isa-5-5-2-6
-    mql: http.get.header.xFrameOptions != ""
+    mql: http.get.header.params.keys.any(downcase == "x-frame-options")
     docs:
       desc: |
         This check ensures that the X-Frame-Options HTTP header is set to prevent clickjacking attacks.
@@ -828,7 +921,7 @@ queries:
         - **UI redressing**: Malicious sites can position transparent iframes over buttons or links, redirecting user interactions to attacker-controlled content.
         - **Session hijacking**: Combined with other vulnerabilities, clickjacking can be used to steal session tokens or credentials.
 
-        Valid values are `DENY` to prevent all framing, `SAMEORIGIN` to allow framing only from the same origin, or `ALLOW-FROM uri` to allow framing from a specific URI.
+        Valid values are `DENY` to prevent all framing and `SAMEORIGIN` to allow framing only from the same origin. The `ALLOW-FROM` directive is obsolete and ignored by modern browsers; to allow framing from specific origins, use the Content-Security-Policy `frame-ancestors` directive instead.
       audit: |
         Use `curl` to inspect the response headers returned by the site:
 
@@ -909,7 +1002,7 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-1-3-1
       compliance/soc2-2017: soc2-control-cc6-6-4
       compliance/vda-isa-5: vda-isa-5-5-2-6
-    mql: http.get.header.referrerPolicy != ""
+    mql: http.get.header.params.keys.any(downcase == "referrer-policy")
     docs:
       desc: |
         This check ensures that the Referrer-Policy HTTP header is set to control how much referrer information is sent with requests.
@@ -1035,10 +1128,10 @@ queries:
             **Using NGINX**
 
             1. Open your NGINX configuration file.
-            2. Update the HSTS header to include a max-age of at least one year:
+            2. Update the HSTS header so `max-age` is at least one year, which is 31536000 seconds. Keep any directives you already deploy deliberately, such as `includeSubDomains`. Do not add the `preload` directive unless you intend to submit the domain to browser preload lists, which is a long-term commitment that is slow to reverse:
 
                 ```nginx
-                add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload";
+                add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
                 ```
 
             3. Save and reload NGINX:
@@ -1051,10 +1144,10 @@ queries:
             **Using Apache HTTPD**
 
             1. Open your Apache configuration file or `.htaccess` file.
-            2. Update the HSTS header:
+            2. Update the HSTS header so `max-age` is at least one year, which is 31536000 seconds. Keep any directives you already deploy deliberately, such as `includeSubDomains`. Do not add the `preload` directive unless you intend to submit the domain to browser preload lists, which is a long-term commitment that is slow to reverse:
 
                 ```apache
-                Header set Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+                Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
                 ```
 
             3. Restart Apache:
@@ -1068,12 +1161,8 @@ queries:
 
             1. Open the IIS Manager.
             2. Select your site and go to `HTTP Response Headers`.
-            3. Update `Strict-Transport-Security` to `max-age=31536000; includeSubDomains; preload`.
-            4. Restart IIS:
-
-                ```bash
-                iisreset
-                ```
+            3. Update `Strict-Transport-Security` so `max-age` is at least `31536000`, for example `max-age=31536000; includeSubDomains`. Do not add the `preload` directive unless you intend to submit the domain to browser preload lists, which is a long-term commitment that is slow to reverse.
+            4. Click OK. The change takes effect immediately.
     refs:
       - url: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Strict-Transport-Security
         title: MDN Web Docs Strict-Transport-Security
@@ -1127,14 +1216,15 @@ queries:
           desc: |
             **Using NGINX**
 
-            1. Open your NGINX configuration file.
-            2. Update the HSTS header to include `includeSubDomains`:
+            1. Inventory every subdomain of this domain and confirm each one is fully reachable over HTTPS. After this change, browsers refuse plain HTTP to all subdomains for the full `max-age`, which makes any HTTP-only subdomain unreachable.
+            2. Open your NGINX configuration file.
+            3. Update the HSTS header to include `includeSubDomains`. Do not add the `preload` directive unless you intend to submit the domain to browser preload lists, which is a long-term commitment that is slow to reverse:
 
                 ```nginx
-                add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload";
+                add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
                 ```
 
-            3. Save and reload NGINX:
+            4. Save and reload NGINX:
 
                 ```bash
                 nginx -s reload
@@ -1143,14 +1233,15 @@ queries:
           desc: |
             **Using Apache HTTPD**
 
-            1. Open your Apache configuration file or `.htaccess` file.
-            2. Update the HSTS header:
+            1. Inventory every subdomain of this domain and confirm each one is fully reachable over HTTPS. After this change, browsers refuse plain HTTP to all subdomains for the full `max-age`, which makes any HTTP-only subdomain unreachable.
+            2. Open your Apache configuration file or `.htaccess` file.
+            3. Update the HSTS header to include `includeSubDomains`. Do not add the `preload` directive unless you intend to submit the domain to browser preload lists, which is a long-term commitment that is slow to reverse:
 
                 ```apache
-                Header set Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+                Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
                 ```
 
-            3. Restart Apache:
+            4. Restart Apache:
 
                 ```bash
                 systemctl restart apache2
@@ -1159,14 +1250,11 @@ queries:
           desc: |
             **Using IIS**
 
-            1. Open the IIS Manager.
-            2. Select your site and go to `HTTP Response Headers`.
-            3. Update `Strict-Transport-Security` to `max-age=31536000; includeSubDomains; preload`.
-            4. Restart IIS:
-
-                ```bash
-                iisreset
-                ```
+            1. Inventory every subdomain of this domain and confirm each one is fully reachable over HTTPS. After this change, browsers refuse plain HTTP to all subdomains for the full `max-age`, which makes any HTTP-only subdomain unreachable.
+            2. Open the IIS Manager.
+            3. Select your site and go to `HTTP Response Headers`.
+            4. Update `Strict-Transport-Security` to `max-age=31536000; includeSubDomains`. Do not add the `preload` directive unless you intend to submit the domain to browser preload lists, which is a long-term commitment that is slow to reverse.
+            5. Click OK. The change takes effect immediately.
     refs:
       - url: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Strict-Transport-Security
         title: MDN Web Docs Strict-Transport-Security
@@ -1218,52 +1306,56 @@ queries:
           desc: |
             **Using NGINX**
 
-            1. Open your NGINX configuration file.
-            2. Update the HSTS header to include `preload`:
+            HSTS preload is a long-term commitment. Once the domain is on browser preload lists, every browser refuses plain HTTP for the entire registrable domain and all of its subdomains, and removal from the lists takes months to propagate. Only proceed if every current and future subdomain will serve HTTPS. Preload list eligibility requires `max-age` of at least 31536000 and the `includeSubDomains` directive.
+
+            1. Confirm every subdomain of the registrable domain serves HTTPS and that you accept the long-term commitment described above.
+            2. Open your NGINX configuration file.
+            3. Update the HSTS header to include `preload`:
 
                 ```nginx
-                add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload";
+                add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
                 ```
 
-            3. Save and reload NGINX:
+            4. Save and reload NGINX:
 
                 ```bash
                 nginx -s reload
                 ```
 
-            4. After deploying the header, submit your domain at https://hstspreload.org/.
+            5. After deploying the header, submit your domain at https://hstspreload.org/.
         - id: apache
           desc: |
             **Using Apache HTTPD**
 
-            1. Open your Apache configuration file or `.htaccess` file.
-            2. Update the HSTS header:
+            HSTS preload is a long-term commitment. Once the domain is on browser preload lists, every browser refuses plain HTTP for the entire registrable domain and all of its subdomains, and removal from the lists takes months to propagate. Only proceed if every current and future subdomain will serve HTTPS. Preload list eligibility requires `max-age` of at least 31536000 and the `includeSubDomains` directive.
+
+            1. Confirm every subdomain of the registrable domain serves HTTPS and that you accept the long-term commitment described above.
+            2. Open your Apache configuration file or `.htaccess` file.
+            3. Update the HSTS header to include `preload`:
 
                 ```apache
-                Header set Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+                Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
                 ```
 
-            3. Restart Apache:
+            4. Restart Apache:
 
                 ```bash
                 systemctl restart apache2
                 ```
 
-            4. After deploying the header, submit your domain at https://hstspreload.org/.
+            5. After deploying the header, submit your domain at https://hstspreload.org/.
         - id: iis
           desc: |
             **Using IIS**
 
-            1. Open the IIS Manager.
-            2. Select your site and go to `HTTP Response Headers`.
-            3. Update `Strict-Transport-Security` to `max-age=31536000; includeSubDomains; preload`.
-            4. Restart IIS:
+            HSTS preload is a long-term commitment. Once the domain is on browser preload lists, every browser refuses plain HTTP for the entire registrable domain and all of its subdomains, and removal from the lists takes months to propagate. Only proceed if every current and future subdomain will serve HTTPS. Preload list eligibility requires `max-age` of at least 31536000 and the `includeSubDomains` directive.
 
-                ```bash
-                iisreset
-                ```
-
-            5. After deploying the header, submit your domain at https://hstspreload.org/.
+            1. Confirm every subdomain of the registrable domain serves HTTPS and that you accept the long-term commitment described above.
+            2. Open the IIS Manager.
+            3. Select your site and go to `HTTP Response Headers`.
+            4. Update `Strict-Transport-Security` to `max-age=31536000; includeSubDomains; preload`.
+            5. Click OK. The change takes effect immediately.
+            6. After deploying the header, submit your domain at https://hstspreload.org/.
     refs:
       - url: https://hstspreload.org/
         title: HSTS Preload List Submission
