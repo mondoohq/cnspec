@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-tls-security
     name: Mondoo TLS/SSL Security
-    version: 1.7.2
+    version: 1.7.3
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -238,6 +238,13 @@ queries:
       tls.certificates.first {
         subject.commonName
         notBefore < time.now
+        notAfter > time.now
+        // 398 days is the strictest cap every currently trusted public cert can
+        // satisfy: CA/Browser Forum ballot SC-081 lowered new issuance to 200
+        // days in March 2026, but 398-day certs issued before that date stay
+        // valid into 2027. Tighten to 200*time.day once those expire (after
+        // April 2027), and to 100*time.day after the 200-day generation ages
+        // out following the March 2027 issuance change.
         notAfter - notBefore < 398*time.day
       }
     docs:
@@ -273,17 +280,19 @@ queries:
             1. Check the certificate's validity window and chain trust:
 
                 ```bash
-                openssl s_client -connect yourdomain.com:443 -showcerts </dev/null 2>&1 \
-                  | grep -E "verify|depth|notBefore|notAfter"
+                openssl s_client -connect yourdomain.com:443 -servername yourdomain.com </dev/null 2>/dev/null \
+                  | openssl x509 -noout -dates
+                openssl s_client -connect yourdomain.com:443 </dev/null 2>&1 \
+                  | grep "Verify return code"
                 ```
 
-            2. Browser policies cap leaf cert validity at 398 days (13 months). Issue a new cert from a publicly trusted CA — for example, Let's Encrypt via Certbot's Apache plugin:
+            2. Issue a new certificate from a publicly trusted CA. CA/Browser Forum rules cap publicly trusted leaf certificates issued on or after March 15, 2026 at 200 days, and the cap drops to 100 days in March 2027, so automated issuance is the sustainable approach. For example, use Let's Encrypt via Certbot's Apache plugin:
 
                 ```bash
                 certbot --apache -d yourdomain.com -d www.yourdomain.com
                 ```
 
-            3. If you manage cert files manually, point Apache at the full chain (server cert + intermediates):
+            3. If you manage cert files manually, point Apache at the full chain, which is the server certificate followed by the intermediates:
 
                 ```apache
                 SSLCertificateFile      /etc/letsencrypt/live/yourdomain.com/fullchain.pem
@@ -296,7 +305,7 @@ queries:
                 systemctl reload httpd     # RHEL/CentOS
                 ```
 
-            4. Re-run the verification command in step 1 — `Verify return code: 0 (ok)` confirms the new chain is trusted.
+            4. Re-run the commands in step 1. The notBefore date must be in the past, the notAfter date in the future with a total span under 398 days, and `Verify return code: 0 (ok)` confirms the chain is trusted.
         - id: nginx
           desc: |
             **Using Nginx**
@@ -304,11 +313,13 @@ queries:
             1. Check the certificate's validity window and chain trust:
 
                 ```bash
-                openssl s_client -connect yourdomain.com:443 -showcerts </dev/null 2>&1 \
-                  | grep -E "verify|depth|notBefore|notAfter"
+                openssl s_client -connect yourdomain.com:443 -servername yourdomain.com </dev/null 2>/dev/null \
+                  | openssl x509 -noout -dates
+                openssl s_client -connect yourdomain.com:443 </dev/null 2>&1 \
+                  | grep "Verify return code"
                 ```
 
-            2. Browser policies cap leaf cert validity at 398 days (13 months). Issue a new cert from a publicly trusted CA — for example, Let's Encrypt via Certbot's Nginx plugin:
+            2. Issue a new certificate from a publicly trusted CA. CA/Browser Forum rules cap publicly trusted leaf certificates issued on or after March 15, 2026 at 200 days, and the cap drops to 100 days in March 2027, so automated issuance is the sustainable approach. For example, use Let's Encrypt via Certbot's Nginx plugin:
 
                 ```bash
                 certbot --nginx -d yourdomain.com -d www.yourdomain.com
@@ -325,7 +336,7 @@ queries:
                 nginx -t && systemctl reload nginx
                 ```
 
-            4. Re-run the verification command in step 1 — `Verify return code: 0 (ok)` confirms the new chain is trusted.
+            4. Re-run the commands in step 1. The notBefore date must be in the past, the notAfter date in the future with a total span under 398 days, and `Verify return code: 0 (ok)` confirms the chain is trusted.
         - id: haproxy
           desc: |
             **Using HAProxy**
@@ -333,11 +344,13 @@ queries:
             1. Check the certificate's validity window and chain trust:
 
                 ```bash
-                openssl s_client -connect yourdomain.com:443 -showcerts </dev/null 2>&1 \
-                  | grep -E "verify|depth|notBefore|notAfter"
+                openssl s_client -connect yourdomain.com:443 -servername yourdomain.com </dev/null 2>/dev/null \
+                  | openssl x509 -noout -dates
+                openssl s_client -connect yourdomain.com:443 </dev/null 2>&1 \
+                  | grep "Verify return code"
                 ```
 
-            2. Browser policies cap leaf cert validity at 398 days (13 months). Issue a new cert from a publicly trusted CA — for example, Let's Encrypt:
+            2. Issue a new certificate from a publicly trusted CA. CA/Browser Forum rules cap publicly trusted leaf certificates issued on or after March 15, 2026 at 200 days, and the cap drops to 100 days in March 2027, so automated issuance is the sustainable approach. For example, use Let's Encrypt in standalone mode:
 
                 ```bash
                 certbot certonly --standalone -d yourdomain.com -d www.yourdomain.com
@@ -362,7 +375,7 @@ queries:
                 systemctl reload haproxy
                 ```
 
-            4. Re-run the verification command in step 1 — `Verify return code: 0 (ok)` confirms the new chain is trusted.
+            4. Re-run the commands in step 1. The notBefore date must be in the past, the notAfter date in the future with a total span under 398 days, and `Verify return code: 0 (ok)` confirms the chain is trusted.
     refs:
       - url: https://www.ssllabs.com/projects/best-practices/
         title: SSL/TLS Deployment Best Practices
@@ -576,26 +589,18 @@ queries:
             1. List every certificate the server presents and find the expired ones:
 
                 ```bash
+                certdir=$(mktemp -d)
                 openssl s_client -connect yourdomain.com:443 -showcerts </dev/null 2>/dev/null \
                   | awk '/BEGIN CERT/,/END CERT/' \
-                  | csplit --quiet --prefix=/tmp/cert- -z - '/BEGIN CERT/' '{*}'
-                for f in /tmp/cert-*; do
+                  | csplit --quiet --prefix="$certdir/cert-" -z - '/BEGIN CERT/' '{*}'
+                for f in "$certdir"/cert-*; do
                   openssl x509 -in "$f" -noout -subject -enddate
                 done
                 ```
 
-            2. Pull current intermediates from your CA. For Let's Encrypt, run `certbot renew --force-renewal` to refresh `/etc/letsencrypt/live/yourdomain.com/fullchain.pem`.
+            2. Pull current intermediates from your CA. For Let's Encrypt, run `certbot renew --force-renewal` to refresh `/etc/letsencrypt/live/yourdomain.com/fullchain.pem`. Use force renewal only to replace an outdated chain, because repeated runs count against CA rate limits. For other CAs, download the current intermediate bundle from the CA's support site and rebuild your chain file with the leaf first.
 
-            3. Refresh the OS trust store so Apache validates updated roots correctly:
-
-                ```bash
-                apt update && apt install --only-upgrade ca-certificates   # Debian/Ubuntu
-                yum update ca-certificates                                  # RHEL/CentOS
-                update-ca-certificates                                       # Debian/Ubuntu
-                update-ca-trust                                              # RHEL/CentOS
-                ```
-
-            4. Point Apache at the refreshed chain (leaf first, then intermediates) and reload:
+            3. Point Apache at the refreshed chain and reload:
 
                 ```apache
                 SSLCertificateFile      /etc/letsencrypt/live/yourdomain.com/fullchain.pem
@@ -608,7 +613,7 @@ queries:
                 systemctl reload httpd     # RHEL/CentOS
                 ```
 
-            5. Re-run the iteration in step 1 — every `notAfter` should now be in the future.
+            4. Re-run the iteration in step 1. Every `notAfter` date must now be in the future.
         - id: nginx
           desc: |
             **Using Nginx**
@@ -616,26 +621,18 @@ queries:
             1. List every certificate the server presents and find the expired ones:
 
                 ```bash
+                certdir=$(mktemp -d)
                 openssl s_client -connect yourdomain.com:443 -showcerts </dev/null 2>/dev/null \
                   | awk '/BEGIN CERT/,/END CERT/' \
-                  | csplit --quiet --prefix=/tmp/cert- -z - '/BEGIN CERT/' '{*}'
-                for f in /tmp/cert-*; do
+                  | csplit --quiet --prefix="$certdir/cert-" -z - '/BEGIN CERT/' '{*}'
+                for f in "$certdir"/cert-*; do
                   openssl x509 -in "$f" -noout -subject -enddate
                 done
                 ```
 
-            2. Pull current intermediates from your CA. For Let's Encrypt, run `certbot renew --force-renewal` to refresh `/etc/letsencrypt/live/yourdomain.com/fullchain.pem`.
+            2. Pull current intermediates from your CA. For Let's Encrypt, run `certbot renew --force-renewal` to refresh `/etc/letsencrypt/live/yourdomain.com/fullchain.pem`. Use force renewal only to replace an outdated chain, because repeated runs count against CA rate limits. For other CAs, download the current intermediate bundle from the CA's support site and rebuild your chain file with the leaf first.
 
-            3. Refresh the OS trust store so Nginx validates updated roots correctly:
-
-                ```bash
-                apt update && apt install --only-upgrade ca-certificates   # Debian/Ubuntu
-                yum update ca-certificates                                  # RHEL/CentOS
-                update-ca-certificates                                       # Debian/Ubuntu
-                update-ca-trust                                              # RHEL/CentOS
-                ```
-
-            4. Point Nginx at the refreshed chain (`ssl_certificate` MUST be the full chain — leaf + intermediates) and reload:
+            3. Point Nginx at the refreshed chain. The `ssl_certificate` file must contain the full chain, leaf followed by intermediates:
 
                 ```nginx
                 ssl_certificate     /etc/letsencrypt/live/yourdomain.com/fullchain.pem;
@@ -646,7 +643,7 @@ queries:
                 nginx -t && systemctl reload nginx
                 ```
 
-            5. Re-run the iteration in step 1 — every `notAfter` should now be in the future.
+            4. Re-run the iteration in step 1. Every `notAfter` date must now be in the future.
         - id: haproxy
           desc: |
             **Using HAProxy**
@@ -654,26 +651,18 @@ queries:
             1. List every certificate the server presents and find the expired ones:
 
                 ```bash
+                certdir=$(mktemp -d)
                 openssl s_client -connect yourdomain.com:443 -showcerts </dev/null 2>/dev/null \
                   | awk '/BEGIN CERT/,/END CERT/' \
-                  | csplit --quiet --prefix=/tmp/cert- -z - '/BEGIN CERT/' '{*}'
-                for f in /tmp/cert-*; do
+                  | csplit --quiet --prefix="$certdir/cert-" -z - '/BEGIN CERT/' '{*}'
+                for f in "$certdir"/cert-*; do
                   openssl x509 -in "$f" -noout -subject -enddate
                 done
                 ```
 
-            2. Pull current intermediates from your CA. For Let's Encrypt, run `certbot renew --force-renewal` to refresh `/etc/letsencrypt/live/yourdomain.com/fullchain.pem`.
+            2. Pull current intermediates from your CA. For Let's Encrypt, run `certbot renew --force-renewal` to refresh `/etc/letsencrypt/live/yourdomain.com/fullchain.pem`. Use force renewal only to replace an outdated chain, because repeated runs count against CA rate limits. For other CAs, download the current intermediate bundle from the CA's support site and rebuild your chain file with the leaf first.
 
-            3. Refresh the OS trust store so HAProxy validates updated roots correctly:
-
-                ```bash
-                apt update && apt install --only-upgrade ca-certificates   # Debian/Ubuntu
-                yum update ca-certificates                                  # RHEL/CentOS
-                update-ca-certificates                                       # Debian/Ubuntu
-                update-ca-trust                                              # RHEL/CentOS
-                ```
-
-            4. Rebuild HAProxy's combined PEM (chain + key) and reload:
+            3. Rebuild HAProxy's combined PEM with the chain followed by the key, and reload:
 
                 ```bash
                 cat /etc/letsencrypt/live/yourdomain.com/fullchain.pem \
@@ -684,7 +673,7 @@ queries:
                 systemctl reload haproxy
                 ```
 
-            5. Re-run the iteration in step 1 — every `notAfter` should now be in the future.
+            4. Re-run the iteration in step 1. Every `notAfter` date must now be in the future.
     refs:
       - url: https://www.ssllabs.com/projects/best-practices/
         title: SSL/TLS Deployment Best Practices
@@ -706,10 +695,12 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-7-2
       compliance/vda-isa-5: vda-isa-5-5-1-2
     mql: |
-      tls.certificates.last.isCA
+      tls.certificates.first {
+        subject.dn != issuer.dn
+      }
     docs:
       desc: |
-        This check ensures that the certificate chain is configured to terminate at a trusted Certificate Authority root rather than at a self-signed certificate. Self-signed certificates bypass the third-party trust model that TLS authentication relies on.
+        This check ensures that the certificate the server presents is issued by a Certificate Authority rather than self-signed. A self-signed certificate, whose subject and issuer names are identical, bypasses the third-party trust model that TLS authentication relies on.
 
         **Why this matters**
 
@@ -903,28 +894,34 @@ queries:
       audit: |
         ### Audit via openssl
 
-        Check the revocation status of the server's certificate using the OCSP responder named in the certificate:
+        Request the certificate's revocation status during the handshake with the OCSP status extension:
 
         ```bash
-        openssl s_client -connect example.com:443 -servername example.com -status 2>/dev/null | openssl x509 -noout -text | grep -A1 "OCSP"
+        openssl s_client -connect example.com:443 -servername example.com -status </dev/null 2>/dev/null | grep -A5 "OCSP Response"
         ```
 
-        A passing result shows an OCSP response with a status of good, while a failing result shows a status of revoked or a certificate whose chain a client refuses to verify.
+        A passing result shows a stapled response with a certificate status of good, while a failing result shows a status of revoked. When the server staples no response, query the OCSP responder named in the certificate directly, or check the CRL endpoint for certificates issued without an OCSP URL.
       remediation:
         - id: apache
           desc: |
             **Using Apache**
 
-            1. Confirm revocation status by extracting the OCSP responder URL and querying it:
+            1. Confirm revocation status. If the certificate carries an OCSP responder URL, query it; if it does not, which includes all Let's Encrypt certificates issued since May 2025, check the CRL endpoint instead:
 
                 ```bash
                 cert=/etc/ssl/certs/yourdomain.com.crt
                 ocsp=$(openssl x509 -in "$cert" -noout -ocsp_uri)
-                openssl ocsp -no_nonce -issuer /etc/ssl/certs/yourdomain.com.issuer.crt \
-                  -cert "$cert" -url "$ocsp" -resp_text 2>&1 | grep -E "Cert Status|good|revoked"
+                if [ -n "$ocsp" ]; then
+                  openssl ocsp -no_nonce -issuer /etc/ssl/certs/yourdomain.com.issuer.crt \
+                    -cert "$cert" -url "$ocsp" -resp_text 2>&1 | grep -E "Cert Status|good|revoked"
+                else
+                  openssl x509 -in "$cert" -noout -ext crlDistributionPoints
+                fi
                 ```
 
-            2. If the cert is revoked, generate a fresh **new** private key (never reuse a compromised one) and request a replacement from the CA:
+                When only a CRL endpoint exists, download the listed CRL and search it for your certificate's serial number.
+
+            2. If the cert is revoked, generate a fresh new private key and request a replacement from the CA. Never reuse a compromised key:
 
                 ```bash
                 openssl req -new -newkey rsa:2048 -nodes \
@@ -952,7 +949,7 @@ queries:
                 systemctl reload httpd     # RHEL/CentOS
                 ```
 
-            4. Turn on OCSP stapling so clients can confirm revocation status without a third-party round-trip:
+            4. If your CA still publishes OCSP responders, turn on OCSP stapling so clients can confirm revocation status without a third-party round-trip. Stapling has no effect for certificates without an OCSP URL:
 
                 ```apache
                 SSLUseStapling          on
@@ -965,16 +962,22 @@ queries:
           desc: |
             **Using Nginx**
 
-            1. Confirm revocation status by extracting the OCSP responder URL and querying it:
+            1. Confirm revocation status. If the certificate carries an OCSP responder URL, query it; if it does not, which includes all Let's Encrypt certificates issued since May 2025, check the CRL endpoint instead:
 
                 ```bash
                 cert=/etc/ssl/certs/yourdomain.com.crt
                 ocsp=$(openssl x509 -in "$cert" -noout -ocsp_uri)
-                openssl ocsp -no_nonce -issuer /etc/ssl/certs/yourdomain.com.issuer.crt \
-                  -cert "$cert" -url "$ocsp" -resp_text 2>&1 | grep -E "Cert Status|good|revoked"
+                if [ -n "$ocsp" ]; then
+                  openssl ocsp -no_nonce -issuer /etc/ssl/certs/yourdomain.com.issuer.crt \
+                    -cert "$cert" -url "$ocsp" -resp_text 2>&1 | grep -E "Cert Status|good|revoked"
+                else
+                  openssl x509 -in "$cert" -noout -ext crlDistributionPoints
+                fi
                 ```
 
-            2. If the cert is revoked, generate a fresh **new** private key (never reuse a compromised one) and request a replacement from the CA:
+                When only a CRL endpoint exists, download the listed CRL and search it for your certificate's serial number.
+
+            2. If the cert is revoked, generate a fresh new private key and request a replacement from the CA. Never reuse a compromised key:
 
                 ```bash
                 openssl req -new -newkey rsa:2048 -nodes \
@@ -1000,11 +1003,12 @@ queries:
                 nginx -t && systemctl reload nginx
                 ```
 
-            4. Turn on OCSP stapling so clients can confirm revocation status without a third-party round-trip:
+            4. If your CA still publishes OCSP responders, turn on OCSP stapling. The `ssl_trusted_certificate` file must contain the issuing CA so Nginx can validate the response. Stapling has no effect for certificates without an OCSP URL:
 
                 ```nginx
                 ssl_stapling          on;
                 ssl_stapling_verify   on;
+                ssl_trusted_certificate /etc/ssl/certs/yourdomain.com.issuer.crt;
                 resolver              1.1.1.1 8.8.8.8 valid=300s;
                 resolver_timeout      5s;
                 ```
@@ -1014,22 +1018,28 @@ queries:
           desc: |
             **Using HAProxy**
 
-            1. Confirm revocation status by extracting the OCSP responder URL and querying it:
+            1. Confirm revocation status. If the certificate carries an OCSP responder URL, query it; if it does not, which includes all Let's Encrypt certificates issued since May 2025, check the CRL endpoint instead:
 
                 ```bash
                 cert=/etc/haproxy/certs/yourdomain.com.pem
                 ocsp=$(openssl x509 -in "$cert" -noout -ocsp_uri)
-                openssl ocsp -no_nonce -issuer /etc/haproxy/certs/yourdomain.com.issuer.pem \
-                  -cert "$cert" -url "$ocsp" -resp_text 2>&1 | grep -E "Cert Status|good|revoked"
+                if [ -n "$ocsp" ]; then
+                  openssl ocsp -no_nonce -issuer /etc/haproxy/certs/yourdomain.com.issuer.pem \
+                    -cert "$cert" -url "$ocsp" -resp_text 2>&1 | grep -E "Cert Status|good|revoked"
+                else
+                  openssl x509 -in "$cert" -noout -ext crlDistributionPoints
+                fi
                 ```
 
-            2. If the cert is revoked, generate a fresh **new** private key (never reuse a compromised one) and request a replacement from the CA. For Let's Encrypt:
+                When only a CRL endpoint exists, download the listed CRL and search it for your certificate's serial number.
+
+            2. If the cert is revoked, generate a fresh new private key and request a replacement from the CA. Never reuse a compromised key. For Let's Encrypt:
 
                 ```bash
                 certbot certonly --standalone --force-renewal -d yourdomain.com
                 ```
 
-            3. Rebuild HAProxy's combined PEM (chain + key) and reload:
+            3. Rebuild HAProxy's combined PEM with the chain followed by the key, and reload:
 
                 ```bash
                 cat /etc/letsencrypt/live/yourdomain.com/fullchain.pem \
@@ -1040,7 +1050,7 @@ queries:
                 systemctl reload haproxy
                 ```
 
-            4. Enable OCSP stapling. HAProxy reads stapled OCSP responses from a sibling `.ocsp` file. Refresh it with `openssl ocsp` from a renew hook so HAProxy serves a fresh response on reload:
+            4. If your CA still publishes OCSP responders, enable OCSP stapling. On HAProxy 2.8 and newer, let HAProxy refresh the response automatically with `ocsp-update on` in a crt-list. On older releases, generate the sibling `.ocsp` file yourself and refresh it from a renew hook:
 
                 ```bash
                 openssl ocsp -no_nonce -respout /etc/haproxy/certs/yourdomain.com.pem.ocsp \
@@ -1311,6 +1321,8 @@ queries:
                 openssl s_client -connect yourdomain.com:443 -tls1   # Should fail
                 openssl s_client -connect yourdomain.com:443 -tls1_2 # Should succeed
                 ```
+
+            **Compatibility:** Disabling TLS 1.0 and TLS 1.1 blocks legacy clients such as Android 4.3 and earlier, Internet Explorer 10 and earlier, Java 7 and earlier with default settings, and many older embedded or point-of-sale devices. Review connection logs for legacy protocol usage and plan a migration window before applying this change in production.
         - id: nginx
           desc: |
             **Using Nginx**
@@ -1335,6 +1347,8 @@ queries:
                 openssl s_client -connect yourdomain.com:443 -tls1   # Should fail
                 openssl s_client -connect yourdomain.com:443 -tls1_2 # Should succeed
                 ```
+
+            **Compatibility:** Disabling TLS 1.0 and TLS 1.1 blocks legacy clients such as Android 4.3 and earlier, Internet Explorer 10 and earlier, Java 7 and earlier with default settings, and many older embedded or point-of-sale devices. Review connection logs for legacy protocol usage and plan a migration window before applying this change in production.
         - id: haproxy
           desc: |
             **Using HAProxy**
@@ -1358,6 +1372,8 @@ queries:
                 ```bash
                 systemctl restart haproxy
                 ```
+
+            **Compatibility:** Disabling TLS 1.0 and TLS 1.1 blocks legacy clients such as Android 4.3 and earlier, Internet Explorer 10 and earlier, Java 7 and earlier with default settings, and many older embedded or point-of-sale devices. Review connection logs for legacy protocol usage and plan a migration window before applying this change in production.
         - id: aws-alb
           desc: |
             **Using AWS Application Load Balancer**
@@ -1376,6 +1392,8 @@ queries:
             aws elbv2 modify-listener --listener-arn <listener-arn> \
               --ssl-policy ELBSecurityPolicy-TLS13-1-2-2021-06
             ```
+
+            **Compatibility:** Disabling TLS 1.0 and TLS 1.1 blocks legacy clients such as Android 4.3 and earlier, Internet Explorer 10 and earlier, Java 7 and earlier with default settings, and many older embedded or point-of-sale devices. Review connection logs for legacy protocol usage and plan a migration window before applying this change in production.
         - id: iis
           desc: |
             **Using IIS (Windows Server)**
@@ -1410,6 +1428,8 @@ queries:
                 ```powershell
                 Restart-Computer
                 ```
+
+            **Compatibility:** Disabling TLS 1.0 and TLS 1.1 blocks legacy clients such as Android 4.3 and earlier, Internet Explorer 10 and earlier, Java 7 and earlier with default settings, and many older embedded or point-of-sale devices. Review connection logs for legacy protocol usage and plan a migration window before applying this change in production.
     refs:
       - url: https://datatracker.ietf.org/doc/html/rfc8446
         title: TLS 1.3 RFC 8446
@@ -2125,6 +2145,8 @@ queries:
                 nmap --script ssl-enum-ciphers -p 443 yourdomain.com | grep -i CBC
                 ```
 
+            **Compatibility:** Removing every CBC suite blocks clients that cannot negotiate AEAD suites, including Internet Explorer 11 on Windows 7 and 8.1 with RSA certificates, Android 4.x, and Java 7 with default settings. Review connection logs for CBC usage and plan a migration window before applying this change in production.
+
             **Note:** Enabling TLS 1.3 automatically enforces AEAD cipher usage.
         - id: nginx
           desc: |
@@ -2151,6 +2173,8 @@ queries:
                 nmap --script ssl-enum-ciphers -p 443 yourdomain.com | grep -i CBC
                 ```
 
+            **Compatibility:** Removing every CBC suite blocks clients that cannot negotiate AEAD suites, including Internet Explorer 11 on Windows 7 and 8.1 with RSA certificates, Android 4.x, and Java 7 with default settings. Review connection logs for CBC usage and plan a migration window before applying this change in production.
+
             **Note:** Enabling TLS 1.3 automatically enforces AEAD cipher usage.
         - id: haproxy
           desc: |
@@ -2175,6 +2199,8 @@ queries:
                 ```bash
                 nmap --script ssl-enum-ciphers -p 443 yourdomain.com | grep -i CBC
                 ```
+
+            **Compatibility:** Removing every CBC suite blocks clients that cannot negotiate AEAD suites, including Internet Explorer 11 on Windows 7 and 8.1 with RSA certificates, Android 4.x, and Java 7 with default settings. Review connection logs for CBC usage and plan a migration window before applying this change in production.
     refs:
       - url: https://www.ssllabs.com/projects/best-practices/
         title: SSL/TLS Deployment Best Practices
@@ -2317,7 +2343,7 @@ queries:
       - url: https://datatracker.ietf.org/doc/html/rfc8446
         title: TLS 1.3 RFC 8446
   - uid: mondoo-tls-security-no-old-cipher-suites
-    title: Avoid old cipher suites
+    title: Avoid draft ChaCha20-Poly1305 cipher suites
     impact: 90
     tags:
       compliance/bsi-sys-1-5: false
@@ -2336,31 +2362,19 @@ queries:
     mql: tls.ciphers.none( /^old/i )
     docs:
       desc: |
-        This check ensures that the server is configured to reject legacy cipher suites carried over from older TLS and SSL versions. These suites combine outdated algorithms whose weaknesses compound into serious risk.
+        This check ensures that the server is configured to reject the draft ChaCha20-Poly1305 cipher suites that predate RFC 7905. These suites, assigned the IDs 0xCC13, 0xCC14, and 0xCC15, were implemented from early drafts before the algorithm was standardized and are only offered by outdated TLS stacks.
 
         **Why this matters**
 
-        - **Weak hash functions:** Older suites rely on MD5 or SHA-1, both of which have known collision vulnerabilities.
-        - **Weak encryption:** Algorithms such as RC4, DES, and 3DES no longer provide adequate protection against current threats.
-        - **Vulnerable modes:** CBC implementations in legacy suites are susceptible to padding oracle and timing attacks.
-        - **No forward secrecy:** Many legacy suites use static RSA key exchange and discard ephemeral keys entirely.
-        - **Cumulative risk:** The overlapping weaknesses in old suites compound into a much larger overall exposure.
+        - **Outdated TLS stack:** Offering the draft suites signals a TLS library that predates the 2016 standardization, typically OpenSSL 1.0.2 with an early ChaCha20 patch, which also lacks years of security fixes.
+        - **Non-standard construction:** The draft suites use a different nonce construction than the standardized suites and never received the same scrutiny or formal analysis.
+        - **No benefit to clients:** Modern clients negotiate the standardized ChaCha20-Poly1305 suites, so keeping the draft IDs adds risk without improving compatibility.
 
         **Risk mitigation**
 
+        - **Upgrade the TLS library:** Move to a current OpenSSL release so the standardized ChaCha20-Poly1305 suites replace the draft IDs.
         - **Modern cipher selection:** Configure only current suites with AEAD encryption, forward secrecy, and SHA-256 or stronger hashing.
-        - **Tested baselines:** Adopt a vetted configuration so legacy suites are removed without breaking interoperability.
       audit: |
-        ### Audit via openssl
-
-        Inspect the server's TLS configuration with the OpenSSL client:
-
-        ```bash
-        openssl s_client -connect example.com:443 -cipher RC4-SHA
-        ```
-
-        A handshake failure means the legacy cipher suite is rejected and the check passes, while a successful handshake means it is still accepted and the check fails.
-
         ### Audit via nmap
 
         Enumerate the server's supported ciphers:
@@ -2369,85 +2383,112 @@ queries:
         nmap --script ssl-enum-ciphers -p 443 example.com
         ```
 
-        The check passes when only modern cipher suites appear and none are flagged as weak, and fails if any legacy suite is listed.
+        The check passes when no draft ChaCha20-Poly1305 suite with the ID 0xCC13, 0xCC14, or 0xCC15 appears in the output, and fails if any of them is listed.
       remediation:
         - id: apache
           desc: |
             **Using Apache**
 
-            1. Open your Apache SSL configuration file (typically `/etc/httpd/conf.d/ssl.conf` or `/etc/apache2/sites-available/default-ssl.conf`).
+            1. The legacy cipher suites this finding reports are draft ChaCha20-Poly1305 suites with the IDs 0xCC13, 0xCC14, and 0xCC15. They are only offered by TLS stacks that predate the standardization of ChaCha20-Poly1305 in RFC 7905, typically OpenSSL 1.0.2 builds with the early ChaCha20 patch. Check which OpenSSL release Apache is linked against:
 
-            2. Replace your cipher configuration with a modern cipher suite:
+                ```bash
+                apachectl -V | grep -i ssl
+                openssl version
+                ```
+
+            2. Upgrade OpenSSL and Apache to current distribution packages so the standard RFC 7905 suites replace the draft IDs:
+
+                ```bash
+                apt update && apt upgrade openssl apache2   # Debian/Ubuntu
+                yum update openssl httpd                    # RHEL/CentOS
+                ```
+
+            3. Set a modern cipher configuration and restart Apache:
 
                 ```apache
-                SSLCipherSuite ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384
+                SSLCipherSuite ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305
                 SSLHonorCipherOrder on
                 SSLProtocol -all +TLSv1.2 +TLSv1.3
                 ```
-
-            3. Save the file and restart Apache:
 
                 ```bash
                 systemctl restart apache2   # Debian/Ubuntu
                 systemctl restart httpd     # RHEL/CentOS
                 ```
 
-            4. Verify using SSL Labs (ssllabs.com/ssltest) or:
+            4. Verify the server's ChaCha20-Poly1305 suites are now the standard `TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256` family rather than draft variants:
 
                 ```bash
                 nmap --script ssl-enum-ciphers -p 443 yourdomain.com
                 ```
-
-            **Resource:** Use the [Mozilla SSL Configuration Generator](https://ssl-config.mozilla.org/) for tested configurations.
         - id: nginx
           desc: |
             **Using Nginx**
 
-            1. Open your Nginx configuration file (typically `/etc/nginx/nginx.conf` or a site-specific file).
+            1. The legacy cipher suites this finding reports are draft ChaCha20-Poly1305 suites with the IDs 0xCC13, 0xCC14, and 0xCC15. They are only offered by TLS stacks that predate the standardization of ChaCha20-Poly1305 in RFC 7905, typically OpenSSL 1.0.2 builds with the early ChaCha20 patch. Check which OpenSSL release Nginx is linked against:
 
-            2. Replace your cipher configuration with a modern cipher suite:
+                ```bash
+                nginx -V 2>&1 | grep -io "built with [^ ]* [^ ]*"
+                openssl version
+                ```
+
+            2. Upgrade OpenSSL and Nginx to current distribution packages so the standard RFC 7905 suites replace the draft IDs:
+
+                ```bash
+                apt update && apt upgrade openssl nginx   # Debian/Ubuntu
+                yum update openssl nginx                  # RHEL/CentOS
+                ```
+
+            3. Set a modern cipher configuration and reload Nginx:
 
                 ```nginx
-                ssl_ciphers 'ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384';
+                ssl_ciphers 'ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305';
                 ssl_prefer_server_ciphers on;
                 ssl_protocols TLSv1.2 TLSv1.3;
                 ```
-
-            3. Save the file and reload Nginx:
 
                 ```bash
                 nginx -t && systemctl reload nginx
                 ```
 
-            4. Verify using SSL Labs (ssllabs.com/ssltest) or:
+            4. Verify the server's ChaCha20-Poly1305 suites are now the standard `TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256` family rather than draft variants:
 
                 ```bash
                 nmap --script ssl-enum-ciphers -p 443 yourdomain.com
                 ```
-
-            **Resource:** Use the [Mozilla SSL Configuration Generator](https://ssl-config.mozilla.org/) for tested configurations.
         - id: haproxy
           desc: |
             **Using HAProxy**
 
-            1. Open your HAProxy configuration file (typically `/etc/haproxy/haproxy.cfg`).
+            1. The legacy cipher suites this finding reports are draft ChaCha20-Poly1305 suites with the IDs 0xCC13, 0xCC14, and 0xCC15. They are only offered by TLS stacks that predate the standardization of ChaCha20-Poly1305 in RFC 7905, typically OpenSSL 1.0.2 builds with the early ChaCha20 patch. Check which OpenSSL release HAProxy is linked against:
 
-            2. Replace your cipher configuration with a modern cipher suite:
+                ```bash
+                haproxy -vv | grep -i openssl
+                ```
+
+            2. Upgrade OpenSSL and HAProxy to current distribution packages so the standard RFC 7905 suites replace the draft IDs:
+
+                ```bash
+                apt update && apt upgrade openssl haproxy   # Debian/Ubuntu
+                yum update openssl haproxy                  # RHEL/CentOS
+                ```
+
+            3. Set a modern cipher configuration and restart HAProxy:
 
                 ```haproxy
                 ssl-default-bind-ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305
                 ssl-default-bind-options ssl-min-ver TLSv1.2
                 ```
 
-            3. Save the file and restart HAProxy:
-
                 ```bash
                 systemctl restart haproxy
                 ```
 
-            4. Verify using SSL Labs (ssllabs.com/ssltest) to ensure your configuration scores A or A+.
+            4. Verify the server's ChaCha20-Poly1305 suites are now the standard `TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256` family rather than draft variants:
 
-            **Resource:** Use the [Mozilla SSL Configuration Generator](https://ssl-config.mozilla.org/) for tested configurations.
+                ```bash
+                nmap --script ssl-enum-ciphers -p 443 yourdomain.com
+                ```
     refs:
       - url: https://www.ssllabs.com/projects/best-practices/
         title: SSL/TLS Deployment Best Practices
@@ -2756,7 +2797,7 @@ queries:
       switch {
         case tls.versions.containsOnly(["tls1.2", "tls1.3"]):
           score(100);
-        case tls.cipherSuites.none(nullCipher || anonymous || export || cbc || encryption == /des|rc2|idea/):
+        case tls.cipherSuites.none(nullCipher || anonymous || export || cbc || encryption == /des|rc2|idea/i):
           score(80);
         default:
           score(0);
@@ -2974,14 +3015,15 @@ queries:
                 systemctl reload httpd     # RHEL/CentOS
                 ```
 
-            4. Verify the chain locally:
+            4. Verify the chain locally. Pass the intermediates as untrusted chain material and the leaf as the target, because `openssl verify` only validates the first certificate in a file:
 
                 ```bash
                 openssl verify -CAfile /etc/ssl/certs/ca-certificates.crt \
-                  /etc/ssl/certs/yourdomain.com.fullchain.pem
+                  -untrusted /etc/ssl/certs/yourdomain.com.intermediate.crt \
+                  /etc/ssl/certs/yourdomain.com.crt
                 ```
 
-                Re-run the verification from step 1 — `Verify return code: 0 (ok)` confirms success.
+                Then re-run the verification from step 1. `Verify return code: 0 (ok)` confirms success.
         - id: nginx
           desc: |
             **Using Nginx**
@@ -3015,14 +3057,15 @@ queries:
                 nginx -t && systemctl reload nginx
                 ```
 
-            4. Verify the chain locally:
+            4. Verify the chain locally. Pass the intermediates as untrusted chain material and the leaf as the target, because `openssl verify` only validates the first certificate in a file:
 
                 ```bash
                 openssl verify -CAfile /etc/ssl/certs/ca-certificates.crt \
-                  /etc/ssl/certs/yourdomain.com.fullchain.pem
+                  -untrusted /etc/ssl/certs/yourdomain.com.intermediate.crt \
+                  /etc/ssl/certs/yourdomain.com.crt
                 ```
 
-                Re-run the verification from step 1 — `Verify return code: 0 (ok)` confirms success.
+                Then re-run the verification from step 1. `Verify return code: 0 (ok)` confirms success.
         - id: haproxy
           desc: |
             **Using HAProxy**
@@ -3066,14 +3109,15 @@ queries:
                 systemctl reload haproxy
                 ```
 
-            4. Verify the chain locally:
+            4. Verify the chain locally using the separate leaf and chain files rather than the combined PEM, because `openssl verify` only validates the first certificate in a file:
 
                 ```bash
                 openssl verify -CAfile /etc/ssl/certs/ca-certificates.crt \
-                  /etc/haproxy/certs/yourdomain.com.pem
+                  -untrusted /etc/letsencrypt/live/yourdomain.com/chain.pem \
+                  /etc/letsencrypt/live/yourdomain.com/cert.pem
                 ```
 
-                Re-run the verification from step 1 — `Verify return code: 0 (ok)` confirms success.
+                Then re-run the verification from step 1. `Verify return code: 0 (ok)` confirms success.
     refs:
       - url: https://www.openssl.org/docs/man1.1.1/man1/verify.html
         title: OpenSSL certificate chain verification
@@ -3184,9 +3228,13 @@ queries:
           desc: |
             **Using HAProxy**
 
-            1. Ensure you are running HAProxy 1.9.1+ with OpenSSL 1.1.1+.
+            1. Ensure you are running HAProxy 1.9.1+ built against OpenSSL 1.1.1+. With that combination TLS 1.3 is offered by default:
 
-            2. Open your HAProxy configuration file and enable TLS 1.3:
+                ```bash
+                haproxy -vv | grep -i openssl
+                ```
+
+            2. Open your HAProxy configuration file and remove anything that caps the protocol below TLS 1.3, such as `ssl-max-ver TLSv1.2` or `no-tlsv13` on `bind` lines or in `ssl-default-bind-options`. Then set a floor of TLS 1.2 and the TLS 1.3 cipher suites:
 
                 ```haproxy
                 ssl-default-bind-options ssl-min-ver TLSv1.2
@@ -3240,18 +3288,18 @@ queries:
 
         **Risk mitigation**
 
-        - **Use a CA that publishes OCSP:** Obtain certificates from a Certificate Authority that includes OCSP responder URLs, which most reputable CAs do by default.
+        - **Use a CA that publishes OCSP:** Obtain certificates from a Certificate Authority that includes OCSP responder URLs, and confirm OCSP support with the CA first, since some CAs, including Let's Encrypt, no longer publish OCSP responders.
         - **Enable OCSP stapling:** Have the server staple a fresh OCSP response so clients receive revocation status without contacting the responder directly.
       audit: |
         ### Audit via openssl
 
-        Inspect the server's TLS configuration with the OpenSSL client:
+        Inspect the certificate's Authority Information Access extension for an OCSP responder URL:
 
         ```bash
-        openssl s_client -connect example.com:443 -status
+        openssl s_client -connect example.com:443 -servername example.com 2>/dev/null | openssl x509 -noout -ocsp_uri
         ```
 
-        The check passes when the output reports `OCSP Response Status: successful`, and fails when no OCSP response is returned or the certificate advertises no responder URL.
+        The check passes when the command prints at least one OCSP responder URL, and fails when it prints nothing, which means the certificate was issued without an OCSP responder.
       remediation:
         - id: apache
           desc: |
@@ -3264,9 +3312,9 @@ queries:
                   | openssl x509 -noout -ocsp_uri
                 ```
 
-                If the command returns nothing, the cert was issued without OCSP information — request a new cert from a CA that includes it (Let's Encrypt, DigiCert, Sectigo, GlobalSign all do).
+                If the command returns nothing, the certificate was issued without an OCSP responder URL. Let's Encrypt stopped including OCSP URLs in May 2025 and shut down its responders in August 2025, so Let's Encrypt certificates cannot satisfy this requirement. To keep OCSP, obtain the certificate from a CA that still publishes OCSP responders, such as DigiCert, Sectigo, or GlobalSign, and confirm OCSP support with the CA first because the industry is shifting revocation checking to CRLs.
 
-            2. Enable OCSP stapling. Add the following to your global SSL config (e.g., `/etc/apache2/mods-enabled/ssl.conf`) — `SSLUseStapling` and `SSLStaplingCache` MUST live in the global scope, not per-vhost:
+            2. Enable OCSP stapling. Add the following to your global SSL config, for example `/etc/apache2/mods-enabled/ssl.conf`. `SSLUseStapling` and `SSLStaplingCache` must live in the global scope, not per-vhost:
 
                 ```apache
                 SSLUseStapling          on
@@ -3302,14 +3350,14 @@ queries:
                   | openssl x509 -noout -ocsp_uri
                 ```
 
-                If the command returns nothing, the cert was issued without OCSP information — request a new cert from a CA that includes it (Let's Encrypt, DigiCert, Sectigo, GlobalSign all do).
+                If the command returns nothing, the certificate was issued without an OCSP responder URL. Let's Encrypt stopped including OCSP URLs in May 2025 and shut down its responders in August 2025, so Let's Encrypt certificates cannot satisfy this requirement. To keep OCSP, obtain the certificate from a CA that still publishes OCSP responders, such as DigiCert, Sectigo, or GlobalSign, and confirm OCSP support with the CA first because the industry is shifting revocation checking to CRLs.
 
-            2. Enable OCSP stapling in the `server` block (or globally in `http`). `ssl_trusted_certificate` must point at a file containing the issuing CA so Nginx can validate the OCSP response:
+            2. Enable OCSP stapling in the `server` block or globally in `http`. `ssl_trusted_certificate` must point at a file containing the issuing CA so Nginx can validate the OCSP response:
 
                 ```nginx
                 ssl_stapling          on;
                 ssl_stapling_verify   on;
-                ssl_trusted_certificate /etc/letsencrypt/live/yourdomain.com/chain.pem;
+                ssl_trusted_certificate /etc/ssl/certs/yourdomain.com.issuer.crt;
                 resolver              1.1.1.1 8.8.8.8 valid=300s;
                 resolver_timeout      5s;
                 ```
@@ -3327,7 +3375,7 @@ queries:
                   | grep -A5 "OCSP Response"
                 ```
 
-                A `Cert Status: good` line confirms stapling is working. (Nginx caches the response for ~1 hour, so the first request after reload may not include one.)
+                A `Cert Status: good` line confirms stapling is working. Nginx caches the response for about an hour, so the first request after a reload may not include one.
         - id: haproxy
           desc: |
             **Using HAProxy**
@@ -3339,22 +3387,37 @@ queries:
                   | openssl x509 -noout -ocsp_uri
                 ```
 
-                If the command returns nothing, the cert was issued without OCSP information — request a new cert from a CA that includes it (Let's Encrypt, DigiCert, Sectigo, GlobalSign all do).
+                If the command returns nothing, the certificate was issued without an OCSP responder URL. Let's Encrypt stopped including OCSP URLs in May 2025 and shut down its responders in August 2025, so Let's Encrypt certificates cannot satisfy this requirement. To keep OCSP, obtain the certificate from a CA that still publishes OCSP responders, such as DigiCert, Sectigo, or GlobalSign, and confirm OCSP support with the CA first because the industry is shifting revocation checking to CRLs.
 
-            2. HAProxy reads stapled OCSP responses from a `<cert>.ocsp` sibling file. Generate it from the OCSP responder and drop it next to your PEM:
+            2. On HAProxy 2.8 and newer, let HAProxy fetch and refresh the stapled response automatically with a crt-list:
 
-                ```bash
-                openssl ocsp -no_nonce \
-                  -issuer /etc/haproxy/certs/yourdomain.com.issuer.pem \
-                  -cert   /etc/haproxy/certs/yourdomain.com.pem \
-                  -url    "$(openssl x509 -in /etc/haproxy/certs/yourdomain.com.pem -noout -ocsp_uri)" \
-                  -respout /etc/haproxy/certs/yourdomain.com.pem.ocsp
+                ```haproxy
+                # /etc/haproxy/crt-list.txt
+                /etc/haproxy/certs/yourdomain.com.pem [ocsp-update on]
                 ```
 
-            3. Refresh the response on a schedule and reload HAProxy. A daily cron entry works well — OCSP responses typically have a 7-day lifetime:
+                ```haproxy
+                frontend https-in
+                    bind *:443 ssl crt-list /etc/haproxy/crt-list.txt
+                ```
+
+            3. On older HAProxy releases, generate the sibling `.ocsp` file yourself with a script such as `/usr/local/sbin/refresh-ocsp.sh`, mode 0755:
+
+                ```bash
+                #!/bin/bash
+                set -euo pipefail
+                cert=/etc/haproxy/certs/yourdomain.com.pem
+                issuer=/etc/haproxy/certs/yourdomain.com.issuer.pem
+                url=$(openssl x509 -in "$cert" -noout -ocsp_uri)
+                openssl ocsp -no_nonce -issuer "$issuer" -cert "$cert" \
+                  -url "$url" -respout "$cert.ocsp"
+                systemctl reload haproxy
+                ```
+
+                Run it daily from cron, since OCSP responses typically have a 7-day lifetime:
 
                 ```cron
-                15 3 * * * /usr/local/sbin/refresh-ocsp.sh && systemctl reload haproxy
+                15 3 * * * /usr/local/sbin/refresh-ocsp.sh
                 ```
 
             4. Verify the response is being stapled:
