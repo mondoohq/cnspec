@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-hetzner-security
     name: Mondoo Hetzner Cloud Security
-    version: 2.2.0
+    version: 2.2.1
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -140,7 +140,7 @@ queries:
             ```
         - id: terraform
           desc: |
-            Define a `hcloud_network` (with at least one `hcloud_network_subnet`) and reference it from a `network` block on every `hcloud_server`:
+            Define a `hcloud_network` with at least one `hcloud_network_subnet` and reference it from a `network` block on every `hcloud_server`. Use the inline `network` block rather than a separate `hcloud_server_network` resource, because only the inline form is recognized when this check evaluates Terraform code:
 
             ```hcl
             resource "hcloud_network" "main" {
@@ -277,7 +277,7 @@ queries:
             ```
         - id: terraform
           desc: |
-            Reference at least one `hcloud_firewall` from `firewall_ids` on every `hcloud_server`:
+            Reference at least one `hcloud_firewall` from `firewall_ids` on every `hcloud_server`. Use the `firewall_ids` attribute rather than a separate `hcloud_firewall_attachment` resource or an `apply_to` block on the firewall, because only the `firewall_ids` form is recognized when this check evaluates Terraform code:
 
             ```hcl
             resource "hcloud_firewall" "default" {
@@ -384,15 +384,31 @@ queries:
       remediation:
         - id: console
           desc: |
-            Hetzner does not support changing the base image of a running server in place. To remediate, build a new server from a supported image and migrate the workload.
+            Rebuilding a server from a new image erases all data on its disk. Back up or migrate any data you need before you start. For stateful workloads, prefer provisioning a replacement server and migrating the workload.
 
-            1. Note the affected server's configuration (type, location, network, firewall, SSH keys).
+            To rebuild in place:
+
+            1. Navigate to **Servers** and open the affected server.
+            2. Go to **Rebuild**, select a current, supported OS image, and confirm.
+            3. Restore data and configuration from your backup.
+
+            To migrate to a replacement server instead:
+
+            1. Note the affected server's configuration, including server type, location, networks, firewalls, and SSH keys.
             2. Provision a replacement server using a current OS image.
             3. Migrate data and configuration to the new server.
             4. Update DNS, monitoring, and dependent services to point at the new server.
-            5. Delete the original server.
+            5. Delete the original server. The finding clears only once no server runs a deprecated image.
         - id: cli
           desc: |
+            Rebuilding erases all data on the server's disk; back up anything you need first:
+
+            ```bash
+            hcloud server rebuild <server> --image <current-image>
+            ```
+
+            To migrate to a replacement server instead, create the new server, move the workload, then delete the original server so the deprecated image is no longer in use:
+
             ```bash
             hcloud server create \
               --name <new-name> \
@@ -402,6 +418,7 @@ queries:
               --network <network> \
               --firewall <firewall> \
               --ssh-key <ssh-key>
+            hcloud server delete <old-server>
             ```
         - id: terraform
           desc: |
@@ -602,12 +619,19 @@ queries:
             3. Save the firewall.
         - id: cli
           desc: |
+            The `delete-rule` command must match the existing rule exactly, including the complete source IP list and any description, so inspect the rule first and reuse its exact values. Add the restricted rule before deleting the open one so SSH access from your trusted range is never interrupted, and make sure your own management network is inside that range:
+
             ```bash
-            hcloud firewall delete-rule <firewall> \
-              --direction in --protocol tcp --port 22 --source-ips 0.0.0.0/0
+            hcloud firewall describe <firewall> -o json
             hcloud firewall add-rule <firewall> \
-              --direction in --protocol tcp --port 22 --source-ips <your-trusted-cidr>
+              --direction in --protocol tcp --port 22 \
+              --source-ips <your-trusted-cidr>
+            hcloud firewall delete-rule <firewall> \
+              --direction in --protocol tcp --port 22 \
+              --source-ips 0.0.0.0/0,::/0
             ```
+
+            If the unrestricted IPv4 and IPv6 sources are defined in separate rules, run `delete-rule` once per rule with that rule's exact `source-ips` value.
         - id: terraform
           desc: |
             Scope inbound SSH `source_ips` to a specific trusted CIDR. Never use `0.0.0.0/0` or `::/0`:
@@ -749,9 +773,21 @@ queries:
             3. Save the firewall.
         - id: cli
           desc: |
+            The `delete-rule` command must match the existing rule exactly, including the complete source IP list and any description, so inspect the rule first and reuse its exact values:
+
             ```bash
+            hcloud firewall describe <firewall> -o json
             hcloud firewall delete-rule <firewall> \
-              --direction in --protocol tcp --port 3389 --source-ips 0.0.0.0/0
+              --direction in --protocol tcp --port 3389 \
+              --source-ips 0.0.0.0/0,::/0
+            ```
+
+            If the unrestricted IPv4 and IPv6 sources are defined in separate rules, run `delete-rule` once per rule with that rule's exact `source-ips` value. If RDP must remain reachable, add a replacement rule restricted to a trusted range before deleting the open rule:
+
+            ```bash
+            hcloud firewall add-rule <firewall> \
+              --direction in --protocol tcp --port 3389 \
+              --source-ips <your-trusted-cidr>
             ```
         - id: terraform
           desc: |
@@ -890,15 +926,24 @@ queries:
       remediation:
         - id: console
           desc: |
-            Remove or restrict the offending inbound rule so the source is a trusted CIDR. Repeat for each offending port. Prefer placing databases on a Hetzner private network and reaching them only from within that network.
+            Database services should be reachable only from the application tier, ideally over a Hetzner private network.
+
+            1. Navigate to **Firewalls** and open the affected firewall.
+            2. On the **Rules** tab, locate each inbound rule for ports `3306`, `5432`, `27017`, `6379`, `9092`, `9200`, or `1433` whose source is `Any IPv4` or `Any IPv6`.
+            3. Delete the rule, or change its source to the trusted CIDR of your application servers.
+            4. Save the firewall and repeat for every offending port.
         - id: cli
           desc: |
+            The `delete-rule` command must match the existing rule exactly, including the complete source IP list and any description, so inspect the rule first and reuse its exact values:
+
             ```bash
+            hcloud firewall describe <firewall> -o json
             hcloud firewall delete-rule <firewall> \
-              --direction in --protocol tcp --port 5432 --source-ips 0.0.0.0/0
+              --direction in --protocol tcp --port 5432 \
+              --source-ips 0.0.0.0/0,::/0
             ```
 
-            Repeat for each offending port (`3306`, `5432`, `27017`, `6379`, `9092`, `9200`, `1433`).
+            If the unrestricted IPv4 and IPv6 sources are defined in separate rules, run `delete-rule` once per rule with that rule's exact `source-ips` value. Repeat for each offending port: `3306`, `5432`, `27017`, `6379`, `9092`, `9200`, `1433`.
         - id: terraform
           desc: |
             Database ports should not be exposed to `0.0.0.0/0` or `::/0`. Either drop the rule entirely (databases are best reached over a `hcloud_network`), or scope `source_ips` to a specific trusted CIDR:
@@ -1043,7 +1088,12 @@ queries:
       remediation:
         - id: console
           desc: |
-            Remove the wide-open rule and replace it with narrow rules that expose only the specific ports required by the workload, scoped to trusted source CIDRs.
+            1. Navigate to **Firewalls** and open the affected firewall.
+            2. On the **Rules** tab, first add narrow inbound rules for only the ports the workload requires, scoped to trusted source CIDRs.
+            3. Delete the inbound rule that allows the full port range from `Any IPv4` or `Any IPv6`.
+            4. Save the firewall.
+
+            Add the narrow rules before deleting the wide-open rule. Hetzner firewalls deny all other inbound traffic by default, so removing the only inbound rule immediately blocks every connection to the attached servers.
         - id: cli
           desc: |
             `delete-rule` removes one rule at a time, matched by direction, protocol, port, and source. Because the check fails on any inbound all-ports rule, you must repeat the deletion for every protocol that has a wide-open rule and for every unrestricted source, including IPv6. Removing only the `tcp` and `0.0.0.0/0` rule leaves UDP, ICMP, and `::/0` rules in place, so the firewall still fails the check.
@@ -1051,6 +1101,10 @@ queries:
             Run `hcloud firewall describe <firewall> -o json` first to enumerate the offending rules, then delete each one:
 
             ```bash
+            hcloud firewall describe <firewall> -o json
+            hcloud firewall add-rule <firewall> \
+              --direction in --protocol tcp --port 443 \
+              --source-ips 0.0.0.0/0,::/0
             hcloud firewall delete-rule <firewall> \
               --direction in --protocol tcp --port any --source-ips 0.0.0.0/0
             hcloud firewall delete-rule <firewall> \
@@ -1450,7 +1504,7 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every Hetzner Cloud load balancer service that listens on HTTP has the HTTP-to-HTTPS redirect enabled, so plaintext HTTP requests receive a 301 redirect to the HTTPS equivalent. Without this redirect, clients that initiate HTTP connections receive responses over an unencrypted channel.
+        This check ensures that every Hetzner Cloud load balancer redirects plaintext HTTP requests to HTTPS instead of serving a plain HTTP service. Hetzner implements the redirect as an option of the HTTPS service: when it is enabled, the load balancer answers port 80 with a 301 redirect to the HTTPS equivalent. Without this redirect, clients that initiate HTTP connections receive responses over an unencrypted channel.
 
         **Why this matters**
 
@@ -1468,9 +1522,9 @@ queries:
         1. Log in to the [Hetzner Cloud Console](https://console.hetzner.cloud) and select the project.
         2. Navigate to **Load Balancers** and open each load balancer.
         3. Click the **Services** tab.
-        4. Find the service listening on port 80 (HTTP) and check whether **Redirect HTTP to HTTPS** is enabled.
+        4. Verify that no plain HTTP service is configured and that the HTTPS service has **Redirect HTTP to HTTPS** enabled.
 
-        A passing load balancer shows **Redirect HTTP to HTTPS** toggled on for every HTTP service. A failing load balancer shows an HTTP service with that option disabled or not configured.
+        A passing load balancer has no plain HTTP service and shows **Redirect HTTP to HTTPS** toggled on for its HTTPS service. A failing load balancer has a plain HTTP service, or none of its HTTPS services has the redirect enabled.
 
         ### Audit via CLI
 
@@ -1481,33 +1535,41 @@ queries:
         hcloud load-balancer describe <lb> -o json
         ```
 
-        In the `services` array, find entries where `protocol` is `http` and check whether `http.redirect_http` is `true`.
+        In the `services` array, verify that no entry has `protocol` set to `http`, and that on a load balancer with HTTPS services at least one of them has `http.redirect_http` set to `true`.
 
-        A passing load balancer returns `"redirect_http": true` for every HTTP service. A failing load balancer returns `"redirect_http": false` or omits the field for an HTTP service.
+        A passing load balancer has no `http` service and returns `"redirect_http": true` on an HTTPS service. A failing load balancer has a service with `protocol` set to `http`, or HTTPS services that all return `"redirect_http": false`.
       remediation:
         - id: console
           desc: |
+            Hetzner exposes the redirect as an option of the HTTPS service, not the HTTP service. When the redirect is enabled, the load balancer answers port 80 itself with a redirect to HTTPS, so a separate plain HTTP service is no longer needed.
+
             1. Navigate to **Load Balancers** and open the affected load balancer.
-            2. Go to **Services** and edit the HTTP service.
-            3. Enable **Redirect HTTP to HTTPS**. Confirm that an HTTPS service and TLS certificate are configured.
+            2. Go to **Services** and delete the plain HTTP service listening on port 80.
+            3. Edit the HTTPS service and enable **Redirect HTTP to HTTPS**. If no HTTPS service exists yet, create one on port 443 with a certificate and enable the redirect on it.
+
+            Plain HTTP requests go unanswered for the short interval between deleting the HTTP service and enabling the redirect.
         - id: cli
           desc: |
+            The redirect option belongs to the HTTPS service. Delete the plain HTTP service on port 80, then enable the redirect on the HTTPS service:
+
             ```bash
+            hcloud load-balancer delete-service <lb> --listen-port 80
             hcloud load-balancer update-service <lb> \
-              --listen-port 80 --http-redirect-http
+              --listen-port 443 --http-redirect-http=true
             ```
         - id: terraform
           desc: |
-            Set `http.redirect_http = true` on every `hcloud_load_balancer_service` whose `protocol = "http"`. Make sure a paired HTTPS service with a certificate also exists:
+            The `redirect_http` option is only supported on services with `protocol = "https"`. Remove any plain HTTP service on port 80 and enable the redirect on the HTTPS service instead:
 
             ```hcl
-            resource "hcloud_load_balancer_service" "http" {
+            resource "hcloud_load_balancer_service" "https" {
               load_balancer_id = hcloud_load_balancer.example.id
-              protocol         = "http"
-              listen_port      = 80
+              protocol         = "https"
+              listen_port      = 443
               destination_port = 80
 
               http {
+                certificates  = [hcloud_managed_certificate.example.id]
                 redirect_http = true
               }
             }
@@ -1519,26 +1581,33 @@ queries:
   - uid: mondoo-hetzner-security-lb-http-redirected-to-https-hetzner
     filters: asset.platform == "hetzner-loadbalancer"
     mql: |
-      hetzner.loadBalancer.services.where(protocol == "http").all(http["redirect_http"] == true)
+      hetzner.loadBalancer.services.none(protocol == "http")
+      hetzner.loadBalancer.services.where(protocol == "https").all(http["redirectHttp"] == true)
   - uid: mondoo-hetzner-security-lb-http-redirected-to-https-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "hcloud_load_balancer_service")
     mql: |
-      terraform.resources("hcloud_load_balancer_service").all(
-        arguments['protocol'] != "http" ||
-        blocks.where(type == "http").any(arguments['redirect_http'] == true)
+      terraform.resources("hcloud_load_balancer_service").all(arguments['protocol'] != "http")
+      terraform.resources("hcloud_load_balancer_service").where(arguments['protocol'] == "https").all(
+        blocks.where(type == "http").all(arguments['redirect_http'] == true)
       )
   - uid: mondoo-hetzner-security-lb-http-redirected-to-https-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "hcloud_load_balancer_service")
     mql: |
       terraform.plan.resourceChanges.where(type == "hcloud_load_balancer_service").all(
-        change.after.protocol != "http" ||
+        change.after.protocol != "http"
+      )
+      terraform.plan.resourceChanges.where(type == "hcloud_load_balancer_service").all(
+        change.after.protocol != "https" ||
         change.after.http.all(_['redirect_http'] == true)
       )
   - uid: mondoo-hetzner-security-lb-http-redirected-to-https-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "hcloud_load_balancer_service")
     mql: |
       terraform.state.resources.where(type == "hcloud_load_balancer_service").all(
-        values.protocol != "http" ||
+        values.protocol != "http"
+      )
+      terraform.state.resources.where(type == "hcloud_load_balancer_service").all(
+        values.protocol != "https" ||
         values.http.all(_['redirect_http'] == true)
       )
 
@@ -1840,16 +1909,23 @@ queries:
       remediation:
         - id: console
           desc: |
-            1. Navigate to **Certificates**.
-            2. Identify the expired certificate. For Hetzner-managed certificates, deletion and re-creation will trigger reissuance through Let's Encrypt; for uploaded certificates, upload a renewed version.
-            3. Update any load balancers referencing the old certificate to use the renewed certificate.
+            1. Navigate to **Certificates** and create a replacement. For managed certificates, create a new managed certificate for the affected domains; for uploaded certificates, upload the renewed certificate and key.
+            2. Navigate to **Load Balancers** and update every HTTPS service that references the expired certificate to use the replacement.
+            3. Delete the expired certificate so it no longer exists in the project.
+
+            Managed certificates normally renew automatically through Let's Encrypt. If one expired, investigate why renewal failed before re-creating it; a common cause is the domain's DNS no longer pointing at the load balancer.
         - id: cli
           desc: |
+            Create a replacement certificate, repoint every load balancer service that uses the expired certificate, then delete the expired certificate:
+
             ```bash
             hcloud certificate create \
               --type managed \
               --name <new-name> \
               --domain <domain>
+            hcloud load-balancer update-service <lb> \
+              --listen-port 443 --http-certificates <new-certificate>
+            hcloud certificate delete <expired-certificate>
             ```
         - id: terraform
           desc: |
@@ -1876,7 +1952,6 @@ queries:
         title: Hetzner Cloud Certificates overview
 
   # No Terraform variants: the `blocked` flag is set by Hetzner's abuse team based on observed traffic; it is not a configurable field on `hcloud_floating_ip` and Terraform carries no signal about it.
-  # No Terraform remediation: the `blocked` flag is set by Hetzner's abuse team based on observed traffic; it is not a configurable field on `hcloud_floating_ip`. The fix is investigation and remediation of the underlying workload, then a support request.
   - uid: mondoo-hetzner-security-floating-ip-not-blocked
     title: Ensure floating IPs are not blocked by Hetzner abuse
     impact: 70
@@ -1938,12 +2013,13 @@ queries:
             1. Identify the server the floating IP is attached to and review recent logs, outbound traffic, and authentication events for signs of compromise.
             2. If the workload is compromised, rebuild the server from a known-good image and rotate any credentials it held.
             3. Contact Hetzner support to discuss the abuse case and request unblocking once the underlying issue is remediated.
+        # No CLI remediation: the `blocked` flag is set and cleared only by Hetzner's abuse team; neither the hcloud CLI nor the API can modify it.
+        # No Terraform remediation: the `blocked` flag is set by Hetzner's abuse team based on observed traffic; it is not a configurable field on `hcloud_floating_ip`. The fix is investigation and remediation of the underlying workload, then a support request.
     refs:
       - url: https://docs.hetzner.com/cloud/floating-ips/overview/
         title: Hetzner Cloud Floating IPs overview
 
   # No Terraform variants: the `blocked` flag is set by Hetzner's abuse team based on observed traffic; it is not a configurable field on `hcloud_primary_ip` and Terraform carries no signal about it.
-  # No Terraform remediation: the `blocked` flag is set by Hetzner's abuse team based on observed traffic; it is not a configurable field on `hcloud_primary_ip`. The fix is investigation and remediation of the underlying workload, then a support request.
   - uid: mondoo-hetzner-security-primary-ip-not-blocked
     title: Ensure primary IPs are not blocked by Hetzner abuse
     impact: 70
@@ -2005,6 +2081,8 @@ queries:
             1. Identify the server the primary IP is assigned to and review recent logs, outbound traffic, and authentication events for signs of compromise.
             2. If the workload is compromised, rebuild the server from a known-good image and rotate any credentials it held.
             3. Contact Hetzner support to discuss the abuse case and request unblocking once the underlying issue is remediated.
+        # No CLI remediation: the `blocked` flag is set and cleared only by Hetzner's abuse team; neither the hcloud CLI nor the API can modify it.
+        # No Terraform remediation: the `blocked` flag is set by Hetzner's abuse team based on observed traffic; it is not a configurable field on `hcloud_primary_ip`. The fix is investigation and remediation of the underlying workload, then a support request.
     refs:
       - url: https://docs.hetzner.com/cloud/primary-ips/overview/
         title: Hetzner Cloud Primary IPs overview
