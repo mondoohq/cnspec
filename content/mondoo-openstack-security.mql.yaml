@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-openstack-security
     name: Mondoo OpenStack Security
-    version: 1.1.1
+    version: 1.1.2
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -147,16 +147,16 @@ queries:
         - id: console
           desc: |
             1. Navigate to **Identity → Application Credentials** in Horizon.
-            2. Delete the offending credential and create a replacement.
-            3. Leave **Unrestricted** unchecked when creating the replacement.
-            4. Rotate any automation that consumed the old credential.
+            2. Create a replacement credential and leave **Unrestricted** unchecked.
+            3. Update every automation consumer to use the replacement credential.
+            4. Delete the unrestricted credential once nothing depends on it.
         - id: cli
           desc: |
             ```bash
-            # Create a new restricted credential (the default), then revoke the old one
+            # Create a restricted replacement first, cut consumers over, then revoke the old credential
             openstack application credential create automation-job \
               --role member --expiration 2026-12-31T00:00:00
-            openstack application credential delete <old-credential-id>
+            openstack application credential delete old-automation-job
             ```
         - id: terraform
           desc: |
@@ -267,16 +267,16 @@ queries:
         - id: console
           desc: |
             1. Navigate to **Identity → Application Credentials** in Horizon.
-            2. Delete any credential without an expiration date.
-            3. Create a replacement with an **Expiration** value that matches your rotation policy.
-            4. Update any automation that consumed the old credential.
+            2. Create a replacement credential with an **Expiration** value that matches your rotation policy.
+            3. Update every automation consumer to use the replacement credential.
+            4. Delete the non-expiring credential once nothing depends on it.
         - id: cli
           desc: |
             ```bash
-            # Re-issue with an explicit expiration
+            # Re-issue with an explicit expiration, cut consumers over, then revoke the old credential
             openstack application credential create automation-job \
               --role member --expiration 2026-12-31T00:00:00
-            openstack application credential delete <old-credential-id>
+            openstack application credential delete old-automation-job
             ```
         - id: terraform
           desc: |
@@ -387,14 +387,17 @@ queries:
           desc: |
             1. Navigate to **Compute → Instances** in Horizon.
             2. The keypair cannot be added to an existing server. Snapshot the workload, then launch a replacement with **Key Pair** set to a managed keypair.
-            3. Delete the original instance.
+            3. Move any floating IPs and attached volumes to the replacement.
+            4. Delete the original instance; the check keeps failing while the keyless server exists.
         - id: cli
           desc: |
             ```bash
             # Boot a replacement instance with a keypair injected at launch
             openstack server create replacement \
-              --image <image> --flavor <flavor> --network <network> \
-              --key-name <keypair-name>
+              --image ubuntu-24.04 --flavor m1.small --network app-net \
+              --key-name ops-key
+            # Move floating IPs and volumes over, confirm access, then remove the keyless server
+            openstack server delete original-server
             ```
         - id: terraform
           desc: |
@@ -510,11 +513,12 @@ queries:
         - id: console
           desc: |
             1. Navigate to **Compute → Instances** in Horizon.
-            2. Open the instance, go to the **Security Groups** tab, and add the security group that matches its role.
+            2. From the instance's action menu, select **Edit Security Groups**.
+            3. Add the security group that matches the instance's role and save.
         - id: cli
           desc: |
             ```bash
-            openstack server add security group <server> <security-group>
+            openstack server add security group web-01 app-sg
             ```
         - id: terraform
           desc: |
@@ -630,19 +634,21 @@ queries:
       remediation:
         - id: console
           desc: |
-            1. Navigate to **Network → Security Groups** in Horizon.
-            2. Open the affected security group and remove the offending ingress rule.
-            3. Re-add the rule with **CIDR** set to a specific trusted range.
+            1. Navigate to **Network → Security Groups** in Horizon and open the affected security group.
+            2. Add a new ingress rule for TCP port 22 with **CIDR** set to a specific trusted range.
+            3. Confirm you can still reach the affected instances from the trusted range, then delete the rule open to `0.0.0.0/0` or `::/0`. Removing the open rule drops live SSH sessions that arrived through it.
         - id: cli
           desc: |
             ```bash
-            openstack security group rule delete <rule-id>
-            openstack security group rule create <security-group> \
-              --proto tcp --dst-port 22 --remote-ip <your-trusted-cidr>
+            # Add the scoped rule first so management access survives the change
+            openstack security group rule create web-sg \
+              --ingress --protocol tcp --dst-port 22 --remote-ip 203.0.113.0/24
+            # Then remove the world-open rule; live sessions through it are dropped
+            openstack security group rule delete 4a4ee176-43e6-4b48-8bcf-5acd1c403fbf
             ```
         - id: terraform
           desc: |
-            Scope inbound SSH `remote_ip_prefix` to a specific trusted CIDR — never `0.0.0.0/0` or `::/0`:
+            Scope inbound SSH `remote_ip_prefix` to a specific trusted CIDR, never `0.0.0.0/0` or `::/0`:
 
             ```hcl
             resource "openstack_networking_secgroup_rule_v2" "ssh" {
@@ -755,19 +761,21 @@ queries:
       remediation:
         - id: console
           desc: |
-            1. Navigate to **Network → Security Groups** in Horizon.
-            2. Open the affected security group and remove the offending ingress rule.
-            3. Re-add the rule with **CIDR** scoped to a specific trusted range.
+            1. Navigate to **Network → Security Groups** in Horizon and open the affected security group.
+            2. Add a new ingress rule for TCP port 3389 with **CIDR** set to a specific trusted range.
+            3. Confirm RDP still works from the trusted range, then delete the rule open to `0.0.0.0/0` or `::/0`. Removing the open rule drops live RDP sessions that arrived through it.
         - id: cli
           desc: |
             ```bash
-            openstack security group rule delete <rule-id>
-            openstack security group rule create <security-group> \
-              --proto tcp --dst-port 3389 --remote-ip <your-trusted-cidr>
+            # Add the scoped rule first so management access survives the change
+            openstack security group rule create windows-sg \
+              --ingress --protocol tcp --dst-port 3389 --remote-ip 203.0.113.0/24
+            # Then remove the world-open rule; live sessions through it are dropped
+            openstack security group rule delete 4a4ee176-43e6-4b48-8bcf-5acd1c403fbf
             ```
         - id: terraform
           desc: |
-            Scope inbound RDP `remote_ip_prefix` to a specific trusted CIDR — never `0.0.0.0/0` or `::/0`:
+            Scope inbound RDP `remote_ip_prefix` to a specific trusted CIDR, never `0.0.0.0/0` or `::/0`:
 
             ```hcl
             resource "openstack_networking_secgroup_rule_v2" "rdp" {
@@ -880,19 +888,21 @@ queries:
       remediation:
         - id: console
           desc: |
-            1. Navigate to **Network → Security Groups** in Horizon.
-            2. Open the affected security group and remove the offending ingress rule.
-            3. Re-add the rule with **CIDR** scoped to a specific trusted range, or replace it with a **Remote Security Group** rule that allows only the application tier's security group.
+            1. Navigate to **Network → Security Groups** in Horizon and open the affected security group.
+            2. Add a replacement ingress rule for the database port with **CIDR** scoped to a specific trusted range, or a **Remote Security Group** rule that allows only the application tier's security group.
+            3. Confirm the application tier can still reach the database, then delete the rule open to `0.0.0.0/0` or `::/0`. Removing the open rule drops connections established through it.
         - id: cli
           desc: |
             ```bash
-            openstack security group rule delete <rule-id>
-            openstack security group rule create <db-security-group> \
-              --proto tcp --dst-port 3306 --remote-group <app-security-group>
+            # Add the scoped rule first so the application tier keeps its database access
+            openstack security group rule create db-sg \
+              --ingress --protocol tcp --dst-port 3306 --remote-group app-sg
+            # Then remove the world-open rule; connections established through it are dropped
+            openstack security group rule delete 4a4ee176-43e6-4b48-8bcf-5acd1c403fbf
             ```
         - id: terraform
           desc: |
-            Constrain database ingress with `remote_group_id` (preferred) or a private `remote_ip_prefix`:
+            Constrain database ingress with `remote_group_id` or a private `remote_ip_prefix`:
 
             ```hcl
             resource "openstack_networking_secgroup_rule_v2" "db_from_app" {
@@ -1033,15 +1043,19 @@ queries:
       remediation:
         - id: console
           desc: |
-            1. Navigate to **Network → Security Groups** in Horizon.
-            2. Remove the wide-open ingress rule.
-            3. Replace it with narrow per-service rules scoped to specific ports and trusted source CIDRs.
+            1. Navigate to **Network → Security Groups** in Horizon and open the affected security group.
+            2. Add narrow per-service ingress rules scoped to the specific ports and source CIDRs the workload needs, including the port you manage the instance over.
+            3. Confirm the services and your management path still work, then delete the allow-all rule. Removing it drops every connection that was admitted through it.
         - id: cli
           desc: |
             ```bash
-            openstack security group rule delete <rule-id>
-            openstack security group rule create <security-group> \
-              --proto tcp --dst-port 443 --remote-ip 0.0.0.0/0
+            # Add the narrow per-service rules first
+            openstack security group rule create web-sg \
+              --ingress --protocol tcp --dst-port 443 --remote-ip 0.0.0.0/0
+            openstack security group rule create web-sg \
+              --ingress --protocol tcp --dst-port 22 --remote-ip 203.0.113.0/24
+            # Then remove the allow-all rule; connections admitted through it are dropped
+            openstack security group rule delete 4a4ee176-43e6-4b48-8bcf-5acd1c403fbf
             ```
         - id: terraform
           desc: |
@@ -1067,7 +1081,8 @@ queries:
     mql: |
       openstack.securityGroups.all(
         rules.where(direction == "ingress").where(remoteIpPrefix == "0.0.0.0/0" || remoteIpPrefix == "::/0").none(
-          portRangeMin == 0 && portRangeMax == 0
+          portRangeMin == 0 && portRangeMax == 0 ||
+          portRangeMin <= 1 && portRangeMax >= 65535
         )
       )
   - uid: mondoo-openstack-security-no-all-ports-open-terraform-hcl
@@ -1161,17 +1176,19 @@ queries:
       remediation:
         - id: console
           desc: |
-            1. Navigate to **Network → Networks** in Horizon, open the network, then the port.
-            2. Re-enable **Port Security**.
-            3. Reattach any security groups the port needs.
+            1. Navigate to **Network → Networks** in Horizon, open the network, then edit the port.
+            2. In the same edit, attach the security groups the port needs and re-enable **Port Security**. A port with port security on and no security group drops all traffic.
+            3. If the workload legitimately sends traffic from additional addresses, for example a VRRP virtual IP, add those addresses as allowed address pairs before saving.
         - id: cli
           desc: |
             ```bash
-            openstack port set --enable-port-security <port-id>
+            # Attach a security group in the same call that re-enables port security;
+            # a port with port security on and no security group drops all traffic
+            openstack port set --security-group app-sg --enable-port-security 9c4ad8a0-2b7e-4d61-b8a4-3f1e5c6d7a8b
             ```
         - id: terraform
           desc: |
-            Either omit `port_security_enabled` on `openstack_networking_port_v2` (the default is `true`) or set it explicitly:
+            Either omit `port_security_enabled` on `openstack_networking_port_v2` (the default is `true`) or set it explicitly, and always pair it with the security groups the port needs:
 
             ```hcl
             resource "openstack_networking_port_v2" "app" {
@@ -1265,18 +1282,23 @@ queries:
       remediation:
         - id: console
           desc: |
-            1. Snapshot the unencrypted volume.
-            2. Create a new volume from the snapshot using a volume type that is configured with an encryption provider (LUKS or a backend-native provider).
-            3. Detach the original volume and attach the encrypted replacement.
+            1. Confirm with your cloud administrator which volume types provide encryption.
+            2. Navigate to **Volumes → Volumes** in Horizon and detach the volume from its server if it is attached.
+            3. From the volume's action menu, select **Change Volume Type**, choose the encrypted type, and set **Migration Policy** to **On Demand**.
+            4. Reattach the volume once the retype completes.
         - id: cli
           desc: |
             ```bash
             # Confirm which volume types are encrypted
             openstack volume type list --long
 
-            # Create a new volume on the encrypted type, then copy data over
-            openstack volume create --size <gb> --type <encrypted-type> encrypted-volume
+            # Detach if needed, then retype the volume onto an encrypted type with data migration
+            openstack server remove volume web-01 data-volume
+            openstack volume set --type encrypted-lvm --migration-policy on-demand data-volume
+            openstack server add volume web-01 data-volume
             ```
+
+            If the backend rejects the retype, create a new volume on the encrypted type, attach both volumes, copy the data at the operating system level, and delete the unencrypted original.
     refs:
       - url: https://docs.openstack.org/cinder/latest/configuration/block-storage/volume-encryption.html
         title: OpenStack Cinder volume encryption
@@ -1601,15 +1623,15 @@ queries:
       remediation:
         - id: console
           desc: |
-            1. Open Horizon's **Object Store → Containers** view.
-            2. Open the affected container's metadata, remove the public read ACL entry, and save.
+            1. Navigate to **Object Store → Containers** in Horizon.
+            2. Select the affected container and clear the **Public Access** checkbox.
         - id: cli
           desc: |
             ```bash
             # Clear the read ACL entirely
-            swift post <container> -r ""
+            swift post backups -r ""
             # Or restrict to the project's authenticated users only
-            swift post <container> -r "<project-id>:*"
+            swift post backups -r "f47ac10b58cc4372a5670e02b2c3d479:*"
             ```
         - id: terraform
           desc: |
@@ -1717,12 +1739,11 @@ queries:
       remediation:
         - id: console
           desc: |
-            1. Navigate to **Network → Load Balancers** in Horizon and open the listener.
-            2. Edit **TLS Versions** so only `TLSv1.2` and `TLSv1.3` are checked.
+            The Horizon load balancer panels expose the TLS cipher string but not the allowed TLS protocol versions; use the CLI to restrict TLS versions.
         - id: cli
           desc: |
             ```bash
-            openstack loadbalancer listener set <listener> \
+            openstack loadbalancer listener set https-listener \
               --tls-version TLSv1.2 --tls-version TLSv1.3
             ```
         - id: terraform
@@ -1832,15 +1853,18 @@ queries:
       remediation:
         - id: console
           desc: |
-            Horizon does not expose trust management; use the CLI to delete and re-create the trust with an expiration.
+            Horizon does not expose trust management; use the CLI to create the replacement trust with an expiration before deleting the old one.
         - id: cli
           desc: |
             ```bash
-            # Trusts are immutable; delete the offending trust and re-create it with an expiration
-            openstack trust delete <trust-id>
-            openstack trust create <trustor-user> <trustee-user> \
-              --project <project> --role <role> \
+            # Trusts are immutable; create the replacement first, then delete the old trust.
+            # Run the create command as the trustor, since Keystone only lets a user
+            # delegate their own roles.
+            openstack trust create alice deploy-bot \
+              --project web-project --role member \
               --impersonate --expiration 2026-12-31T00:00:00
+            # Update consumers to the new trust ID, then remove the non-expiring trust
+            openstack trust delete 9d3b2c1a-5f6e-4d7c-8b9a-0e1f2a3b4c5d
             ```
         # No Terraform remediation: terraform-provider-openstack has no Keystone trust resource (see the note above the check). Trusts are managed only through the CLI/API.
     refs:
@@ -1917,11 +1941,11 @@ queries:
         - id: console
           desc: |
             1. Navigate to **Share → Shares** in Horizon.
-            2. Open the affected share and edit it so **Public** is unchecked.
+            2. Open the affected share's **Edit Share** dialog and clear the **Public** setting.
         - id: cli
           desc: |
             ```bash
-            openstack share set --no-public <share>
+            openstack share set --public false data-share
             ```
         - id: terraform
           desc: |
@@ -2032,17 +2056,20 @@ queries:
         - id: console
           desc: |
             1. Navigate to **Share → Shares** in Horizon and open the share's **Rules** tab.
-            2. Delete the rule whose **Access to** is `0.0.0.0/0` or `::/0`.
-            3. Add a replacement rule scoped to the specific client CIDR that needs the share.
+            2. Add a replacement rule scoped to the specific client CIDR that needs the share, with the access level those clients require.
+            3. Confirm the clients can still reach the share, then delete the rule whose **Access to** is `0.0.0.0/0` or `::/0`. Removing it cuts off any client still relying on it.
         - id: cli
           desc: |
             ```bash
-            openstack share access delete <share> <access-rule-id>
-            openstack share access create <share> ip 203.0.113.0/24 --access-level ro
+            # Grant the scoped rule first so existing clients keep access;
+            # match the access level the clients actually need
+            openstack share access create data-share ip 203.0.113.0/24 --access-level rw
+            # Then remove the world-open rule
+            openstack share access delete data-share 4a4ee176-43e6-4b48-8bcf-5acd1c403fbf
             ```
         - id: terraform
           desc: |
-            Scope `access_to` on `openstack_sharedfilesystem_share_access_v2` to a specific trusted CIDR — never `0.0.0.0/0` or `::/0`:
+            Scope `access_to` on `openstack_sharedfilesystem_share_access_v2` to a specific trusted CIDR, never `0.0.0.0/0` or `::/0`:
 
             ```hcl
             resource "openstack_sharedfilesystem_share_access_v2" "clients" {
@@ -2150,15 +2177,21 @@ queries:
       remediation:
         - id: console
           desc: |
-            Cluster templates are immutable once clusters reference them. In Horizon, open **Container Infra → Cluster Templates**, create a replacement template with **Disable TLS** left unset, and migrate clusters onto it.
+            1. Open **Container Infra → Cluster Templates** in Horizon.
+            2. If no cluster references the template, fix it in place with the CLI, since Horizon does not expose template patching.
+            3. If clusters reference the template, create a replacement template with **Disable TLS** left unset. Existing clusters cannot switch templates: rebuild each cluster from the new template, move its workloads, then delete the old cluster and template.
         - id: cli
           desc: |
             ```bash
-            # Templates are immutable; create a TLS-enabled replacement (tls_disabled defaults to false)
+            # Fix the template in place while no clusters reference it
+            openstack coe cluster template update secure-template replace tls_disabled=false
+
+            # If clusters reference it, create a TLS-enabled replacement
+            # (tls_disabled defaults to false) and rebuild clusters from it
             openstack coe cluster template create secure-template \
-              --image <image> --keypair <keypair> \
-              --external-network <network> --coe kubernetes \
-              --flavor <flavor> --docker-volume-size 10
+              --image fedora-coreos-38 --keypair ops-key \
+              --external-network public --coe kubernetes \
+              --flavor m1.small --docker-volume-size 10
             ```
         - id: terraform
           desc: |
@@ -2269,15 +2302,21 @@ queries:
       remediation:
         - id: console
           desc: |
-            Cluster templates are immutable once clusters reference them. In Horizon, open **Container Infra → Cluster Templates**, create a replacement template with **Insecure Registry** left empty, and migrate clusters onto it.
+            1. Open **Container Infra → Cluster Templates** in Horizon.
+            2. If no cluster references the template, fix it in place with the CLI, since Horizon does not expose template patching.
+            3. If clusters reference the template, create a replacement template with **Insecure Registry** left empty. Existing clusters cannot switch templates: rebuild each cluster from the new template, move its workloads, then delete the old cluster and template.
         - id: cli
           desc: |
             ```bash
-            # Templates are immutable; create a replacement that omits --insecure-registry
+            # Fix the template in place while no clusters reference it
+            openstack coe cluster template update secure-template remove insecure_registry
+
+            # If clusters reference it, create a replacement that omits --insecure-registry
+            # and rebuild clusters from it
             openstack coe cluster template create secure-template \
-              --image <image> --keypair <keypair> \
-              --external-network <network> --coe kubernetes \
-              --flavor <flavor> --docker-volume-size 10
+              --image fedora-coreos-38 --keypair ops-key \
+              --external-network public --coe kubernetes \
+              --flavor m1.small --docker-volume-size 10
             ```
         - id: terraform
           desc: |
@@ -2289,7 +2328,7 @@ queries:
               image               = "fedora-coreos"
               coe                 = "kubernetes"
               external_network_id = openstack_networking_network_v2.public.id
-              # insecure_registry intentionally omitted — pull only from TLS-protected registries
+              # insecure_registry intentionally omitted; pull only from TLS-protected registries
             }
             ```
     refs:
@@ -2377,15 +2416,21 @@ queries:
       remediation:
         - id: console
           desc: |
-            Trove cannot move a running instance off a public network. In Horizon, open **Database → Instances**, launch a replacement instance attached only to a private network, migrate the data, and delete the original.
+            The Horizon database panel does not expose the instance access setting; use the CLI.
         - id: cli
           desc: |
             ```bash
-            # Launch a replacement bound to a private network, then migrate and delete the original
+            # Remove public access in place; Trove releases the public address
+            openstack database instance update db-instance-1 --is-private
+            ```
+
+            If the instance was built directly on an external network rather than made public by Trove, launch a replacement on a private network, migrate the data, and delete the original:
+
+            ```bash
             openstack database instance create db-private \
-              --flavor <flavor> --size 10 \
+              --flavor m1.small --size 10 \
               --datastore mysql --datastore-version 8.0 \
-              --nic net-id=<private-network-id>
+              --nic net-id=6f2c1b3a-7e8d-4a5b-9c0d-1e2f3a4b5c6d
             ```
         # No Terraform remediation: see the note above the check — the public/private posture is a property of the network the instance attaches to, not a setting on the openstack_db_instance_v1 resource itself.
     refs:
