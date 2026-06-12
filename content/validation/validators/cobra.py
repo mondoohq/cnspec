@@ -341,6 +341,14 @@ def parse_cobra_command(
     if not command_path and raw_path_parts:
         command_path = " ".join(raw_path_parts)
 
+    # Collect every --flag in the command, including globals that precede
+    # the subcommand. They are validated against the leaf node's flag
+    # set, which is safe because each leaf's set includes inherited/
+    # persistent flags for all registered CLIs: gh and hcloud list them
+    # in --help ("INHERITED FLAGS" / "Global Flags:"), kubectl and glab
+    # include them in flag completion — and the leaf set is the union of
+    # both sources. Scoping collection to parts after the command path
+    # would silently skip typo'd global flags instead.
     flags = []
     for token in parts:
         if token.startswith("--"):
@@ -368,6 +376,14 @@ def validate_cobra_command(
     # A node with subcommands needs one; the next positional token (if
     # any) was already rejected by the longest-path match, so it's a
     # misspelled subcommand rather than a positional argument.
+    #
+    # This assumes a node with subcommands is a pure command group.
+    # Cobra technically allows a command to be runnable AND have
+    # children (Run set alongside subcommands); none of the registered
+    # CLIs' policy commands use that shape today, but if a future policy
+    # legitimately invokes such a command bare, this will false-positive
+    # with "missing subcommand" — relax this check rather than chase a
+    # phantom parse bug.
     if node["subcommands"]:
         if raw_next_token is not None:
             errors.append(
