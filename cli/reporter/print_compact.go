@@ -38,12 +38,31 @@ type defaultReporter struct {
 	// indicates if the StoreResourcesData MQL feature is enabled
 	isStoreResourcesEnabled bool
 
+	// tracks whether any section of the current asset's body (controls,
+	// queries, checks, risks, vulnerabilities) has already printed content
+	// since the asset header. It is used to emit exactly one blank line
+	// between consecutive non-empty sections, so an asset with no checks
+	// doesn't leave a double gap after its header.
+	assetBodyPrinted bool
+
 	// vv the items below will be automatically filled
 	bundle *policy.PolicyBundleMap
 }
 
 func (r *defaultReporter) out(s string) {
 	_, _ = r.output.Write([]byte(s))
+}
+
+// beginAssetSection separates a new asset body section from the previous one.
+// The asset header (H2) already emits a trailing blank line, so the first
+// section needs no leading separator; every subsequent non-empty section gets
+// exactly one blank line before it. Call this immediately before a section
+// emits its first content.
+func (r *defaultReporter) beginAssetSection() {
+	if r.assetBodyPrinted {
+		r.out(NewLineCharacter)
+	}
+	r.assetBodyPrinted = true
 }
 
 // hasQueryPacks returns true if the bundle contains any
@@ -307,6 +326,7 @@ func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 		}
 
 		r.out(r.Printer.H2("Asset: (" + getPlatformNameForAsset(asset) + ") " + target))
+		r.assetBodyPrinted = false
 
 		errorMsg, ok := r.data.Errors[assetMrn]
 		if ok {
@@ -342,7 +362,6 @@ func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 		if r.Conf.printRisks {
 			r.printAssetRisks(resolved, report, assetMrn, asset)
 		}
-		r.out(NewLineCharacter)
 
 		if r.Conf.printVulnerabilities {
 			// TODO: we should re-use the report results
@@ -380,6 +399,7 @@ func (r *defaultReporter) printAssetControls(resolved *policy.ResolvedPolicy, re
 		return scores[i].QrId < scores[j].QrId
 	})
 
+	r.beginAssetSection()
 	r.out("Compliance controls:" + NewLineCharacter)
 
 	for i := range scores {
@@ -393,8 +413,6 @@ func (r *defaultReporter) printAssetControls(resolved *policy.ResolvedPolicy, re
 
 		r.printControl(score, control, resolved, report)
 	}
-
-	r.out(NewLineCharacter)
 }
 
 func (r *defaultReporter) printControl(score *policy.Score, control *policy.Control, resolved *policy.ResolvedPolicy, report *policy.Report) {
@@ -482,9 +500,9 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 		})
 
 		if len(dataQueriesOutput) > 0 {
+			r.beginAssetSection()
 			r.out("Data queries:" + NewLineCharacter)
 			r.out(dataQueriesOutput)
-			r.out(NewLineCharacter)
 		}
 	}
 
@@ -609,25 +627,21 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 			return a > b
 		})
 
-		prevPrinted := false
 		if len(sortedPassed) != 0 {
+			r.beginAssetSection()
 			r.out("Passing:" + NewLineCharacter)
 			for _, mrn := range sortedPassed {
 				r.printCheck(foundChecks[mrn], matchedByMrn[mrn], resolved, report, results, false)
 			}
-			prevPrinted = true
 		}
 
 		if len(sortedWarnings) != 0 {
-			if prevPrinted {
-				r.out(NewLineCharacter)
-			}
+			r.beginAssetSection()
 			// FIXME v12: rename to risk threshold
 			r.out("Warnings (below risk threshold):" + NewLineCharacter)
 			for _, mrn := range sortedWarnings {
 				r.printCheck(foundChecks[mrn], matchedByMrn[mrn], resolved, report, results, false)
 			}
-			prevPrinted = true
 		}
 
 		times := []int{}
@@ -638,9 +652,7 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 		}
 		sort.Ints(times)
 		for i := len(times) - 1; i >= 0; i-- {
-			if prevPrinted {
-				r.out(NewLineCharacter)
-			}
+			r.beginAssetSection()
 
 			unixTime := times[i]
 			deadline := time.Unix(int64(unixTime), 0)
@@ -668,14 +680,10 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 				score.Rating = ps.Rating()
 				r.printCheck(score, matchedByMrn[mrn], resolved, report, results, false)
 			}
-
-			prevPrinted = true
 		}
 
 		if len(sortedExceptions) > 0 {
-			if prevPrinted {
-				r.out(NewLineCharacter)
-			}
+			r.beginAssetSection()
 
 			sort.Slice(sortedExceptions, func(i, j int) bool {
 				return matchedByMrn[sortedExceptions[i]].Title < matchedByMrn[sortedExceptions[j]].Title
@@ -685,13 +693,10 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 			for _, mrn := range sortedExceptions {
 				r.printCheck(foundChecks[mrn], matchedByMrn[mrn], resolved, report, results, true)
 			}
-			prevPrinted = true
 		}
 
 		if len(sortedFailed) != 0 {
-			if prevPrinted {
-				r.out(NewLineCharacter)
-			}
+			r.beginAssetSection()
 			if r.RiskThreshold != DEFAULT_RISK_THRESHOLD {
 				r.out("Failures (above risk threshold):" + NewLineCharacter)
 			} else {
@@ -753,7 +758,8 @@ func (r *defaultReporter) printAssetRisks(resolved *policy.ResolvedPolicy, repor
 	}
 	out := res.String()
 
-	r.out(NewLineCharacter + "Risks / Preventive Controls:" + NewLineCharacter)
+	r.beginAssetSection()
+	r.out("Risks / Preventive Controls:" + NewLineCharacter)
 	if out != "" {
 		r.out(out)
 	} else {
@@ -894,6 +900,7 @@ func (r *defaultReporter) printVulns(report *policy.Report, assetMrn string) {
 	if vulnReport == nil {
 		return
 	}
+	r.beginAssetSection()
 	r.out(print.Primary("Vulnerabilities:" + NewLineCharacter))
 
 	score := report.Scores[advisoryPolicyMrn]
