@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-edr-policy
     name: Mondoo Endpoint Detection and Response (EDR)
-    version: 1.6.0
+    version: 1.6.1
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -103,7 +103,8 @@ queries:
 
             1. Download the agent installer package for the endpoint from your EDR vendor's management console.
             2. Run the installer on the endpoint and complete the guided installation.
-            3. Confirm the endpoint appears as enrolled in the vendor console.
+            3. On macOS, approve the vendor's system extension and full disk access prompts in System Settings > Privacy & Security.
+            4. Confirm the endpoint appears as enrolled in the vendor console.
         - id: console
           desc: |-
             To deploy an EDR agent from the vendor management console:
@@ -113,13 +114,27 @@ queries:
             3. Push the package to the endpoint, or distribute the installer through your software-deployment tooling, and verify enrollment in the device inventory.
         - id: cli
           desc: |-
-            To install an EDR agent from the command line, run the vendor's installer with the appropriate package manager:
+            To install an EDR agent from the command line, run the vendor's installer for the endpoint's platform. CrowdStrike Falcon examples:
+
+            On Linux:
 
             ```bash
-            # Linux example for CrowdStrike Falcon
-            sudo dnf install -y falcon-sensor.rpm
-            sudo /opt/CrowdStrike/falconctl -s --cid=<your-cid>
+            sudo dnf install -y ./falcon-sensor.rpm
+            sudo /opt/CrowdStrike/falconctl -s --cid="${FALCON_CID}"
             sudo systemctl enable --now falcon-sensor
+            ```
+
+            On macOS:
+
+            ```bash
+            sudo installer -pkg /tmp/FalconSensorMacOS.pkg -target /
+            sudo /Applications/Falcon.app/Contents/Resources/falconctl license "${FALCON_CID}"
+            ```
+
+            On Windows:
+
+            ```powershell
+            Start-Process -FilePath .\WindowsSensor.exe -ArgumentList '/install', '/quiet', '/norestart', 'CID=ABCDEF1234567890ABCDEF1234567890-12' -Wait
             ```
         - id: ansible
           desc: |-
@@ -147,6 +162,7 @@ queries:
             sudo dnf install -y /tmp/falcon-sensor.rpm
             sudo /opt/CrowdStrike/falconctl -s --cid="${FALCON_CID}"
             sudo systemctl enable --now falcon-sensor
+            sudo systemctl is-active falcon-sensor
             ```
     refs:
       - url: https://www.nist.gov/publications/guide-endpoint-detection-and-response
@@ -158,7 +174,7 @@ queries:
       package('SentinelOne Extensions').installed ||
       package('ESET Endpoint Security').installed ||
       file('/Library/Ossec').exists ||
-      ['Cortex XDR', 'Cortex XDR Agent'].all(package(_).installed) ||
+      ['Cortex XDR', 'Cortex XDR Agent'].any(package(_).installed) ||
       file('/Library/Application Support/Malwarebytes').exists
   - uid: mondoo-edr-policy-ensure-edr-agent-is-installed-linux
     filters: asset.family.contains('linux')
@@ -166,13 +182,14 @@ queries:
       package('falcon-sensor').installed ||
       ['SentinelAgent', 'sentinelagent'].any(package(_).installed) ||
       file('/opt/eset/RemoteAdministrator/Agent').exists ||
-      ['Cortex XDR', 'Cortex XDR Agent','cortex-agent'].any(package(_).installed)
+      ['Cortex XDR', 'Cortex XDR Agent','cortex-agent'].any(package(_).installed) ||
+      package('wazuh-agent').installed
   - uid: mondoo-edr-policy-ensure-edr-agent-is-installed-windows
     filters: asset.family.contains('windows')
     mql: |
       package('CrowdStrike Sensor Platform').installed ||
       package('Sentinel Agent').installed ||
-      ['ESET Endpoint Security', 'ESET Server Security'].one(package(_).installed) ||
+      ['ESET Endpoint Security', 'ESET Server Security'].any(package(_).installed) ||
       service('WinDefend').installed ||
       package('Wazuh Agent').installed ||
       ['Sophos Endpoint Defense', 'Sophos Endpoint Agent'].all(package(_).installed) ||
@@ -293,7 +310,7 @@ queries:
 
             1. Open the Services console on Windows, or System Settings on macOS.
             2. Locate the EDR product's service or system extension.
-            3. Start the service and set it to launch automatically, then approve any required system extension prompt.
+            3. Start the service and set it to launch automatically, then approve any required system extension prompt under Privacy & Security.
         - id: console
           desc: |-
             To restore agent health from the vendor management console:
@@ -305,21 +322,42 @@ queries:
           desc: |-
             To start and enable the EDR agent service from the command line:
 
+            On Linux (CrowdStrike Falcon example):
+
             ```bash
-            # Linux example for CrowdStrike Falcon
             sudo systemctl enable --now falcon-sensor
-            sudo systemctl status falcon-sensor
+            systemctl is-active falcon-sensor
+            ```
+
+            On macOS (Wazuh example; system-extension products such as CrowdStrike Falcon and SentinelOne must instead be approved in System Settings > Privacy & Security):
+
+            ```bash
+            sudo launchctl bootstrap system /Library/LaunchDaemons/com.wazuh.agent.plist
+            sudo launchctl print system/com.wazuh.agent
+            ```
+
+            On Windows (CrowdStrike Falcon example):
+
+            ```powershell
+            Set-Service -Name CSFalconService -StartupType Automatic
+            Start-Service -Name CSFalconService
             ```
         - id: ansible
           desc: |-
             To ensure the EDR agent service is running with Ansible:
 
             ```yaml
-            - name: Ensure the EDR agent service is running and enabled
+            - name: Ensure the EDR agent service is running and enabled (Linux)
               ansible.builtin.service:
                 name: falcon-sensor
                 state: started
                 enabled: true
+
+            - name: Ensure the EDR agent service is running and enabled (Windows)
+              ansible.windows.win_service:
+                name: CSFalconService
+                start_mode: auto
+                state: started
             ```
         - id: script
           desc: |-
@@ -336,27 +374,27 @@ queries:
         title: NIST Guide to EDR
   - uid: mondoo-edr-policy-ensure-crowdstrike-agent-is-running-macos
     filters: |
-      asset.platform == 'macos'
+      asset.platform == 'macos' &&
       package('Falcon').installed
     mql: |
       macos.systemExtensions.where(identifier == "com.crowdstrike.falcon.Agent").any(enabled == true && active == true && state == "activated_enabled")
   - uid: mondoo-edr-policy-ensure-crowdstrike-agent-is-running-linux
     filters: |
-      asset.family.contains('linux')
+      asset.family.contains('linux') &&
       package('falcon-sensor').installed
     mql: |
       service('falcon-sensor').running
       service('falcon-sensor').enabled
   - uid: mondoo-edr-policy-ensure-crowdstrike-agent-is-running-windows
     filters: |
-      asset.family.contains('windows')
+      asset.family.contains('windows') &&
       package('CrowdStrike Sensor Platform').installed
     mql: |
       service('CSFalconService').running
       service('CSFalconService').enabled
   - uid: mondoo-edr-policy-ensure-sentinelone-agent-is-running-macos
     filters: |
-      asset.platform == 'macos'
+      asset.platform == 'macos' &&
       package('SentinelOne Extensions').installed
     mql: |
       service('com.sentinelone.sentineld-helper').running
@@ -377,22 +415,21 @@ queries:
       service('sentinelone').enabled
   - uid: mondoo-edr-policy-ensure-sentinelone-agent-is-running-windows
     filters: |
-      asset.family.contains('windows')
+      asset.family.contains('windows') &&
       package('Sentinel Agent').installed
     mql: |
       services.where(name == /SentinelAgent/).any(running == true)
       services.where(name == /SentinelAgent/).any(enabled == true)
   - uid: mondoo-edr-policy-ensure-eset-agent-is-running-macos
     filters: |
-      asset.platform == 'macos'
+      asset.platform == 'macos' &&
       package('ESET Endpoint Security').installed
     mql: |
-      services.where(name == /com\.eset\.endpoint/).any(running == true)
-      services.where(name == 'com.eset.enterpriseinspector.eiagent').any(enabled == true)
-      services.where(name == 'com.eset.remoteadministrator.agent').any(enabled == true)
+      // The launchd provider reports enabled=true for every loaded label, so only running is meaningful on macOS
+      services.where(name == /com\.eset\./).any(running == true)
   - uid: mondoo-edr-policy-ensure-eset-agent-is-running-linux
     filters: |
-      asset.family.contains('linux')
+      asset.family.contains('linux') &&
       file('/opt/eset/RemoteAdministrator/Agent').exists
     mql: |
       service('eraagent').running
@@ -400,41 +437,42 @@ queries:
   - uid: mondoo-edr-policy-ensure-eset-agent-is-running-windows
     filters: |
       asset.family.contains('windows') &&
-      ['ESET Endpoint Security', 'ESET Server Security'].one(package(_).installed)
+      ['ESET Endpoint Security', 'ESET Server Security'].any(package(_).installed)
     mql: |
-      service('EraAgentSvc').running
-      service('EraAgentSvc').enabled
+      service('ekrn').running
+      service('ekrn').enabled
   - uid: mondoo-edr-policy-ensure-defender-agent-is-running-and-updated-windows
     # Defender is often installed passively alongside third-party EDR.
     # Keep this exclusion list aligned with the supported Windows EDR variants.
     filters: |
-      asset.family.contains('windows')
-      service('WinDefend').installed
-      packages.where(name == 'CrowdStrike Sensor Platform').length == 0
-      packages.where(name == 'Sentinel Agent').length == 0
-      packages.where(name == 'ESET Endpoint Security').length == 0
-      packages.where(name == 'ESET Server Security').length == 0
-      packages.where(name == 'Wazuh Agent').length == 0
-      packages.where(name == 'Sophos Endpoint Defense').length == 0
-      packages.where(name == 'Sophos Endpoint Agent').length == 0
+      asset.family.contains('windows') &&
+      service('WinDefend').installed &&
+      packages.where(name == 'CrowdStrike Sensor Platform').length == 0 &&
+      packages.where(name == 'Sentinel Agent').length == 0 &&
+      packages.where(name == 'ESET Endpoint Security').length == 0 &&
+      packages.where(name == 'ESET Server Security').length == 0 &&
+      packages.where(name == 'Wazuh Agent').length == 0 &&
+      packages.where(name == 'Sophos Endpoint Defense').length == 0 &&
+      packages.where(name == 'Sophos Endpoint Agent').length == 0 &&
       # Cortex XDR package names vary across supported Windows releases.
-      packages.where(name == /Cortex XDR/i).length == 0
-      packages.where(name == 'WatchGuard EPDR').length == 0
+      packages.where(name == /Cortex XDR/i).length == 0 &&
+      packages.where(name == 'WatchGuard EPDR').length == 0 &&
       packages.where(name == 'Malwarebytes Endpoint Agent').length == 0
     mql: |
       service('WinDefend').running
       service('WinDefend').enabled
-      parse.json(content: powershell("Get-MpComputerStatus | Select-Object -Property AntivirusSignatureAge | ConvertTo-JSON").stdout).params.AntivirusSignatureAge == 0
+      // AntivirusSignatureAge is measured in days; age 1 is normal before the first signature update of the day
+      parse.json(content: powershell("Get-MpComputerStatus | Select-Object -Property AntivirusSignatureAge | ConvertTo-JSON").stdout).params.AntivirusSignatureAge <= 1
   - uid: mondoo-edr-policy-ensure-wazuh-agent-is-running-macos
     filters: |
-      asset.platform == "macos"
+      asset.platform == "macos" &&
       file('/Library/Ossec').exists
     mql: |
-      service('wazuh-agentd').running
-      service('wazuh-agentd').enabled
+      // The launchd provider reports enabled=true for every loaded label, so only running is meaningful on macOS
+      service('com.wazuh.agent').running
   - uid: mondoo-edr-policy-ensure-wazuh-agent-is-running-windows
     filters: |
-      asset.platform == "windows"
+      asset.platform == "windows" &&
       package('Wazuh Agent').installed
     mql: |
       service('WazuhSvc').running
@@ -451,7 +489,7 @@ queries:
   - uid: mondoo-edr-policy-ensure-cortex-xdr-agent-is-running-macos
     filters: |
       asset.platform == 'macos' &&
-      ['Cortex XDR', 'Cortex XDR Agent'].all(package(_).installed)
+      ['Cortex XDR', 'Cortex XDR Agent'].any(package(_).installed)
     mql: |
       service('com.paloaltonetworks.cortex.agent').running
       service('com.paloaltonetworks.cortex.agent').enabled
@@ -461,6 +499,7 @@ queries:
       ['Cortex XDR', 'Cortex XDR Agent','cortex-agent'].any(package(_).installed)
     mql: |
       service('traps_pmd').running
+      service('traps_pmd').enabled
   - uid: mondoo-edr-policy-ensure-cortex-xdr-agent-is-running-windows
     filters: |
       asset.family.contains('windows') &&
@@ -474,15 +513,16 @@ queries:
       package('WatchGuard EPDR').installed
     mql: |
       service('PandaAetherAgent').running
+      service('PandaAetherAgent').enabled
   - uid: mondoo-edr-policy-ensure-malwarebytes-agent-is-running-macos
     filters: |
-      asset.platform == 'macos'
+      asset.platform == 'macos' &&
       file('/Library/Application Support/Malwarebytes').exists
     mql: |
       processes.where(executable == /Malwarebytes/).any(state != "zombie")
   - uid: mondoo-edr-policy-ensure-malwarebytes-agent-is-running-windows
     filters: |
-      asset.family.contains('windows')
+      asset.family.contains('windows') &&
       package('Malwarebytes Endpoint Agent').installed
     mql: |
       service('MBEndpointAgent').running
