@@ -23,7 +23,7 @@ func init() {
 	vulnCmd.Flags().StringP("output", "o", "full", "Set the output format: "+reporter.AllFormats())
 	vulnCmd.Flags().String("platform-id", "", "Select a specific target asset by providing its platform ID")
 
-	// we need ths for config parsing but it should not be exposed to the user
+	// we need this for config parsing but it should not be exposed to the user
 	vulnCmd.Flags().String("asset-name", "", "Override the asset name")
 	vulnCmd.Flags().Lookup("asset-name").Hidden = true
 

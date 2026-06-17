@@ -168,7 +168,7 @@ func New(runtime llx.Runtime) *Executor {
 		bundleErrors:  &llx.DictGroupTracker{},
 		waitGroup:     internal.NewWaitGroup(),
 	}
-	res.DecomissionAndReset()
+	res.DecommissionAndReset()
 
 	return res
 }
@@ -496,9 +496,9 @@ func (e *Executor) RemoveCode(codeID string, query string) {
 	}
 }
 
-// DecomissionAndReset this executor. Typically used when you are done but
+// DecommissionAndReset this executor. Typically used when you are done but
 // can also be used to reset the executor on timeouts
-func (e *Executor) DecomissionAndReset() {
+func (e *Executor) DecommissionAndReset() {
 	e.watchers = &watcherMap{}
 	e.ScoreResults = &ScoreResults{}
 	e.Results = &RawResults{}
