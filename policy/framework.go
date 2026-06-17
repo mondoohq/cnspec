@@ -303,6 +303,15 @@ func (f *Framework) updateGraphChecksums(
 			AddUint(uint64(dep.Action))
 	}
 
+	// The graph checksum is an order-sensitive rolling hash, so framework maps
+	// must be folded in a deterministic order — exactly like Dependencies are
+	// sorted above. The maps are loaded without an explicit ORDER BY, so their
+	// slice order is not stable across reads; folding them unsorted makes
+	// graph_content_checksum non-deterministic for a framework with >=2 maps.
+	sort.Slice(f.FrameworkMaps, func(i, j int) bool {
+		return f.FrameworkMaps[i].Mrn < f.FrameworkMaps[j].Mrn
+	})
+
 	for _, fm := range f.FrameworkMaps {
 		if fm.LocalContentChecksum == "" || fm.LocalExecutionChecksum == "" {
 			fm.UpdateChecksums()

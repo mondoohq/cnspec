@@ -81,3 +81,34 @@ func requireComesAfter(t *testing.T, sorted []string, a, b string) {
 		t.Errorf("Expected %s to come after %s", a, b)
 	}
 }
+
+// A framework's graph checksums are an order-sensitive rolling hash over its
+// framework maps. The maps are loaded without a stable ORDER BY, so the
+// checksum must not depend on the order they happen to arrive in — otherwise
+// the same framework yields different graph_content_checksum values across
+// reads, which makes the PolicyBundle rebuild persist CAS never converge.
+func TestFrameworkGraphChecksum_StableAcrossFrameworkMapOrder(t *testing.T) {
+	ctx := context.Background()
+
+	mk := func(maps []*FrameworkMap) *Framework {
+		return &Framework{
+			Mrn:                    "//framework.api.mondoo.app/frameworks/test",
+			LocalContentChecksum:   "local-content",
+			LocalExecutionChecksum: "local-exec",
+			FrameworkMaps:          maps,
+		}
+	}
+	a := &FrameworkMap{Mrn: "//fm/a", LocalContentChecksum: "ca", LocalExecutionChecksum: "ea"}
+	b := &FrameworkMap{Mrn: "//fm/b", LocalContentChecksum: "cb", LocalExecutionChecksum: "eb"}
+
+	f1 := mk([]*FrameworkMap{a, b})
+	f2 := mk([]*FrameworkMap{b, a}) // same maps, reversed load order
+
+	require.NoError(t, f1.UpdateChecksums(ctx, nil, nil, nil))
+	require.NoError(t, f2.UpdateChecksums(ctx, nil, nil, nil))
+
+	assert.Equal(t, f1.GraphContentChecksum, f2.GraphContentChecksum,
+		"graph_content_checksum must not depend on FrameworkMap load order")
+	assert.Equal(t, f1.GraphExecutionChecksum, f2.GraphExecutionChecksum,
+		"graph_execution_checksum must not depend on FrameworkMap load order")
+}
