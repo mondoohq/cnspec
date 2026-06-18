@@ -1269,13 +1269,22 @@ func (s *localAssetScanner) getReport(resolvedPolicy *policy.ResolvedPolicy) (*p
 
 	// TODO: we do not needs this anymore since we receive updates already
 	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("client> send all results")
-	_, err := policy.WaitUntilDone(resolver, s.job.Asset.Mrn, s.job.Asset.Mrn, 1*time.Second)
+	done, err := policy.WaitUntilDone(resolver, s.job.Asset.Mrn, s.job.Asset.Mrn, 1*time.Second)
 	// handle error
 	if err != nil {
 		return &policy.Report{
 			EntityMrn:  s.job.Asset.Mrn,
 			ScoringMrn: s.job.Asset.Mrn,
 		}, err
+	}
+	// If the asset score has not reached full completion, individual check
+	// scores may still be in flight (the buffered collector flushes on an
+	// interval). Generating the report now can silently drop those late
+	// scores from the output, so surface it rather than failing quietly.
+	if !done {
+		log.Warn().
+			Str("asset", s.job.Asset.Mrn).
+			Msg("client> report generated before all scores reported completion; some check scores may be missing from the report")
 	}
 
 	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("generate report")
