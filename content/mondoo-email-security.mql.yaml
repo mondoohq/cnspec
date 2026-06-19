@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-email-security
     name: Mondoo Email Security
-    version: 1.2.1
+    version: 1.2.2
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -120,10 +120,10 @@ queries:
           3.  Ensure each PTR record resolves to a valid FQDN like mail.lunalectric.com.
           4.  Confirm that the forward DNS for mail.lunalectric.com also resolves back to 123.123.123.123 to establish a valid forward-confirmed reverse DNS (FCrDNS) match.
 
-        You can verify the rDNS setup using tools like dig or nslookup:
+        You can verify the rDNS setup with `dig -x`, which queries the PTR record directly (the canonical way to look up reverse DNS):
 
         ```bash
-        nslookup 123.123.123.123
+        dig -x 123.123.123.123 +short
         ```
 
         A properly configured setup will show:
@@ -289,11 +289,13 @@ queries:
 
         If exactly one TXT record starting with `v=spf1` is returned, the check passes. If no such record is returned, the check fails.
       remediation: |
-        Add a TXT record to your DNS zone file with the following format:
+        Add a single TXT record to your DNS zone file listing every server allowed to send mail for the domain, ending with an `all` mechanism that tells receivers how to treat everyone else:
 
         ```dns
-        <domain> IN TXT "v=spf1 include:_spf.google.com ~all"
+        <domain> IN TXT "v=spf1 include:_spf.google.com -all"
         ```
+
+        Replace `include:_spf.google.com` with the include/`ip4`/`ip6`/`a`/`mx` mechanisms for your own senders. The trailing qualifier decides the outcome for unlisted servers: `-all` (hard fail) tells receivers to reject them and is the recommended end state, while `~all` (soft fail) only marks them suspicious. Roll out with `~all` first, confirm from your DMARC aggregate reports that all legitimate senders pass, then tighten to `-all`.
 
         You can verify that the SPF record was added correctly using the following command:
 
@@ -392,9 +394,9 @@ queries:
 
         If the SPF record is 255 characters or fewer, the check passes. If it exceeds 255 characters, the check fails.
       remediation: |
-        Remove some of the entries from your SPF record.
+        SPF records have two limits to respect: the 255-character limit on a single DNS string this check measures, and a separate hard limit of 10 DNS lookups (each `include`, `a`, `mx`, `ptr`, and `exists` mechanism counts) that breaks SPF evaluation when exceeded. Don't just delete entries — that silently stops authorizing legitimate senders. Instead, consolidate: remove `include:` mechanisms for services you no longer use, merge providers where possible, and "flatten" includes (replace an `include:` with the `ip4:`/`ip6:` addresses it resolves to) to cut both the length and the lookup count.
 
-        You can verify that the SPF record using the following command:
+        You can verify the SPF record using the following command:
 
         ```bash
         dig +short TXT lunalectric.com
@@ -658,13 +660,13 @@ queries:
         Example output:
 
         ```text
-        _dmarc.lunalectric.com.  300 IN TXT "v=DMARC1; p=reject; pct=100; rua=mailto:lunalectric.com; ruf=mailto:lunalectric.com; fo=1;"
+        _dmarc.lunalectric.com.  300 IN TXT "v=DMARC1; p=reject; pct=100; rua=mailto:dmarc-aggregate@lunalectric.com; ruf=mailto:dmarc-forensic@lunalectric.com; fo=1;"
         ```
       remediation: |
         Add a TXT record for the `_dmarc` subdomain to your DNS zone file with the following format:
 
         ```dns
-        _dmarc.<domain> IN TXT "v=DMARC1; p=reject; pct=100; rua=mailto:lunalectric.com; ruf=mailto:lunalectric.com; fo=1;"
+        _dmarc.<domain> IN TXT "v=DMARC1; p=reject; pct=100; rua=mailto:dmarc-aggregate@lunalectric.com; ruf=mailto:dmarc-forensic@lunalectric.com; fo=1;"
         ```
 
         You can verify that the DMARC record was added correctly using the following command:
@@ -717,13 +719,13 @@ queries:
         Example output:
 
         ```text
-        _dmarc.lunalectric.com.  300 IN TXT "v=DMARC1; p=reject; pct=100; rua=mailto:lunalectric.com; ruf=mailto:lunalectric.com; fo=1;"
+        _dmarc.lunalectric.com.  300 IN TXT "v=DMARC1; p=reject; pct=100; rua=mailto:dmarc-aggregate@lunalectric.com; ruf=mailto:dmarc-forensic@lunalectric.com; fo=1;"
         ```
       remediation: |
         Add a TXT record to your DNS zone file with the following format:
 
         ```dns
-        <domain> IN TXT "v=DMARC1; p=reject; pct=100; rua=mailto:lunalectric.com; ruf=mailto:lunalectric.com; fo=1;"
+        _dmarc.<domain> IN TXT "v=DMARC1; p=reject; pct=100; rua=mailto:dmarc-aggregate@lunalectric.com; ruf=mailto:dmarc-forensic@lunalectric.com; fo=1;"
         ```
 
         You can verify that the DMARC record was added correctly using the following command:
@@ -777,10 +779,12 @@ queries:
 
         If the policy is set to `p=quarantine` or `p=reject`, the check passes. If the policy is `p=none` or absent, the check fails.
       remediation: |
-        Add a TXT record to your DNS zone file with the following format:
+        Set the `p=` policy tag to `quarantine` or `reject` in your `_dmarc` TXT record. The policy tells receivers what to do with mail that fails authentication: `quarantine` sends it to spam, `reject` blocks it outright.
+
+        **Roll this out gradually.** Switching straight to `p=reject` before every legitimate sender passes SPF/DKIM will silently block real mail (newsletters, ticketing systems, and third-party senders are common casualties). Start at `p=none` with a `rua` reporting address, watch the aggregate reports until all your senders authenticate cleanly, move to `p=quarantine`, then finally to `p=reject`.
 
         ```dns
-        <domain> IN TXT "v=DMARC1; p=reject; pct=100; rua=mailto:lunalectric.com; ruf=mailto:lunalectric.com; fo=1;"
+        _dmarc.<domain> IN TXT "v=DMARC1; p=reject; pct=100; rua=mailto:dmarc-aggregate@lunalectric.com; ruf=mailto:dmarc-forensic@lunalectric.com; fo=1;"
         ```
 
         You can verify that the DMARC record was added correctly using the following command:
@@ -835,7 +839,7 @@ queries:
         Add a TXT record to your DNS zone file with the following format:
 
         ```dns
-        <domain> IN TXT "v=DMARC1; p=reject; pct=100; rua=mailto:lunalectric.com; ruf=mailto:lunalectric.com; fo=1;"
+        _dmarc.<domain> IN TXT "v=DMARC1; p=reject; pct=100; rua=mailto:dmarc-aggregate@lunalectric.com; ruf=mailto:dmarc-forensic@lunalectric.com; fo=1;"
         ```
 
         You can verify that the DMARC record was added correctly using the following command:
@@ -890,7 +894,7 @@ queries:
         Add a TXT record to your DNS zone file with the following format:
 
         ```dns
-        <domain> IN TXT "v=DMARC1; p=reject; pct=100; rua=mailto:lunalectric.com; ruf=mailto:lunalectric.com; fo=1;"
+        _dmarc.<domain> IN TXT "v=DMARC1; p=reject; pct=100; rua=mailto:dmarc-aggregate@lunalectric.com; ruf=mailto:dmarc-forensic@lunalectric.com; fo=1;"
         ```
 
         You can verify that the DMARC record was added correctly using the following command:
@@ -957,10 +961,12 @@ queries:
 
         If the record returns a DKIM key containing `p=` (the public key) and `k=rsa`, the check passes. If no record is returned or the key material is missing, the check fails.
       remediation: |
-        Add a TXT record to your DNS zone file with the following format:
+        DKIM keys are generated by your mail provider (Google Workspace, Microsoft 365, Mailjet, etc.), not hand-authored — enable DKIM in the provider's admin console and it gives you the exact TXT record to publish. The record names a key type (`k=rsa`) and the base64-encoded public key (`p=`); the matching private key stays with the provider and signs your outgoing mail. Use a 2048-bit key where the provider offers it.
+
+        Publish the TXT record the provider gives you in your DNS zone file. It looks like this (the `p=` value is a long base64 string, truncated here):
 
         ```dns
-        <selector>._domainkey.<domain> IN TXT "v=DKIM1; p=76E629F05F9EF6658533333F5ADE69A240657AB2FC3"
+        <selector>._domainkey.<domain> IN TXT "v=DKIM1; k=rsa; p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDExampleBase64PublicKeyMaterialThatYourProviderGeneratesGoesHere...IDAQAB"
         ```
 
         You can verify that the DKIM record was added correctly using the following command:
