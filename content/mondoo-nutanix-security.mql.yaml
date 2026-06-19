@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-nutanix-security
     name: Mondoo Nutanix Security
-    version: 1.0.2
+    version: 1.0.3
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -158,15 +158,8 @@ queries:
             1. Open Settings, then Data-at-Rest Encryption.
             2. Click Edit Configuration and select the key management option, either the cluster's local key manager or an external key management server with the required certificates.
             3. Choose the encryption scope, click Enable Encryption, and confirm.
-        - id: cli
-          desc: |
-            Enabling encryption is performed in Prism. To confirm the resulting status using the CLI, run on a Controller VM:
 
-            ```bash
-            ncli data-at-rest-encryption get-status
-            ```
-
-            A status of enabled with the expected scope confirms the change.
+            Enabling encryption is performed in Prism; there is no CLI command to enable it. To confirm the resulting status afterward, run `ncli data-at-rest-encryption get-status` on a Controller VM. A status of enabled with the expected scope confirms the change.
 
   - uid: mondoo-nutanix-security-cluster-encryption-in-transit-enabled
     title: Ensure encryption-in-transit is enabled on clusters
@@ -228,16 +221,13 @@ queries:
             1. Log in to Prism Element for the cluster.
             2. Open Settings, then Data-in-Transit Encryption.
             3. Select Enable Encryption and save, then allow the cluster to apply the setting to all nodes.
-        - id: api
-          desc: |
-            To confirm the setting using the clustermgmt v4 API, query the cluster configuration and review `encryptionInTransitStatus`:
+
+            To confirm the setting afterward using the clustermgmt v4 API, query the cluster configuration and review `encryptionInTransitStatus`; a value of ENABLED confirms the change:
 
             ```bash
             curl -fsS -u admin \
               "https://prism-central.example.com:9440/api/clustermgmt/v4.0/config/clusters"
             ```
-
-            A value of ENABLED confirms the change.
 
   - uid: mondoo-nutanix-security-cluster-external-key-management
     title: Ensure clusters use an external key management server
@@ -293,21 +283,16 @@ queries:
       remediation:
         - id: console
           desc: |
+            The external key management server must speak the Key Management Interoperability Protocol (KMIP); Nutanix integrates with KMS solutions over KMIP, whose default port is 5696. Confirm your KMS supports KMIP before starting.
+
             To switch the cluster to an external key management server using Prism:
 
-            1. Open Settings, then Key Management Server, and add the external KMS with its address and port, typically 5696.
+            1. Open Settings, then Key Management Server, and add the external KMS with its address and its KMIP port, the default being 5696.
             2. Upload the client certificate and the CA certificate for the KMS and verify the connection test passes.
             3. Open Settings, then Data-at-Rest Encryption, click Edit Configuration, and change the key manager from the local key manager to the external KMS.
             4. Rekey the cluster so the data encryption keys are protected by the external KMS.
-        - id: cli
-          desc: |
-            To confirm the configured key management servers using the CLI, run on a Controller VM:
 
-            ```bash
-            ncli key-management-server list
-            ```
-
-            Adding a server alone does not change the key manager type; the cluster must also be switched to the external KMS in the Data-at-Rest Encryption settings.
+            Adding a server alone does not change the key manager type; the cluster must also be switched to the external KMS in the Data-at-Rest Encryption settings. To confirm the configured key management servers afterward, run `ncli key-management-server list` on a Controller VM.
 
   - uid: mondoo-nutanix-security-cluster-ssh-password-login-disabled
     title: Ensure password-based SSH login to clusters is disabled
@@ -497,14 +482,19 @@ queries:
       remediation:
         - id: console
           desc: |
-            The redundancy factor is set when the cluster is created and requires sufficient nodes (at least 3 for RF2). To raise it using Prism:
+            The redundancy factor is chosen when the cluster is created and is not freely editable afterward. Raising the redundancy factor on an existing cluster is heavily constrained: it requires enough nodes to support the target factor, sufficient free capacity to store the extra copy, and on many AOS versions it is not exposed as an in-place edit at all and must be coordinated with Nutanix Support. Treat this as a planned change rather than a setting toggle.
 
-            1. Ensure the cluster has enough nodes to support the target redundancy factor.
-            2. Open the cluster details and edit the redundancy factor.
-            3. Apply the change and allow the cluster to re-protect data.
+            To attempt the change using Prism, where the target AOS supports it:
+
+            1. Confirm the cluster has enough nodes for the target redundancy factor, at least 3 nodes for RF2.
+            2. Confirm there is enough free capacity for the additional data copy.
+            3. Open the cluster details and raise the redundancy factor if the option is offered.
+            4. Apply the change and allow the cluster to re-protect data.
+
+            If Prism does not offer the change for your AOS release, open a case with Nutanix Support to plan the conversion.
         - id: cli
           desc: |
-            To raise the redundancy factor using the CLI, run on a Controller VM:
+            To attempt raising the redundancy factor using the CLI, run on a Controller VM. This command only succeeds when the cluster already meets the node and capacity prerequisites and the AOS release permits the conversion; otherwise it is rejected and the change must be coordinated with Nutanix Support:
 
             ```bash
             ncli cluster set-redundancy-state desired-redundancy-factor=2
@@ -571,17 +561,10 @@ queries:
             To restore fault-tolerance readiness using Prism:
 
             1. Open the Data Resiliency Status widget on the cluster dashboard.
-            2. Resolve the underlying condition (replace failed disks or nodes, free space, or wait for rebuild to complete).
+            2. Resolve the underlying condition. Replace failed disks or nodes, free space if the cluster is over capacity, or wait for an in-progress rebuild to complete.
             3. Confirm the cluster returns to an OK resiliency state.
-        - id: cli
-          desc: |
-            To investigate and restore fault-tolerance readiness using the CLI, run on a Controller VM:
 
-            ```bash
-            ncli cluster get-domain-fault-tolerance-status type=node
-            ```
-
-            Address any failed components reported, then re-check until the ensembles report prepared.
+            To investigate the same condition from a Controller VM, run `ncli cluster get-domain-fault-tolerance-status type=node`, address any failed components it reports, then re-check until the ensembles report prepared. Readiness is restored by fixing the underlying hardware or capacity problem rather than by a configuration command.
 
   - uid: mondoo-nutanix-security-cluster-ntp-configured
     title: Ensure NTP servers are configured on clusters
@@ -913,14 +896,14 @@ queries:
             3. Run the pre-upgrade checks and apply the upgrade.
         - id: cli
           desc: |
-            To stage a long-term-support release using the CLI, run on a Controller VM:
+            To stage a long-term-support release using the CLI, run on a Controller VM. List the available releases first, identify the long-term-support entry you want to move to, and download that exact version. Do not copy a literal version number from this example, because the current supported release changes over time and a stale value will mis-target the download:
 
             ```bash
             ncli software ls software-type=nos
-            ncli software download software-type=nos name="6.10.1.5"
+            ncli software download software-type=nos name="<lts-version-from-ncli-software-ls>"
             ```
 
-            Current AOS releases apply upgrades through the Life Cycle Manager. After the download completes, open the Life Cycle Manager in Prism, run the pre-upgrade checks, and apply the upgrade.
+            Confirm the chosen version is a long-term-support release on the Nutanix support portal before downloading. Current AOS releases apply upgrades through the Life Cycle Manager. After the download completes, open the Life Cycle Manager in Prism, run the pre-upgrade checks, and apply the upgrade.
 
   # =================================================================
   # Host Security
@@ -1080,11 +1063,11 @@ queries:
             ipmitool -I lanplus -H "<ipmi-ip>" -U ADMIN -P "<password>" user priv 3 4
             ```
 
-            Verify the new account works before disabling the default, so you cannot lock yourself out of the BMC:
+            Verify the new account works before touching the default, so you cannot lock yourself out of the BMC. Re-run `user list 1` and read the slot number of the default account from the Name column; do not assume it is slot 2, because the default account occupies a different slot on different BMC vendors. Disabling the wrong slot can lock out the operator. Substitute the real slot number for `<default-slot>` below:
 
             ```bash
             ipmitool -I lanplus -H "<ipmi-ip>" -U nutanixadmin -P "<new-password>" user list 1
-            ipmitool -I lanplus -H "<ipmi-ip>" -U nutanixadmin -P "<new-password>" user disable 2
+            ipmitool -I lanplus -H "<ipmi-ip>" -U nutanixadmin -P "<new-password>" user disable <default-slot>
             ```
 
   - uid: mondoo-nutanix-security-host-not-degraded
@@ -1567,14 +1550,21 @@ queries:
             3. Open Role Mapping and confirm roles are granted only to those named groups, removing any broad or default mappings.
         - id: api
           desc: |
-            To set the group allowlist on the directory service using the IAM v4 API, read the directory service, add the allowed groups to `whiteListedGroups`, and update it. The update must send the full object and the ETag returned by the read:
+            To set the group allowlist on the directory service using the IAM v4 API, read the directory service, add the allowed groups to `whiteListedGroups`, and update it. First obtain the directory's `extId` by listing the directory services; the value is in the `extId` field of each entry in the response:
+
+            ```bash
+            curl -fsS -u admin \
+              "https://prism-central.example.com:9440/api/iam/v4.0/authn/directory-services"
+            ```
+
+            Read that directory service. The `-D -` flag dumps the response headers to the terminal so you can read the `ETag` header; the update later must echo it back. Save the body to a file:
 
             ```bash
             curl -fsS -u admin -D - -o directory.json \
               "https://prism-central.example.com:9440/api/iam/v4.0/authn/directory-services/<directory-ext-id>"
             ```
 
-            Edit `directory.json` so the object under `data` lists the allowed groups in `whiteListedGroups`, then send that object as the request body:
+            Edit `directory.json` so the object under `data` lists the allowed groups in `whiteListedGroups`, then send that object back as the request body. Set the `If-Match` header to the `ETag` value from the headers dumped above; this concurrency check rejects the update if the object changed since you read it:
 
             ```bash
             curl -fsS -u admin -X PUT \
@@ -1646,14 +1636,21 @@ queries:
             3. Enable signed authn requests and save, updating the IdP metadata if required.
         - id: api
           desc: |
-            To enable signed authn requests using the IAM v4 API, read the identity provider, set `isSignedAuthnReqEnabled` to true in the returned object, and update it. The update must send the full object and the ETag returned by the read:
+            To enable signed authn requests using the IAM v4 API, read the identity provider, set `isSignedAuthnReqEnabled` to true in the returned object, and update it. First obtain the identity provider's `extId` by listing the SAML identity providers; the value is in the `extId` field of each entry in the response:
+
+            ```bash
+            curl -fsS -u admin \
+              "https://prism-central.example.com:9440/api/iam/v4.0/authn/saml-identity-providers"
+            ```
+
+            Read that identity provider. The `-D -` flag dumps the response headers to the terminal so you can read the `ETag` header; the update later must echo it back. Save the body to a file:
 
             ```bash
             curl -fsS -u admin -D - -o idp.json \
               "https://prism-central.example.com:9440/api/iam/v4.0/authn/saml-identity-providers/<idp-ext-id>"
             ```
 
-            Edit `idp.json` so the object under `data` has `isSignedAuthnReqEnabled` set to true, then send that object as the request body:
+            Edit `idp.json` so the object under `data` has `isSignedAuthnReqEnabled` set to true, then send that object back as the request body. Set the `If-Match` header to the `ETag` value from the headers dumped above; this concurrency check rejects the update if the object changed since you read it:
 
             ```bash
             curl -fsS -u admin -X PUT \
@@ -1725,7 +1722,14 @@ queries:
             3. Delete the account.
         - id: api
           desc: |
-            To delete an inactive local user using the IAM v4 API, read the user to obtain its ETag, then delete it with the ETag in the If-Match header:
+            To delete an inactive local user using the IAM v4 API, first obtain the user's `extId` by listing the users; the value is in the `extId` field of each entry in the response:
+
+            ```bash
+            curl -fsS -u admin \
+              "https://prism-central.example.com:9440/api/iam/v4.0/authn/users"
+            ```
+
+            Read that user to obtain its ETag, then delete it. The `-D -` flag dumps the response headers to the terminal so you can read the `ETag` header; pass that value in the `If-Match` header of the delete, where it acts as a concurrency check that rejects the delete if the user changed since you read it:
 
             ```bash
             curl -fsS -u admin -D - -o /dev/null \
@@ -1797,7 +1801,14 @@ queries:
             3. Confirm whether each is still required and delete those that are not. Disabled accounts remain on the system as inactive local accounts and still require removal, so prefer deletion for accounts that are no longer needed.
         - id: api
           desc: |
-            To delete a stale local user using the IAM v4 API after confirming it is unneeded, read the user to obtain its ETag, then delete it with the ETag in the If-Match header:
+            To delete a stale local user using the IAM v4 API after confirming it is unneeded, first obtain the user's `extId` by listing the users; the value is in the `extId` field of each entry in the response:
+
+            ```bash
+            curl -fsS -u admin \
+              "https://prism-central.example.com:9440/api/iam/v4.0/authn/users"
+            ```
+
+            Read that user to obtain its ETag, then delete it. The `-D -` flag dumps the response headers to the terminal so you can read the `ETag` header; pass that value in the `If-Match` header of the delete, where it acts as a concurrency check that rejects the delete if the user changed since you read it:
 
             ```bash
             curl -fsS -u admin -D - -o /dev/null \
@@ -1935,20 +1946,14 @@ queries:
       remediation:
         - id: console
           desc: |
-            Encryption cannot be disabled on a container after it is enabled. To enable encryption for storage containers using Prism:
+            Encryption cannot be disabled on a container after it is enabled. This check is per container: each user-facing container must report encryption as enabled. Per-container encryption requires the cluster to have an encryption capability, either self-encrypting drives (SED) for hardware encryption or the AOS software-encryption capability. Confirm which the cluster has under Settings, then Data-at-Rest Encryption, before proceeding. Clusters without SEDs must use software encryption, and where neither is available no container can be encrypted until a key management configuration and software encryption are enabled.
+
+            To enable encryption for storage containers using Prism:
 
             1. Ensure a key management configuration is in place under Settings, then Key Management Server, or use the local key manager.
             2. Open Settings, then Data-at-Rest Encryption, and click Edit Configuration.
-            3. Enable encryption for the cluster, or for the specific containers where per-container encryption is supported, and save.
-        - id: cli
-          desc: |
-            To confirm the result using the CLI, run on a Controller VM:
-
-            ```bash
-            ncli container ls
-            ```
-
-            Each user container should report encryption as enabled.
+            3. Enable encryption at the level the cluster supports: cluster-wide where only that scope is offered, or per container on clusters whose capability allows it, then save.
+            4. Confirm each user container reports encryption as enabled. On a Controller VM, `ncli container ls` lists each container with its encryption state.
 
   - uid: mondoo-nutanix-security-storage-container-nfs-allowlist
     title: Ensure storage container NFS allowlists are restricted
