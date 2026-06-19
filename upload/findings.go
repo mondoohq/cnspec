@@ -44,6 +44,13 @@ func IsNoCredentials(err error) bool {
 type Opts struct {
 	ConfigPath string
 	ScopeMrn   string
+
+	// HTTPClient, when set, is used for both the resolver RPCs and the
+	// signed-URL PUT, letting callers supply an instrumented client (tracing,
+	// metrics, custom transport). When nil, default clients are used. The PUT
+	// enforces findingsUploadTimeout: if the supplied client has no timeout, a
+	// shallow copy is used for the PUT so the caller's client is left untouched.
+	HTTPClient *http.Client
 }
 
 // UploadFindings uploads FEX/VEX documents to Mondoo Platform as third-party
@@ -69,7 +76,7 @@ func UploadFindings(ctx context.Context, opts Opts, docs []*fex.FindingDocument,
 		return fmt.Errorf("create auth plugin: %w", err)
 	}
 
-	resolver, err := policy.NewPolicyResolverClient(creds.ApiEndpoint, ranger.DefaultHttpClient(), plugin)
+	resolver, err := policy.NewPolicyResolverClient(creds.ApiEndpoint, resolverHTTPClient(opts.HTTPClient), plugin)
 	if err != nil {
 		return fmt.Errorf("create policy resolver client: %w", err)
 	}
@@ -86,11 +93,10 @@ func UploadFindings(ctx context.Context, opts Opts, docs []*fex.FindingDocument,
 		return fmt.Errorf("marshal findings: %w", err)
 	}
 
-	httpClient, err := newHTTPClient()
+	httpClient, err := putHTTPClient(opts.HTTPClient)
 	if err != nil {
 		return fmt.Errorf("create http client: %w", err)
 	}
-	httpClient.Timeout = findingsUploadTimeout
 
 	if err := doUpload(ctx, resolver, httpClient, data, spaceMrn); err != nil {
 		return err
@@ -98,6 +104,36 @@ func UploadFindings(ctx context.Context, opts Opts, docs []*fex.FindingDocument,
 
 	log.Info().Int("findings", len(docs)).Str("source", source).Msg("uploaded findings to Mondoo Platform")
 	return nil
+}
+
+// resolverHTTPClient returns the client used for the resolver RPCs: the
+// caller-supplied client when set, otherwise ranger's default.
+func resolverHTTPClient(c *http.Client) *http.Client {
+	if c != nil {
+		return c
+	}
+	return ranger.DefaultHttpClient()
+}
+
+// putHTTPClient returns the client used for the signed-URL PUT, bounded by
+// findingsUploadTimeout so a stalled connection can't hang indefinitely. When
+// the caller supplies a client with no timeout of its own, a shallow copy is
+// returned (the timeout is set on the copy, not the caller's shared client).
+func putHTTPClient(c *http.Client) (*http.Client, error) {
+	if c == nil {
+		nc, err := newHTTPClient()
+		if err != nil {
+			return nil, err
+		}
+		nc.Timeout = findingsUploadTimeout
+		return nc, nil
+	}
+	if c.Timeout == 0 {
+		clone := *c
+		clone.Timeout = findingsUploadTimeout
+		return &clone, nil
+	}
+	return c, nil
 }
 
 // uploadResolver is the slice of the PolicyResolver client the findings upload
