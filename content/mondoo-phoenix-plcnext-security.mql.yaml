@@ -3,7 +3,7 @@
 policies:
   - uid: phoenix-plcnext
     name: Phoenix PLCnext Security Policy
-    version: 1.1.1
+    version: 1.1.2
     license: BUSL-1.1
     tags:
       benchmark: Mondoo Phoenix PLCnext
@@ -112,6 +112,8 @@ queries:
         6. Wait for the device to install the update and reboot, then verify the new version with `cat /etc/plcnext/arpversion`.
 
         For details, follow the Phoenix Contact guide [Firmware Update](https://www.plcnext.help/te/WBM/Administration_Firmware_Update.htm).
+
+        Do not treat a fixed version number as the target. Check Phoenix Contact's current supported-release list for your controller model on the product page and install the latest release the vendor still supports, because older firmware that once met a benchmark may now be out of support and missing recent security fixes.
 
         > **Warning:** The firmware update reboots the controller and stops the running PLC program. Outputs change to their configured fail-safe state during the reboot. Perform the update only during a planned maintenance window after confirming the automation process is in a safe state.
     refs:
@@ -335,7 +337,7 @@ queries:
         Protocol 2
         ```
 
-        OpenSSH 7.4 and later only implement protocol version 2 and treat this directive as deprecated, so on current firmware this setting documents the requirement rather than changing behavior. Restart the SSH service to apply the change.
+        SSH protocol 1 had cryptographic weaknesses that allowed traffic to be decrypted or tampered with, so only protocol 2 is considered safe. OpenSSH 7.4 and later only implement protocol version 2 and treat this directive as deprecated, so on current firmware this setting documents the requirement rather than changing behavior. On those versions the daemon may reject the `Protocol` keyword, so validate the file with `sshd -t` and remove the line if validation reports it as unsupported. After validation passes, restart the SSH service to apply the change. Keep your current session open until you confirm a new login works, so a configuration error does not lock you out of the controller.
     refs:
       - url: https://www.plcnext.help/te/About/Home.htm
         title: PLCnext Technology Documentation
@@ -362,6 +364,8 @@ queries:
         ```
         LogLevel INFO
         ```
+
+        A useful log level matters because without a record of who logged in and when, you cannot reconstruct what happened to the controller after a security incident. Validate the configuration with `sshd -t`, then restart the SSH service to apply the change. Restarting SSH ends active shell sessions but does not affect the running PLC program. Keep your current session open until you confirm a new login works.
     refs:
       - url: https://www.plcnext.help/te/About/Home.htm
         title: PLCnext Technology Documentation
@@ -379,6 +383,8 @@ queries:
         ```
         X11Forwarding no
         ```
+
+        A controller has no graphical desktop, so X11 forwarding serves no legitimate purpose here and only adds an attack surface that a graphical session could be tunneled through. Validate the configuration with `sshd -t`, then restart the SSH service to apply the change. Restarting SSH ends active shell sessions but does not affect the running PLC program. Keep your current session open until you confirm a new login works.
     refs:
       - url: https://www.plcnext.help/te/About/Home.htm
         title: PLCnext Technology Documentation
@@ -396,6 +402,8 @@ queries:
         ```
         MaxAuthTries 4
         ```
+
+        Limiting the number of authentication attempts per connection slows down password-guessing and brute-force attacks, because each new guess forces the attacker to open a fresh connection. Avoid setting the value too low. A very small limit can lock out a legitimate operator who mistypes a passphrase during maintenance or an incident, when fast access to the controller matters most. Validate the configuration with `sshd -t`, then restart the SSH service to apply the change. Restarting SSH ends active shell sessions but does not affect the running PLC program. Keep your current session open until you confirm a new login works.
     refs:
       - url: https://www.plcnext.help/te/About/Home.htm
         title: PLCnext Technology Documentation
@@ -406,13 +414,17 @@ queries:
     mql: |
       sshd.config.params["IgnoreRhosts"] == "yes"
     docs:
-      desc: The `IgnoreRhosts` parameter specifies that `.rhosts` and `.shosts` files will not be used in `RhostsRSAAuthentication` or `HostbasedAuthentication` .
+      desc: The `IgnoreRhosts` parameter tells the SSH daemon to ignore `.rhosts` and `.shosts` files when deciding whether to authenticate a user. Those files are part of host-based authentication, an obsolete mechanism that trusts a remote host's claim about which user is connecting. That trust is easily spoofed, so disabling it removes a weak path into the controller.
       remediation: |-
+        Setting `IgnoreRhosts yes` stops the SSH daemon from honoring per-user `.rhosts` and `.shosts` trust files, which closes off an old and easily spoofed way to bypass real authentication. Modern OpenSSH usually defaults to this already, so on current firmware this setting often just confirms the secure behavior rather than changing it.
+
         Edit the `/etc/ssh/sshd_config` file to set the `IgnoreRhosts` parameter as follows:
 
         ```
         IgnoreRhosts yes
         ```
+
+        Validate the configuration with `sshd -t`, then restart the SSH service to apply the change. Restarting SSH ends active shell sessions but does not affect the running PLC program. Keep your current session open until you confirm a new login works.
     refs:
       - url: https://www.plcnext.help/te/About/Home.htm
         title: PLCnext Technology Documentation
@@ -423,13 +435,17 @@ queries:
     mql: |
       sshd.config.params["HostbasedAuthentication"] == "no"
     docs:
-      desc: The `HostbasedAuthentication` parameter specifies if authentication is allowed through trusted hosts via the user of `.rhosts`, or `/etc/hosts.equiv`, along with successful public key client host authentication. This option only applies to SSH Protocol Version 2.
+      desc: The `HostbasedAuthentication` parameter controls whether the SSH daemon will accept a login based on the remote host vouching for the user, using files such as `.rhosts` or `/etc/hosts.equiv`. This trusts a remote host's claim about who the user is, which is easily spoofed and is considered obsolete, so it should stay disabled.
       remediation: |-
+        Setting `HostbasedAuthentication no` ensures every login is authenticated by the user's own credentials, such as an SSH key, instead of trusting a remote host to vouch for the user. Host-based trust is easily spoofed and obsolete, so disabling it removes a weak way into the controller. Modern OpenSSH usually defaults to this already, so on current firmware this setting often just confirms the secure behavior rather than changing it.
+
         Edit the `/etc/ssh/sshd_config` file to set the `HostbasedAuthentication` parameter as follows:
 
         ```
         HostbasedAuthentication no
         ```
+
+        Validate the configuration with `sshd -t`, then restart the SSH service to apply the change. Restarting SSH ends active shell sessions but does not affect the running PLC program. Keep your current session open until you confirm a new login works.
     refs:
       - url: https://www.plcnext.help/te/About/Home.htm
         title: PLCnext Technology Documentation
@@ -440,19 +456,28 @@ queries:
     mql: |
       sshd.config.params["PermitRootLogin"] == "no" || sshd.config.params["PermitRootLogin"] == "prohibit-password"
     docs:
-      desc: The `PermitRootLogin` parameter specifies if the root user can log in using ssh(1). The default is no.
+      desc: The `PermitRootLogin` parameter specifies if the root user can log in using ssh(1). Blocking direct root login over SSH means an attacker must first compromise a named account before they can reach the most powerful account on the controller, and it ties every privileged action to an individual login for accountability.
       remediation: |-
-        Edit the `/etc/ssh/sshd_config` file to set the `PermitRootLogin` parameter as follows:
+        Disabling direct root SSH login forces administrators to log in as a named user and then elevate, which both adds a barrier for attackers and creates an audit trail of who did what. Setting `prohibit-password` is a middle ground that still allows root login by SSH key while blocking password-based root login.
 
-        ```
-        PermitRootLogin no
-        ```
+        On many OT controllers root is the primary administrative account, so confirm a working non-root admin login first. If you disable root SSH access without another account that can log in and gain administrative rights, you can lock yourself out of the controller.
 
-        or
+        1. Create or confirm a non-root administrative account, and verify from a separate session that you can log in with it and elevate privileges.
+        2. Edit the `/etc/ssh/sshd_config` file to set the `PermitRootLogin` parameter as follows:
 
-        ```
-        PermitRootLogin prohibit-password
-        ```
+           ```
+           PermitRootLogin no
+           ```
+
+           or
+
+           ```
+           PermitRootLogin prohibit-password
+           ```
+
+        3. Validate the configuration with `sshd -t`, then restart the SSH service to apply the change. Restarting SSH ends active shell sessions but does not affect the running PLC program.
+
+        > **Warning:** Keep your current session open until you confirm that the non-root administrative account can log in and elevate. Closing your only working session before verifying the replacement login can leave you locked out of the controller.
     refs:
       - url: https://www.plcnext.help/te/About/Home.htm
         title: PLCnext Technology Documentation
@@ -470,6 +495,8 @@ queries:
         ```
         PermitEmptyPasswords no
         ```
+
+        An account with a blank password lets anyone who knows the user name log in with no credential at all, so blocking empty passwords closes an open door into the controller. Validate the configuration with `sshd -t`, then restart the SSH service to apply the change. Restarting SSH ends active shell sessions but does not affect the running PLC program. Keep your current session open until you confirm a new login works.
     refs:
       - url: https://www.plcnext.help/te/About/Home.htm
         title: PLCnext Technology Documentation
@@ -487,6 +514,8 @@ queries:
         ```
         PermitUserEnvironment no
         ```
+
+        Allowing users to set environment options at login lets a user influence how their session runs, which can be abused to load unexpected libraries or override paths and weaken other protections. A controller is administered by a small set of operators and has no need for this, so leaving it off keeps the login environment predictable. Validate the configuration with `sshd -t`, then restart the SSH service to apply the change. Restarting SSH ends active shell sessions but does not affect the running PLC program. Keep your current session open until you confirm a new login works.
     refs:
       - url: https://www.plcnext.help/te/About/Home.htm
         title: PLCnext Technology Documentation
@@ -510,7 +539,7 @@ queries:
         ClientAliveCountMax 3
         ```
 
-        Do not set `ClientAliveCountMax` to 0. OpenSSH treats 0 as disabling the keepalive termination mechanism, so idle sessions would never be closed. Restart the SSH service to apply the change. Restarting SSH ends active shell sessions but does not affect the running PLC program.
+        Closing idle sessions matters because an unattended logged-in terminal, for example an operator who walked away, is an open path for anyone with physical access to the engineering station. Do not set `ClientAliveCountMax` to 0. OpenSSH treats 0 as disabling the keepalive termination mechanism, so idle sessions would never be closed. Validate the configuration with `sshd -t`, then restart the SSH service to apply the change. Restarting SSH ends active shell sessions but does not affect the running PLC program. Keep your current session open until you confirm a new login works.
     refs:
       - url: https://www.plcnext.help/te/About/Home.htm
         title: PLCnext Technology Documentation
@@ -531,6 +560,8 @@ queries:
         ```
         LoginGraceTime 60
         ```
+
+        A shorter grace period means each unauthenticated connection is held open for less time, which limits how many half-open sessions an attacker can pile up to exhaust the daemon or stall legitimate logins. Validate the configuration with `sshd -t`, then restart the SSH service to apply the change. Restarting SSH ends active shell sessions but does not affect the running PLC program. Keep your current session open until you confirm a new login works.
     refs:
       - url: https://www.plcnext.help/te/About/Home.htm
         title: PLCnext Technology Documentation
@@ -562,7 +593,7 @@ queries:
         DenyGroups <grouplist>
         ```
 
-        Restart the SSH service to apply the change.
+        Restricting SSH to a named set of users or groups means a stolen or default credential for any other account cannot be used to reach the controller over SSH. Validate the configuration with `sshd -t`, then restart the SSH service to apply the change.
 
         > **Warning:** Once `AllowUsers` or `AllowGroups` is set, every account not on the list loses SSH access to the controller. Make sure the list includes the administrative account you use to manage the device, and keep your current SSH session open while you verify that a new login still succeeds.
     refs:
@@ -576,18 +607,18 @@ queries:
       sshd.config.params["Banner"] != empty
       sshd.config.params["Banner"] != "none"
     docs:
-      desc: The `Banner` parameter specifies a file whose contents must be sent to the remote user before authentication is permitted. By default, no banner is displayed.
+      desc: The `Banner` parameter specifies a file whose contents must be sent to the remote user before authentication is permitted. By default, no banner is displayed. A login banner states the system is restricted and use is monitored, which supports legal action against unauthorized access and warns casual intruders off before they authenticate.
       remediation: |-
         Create a banner file containing your organization's system use notification, then point the SSH daemon at it:
 
-        1. Write the notification text to `/opt/plcnext/config/System/Um/SystemUseNotification.txt`. Do not include details about the device, firmware, or network in the banner.
+        1. Write the notification text to `/opt/plcnext/config/System/Um/SystemUseNotification.txt`. Do not include details about the device, firmware, or network in the banner, because that information helps an attacker. On PLCnext this notification text may also be managed through the Web-based Management interface, so confirm which source is authoritative before editing the file directly.
         2. Edit the `/etc/ssh/sshd_config` file to set the `Banner` parameter:
 
            ```text
            Banner /opt/plcnext/config/System/Um/SystemUseNotification.txt
            ```
 
-        3. Restart the SSH service to apply the change.
+        3. Validate the configuration with `sshd -t`, then restart the SSH service to apply the change. Restarting SSH ends active shell sessions but does not affect the running PLC program. Keep your current session open until you confirm a new login works.
     refs:
       - url: https://www.plcnext.help/te/About/Home.htm
         title: PLCnext Technology Documentation
