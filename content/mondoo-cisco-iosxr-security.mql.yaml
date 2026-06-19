@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-cisco-iosxr-security
     name: Mondoo Cisco IOS-XR Security
-    version: 1.0.1
+    version: 1.0.2
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -324,11 +324,17 @@ queries:
           desc: |
             **Using the CLI**
 
-            Configure AAA authentication login:
+            Changing the default login method list can lock you out if the AAA servers are unreachable or the configuration is wrong, so use IOS-XR's auto-rollback safety net: `commit confirmed <minutes>` reverts the change automatically unless you run a final `commit` within the timer.
 
             ```
             configure terminal
             aaa authentication login default group tacacs+ local
+            commit confirmed 5
+            ```
+
+            Open a new session and confirm you can authenticate, then make the change permanent:
+
+            ```
             commit
             ```
 
@@ -721,6 +727,8 @@ queries:
             ```
             key config-key password-encryption
             ```
+
+            Set the master key before storing any Type 6 passwords, and record it securely: if the master key is lost or changed, every existing Type 6 secret becomes unrecoverable and must be reconfigured.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/routers/asr9000/software/security/configuration/guide/b-system-security-cg-asr9000/implementing-type6-password-encryption.html
         title: Cisco IOS-XR Type 6 Password Encryption Guide
@@ -773,7 +781,7 @@ queries:
           desc: |
             **Using the CLI**
 
-            Configure NTP authentication:
+            Configure NTP authentication. MD5 is the minimum acceptable algorithm here: it authenticates the time source so the device rejects spoofed updates, but it is cryptographically weak, so use a stronger key digest if your IOS-XR release and NTP servers support one. The same key and key number must be configured on the NTP server, or the device will reject its updates.
 
             ```
             configure terminal
@@ -1081,7 +1089,16 @@ queries:
           desc: |
             **Using the CLI**
 
-            Remove the default community strings and configure a unique community string restricted by an ACL:
+            First create an ACL that permits only your SNMP management stations, so the community string is reachable only from trusted hosts:
+
+            ```
+            configure terminal
+            ipv4 access-list <acl-name>
+            10 permit ipv4 host <management-station-ip> any
+            commit
+            ```
+
+            Then remove the default community strings and configure a unique community string restricted by that ACL. Confirm the exact keyword order for `RO`, `IPv4`, and the ACL name against the SNMP configuration guide for your IOS-XR release, because it has varied between releases:
 
             ```
             configure terminal
@@ -1090,6 +1107,8 @@ queries:
             snmp-server community <unique-complex-string> RO IPv4 <acl-name>
             commit
             ```
+
+            SNMPv3 with authentication and privacy is the stronger option where the management platform supports it; community strings with an ACL are a v2c stopgap.
 
             Update monitoring systems that still poll with the removed community strings, or they lose SNMP access when this change commits.
     refs:
@@ -1270,11 +1289,11 @@ queries:
           desc: |
             **Using the CLI**
 
-            Configure a login banner:
+            Configure a login banner. On IOS-XR, `banner login` is followed by a delimiter character that marks the start and end of the message, not by double quotes. Pick a delimiter that does not appear anywhere in the banner text. The example below uses `#`:
 
             ```
             configure terminal
-            banner login "Authorized access only. All activity is monitored and logged."
+            banner login # Authorized access only. All activity is monitored and logged. #
             commit
             ```
     refs:
@@ -1573,7 +1592,7 @@ queries:
           desc: |
             **Using the CLI**
 
-            Restrict each line template that serves VTY pools to SSH transport. Verify that SSH access to the device works before committing, because this change drops telnet management access.
+            Restrict each line template that serves VTY pools to SSH transport. This change drops telnet management access, so use IOS-XR's auto-rollback safety net: `commit confirmed <minutes>` applies the change but reverts it automatically if you do not run a final `commit` within the timer. Open a fresh SSH session to confirm access still works, then make it permanent.
 
             For the built-in default template:
 
@@ -1581,17 +1600,16 @@ queries:
             configure terminal
             line default
             transport input ssh
+            commit confirmed 5
+            ```
+
+            Open a new SSH session and verify you can still manage the device, then confirm the change:
+
+            ```
             commit
             ```
 
-            For a named template:
-
-            ```
-            configure terminal
-            line template <template-name>
-            transport input ssh
-            commit
-            ```
+            For a named template, enter `line template <template-name>` instead of `line default` and follow the same confirmed-commit sequence.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/routers/asr9000/software/security/configuration/guide/b-system-security-cg-asr9000/implementing-secure-shell.html
         title: Cisco IOS-XR SSH Configuration Guide
@@ -1654,16 +1672,22 @@ queries:
             commit
             ```
 
-            Apply the ACL to the built-in default template:
+            Apply the ACL to the built-in default template. Because a wrong or incomplete ACL can lock you out, use IOS-XR's auto-rollback safety net: `commit confirmed <minutes>` reverts the change automatically unless you run a final `commit` within the timer.
 
             ```
             configure terminal
             line default
             access-class ingress <acl-name>
+            commit confirmed 5
+            ```
+
+            Open a new SSH session and verify you can still reach the device, then confirm the change:
+
+            ```
             commit
             ```
 
-            For named templates, enter `line template <template-name>` instead of `line default`.
+            For named templates, enter `line template <template-name>` instead of `line default` and follow the same confirmed-commit sequence.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/routers/asr9000/software/security/configuration/guide/b-system-security-cg-asr9000/configuring-aaa-services.html
         title: Cisco IOS-XR Line Configuration Guide
@@ -1719,7 +1743,7 @@ queries:
           desc: |
             **Using the CLI**
 
-            Configure a password on each BGP neighbor. Adding or changing a session password resets the BGP session and interrupts routing through that peer until both sides match, so apply this during a maintenance window and coordinate with the peer operator:
+            Configure a password on each BGP neighbor. This enables TCP MD5 session authentication, which protects the session from rogue peers and TCP reset attacks. MD5 is the floor: it is weak by modern standards, so prefer TCP-AO where both peers support it. Adding or changing a session password resets the BGP session and interrupts routing through that peer until both sides match, so apply this during a maintenance window and coordinate with the peer operator:
 
             ```
             configure terminal
@@ -1785,7 +1809,7 @@ queries:
           desc: |
             **Using the CLI**
 
-            Create the key chain first. Choose a cryptographic algorithm supported by your software release, such as MD5 or HMAC-SHA-256, and replace `<start-date>` with the date the key takes effect, in `month day year` form:
+            Create the key chain first. This authenticates OSPF adjacencies so an attacker cannot inject routes by joining the area. Choose a cryptographic algorithm supported by your software release: prefer HMAC-SHA-256 and treat MD5 as the floor, since MD5 is weak by modern standards. Replace `<start-date>` with the date the key takes effect, in `month day year` form:
 
             ```
             configure terminal
