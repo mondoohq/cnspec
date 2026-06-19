@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-freebsd-security
     name: Mondoo FreeBSD Security
-    version: 1.0.3
+    version: 1.0.4
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -183,6 +183,10 @@ queries:
                 ```ini
                 kern.elf64.aslr.enable=1
                 ```
+
+            ASLR only takes effect when a binary is executed, so enabling it does not protect processes that are already running. Restart long-running services or reboot the system so they start with randomized address spaces.
+
+            `kern.elf64.aslr.enable` covers 64-bit binaries. If the system also runs 32-bit binaries, enable ASLR for them too with `kern.elf32.aslr.enable`, both at runtime and in `/etc/sysctl.conf`.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -1425,12 +1429,18 @@ queries:
           desc: |
             **Using the CLI**
 
-            Disable and stop the NFS daemon:
+            The NFS server is not a single process. It is several cooperating daemons: `nfsd` serves file data, `mountd` handles mount requests and reads `/etc/exports`, and `rpcbind` advertises which ports those services listen on. Disabling only `nfsd` can leave `mountd` and `rpcbind` running, so the network surface stays partly open.
+
+            Disable and stop both the NFS daemon and `mountd`:
 
             ```bash
             sysrc nfs_server_enable="NO"
+            sysrc mountd_enable="NO"
             service nfsd stop
+            service mountd stop
             ```
+
+            If no other RPC services are needed on this host, also disable `rpcbind` using the dedicated rpcbind check in this policy. Leave `rpcbind` running only if another service requires it.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -1441,7 +1451,9 @@ queries:
 
             echo "Disabling NFS server..."
             sysrc nfs_server_enable="NO"
+            sysrc mountd_enable="NO"
             service nfsd onestop 2>/dev/null || true
+            service mountd onestop 2>/dev/null || true
 
             echo "NFS server disabled."
             ```
@@ -2071,11 +2083,11 @@ queries:
           desc: |
             **Using the CLI**
 
-            Set the correct ownership and permissions on all SSH private host key files:
+            Set the correct ownership and permissions on all SSH private host key files. The `! -name '*.pub'` guard excludes the public key files so they are not tightened to 0600, which would prevent clients from reading them:
 
             ```bash
-            find /etc/ssh -name 'ssh_host_*key' -exec chown root:wheel {} \;
-            find /etc/ssh -name 'ssh_host_*key' -exec chmod 0600 {} \;
+            find /etc/ssh -name 'ssh_host_*key' ! -name '*.pub' -exec chown root:wheel {} \;
+            find /etc/ssh -name 'ssh_host_*key' ! -name '*.pub' -exec chmod 0600 {} \;
             ```
         - id: sh
           desc: |
@@ -2254,11 +2266,13 @@ queries:
             Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr
             ```
 
-            Then restart the SSH daemon:
+            Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
             ```bash
-            service sshd restart
+            sshd -t && service sshd restart
             ```
+
+            If `sshd -t` reports an error, fix the configuration before restarting. Keep your current SSH session open and confirm that a new connection succeeds before you log out.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -2277,6 +2291,9 @@ queries:
               echo "Ciphers ${CIPHERS}" >> "$SSHD_CONFIG"
             fi
 
+            # Validate the configuration before restarting so a syntax error
+            # cannot stop sshd and lock out future logins.
+            sshd -t
             service sshd restart
 
             echo "Strong SSH ciphers configured."
@@ -2351,11 +2368,13 @@ queries:
             MACs umac-128-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com,umac-128@openssh.com,hmac-sha2-256,hmac-sha2-512
             ```
 
-            Then restart the SSH daemon:
+            Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
             ```bash
-            service sshd restart
+            sshd -t && service sshd restart
             ```
+
+            If `sshd -t` reports an error, fix the configuration before restarting. Keep your current SSH session open and confirm that a new connection succeeds before you log out.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -2374,6 +2393,9 @@ queries:
               echo "MACs ${MACS}" >> "$SSHD_CONFIG"
             fi
 
+            # Validate the configuration before restarting so a syntax error
+            # cannot stop sshd and lock out future logins.
+            sshd -t
             service sshd restart
 
             echo "Strong SSH MAC algorithms configured."
@@ -2448,11 +2470,13 @@ queries:
             KexAlgorithms sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,curve25519-sha256,diffie-hellman-group18-sha512,diffie-hellman-group16-sha512
             ```
 
-            Then restart the SSH daemon:
+            Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
             ```bash
-            service sshd restart
+            sshd -t && service sshd restart
             ```
+
+            If `sshd -t` reports an error, fix the configuration before restarting. Keep your current SSH session open and confirm that a new connection succeeds before you log out.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -2471,6 +2495,9 @@ queries:
               echo "KexAlgorithms ${KEXS}" >> "$SSHD_CONFIG"
             fi
 
+            # Validate the configuration before restarting so a syntax error
+            # cannot stop sshd and lock out future logins.
+            sshd -t
             service sshd restart
 
             echo "Strong SSH key exchange algorithms configured."
@@ -2544,11 +2571,13 @@ queries:
             PermitRootLogin no
             ```
 
-            Then restart the SSH daemon:
+            Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
             ```bash
-            service sshd restart
+            sshd -t && service sshd restart
             ```
+
+            If `sshd -t` reports an error, fix the configuration before restarting. Keep your current SSH session open and confirm that a new connection succeeds before you log out.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -2568,6 +2597,9 @@ queries:
               echo 'PermitRootLogin no' >> "$SSHD_CONFIG"
             fi
 
+            # Validate the configuration before restarting so a syntax error
+            # cannot stop sshd and lock out future logins.
+            sshd -t
             service sshd restart
 
             echo "SSH root login disabled."
@@ -2641,11 +2673,13 @@ queries:
             PermitEmptyPasswords no
             ```
 
-            Then restart the SSH daemon:
+            Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
             ```bash
-            service sshd restart
+            sshd -t && service sshd restart
             ```
+
+            If `sshd -t` reports an error, fix the configuration before restarting. Keep your current SSH session open and confirm that a new connection succeeds before you log out.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -2665,6 +2699,9 @@ queries:
               echo 'PermitEmptyPasswords no' >> "$SSHD_CONFIG"
             fi
 
+            # Validate the configuration before restarting so a syntax error
+            # cannot stop sshd and lock out future logins.
+            sshd -t
             service sshd restart
 
             echo "SSH empty passwords disabled."
@@ -2738,11 +2775,13 @@ queries:
             HostbasedAuthentication no
             ```
 
-            Then restart the SSH daemon:
+            Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
             ```bash
-            service sshd restart
+            sshd -t && service sshd restart
             ```
+
+            If `sshd -t` reports an error, fix the configuration before restarting. Keep your current SSH session open and confirm that a new connection succeeds before you log out.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -2762,6 +2801,9 @@ queries:
               echo 'HostbasedAuthentication no' >> "$SSHD_CONFIG"
             fi
 
+            # Validate the configuration before restarting so a syntax error
+            # cannot stop sshd and lock out future logins.
+            sshd -t
             service sshd restart
 
             echo "SSH host-based authentication disabled."
@@ -2835,11 +2877,13 @@ queries:
             PermitUserEnvironment no
             ```
 
-            Then restart the SSH daemon:
+            Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
             ```bash
-            service sshd restart
+            sshd -t && service sshd restart
             ```
+
+            If `sshd -t` reports an error, fix the configuration before restarting. Keep your current SSH session open and confirm that a new connection succeeds before you log out.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -2859,6 +2903,9 @@ queries:
               echo 'PermitUserEnvironment no' >> "$SSHD_CONFIG"
             fi
 
+            # Validate the configuration before restarting so a syntax error
+            # cannot stop sshd and lock out future logins.
+            sshd -t
             service sshd restart
 
             echo "SSH PermitUserEnvironment disabled."
@@ -2932,11 +2979,13 @@ queries:
             IgnoreRhosts yes
             ```
 
-            Then restart the SSH daemon:
+            Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
             ```bash
-            service sshd restart
+            sshd -t && service sshd restart
             ```
+
+            If `sshd -t` reports an error, fix the configuration before restarting. Keep your current SSH session open and confirm that a new connection succeeds before you log out.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -2956,6 +3005,9 @@ queries:
               echo 'IgnoreRhosts yes' >> "$SSHD_CONFIG"
             fi
 
+            # Validate the configuration before restarting so a syntax error
+            # cannot stop sshd and lock out future logins.
+            sshd -t
             service sshd restart
 
             echo "SSH IgnoreRhosts enabled."
@@ -3029,11 +3081,13 @@ queries:
             MaxAuthTries 4
             ```
 
-            Then restart the SSH daemon:
+            Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
             ```bash
-            service sshd restart
+            sshd -t && service sshd restart
             ```
+
+            If `sshd -t` reports an error, fix the configuration before restarting. Keep your current SSH session open and confirm that a new connection succeeds before you log out.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -3053,6 +3107,9 @@ queries:
               echo 'MaxAuthTries 4' >> "$SSHD_CONFIG"
             fi
 
+            # Validate the configuration before restarting so a syntax error
+            # cannot stop sshd and lock out future logins.
+            sshd -t
             service sshd restart
 
             echo "SSH MaxAuthTries set to 4."
@@ -3127,11 +3184,13 @@ queries:
             LoginGraceTime 60
             ```
 
-            Then restart the SSH daemon:
+            Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
             ```bash
-            service sshd restart
+            sshd -t && service sshd restart
             ```
+
+            If `sshd -t` reports an error, fix the configuration before restarting. Keep your current SSH session open and confirm that a new connection succeeds before you log out.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -3151,6 +3210,9 @@ queries:
               echo 'LoginGraceTime 60' >> "$SSHD_CONFIG"
             fi
 
+            # Validate the configuration before restarting so a syntax error
+            # cannot stop sshd and lock out future logins.
+            sshd -t
             service sshd restart
 
             echo "SSH LoginGraceTime set to 60."
@@ -3224,11 +3286,13 @@ queries:
             LogLevel VERBOSE
             ```
 
-            Then restart the SSH daemon:
+            Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
             ```bash
-            service sshd restart
+            sshd -t && service sshd restart
             ```
+
+            If `sshd -t` reports an error, fix the configuration before restarting. Keep your current SSH session open and confirm that a new connection succeeds before you log out.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -3248,6 +3312,9 @@ queries:
               echo 'LogLevel VERBOSE' >> "$SSHD_CONFIG"
             fi
 
+            # Validate the configuration before restarting so a syntax error
+            # cannot stop sshd and lock out future logins.
+            sshd -t
             service sshd restart
 
             echo "SSH LogLevel set to VERBOSE."
@@ -3324,11 +3391,13 @@ queries:
             ClientAliveCountMax 3
             ```
 
-            Then restart the SSH daemon:
+            Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
             ```bash
-            service sshd restart
+            sshd -t && service sshd restart
             ```
+
+            If `sshd -t` reports an error, fix the configuration before restarting. Keep your current SSH session open and confirm that a new connection succeeds before you log out.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -3359,6 +3428,9 @@ queries:
               echo 'ClientAliveCountMax 3' >> "$SSHD_CONFIG"
             fi
 
+            # Validate the configuration before restarting so a syntax error
+            # cannot stop sshd and lock out future logins.
+            sshd -t
             service sshd restart
 
             echo "SSH idle timeout configured."
@@ -3435,11 +3507,13 @@ queries:
             DisableForwarding yes
             ```
 
-            Then restart the SSH daemon:
+            Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
             ```bash
-            service sshd restart
+            sshd -t && service sshd restart
             ```
+
+            If `sshd -t` reports an error, fix the configuration before restarting. Keep your current SSH session open and confirm that a new connection succeeds before you log out.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -3459,6 +3533,9 @@ queries:
               echo 'DisableForwarding yes' >> "$SSHD_CONFIG"
             fi
 
+            # Validate the configuration before restarting so a syntax error
+            # cannot stop sshd and lock out future logins.
+            sshd -t
             service sshd restart
 
             echo "SSH DisableForwarding enabled."
@@ -3532,11 +3609,13 @@ queries:
             UsePAM yes
             ```
 
-            Then restart the SSH daemon:
+            Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
             ```bash
-            service sshd restart
+            sshd -t && service sshd restart
             ```
+
+            If `sshd -t` reports an error, fix the configuration before restarting. Keep your current SSH session open and confirm that a new connection succeeds before you log out.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -3556,6 +3635,9 @@ queries:
               echo 'UsePAM yes' >> "$SSHD_CONFIG"
             fi
 
+            # Validate the configuration before restarting so a syntax error
+            # cannot stop sshd and lock out future logins.
+            sshd -t
             service sshd restart
 
             echo "SSH UsePAM enabled."
@@ -4146,14 +4228,36 @@ queries:
           desc: |
             **Using the CLI**
 
-            Identify duplicate UIDs and assign unique UIDs to each user:
+            First identify the duplicated UIDs:
 
             ```bash
             awk -F: '$3 != 0 { print $3 }' /etc/passwd | sort -n | uniq -d
             ```
+
+            For each duplicated UID, list the accounts that share it so you can decide which one to renumber:
+
+            ```bash
+            awk -F: -v u=<uid> '$3 == u { print $1 }' /etc/passwd
+            ```
+
+            Assign a new, unused UID to the account you chose to change:
+
+            ```bash
+            pw usermod <name> -u <new-uid>
+            ```
+
+            Changing a UID does not update files that the account already owns. Those files keep the old numeric UID, so re-own them to the new UID:
+
+            ```bash
+            find / -uid <old-uid> -exec chown <new-uid> {} +
+            ```
+
+            Confirm that the new UID is not already in use before assigning it, and verify the account can still log in and access its files afterward.
         - id: sh
           desc: |
             **Using a Shell Script**
+
+            This script reports duplicate UIDs but does not change them, because choosing which account to renumber and re-owning its files must be done deliberately. Use the CLI steps to apply the fix.
 
             ```sh
             #!/bin/sh
@@ -4233,14 +4337,36 @@ queries:
           desc: |
             **Using the CLI**
 
-            Identify duplicate GIDs and assign unique GIDs to each group:
+            First identify the duplicated GIDs:
 
             ```bash
             awk -F: '{print $3}' /etc/group | sort -n | uniq -d
             ```
+
+            For each duplicated GID, list the groups that share it so you can decide which one to renumber:
+
+            ```bash
+            awk -F: -v g=<gid> '$3 == g { print $1 }' /etc/group
+            ```
+
+            Assign a new, unused GID to the group you chose to change:
+
+            ```bash
+            pw groupmod <name> -g <new-gid>
+            ```
+
+            Changing a GID does not update files that already carry the old group ownership. Re-group them to the new GID:
+
+            ```bash
+            find / -gid <old-gid> -exec chgrp <new-gid> {} +
+            ```
+
+            Confirm that the new GID is not already in use before assigning it, and verify that members of the group still have the access they need afterward.
         - id: sh
           desc: |
             **Using a Shell Script**
+
+            This script reports duplicate GIDs but does not change them, because choosing which group to renumber and re-grouping its files must be done deliberately. Use the CLI steps to apply the fix.
 
             ```sh
             #!/bin/sh
@@ -4770,6 +4896,11 @@ queries:
             if command -v sudo >/dev/null 2>&1; then
               echo "sudo is already installed."
             else
+              # Refresh the package catalog first; on a fresh host it may be
+              # stale or absent, which would make `pkg install` fail or install
+              # an outdated version. On a minimal install where pkg itself is
+              # not yet present, run `pkg bootstrap` before this step.
+              pkg update
               pkg install -y sudo
               echo "sudo installed."
             fi
@@ -4930,13 +5061,25 @@ queries:
           desc: |
             **Using the CLI**
 
-            Edit the sudoers file using `visudo` and remove any `NOPASSWD` entries:
+            Always edit the sudoers files with `visudo`. It checks the syntax before saving and refuses to write a broken file. A syntax error in `sudoers` can break sudo for every user, including the administrator, so do not bypass `visudo` by editing the file directly.
 
             ```bash
             visudo
             ```
 
-            Replace lines containing `NOPASSWD:` with `PASSWD:` or simply remove the `NOPASSWD` tag.
+            Remove the `NOPASSWD` tag from any rule so that sudo prompts for a password. For example, change a line like:
+
+            ```
+            alice ALL=(ALL) NOPASSWD: ALL
+            ```
+
+            to:
+
+            ```
+            alice ALL=(ALL) PASSWD: ALL
+            ```
+
+            Files under `/usr/local/etc/sudoers.d/` are included by the main sudoers file, so check and fix those too. Edit each one with `visudo -f /usr/local/etc/sudoers.d/<file>`.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -5034,15 +5177,17 @@ queries:
 
             Warning: Starting a firewall on a remote system can terminate your SSH session and lock you out. Run these commands from the system console, and confirm the rule set allows SSH before starting the firewall.
 
-            Enable `ipfw`:
+            Enable `ipfw`. The `workstation` profile opens the ports in `firewall_myservices` to the networks in `firewall_allowservices`. The example below allows SSH from a single admin network instead of from any source, which keeps the management surface small:
 
             ```bash
             sysrc firewall_enable="YES"
             sysrc firewall_type="workstation"
             sysrc firewall_myservices="22/tcp"
-            sysrc firewall_allowservices="any"
+            sysrc firewall_allowservices="203.0.113.0/24"
             service ipfw start
             ```
+
+            Before you run `service ipfw start`, replace `22/tcp` with the real SSH port if this host listens on a non-default port, and replace `203.0.113.0/24` with your actual administrative network. If `firewall_myservices` does not list the port you are connected on, or `firewall_allowservices` does not include your source network, starting the firewall will drop your session.
 
             Or enable `pf` after creating an `/etc/pf.conf` rule set that allows SSH:
 
