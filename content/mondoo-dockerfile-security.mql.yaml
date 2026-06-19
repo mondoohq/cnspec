@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-docker-security
     name: Mondoo Dockerfile Security
-    version: 1.3.1
+    version: 1.3.2
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -176,16 +176,25 @@ queries:
       remediation:
         - id: dockerfile
           desc: |
-            Remove the `--allow-insecure-repositories` option from APT commands and configure APT to use signed, secure repositories:
+            The proper fix is to make APT trust the repository, then remove the bypass. Removing `--allow-insecure-repositories` on its own breaks installs from an unsigned or keyless repository, because APT then refuses packages it cannot verify. Import the repository's GPG signing key so verification succeeds, then drop the flag.
+
+            Fetch the publisher's key, store it in `/etc/apt/keyrings`, and pin it to the repository with `signed-by` so only that key can authorize packages from that source:
 
             ```dockerfile
             # Instead of:
             RUN apt-get update --allow-insecure-repositories && apt-get install -y package
 
             # Use:
-            RUN apt-get update && apt-get install -y --no-install-recommends package && \
+            RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl gnupg && \
+                install -m 0755 -d /etc/apt/keyrings && \
+                curl -fsSL https://repo.example.com/gpg | gpg --dearmor -o /etc/apt/keyrings/example.gpg && \
+                echo "deb [signed-by=/etc/apt/keyrings/example.gpg] https://repo.example.com/apt stable main" \
+                  > /etc/apt/sources.list.d/example.list && \
+                apt-get update && apt-get install -y --no-install-recommends package && \
                 rm -rf /var/lib/apt/lists/*
             ```
+
+            With the key imported, APT validates package signatures and the insecure flag is no longer needed. The `rm -rf /var/lib/apt/lists/*` step clears the package index cache so it does not persist in the image layer.
     refs:
       - url: https://docs.docker.com/build/building/best-practices/
         title: Dockerfile Best Practices
@@ -346,7 +355,8 @@ queries:
             RUN sudo apt-get install -y package
 
             # Use:
-            RUN apt-get install -y --no-install-recommends package
+            RUN apt-get update && apt-get install -y --no-install-recommends package && \
+                rm -rf /var/lib/apt/lists/*
             USER appuser
             ```
     refs:
@@ -394,17 +404,33 @@ queries:
       remediation:
         - id: dockerfile
           desc: |
-            Remove GPG bypass options from package manager commands so signature verification stays enabled. For YUM and DNF, drop `--nogpgcheck`; for zypper, drop `--no-gpg-checks`:
+            The proper fix is to import the repository's GPG signing key so signature verification succeeds, then remove the bypass flag. Dropping `--nogpgcheck` or `--no-gpg-checks` on its own breaks installs from an unsigned or keyless repository, because the package manager then refuses packages whose signatures it cannot verify against a trusted key.
+
+            For YUM and DNF, import the publisher's key with `rpm --import`, then install without the bypass:
 
             ```dockerfile
             # Instead of:
             RUN dnf install -y --nogpgcheck package
+
+            # Use:
+            RUN rpm --import https://repo.example.com/RPM-GPG-KEY-example && \
+                dnf install -y package && \
+                dnf clean all && rm -rf /var/cache/dnf
+            ```
+
+            For zypper, import the key the same way, then install without `--no-gpg-checks`:
+
+            ```dockerfile
+            # Instead of:
             RUN zypper --no-gpg-checks install -y package
 
             # Use:
-            RUN dnf install -y package && dnf clean all
-            RUN zypper install -y package && zypper clean --all
+            RUN rpm --import https://repo.example.com/RPM-GPG-KEY-example && \
+                zypper install -y package && \
+                zypper clean --all
             ```
+
+            With the key imported, signature verification passes and the bypass flag is no longer needed. The `dnf clean all` / `zypper clean --all` and `rm -rf /var/cache/dnf` steps clear the package caches so they do not persist in the image layer.
     refs:
       - url: https://docs.docker.com/build/building/best-practices/
         title: Dockerfile Best Practices
@@ -471,6 +497,17 @@ queries:
             ```dockerfile
             USER 10001:10001
             ```
+
+            After the `USER` switch, the process can no longer write to files and directories that earlier steps created as root. Anything the application needs to write at runtime, such as application directories, cache paths, log directories, or a writable temp area, must be owned by the new user. Place the `USER` instruction after those steps and grant ownership with `chown` so the switch does not break the running container:
+
+            ```dockerfile
+            RUN groupadd -r appgroup && useradd -r -g appgroup appuser && \
+                mkdir -p /app/data && chown -R appuser:appgroup /app
+            WORKDIR /app
+            USER appuser
+            ```
+
+            For files brought in with `COPY`, set ownership at copy time with `COPY --chown=appuser:appgroup` rather than running a separate `chown`, which avoids duplicating the file data into an extra image layer.
     refs:
       - url: https://docs.docker.com/build/building/best-practices/#user
         title: Dockerfile Best Practices - USER Instruction
