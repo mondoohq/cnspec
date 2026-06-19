@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-gcp-security
     name: Mondoo Google Cloud (GCP) Security
-    version: 9.3.2
+    version: 9.3.3
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -567,7 +567,7 @@ queries:
             2. Select the Organization and Project where the instance you want to update is running.
             3. Navigate to **Compute Engine**.
             4. Select the compute instance that you want to update.
-            5. If the instance is not stopped, select **Stop**. Wait for the instance to stop.
+            5. If the instance is not stopped, select **Stop**. Wait for the instance to stop. Stopping the instance interrupts running workloads and permanently erases any data on local SSDs, so schedule a maintenance window first.
             6. Select **Edit**.
             7. Scroll down to the Service Account section.
             8. Select a different service account.
@@ -576,6 +576,8 @@ queries:
         - id: cli
           desc: |
             To ensure that instances are not configured to use the default service account using the Google Cloud CLI, update the service account using the `gcloud` CLI:
+
+            Stopping the instance interrupts running workloads and permanently erases any data on local SSDs. Schedule a maintenance window before you begin.
 
             1. Stop the instance:
 
@@ -737,12 +739,13 @@ queries:
               tags = ["terraform"]
 
               service_account {
-                # Google recommends custom service accounts with cloud-platform scope and permissions granted via IAM Roles.
                 email  = google_service_account.default.email
-                scopes = ["cloud-platform"]
+                scopes = ["logging-write", "monitoring-write"]
               }
             }
             ```
+
+            Grant the workload's required permissions to the custom service account through IAM roles and keep the access scopes minimal. The broad `cloud-platform` scope is acceptable only when paired with a dedicated, least-privilege custom service account, never with the default service account.
         - id: console
           desc: |
             To ensure instances do not use default service account with full API access using the Google Cloud Console, change the policy using the Google Cloud Console:
@@ -751,7 +754,7 @@ queries:
             2. Select the Organization and Project where the instance you want to update is running.
             3. Navigate to **Compute Engine**.
             4. Select the compute instance that you want to update.
-            5. If the instance is not stopped, select **Stop**. Wait for the instance to stop.
+            5. If the instance is not stopped, select **Stop**. Wait for the instance to stop. Stopping the instance interrupts running workloads and permanently erases any data on local SSDs, so schedule a maintenance window first.
             6. Select **Edit**.
             7. Scroll down to the Service Account section.
             8. Select a different service account or ensure Allow full access to all Cloud APIs is not selected.
@@ -760,6 +763,8 @@ queries:
         - id: cli
           desc: |
             To ensure instances do not use default service account with full API access using the Google Cloud CLI, update the service account using the `gcloud` CLI:
+
+            Stopping the instance interrupts running workloads and permanently erases any data on local SSDs. Schedule a maintenance window before you begin.
 
             1. Stop the instance:
 
@@ -1517,9 +1522,19 @@ queries:
               key_ring = google_kms_key_ring.example.id
             }
 
+            # The Cloud Storage service agent must be able to use the key, or object writes fail.
+            data "google_storage_project_service_account" "gcs_account" {}
+
+            resource "google_kms_crypto_key_iam_member" "gcs_cmek" {
+              crypto_key_id = google_kms_crypto_key.example.id
+              role          = "roles/cloudkms.cryptoKeyEncrypterDecrypter"
+              member        = "serviceAccount:${data.google_storage_project_service_account.gcs_account.email_address}"
+            }
+
             resource "google_storage_bucket" "example" {
-              name     = "example-bucket"
-              location = "US"
+              name       = "example-bucket"
+              location   = "US"
+              depends_on = [google_kms_crypto_key_iam_member.gcs_cmek]
 
               encryption {
                 default_kms_key_name = google_kms_crypto_key.example.id
@@ -1529,6 +1544,8 @@ queries:
         - id: console
           desc: |
             To ensure Cloud Storage buckets are encrypted with CMEK using the Google Cloud Console:
+
+            First, grant the Cloud Storage service agent permission to use the key. In **Security > Key Management**, open the key, and on the **Permissions** panel add the bucket project's Cloud Storage service agent with the **Cloud KMS CryptoKey Encrypter/Decrypter** role. Without this grant, every object write to the bucket fails.
 
             1. In the Google Cloud console, go to the **Cloud Storage Buckets** page.
             2. Select the name of the bucket you want to configure.
@@ -1540,6 +1557,21 @@ queries:
         - id: cli
           desc: |
             To ensure Cloud Storage buckets are encrypted with CMEK using the Google Cloud CLI:
+
+            First, grant the Cloud Storage service agent permission to use the key, or all object writes to the bucket fail:
+
+            ```bash
+            # Look up the project's Cloud Storage service agent
+            SERVICE_AGENT=$(gcloud storage service-agent --project=PROJECT_ID)
+
+            # Allow the service agent to encrypt and decrypt with the key
+            gcloud kms keys add-iam-policy-binding KEY \
+              --keyring=KEY_RING --location=LOCATION \
+              --member="serviceAccount:${SERVICE_AGENT}" \
+              --role=roles/cloudkms.cryptoKeyEncrypterDecrypter
+            ```
+
+            Then set the bucket's default encryption key:
 
             ```bash
             gcloud storage buckets update gs://BUCKET_NAME --default-encryption-key=projects/PROJECT_ID/locations/LOCATION/keyRings/KEY_RING/cryptoKeys/KEY
@@ -2792,6 +2824,8 @@ queries:
           desc: |
             To ensure Cloud SQL MySQL instances are not publicly exposed using the Google Cloud CLI:
 
+            Private IP requires Private Service Access (a VPC peering range allocated to Google services) to be configured on the VPC network first. Set this up before you switch the instance to private IP, or the change fails. Removing the public IP also cuts off any client that connects over the public endpoint, so confirm clients can reach the instance over private IP first.
+
             1.  Modify the target instance to remove its public IP address and ensure it's associated with a VPC network for private IP access. Replace `INSTANCE_NAME` with the actual instance name and `VPC_NETWORK_NAME` with the desired VPC network name:
                 ```bash
                 gcloud sql instances patch INSTANCE_NAME --network=VPC_NETWORK_NAME --no-assign-ip
@@ -2923,7 +2957,7 @@ queries:
             2.  Select the name of the target MySQL instance.
             3.  Navigate to the **Connections** tab, then the **Security** sub-tab.
             4.  Check the box labeled **Allow only SSL connections**.
-            5.  Select **Save** to apply the change. *Note: This may trigger an instance restart.*
+            5.  Select **Save** to apply the change. *Note: This may trigger an instance restart, and any client that is not already configured to use TLS will immediately lose database access. Confirm all clients connect over TLS before saving.*
 
             **Prevention:**
 
@@ -2931,6 +2965,8 @@ queries:
         - id: cli
           desc: |
             To ensure Cloud SQL MySQL connections require SSL/TLS using the Google Cloud CLI:
+
+            Setting `ENCRYPTED_ONLY` immediately rejects every connection that does not use TLS. Confirm that all applications and clients are configured to connect over TLS before you apply this change, or they will lose database access.
 
             1.  Enable the SSL Mode to be "ENCRYPTED_ONLY":
                 ```bash
@@ -3921,6 +3957,8 @@ queries:
           desc: |
             To ensure public IP addresses are not assigned to VM instances using the Google Cloud CLI:
 
+            Removing the external access configuration immediately drops active SSH, RDP, and inbound internet connections to the instance, and outbound internet access stops unless another path exists. Set up an alternative such as Identity-Aware Proxy, a bastion host, or Cloud NAT before you remove the public IP.
+
             1. First, identify the name of the access configuration associated with the external IP. Describe the instance:
             ```bash
             gcloud compute instances describe INSTANCE_NAME --zone=ZONE --format='json(networkInterfaces[].accessConfigs)'
@@ -4431,7 +4469,7 @@ queries:
             ```
         - id: console
           desc: |
-            The Confidential VM service can only be activated when creating a new VM instance. It cannot be enabled on an existing instance.
+            The Confidential VM service can only be activated when creating a new VM instance. It cannot be enabled on an existing instance. To remediate an existing instance, create a replacement Confidential VM, migrate its workloads and persistent disks, repoint clients, and then decommission the original instance during a planned maintenance window.
 
             To ensure Confidential VM Service is enabled for all VM instances using the Google Cloud Console:
 
@@ -4445,7 +4483,7 @@ queries:
             8. Select `Create`.
         - id: cli
           desc: |
-            The Confidential VM service can only be activated when creating a new VM instance. It cannot be enabled on an existing instance.
+            The Confidential VM service can only be activated when creating a new VM instance. It cannot be enabled on an existing instance. To remediate an existing instance, create a replacement Confidential VM, migrate its workloads and persistent disks, repoint clients, and then decommission the original instance during a planned maintenance window.
 
             To ensure Confidential VM Service is enabled for all VM instances using the Google Cloud CLI, use the `--confidential-compute` flag during instance creation. You must also set the maintenance policy to `TERMINATE`.
 
@@ -5163,6 +5201,8 @@ queries:
           desc: |
             To ensure Cloud SQL PostgreSQL instances are not publicly exposed using the Google Cloud CLI:
 
+            Private IP requires Private Service Access (a VPC peering range allocated to Google services) to be configured on the VPC network first. Set this up before you switch the instance to private IP, or the change fails. Removing the public IP also cuts off any client that connects over the public endpoint, so confirm clients can reach the instance over private IP first.
+
             1.  Modify the target instance to remove its public IP address and ensure it's associated with a VPC network for private IP access. Replace `INSTANCE_NAME` with the actual instance name and `VPC_NETWORK_NAME` with the desired VPC network name:
                 ```bash
                 gcloud sql instances patch INSTANCE_NAME --network=VPC_NETWORK_NAME --no-assign-ip
@@ -5324,6 +5364,8 @@ queries:
           desc: |
             To ensure Cloud SQL for SQL Server instances are not publicly exposed using the Google Cloud CLI:
 
+            Private IP requires Private Service Access (a VPC peering range allocated to Google services) to be configured on the VPC network first. Set this up before you switch the instance to private IP, or the change fails. Removing the public IP also cuts off any client that connects over the public endpoint, so confirm clients can reach the instance over private IP first.
+
             1.  Modify the target instance to remove its public IP address and ensure it's associated with a VPC network for private IP access. Replace `INSTANCE_NAME` with the actual instance name and `VPC_NETWORK_NAME` with the desired VPC network name:
                 ```bash
                 gcloud sql instances patch INSTANCE_NAME --network=VPC_NETWORK_NAME --no-assign-ip
@@ -5480,7 +5522,7 @@ queries:
             2.  Select the name of the target PostgreSQL instance.
             3.  Navigate to the **Connections** tab, then the **Security** sub-tab.
             4.  Check the box labeled **Allow only SSL connections**.
-            5.  Select **Save** to apply the change. *Note: This may trigger an instance restart.*
+            5.  Select **Save** to apply the change. *Note: This may trigger an instance restart, and any client that is not already configured to use TLS will immediately lose database access. Confirm all clients connect over TLS before saving.*
 
             **Prevention:**
 
@@ -5488,6 +5530,8 @@ queries:
         - id: cli
           desc: |
             To ensure Cloud SQL PostgreSQL connections require SSL/TLS using the Google Cloud CLI:
+
+            Setting `ENCRYPTED_ONLY` immediately rejects every connection that does not use TLS. Confirm that all applications and clients are configured to connect over TLS before you apply this change, or they will lose database access.
 
             1.  Enable the SSL Mode to be "ENCRYPTED_ONLY":
                 ```bash
@@ -5648,7 +5692,7 @@ queries:
             2.  Select the name of the target SQL Server instance.
             3.  Navigate to the **Connections** tab, then the **Security** sub-tab.
             4.  Check the box labeled **Allow only SSL connections**.
-            5.  Select **Save** to apply the change. *Note: This may trigger an instance restart.*
+            5.  Select **Save** to apply the change. *Note: This may trigger an instance restart, and any client that is not already configured to use TLS will immediately lose database access. Confirm all clients connect over TLS before saving.*
 
             **Prevention:**
 
@@ -5656,6 +5700,8 @@ queries:
         - id: cli
           desc: |
             To ensure Cloud SQL for SQL Server connections require SSL/TLS using the Google Cloud CLI:
+
+            Setting `ENCRYPTED_ONLY` immediately rejects every connection that does not use TLS. Confirm that all applications and clients are configured to connect over TLS before you apply this change, or they will lose database access.
 
             1.  Enable the SSL Mode to be "ENCRYPTED_ONLY":
                 ```bash
@@ -6182,7 +6228,7 @@ queries:
             1. Navigate to **Security** > **Key Management** in the GCP Console.
             2. When creating a new crypto key, expand **Advanced settings**.
             3. Set the **Scheduled for destruction duration** to at least 24 hours.
-            4. For existing keys with insufficient duration, create a new key with the correct duration and re-encrypt data with the new key.
+            4. For existing keys with insufficient duration, create a new key with the correct duration and re-encrypt data with the new key. Key destruction is irreversible and destroys all data still encrypted with that key, so retain the old key until you have confirmed that all data has been re-encrypted with the new key.
         - id: cli
           desc: |
             To ensure KMS crypto keys have a destroy scheduled duration of 24h+ using the Google Cloud CLI, set the destroy scheduled duration when creating a new crypto key:
@@ -6195,7 +6241,7 @@ queries:
               --destroy-scheduled-duration=24h
             ```
 
-            For existing keys, the destroy scheduled duration cannot be changed. Create a new key with the correct duration and migrate encrypted data.
+            For existing keys, the destroy scheduled duration cannot be changed. Create a new key with the correct duration and migrate encrypted data. Key destruction is irreversible and destroys all data still encrypted with that key, so retain the old key until you have confirmed that all data has been re-encrypted with the new key.
     refs:
       - url: https://cloud.google.com/kms/docs/reference
         title: Cloud KMS Documentation
@@ -6319,7 +6365,7 @@ queries:
             2. Select **Create Key Ring**.
             3. Under **Key ring location**, select a specific region such as us-central1 instead of 'global'.
             4. Complete the key ring creation.
-            5. For existing global keyrings, create a new regional keyring, create new keys, and re-encrypt data with the new keys.
+            5. For existing global keyrings, create a new regional keyring, create new keys, and re-encrypt data with the new keys. Keyring and key location are immutable and key destruction is irreversible: retain the old keys until you have confirmed that all data has been re-encrypted with the new regional keys, then schedule the old keys for destruction.
         - id: cli
           desc: |
             To ensure KMS keyrings are not in the global location using the Google Cloud CLI, create a keyring in a specific regional location:
@@ -6343,6 +6389,8 @@ queries:
               --purpose=encryption \
               --rotation-period=7776000s
             ```
+
+            Keyring and key location are immutable and key destruction is irreversible. Retain the old global keys until you have confirmed that all data has been re-encrypted with the new regional keys, then schedule the old keys for destruction.
     refs:
       - url: https://cloud.google.com/kms/docs/reference
         title: Cloud KMS Documentation
@@ -7125,9 +7173,11 @@ queries:
             # Re-enable with strong algorithms
             gcloud dns managed-zones update ZONE_NAME \
               --dnssec-state=on \
-              --ksk-algorithm=ecdsap256sha256 --ksk-key-length=256 \
-              --zsk-algorithm=ecdsap256sha256 --zsk-key-length=256
+              --ksk-algorithm=ecdsap256sha256 \
+              --zsk-algorithm=ecdsap256sha256
             ```
+
+            ECDSA P256 keys have a fixed length, so the `--ksk-key-length` and `--zsk-key-length` flags are not used with `ecdsap256sha256`. If you choose `rsasha256` instead, add `--ksk-key-length=2048` and `--zsk-key-length=1024`.
 
             After the new keys are active, update the DS record at the domain's registrar.
     refs:
@@ -7454,6 +7504,8 @@ queries:
               source_ranges = ["35.235.240.0/20"]
             }
             ```
+
+            Limiting the source range to the IAP forwarding range is necessary but not sufficient to enforce IAP authentication. You must also enable the IAP API and grant connecting users the `roles/iap.tunnelResourceAccessor` role; otherwise the rule only narrows the source range without requiring identity-based access.
         - id: console
           desc: |
             To ensure SSH access is restricted from the internet using the Google Cloud Console:
@@ -8534,7 +8586,7 @@ queries:
       remediation:
         - id: terraform
           desc: |
-            To ensure Stackdriver Kubernetes Engine Monitoring is enabled on GKE clusters in Terraform, enable Cloud Logging in your GKE cluster configuration:
+            To ensure Cloud Logging is enabled on GKE clusters in Terraform, enable Cloud Logging in your GKE cluster configuration:
 
             ```hcl
             resource "google_container_cluster" "example" {
@@ -8546,7 +8598,7 @@ queries:
             ```
         - id: console
           desc: |
-            To ensure Stackdriver Kubernetes Engine Monitoring is enabled on GKE clusters using the Google Cloud Console:
+            To ensure Cloud Logging is enabled on GKE clusters using the Google Cloud Console:
 
             1. In the Google Cloud console, go to the **Kubernetes Engine > Clusters** page.
             2. Select the cluster you want to configure.
@@ -8555,7 +8607,7 @@ queries:
             5. Select **Save**.
         - id: cli
           desc: |
-            To ensure Stackdriver Kubernetes Engine Monitoring is enabled on GKE clusters using the Google Cloud CLI:
+            To ensure Cloud Logging is enabled on GKE clusters using the Google Cloud CLI:
 
             ```bash
             gcloud container clusters update CLUSTER_NAME --zone ZONE --logging=SYSTEM,WORKLOAD
@@ -9088,7 +9140,7 @@ queries:
             ```
         - id: console
           desc: |
-            To ensure private cluster is enabled on GKE clusters using the Google Cloud Console, note: Private cluster configuration cannot be changed on an existing cluster. You must create a new cluster:
+            To ensure private cluster is enabled on GKE clusters using the Google Cloud Console, note: Private cluster configuration cannot be changed on an existing cluster. You must create a new private cluster, migrate your workloads to it, cut traffic over, and then delete the old cluster. Plan for downtime during the cutover.
 
             1. Go to the **Kubernetes Engine > Clusters** page in the Google Cloud Console.
             2. Select **Create**.
@@ -9096,6 +9148,7 @@ queries:
             4. Enable **Access control plane using its external IP address** if needed.
             5. Configure the **Control plane IP range**.
             6. Complete the cluster creation.
+            7. Migrate your workloads to the new cluster, repoint clients, and then delete the old cluster.
         - id: cli
           desc: |
             To ensure private cluster is enabled on GKE clusters using the Google Cloud CLI:
@@ -11495,6 +11548,14 @@ queries:
               filter                 = "logName:\"cloudaudit.googleapis.com\""
               unique_writer_identity = true
             }
+
+            # Grant the sink's writer identity write access on the destination,
+            # otherwise the sink silently drops all logs.
+            resource "google_storage_bucket_iam_member" "audit_sink_writer" {
+              bucket = google_storage_bucket.audit_logs.name
+              role   = "roles/storage.objectCreator"
+              member = google_logging_project_sink.audit_sink.writer_identity
+            }
             ```
         - id: console
           desc: |
@@ -12159,15 +12220,18 @@ queries:
             To ensure Cloud Functions do not allow all ingress traffic in Terraform:
 
             ```hcl
-            resource "google_cloudfunctions_function" "example" {
-              name        = "example-function"
-              runtime     = "python312"
-              entry_point = "main"
+            resource "google_cloudfunctions2_function" "example" {
+              name     = "example-function"
+              location = "us-central1"
 
-              ingress_settings = "ALLOW_INTERNAL_ONLY"
+              build_config {
+                runtime     = "python312"
+                entry_point = "main"
+              }
 
-              source_archive_bucket = google_storage_bucket.source.name
-              source_archive_object = google_storage_bucket_object.archive.name
+              service_config {
+                ingress_settings = "ALLOW_INTERNAL_ONLY"
+              }
             }
             ```
         - id: console
@@ -12297,14 +12361,18 @@ queries:
               display_name = "Cloud Function Service Account"
             }
 
-            resource "google_cloudfunctions_function" "example" {
-              name                  = "example-function"
-              runtime               = "python312"
-              entry_point           = "main"
-              service_account_email = google_service_account.function_sa.email
+            resource "google_cloudfunctions2_function" "example" {
+              name     = "example-function"
+              location = "us-central1"
 
-              source_archive_bucket = google_storage_bucket.source.name
-              source_archive_object = google_storage_bucket_object.archive.name
+              build_config {
+                runtime     = "python312"
+                entry_point = "main"
+              }
+
+              service_config {
+                service_account_email = google_service_account.function_sa.email
+              }
             }
             ```
         - id: console
@@ -12443,15 +12511,19 @@ queries:
               network       = "default"
             }
 
-            resource "google_cloudfunctions_function" "example" {
-              name                  = "example-function"
-              runtime               = "python312"
-              entry_point           = "main"
-              vpc_connector         = google_vpc_access_connector.connector.id
-              vpc_connector_egress_settings = "ALL_TRAFFIC"
+            resource "google_cloudfunctions2_function" "example" {
+              name     = "example-function"
+              location = "us-central1"
 
-              source_archive_bucket = google_storage_bucket.source.name
-              source_archive_object = google_storage_bucket_object.archive.name
+              build_config {
+                runtime     = "python312"
+                entry_point = "main"
+              }
+
+              service_config {
+                vpc_connector                 = google_vpc_access_connector.connector.id
+                vpc_connector_egress_settings = "ALL_TRAFFIC"
+              }
             }
             ```
         - id: console
@@ -14250,6 +14322,8 @@ queries:
             ```bash
             gcloud container binauthz policy import policy.yaml
             ```
+
+            Configure attestors and sign your images before you enforce `REQUIRE_ATTESTATION`. Without attestors in place, the policy blocks every deployment to your GKE clusters, including system pods, and causes a full outage. To stage the change safely, set the enforcement mode to a dry-run or audit-only mode first and confirm that legitimate images pass.
     refs:
       - url: https://cloud.google.com/binary-authorization/docs/overview
         title: Binary Authorization overview
@@ -14818,13 +14892,15 @@ queries:
             gcloud services api-keys list --project=PROJECT_ID
             ```
 
-            Create a new key:
+            Create a new key, replicating the API and application restrictions from the key you are replacing. A key created without restrictions is usable against any enabled API from anywhere, which is less secure than the key it replaces:
 
             ```bash
-            gcloud services api-keys create --display-name="Rotated Key" --project=PROJECT_ID
+            gcloud services api-keys create --display-name="Rotated Key" --project=PROJECT_ID \
+              --api-target=service=maps-backend.googleapis.com \
+              --allowed-ips=203.0.113.0/24
             ```
 
-            Delete the old key after updating consumers:
+            Confirm the new key carries the same restrictions as the old one before you delete the old key:
 
             ```bash
             gcloud services api-keys delete KEY_ID --project=PROJECT_ID
@@ -14937,6 +15013,8 @@ queries:
         - id: cli
           desc: |
             To ensure the default network does not exist in the project using the Google Cloud CLI, delete the default network:
+
+            Deleting the default network is irreversible and removes its subnets and firewall rules. The delete fails if any VMs, forwarding rules, or other resources still reference it, so move or delete those dependents first. This is best done as a bootstrap-time action on a new project before workloads are deployed.
 
             ```bash
             gcloud compute networks delete default
@@ -15182,6 +15260,8 @@ queries:
         - id: console
           desc: |
             To ensure subnetworks do not use overly broad IP CIDR ranges using the Google Cloud Console:
+
+            A subnet's primary IP range cannot be shrunk in place, so this is a migration rather than an in-place edit. Every VM, GKE node, and other resource attached to the oversized subnet must be moved to the new subnet and given a new IP, which means an outage for those resources. Plan a maintenance window before you begin.
 
             1. Navigate to **VPC network > VPC networks** in the Google Cloud Console.
             2. Review each subnet's IP address range.
@@ -16080,7 +16160,8 @@ queries:
 
               rotation {
                 rotation_period    = "7776000s"  # 90 days
-                next_rotation_time = "2024-12-01T00:00:00Z"
+                # Set to a future RFC 3339 timestamp; an elapsed time is rejected on apply.
+                next_rotation_time = "2030-01-01T00:00:00Z"
               }
 
               topics {
@@ -16106,12 +16187,12 @@ queries:
 
             ```bash
             gcloud secrets update SECRET_ID \
-              --next-rotation-time="2024-12-01T00:00:00Z" \
+              --next-rotation-time="2030-01-01T00:00:00Z" \
               --rotation-period="7776000s" \
               --add-topics=projects/PROJECT/topics/ROTATION_TOPIC
             ```
 
-            Note: A Pub/Sub topic must be configured on the secret to receive rotation notifications. The rotation period is specified in seconds (for example, 7776000s for 90 days).
+            Note: Set `--next-rotation-time` to a future RFC 3339 timestamp; gcloud rejects a time that has already elapsed. A Pub/Sub topic must be configured on the secret to receive rotation notifications. The rotation period is specified in seconds (for example, 7776000s for 90 days).
     refs:
       - url: https://cloud.google.com/secret-manager/docs/secret-rotation
         title: Secret rotation in Secret Manager
@@ -17942,7 +18023,7 @@ queries:
         - **CMEK support:** User-managed Artifact Registry repositories can be configured with a customer-managed encryption key, ensuring that built function container images are encrypted with an organization-controlled key.
         - **Vulnerability scanning:** Artifact Registry supports automated vulnerability scanning for container images, enabling detection of known CVEs in function runtime images without additional tooling.
         - **Access control granularity:** A user-managed repository allows IAM policies to be applied independently from function deployment permissions, supporting the principle of least privilege for image storage.
-        - **Legacy repository deprecation:** The default Google-managed Container Registry is deprecated; relying on it creates a dependency on infrastructure that will eventually be removed.
+        - **Legacy repository shutdown:** Container Registry was shut down on March 18, 2025, and has been replaced by Artifact Registry. New functions must use an Artifact Registry repository.
 
         **Risk mitigation**
 
@@ -20589,6 +20670,8 @@ queries:
               --security-posture=standard \
               --workload-vulnerability-scanning=standard
             ```
+
+            The gcloud value `standard` selects the same basic tier that the API and Terraform call `BASIC` (`security_posture_config.mode = "BASIC"`). The value names differ between gcloud and the API or Terraform, but they configure the equivalent tier.
     refs:
       - url: https://cloud.google.com/kubernetes-engine/docs/concepts/about-security-posture-dashboard
         title: GKE Security Posture overview
@@ -23770,6 +23853,8 @@ queries:
             gcloud sql instances patch <instance-name> \
               --backup-start-time=02:00
             ```
+
+            Setting `--backup-start-time` enables automated backups and pins the daily backup window. To turn automated backups off, use `--no-backup` instead.
         - id: terraform
           desc: |
             To ensure Cloud SQL instances have automated backups enabled in Terraform, enable automated backups in the settings block:
@@ -25400,15 +25485,13 @@ queries:
             Replace `PERIMETER_NAME` with the perimeter name and `POLICY_ID` with the access policy ID. This promotes the dry-run configuration to the enforced configuration.
         - id: terraform
           desc: |
-            To enforce a VPC Service Controls perimeter using Terraform, configure only the `status` block without a `spec` block and set `use_explicit_dry_run_spec` to `false`:
+            To enforce a VPC Service Controls perimeter using Terraform, configure only the `status` block and omit the `spec` block. A perimeter that defines `status` without `spec` is enforced rather than dry-run:
 
             ```hcl
             resource "google_access_context_manager_service_perimeter" "example" {
               parent = "accessPolicies/POLICY_ID"
               name   = "accessPolicies/POLICY_ID/servicePerimeters/example_perimeter"
               title  = "example-perimeter"
-
-              use_explicit_dry_run_spec = false
 
               status {
                 restricted_services = [
@@ -27240,7 +27323,7 @@ queries:
 
             1. Open **Security** → **Identity-Aware Proxy** → **TCP forwarding** → **Destination groups**.
             2. Edit the destination group.
-            3. Remove any CIDR of `/15` or larger. Replace with specific subnets (ideally `/24` or smaller) that match the intended hosts.
+            3. Remove any CIDR with a prefix of `/15` or shorter, which is a broader range. Replace it with specific subnets that have a prefix of `/24` or longer and match the intended hosts.
             4. Save. Existing sessions to removed ranges drop immediately.
         - id: cli
           desc: |
@@ -27393,7 +27476,7 @@ queries:
             1. Open **Security** → **Sensitive Data Protection** → **Inspection** → **Job triggers**.
             2. Select the flagged trigger.
             3. If status is `PAUSED`, review why it was paused and either resume via **Resume** or delete it if no longer needed.
-            4. If status is `HEALTHY` but `updated` is stale, check the trigger's schedule and IAM bindings on the target bucket / dataset; a missing `dlp.jobs.create` permission will silently prevent runs.
+            4. If the status is **Healthy** but the **Last run** timestamp is stale, check the trigger's schedule and IAM bindings on the target bucket or dataset; a missing `dlp.jobs.create` permission will silently prevent runs.
             5. Use **Run now** to verify the trigger executes end-to-end.
         - id: cli
           desc: |
@@ -29098,7 +29181,7 @@ queries:
             1. In the Google Cloud console, open **SQL** and select the affected instance.
             2. Confirm that **Customer-managed encryption key** is configured on the instance.
             3. If the instance is not CMEK-encrypted but must be, you must re-create the instance with CMEK, since CMEK cannot be applied to an existing instance, and migrate data.
-            4. Delete backup runs that pre-date the CMEK configuration and create a fresh CMEK-encrypted backup from **Backups** → **Create backup**.
+            4. Create a fresh CMEK-encrypted backup from **Backups** → **Create backup**, confirm it succeeds, and only then delete backup runs that pre-date the CMEK configuration. Deleting a backup is irreversible and removes that recovery point, so keep a current valid backup before removing any older ones.
         - id: cli
           desc: |
             Create a fresh on-demand backup after confirming the instance has a CMEK configured. Any new backup run will inherit the instance's CMEK:
@@ -29113,7 +29196,7 @@ queries:
             gcloud sql backups list --instance=INSTANCE_NAME
             ```
 
-            Delete each backup run that pre-dates the CMEK configuration:
+            After confirming the new CMEK-encrypted backup exists, delete each backup run that pre-dates the CMEK configuration. Deleting a backup is irreversible and removes that recovery point, so keep a current valid backup before removing any older ones:
 
             ```bash
             gcloud sql backups delete BACKUP_ID --instance=INSTANCE_NAME
@@ -29416,13 +29499,22 @@ queries:
             4. Re-run a dependent query to confirm the connection is healthy.
         - id: cli
           desc: |
-            Update the connection with the new password:
+            Update the connection with the new password. Pass the credential through a file rather than typing it on the command line, which would record the plaintext password in your shell history and process list:
 
             ```bash
+            # Write the credential to a restricted file
+            cat > /tmp/bq-cred.json <<'EOF'
+            {"username":"DB_USER","password":"NEW_PASSWORD"}
+            EOF
+            chmod 600 /tmp/bq-cred.json
+
             bq update --connection \
-              --connection_credential='{"username":"DB_USER","password":"NEW_PASSWORD"}' \
+              --connection_credential="$(cat /tmp/bq-cred.json)" \
               --location=LOCATION \
               CONNECTION_ID
+
+            # Remove the credential file when done
+            rm -f /tmp/bq-cred.json
             ```
     refs:
       - url: https://cloud.google.com/bigquery/docs/cloud-sql-federated-queries
@@ -30608,7 +30700,7 @@ queries:
             Backup-collection CMEK is determined by the source instance. To remediate, recreate the source instance with CMEK enabled (see the instance CMEK check above) and let the backup collection inherit the key.
         - id: cli
           desc: |
-            Confirm the source instance is created with `--kms-key=...`. Cnspec verifies the resolved `backupCollection.kmsKey` is set:
+            Create the source instance with `--kms-key=...` so its backup collection inherits the customer-managed key:
 
             ```bash
             gcloud memorystore instances create INSTANCE_ID \
@@ -30940,6 +31032,7 @@ queries:
 
         - **Upgrade planning:** Scheduling engine-version upgrades during low-traffic maintenance windows reduces the blast radius of the upgrade while eliminating the CVE exposure.
         - **Version tracking:** Monitoring upstream Valkey and Redis security advisories alongside the Memorystore release notes enables prompt identification of when an upgrade is required.
+        - **Review the version list against current advisories:** The releases this check flags reflect advisories known at authoring time. Re-check the latest Redis and Valkey security advisories and the Memorystore release notes when remediating, since newer releases may also be affected and older ones may reach end of support.
       audit: |
         ### Audit via Console
 
@@ -33924,9 +34017,10 @@ queries:
             Assign a dedicated service account to a trigger:
 
             1. Create a service account scoped to the trigger's required permissions in **IAM & Admin > Service accounts**.
-            2. Go to **Cloud Build > Triggers** and open the trigger.
-            3. Under **Advanced > Service account**, choose the dedicated service account.
-            4. Save the trigger and rerun a build to confirm the new identity has the required permissions.
+            2. Grant the service account `roles/logging.logWriter` (or configure the build to write to a user-specified logs bucket). Without log-write permission, builds run by a user-specified service account fail at startup.
+            3. Go to **Cloud Build > Triggers** and open the trigger.
+            4. Under **Advanced > Service account**, choose the dedicated service account.
+            5. Save the trigger and rerun a build to confirm the new identity has the required permissions.
         - id: cli
           desc: |
             Update the trigger to use a dedicated service account. The flag belongs to the trigger source subcommand (`github`, `manual`, `pubsub`, or `webhook`):
@@ -34075,7 +34169,7 @@ queries:
             4. Pick a subnetwork in the customer VPC that has Private Google Access enabled.
             5. Submit the job.
 
-            Cancel any running job that uses public workers and resubmit it with private workers; existing jobs cannot switch IP configuration in place.
+            Existing jobs cannot switch IP configuration in place, so stop the running job and resubmit it with private workers. Cancelling a streaming job drops in-flight data; drain the job first with `gcloud dataflow jobs drain JOB_ID --region=REGION` so it finishes processing buffered data before you resubmit. Batch jobs can be cancelled, but any unwritten output is lost.
         - id: cli
           desc: |
             Submit Dataflow jobs with private workers:
@@ -37053,6 +37147,14 @@ queries:
             gcloud app deploy app.yaml
             gcloud app services set-traffic SERVICE_NAME --splits=NEW_VERSION=1
             ```
+
+            After traffic has shifted to the new version, stop or delete the old insecure version so it no longer serves requests and no longer reports as a finding:
+
+            ```bash
+            gcloud app versions stop OLD_VERSION --service=SERVICE_NAME
+            # or, to remove it entirely
+            gcloud app versions delete OLD_VERSION --service=SERVICE_NAME
+            ```
     refs:
       - url: https://cloud.google.com/appengine/docs/standard/reference/app-yaml
         title: App Engine - app.yaml reference
@@ -38870,7 +38972,7 @@ queries:
       remediation:
         - id: console
           desc: |
-            A detached subscription cannot be directly reattached via the console. To remediate:
+            A detached subscription cannot be directly reattached via the console. Deleting a subscription permanently discards its entire backlog of unacknowledged messages. Confirm that consumers have drained the backlog before you delete it. To remediate:
 
             1. Navigate to **Pub/Sub > Subscriptions** in the Google Cloud Console.
             2. Note the configuration of the detached subscription.
@@ -38878,7 +38980,7 @@ queries:
             4. Create a new subscription on the same topic with the same configuration and consumer permissions.
         - id: cli
           desc: |
-            A detached subscription cannot be reattached directly. Delete and recreate it:
+            A detached subscription cannot be reattached directly. Delete and recreate it. Deleting a subscription permanently discards its entire backlog of unacknowledged messages, so confirm that consumers have drained the backlog before you delete it:
 
             ```bash
             gcloud pubsub subscriptions delete SUBSCRIPTION_NAME
