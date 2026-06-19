@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-oci-security
     name: Mondoo Oracle Cloud Infrastructure (OCI) Security
-    version: 4.1.2
+    version: 4.1.3
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -213,13 +213,21 @@ queries:
       remediation:
         - id: console
           desc: |
-            To enable MFA for IAM users using the OCI Console:
+            An administrator can require and initiate MFA, but each user completes the TOTP device enrollment from their own profile. The check passes only once the user finishes enrollment.
 
-            1. Navigate to **Identity & Security > Users**.
-            2. Select the user.
-            3. Under **Resources**, select **Multi-Factor Authentication**.
-            4. Select **Enable Multi-Factor Authentication** and follow the setup instructions.
-            5. Repeat for each active user that does not have MFA enabled.
+            As an administrator, require MFA through a sign-on policy:
+
+            1. Navigate to **Identity & Security > Domains** → select the domain → **Security** → **Sign-on policies**.
+            2. Add or edit a sign-on rule that requires multi-factor authentication for the relevant users or groups.
+            3. Save the policy.
+
+            Each affected user then enrolls a TOTP device themselves:
+
+            1. The user signs in to the OCI Console and opens their own **My profile**.
+            2. They select **Security** → **Set up** for multi-factor authentication.
+            3. They scan the QR code with an authenticator app and confirm the generated code.
+
+            Repeat the user-enrollment step for each active user that has not yet completed MFA enrollment.
         - id: cli
           desc: |
             MFA must be enabled by each user through the Console. To identify users without MFA using the OCI CLI, list their MFA status:
@@ -403,11 +411,21 @@ queries:
             oci iam policy list --compartment-id TENANCY_OCID --all --query "data[].{Name:name, Statements:statements}" --output table
             ```
 
-            Review the output for any statements containing `manage all-resources in tenancy`. For each match, update the policy to use compartment-scoped statements with specific resource types:
+            Review the output for any statements containing `manage all-resources in tenancy`. For each match, update the policy to use compartment-scoped statements with specific resource types.
+
+            **Warning: `--statements` replaces the COMPLETE set of statements on the policy.** Whatever you pass becomes the entire statement list, so any statement you omit is silently dropped. Retrieve the current statements first, replace only the overly permissive one, then resubmit every statement you want to keep.
+
+            1. Export the current statements so you keep every statement you still need:
+
+            ```bash
+            oci iam policy get --policy-id POLICY_OCID --query 'data.statements' > statements.json
+            ```
+
+            2. Edit `statements.json`, replacing the `manage all-resources in tenancy` statement with scoped statements, then resubmit the full list. The list must include every statement you want to keep, for example:
 
             ```bash
             oci iam policy update --policy-id POLICY_OCID \
-              --statements '["Allow group NetworkAdmins to manage virtual-network-family in compartment NetworkCompartment"]'
+              --statements '["Allow group NetworkAdmins to manage virtual-network-family in compartment NetworkCompartment","Allow group ComputeAdmins to manage instance-family in compartment ComputeCompartment"]'
             ```
         - id: terraform
           desc: |
@@ -1215,11 +1233,22 @@ queries:
             5. Edit or remove the ingress rule that allows all protocols from 0.0.0.0/0, replacing it with rules for specific protocols, ports, and trusted source CIDR blocks.
         - id: cli
           desc: |
-            To restrict unrestricted ingress rules in a VCN security list using the OCI CLI, update the security list with scoped rules that specify protocols, ports, and trusted source CIDR blocks:
+            To restrict unrestricted ingress rules in a VCN security list using the OCI CLI, update the security list with scoped rules that specify protocols, ports, and trusted source CIDR blocks.
+
+            **Warning: `--ingress-security-rules` replaces the COMPLETE set of ingress rules.** Whatever you pass becomes the entire ingress rule list, so any rule you omit is deleted. Retrieve the current rules first, edit only the all-protocols rule, then resubmit the full list.
+
+            1. Export the current ingress rules so you keep every rule you still need:
+
+            ```bash
+            oci network security-list get --security-list-id SECURITY_LIST_OCID \
+              --query 'data."ingress-security-rules"' > ingress-rules.json
+            ```
+
+            2. Edit `ingress-rules.json`, replacing the all-protocols rule from `0.0.0.0/0` with scoped rules. The full list must include every rule you want to keep, for example:
 
             ```bash
             oci network security-list update --security-list-id SECURITY_LIST_OCID \
-              --ingress-security-rules '<updated-rules-json>'
+              --ingress-security-rules '[{"source":"10.0.0.0/16","protocol":"6","tcpOptions":{"destinationPortRange":{"min":443,"max":443}},"isStateless":false}]'
             ```
         - id: terraform
           desc: |
@@ -1352,11 +1381,22 @@ queries:
             5. Edit TCP ingress rules from 0.0.0.0/0 to specify destination port ranges, allowing only the ports required for your workload.
         - id: cli
           desc: |
-            To restrict unrestricted TCP ingress rules in a VCN security list using the OCI CLI, update the security list with rules that include specific port ranges:
+            To restrict unrestricted TCP ingress rules in a VCN security list using the OCI CLI, update the security list with rules that include specific port ranges.
+
+            **Warning: `--ingress-security-rules` replaces the COMPLETE set of ingress rules.** Whatever you pass becomes the entire ingress rule list, so any rule you omit is deleted. Retrieve the current rules first, edit only the unrestricted TCP rule, then resubmit the full list.
+
+            1. Export the current ingress rules so you keep every rule you still need:
+
+            ```bash
+            oci network security-list get --security-list-id SECURITY_LIST_OCID \
+              --query 'data."ingress-security-rules"' > ingress-rules.json
+            ```
+
+            2. Edit `ingress-rules.json` to add explicit `tcpOptions` port ranges, then resubmit the full list. The list must include every rule you want to keep, for example:
 
             ```bash
             oci network security-list update --security-list-id SECURITY_LIST_OCID \
-              --ingress-security-rules '<updated-rules-with-port-ranges-json>'
+              --ingress-security-rules '[{"source":"0.0.0.0/0","protocol":"6","tcpOptions":{"destinationPortRange":{"min":443,"max":443}},"isStateless":false}]'
             ```
         - id: terraform
           desc: |
@@ -1502,11 +1542,22 @@ queries:
             5. Edit egress rules to specify destination CIDR blocks and protocols, replacing any rule that allows all traffic to 0.0.0.0/0.
         - id: cli
           desc: |
-            To restrict unrestricted egress rules in a VCN security list using the OCI CLI, update the security list with scoped rules that specify destinations and protocols:
+            To restrict unrestricted egress rules in a VCN security list using the OCI CLI, update the security list with scoped rules that specify destinations and protocols.
+
+            **Warning: `--egress-security-rules` replaces the COMPLETE set of egress rules.** Whatever you pass becomes the entire egress rule list, so any rule you omit is deleted. Retrieve the current rules first, edit only the all-protocols rule, then resubmit the full list.
+
+            1. Export the current egress rules so you keep every rule you still need:
+
+            ```bash
+            oci network security-list get --security-list-id SECURITY_LIST_OCID \
+              --query 'data."egress-security-rules"' > egress-rules.json
+            ```
+
+            2. Edit `egress-rules.json`, replacing the all-protocols rule to `0.0.0.0/0` with scoped rules, then resubmit the full list. The list must include every rule you want to keep, for example:
 
             ```bash
             oci network security-list update --security-list-id SECURITY_LIST_OCID \
-              --egress-security-rules '<updated-rules-json>'
+              --egress-security-rules '[{"destination":"10.0.0.0/16","protocol":"6","tcpOptions":{"destinationPortRange":{"min":443,"max":443}},"isStateless":false}]'
             ```
         - id: terraform
           desc: |
@@ -1736,11 +1787,21 @@ queries:
             oci iam policy list --compartment-id TENANCY_OCID --all --query "data[].{Name:name, Statements:statements}" --output table
             ```
 
-            Review for statements containing `manage all-resources in compartment`. Update each policy to use specific resource types:
+            Review for statements containing `manage all-resources in compartment`. Update each policy to use specific resource types.
+
+            **Warning: `--statements` replaces the COMPLETE set of statements on the policy.** Whatever you pass becomes the entire statement list, so any statement you omit is silently dropped. Retrieve the current statements first, replace only the broad statement, then resubmit every statement you want to keep.
+
+            1. Export the current statements so you keep every statement you still need:
+
+            ```bash
+            oci iam policy get --policy-id POLICY_OCID --query 'data.statements' > statements.json
+            ```
+
+            2. Edit `statements.json`, replacing the `manage all-resources in compartment` statement with scoped statements, then resubmit the full list. The list must include every statement you want to keep, for example:
 
             ```bash
             oci iam policy update --policy-id POLICY_OCID \
-              --statements '["Allow group DevOps to manage instance-family in compartment Production"]'
+              --statements '["Allow group DevOps to manage instance-family in compartment Production","Allow group DevOps to manage virtual-network-family in compartment Production"]'
             ```
         - id: terraform
           desc: |
@@ -1861,6 +1922,8 @@ queries:
       remediation:
         - id: console
           desc: |
+            Before creating a replication policy, two prerequisites must be in place or the policy creation fails: the destination bucket must already exist with object versioning enabled, and an IAM policy must grant the Object Storage service permission to manage objects in the destination compartment, for example `Allow service objectstorage-<region> to manage object-family in compartment <destination-compartment>`.
+
             To enable replication on an Object Storage bucket using the OCI Console:
 
             1. Navigate to **Object Storage > Buckets**.
@@ -1871,6 +1934,8 @@ queries:
             6. Select **Create**.
         - id: cli
           desc: |
+            Before creating a replication policy, two prerequisites must be in place or the policy creation fails: the destination bucket must already exist with object versioning enabled, and an IAM policy must grant the Object Storage service permission to manage objects in the destination compartment, for example `Allow service objectstorage-<region> to manage object-family in compartment <destination-compartment>`.
+
             To enable replication on an Object Storage bucket using the OCI CLI, create a replication policy:
 
             ```bash
@@ -1881,9 +1946,26 @@ queries:
             ```
         - id: terraform
           desc: |
-            To enable replication on an Object Storage bucket in Terraform, create a replication policy resource:
+            To enable replication on an Object Storage bucket in Terraform, create a replication policy resource. The destination bucket must already exist with object versioning enabled, and an IAM policy must grant the Object Storage service permission to manage objects in the destination compartment, or the policy creation fails. The example below declares both prerequisites:
 
             ```hcl
+            resource "oci_objectstorage_bucket" "destination" {
+              compartment_id = var.destination_compartment_ocid
+              namespace      = var.namespace
+              name           = "backups-replica"
+              versioning     = "Enabled"
+            }
+
+            resource "oci_identity_policy" "replication" {
+              compartment_id = var.destination_compartment_ocid
+              name           = "objectstorage-replication"
+              description    = "Allow Object Storage to replicate into the destination compartment"
+
+              statements = [
+                "Allow service objectstorage-${var.destination_region} to manage object-family in compartment id ${var.destination_compartment_ocid}",
+              ]
+            }
+
             resource "oci_objectstorage_replication_policy" "example" {
               bucket           = oci_objectstorage_bucket.source.name
               namespace        = var.namespace
@@ -2575,11 +2657,22 @@ queries:
             6. Select **Save Changes**.
         - id: cli
           desc: |
-            To convert stateless ingress rules to stateful using the OCI CLI, update the security list with `isStateless` set to `false`:
+            To convert stateless ingress rules to stateful using the OCI CLI, update the security list with `isStateless` set to `false`.
+
+            **Warning: `--ingress-security-rules` replaces the COMPLETE set of ingress rules.** Whatever you pass becomes the entire ingress rule list, so any rule you omit is deleted. Retrieve the current rules first, set `isStateless` to `false` only on the internet-facing rule, then resubmit the full list.
+
+            1. Export the current ingress rules so you keep every rule you still need:
+
+            ```bash
+            oci network security-list get --security-list-id SECURITY_LIST_OCID \
+              --query 'data."ingress-security-rules"' > ingress-rules.json
+            ```
+
+            2. Edit `ingress-rules.json`, setting `isStateless` to `false` on the rule from `0.0.0.0/0`, then resubmit the full list. The list must include every rule you want to keep, for example:
 
             ```bash
             oci network security-list update --security-list-id SECURITY_LIST_OCID \
-              --ingress-security-rules '<updated-rules-with-isStateless-false-json>'
+              --ingress-security-rules '[{"source":"0.0.0.0/0","protocol":"6","tcpOptions":{"destinationPortRange":{"min":443,"max":443}},"isStateless":false}]'
             ```
         - id: terraform
           desc: |
@@ -2712,7 +2805,18 @@ queries:
             5. Edit TCP egress rules to 0.0.0.0/0 to specify destination port ranges, allowing only the ports required for your workload (e.g., 443 for HTTPS).
         - id: cli
           desc: |
-            To restrict unrestricted TCP egress rules in a VCN security list using the OCI CLI, update the security list with rules that include specific port ranges:
+            To restrict unrestricted TCP egress rules in a VCN security list using the OCI CLI, update the security list with rules that include specific port ranges.
+
+            **Warning: `--egress-security-rules` replaces the COMPLETE set of egress rules.** Whatever you pass becomes the entire egress rule list, so any rule you omit is deleted. Retrieve the current rules first, edit only the unrestricted TCP rule, then resubmit the full list.
+
+            1. Export the current egress rules so you keep every rule you still need:
+
+            ```bash
+            oci network security-list get --security-list-id SECURITY_LIST_OCID \
+              --query 'data."egress-security-rules"' > egress-rules.json
+            ```
+
+            2. Edit `egress-rules.json` to add explicit `tcpOptions` port ranges, then resubmit the full list. The list must include every rule you want to keep, for example:
 
             ```bash
             oci network security-list update --security-list-id SECURITY_LIST_OCID \
@@ -3519,7 +3623,7 @@ queries:
             1. Open **Compute** → **Instances** → select the instance.
             2. **More Actions** → **Edit** → expand **Show advanced options** → **Security**.
             3. Set **Legacy MetaData service endpoint** to **Disabled**.
-            4. Save. The setting applies without rebooting, but reboot is required for any running application using IMDSv1 to re-initialize via IMDSv2.
+            4. Save. The setting takes effect immediately. Once legacy IMDS is disabled, any application still calling IMDSv1 fails immediately, so update those applications to IMDSv2 (which sends a PUT request to obtain a session token and includes that token as a header on subsequent calls) before disabling, then restart those applications.
         - id: cli
           desc: |
             Disable legacy IMDS endpoints via the OCI CLI:
@@ -4292,7 +4396,7 @@ queries:
               compartment_id     = var.compartment_ocid
               name               = "prod"
               vcn_id             = oci_core_vcn.main.id
-              kubernetes_version = "v1.30.1"
+              kubernetes_version = var.kubernetes_version # use a currently supported OKE version
 
               endpoint_config {
                 subnet_id            = oci_core_subnet.api_endpoint_private.id
@@ -4514,7 +4618,7 @@ queries:
               compartment_id     = var.compartment_ocid
               name               = "prod"
               vcn_id             = oci_core_vcn.main.id
-              kubernetes_version = "v1.30.1"
+              kubernetes_version = var.kubernetes_version # use a currently supported OKE version
 
               image_policy_config {
                 is_policy_enabled = true
@@ -5835,12 +5939,27 @@ queries:
       remediation:
         - id: console
           desc: |
-            Mirror external images into OCIR and update container specs:
+            Mirroring an image into OCIR is done with the local Docker CLI, not in the OCI Console. Before you can push, you must authenticate to OCIR with `docker login`. The password is an OCIR auth token generated from your user profile, not your console password. The username is `<namespace>/<your-username>` (or `<namespace>/oracleidentitycloudservice/<your-username>` for federated users).
 
-            1. Mirror the required image into OCIR: `docker pull <external>:<tag> && docker tag ... <region>.ocir.io/<namespace>/<repo>:<tag> && docker push ...`.
-            2. Scan the mirrored image via OCIR's integrated vulnerability scanning.
-            3. In the container instance spec, change the `imageUrl` to the OCIR path.
-            4. Recreate the container instance with the updated spec.
+            1. Authenticate the Docker CLI to OCIR:
+
+            ```bash
+            docker login <region>.ocir.io
+            # Username: <namespace>/<your-username>
+            # Password: <your OCIR auth token>
+            ```
+
+            2. Mirror the required image into OCIR:
+
+            ```bash
+            docker pull <external>:<tag>
+            docker tag <external>:<tag> <region>.ocir.io/<namespace>/<repo>:<tag>
+            docker push <region>.ocir.io/<namespace>/<repo>:<tag>
+            ```
+
+            3. Scan the mirrored image via OCIR's integrated vulnerability scanning.
+            4. In the container instance spec, change the `imageUrl` to the OCIR path.
+            5. Recreate the container instance with the updated spec.
         - id: cli
           desc: |
             Recreate the container instance pointing at the OCIR copy:
@@ -6015,10 +6134,10 @@ queries:
               --namespace-name <namespace> \
               --bucket-name <bucket> \
               --retention-rule-id <rule-ocid> \
-              --time-rule-locked 2030-01-01T00:00:00Z
+              --time-rule-locked 2099-01-01T00:00:00Z # set to a real future RFC 3339 timestamp ≥ 14 days from now
             ```
 
-            Set the lock time to a real RFC 3339 timestamp at least 14 days in the future.
+            Set the lock time to a real RFC 3339 timestamp at least 14 days in the future (OCI enforces a 14-day grace period before the lock takes effect). This is irreversible: once the lock takes effect the duration can only be increased, and the rule becomes non-deletable for the bucket's lifetime, so the only way to remove it is to delete the entire bucket. Plan the retention duration carefully before locking.
         - id: terraform
           desc: |
             Set `time_rule_locked` on every `retention_rules` block to an RFC 3339 timestamp at least 14 days in the future so the rule transitions to a non-deletable lock. Use a fixed value committed in your repository. Do not use `timeadd(timestamp(), ...)` directly on this attribute, because `timestamp()` evaluates on every plan and would produce a perpetual diff. Update the value when you intentionally roll the lock, and add `lifecycle.ignore_changes = [retention_rules]` after the first apply if you want Terraform to stop tracking drift on the locked rule:
@@ -6173,7 +6292,7 @@ queries:
             ```
         - id: terraform
           desc: |
-            Declare every `retention_rules.duration` block with at least 30 days, or 1 year for year-denominated rules. Set `time_rule_locked` to a fixed RFC 3339 timestamp committed in your repository. Do not use `timeadd(timestamp(), ...)` on this attribute, because `timestamp()` evaluates on every plan and would produce a perpetual diff. Update the value when you intentionally roll the lock, and add `lifecycle.ignore_changes = [retention_rules]` after the first apply if you want Terraform to stop tracking drift on the locked rule:
+            This check verifies the retention `duration`, so the fix is to declare every `retention_rules.duration` block with at least 30 days, or 1 year for year-denominated rules:
 
             ```hcl
             resource "oci_objectstorage_bucket" "backups" {
@@ -6183,8 +6302,7 @@ queries:
               access_type    = "NoPublicAccess"
 
               retention_rules {
-                display_name     = "regulatory-90d"
-                time_rule_locked = "2099-01-01T00:00:00Z" # set to a real future RFC 3339 timestamp ≥ 14 days from apply
+                display_name = "regulatory-90d"
 
                 duration {
                   time_amount = 90
@@ -6193,6 +6311,8 @@ queries:
               }
             }
             ```
+
+            Locking the rule with `time_rule_locked` is a separate hardening step that prevents the duration from being shortened later. It is optional for this check. If you add it, set it to a fixed RFC 3339 timestamp committed in your repository rather than `timeadd(timestamp(), ...)`, because `timestamp()` re-evaluates on every plan and produces a perpetual diff.
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Object/Tasks/usingretentionrules.htm
         title: OCI - Using Retention Rules
@@ -6461,14 +6581,18 @@ queries:
       remediation:
         - id: console
           desc: |
+            This check fails on the presence of ANY `Endorse` or `Admit` statement. The only way to make it pass is to remove every such statement. The single non-removal path is to retain the statement and file a documented exception for this check.
+
             Review and tighten cross-tenancy policy statements:
 
             1. Open **Identity & Security** → **Policies** → select the flagged policy.
             2. For each `Endorse` or `Admit` statement, confirm the remote tenancy OCID is still an active partner and the grant matches the current business need.
             3. Remove any statement whose business justification can no longer be demonstrated.
-            4. Where a cross-tenancy grant is still required, narrow the resource and action scope, document the justification, and record an exception for this check, because any policy containing an Endorse or Admit statement is reported as failing.
+            4. Where a cross-tenancy grant is genuinely still required, narrow the resource and action scope, document the justification, and record an exception for this check. The check continues to report the policy as failing for as long as the statement remains, so the exception is the only supported way to keep it.
         - id: cli
           desc: |
+            This check fails on the presence of ANY `Endorse` or `Admit` statement. The only way to make it pass is to remove every such statement. The single non-removal path is to retain the statement and file a documented exception for this check.
+
             List policies and find cross-tenancy statements:
 
             ```bash
@@ -6477,14 +6601,22 @@ queries:
               --output json
             ```
 
-            Replace cross-tenancy statements with in-tenancy grants:
+            Remove the cross-tenancy statements, replacing them with in-tenancy grants where access is still needed.
+
+            **Warning: `--statements` replaces the COMPLETE set of statements on the policy.** Whatever you pass becomes the entire statement list, so any statement you omit is silently dropped. Retrieve the current statements first, remove only the `Endorse`/`Admit` statements, then resubmit every statement you want to keep.
+
+            1. Export the current statements so you keep every statement you still need:
+
+            ```bash
+            oci iam policy get --policy-id <policy-ocid> --query 'data.statements' > statements.json
+            ```
+
+            2. Edit `statements.json`, removing the `Endorse`/`Admit` statements, then resubmit the full list. The list must include every statement you want to keep, for example:
 
             ```bash
             oci iam policy update --policy-id <policy-ocid> \
               --statements '["Allow group AppReaders to read objects in compartment AppData"]'
             ```
-
-            The check reports a failure while any Endorse or Admit statement remains; retained cross-tenancy grants require a documented exception.
         - id: terraform
           desc: |
             Prefer in-tenancy grants over cross-tenancy statements:
@@ -7331,6 +7463,8 @@ queries:
             4. Subsequent automatic and on-demand backups inherit the new key. Existing backups remain encrypted with the previous key — re-create critical long-term backups after the rotation.
         - id: cli
           desc: |
+            Re-keying the parent database only fixes backups taken after the change. Existing backups stay on the old key, so this finding persists for them until those backups are re-created. Plan to re-create any critical long-term backups you need to keep.
+
             Switch the parent database to a customer-managed KMS key so subsequent backups inherit it.
 
             For an Autonomous Database:
@@ -7536,15 +7670,25 @@ queries:
             4. Save and deploy.
         - id: cli
           desc: |
-            Update a deployment's specification with `is_anonymous_access_allowed: false` in the authentication block:
+            Update a deployment's specification with `isAnonymousAccessAllowed: false` in the authentication block.
+
+            **Warning: `--specification` replaces the COMPLETE deployment specification.** The specification is a large nested document covering every route, backend, and policy. Whatever you pass becomes the entire spec, so anything you omit is removed. Retrieve the current spec first, edit only the authentication block, then resubmit the entire document.
+
+            1. Export the current specification so you keep every route and backend:
+
+            ```bash
+            oci api-gateway deployment get \
+              --deployment-id <deployment-ocid> \
+              --query 'data.specification' > specification.json
+            ```
+
+            2. In `specification.json`, set the authentication block to `"isAnonymousAccessAllowed": false`, leaving all other routes and backends intact. Resubmit the full document:
 
             ```bash
             oci api-gateway deployment update \
               --deployment-id <deployment-ocid> \
               --specification file://specification.json
             ```
-
-            Where `specification.json` sets the authentication block to `"isAnonymousAccessAllowed": false`.
         - id: terraform
           desc: |
             Set `is_anonymous_access_allowed = false` on every `authentication` block in every deployment specification:
@@ -7709,15 +7853,25 @@ queries:
             5. Save and deploy.
         - id: cli
           desc: |
-            Update the deployment with a specification whose `requestPolicies.authentication.type` is set:
+            Update the deployment with a specification whose `requestPolicies.authentication.type` is set.
+
+            **Warning: `--specification` replaces the COMPLETE deployment specification.** The specification is a large nested document covering every route, backend, and policy. Whatever you pass becomes the entire spec, so anything you omit is removed. Retrieve the current spec first, add only the authentication block, then resubmit the entire document.
+
+            1. Export the current specification so you keep every route and backend:
+
+            ```bash
+            oci api-gateway deployment get \
+              --deployment-id <deployment-ocid> \
+              --query 'data.specification' > specification.json
+            ```
+
+            2. In `specification.json`, declare an `authentication` block with `"type": "JWT_AUTHENTICATION"` (or `TOKEN_AUTHENTICATION` / `CUSTOM_AUTHENTICATION`), leaving all other routes and backends intact. Resubmit the full document:
 
             ```bash
             oci api-gateway deployment update \
               --deployment-id <deployment-ocid> \
               --specification file://specification.json
             ```
-
-            Where `specification.json` declares an `authentication` block with `"type": "JWT_AUTHENTICATION"` (or `TOKEN_AUTHENTICATION` / `CUSTOM_AUTHENTICATION`).
         - id: terraform
           desc: |
             Declare an `authentication` block with a non-empty `type` on every deployment specification:
@@ -7890,7 +8044,19 @@ queries:
             4. Confirm the CA bundle and allowed SANs are appropriate, then save and deploy.
         - id: cli
           desc: |
-            Update the deployment specification with `is_verified_certificate_required: true` in the mutual TLS block:
+            Update the deployment specification with `isVerifiedCertificateRequired: true` in the mutual TLS block.
+
+            **Warning: `--specification` replaces the COMPLETE deployment specification.** The specification is a large nested document covering every route, backend, and policy. Whatever you pass becomes the entire spec, so anything you omit is removed. Retrieve the current spec first, edit only the mutual TLS block, then resubmit the entire document.
+
+            1. Export the current specification so you keep every route and backend:
+
+            ```bash
+            oci api-gateway deployment get \
+              --deployment-id <deployment-ocid> \
+              --query 'data.specification' > specification.json
+            ```
+
+            2. In `specification.json`, set the mutual TLS block to `"isVerifiedCertificateRequired": true`, leaving all other routes and backends intact. Resubmit the full document:
 
             ```bash
             oci api-gateway deployment update \
@@ -8072,7 +8238,19 @@ queries:
             4. Save and deploy. Verify that production front-ends still load the API.
         - id: cli
           desc: |
-            Update the deployment with a CORS specification whose `allowedOrigins` is an explicit list:
+            Update the deployment with a CORS specification whose `allowedOrigins` is an explicit list.
+
+            **Warning: `--specification` replaces the COMPLETE deployment specification.** The specification is a large nested document covering every route, backend, and policy. Whatever you pass becomes the entire spec, so anything you omit is removed. Retrieve the current spec first, edit only the CORS block, then resubmit the entire document.
+
+            1. Export the current specification so you keep every route and backend:
+
+            ```bash
+            oci api-gateway deployment get \
+              --deployment-id <deployment-ocid> \
+              --query 'data.specification' > specification.json
+            ```
+
+            2. In `specification.json`, replace `"*"` in the CORS `allowedOrigins` list with an explicit list of trusted origins, leaving all other routes and backends intact. Resubmit the full document:
 
             ```bash
             oci api-gateway deployment update \
@@ -8232,7 +8410,18 @@ queries:
             4. Trigger the new version, verify the consumers pick it up, and remove the old version once dependents have rotated.
         - id: cli
           desc: |
-            Add or update a renewal rule on an internally-issued certificate so the next version is issued automatically before the current one expires:
+            A renewal rule only governs future renewals, so a near-expiry certificate still expires this cycle unless you issue a new version now. Do both: issue a fresh version immediately, then add a renewal rule so this does not recur.
+
+            1. Issue a new version immediately so the certificate stops failing this cycle:
+
+            ```bash
+            oci certs-mgmt certificate update-certificate-managed-internally \
+              --certificate-id <certificate-ocid> \
+              --version-name <new-version-name> \
+              --force
+            ```
+
+            2. Add or update a renewal rule so the next version is issued automatically before the current one expires:
 
             ```bash
             oci certs-mgmt certificate update-certificate-managed-internally \
@@ -8341,6 +8530,8 @@ queries:
             ```
         - id: terraform
           desc: |
+            This Terraform fix applies only to internally-issued certificates. Imported certificates have no `key_algorithm` argument in HCL because their key material is generated outside OCI, so a weak imported certificate must be re-issued externally with a strong key algorithm and re-imported.
+
             Set `certificate_config.key_algorithm` to a strong value on every internally-issued certificate:
 
             ```hcl
@@ -8506,6 +8697,8 @@ queries:
             ```
         - id: terraform
           desc: |
+            This Terraform fix applies only to internally-issued certificates. Imported certificates have no `signature_algorithm` argument in HCL because they are signed outside OCI, so a weak imported certificate must be re-issued externally with a strong signature algorithm and re-imported.
+
             Set `certificate_config.signature_algorithm` to a SHA-2 value on every internally-issued certificate:
 
             ```hcl
@@ -8864,7 +9057,7 @@ queries:
 
               key_shape {
                 algorithm = "RSA"
-                length    = 256
+                length    = 256 # bytes; 256 bytes = RSA-2048
               }
             }
 
