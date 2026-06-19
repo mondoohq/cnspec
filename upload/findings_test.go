@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -98,4 +99,43 @@ func TestDoUpload(t *testing.T) {
 	assert.Equal(t, 1, resolver.getCalls)
 	assert.Equal(t, "sess-123", resolver.completedSession)
 	assert.Equal(t, req.SpaceMrn, resolver.completedScope)
+}
+
+func TestResolverHTTPClient(t *testing.T) {
+	// nil falls back to a non-nil default client.
+	assert.NotNil(t, resolverHTTPClient(nil))
+
+	// a supplied client is used as-is.
+	custom := &http.Client{}
+	assert.Same(t, custom, resolverHTTPClient(custom))
+}
+
+func TestPutHTTPClient(t *testing.T) {
+	t.Run("nil builds a default client with the upload timeout", func(t *testing.T) {
+		c, err := putHTTPClient(nil)
+		require.NoError(t, err)
+		require.NotNil(t, c)
+		assert.Equal(t, findingsUploadTimeout, c.Timeout)
+	})
+
+	t.Run("client without a timeout is cloned, caller left untouched", func(t *testing.T) {
+		caller := &http.Client{Transport: http.DefaultTransport}
+		c, err := putHTTPClient(caller)
+		require.NoError(t, err)
+		// A copy is returned with the upload timeout set...
+		assert.NotSame(t, caller, c)
+		assert.Equal(t, findingsUploadTimeout, c.Timeout)
+		// ...and the same transport is preserved (so instrumentation survives).
+		assert.Same(t, caller.Transport, c.Transport)
+		// ...while the caller's client is unchanged.
+		assert.Equal(t, time.Duration(0), caller.Timeout)
+	})
+
+	t.Run("client with its own timeout is used as-is", func(t *testing.T) {
+		caller := &http.Client{Timeout: 30 * time.Second}
+		c, err := putHTTPClient(caller)
+		require.NoError(t, err)
+		assert.Same(t, caller, c)
+		assert.Equal(t, 30*time.Second, c.Timeout)
+	})
 }
