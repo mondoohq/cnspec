@@ -112,6 +112,7 @@ policies:
           - uid: mondoo-aws-security-iam-expired-certificates
           - uid: mondoo-aws-security-iam-support-role
           - uid: mondoo-aws-security-iam-unused-credentials-disabled
+          - uid: mondoo-aws-security-iam-instance-role-no-admin-access
       - title: AWS Lambda Function
         checks:
           - uid: mondoo-aws-security-lambda-concurrency-check
@@ -157,6 +158,7 @@ policies:
           - uid: mondoo-aws-security-secgroup-restricted-kubernetes-api
           - uid: mondoo-aws-security-secgroup-restricted-kubelet
           - uid: mondoo-aws-security-secgroup-restricted-etcd
+          - uid: mondoo-aws-security-secgroup-internet-facing-restrict-admin-ports
       - title: AWS VPC
         checks:
           - uid: mondoo-aws-security-vpc-default-security-group-closed
@@ -44289,6 +44291,133 @@ queries:
         accessKey2LastUsedDate != null &&
         time.now - accessKey2LastUsedDate > props.mondooAWSSecurityCredentialInactivityThreshold * time.day
       ).length == 0
+  - uid: mondoo-aws-security-iam-instance-role-no-admin-access
+    title: Ensure EC2 instance roles do not grant administrator access
+    impact: 85
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-3-1
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-aws-security-iam-instance-role-no-admin-access-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that IAM roles attached to EC2 instances through an instance profile do not grant full administrator access via the AWS-managed `AdministratorAccess` policy. Only roles that are actually assumed by an instance are evaluated, so the finding represents credentials that a workload can retrieve from the instance metadata service rather than an unused role definition.
+
+        **Why this matters**
+
+        - **Blast radius of a single compromise:** Any process that reaches an instance's metadata service inherits the role's permissions. If the role grants `AdministratorAccess`, a single application flaw such as a server-side request forgery escalates directly to full control of the AWS account.
+        - **Least privilege for workloads:** Compute identities should hold only the permissions the workload needs. Administrator access on an instance role almost always exceeds the application's actual requirements and is rarely audited after the initial setup.
+        - **Containment of lateral movement:** Scoped instance roles stop an attacker who lands on one host from using its credentials to read every bucket, modify security groups, or create new privileged identities across the account.
+
+        **Risk mitigation**
+
+        - **Privilege reduction:** Replacing `AdministratorAccess` with a policy scoped to the specific actions and resources the workload uses limits what stolen instance credentials can do.
+        - **Auditable access:** Purpose-built role policies make it clear what each workload is permitted to do, so unexpected permission use stands out during review and monitoring.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the AWS Management Console and open the IAM console at https://console.aws.amazon.com/iam/.
+        2. In the left navigation pane, choose **Roles**, and filter for roles whose trusted entity is the EC2 service (`ec2.amazonaws.com`).
+        3. For each such role, open the **Permissions** tab and review the attached managed policies.
+        4. Identify any role that has the `AdministratorAccess` managed policy attached.
+
+        A passing instance role has no `AdministratorAccess` policy attached. A failing instance role lists `AdministratorAccess` among its attached policies.
+
+        ### Audit via CLI
+
+        1. For a role used by an instance profile, list its attached managed policies:
+
+        ```bash
+        aws iam list-attached-role-policies --role-name <role-name> --query "AttachedPolicies[?PolicyName=='AdministratorAccess'].PolicyArn"
+        ```
+
+        A passing role returns an empty list `[]`. A failing role returns the ARN of the `AdministratorAccess` policy.
+      remediation:
+        - id: console
+          desc: |
+            To remove administrator access from an EC2 instance role using the AWS Console:
+
+            1. Open the IAM console and choose **Roles**.
+            2. Select the role attached to the instance profile, then open the **Permissions** tab.
+            3. Detach the `AdministratorAccess` managed policy.
+            4. Attach a policy scoped to only the actions and resources the workload requires, then verify the application still functions.
+        - id: cli
+          desc: |
+            To remove administrator access from an EC2 instance role using the AWS CLI, detach the `AdministratorAccess` policy and attach a least-privilege policy:
+
+            ```bash
+            aws iam detach-role-policy --role-name <role-name> --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+
+            aws iam attach-role-policy --role-name <role-name> --policy-arn <scoped-policy-arn>
+            ```
+        - id: terraform
+          desc: |
+            To grant an EC2 instance role least-privilege access in Terraform, attach a scoped policy instead of `AdministratorAccess`:
+
+            ```hcl
+            resource "aws_iam_role" "instance_role" {
+              name = "app-instance-role"
+              assume_role_policy = jsonencode({
+                Version = "2012-10-17"
+                Statement = [{
+                  Action    = "sts:AssumeRole"
+                  Effect    = "Allow"
+                  Principal = { Service = "ec2.amazonaws.com" }
+                }]
+              })
+            }
+
+            # Attach a scoped policy that grants only the permissions the workload needs.
+            resource "aws_iam_role_policy_attachment" "instance_role_scoped" {
+              role       = aws_iam_role.instance_role.name
+              policy_arn = aws_iam_policy.app_scoped.arn # Not arn:aws:iam::aws:policy/AdministratorAccess
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To grant an EC2 instance role least-privilege access in CloudFormation, reference a scoped policy rather than `AdministratorAccess`:
+
+            ```yaml
+            Resources:
+              InstanceRole:
+                Type: "AWS::IAM::Role"
+                Properties:
+                  AssumeRolePolicyDocument:
+                    Version: "2012-10-17"
+                    Statement:
+                      - Effect: Allow
+                        Principal:
+                          Service: "ec2.amazonaws.com"
+                        Action: "sts:AssumeRole"
+                  ManagedPolicyArns:
+                    - !Ref AppScopedPolicy  # A scoped policy, not arn:aws:iam::aws:policy/AdministratorAccess
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html#grant-least-privilege
+        title: AWS IAM Best Practices - Grant least privilege
+      - url: https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_switch-role-ec2.html
+        title: Using an IAM role to grant permissions to applications on EC2
+  # No Terraform variants: this check correlates an IAM role with the EC2 instances that assume it through an instance profile, a runtime relationship that static Terraform HCL, plan, and state assets do not express. The Terraform remediation still shows how to attach a least-privilege policy.
+  - uid: mondoo-aws-security-iam-instance-role-no-admin-access-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.iam.roles.where(usedByInstances.length > 0).all(
+        attachedPolicies.none(name == "AdministratorAccess")
+      )
   - uid: mondoo-aws-security-lambda-xray-tracing
     title: Ensure Lambda functions have X-Ray tracing enabled
     impact: 30
@@ -61341,6 +61470,150 @@ queries:
       cloudformation.template.resources.where(type == "AWS::EC2::SecurityGroup").all(
         properties['SecurityGroupIngress'] == empty ||
         properties['SecurityGroupIngress'].where(_['FromPort'] <= 2380 && _['ToPort'] >= 2379).none(_['CidrIp'] == "0.0.0.0/0" || _['CidrIpv6'] == "::/0")
+      )
+  - uid: mondoo-aws-security-secgroup-internet-facing-restrict-admin-ports
+    title: Ensure security groups on internet-facing instances restrict SSH and RDP
+    impact: 95
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    variants:
+      - uid: mondoo-aws-security-secgroup-internet-facing-restrict-admin-ports-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that security groups attached to internet-facing EC2 instances do not permit unrestricted inbound access on the SSH (port 22) or RDP (port 3389) administrative ports. A security group is only flagged when it is actually attached to a running instance that holds a public IP address, so the finding represents a directly reachable management port rather than a rule that exists on paper but protects nothing.
+
+        **Why this matters**
+
+        - **Directly exploitable exposure:** An instance with a public IP and a security group opening port 22 or 3389 to `0.0.0.0/0` is reachable from anywhere on the internet, turning continuous credential brute-force and exploitation attempts into a realistic compromise path.
+        - **Prioritization signal:** Pairing the open administrative rule with a confirmed internet-facing attachment separates the genuinely exposed hosts from dormant security groups, so responders fix the cases that an attacker can act on first.
+        - **Lateral movement origin:** A compromised internet-facing instance becomes a foothold inside the VPC, giving an attacker routes to private resources that are not themselves reachable from the internet.
+
+        **Risk mitigation**
+
+        - **Attack surface reduction:** Restricting SSH and RDP to a bastion host, VPN range, or AWS Systems Manager Session Manager removes the open management port that automated scanners target.
+        - **Defense in depth:** Combining private addressing, scoped security group sources, and brokered administrative access ensures no single misconfiguration leaves a management port open to the world.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the AWS Management Console and open the EC2 console at https://console.aws.amazon.com/ec2/.
+        2. In the left navigation pane, choose **Instances**, and note instances that show a value in the **Public IPv4 address** column.
+        3. For each such instance, open the **Security** tab and review every attached security group's **Inbound rules**.
+        4. Look for any inbound rule where the port range includes 22 (SSH) or 3389 (RDP) with a **Source** of `0.0.0.0/0` or `::/0`.
+
+        A passing internet-facing instance has no attached security group that allows port 22 or 3389 from `0.0.0.0/0` or `::/0`. A failing instance has at least one attached security group opening either administrative port to any address.
+
+        ### Audit via CLI
+
+        1. List running instances that have a public IP together with their attached security groups:
+
+        ```bash
+        aws ec2 describe-instances --filters "Name=instance-state-name,Values=running" --query "Reservations[*].Instances[?PublicIpAddress!=null].{InstanceId:InstanceId,PublicIp:PublicIpAddress,SecurityGroups:SecurityGroups[*].GroupId}"
+        ```
+
+        2. For each security group returned, check whether it opens SSH or RDP to the internet:
+
+        ```bash
+        aws ec2 describe-security-groups --group-ids <security-group-id> --query "SecurityGroups[?IpPermissions[?(FromPort<=\`22\` && ToPort>=\`22\`) || (FromPort<=\`3389\` && ToPort>=\`3389\`)][?IpRanges[?CidrIp=='0.0.0.0/0'] || Ipv6Ranges[?CidrIpv6=='::/0']]].GroupId"
+        ```
+
+        A passing result returns an empty list `[]`. A failing result returns the security group ID of an internet-facing instance that exposes an administrative port.
+      remediation:
+        - id: console
+          desc: |
+            To restrict administrative access on internet-facing instances using the AWS Console:
+
+            1. Navigate to the Amazon EC2 Console and select **Instances**.
+            2. Identify instances with a public IPv4 address, then open the **Security** tab to list their attached security groups.
+            3. For each security group, edit the **Inbound rules** and replace the `0.0.0.0/0` or `::/0` source on ports 22 and 3389 with a trusted range such as a corporate VPN or bastion host.
+            4. Where possible, remove the public IP and use AWS Systems Manager Session Manager for administrative access instead of exposing the port at all.
+        - id: cli
+          desc: |
+            To restrict administrative access on internet-facing instances using the AWS CLI, revoke the unrestricted SSH and RDP rules from the attached security group:
+
+            ```bash
+            aws ec2 revoke-security-group-ingress --group-id <security-group-id> --ip-permissions IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges='[{CidrIp=0.0.0.0/0}]'
+
+            aws ec2 revoke-security-group-ingress --group-id <security-group-id> --ip-permissions IpProtocol=tcp,FromPort=3389,ToPort=3389,IpRanges='[{CidrIp=0.0.0.0/0}]'
+            ```
+
+            Add a scoped rule that only permits administrative access from a trusted range (replace x.x.x.x/x):
+
+            ```bash
+            aws ec2 authorize-security-group-ingress --group-id <security-group-id> --ip-permissions IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges='[{CidrIp=x.x.x.x/x}]'
+            ```
+        - id: terraform
+          desc: |
+            To restrict administrative access in Terraform, scope the SSH and RDP ingress rules of the security group attached to the instance to a trusted source range:
+
+            ```hcl
+            resource "aws_security_group" "instance_sg" {
+              name        = "instance-sg"
+              description = "Restricts administrative access"
+
+              ingress {
+                description = "SSH from trusted range"
+                from_port   = 22
+                to_port     = 22
+                protocol    = "tcp"
+                cidr_blocks = ["203.0.113.0/24"] # Replace with trusted IP range
+              }
+              ingress {
+                description = "RDP from trusted range"
+                from_port   = 3389
+                to_port     = 3389
+                protocol    = "tcp"
+                cidr_blocks = ["203.0.113.0/24"] # Replace with trusted IP range
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To restrict administrative access in CloudFormation, define the attached security group so that SSH and RDP are only reachable from a trusted range:
+
+            ```yaml
+            Resources:
+              InstanceSecurityGroup:
+                Type: "AWS::EC2::SecurityGroup"
+                Properties:
+                  GroupDescription: "Restricts administrative access"
+                  VpcId: !Ref VPC
+                  SecurityGroupIngress:
+                    - IpProtocol: "tcp"
+                      FromPort: 22
+                      ToPort: 22
+                      CidrIp: "203.0.113.0/24"  # Replace with your trusted IP range
+                    - IpProtocol: "tcp"
+                      FromPort: 3389
+                      ToPort: 3389
+                      CidrIp: "203.0.113.0/24"  # Replace with your trusted IP range
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/security-group-rules.html
+        title: Security Group Rules Reference
+      - url: https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager.html
+        title: AWS Systems Manager Session Manager
+  # No Terraform variants: this check correlates a security group with the running instances it is attached to and their public IPs through Elastic Network Interfaces, a runtime relationship that static Terraform HCL, plan, and state assets do not express. The Terraform remediation still shows how to scope the rules correctly.
+  - uid: mondoo-aws-security-secgroup-internet-facing-restrict-admin-ports-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.ec2.securityGroups.where(instances.any(publicIp != empty)).all(
+        ipPermissions.where(fromPort <= 22 && toPort >= 22 && toPort != 0).none(ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")) &&
+        ipPermissions.where(fromPort <= 3389 && toPort >= 3389 && toPort != 0).none(ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0"))
       )
   - uid: mondoo-aws-security-s3-bucket-policy-no-public-principal
     title: Ensure S3 bucket policies do not grant access to anonymous principals
