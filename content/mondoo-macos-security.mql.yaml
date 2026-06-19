@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-macos-security
     name: Mondoo macOS Security
-    version: 1.4.2
+    version: 1.4.3
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -277,6 +277,8 @@ queries:
             sudo -u firstuser defaults -currentHost write com.apple.Bluetooth PrefKeyServicesEnabled -bool false
             ```
 
+            This preference is stored per user and per host, so repeat the command for every account on the system. For fleet-wide enforcement, deploy a configuration profile through your MDM instead, which applies the setting to all current and future users.
+
             **Impact:**
 
             Disabling Bluetooth Sharing prevents the system from accepting file transfers over Bluetooth, reducing the risk of unauthorized access or exploitation of Bluetooth vulnerabilities.
@@ -310,6 +312,8 @@ queries:
                 - name: Disable Bluetooth Sharing for user
                   ansible.builtin.command: defaults -currentHost write com.apple.Bluetooth PrefKeyServicesEnabled -bool false
             ```
+
+            This preference is stored per user and per host, so run the task with `become_user` set to each account on the system. For fleet-wide enforcement, deploy a configuration profile through your MDM instead, which applies the setting to all current and future users.
 
             **Impact:**
 
@@ -385,7 +389,7 @@ queries:
             sudo defaults write /Library/Preferences/com.apple.mDNSResponder.plist NoMulticastAdvertisements -bool true
             ```
 
-            Restart the system for the change to take effect, because `mDNSResponder` only reads this preference at startup.
+            Restart the system for the change to take effect, because `mDNSResponder` only reads this preference at startup. The setting is inert until that reboot, so do not assume multicast advertising stops the moment the command runs. Plan the restart for a maintenance window on a server or shared Mac, where a reboot is disruptive.
 
             **Impact:**
 
@@ -622,9 +626,16 @@ queries:
               hosts: all
               become: true
               tasks:
-                - name: Disable File Sharing
-                  ansible.builtin.command: launchctl unload -w /System/Library/LaunchDaemons/com.apple.smbd.plist
+                - name: Disable the SMB daemon
+                  ansible.builtin.command: launchctl disable system/com.apple.smbd
+                - name: Stop the SMB daemon
+                  ansible.builtin.command: launchctl bootout system/com.apple.smbd
+                  register: bootout_result
+                  failed_when: false
+                  changed_when: bootout_result.rc == 0
             ```
+
+            The `bootout` task fails harmlessly if the daemon is not running, so its result is ignored.
 
             **Impact:**
 
@@ -795,6 +806,8 @@ queries:
             sudo -u <username> defaults write com.apple.amp.mediasharingd home-sharing-enabled -int 0
             ```
 
+            This preference is stored per user, so repeat the command for every account on the system. For fleet-wide enforcement, deploy a configuration profile through your MDM instead, which applies the setting to all current and future users.
+
             **Impact:**
 
             Disabling Media Sharing prevents the system from being used as a media server, reducing its visibility and potential attack surface. For environments requiring media sharing, dedicated servers should be used instead of user endpoints.
@@ -829,7 +842,7 @@ queries:
                   ansible.builtin.command: defaults write com.apple.amp.mediasharingd home-sharing-enabled -int 0
             ```
 
-            Replace `firstuser` with the account that has Media Sharing enabled.
+            Replace `firstuser` with the account that has Media Sharing enabled. This preference is stored per user, so run the task with `become_user` set to each account on the system. For fleet-wide enforcement, deploy a configuration profile through your MDM instead, which applies the setting to all current and future users.
 
             **Impact:**
 
@@ -1309,11 +1322,14 @@ queries:
           desc: |
             **Using the CLI**
 
-            Run this command to disable Screen Sharing:
+            Run these commands to disable Screen Sharing:
 
             ```bash
-            sudo launchctl unload -w /System/Library/LaunchDaemons/com.apple.screensharing.plist
+            sudo launchctl disable system/com.apple.screensharing
+            sudo launchctl bootout system/com.apple.screensharing
             ```
+
+            The `disable` command marks the daemon disabled so it does not start again, and `bootout` stops it now. The `bootout` command reports an error if the service is not currently running; that error is harmless. On older macOS versions you can use the legacy form `sudo launchctl unload -w /System/Library/LaunchDaemons/com.apple.screensharing.plist`.
 
             **Impact:**
 
@@ -1344,9 +1360,16 @@ queries:
               hosts: all
               become: true
               tasks:
-                - name: Disable Screen Sharing
-                  ansible.builtin.command: launchctl unload -w /System/Library/LaunchDaemons/com.apple.screensharing.plist
+                - name: Disable the Screen Sharing daemon
+                  ansible.builtin.command: launchctl disable system/com.apple.screensharing
+                - name: Stop the Screen Sharing daemon
+                  ansible.builtin.command: launchctl bootout system/com.apple.screensharing
+                  register: bootout_result
+                  failed_when: false
+                  changed_when: bootout_result.rc == 0
             ```
+
+            The `bootout` task fails harmlessly if the daemon is not running, so its result is ignored.
 
             **Impact:**
 
@@ -1959,11 +1982,14 @@ queries:
           desc: |
             **Using the CLI**
 
-            Run this command to enable `auditd`:
+            Run these commands to enable `auditd`:
 
             ```bash
-            sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.auditd.plist
+            sudo launchctl enable system/com.apple.auditd
+            sudo launchctl bootstrap system /System/Library/LaunchDaemons/com.apple.auditd.plist
             ```
+
+            The `enable` command clears the disabled override so the daemon starts again, and `bootstrap` loads it now. The `bootstrap` command reports an error if the service is already loaded; that error is harmless. On older macOS versions you can use the legacy form `sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.auditd.plist`.
 
             **Impact:**
 
@@ -1980,9 +2006,16 @@ queries:
               hosts: all
               become: true
               tasks:
-                - name: Enable security auditing
-                  ansible.builtin.command: launchctl load -w /System/Library/LaunchDaemons/com.apple.auditd.plist
+                - name: Clear the disabled override on the audit daemon
+                  ansible.builtin.command: launchctl enable system/com.apple.auditd
+                - name: Load the audit daemon
+                  ansible.builtin.command: launchctl bootstrap system /System/Library/LaunchDaemons/com.apple.auditd.plist
+                  register: bootstrap_result
+                  failed_when: false
+                  changed_when: bootstrap_result.rc == 0
             ```
+
+            The `bootstrap` task fails harmlessly if the daemon is already loaded, so its result is ignored.
 
             **Impact:**
 
@@ -2079,6 +2112,8 @@ queries:
 
             _Note: Both `18` and `2` are valid values for this parameter._
 
+            This preference is stored per user, so repeat the command for every account on the system. For fleet-wide enforcement, deploy a configuration profile through your MDM instead, which applies the setting to all current and future users.
+
             **Impact:**
 
             Enabling the Wi-Fi status in the menu bar provides users with a quick and visible way to monitor their wireless network connectivity.
@@ -2112,7 +2147,7 @@ queries:
                   ansible.builtin.command: defaults -currentHost write com.apple.controlcenter.plist WiFi -int 18
             ```
 
-            Replace `firstuser` with the account being configured. Both `18` and `2` are valid values for this parameter.
+            Replace `firstuser` with the account being configured. Both `18` and `2` are valid values for this parameter. This preference is stored per user, so run the task with `become_user` set to each account on the system. For fleet-wide enforcement, deploy a configuration profile through your MDM instead, which applies the setting to all current and future users.
 
             **Impact:**
 
@@ -2200,6 +2235,8 @@ queries:
             sudo -u firstuser defaults write com.apple.NetworkBrowser DisableAirDrop -bool true
             ```
 
+            This preference is stored per user, so repeat the command for every account on the system. For fleet-wide enforcement, deploy a configuration profile through your MDM instead, which applies the setting to all current and future users.
+
             **Impact:**
 
             Disabling AirDrop can limit the ability to move files quickly over the network without using file shares.
@@ -2232,7 +2269,7 @@ queries:
                   ansible.builtin.command: defaults write com.apple.NetworkBrowser DisableAirDrop -bool true
             ```
 
-            Replace `firstuser` with the account being configured.
+            Replace `firstuser` with the account being configured. This preference is stored per user, so run the task with `become_user` set to each account on the system. For fleet-wide enforcement, deploy a configuration profile through your MDM instead, which applies the setting to all current and future users.
 
             **Impact:**
 
@@ -2912,7 +2949,7 @@ queries:
           desc: |
             **Using the CLI**
 
-            Run this command to reduce the sudo timeout period:
+            This is an interactive editor procedure rather than a single runnable command. Open the sudoers file with `visudo`, which checks the syntax when you save so a typo cannot be written out and silently break every `sudo` invocation:
 
             ```bash
             sudo visudo
@@ -2923,6 +2960,8 @@ queries:
             ```bash
             Defaults timestamp_timeout=0
             ```
+
+            Save and exit. If `visudo` reports a syntax error, return to the editor and correct it. Do not bypass that validation, because a malformed sudoers file can lock out all privileged access. Keep your existing root or `sudo` session open in a separate terminal until you have confirmed that `sudo` still works in a fresh session.
 
             **Impact:**
 
