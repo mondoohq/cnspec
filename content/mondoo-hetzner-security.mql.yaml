@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-hetzner-security
     name: Mondoo Hetzner Cloud Security
-    version: 1.0.2
+    version: 1.0.3
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -946,10 +946,26 @@ queries:
             Remove the wide-open rule and replace it with narrow rules that expose only the specific ports required by the workload, scoped to trusted source CIDRs.
         - id: cli
           desc: |
+            `delete-rule` removes one rule at a time, matched by direction, protocol, port, and source. Because the check fails on any inbound all-ports rule, you must repeat the deletion for every protocol that has a wide-open rule and for every unrestricted source, including IPv6. Removing only the `tcp` and `0.0.0.0/0` rule leaves UDP, ICMP, and `::/0` rules in place, so the firewall still fails the check.
+
+            Run `hcloud firewall describe <firewall> -o json` first to enumerate the offending rules, then delete each one:
+
             ```bash
             hcloud firewall delete-rule <firewall> \
               --direction in --protocol tcp --port any --source-ips 0.0.0.0/0
+            hcloud firewall delete-rule <firewall> \
+              --direction in --protocol tcp --port any --source-ips ::/0
+            hcloud firewall delete-rule <firewall> \
+              --direction in --protocol udp --port any --source-ips 0.0.0.0/0
+            hcloud firewall delete-rule <firewall> \
+              --direction in --protocol udp --port any --source-ips ::/0
+            hcloud firewall delete-rule <firewall> \
+              --direction in --protocol icmp --source-ips 0.0.0.0/0
+            hcloud firewall delete-rule <firewall> \
+              --direction in --protocol icmp --source-ips ::/0
             ```
+
+            Adjust the `--port` value to match the rule actually in place (`any`, `1-65535`, or `0-65535`); `--port` is omitted for `icmp`. After deleting the wide-open rules, add narrow per-service rules that expose only the required ports.
         - id: terraform
           desc: |
             Never declare an inbound `rule` whose `port` is `any`, `1-65535`, or `0-65535` with `source_ips` of `0.0.0.0/0` or `::/0`. Replace it with narrow per-service rules:
@@ -1225,12 +1241,15 @@ queries:
             3. Under **Certificates**, attach an existing certificate or create a Hetzner-managed certificate for the domain.
         - id: cli
           desc: |
+            The check fails when an HTTPS service already exists but has no certificate attached. Use `update-service` to attach a certificate to that existing listener; `add-service` would attempt to create a second service on the same listen port and fail because the listener already exists.
+
             ```bash
-            hcloud load-balancer add-service <lb> \
-              --protocol https --listen-port 443 \
-              --destination-port 80 \
+            hcloud load-balancer update-service <lb> \
+              --listen-port 443 \
               --http-certificates <certificate>
             ```
+
+            The service is identified by its listen port, so `--listen-port` must match the existing HTTPS service. Use `add-service` only when no HTTPS service exists yet on that port.
         - id: terraform
           desc: |
             Attach at least one certificate to every HTTPS `hcloud_load_balancer_service` via `http.certificates`:
