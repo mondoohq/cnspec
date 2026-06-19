@@ -1,0 +1,334 @@
+# Copyright Mondoo, Inc. 2026
+# SPDX-License-Identifier: BUSL-1.1
+
+policies:
+  - uid: mondoo-kubernetes-runtime-image-cache
+    name: Mondoo Kubernetes Runtime Image Cache
+    version: 0.1.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: kubernetes
+    require:
+      - provider: k8s
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Validate node-local Kubernetes image cache scan coverage
+    docs:
+      desc: |
+        The Mondoo Kubernetes Runtime Image Cache policy validates node-local image scan coverage for Kubernetes clusters. It uses runtime image evidence collected from the node runtime cache, so protected registry images can be inspected without reading image pull secrets or pulling images again.
+
+        This policy focuses on visibility and scanner health:
+
+        - Runtime delegates are available on schedulable nodes.
+        - Runtime delegates operate in read-only, no-pull mode.
+        - Running pod container images map to node-local runtime image evidence.
+        - Matched pod images have completed runtime-cache scans.
+        - Matched pod images include immutable image identity for reliable deduplication and reporting.
+
+        Learn more about scanning Kubernetes in the [cnspec Kubernetes documentation](https://mondoo.com/docs/cnspec/cloud/kubernetes).
+    groups:
+      - title: Runtime Image Cache
+        filters: asset.platform == "k8s-cluster"
+        checks:
+          - uid: mondoo-kubernetes-runtime-image-cache-delegates-ready
+          - uid: mondoo-kubernetes-runtime-image-cache-delegates-no-pull
+          - uid: mondoo-kubernetes-runtime-image-cache-pod-images-matched
+          - uid: mondoo-kubernetes-runtime-image-cache-pod-images-scanned
+          - uid: mondoo-kubernetes-runtime-image-cache-pod-images-immutable
+    scoring_system: highest impact
+
+queries:
+  - uid: mondoo-kubernetes-runtime-image-cache-delegates-ready
+    title: Runtime cache scanning should be available on every schedulable node
+    impact: 60
+    mql: |
+      k8s.nodes.where(unschedulable == false).all(runtimeDelegates.any(status == "ready" && endpoint != ""))
+    docs:
+      desc: |
+        This check ensures that every schedulable Kubernetes node reports at least one ready runtime delegate. Runtime delegates provide read-only access to images already present in the node runtime cache, allowing cnspec to scan the images that workloads actually use without requiring registry credentials.
+
+        **Why this matters**
+
+        - **Node coverage:** Schedulable nodes without ready delegates can miss node-local image cache scan coverage.
+        - **Protected registries:** Runtime-cache scanning avoids reading image pull secrets and does not pull images from registries.
+        - **Operational signal:** Missing delegates identify scanner scheduling or runtime socket access gaps before workload images go unscanned.
+      audit: |
+        ### Audit via kubectl
+
+        1. List schedulable nodes:
+
+           ```bash
+           kubectl get nodes --field-selector spec.unschedulable!=true
+           ```
+
+        2. Confirm that the runtime-cache scanner DaemonSet has one ready pod per schedulable node:
+
+           ```bash
+           kubectl get daemonset -n <mondoo-namespace> <auditconfig-name>-runtime-cache-scan
+           kubectl get pods -n <mondoo-namespace> -l scan=runtime-cache -o wide
+           ```
+
+        A passing cluster has a ready runtime-cache scanner pod on every schedulable node. A failing cluster has schedulable nodes without a ready scanner pod or scanner pods that cannot access the configured runtime socket.
+      remediation:
+        - id: kubectl
+          desc: |
+            To enable runtime-cache scanning using kubectl:
+
+            1. Enable `spec.containers.runtimeCache`.
+            2. Configure at least one runtime delegate with the host runtime socket path.
+            3. Verify node selectors and tolerations allow the DaemonSet to run on every schedulable worker node.
+
+            ```bash
+            kubectl patch mondooauditconfig <name> -n <mondoo-namespace> --type merge -p '{"spec":{"containers":{"runtimeCache":{"enable":true,"delegates":[{"name":"containerd-cri","kind":"containerd","hostPath":"/run/containerd/containerd.sock"}]}}}}'
+            ```
+        - id: manifest
+          desc: |
+            To enable runtime-cache scanning in a MondooAuditConfig manifest:
+
+            ```yaml
+            spec:
+              containers:
+                runtimeCache:
+                  enable: true
+                  delegates:
+                    - name: containerd-cri
+                      kind: containerd
+                      hostPath: /run/containerd/containerd.sock
+                      namespaces:
+                        - k8s.io
+            ```
+        - id: helm
+          desc: |
+            To manage runtime-cache scanning through Helm, render the `MondooAuditConfig` runtime-cache fields from chart values and keep node selectors, tolerations, and delegate socket paths aligned with the worker node runtime configuration.
+    refs:
+      - url: https://mondoo.com/docs/cnspec/cloud/kubernetes
+        title: Mondoo Kubernetes scanning
+  - uid: mondoo-kubernetes-runtime-image-cache-delegates-no-pull
+    title: Runtime cache delegates should run read-only and must not pull images
+    impact: 80
+    mql: |
+      k8s.nodes.where(unschedulable == false).all(runtimeDelegates.all(readonly == true && allowPull == false))
+    docs:
+      desc: |
+        This check ensures that runtime-cache delegates are configured for read-only cache inspection and cannot pull images from registries. Runtime-cache scanning should reuse images that already exist on the node, preserving protected-registry boundaries and avoiding duplicate image transfer.
+
+        **Why this matters**
+
+        - **No credential expansion:** No-pull delegates avoid registry credentials and preserve protected-registry boundaries.
+        - **Actual runtime evidence:** Read-only delegates inspect images already present on the node instead of fetching a different copy.
+        - **Lower resource use:** Preventing pulls avoids duplicate network transfer and storage pressure during cluster scans.
+      audit: |
+        ### Audit via kubectl
+
+        1. Inspect the runtime-cache inventory ConfigMap and delegate configuration:
+
+           ```bash
+           kubectl get configmap -n <mondoo-namespace> <auditconfig-name>-runtime-cache-inventory -o yaml
+           ```
+
+        2. Confirm that runtime-cache scanner pods do not mount registry credential volumes or set `DOCKER_CONFIG`:
+
+           ```bash
+           kubectl get daemonset -n <mondoo-namespace> <auditconfig-name>-runtime-cache-scan -o yaml
+           ```
+
+        A passing configuration keeps delegates read-only, does not allow runtime-cache pulls, and does not mount registry credentials into runtime-cache scanner pods. A failing configuration grants write or pull behavior to the node-local scanner.
+      remediation:
+        - id: kubectl
+          desc: |
+            To enforce no-pull runtime-cache scanning using kubectl:
+
+            1. Set `allowPull` to `false` or omit it so the operator applies the no-pull default.
+            2. Remove registry credential mounts from runtime-cache scanner pods.
+            3. Use separate registry scanning only when explicit registry pulls are required.
+
+            ```bash
+            kubectl patch mondooauditconfig <name> -n <mondoo-namespace> --type merge -p '{"spec":{"containers":{"runtimeCache":{"allowPull":false}}}}'
+            ```
+        - id: manifest
+          desc: |
+            To keep runtime-cache delegates no-pull in source control:
+
+            ```yaml
+            spec:
+              containers:
+                runtimeCache:
+                  enable: true
+                  allowPull: false
+                  delegates:
+                    - name: containerd-cri
+                      kind: containerd
+                      hostPath: /run/containerd/containerd.sock
+                      readOnly: true
+            ```
+        - id: helm
+          desc: |
+            To manage no-pull behavior through Helm, render `allowPull: false` and read-only delegate settings into the `MondooAuditConfig` values used for runtime-cache scanning.
+    refs:
+      - url: https://mondoo.com/docs/cnspec/cloud/kubernetes
+        title: Mondoo Kubernetes scanning
+  - uid: mondoo-kubernetes-runtime-image-cache-pod-images-matched
+    title: Running pod images should map to node-local runtime image evidence
+    impact: 70
+    mql: |
+      k8s.pods.where(phase == "Running").all(initContainerStatuses.all(runtimeImageStatus == "matched") && containerStatuses.all(runtimeImageStatus == "matched") && ephemeralContainerStatuses.all(runtimeImageStatus == "matched"))
+    docs:
+      desc: |
+        This check ensures that every observed pod container status can be matched to node-local runtime image evidence. A matched status means cnspec can relate the workload image reference and container runtime ID to the cached image metadata that the runtime-cache scanner uses.
+
+        **Why this matters**
+
+        - **Workload visibility:** Missing runtime image matches create blind spots in workload image reporting.
+        - **Runtime alignment:** Match failures can show that evidence was collected from a different node than the running workload.
+        - **Troubleshooting signal:** Unmatched statuses highlight runtime access, pod lifecycle, or cache-retention gaps.
+      audit: |
+        ### Audit via kubectl
+
+        1. List running pods and the nodes that host them:
+
+           ```bash
+           kubectl get pods -A --field-selector status.phase=Running -o wide
+           ```
+
+        2. Inspect pod container statuses and confirm that each running, init, and ephemeral container has an `imageID` and `containerID`:
+
+           ```bash
+           kubectl get pod -n <namespace> <pod> -o jsonpath='{range .status.initContainerStatuses[*]}{.name}{" imageID="}{.imageID}{" containerID="}{.containerID}{"\n"}{end}{range .status.containerStatuses[*]}{.name}{" imageID="}{.imageID}{" containerID="}{.containerID}{"\n"}{end}{range .status.ephemeralContainerStatuses[*]}{.name}{" imageID="}{.imageID}{" containerID="}{.containerID}{"\n"}{end}'
+           ```
+
+        3. Confirm that the runtime-cache scanner pod is ready on the same node as the workload:
+
+           ```bash
+           kubectl get pods -n <mondoo-namespace> -l scan=runtime-cache -o wide
+           ```
+
+        A passing workload is running on a node with a ready runtime-cache scanner pod and has populated container runtime status fields. A failing workload is missing runtime status fields or runs on a node without scanner coverage.
+      remediation:
+        - id: kubectl
+          desc: |
+            To restore pod image matching using kubectl:
+
+            1. Confirm the workload is scheduled and running.
+            2. Restart or reconcile the runtime-cache scanner DaemonSet on the workload node.
+            3. Review runtime socket path, node selector, and toleration settings if the scanner pod is absent from that node.
+
+            ```bash
+            kubectl rollout restart daemonset -n <mondoo-namespace> <auditconfig-name>-runtime-cache-scan
+            kubectl get pods -n <mondoo-namespace> -l scan=runtime-cache -o wide
+            ```
+        - id: manifest
+          desc: |
+            To keep runtime-cache scanner scheduling aligned in manifests, configure node selectors and tolerations so scanner pods run wherever workloads that need image coverage can be scheduled.
+        - id: helm
+          desc: |
+            To manage runtime-cache coverage through Helm, expose values for runtime-cache node selectors, tolerations, and delegate socket paths and apply them consistently across all worker node pools.
+    refs:
+      - url: https://mondoo.com/docs/cnspec/cloud/kubernetes
+        title: Mondoo Kubernetes scanning
+  - uid: mondoo-kubernetes-runtime-image-cache-pod-images-scanned
+    title: Matched pod images should have completed runtime-cache scans
+    impact: 80
+    mql: |
+      k8s.pods.where(phase == "Running").all(initContainerStatuses.where(runtimeImageStatus == "matched").all(runtimeImage.scanStatus == "scanned") && containerStatuses.where(runtimeImageStatus == "matched").all(runtimeImage.scanStatus == "scanned") && ephemeralContainerStatuses.where(runtimeImageStatus == "matched").all(runtimeImage.scanStatus == "scanned"))
+    docs:
+      desc: |
+        This check ensures that every matched runtime-cache image for running pods has a completed scan result. Matching a pod status to node-local runtime evidence is not enough on its own: the cache entry can still be pending, failed, permission denied, or otherwise unavailable for vulnerability and policy evaluation.
+
+        **Why this matters**
+
+        - **Shared evidence:** Runtime-cache scanning deduplicates by immutable image identity, so many pods can share one scan result.
+        - **Complete risk visibility:** A matched cache entry that never reaches `scanned` leaves every workload using that image without completed image assessment.
+        - **Failure isolation:** Pending, failed, or denied scan states point operators to runtime socket, permission, or resource-limit issues.
+      audit: |
+        ### Audit via kubectl
+
+        1. List running pods and runtime-cache scanner pods:
+
+           ```bash
+           kubectl get pods -A --field-selector status.phase=Running -o wide
+           kubectl get pods -n <mondoo-namespace> -l scan=runtime-cache -o wide
+           ```
+
+        2. Inspect scanner pod logs for cache scan failures, permission errors, or pending runtime socket access:
+
+           ```bash
+           kubectl logs -n <mondoo-namespace> -l scan=runtime-cache --tail=200
+           ```
+
+        A passing workload maps to runtime image evidence whose scan status is `scanned`. A failing workload maps to an image whose scan status is pending, failed, denied, or absent.
+      remediation:
+        - id: kubectl
+          desc: |
+            To restore runtime-cache scan coverage using kubectl:
+
+            1. Check runtime-cache scanner logs for the affected image digest or runtime image ID.
+            2. Fix runtime socket permissions, delegate configuration, or scanner resource limits.
+            3. Reconcile or restart the runtime-cache scanner so the image can be scanned again.
+
+            ```bash
+            kubectl rollout restart daemonset -n <mondoo-namespace> <auditconfig-name>-runtime-cache-scan
+            kubectl logs -n <mondoo-namespace> -l scan=runtime-cache --tail=200
+            ```
+        - id: manifest
+          desc: |
+            In source-controlled manifests, keep runtime-cache delegate socket paths, read-only mounts, and resource limits aligned with the node runtime. Use node-targeted scanner sets when smaller control-plane nodes and larger worker nodes need different scanner sizing.
+        - id: helm
+          desc: |
+            In Helm-managed deployments, update runtime-cache scanner values for delegate socket access, tolerations, node selectors, and resource limits, then redeploy the Mondoo operator chart.
+    refs:
+      - url: https://mondoo.com/docs/cnspec/cloud/kubernetes
+        title: Mondoo Kubernetes scanning
+  - uid: mondoo-kubernetes-runtime-image-cache-pod-images-immutable
+    title: Matched pod images should include immutable image identity
+    impact: 60
+    mql: |
+      k8s.pods.where(phase == "Running").all(initContainerStatuses.where(runtimeImageStatus == "matched").all(runtimeImage.resolvedDigest != "" || runtimeImage.imageId != "") && containerStatuses.where(runtimeImageStatus == "matched").all(runtimeImage.resolvedDigest != "" || runtimeImage.imageId != "") && ephemeralContainerStatuses.where(runtimeImageStatus == "matched").all(runtimeImage.resolvedDigest != "" || runtimeImage.imageId != ""))
+    docs:
+      desc: |
+        This check ensures that matched runtime images include an immutable digest or runtime image ID. Immutable identity lets Mondoo deduplicate image findings across workloads and verify that the scanned cache entry maps to the image actually running on the node.
+
+        **Why this matters**
+
+        - **Stable identity:** Tags are mutable and can point to different image contents over time.
+        - **Finding deduplication:** Digests and runtime image IDs let Mondoo deduplicate image findings across workloads.
+        - **Private-registry clarity:** Immutable identity prevents ambiguity when the same tag is reused across deployments or protected registries.
+      audit: |
+        ### Audit via kubectl
+
+        1. Inspect container image IDs for running pods:
+
+           ```bash
+           kubectl get pod -n <namespace> <pod> -o jsonpath='{range .status.initContainerStatuses[*]}{.name}{" image="}{.image}{" imageID="}{.imageID}{"\n"}{end}{range .status.containerStatuses[*]}{.name}{" image="}{.image}{" imageID="}{.imageID}{"\n"}{end}{range .status.ephemeralContainerStatuses[*]}{.name}{" image="}{.image}{" imageID="}{.imageID}{"\n"}{end}'
+           ```
+
+        2. Confirm that each running container has an immutable image identity, such as a `sha256:` digest in `imageID`, and prefer workload specs that pin images by digest.
+
+        A passing workload exposes immutable runtime image identity for every matched container. A failing workload only exposes mutable tags or has empty image identity fields.
+      remediation:
+        - id: kubectl
+          desc: |
+            To deploy an image by digest using kubectl:
+
+            ```bash
+            kubectl set image deployment/<deployment> <container>=registry.example.com/team/app@sha256:<digest> -n <namespace>
+            ```
+        - id: manifest
+          desc: |
+            To pin workload images by digest in Kubernetes YAML:
+
+            ```yaml
+            spec:
+              template:
+                spec:
+                  containers:
+                    - name: app
+                      image: registry.example.com/team/app@sha256:<digest>
+            ```
+        - id: helm
+          desc: |
+            To manage immutable image identity through Helm, split image repository and digest values in the chart and render workload image references with `@sha256:<digest>` for runtime-cache scanned workloads.
+    refs:
+      - url: https://kubernetes.io/docs/concepts/containers/images/#image-names
+        title: Kubernetes image names
