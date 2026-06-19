@@ -19,6 +19,7 @@ import (
 	"go.mondoo.com/mql/v13/logger"
 	"go.mondoo.com/mql/v13/providers"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/testutils"
 )
 
 func init() {
@@ -117,6 +118,99 @@ func runBundle(policyBundlePath string, policyMrn string, asset *inventory.Asset
 	}
 
 	return nil, errors.New("no report found")
+}
+
+func TestRuntimeImageCacheContent(t *testing.T) {
+	runtime := runtimeImageCacheRuntime(t)
+	loader := policy.DefaultBundleLoader()
+
+	t.Run("policy compiles runtime cache controls", func(t *testing.T) {
+		bundle, err := loader.BundleFromPaths("./mondoo-kubernetes-runtime-image-cache.mql.yaml")
+		require.NoError(t, err)
+		require.NotNil(t, bundle)
+		require.Len(t, bundle.Policies, 1)
+		require.Len(t, bundle.Queries, 5)
+
+		p := bundle.Policies[0]
+		assert.Equal(t, "mondoo-kubernetes-runtime-image-cache", p.Uid)
+		require.Len(t, p.Groups, 1)
+
+		checks := map[string]bool{}
+		for _, check := range p.Groups[0].Checks {
+			checks[check.Uid] = true
+		}
+		assert.True(t, checks["mondoo-kubernetes-runtime-image-cache-delegates-ready"])
+		assert.True(t, checks["mondoo-kubernetes-runtime-image-cache-delegates-no-pull"])
+		assert.True(t, checks["mondoo-kubernetes-runtime-image-cache-pod-images-matched"])
+		assert.True(t, checks["mondoo-kubernetes-runtime-image-cache-pod-images-scanned"])
+		assert.True(t, checks["mondoo-kubernetes-runtime-image-cache-pod-images-immutable"])
+
+		queries := map[string]string{}
+		for _, query := range bundle.Queries {
+			queries[query.Uid] = query.Mql
+		}
+		assert.Contains(t, queries["mondoo-kubernetes-runtime-image-cache-delegates-ready"], `endpoint != ""`)
+		assert.Contains(t, queries["mondoo-kubernetes-runtime-image-cache-pod-images-matched"], `initContainerStatuses.all`)
+		assert.Contains(t, queries["mondoo-kubernetes-runtime-image-cache-pod-images-matched"], `k8s.pods.where(phase == "Running")`)
+		assert.Contains(t, queries["mondoo-kubernetes-runtime-image-cache-pod-images-matched"], `ephemeralContainerStatuses.all`)
+		assert.Contains(t, queries["mondoo-kubernetes-runtime-image-cache-pod-images-scanned"], `runtimeImage.scanStatus == "scanned"`)
+		assert.Contains(t, queries["mondoo-kubernetes-runtime-image-cache-pod-images-scanned"], `initContainerStatuses.where`)
+		assert.Contains(t, queries["mondoo-kubernetes-runtime-image-cache-pod-images-scanned"], `containerStatuses.where`)
+		assert.Contains(t, queries["mondoo-kubernetes-runtime-image-cache-pod-images-scanned"], `ephemeralContainerStatuses.where`)
+		assert.Contains(t, queries["mondoo-kubernetes-runtime-image-cache-pod-images-immutable"], `initContainerStatuses.where`)
+		assert.Contains(t, queries["mondoo-kubernetes-runtime-image-cache-pod-images-immutable"], `k8s.pods.where(phase == "Running")`)
+		assert.Contains(t, queries["mondoo-kubernetes-runtime-image-cache-pod-images-immutable"], `ephemeralContainerStatuses.where`)
+
+		compiled, err := bundle.Compile(context.Background(), runtime.Schema(), nil)
+		require.NoError(t, err)
+		require.NotNil(t, compiled)
+	})
+
+	t.Run("inventory querypack compiles runtime cache queries", func(t *testing.T) {
+		bundle, err := loader.BundleFromPaths("./querypacks/mondoo-kubernetes-inventory.mql.yaml")
+		require.NoError(t, err)
+		require.NotNil(t, bundle)
+		require.Len(t, bundle.Packs, 1)
+
+		queries := map[string]string{}
+		for _, group := range bundle.Packs[0].Groups {
+			for _, query := range group.Queries {
+				queries[query.Uid] = query.Mql
+			}
+		}
+		assert.Contains(t, queries, "k8s-runtime-cache-delegates")
+		assert.Contains(t, queries, "k8s-runtime-cache-images")
+		assert.Contains(t, queries, "k8s-runtime-cache-pod-image-coverage")
+		assert.Contains(t, queries["k8s-runtime-cache-pod-image-coverage"], "initContainerStatuses")
+		assert.Contains(t, queries["k8s-runtime-cache-pod-image-coverage"], "containerStatuses")
+		assert.Contains(t, queries["k8s-runtime-cache-pod-image-coverage"], "ephemeralContainerStatuses")
+
+		bundle.ConvertQuerypacks()
+		compiled, err := bundle.Compile(context.Background(), runtime.Schema(), nil)
+		require.NoError(t, err)
+		require.NotNil(t, compiled)
+	})
+}
+
+func runtimeImageCacheRuntime(t *testing.T) *providers.Runtime {
+	t.Helper()
+
+	runtime := providers.DefaultRuntime()
+	schema, ok := runtime.Schema().(providers.ExtensibleSchema)
+	require.True(t, ok, "provider runtime schema must support adding source schemas")
+	schema.Add("core", testutils.MustLoadSchema(testutils.SchemaProvider{Path: runtimeImageCacheSchemaPath(t, "core", "./testdata/schema/providers/core/resources/core.lr")}))
+	schema.Add("network", testutils.MustLoadSchema(testutils.SchemaProvider{Path: runtimeImageCacheSchemaPath(t, "network", "./testdata/schema/providers/network/resources/network.lr")}))
+	schema.Add("os", testutils.MustLoadSchema(testutils.SchemaProvider{Path: runtimeImageCacheSchemaPath(t, "os", "./testdata/schema/providers/os/resources/os.lr")}))
+	schema.Add("k8s", testutils.MustLoadSchema(testutils.SchemaProvider{Path: runtimeImageCacheSchemaPath(t, "k8s", "./testdata/schema/providers/k8s/resources/k8s.lr")}))
+	return runtime
+}
+
+func runtimeImageCacheSchemaPath(t *testing.T, provider, path string) string {
+	t.Helper()
+
+	_, err := os.Stat(path)
+	require.NoErrorf(t, err, "in-repo schema fixture must point to a readable %s schema file", provider)
+	return path
 }
 
 func TestBundles(t *testing.T) {
