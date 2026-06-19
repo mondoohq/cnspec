@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-vmware-vsphere-esxi-security-baseline
     name: Mondoo VMware vSphere ESXi Security
-    version: 2.0.3
+    version: 2.0.4
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -138,7 +138,7 @@ queries:
           desc: |
             To set the account lockout to 15 minutes using the vSphere Client:
 
-            1. From the vSphere Web Client, select the host.
+            1. From the vSphere Client, select the host.
             2. Select `Configure` then expand `System`.
             3. Select `Advanced System Settings` then select `Edit`.
             4. Enter `Security.AccountUnlockTime` in the filter.
@@ -300,7 +300,7 @@ queries:
           desc: |
             To enable bidirectional CHAP authentication for iSCSI traffic using the vSphere Client:
 
-            1. From the vSphere Web Client, select the host.
+            1. From the vSphere Client, select the host.
             2. Select `Configure` then expand `Storage`.
             3. Select `Storage Adapters` then select the iSCSI Adapter.
             4. Under `Properties` select `Edit` next to `Authentication`.
@@ -395,10 +395,16 @@ queries:
             esxcli network ip dns server add --server=192.0.2.53
             ```
 
-            If the management interface currently obtains its settings from DHCP, convert it to a static configuration. Supply the address and netmask explicitly, and perform this change from the DCUI or a console session because it can interrupt management connectivity:
+            If the management interface currently obtains its settings from DHCP, convert it to a static configuration. Supply the address and netmask explicitly:
 
             ```bash
             esxcli network ip interface ipv4 set --interface-name=vmk0 --type=static --ipv4=192.0.2.10 --netmask=255.255.255.0
+            ```
+
+            **Warning:** Reconfiguring a management VMkernel interface can strand the host at the wrong address and cut off management connectivity. Run this from the DCUI or a direct console session, not over an SSH or vSphere connection that depends on the interface, and have console access ready in case the host becomes unreachable. Confirm that `vmk0` is the management interface before changing it, since the management VMkernel is not always `vmk0`. After setting a static address you may also need to set the default gateway explicitly:
+
+            ```bash
+            esxcli network ip route ipv4 add --gateway=192.0.2.1 --network=default
             ```
         # No Terraform remediation: the host DNS configuration is runtime network state with no Terraform resource.
     refs:
@@ -539,7 +545,7 @@ queries:
           desc: |
             To set the timeout to the desired value using the vSphere Client:
 
-            1. From the vSphere Web Client, select the host.
+            1. From the vSphere Client, select the host.
             2. Select `Configure` then expand `System`.
             3. Select `Advanced System Settings` then select `Edit`.
             4. Enter `ESXiShellInteractiveTimeOut` in the filter.
@@ -686,7 +692,7 @@ queries:
           desc: |
             To enable lockdown mode using the vSphere Client:
 
-            1. From the vSphere Web Client, select the host.
+            1. From the vSphere Client, select the host.
             2. Select `Configure` then expand `System` and select `Security Profile`.
             3. Across from `Lockdown Mode` select `Edit`.
             4. Select the radio button for `Normal`.
@@ -773,10 +779,16 @@ queries:
             6. Select `OK`.
         - id: powershell
           desc: |
-            To implement the recommended NTP configuration state using PowerCLI. If an internal NTP server is used, replace pool.ntp.org with the IP address or fully qualified domain name of the internal NTP server:
+            This requires VMware PowerCLI. First connect to vCenter Server with `Connect-VIServer`:
 
             ```powershell
-            $ntpServers = "pool.ntp.org", "pool2.ntp.org"
+            Connect-VIServer -Server <vcenter-fqdn>
+            ```
+
+            To implement the recommended NTP configuration state using PowerCLI, run the following. If an internal NTP server is used, replace the pool hostnames with the IP address or fully qualified domain name of the internal NTP server:
+
+            ```powershell
+            $ntpServers = "0.pool.ntp.org", "1.pool.ntp.org"
             Get-VMHost | Add-VMHostNtpServer -NtpServer $ntpServers
             Get-VMHost | Get-VMHostService | Where-Object { $_.Key -eq "ntpd" } | Set-VMHostService -Policy On
             Get-VMHost | Get-VMHostService | Where-Object { $_.Key -eq "ntpd" } | Start-VMHostService
@@ -841,7 +853,7 @@ queries:
 
             1. Select the host
             2. Select `Configure` then expand `System` then select `Advanced System Settings`.
-            3. Select `Edit` then enter `Syslog.global.LogDir` in the filter.
+            3. Select `Edit` then enter `Syslog.global.logDir` in the filter.
             4. Set `Syslog.global.logDir` to a persistent location specified as [datastorename] path\_to\_file where the path is relative to the datastore. For example, [datastore1] /systemlogs.
             5. Select `OK`.
         - id: powershell
@@ -925,7 +937,7 @@ queries:
           desc: |
             To stop using the native VLAN ID for port groups using the vSphere Client:
 
-            1. From the vSphere Web Client, select the host.
+            1. From the vSphere Client, select the host.
             2. Select `Configure` then expand `Networking`.
             3. Select `Virtual switches`.
             4. Expand the Standard vSwitch.
@@ -1022,7 +1034,7 @@ queries:
           desc: |
             To set port groups to values other than 4095 and 0 unless VGT is required using the vSphere Client:
 
-            1. From the vSphere Web Client, select the host.
+            1. From the vSphere Client, select the host.
             2. Select `Configure` then expand `Networking`.
             3. Select `Virtual switches`.
             4. Expand the Standard vSwitch.
@@ -1176,12 +1188,14 @@ queries:
           desc: |
             To disable SSH using the vSphere Client:
 
-            1. From the vSphere Web Client, select the host.
+            1. From the vSphere Client, select the host.
             2. Select `Configure` then expand `System` and select `Services`.
             3. Select `SSH` then select `Edit Startup Policy`.
             4. Set the Startup Policy is set to `Start and Stop Manually`.
             5. Select `OK`.
             6. While `SSH` is still selected, select `Stop`.
+
+            **Warning:** Stopping the SSH service ends any SSH session that is currently connected to the host. Perform this change from the vSphere Client or the host console (DCUI) rather than from an SSH session you depend on. If lockdown mode is enabled, SSH cannot be re-enabled from a local SSH session, so make sure you retain vSphere Client or DCUI access before disabling it.
 
             **Impact:**
 
@@ -1194,6 +1208,8 @@ queries:
             Get-VMHost | Get-VMHostService | Where-Object { $_.Key -eq "TSM-SSH" } | Set-VMHostService -Policy Off
             Get-VMHost | Get-VMHostService | Where-Object { $_.Key -eq "TSM-SSH" } | Stop-VMHostService -Confirm:$false
             ```
+
+            **Warning:** Run this from a vCenter-connected PowerCLI session, not from an SSH session on the host, because stopping the service ends any active SSH connection. With lockdown mode enabled, SSH cannot be re-enabled locally, so confirm you retain vSphere Client or DCUI access first.
         # No Terraform remediation: SSH service state and startup policy are runtime host configuration with no Terraform resource.
   # No Terraform variants: the vsphere Terraform provider does not manage ESXi host lockdown mode.
   - uid: mondoo-vmware-vsphere-esxi-security-baseline-ensure-strict-lockdown-mode-is-enabled
@@ -1250,7 +1266,7 @@ queries:
           desc: |
             To enable lockdown mode using the vSphere Client:
 
-            1. From the vSphere Web Client, select the host.
+            1. From the vSphere Client, select the host.
             2. Select `Configure`, then expand `System` and select `Security Profile`.
             3. Across from `Lockdown Mode` select `Edit`.
             4. Select the radio button for `Strict`.
@@ -1331,7 +1347,7 @@ queries:
           desc: |
             To correct the DCUI timeout setting using the vSphere Client:
 
-            1. From the vSphere Web Client, select the host.
+            1. From the vSphere Client, select the host.
             2. Select `Configure`, then under `System` select `Advanced System Settings`.
             3. Select `Edit` then enter `UserVars.DcuiTimeOut` in the filter.
             4. Change the current value to 600 seconds or less.
@@ -1339,7 +1355,7 @@ queries:
           desc: |
             To correct the DCUI timeout setting using PowerCLI:
 
-            ```
+            ```powershell
             Get-VMHost | Get-AdvancedSetting -Name UserVars.DcuiTimeOut | Set-AdvancedSetting -Value 600
             ```
         # No Terraform remediation: the DCUI timeout is a runtime host advanced setting with no Terraform resource.
@@ -1411,7 +1427,7 @@ queries:
           desc: |
             To configure per-VM salting using PowerCLI:
 
-            ```
+            ```powershell
             Get-VMHost | Get-AdvancedSetting -Name Mem.ShareForceSalting | Set-AdvancedSetting -Value 2
             ```
         # No Terraform remediation: the Transparent Page Sharing salt setting is a runtime host advanced setting with no Terraform resource.
@@ -1612,7 +1628,7 @@ queries:
           desc: |
             To disable the ESXi shell using the vSphere Client:
 
-            1. From the vSphere Web Client, select the host.
+            1. From the vSphere Client, select the host.
             2. Select `Configure`, then expand `System` and select `Services`.
             3. Select `ESXi Shell`, then select `Edit Startup Policy`.
             4. Set the Startup Policy is set to `Start and Stop Manually`.
@@ -1680,7 +1696,7 @@ queries:
           desc: |
             To set the host image profile acceptance level using the vSphere Client:
 
-            1. From the vSphere Web Client, select the host.
+            1. From the vSphere Client, select the host.
             2. Select `Configure`, then under `System` and select `Security Profile`.
             3. Under `Host Image Profile Acceptance Level` select `Edit`
             4. In the dropdown select one of the following - `VMware Certified`, `VMware Accepted`, or `Partner Supported`.
@@ -1755,7 +1771,7 @@ queries:
           desc: |
             To set the maximum failed login attempts correctly using the vSphere Client:
 
-            1. From the vSphere Web Client, select the host.
+            1. From the vSphere Client, select the host.
             2. Select `Configure`, then expand `System`.
             3. Select `Advanced System Settings` then select `Edit`.
             4. Enter `Security.AccountLockFailures` in the filter.
@@ -1829,7 +1845,7 @@ queries:
           desc: |
             To set the timeout to the desired value using the vSphere Client:
 
-            1. From the vSphere Web Client, select the host.
+            1. From the vSphere Client, select the host.
             2. Select `Configure`, then expand `System`.
             3. Select `Advanced System Settings`, then select `Edit`.
             4. Enter `ESXiShellTimeOut` in the filter.
@@ -1904,7 +1920,7 @@ queries:
           desc: |
             To disable the SLP service using the vSphere Client:
 
-            1. From the vSphere Web Client, select the host.
+            1. From the vSphere Client, select the host.
             2. Select `Configure`, then expand `System` and select `Services`.
             3. Select `slpd`, then select `Stop`.
             4. Select `Edit Startup Policy` and set it to `Start and stop manually`.
@@ -2004,7 +2020,7 @@ queries:
           desc: |
             To disable the SNMP service using the vSphere Client:
 
-            1. From the vSphere Web Client, select the host.
+            1. From the vSphere Client, select the host.
             2. Select `Configure`, then expand `System` and select `Services`.
             3. Select `snmpd`, then select `Stop`.
             4. Select `Edit Startup Policy` and set it to `Start and stop manually`.
@@ -2098,7 +2114,7 @@ queries:
           desc: |
             To set the policy to reject forged transmissions using the vSphere Client:
 
-            1. From the vSphere Web Client, select the host.
+            1. From the vSphere Client, select the host.
             2. Select `Configure`, then expand `Networking`.
             3. Select `Virtual switches`, then select `Edit`.
             4. Select `Security`.
@@ -2115,6 +2131,8 @@ queries:
             ```bash
             esxcli network vswitch standard policy security set -v vSwitch2 -f false
             ```
+
+            Replace `vSwitch2` with the target switch and run the command for each standard vSwitch on the host. List them with `esxcli network vswitch standard list`. Distributed switches and any per-port-group security overrides are configured separately and are not changed by this command.
         - id: terraform
           desc: |
             To reject forged transmits on a standard vSwitch using Terraform, set `allow_forged_transmits` to `false` on the `vsphere_host_virtual_switch` resource:
@@ -2201,7 +2219,7 @@ queries:
           desc: |
             To set the MAC Address Change policy to reject using the vSphere Client:
 
-            1. From the vSphere Web Client, select the host.
+            1. From the vSphere Client, select the host.
             2. Select `Configure`, then expand `Networking`.
             3. Select `Virtual switches`, then select `Edit`.
             4. Select `Security`.
@@ -2218,6 +2236,8 @@ queries:
             ```bash
             esxcli network vswitch standard policy security set -v vSwitch2 -m false
             ```
+
+            Replace `vSwitch2` with the target switch and run the command for each standard vSwitch on the host. List them with `esxcli network vswitch standard list`. Distributed switches and any per-port-group security overrides are configured separately and are not changed by this command.
         - id: terraform
           desc: |
             To reject MAC address changes on a standard vSwitch using Terraform, set `allow_mac_changes` to `false` on the `vsphere_host_virtual_switch` resource:
@@ -2304,7 +2324,7 @@ queries:
           desc: |
             To set the Promiscuous Mode policy to reject using the vSphere Client:
 
-            1. From the vSphere Web Client, select the host.
+            1. From the vSphere Client, select the host.
             2. Select `Configure`, then expand `Networking`.
             3. Select `Virtual switches`, then select `Edit`.
             4. Select `Security`.
@@ -2321,6 +2341,8 @@ queries:
             ```bash
             esxcli network vswitch standard policy security set -v vSwitch2 -p false
             ```
+
+            Replace `vSwitch2` with the target switch and run the command for each standard vSwitch on the host. List them with `esxcli network vswitch standard list`. Distributed switches and any per-port-group security overrides are configured separately and are not changed by this command.
         - id: terraform
           desc: |
             To reject promiscuous mode on a standard vSwitch using Terraform, set `allow_promiscuous` to `false` on the `vsphere_host_virtual_switch` resource:
