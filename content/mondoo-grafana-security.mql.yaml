@@ -4,7 +4,7 @@ policies:
   - summary: Secure Grafana organizations across service accounts, user roles, datasources, and alerting
     uid: mondoo-grafana-security
     name: Mondoo Grafana Security
-    version: 1.0.2
+    version: 1.0.3
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -468,7 +468,7 @@ queries:
 
         > **Warning:** Never delete the default admin before the replacement account holds the Grafana Admin server permission and you have verified it in step 4, or you lose server-level administration.
 
-        For new installations, set a unique admin login and a strong password before first startup. Prefer environment variables over a plaintext password in `grafana.ini`:
+        For new self-hosted installations, set a unique admin login and a strong password before first startup. Prefer environment variables over a plaintext password in `grafana.ini`:
 
         ```bash
         export GF_SECURITY_ADMIN_USER="your_unique_admin_name"
@@ -476,6 +476,8 @@ queries:
         ```
 
         These settings correspond to `admin_user` and `admin_password` in the `[security]` section and only take effect when Grafana initializes its database at first startup. Changing them later does not rename an existing admin user.
+
+        On Grafana Cloud you have no access to `grafana.ini` or the server process, so the default `admin` account does not apply in the same way. Manage administrators through the Grafana Cloud UI or the HTTP API instead.
     refs:
       - url: https://grafana.com/docs/grafana/latest/setup-grafana/configure-security/configure-authentication/
         title: Grafana Authentication Configuration
@@ -513,17 +515,9 @@ queries:
         - **Credential interception:** Authentication details for the datasource are never delivered to the client, preventing browser-side capture.
         - **Internal endpoint exposure:** Internal datasource endpoints stay shielded from the user's network, reducing reconnaissance and pivot opportunities.
       audit: |
-        ### Audit via UI
-
-        1. Sign in to Grafana and open **Connections > Data sources**.
-        2. Select each datasource and review its **Access** setting.
-        3. Confirm the setting is **Server (default)**, which corresponds to proxy mode.
-
-        A passing result shows every datasource using Server access mode; a failing result shows one or more datasources set to Browser access mode.
-
         ### Audit via API
 
-        Query the Grafana HTTP API and inspect the result:
+        The API reports the access mode for every datasource regardless of version, so it is the most reliable way to audit this setting. Query the Grafana HTTP API and inspect the result:
 
         ```bash
         curl -s -H "Authorization: Bearer $GRAFANA_TOKEN" \
@@ -531,13 +525,15 @@ queries:
         ```
 
         A passing response shows every datasource with `access` set to `proxy`; a failing response includes at least one datasource with `access` set to `direct`.
-      remediation: |
-        Switch datasources from direct to proxy access mode:
 
-        1. Navigate to **Connections > Data sources** in the Grafana UI.
-        2. Select each datasource configured with direct access.
-        3. If the datasource still shows an **Access** setting, change it to **Server (default)**, which corresponds to proxy mode. Recent Grafana versions removed this setting from the UI for most datasource types, so use the API instead.
-        4. Save and test the datasource connection.
+        ### Audit via UI
+
+        1. Sign in to Grafana and open **Connections > Data sources**.
+        2. Select each datasource. If it still shows an **Access** setting, confirm it is set to **Server (default)**, which corresponds to proxy mode.
+
+        Recent Grafana versions removed the **Access** setting from the UI for most datasource types, so the API audit above is the authoritative check. A passing result shows every datasource using Server access mode; a failing result shows one or more datasources set to Browser access mode.
+      remediation: |
+        Switch datasources from direct to proxy access mode. Browser access mode sends datasource credentials to the user's browser and requires the datasource to be reachable from the client network, so proxy mode keeps credentials server-side and shields internal endpoints. Recent Grafana versions removed the **Access** setting from the UI for most datasource types, so the API or provisioning path is the primary way to change it.
 
         Via the API, fetch the datasource definition, set `access` to `proxy`, and update it:
 
@@ -552,7 +548,13 @@ queries:
           "https://grafana.example.com/api/datasources/uid/$DS_UID"
         ```
 
-        For datasources defined through provisioning files, set `access: proxy` in the provisioning YAML and restart Grafana to apply the change.
+        For self-hosted Grafana datasources defined through provisioning files, set `access: proxy` in the provisioning YAML and restart Grafana to apply the change. On Grafana Cloud you cannot edit provisioning files or restart the server, so manage datasources through the API or the UI instead.
+
+        If the datasource still shows an **Access** setting in the UI, you can also change it there:
+
+        1. Navigate to **Connections > Data sources** in the Grafana UI.
+        2. Select the datasource configured with direct access and set **Access** to **Server (default)**.
+        3. Save and test the datasource connection.
     refs:
       - url: https://grafana.com/docs/grafana/latest/datasources/
         title: Grafana Datasources
