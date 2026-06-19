@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-http-security
     name: Mondoo HTTP Security
-    version: 1.2.3
+    version: 1.2.4
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -198,6 +198,8 @@ queries:
 
             A Content Security Policy that is too strict can break legitimate scripts, styles, and images. Deploy it in report-only mode first, fix the violations it reports, and only then switch to the enforcing header. The check passes only once the enforcing `Content-Security-Policy` header is served.
 
+            The `default-src 'self'` value shown below is only a starting skeleton, not a finished policy. On its own it blocks inline styles and scripts, CDNs, analytics, fonts, and embedded media that most real sites depend on. Treat it as the strict baseline you start from, then enumerate the exact sources your application actually loads and add the directives for them, such as the specific `script-src`, `style-src`, `img-src`, and `connect-src` origins your pages request. This is why report-only rollout matters: the violation reports tell you which sources to add before you enforce.
+
             1. Open your NGINX configuration file, typically `/etc/nginx/nginx.conf` or a site-specific file under `/etc/nginx/sites-available/`.
             2. Inside the `server` or `location` block, add a report-only policy to observe violations without blocking content:
 
@@ -228,6 +230,8 @@ queries:
             **Using Apache HTTPD**
 
             A Content Security Policy that is too strict can break legitimate scripts, styles, and images. Deploy it in report-only mode first, fix the violations it reports, and only then switch to the enforcing header. The check passes only once the enforcing `Content-Security-Policy` header is served.
+
+            The `default-src 'self'` value shown below is only a starting skeleton, not a finished policy. On its own it blocks inline styles and scripts, CDNs, analytics, fonts, and embedded media that most real sites depend on. Treat it as the strict baseline you start from, then enumerate the exact sources your application actually loads and add the directives for them, such as the specific `script-src`, `style-src`, `img-src`, and `connect-src` origins your pages request. This is why report-only rollout matters: the violation reports tell you which sources to add before you enforce.
 
             1. Open your Apache configuration file or `.htaccess` file.
             2. Add a report-only policy to observe violations without blocking content:
@@ -260,6 +264,8 @@ queries:
             **Using IIS**
 
             A Content Security Policy that is too strict can break legitimate scripts, styles, and images. Deploy it in report-only mode first, fix the violations it reports, and only then switch to the enforcing header. The check passes only once the enforcing `Content-Security-Policy` header is served.
+
+            The `default-src 'self'` value shown below is only a starting skeleton, not a finished policy. On its own it blocks inline styles and scripts, CDNs, analytics, fonts, and embedded media that most real sites depend on. Treat it as the strict baseline you start from, then enumerate the exact sources your application actually loads and add the directives for them, such as the specific `script-src`, `style-src`, `img-src`, and `connect-src` origins your pages request. This is why report-only rollout matters: the violation reports tell you which sources to add before you enforce.
 
             1. Open the IIS Manager.
             2. Select your site and go to the `HTTP Response Headers` feature.
@@ -473,6 +479,22 @@ queries:
                 ```bash
                 systemctl restart apache2
                 ```
+
+            `ServerTokens Full` is the most information-revealing setting and exposes the full server version string on its own. This configuration is only safe once ModSecurity is confirmed loaded and actively rewriting the `Server` header. If the module fails to load, the signature directive does nothing and the server falls back to leaking its complete version. Always verify the result before relying on it:
+
+            5. Confirm ModSecurity is loaded:
+
+                ```bash
+                apachectl -M | grep -i security2
+                ```
+
+            6. Confirm no version information leaks in the response:
+
+                ```bash
+                curl -sI https://example.com | grep -i '^Server:'
+                ```
+
+                The `Server` value must read `webserver` (or your chosen string). If it still shows `Apache` or a version number, ModSecurity is not rewriting the header and `ServerTokens Full` is exposing the version. Resolve the module load failure before leaving the configuration in place.
         - id: iis
           desc: |
             **Using IIS**
@@ -939,12 +961,17 @@ queries:
           desc: |
             **Using NGINX**
 
+            X-Frame-Options is a legacy header. The modern equivalent is the Content-Security-Policy `frame-ancestors` directive, which modern browsers prefer when both are present and which supports finer-grained origin control. Deploy `frame-ancestors` alongside X-Frame-Options so legacy browsers that do not honor CSP still get clickjacking protection.
+
             1. Open your NGINX configuration file.
-            2. Inside the `server` or `location` block, add:
+            2. Inside the `server` or `location` block, add both headers:
 
                 ```nginx
                 add_header X-Frame-Options "SAMEORIGIN";
+                add_header Content-Security-Policy "frame-ancestors 'self';";
                 ```
+
+                Use `frame-ancestors 'none'` to forbid all framing, the CSP equivalent of `DENY`.
 
             3. Save and reload NGINX:
 
@@ -955,12 +982,17 @@ queries:
           desc: |
             **Using Apache HTTPD**
 
+            X-Frame-Options is a legacy header. The modern equivalent is the Content-Security-Policy `frame-ancestors` directive, which modern browsers prefer when both are present and which supports finer-grained origin control. Deploy `frame-ancestors` alongside X-Frame-Options so legacy browsers that do not honor CSP still get clickjacking protection.
+
             1. Open your Apache configuration file or `.htaccess` file.
-            2. Add:
+            2. Add both headers:
 
                 ```apache
                 Header set X-Frame-Options "SAMEORIGIN"
+                Header set Content-Security-Policy "frame-ancestors 'self';"
                 ```
+
+                Use `frame-ancestors 'none'` to forbid all framing, the CSP equivalent of `DENY`.
 
             3. Enable the headers module and restart:
 
@@ -972,10 +1004,13 @@ queries:
           desc: |
             **Using IIS**
 
+            X-Frame-Options is a legacy header. The modern equivalent is the Content-Security-Policy `frame-ancestors` directive, which modern browsers prefer when both are present and which supports finer-grained origin control. Deploy `frame-ancestors` alongside X-Frame-Options so legacy browsers that do not honor CSP still get clickjacking protection.
+
             1. Open the IIS Manager.
             2. Select your site and go to `HTTP Response Headers`.
             3. Add `X-Frame-Options` with value `SAMEORIGIN`.
-            4. Restart IIS:
+            4. Add a second header named `Content-Security-Policy` with the value `frame-ancestors 'self';`. Use `frame-ancestors 'none'` to forbid all framing, the CSP equivalent of `DENY`.
+            5. Restart IIS:
 
                 ```bash
                 iisreset
