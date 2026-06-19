@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-vllm-security
     name: Mondoo vLLM Security
-    version: 1.0.2
+    version: 1.0.3
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -110,19 +110,19 @@ queries:
 
         ### Audit via server configuration
 
-        1. Inspect the `vllm serve` or `python -m vllm.entrypoints.openai.api_server` launch command for `--allowed-origins` or a custom `--middleware` that installs CORS handling.
+        1. Inspect the `vllm serve` or `python -m vllm.entrypoints.openai.api_server` launch command for the origin-scoping flag your release exposes, such as `--allowed-origins`, or a custom `--middleware` that installs CORS handling. Confirm the current flag name against `vllm serve --help`.
         2. If vLLM runs behind a reverse proxy or API gateway, review that component's CORS configuration for wildcard origin rules.
 
         A passing result shows CORS limited to a fixed list of trusted origins; a failing result shows a wildcard origin or reflected request origins.
       remediation: |
-        Set the allowed origins to an explicit list when starting vLLM. The server applies CORS middleware with a wildcard origin by default, so every hardened deployment must override it:
+        Set the allowed origins to an explicit list when starting vLLM. The server applies CORS middleware with a wildcard origin by default, so every hardened deployment must override it. The flag name and value format for scoping origins have changed across releases, so confirm the current flag against `vllm serve --help` before applying. On releases that accept a JSON list this looks like:
 
         ```bash
         vllm serve meta-llama/Llama-3.1-8B-Instruct \
           --allowed-origins '["https://app.example.com"]'
         ```
 
-        Restarting the server to apply the flag cancels in-flight requests, so drain traffic at the load balancer or proxy first. When vLLM is exposed through a reverse proxy or API gateway, enforce the same origin allowlist there and strip any wildcard or reflected `Access-Control-Allow-Origin` headers so the rule holds on every path to the server.
+        If your release renames the flag or expects repeated values, adjust the command accordingly. Restarting the server to apply the flag cancels in-flight requests, so drain traffic at the load balancer or proxy first. When vLLM is exposed through a reverse proxy or API gateway, enforce the same origin allowlist there and strip any wildcard or reflected `Access-Control-Allow-Origin` headers so the rule holds on every path to the server.
     refs:
       - url: https://docs.vllm.ai/en/latest/serving/openai_compatible_server.html
         title: vLLM OpenAI-Compatible Server
@@ -149,11 +149,11 @@ queries:
       vllm.endpoints.where(category == "custom-inference").none(anonymousAccessible == true)
     docs:
       desc: |
-        This check ensures that non-`/v1` inference routes such as `/invocations`, `/inference/v1/generate`, `/pooling`, `/classify`, `/score`, and `/rerank` are configured to reject anonymous requests. vLLM API-key authentication covers the `/v1`, `/v2`, and `/inference` route prefixes on current releases and only `/v1` on older ones, so the root-level inference endpoints stay reachable unless an upstream control protects them.
+        This check ensures that non-`/v1` inference routes such as `/invocations`, `/inference/v1/generate`, `/pooling`, `/classify`, `/score`, and `/rerank` are configured to reject anonymous requests. The vLLM built-in API key only guards a subset of route prefixes, and the exact prefixes it covers vary by release, so root-level inference endpoints stay reachable unless an upstream control protects them. Confirm which prefixes the API key protects in your release against `vllm serve --help` and the security documentation for that version before relying on it.
 
         **Why this matters**
 
-        - **Authentication bypass:** Root-level routes sit outside the built-in API-key boundary on every release, so anonymous access defeats the intended authentication model.
+        - **Authentication bypass:** Root-level routes commonly sit outside the built-in API-key boundary, so anonymous access defeats the intended authentication model.
         - **Unauthorized model use:** Open inference routes let anyone who can reach the endpoint generate completions, embeddings, or rankings without credentials.
         - **Capacity abuse:** Unauthenticated inference traffic consumes GPU and memory capacity reserved for sanctioned workloads.
 
@@ -174,12 +174,12 @@ queries:
 
         ### Audit via server configuration
 
-        1. Inspect the `vllm serve` launch command and confirm `--api-key` is set, while noting that the key protects the `/v1`, `/v2`, and `/inference` prefixes on current releases and only `/v1` on older ones.
-        2. Review the reverse proxy, API gateway, ingress, or firewall configuration that fronts vLLM for an authentication or deny rule covering non-`/v1` inference paths.
+        1. Inspect the `vllm serve` launch command and confirm `--api-key` is set, while noting that the key protects only a subset of route prefixes and that the covered prefixes vary by release. Confirm the protected prefixes for your version against `vllm serve --help` and the security documentation for that release.
+        2. Review the reverse proxy, API gateway, ingress, or firewall configuration that fronts vLLM for an authentication or deny rule covering the inference paths the built-in key does not protect.
 
         A passing result shows an upstream rule that authenticates or blocks these routes; a failing result shows the routes forwarded to vLLM with no authentication.
       remediation: |
-        Set an API key on the vLLM launch command so the `/v1`, `/v2`, and `/inference` route prefixes require a bearer token on current vLLM releases. The root-level routes `/invocations`, `/pooling`, `/classify`, `/score`, and `/rerank` sit outside the built-in authentication scope on every release, so deny or authenticate them at the reverse proxy, API gateway, ingress controller, or firewall that fronts vLLM. If the routes are not required, deny them entirely:
+        Set an API key on the vLLM launch command so that requests to the route prefixes the built-in key guards require a bearer token. The covered prefixes vary by release, so confirm them against `vllm serve --help` and the security documentation for your version. The root-level routes `/invocations`, `/pooling`, `/classify`, `/score`, and `/rerank` sit outside the built-in authentication scope, so deny or authenticate them at the reverse proxy, API gateway, ingress controller, or firewall that fronts vLLM. If the routes are not required, deny them entirely:
 
         ```nginx
         location ~ ^/(invocations|pooling|classify|score|rerank)$ {
@@ -187,7 +187,7 @@ queries:
         }
         ```
 
-        On vLLM releases before v0.12, also deny the `/inference/` prefix upstream because the built-in API key does not cover it there. If client applications need any of these routes, require authentication and authorization at the proxy before forwarding requests to vLLM.
+        If your release does not protect the `/inference/` prefix with the built-in key, deny that prefix upstream as well. If client applications need any of these routes, require authentication and authorization at the proxy before forwarding requests to vLLM.
     refs:
       - url: https://docs.vllm.ai/en/latest/serving/security.html
         title: vLLM Security
@@ -662,12 +662,12 @@ queries:
 
         ### Audit via server configuration
 
-        1. Inspect the `vllm serve` launch command for the `--profiler-config` flag and the environment for the deprecated `VLLM_TORCH_PROFILER_DIR` variable used by older releases.
+        1. Inspect the `vllm serve` launch command and environment for whatever enables profiling in your release. Depending on the version this is the `VLLM_TORCH_PROFILER_DIR` environment variable, a `--profiler-config` flag, or another setting, so confirm the enablement mechanism for your version against `vllm serve --help` and the profiling documentation for that release.
         2. Review the reverse proxy, API gateway, ingress, or firewall rules for entries that block `/start_profile` and `/stop_profile`.
 
         A passing result shows profiler routes disabled or blocked from untrusted clients; a failing result shows them reachable anonymously.
       remediation: |
-        Remove profiler configuration from production launch commands. The `/start_profile` and `/stop_profile` routes only exist while profiling is enabled, so confirm that the `--profiler-config` flag is absent and that the deprecated `VLLM_TORCH_PROFILER_DIR` environment variable used by older releases is unset:
+        Remove profiler configuration from production launch commands. The `/start_profile` and `/stop_profile` routes only exist while profiling is enabled, so confirm that whatever enables profiling in your release is absent. Depending on the version this means unsetting the `VLLM_TORCH_PROFILER_DIR` environment variable, removing a `--profiler-config` flag, or both, so check the profiling enablement mechanism for your version against `vllm serve --help` and the profiling documentation for that release:
 
         ```bash
         unset VLLM_TORCH_PROFILER_DIR
@@ -826,13 +826,13 @@ queries:
       audit: |
         ### Audit via HTTP request
 
-        Probe the running vLLM server and inspect the response:
+        Probe the TLS handshake directly so the result does not depend on any application route staying open. The `version-not-exposed` check expects `/version` to be blocked, so this audit avoids it and verifies the TLS listener instead:
 
         ```bash
-        curl -s -i https://vllm.example.com:8000/version
+        curl -sv https://vllm.example.com:8000/ -o /dev/null
         ```
 
-        A passing result completes the HTTPS handshake and returns a response; a failing result is one where the same endpoint is reachable over plain `http://` or the HTTPS request fails because no TLS listener exists.
+        A passing result completes the TLS handshake, which `curl -v` reports as an `SSL connection using` line, regardless of the HTTP status the server then returns. A failing result is one where the same host and port answer over plain `http://`, or the HTTPS request fails because no TLS listener exists.
 
         ### Audit via server configuration
 
