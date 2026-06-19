@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-proxmox-security
     name: Mondoo Proxmox VE Security
-    version: 1.1.2
+    version: 1.1.3
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -232,7 +232,15 @@ queries:
             **Using the CLI**
 
             Require a time-based one-time password factor on each authentication
-            realm so every user must enrol a token at their next login:
+            realm so every user must enrol a token at their next login.
+
+            **Verify the command surface for your PVE 8.x version first.** The
+            realm-level `--tfa type=oath` form and the per-user TFA verbs have
+            changed across Proxmox VE releases. Before applying, confirm the
+            exact flags and subcommands for your version with
+            `pveum realm modify --help` and `pveum user --help` (and check the
+            `/access/tfa` API path with `pvesh ls /access/tfa`). Substitute the
+            verified commands for the examples below if they differ:
 
             ```bash
             pveum realm modify pam --tfa type=oath
@@ -243,10 +251,12 @@ queries:
             enrol a factor, which writes an entry to `/etc/pve/priv/tfa.cfg`.
             Enrolment is done in the web interface: open Datacenter, then
             Permissions, then Two Factor, select Add, then TOTP, and scan the
-            QR code with an authenticator app. Verify enrolled factors with:
+            QR code with an authenticator app. To list enrolled factors, use the
+            verb confirmed for your PVE 8.x version (for example query the TFA
+            API with `pvesh get /access/tfa`):
 
             ```bash
-            pveum user tfa list
+            pvesh get /access/tfa
             ```
         - id: bash
           desc: |
@@ -1052,9 +1062,17 @@ queries:
             Enabling the cluster firewall blocks inbound traffic to all hosts,
             with a built-in exception for the web UI and SSH from the local
             subnet only, so administrators on other networks are cut off
-            without these rules:
+            without these rules.
+
+            **Lockout warning:** Replace the `10.0.0.0/24` placeholder below
+            with the real CIDR of the network you administer the cluster from
+            before you run these commands. If you allow the wrong source and
+            then enable the firewall, you lose web UI and SSH access to every
+            node. Keep an existing session open until you confirm the new
+            rules work.
 
             ```bash
+            # Replace 10.0.0.0/24 with YOUR management network CIDR.
             pvesh create /cluster/firewall/rules \
               --type in --action ACCEPT --proto tcp --dport 22 \
               --source 10.0.0.0/24 --enable 1 --comment "Allow SSH from management"
@@ -1069,7 +1087,10 @@ queries:
             **Using a Bash Script**
 
             Seed enabled management allow rules, then enable the cluster
-            firewall and verify it is active:
+            firewall and verify it is active. Pass your real management CIDR as
+            the first argument; the `10.0.0.0/24` default is only a placeholder
+            and will lock out administrators on other networks if left
+            unchanged:
 
             ```bash
             #!/bin/bash
@@ -1193,9 +1214,20 @@ queries:
 
             Create enabled allow rules for management traffic first, then set
             the default input policy to `DROP`. Setting `DROP` without enabled
-            allow rules cuts off SSH and web UI access from non-local networks:
+            allow rules cuts off SSH and web UI access from non-local networks.
+
+            **Lockout warning:** This is the most dangerous firewall change in
+            this policy. Once the input policy is `DROP`, anything not covered
+            by an enabled allow rule is silently dropped, including your own
+            management session. Replace the `10.0.0.0/24` placeholder below
+            with the real CIDR of the network you administer the cluster from,
+            confirm the allow rules are present and enabled, and keep a working
+            session open until you have verified access still works after the
+            switch to `DROP`. If you are locked out, you must recover through
+            the node console or IPMI.
 
             ```bash
+            # Replace 10.0.0.0/24 with YOUR management network CIDR.
             pvesh create /cluster/firewall/rules \
               --type in --action ACCEPT --proto tcp --dport 22 \
               --source 10.0.0.0/24 --enable 1 --comment "Allow SSH from management"
@@ -1210,7 +1242,10 @@ queries:
             **Using a Bash Script**
 
             Add explicit, enabled allow rules for management traffic, then flip
-            the default policy to `DROP`:
+            the default policy to `DROP`. Pass your real management CIDR as the
+            first argument; the `10.0.0.0/24` default is only a placeholder and
+            will lock out administrators on other networks once the policy is
+            `DROP`:
 
             ```bash
             #!/bin/bash
@@ -1572,7 +1607,14 @@ queries:
             **Using the CLI**
 
             Register an ACME account and order a Let's Encrypt certificate for
-            this node:
+            this node.
+
+            **Verify the ACME flag syntax for your PVE 8.x version first.** The
+            way ACME domains are set on `pvenode config set` has drifted across
+            Proxmox VE releases. Confirm the documented form for your version
+            with `pvenode config set --help`; on current builds the per-domain
+            flag form `pvenode config set -acmedomain0=<fqdn>` is documented.
+            Substitute the verified flag below:
 
             ```bash
             pvenode acme account register default <email>
@@ -1701,7 +1743,13 @@ queries:
             ```
 
             If the node also serves an ACME certificate that is close to
-            expiry, renew it as well:
+            expiry, renew it as well.
+
+            **Verify the ACME renew subcommand for your PVE 8.x version first.**
+            `pvenode acme cert renew` is not present on every PVE 8.x build.
+            Confirm the available verbs with `pvenode acme help`; if `renew` is
+            absent, re-order the certificate instead with
+            `pvenode acme cert order --force`. Substitute the verified command:
 
             ```bash
             pvenode acme cert renew --force
@@ -2773,11 +2821,20 @@ queries:
 
             Append the mitigation flags to the VM's existing CPU type. Quote
             the value so the shell does not split it at the semicolon, and
-            restart the VM cleanly for the change to take effect:
+            restart the VM cleanly for the change to take effect.
+
+            First read the VM's current `cpu:` value, then substitute it for
+            `<existing-cpu-type>` below. Do not paste `kvm64` blindly; that would
+            overwrite a `host` or custom CPU type the VM already uses. If the
+            VM has no `cpu:` line it defaults to `kvm64`, so use `kvm64` only in
+            that case:
 
             ```bash
+            # Read the VM's current CPU type and copy the value after "cpu:".
             qm config <vmid> | grep '^cpu:'
-            qm set <vmid> --cpu 'kvm64,flags=+spec-ctrl;+ssbd'
+
+            # Replace <existing-cpu-type> with that value (for example host, x86-64-v2-AES, or kvm64).
+            qm set <vmid> --cpu '<existing-cpu-type>,flags=+spec-ctrl;+ssbd'
             qm shutdown <vmid>
             qm start <vmid>
             ```
@@ -3159,11 +3216,24 @@ queries:
             **Using the CLI**
 
             Edit a working copy outside `/etc/pve`, then activate it in a
-            single step so the cluster never sees a partial configuration:
+            single step so the cluster never sees a partial configuration.
+
+            **Quorum-loss warning:** Overwriting the live
+            `/etc/pve/corosync.conf` is the riskiest operation in this policy.
+            A bad edit, a stale `config_version`, or a node that fails to reload
+            can drop quorum and freeze the cluster. Only do this while the
+            cluster is healthy and quorate. Confirm quorum first with
+            `pvecm status` (or `corosync-cfgtool -s`), make the change, then
+            re-run `corosync-cfgtool -s` on each node to confirm every link is
+            connected and corosync reloaded cleanly. If quorum drops, restore
+            the backup with `cp /root/corosync.conf.bak /etc/pve/corosync.conf`.
 
             ```bash
             cp /etc/pve/corosync.conf /root/corosync.conf.bak
             cp /etc/pve/corosync.conf /root/corosync.conf.new
+
+            # Confirm the cluster is quorate before changing anything.
+            corosync-cfgtool -s
 
             # Edit /root/corosync.conf.new. Inside the totem { } block ensure:
             #   transport: knet
@@ -3172,16 +3242,28 @@ queries:
             # and increment config_version by 1.
 
             cp /root/corosync.conf.new /etc/pve/corosync.conf
+
+            # Verify every node reloaded and links are connected.
+            corosync-cfgtool -s
             ```
 
             The file replicates automatically across the cluster and corosync
-            reloads when it sees the higher config_version.
+            reloads when it sees the higher config_version. If a node does not
+            come back, roll back from `/root/corosync.conf.bak`.
         - id: bash
           desc: |
             **Using a Bash Script**
 
             Patch a working copy of `corosync.conf`, bump `config_version`,
-            and activate the result with one copy. Run on a single node:
+            and activate the result with one copy. Run on a single node.
+
+            **Quorum-loss warning:** This rewrites the live
+            `/etc/pve/corosync.conf` and can drop cluster quorum if the result
+            is wrong. Run it only on a healthy, quorate cluster. The script
+            keeps a backup at `/root/corosync.conf.bak`; if quorum drops after
+            the change, restore it with
+            `cp /root/corosync.conf.bak /etc/pve/corosync.conf`. After it runs,
+            confirm every node with `corosync-cfgtool -s`:
 
             ```bash
             #!/bin/bash
@@ -3213,13 +3295,24 @@ queries:
 
             cp "$work" "$src"
             echo "Updated config_version to $next; corosync reloads and replicates the change."
+            echo "Verify every node reloaded and links are connected:"
+            corosync-cfgtool -s
             ```
         - id: ansible
           desc: |
             **Using Ansible**
 
             Use this Ansible playbook to stage the change in a working copy and
-            activate it in one step (run once against any node):
+            activate it in one step (run once against any node).
+
+            **Quorum-loss warning:** This task overwrites the live
+            `/etc/pve/corosync.conf` on a running cluster, which can drop quorum
+            if the result is invalid. Run it only against a healthy, quorate
+            cluster, and after the run confirm each node with
+            `corosync-cfgtool -s`. The playbook saves a backup at
+            `/root/corosync.conf.bak` so you can roll back with
+            `cp /root/corosync.conf.bak /etc/pve/corosync.conf` if a node fails
+            to rejoin:
 
             ```yaml
             ---
@@ -3228,6 +3321,12 @@ queries:
               become: true
 
               tasks:
+                - name: Back up the live corosync.conf for rollback
+                  ansible.builtin.copy:
+                    src: /etc/pve/corosync.conf
+                    dest: /root/corosync.conf.bak
+                    remote_src: true
+
                 - name: Stage a working copy of corosync.conf
                   ansible.builtin.copy:
                     src: /etc/pve/corosync.conf
@@ -3703,7 +3802,13 @@ queries:
             **Using the CLI**
 
             Create a master key pair and attach the public half. The key files
-            are written to the current directory:
+            are written to the current directory.
+
+            The `proxmox-backup-client` command is not installed on a base PVE
+            node. Install it first with
+            `apt-get update && apt-get install -y proxmox-backup-client`, or
+            create the master key on the PBS host and copy only the public half
+            to the PVE node:
 
             ```bash
             cd /root || exit
@@ -3836,11 +3941,17 @@ queries:
             **Using the CLI**
 
             Stop the KSM services so they cannot re-enable merging, unmerge
-            all currently shared pages, and leave KSM stopped:
+            all currently shared pages, and leave KSM stopped.
+
+            On most Proxmox installs only `ksmtuned.service` exists; a bare
+            `ksm.service` may be absent, so the `systemctl` calls below tolerate
+            a missing unit with `2>/dev/null || true`. The authoritative control
+            is writing to `/sys/kernel/mm/ksm/run`: writing `2` unmerges already
+            shared pages, and `0` leaves KSM stopped:
 
             ```bash
-            systemctl stop ksmtuned ksm
-            systemctl disable ksmtuned ksm
+            systemctl stop ksmtuned ksm 2>/dev/null || true
+            systemctl disable ksmtuned ksm 2>/dev/null || true
             echo 2 > /sys/kernel/mm/ksm/run
             echo 0 > /sys/kernel/mm/ksm/run
             ```
@@ -5163,7 +5274,16 @@ queries:
             **Using the CLI**
 
             Persist either `1` (allow unprivileged user namespaces) or `0`
-            (disallow). The Proxmox default for unprivileged LXC is `1`:
+            (disallow). The Proxmox default for unprivileged LXC is `1`.
+
+            **Verify the key exists on your Proxmox kernel first.**
+            `kernel.unprivileged_userns_clone` is a Debian downstream knob, and
+            some Proxmox kernels do not expose it. Check with
+            `sysctl kernel.unprivileged_userns_clone` before relying on it; if
+            it reports an error, the key is absent on this kernel and the
+            runtime `sysctl -w` line will fail. On those kernels user namespaces
+            are governed by `user.max_user_namespaces` instead, so confirm which
+            knob your kernel honors:
 
             ```bash
             sysctl -w kernel.unprivileged_userns_clone=1
