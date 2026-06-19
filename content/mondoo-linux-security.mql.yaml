@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-linux-security
     name: Mondoo Linux Security
-    version: 2.7.2
+    version: 2.7.3
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -669,16 +669,17 @@ queries:
                 * hard core 0
                 ```
 
-                Set the following parameter in `/etc/sysctl.conf` or a `/etc/sysctl.d/` file:
+                Set the following parameter in `/etc/sysctl.conf` or a `/etc/sysctl.d/` file. Drop-in files must end in `.conf` to be loaded:
 
                 ```ini
                 fs.suid_dumpable = 0
                 ```
 
-                Run this command to set the active kernel parameter:
+                Run these commands to set the active kernel parameter and reload the persisted drop-in files:
 
                 ```bash
                 sysctl -w fs.suid_dumpable=0
+                sysctl --system
                 ```
 
             3. Configure systemd-coredump if present:
@@ -712,19 +713,39 @@ queries:
               echo '* hard core 0' | tee -a /etc/security/limits.conf
             fi
 
-            # Set fs.suid_dumpable to 0 in sysctl
-            if ! grep -q '^fs.suid_dumpable' /etc/sysctl.conf 2>/dev/null && ! grep -q '^fs.suid_dumpable' /etc/sysctl.d/* 2>/dev/null; then
-              echo "Setting fs.suid_dumpable to 0 in /etc/sysctl.d/99-disable-coredump.conf"
-              echo 'fs.suid_dumpable = 0' | tee /etc/sysctl.d/99-disable-coredump.conf
-            fi
+            # Always write the compliant fs.suid_dumpable value to a dedicated drop-in so an
+            # existing permissive value elsewhere cannot leave a non-compliant setting in place.
+            # The file name must end in .conf to be loaded by sysctl.
+            echo "Setting fs.suid_dumpable to 0 in /etc/sysctl.d/99-disable-coredump.conf"
+            echo 'fs.suid_dumpable = 0' | tee /etc/sysctl.d/99-disable-coredump.conf
             sysctl -w fs.suid_dumpable=0
+
+            # Reload persisted sysctl drop-in files so the saved value takes effect.
+            sysctl --system
 
             # Configure systemd-coredump if present
             if [ -f /etc/systemd/coredump.conf ]; then
               echo "Setting systemd-coredump configuration"
-              sed -i '/^ProcessSizeMax/d' /etc/systemd/coredump.conf
-              sed -i '/^Storage/d' /etc/systemd/coredump.conf
-              echo -e '[Coredump]\nProcessSizeMax=0\nStorage=none' | tee -a /etc/systemd/coredump.conf
+
+              # Ensure a [Coredump] section header exists exactly once.
+              if ! grep -q '^\[Coredump\]' /etc/systemd/coredump.conf; then
+                printf '\n[Coredump]\n' | tee -a /etc/systemd/coredump.conf
+              fi
+
+              # Update the keys in place if they are present, otherwise add them under the
+              # existing [Coredump] header. This avoids appending a second, duplicate section.
+              if grep -qE '^\s*#?\s*Storage=' /etc/systemd/coredump.conf; then
+                sed -i 's/^\s*#\?\s*Storage=.*/Storage=none/' /etc/systemd/coredump.conf
+              else
+                sed -i '/^\[Coredump\]/a Storage=none' /etc/systemd/coredump.conf
+              fi
+
+              if grep -qE '^\s*#?\s*ProcessSizeMax=' /etc/systemd/coredump.conf; then
+                sed -i 's/^\s*#\?\s*ProcessSizeMax=.*/ProcessSizeMax=0/' /etc/systemd/coredump.conf
+              else
+                sed -i '/^\[Coredump\]/a ProcessSizeMax=0' /etc/systemd/coredump.conf
+              fi
+
               systemctl daemon-reexec
             fi
 
@@ -840,6 +861,7 @@ queries:
 
                 ```bash
                 sysctl -w kernel.randomize_va_space=2
+                sysctl --system
                 ```
 
             2. Make the change permanent:
@@ -869,6 +891,7 @@ queries:
 
             echo "Applying kernel.randomize_va_space=2"
             sysctl -w kernel.randomize_va_space=2
+            sysctl --system
             ```
         - id: ansible
           desc: |
@@ -947,6 +970,7 @@ queries:
 
                 ```bash
                 sysctl -w kernel.kptr_restrict=2
+                sysctl --system
                 ```
 
             2. Make the change permanent:
@@ -976,6 +1000,7 @@ queries:
 
             echo "Applying kernel.kptr_restrict=2"
             sysctl -w kernel.kptr_restrict=2
+            sysctl --system
             ```
         - id: ansible
           desc: |
@@ -1054,12 +1079,15 @@ queries:
           desc: |
             **Using the CLI**
 
+            **Caveat: some low-level applications need to map low memory.** Setting `vm.mmap_min_addr = 65536` blocks mapping the lowest memory addresses, which can break Wine, DOSEMU, and qemu workloads that require it. Confirm that no application on this host depends on low-memory mapping before applying.
+
             1. Set the mmap_min_addr value to 65536:
 
                 Run this command to set the active kernel parameter:
 
                 ```bash
                 sysctl -w vm.mmap_min_addr=65536
+                sysctl --system
                 ```
             2. Make the change permanent:
 
@@ -1072,7 +1100,7 @@ queries:
           desc: |
             **Using a Bash Script**
 
-            Use this Bash script to prevent mapping of low memory addresses. It will check if the setting is already configured and apply it if not.
+            **Caveat: some low-level applications need to map low memory.** This setting can break Wine, DOSEMU, and qemu workloads that require mapping the lowest memory addresses. Confirm that no application on this host depends on low-memory mapping before applying. Use this Bash script to prevent mapping of low memory addresses. It will check if the setting is already configured and apply it if not.
 
             ```bash
             #!/bin/bash
@@ -1088,6 +1116,7 @@ queries:
 
             echo "Applying vm.mmap_min_addr=65536"
             sysctl -w vm.mmap_min_addr=65536
+            sysctl --system
             ```
         - id: ansible
           desc: |
@@ -1170,6 +1199,7 @@ queries:
 
                 ```bash
                 sysctl -w kernel.dmesg_restrict=1
+                sysctl --system
                 ```
 
             2. Make the change permanent:
@@ -1199,6 +1229,7 @@ queries:
 
             echo "Applying kernel.dmesg_restrict=1"
             sysctl -w kernel.dmesg_restrict=1
+            sysctl --system
             ```
         - id: ansible
           desc: |
@@ -1277,12 +1308,15 @@ queries:
           desc: |
             **Using the CLI**
 
+            A value of `1` disables unprivileged eBPF but can be toggled back to `0` at runtime. A value of `2` is the stronger setting because it becomes immutable until the next reboot. Use `2` where you do not run eBPF tooling that needs to be reconfigured at runtime; both values satisfy this check.
+
             1. Set the unprivileged_bpf_disabled value to 1:
 
                 Run this command to set the active kernel parameter:
 
                 ```bash
                 sysctl -w kernel.unprivileged_bpf_disabled=1
+                sysctl --system
                 ```
 
             2. Make the change permanent:
@@ -1312,6 +1346,7 @@ queries:
 
             echo "Applying kernel.unprivileged_bpf_disabled=1"
             sysctl -w kernel.unprivileged_bpf_disabled=1
+            sysctl --system
             ```
         - id: ansible
           desc: |
@@ -1392,12 +1427,15 @@ queries:
           desc: |
             **Using the CLI**
 
+            **Caveat: this can break debugging and monitoring tools.** A value of `2` (admin-only) or `3` (ptrace disabled) prevents non-privileged use of ptrace, which breaks debuggers such as `gdb` and `strace`, userspace crash handlers, and APM or observability agents that rely on ptrace. Confirm that no required tooling on this host depends on ptrace before applying.
+
             1. Set the ptrace_scope value to 2:
 
                 Run this command to set the active kernel parameter:
 
                 ```bash
                 sysctl -w kernel.yama.ptrace_scope=2
+                sysctl --system
                 ```
             2. Make the change permanent:
 
@@ -1410,7 +1448,7 @@ queries:
           desc: |
             **Using a Bash Script**
 
-            Use this Bash script to restrict non-privileged access to ptrace. It will check if the setting is already configured and apply it if not.
+            **Caveat: this can break debugging and monitoring tools.** A value of `2` or `3` breaks `gdb`, `strace`, userspace crash handlers, and APM or observability agents that rely on ptrace. Confirm that no required tooling on this host depends on ptrace before applying. Use this Bash script to restrict non-privileged access to ptrace. It will check if the setting is already configured and apply it if not.
 
             ```bash
             #!/bin/bash
@@ -1426,6 +1464,7 @@ queries:
 
             echo "Applying kernel.yama.ptrace_scope=2"
             sysctl -w kernel.yama.ptrace_scope=2
+            sysctl --system
             ```
         - id: ansible
           desc: |
@@ -2697,25 +2736,27 @@ queries:
           desc: |
             **Using the CLI**
 
-            Run this command to stop and disable `slapd`:
+            Run these commands to stop and disable `slapd`. Masking the unit prevents another service or dependency from restarting it:
 
             ```bash
             systemctl stop slapd
             systemctl disable slapd
+            systemctl mask slapd
             ```
         - id: bash
           desc: |
             **Using a Bash Script**
 
-            Use this Bash script to stop and disable the LDAP server.
+            Use this Bash script to stop, disable, and mask the LDAP server. Masking prevents another service or dependency from restarting it.
 
             ```bash
             #!/bin/bash
             set -e
 
-            echo "Stopping and disabling the slapd service..."
+            echo "Stopping, disabling, and masking the slapd service..."
             systemctl stop slapd
             systemctl disable slapd
+            systemctl mask slapd
             ```
         - id: ansible
           desc: |
@@ -2730,11 +2771,12 @@ queries:
               become: true
 
               tasks:
-                - name: Ensure LDAP server (slapd) is stopped and disabled
+                - name: Ensure LDAP server (slapd) is stopped, disabled, and masked
                   ansible.builtin.systemd:
                     name: slapd
                     state: stopped
                     enabled: no
+                    masked: yes
             ```
     refs:
       - url: https://www.freedesktop.org/wiki/Software/systemd/
@@ -3759,59 +3801,54 @@ queries:
         ```bash
         postconf inet_interfaces
         grep -E '^dc_local_interfaces' /etc/exim4/update-exim4.conf.conf
+        grep DAEMON_OPTIONS /etc/mail/sendmail.mc
         ss -lntp | grep ':25'
         ```
 
-        A passing result shows Postfix `inet_interfaces` set to `localhost` or `loopback-only` (or Exim bound to `127.0.0.1` and `::1`), and no listener on port 25 outside the loopback addresses. A failing result shows the MTA bound to an external address on port 25.
+        A passing result shows Postfix `inet_interfaces` set to `localhost` or `loopback-only` (or Exim bound to `127.0.0.1` and `::1`, or Sendmail `DAEMON_OPTIONS` bound to `127.0.0.1`), and no listener on port 25 outside the loopback addresses. A failing result shows the MTA bound to an external address on port 25.
       remediation:
         - id: cli
           desc: |
             **Using CLI**
 
-            1. For Postfix, edit the main configuration file `/etc/postfix/main.cf`:
+            1. For Postfix, set `inet_interfaces` to `loopback-only` with `postconf`, which updates `/etc/postfix/main.cf` whether or not the directive already exists:
 
                 ```bash
-                vi /etc/postfix/main.cf
+                postconf -e 'inet_interfaces = loopback-only'
                 ```
 
-            2. Find the line that starts with `inet_interfaces` and change it to:
-
-                ```ini
-                inet_interfaces = loopback-only
-                ```
-
-            3. Restart Postfix:
+            2. Restart Postfix:
 
                 ```bash
                 systemctl restart postfix
                 ```
 
-            4. For Exim4, edit the Exim4 configuration file:
+            3. For Exim4, edit the Exim4 configuration file:
 
                 ```bash
                 vi /etc/exim4/update-exim4.conf.conf
                 ```
 
-            5. Find the line that sets `dc_local_interfaces` and modify it to:
+            4. Find the line that sets `dc_local_interfaces` and modify it to:
 
                 ```ini
                 dc_local_interfaces='127.0.0.1 ; ::1'
                 ```
 
-            6. Regenerate the Exim4 runtime configuration and restart the service:
+            5. Regenerate the Exim4 runtime configuration and restart the service:
 
                 ```bash
                 update-exim4.conf
                 systemctl restart exim4
                 ```
 
-            7. For Sendmail, edit `/etc/mail/sendmail.mc` and ensure the daemon binds only to the loopback address:
+            6. For Sendmail, edit `/etc/mail/sendmail.mc` and ensure the daemon binds only to the loopback address:
 
                 ```text
                 DAEMON_OPTIONS(`Port=smtp,Addr=127.0.0.1, Name=MTA')dnl
                 ```
 
-            8. Rebuild the Sendmail configuration and restart the service:
+            7. Rebuild the Sendmail configuration and restart the service:
 
                 ```bash
                 make -C /etc/mail
@@ -4567,6 +4604,8 @@ queries:
           desc: |
             **Using CLI**
 
+            **Caveat: do not disable forwarding on hosts that route traffic.** Routers, NAT gateways, VPN concentrators, Docker hosts that publish container ports, and Kubernetes nodes (where kube-proxy and the CNI require `ip_forward=1`) all need IP forwarding. Disabling it there breaks connectivity, so set a documented exception for this check on those hosts rather than applying the change.
+
             1. Set the following parameter in `/etc/sysctl.conf` or a `/etc/sysctl.d/` file:
 
                 ```ini
@@ -4582,6 +4621,7 @@ queries:
 
                 sysctl -w net.ipv6.conf.all.forwarding=0
                 sysctl -w net.ipv6.route.flush=1
+                sysctl --system
                 ```
         - id: bash
           desc: |
@@ -4616,6 +4656,7 @@ queries:
 
             sysctl -w net.ipv6.conf.all.forwarding=0
             sysctl -w net.ipv6.route.flush=1
+            sysctl --system
             ```
         - id: ansible
           desc: |
@@ -4711,6 +4752,7 @@ queries:
                 sysctl -w net.ipv4.conf.all.send_redirects=0
                 sysctl -w net.ipv4.conf.default.send_redirects=0
                 sysctl -w net.ipv4.route.flush=1
+                sysctl --system
                 ```
         - id: bash
           desc: |
@@ -4743,6 +4785,7 @@ queries:
             sysctl -w net.ipv4.conf.all.send_redirects=0
             sysctl -w net.ipv4.conf.default.send_redirects=0
             sysctl -w net.ipv4.route.flush=1
+            sysctl --system
             ```
         - id: ansible
           desc: |
@@ -4850,6 +4893,7 @@ queries:
                 sysctl -w net.ipv6.conf.all.accept_source_route=0
                 sysctl -w net.ipv6.conf.default.accept_source_route=0
                 sysctl -w net.ipv6.route.flush=1
+                sysctl --system
                 ```
         - id: bash
           desc: |
@@ -4904,6 +4948,7 @@ queries:
             sysctl -w net.ipv6.conf.all.accept_source_route=0
             sysctl -w net.ipv6.conf.default.accept_source_route=0
             sysctl -w net.ipv6.route.flush=1
+            sysctl --system
             ```
         - id: ansible
           desc: |
@@ -5013,6 +5058,7 @@ queries:
                 sysctl -w net.ipv6.conf.all.accept_redirects=0
                 sysctl -w net.ipv6.conf.default.accept_redirects=0
                 sysctl -w net.ipv6.route.flush=1
+                sysctl --system
                 ```
         - id: bash
           desc: |
@@ -5066,6 +5112,7 @@ queries:
             sysctl -w net.ipv6.conf.all.accept_redirects=0
             sysctl -w net.ipv6.conf.default.accept_redirects=0
             sysctl -w net.ipv6.route.flush=1
+            sysctl --system
             ```
         - id: ansible
           desc: |
@@ -5163,6 +5210,7 @@ queries:
                 sysctl -w net.ipv4.conf.all.secure_redirects=0
                 sysctl -w net.ipv4.conf.default.secure_redirects=0
                 sysctl -w net.ipv4.route.flush=1
+                sysctl --system
                 ```
         - id: bash
           desc: |
@@ -5195,6 +5243,7 @@ queries:
             sysctl -w net.ipv4.conf.all.secure_redirects=0
             sysctl -w net.ipv4.conf.default.secure_redirects=0
             sysctl -w net.ipv4.route.flush=1
+            sysctl --system
             ```
         - id: ansible
           desc: |
@@ -5288,6 +5337,7 @@ queries:
                 sysctl -w net.ipv4.conf.all.log_martians=1
                 sysctl -w net.ipv4.conf.default.log_martians=1
                 sysctl -w net.ipv4.route.flush=1
+                sysctl --system
                 ```
         - id: bash
           desc: |
@@ -5318,6 +5368,7 @@ queries:
             sysctl -w net.ipv4.conf.all.log_martians=1
             sysctl -w net.ipv4.conf.default.log_martians=1
             sysctl -w net.ipv4.route.flush=1
+            sysctl --system
             ```
         - id: ansible
           desc: |
@@ -5407,6 +5458,7 @@ queries:
                 ```bash
                 sysctl -w net.ipv4.icmp_echo_ignore_broadcasts=1
                 sysctl -w net.ipv4.route.flush=1
+                sysctl --system
                 ```
         - id: bash
           desc: |
@@ -5428,6 +5480,7 @@ queries:
 
             sysctl -w net.ipv4.icmp_echo_ignore_broadcasts=1
             sysctl -w net.ipv4.route.flush=1
+            sysctl --system
             ```
         - id: ansible
           desc: |
@@ -5516,6 +5569,7 @@ queries:
                 ```bash
                 sysctl -w net.ipv4.icmp_ignore_bogus_error_responses=1
                 sysctl -w net.ipv4.route.flush=1
+                sysctl --system
                 ```
         - id: bash
           desc: |
@@ -5537,6 +5591,7 @@ queries:
 
             sysctl -w net.ipv4.icmp_ignore_bogus_error_responses=1
             sysctl -w net.ipv4.route.flush=1
+            sysctl --system
             ```
         - id: ansible
           desc: |
@@ -5616,6 +5671,8 @@ queries:
           desc: |
             **Using CLI**
 
+            **Warning: strict reverse path filtering can break asymmetric routing.** Setting `rp_filter = 1` (strict mode) drops return traffic that would leave through a different interface than the one it arrived on. On routers, multihomed hosts, VPN gateways, and load-balancer nodes this silently breaks legitimate connectivity. On those hosts use loose mode (`rp_filter = 2`), which still validates that a route to the source exists but does not require the same interface. Loose mode does not satisfy this check, so record it as a documented exception, and verify connectivity after applying any change. Drop-in files must end in `.conf` to be loaded.
+
             1. Set the following parameters in `/etc/sysctl.conf` or a `/etc/sysctl.d/` file:
 
                 ```ini
@@ -5623,18 +5680,19 @@ queries:
                 net.ipv4.conf.default.rp_filter = 1
                 ```
 
-            2. Run these commands to set the active kernel parameters:
+            2. Run these commands to set the active kernel parameters and reload the persisted drop-in files:
 
                 ```bash
                 sysctl -w net.ipv4.conf.all.rp_filter=1
                 sysctl -w net.ipv4.conf.default.rp_filter=1
                 sysctl -w net.ipv4.route.flush=1
+                sysctl --system
                 ```
         - id: bash
           desc: |
             **Using a Bash Script**
 
-            Use this Bash script to enable reverse path filtering and persist the settings.
+            **Warning: strict reverse path filtering can break asymmetric routing.** Strict mode (`rp_filter = 1`) drops return traffic that arrives on a different interface than the kernel would use to reach the source. On routers, multihomed hosts, VPN gateways, and load balancers use loose mode (`rp_filter = 2`) instead and record it as a documented exception, then verify connectivity after applying. Use this Bash script to enable reverse path filtering and persist the settings.
 
             ```bash
             #!/bin/bash
@@ -5659,12 +5717,15 @@ queries:
             sysctl -w net.ipv4.conf.all.rp_filter=1
             sysctl -w net.ipv4.conf.default.rp_filter=1
             sysctl -w net.ipv4.route.flush=1
+
+            # Reload all persisted sysctl drop-in files so the saved values take effect.
+            sysctl --system
             ```
         - id: ansible
           desc: |
             **Using Ansible**
 
-            Use this Ansible playbook to set the kernel parameters:
+            Strict reverse path filtering (`rp_filter = 1`) can break asymmetric and multihomed routing on routers, VPN gateways, and load balancers. Use loose mode (`value: '2'`) on those hosts and record it as a documented exception, then verify connectivity after applying. Use this Ansible playbook to set the kernel parameters:
 
             ```yaml
             ---
@@ -5748,6 +5809,7 @@ queries:
                 ```bash
                 sysctl -w net.ipv4.tcp_syncookies=1
                 sysctl -w net.ipv4.route.flush=1
+                sysctl --system
                 ```
         - id: bash
           desc: |
@@ -5770,6 +5832,7 @@ queries:
 
             sysctl -w net.ipv4.tcp_syncookies=1
             sysctl -w net.ipv4.route.flush=1
+            sysctl --system
             ```
         - id: ansible
           desc: |
@@ -5864,6 +5927,7 @@ queries:
                 sysctl -w net.ipv6.conf.all.accept_ra=0
                 sysctl -w net.ipv6.conf.default.accept_ra=0
                 sysctl -w net.ipv6.route.flush=1
+                sysctl --system
                 ```
         - id: bash
           desc: |
@@ -5896,6 +5960,7 @@ queries:
             sysctl -w net.ipv6.conf.all.accept_ra=0
             sysctl -w net.ipv6.conf.default.accept_ra=0
             sysctl -w net.ipv6.route.flush=1
+            sysctl --system
             ```
         - id: ansible
           desc: |
@@ -6176,6 +6241,8 @@ queries:
                 ```bash
                 update-grub
                 ```
+
+            3. Reboot the system so the kernel starts with the new `audit=1` parameter. The change does not take effect until the next boot.
         - id: bash
           desc: |
             **Using a Bash Script**
@@ -6199,14 +6266,19 @@ queries:
             if command -v update-grub >/dev/null 2>&1; then
               echo "Running update-grub"
               update-grub
-            elif command -v grubby >/dev/null 2>&1; then
-              echo "Updating GRUB configuration and the kernel command line"
-              grub2-mkconfig -o /boot/grub2/grub.cfg
-              grubby --update-kernel=ALL --args="audit=1"
             else
-              echo "Running grub2-mkconfig"
+              echo "Regenerating grub.cfg"
               grub2-mkconfig -o /boot/grub2/grub.cfg
+              # On RHEL 8 and later the active boot entries read their parameters from grubenv and
+              # the BLS entries, so a regenerated grub.cfg alone may not apply audit=1. grubby
+              # updates the installed kernels directly, so run it whenever it is available.
+              if command -v grubby >/dev/null 2>&1; then
+                echo "Updating the kernel command line with grubby"
+                grubby --update-kernel=ALL --args="audit=1"
+              fi
             fi
+
+            echo "Reboot required: audit=1 takes effect on the next boot."
             ```
         - id: ansible
           desc: |
@@ -6415,7 +6487,7 @@ queries:
         auditd.config.params.max_log_file_action == "keep_logs"
     docs:
       desc: |
-        This check verifies that the system is configured to retain audit logs by ensuring the `max_log_file_action` parameter in `/etc/audit/auditd.conf`` is set to `keep_logs`.
+        This check verifies that the system is configured to retain audit logs by ensuring the `max_log_file_action` parameter in `/etc/audit/auditd.conf` is set to `keep_logs`.
 
         **Why this matters**
 
@@ -6439,6 +6511,8 @@ queries:
         - id: cli
           desc: |
             **Using CLI**
+
+            **Caveat: `keep_logs` does not rotate or delete logs and can fill the disk.** With this setting auditd stops writing to a log only when it reaches `max_log_file`, then opens the next numbered file and keeps all of them. Pair it with external rotation or archival, and place `/var/log/audit` on its own partition that you monitor, otherwise the disk will eventually fill and auditing or the system can stop.
 
             1. Set the following parameter in `/etc/audit/auditd.conf`:
 
@@ -6587,12 +6661,14 @@ queries:
           desc: |
             **Using CLI**
 
+            **Warning: this can take a production host offline.** `admin_space_left_action` controls what happens when the audit disk is critically low. `halt` powers the system down and `single` drops it to single-user mode, both of which interrupt service. This is a deliberate trade-off that puts audit completeness ahead of availability, so choose it only where that ordering is required, such as systems with a legal mandate for complete audit records. Before enabling either action, size a dedicated partition for `/var/log/audit`, then tune `space_left` and the lower-severity `space_left_action` (for example `email` or `exec`) so you are alerted and can act well before the critical threshold is reached. This check accepts either `single` or `halt`; `single` is the less disruptive choice and is recommended unless a full halt is mandated.
+
             1. Set the following parameters in `/etc/audit/auditd.conf`:
 
                 ```ini
                 space_left_action = email
                 action_mail_acct = root
-                admin_space_left_action = halt
+                admin_space_left_action = single
                 ```
 
             2. Restart the service to load the new configuration values:
@@ -6612,7 +6688,7 @@ queries:
           desc: |
             **Using a Bash Script**
 
-            Use this Bash script to configure the auditd parameters for handling full audit logs.
+            **Warning: this can take a production host offline.** `admin_space_left_action = single` drops the system to single-user mode when the audit disk is critically low, which interrupts service. This script uses `single` rather than `halt` to reduce the impact, but it is still disruptive. Size a dedicated partition for `/var/log/audit` and rely on the lower-severity `space_left_action = email` alert to act before the critical threshold is reached. Use this Bash script to configure the auditd parameters for handling full audit logs.
 
             ```bash
             #!/bin/bash
@@ -6635,11 +6711,11 @@ queries:
             fi
 
             if grep -q '^admin_space_left_action' /etc/audit/auditd.conf; then
-              echo "Updating admin_space_left_action to halt in /etc/audit/auditd.conf"
-              sed -i 's/^admin_space_left_action.*/admin_space_left_action = halt/' /etc/audit/auditd.conf
+              echo "Updating admin_space_left_action to single in /etc/audit/auditd.conf"
+              sed -i 's/^admin_space_left_action.*/admin_space_left_action = single/' /etc/audit/auditd.conf
             else
-              echo "Adding admin_space_left_action = halt to /etc/audit/auditd.conf"
-              echo "admin_space_left_action = halt" >> /etc/audit/auditd.conf
+              echo "Adding admin_space_left_action = single to /etc/audit/auditd.conf"
+              echo "admin_space_left_action = single" >> /etc/audit/auditd.conf
             fi
 
             echo "Restarting auditd service to apply changes"
@@ -6653,7 +6729,7 @@ queries:
           desc: |
             **Using Ansible**
 
-            Use this Ansible playbook to set the auditd parameters:
+            **Warning: this can take a production host offline.** `admin_space_left_action = single` drops the system to single-user mode when the audit disk is critically low, which interrupts service. This playbook uses `single` rather than `halt` to reduce the impact, but it is still disruptive. Size a dedicated partition for `/var/log/audit` and rely on the lower-severity `space_left_action = email` alert to act before the critical threshold is reached. Use this Ansible playbook to set the auditd parameters:
 
             ```yaml
             ---
@@ -6672,7 +6748,7 @@ queries:
                   loop:
                     - { key: space_left_action, value: email }
                     - { key: action_mail_acct, value: root }
-                    - { key: admin_space_left_action, value: halt }
+                    - { key: admin_space_left_action, value: single }
                   register: auditd_params_changed
 
                 - name: Check if auditd is in immutable mode
@@ -8864,13 +8940,14 @@ queries:
 
                 Example: `vi /etc/audit/rules.d/50-modules.rules`
 
-            2. Add the following lines to the configuration file:
+            2. Add the following lines to the configuration file. The `b32` syscall rule audits 32-bit module operations, `finit_module` covers the file-descriptor based loader that modern `modprobe` uses, and the `/sbin` watch paths are required by this check. On distributions where the module tools live under `/usr/sbin`, `/sbin` is normally a symlink to `/usr/sbin`, so the `/sbin` paths still match. Add equivalent `/usr/sbin` watch lines as well if your host does not provide that symlink:
 
                 ```
                 -w /sbin/insmod -p x -k modules
                 -w /sbin/rmmod -p x -k modules
                 -w /sbin/modprobe -p x -k modules
-                -a always,exit -F arch=b64 -S init_module -S delete_module -k modules
+                -a always,exit -F arch=b64 -S init_module -S finit_module -S delete_module -k modules
+                -a always,exit -F arch=b32 -S init_module -S finit_module -S delete_module -k modules
                 ```
 
             3. Load the newly added rules into the running configuration:
@@ -8900,7 +8977,8 @@ queries:
             echo "-w /sbin/insmod -p x -k modules" > /etc/audit/rules.d/50-modules.rules
             echo "-w /sbin/rmmod -p x -k modules" >> /etc/audit/rules.d/50-modules.rules
             echo "-w /sbin/modprobe -p x -k modules" >> /etc/audit/rules.d/50-modules.rules
-            echo "-a always,exit -F arch=b64 -S init_module -S delete_module -k modules" >> /etc/audit/rules.d/50-modules.rules
+            echo "-a always,exit -F arch=b64 -S init_module -S finit_module -S delete_module -k modules" >> /etc/audit/rules.d/50-modules.rules
+            echo "-a always,exit -F arch=b32 -S init_module -S finit_module -S delete_module -k modules" >> /etc/audit/rules.d/50-modules.rules
 
             echo "Loading audit rules"
             augenrules --load > /dev/null
@@ -8929,7 +9007,8 @@ queries:
                       -w /sbin/insmod -p x -k modules
                       -w /sbin/rmmod -p x -k modules
                       -w /sbin/modprobe -p x -k modules
-                      -a always,exit -F arch=b64 -S init_module -S delete_module -k modules
+                      -a always,exit -F arch=b64 -S init_module -S finit_module -S delete_module -k modules
+                      -a always,exit -F arch=b32 -S init_module -S finit_module -S delete_module -k modules
                     create: yes
                     owner: root
                     group: root
@@ -9001,7 +9080,13 @@ queries:
           desc: |
             **Using the CLI**
 
-            Edit or create a file in the `/etc/audit/rules.d/` directory ending in `.rules`
+            **Prerequisite: make sudo write to `/var/log/sudo.log` first.** On mainstream distributions sudo logs to syslog or the journal by default, and `/var/log/sudo.log` does not exist. Without enabling the log file, this watch rule monitors a path that is never written, so the audit rule is meaningless. Run `visudo` and add the following line so sudo writes to the file the rule watches:
+
+            ```text
+            Defaults logfile=/var/log/sudo.log
+            ```
+
+            Then configure the audit watch. Edit or create a file in the `/etc/audit/rules.d/` directory ending in `.rules`
 
             Example: `vi /etc/audit/rules.d/50-sudo.rules`
 
@@ -9500,8 +9585,10 @@ queries:
 
             ### RHEL/Fedora/Amazon Linux and derivatives
 
+            Use `dnf`, which is the package manager on current RHEL, Fedora, and Amazon Linux 2023. On older releases where only `yum` is present, `yum` is aliased to `dnf` and the same command works:
+
             ```bash
-            yum install rsyslog
+            dnf install rsyslog
             systemctl --now enable rsyslog
             ```
 
@@ -9529,7 +9616,9 @@ queries:
             set -e
 
             echo "Installing rsyslog..."
-            if command -v yum &> /dev/null; then
+            if command -v dnf &> /dev/null; then
+              dnf install -y rsyslog
+            elif command -v yum &> /dev/null; then
               yum install -y rsyslog
             elif command -v apt-get &> /dev/null; then
               apt-get install -y rsyslog
@@ -9612,6 +9701,8 @@ queries:
         - id: cli
           desc: |
             **Using the CLI**
+
+            `$FileCreateMode` sets the permissions rsyslog applies to log files it creates that do not already exist. The target is `0640` so that root can write, the log group can read, and other users have no access. This keeps sensitive log contents from being world-readable while still allowing log-processing tools that run as the log group to read them, which a stricter `0600` would prevent.
 
             To set the default file permissions for `rsyslog`, edit the `/etc/rsyslog.conf` and `/etc/rsyslog.d/*.conf` files and add or modify the following line:
 
@@ -10288,22 +10379,30 @@ queries:
           desc: |
             **Using the CLI**
 
-            To set the ownership and permissions on the SSH host private key files, run the following commands:
+            This check requires that the private host keys have no group or other access, so set the mode to `0600`. Some recent Debian and Ubuntu builds ship the keys as `0640 root:ssh_keys` and read them through the `ssh_keys` group. Mode `0600` removes group read regardless of the group owner, so keep the `ssh_keys` group where it exists to match the platform layout, and fall back to `root` ownership only where no such group is present:
 
             ```bash
-            find /etc/ssh -xdev -type f -name 'ssh_host_*_key' -exec chown root:root {} \; -exec chmod 0600 {} \;
+            if getent group ssh_keys >/dev/null 2>&1; then
+              find /etc/ssh -xdev -type f -name 'ssh_host_*_key' -exec chown root:ssh_keys {} \; -exec chmod 0600 {} \;
+            else
+              find /etc/ssh -xdev -type f -name 'ssh_host_*_key' -exec chown root:root {} \; -exec chmod 0600 {} \;
+            fi
             ```
         - id: bash
           desc: |
             **Using a Bash Script**
 
-            To set the ownership and permissions on the SSH host private key files, you can run the following bash script:
+            To set the ownership and permissions on the SSH host private key files, you can run the following bash script. It keeps the `ssh_keys` group where the platform uses it and sets mode `0600` so the keys have no group or other access:
 
             ```bash
             #!/bin/bash
             set -e
 
-            find /etc/ssh -xdev -type f -name 'ssh_host_*_key' -exec chown root:root {} \; -exec chmod 0600 {} \;
+            if getent group ssh_keys >/dev/null 2>&1; then
+              find /etc/ssh -xdev -type f -name 'ssh_host_*_key' -exec chown root:ssh_keys {} \; -exec chmod 0600 {} \;
+            else
+              find /etc/ssh -xdev -type f -name 'ssh_host_*_key' -exec chown root:root {} \; -exec chmod 0600 {} \;
+            fi
             ```
         - id: ansible
           desc: |
@@ -10318,6 +10417,13 @@ queries:
               become: true
 
               tasks:
+                - name: Check whether the ssh_keys group exists
+                  ansible.builtin.getent:
+                    database: group
+                    key: ssh_keys
+                  register: ssh_keys_group
+                  failed_when: false
+
                 - name: Find SSH host private key files
                   ansible.builtin.find:
                     paths: /etc/ssh
@@ -10331,7 +10437,7 @@ queries:
                   ansible.builtin.file:
                     path: "{{ item.path }}"
                     owner: root
-                    group: root
+                    group: "{{ 'ssh_keys' if ssh_keys_group.ansible_facts.getent_group is defined and ssh_keys_group.ansible_facts.getent_group else 'root' }}"
                     mode: '0600'
                   loop: "{{ ssh_private_keys.files }}"
             ```
@@ -10490,6 +10596,8 @@ queries:
           desc: |
             **Using the CLI**
 
+            **Warning: avoid locking yourself out.** Before you restart SSH, keep your current session open. Validate the configuration with `sshd -t`, restart the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works.
+
             To set the SSH protocol to version 2, edit the `/etc/ssh/sshd_config` file and add or modify the following line:
 
             ```bash
@@ -10527,7 +10635,7 @@ queries:
           desc: |
             **Using a Bash Script**
 
-            To set the SSH Protocol to 2, you can run the following bash script:
+            The `Protocol` directive applies only to OpenSSH versions earlier than 7.6. OpenSSH 7.6 removed protocol 1 support and the directive itself, so on newer servers no `Protocol` line is needed and writing one logs an unknown-keyword error. To set the SSH Protocol to 2 on an in-scope server, you can run the following bash script:
 
             ```bash
             #!/bin/bash
@@ -10541,7 +10649,15 @@ queries:
               echo "Protocol 2" >> /etc/ssh/sshd_config
             fi
 
-            systemctl restart sshd
+            # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
+            sshd -t
+
+            # Restart the SSH service. The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
+            if systemctl list-unit-files | grep -q '^ssh\.service'; then
+              systemctl restart ssh
+            else
+              systemctl restart sshd
+            fi
             ```
         - id: ansible
           desc: |
@@ -10563,9 +10679,13 @@ queries:
                     line: 'Protocol 2'
                   register: ssh_config_change
 
-                - name: Restart SSH service if config changed
+                - name: Gather service facts to detect the SSH unit name
+                  ansible.builtin.service_facts:
+                  when: ssh_config_change.changed
+
+                - name: Restart the SSH service
                   ansible.builtin.systemd:
-                    name: sshd
+                    name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
                     state: restarted
                   when: ssh_config_change.changed
             ```
@@ -10614,6 +10734,8 @@ queries:
         - id: cli
           desc: |
             **Using the CLI**
+
+            **Warning: avoid locking yourself out.** Before you restart SSH, keep your current session open. Validate the configuration with `sshd -t`, restart the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works.
 
             To set the SSH LogLevel to an appropriate value, edit the `/etc/ssh/sshd_config` file and add or modify the following line:
 
@@ -10672,7 +10794,15 @@ queries:
               echo "LogLevel VERBOSE" >> /etc/ssh/sshd_config
             fi
 
-            systemctl restart sshd
+            # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
+            sshd -t
+
+            # Restart the SSH service. The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
+            if systemctl list-unit-files | grep -q '^ssh\.service'; then
+              systemctl restart ssh
+            else
+              systemctl restart sshd
+            fi
             ```
         - id: ansible
           desc: |
@@ -10694,9 +10824,13 @@ queries:
                     line: 'LogLevel VERBOSE'
                   register: ssh_config_change
 
-                - name: Restart SSH service if config changed
+                - name: Gather service facts to detect the SSH unit name
+                  ansible.builtin.service_facts:
+                  when: ssh_config_change.changed
+
+                - name: Restart the SSH service
                   ansible.builtin.systemd:
-                    name: sshd
+                    name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
                     state: restarted
                   when: ssh_config_change.changed
             ```
@@ -10746,6 +10880,8 @@ queries:
         - id: cli
           desc: |
             **Using the CLI**
+
+            **Warning: avoid locking yourself out.** Before you restart SSH, keep your current session open. Validate the configuration with `sshd -t`, restart the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works.
 
             To disable SSH X11 forwarding, edit the `/etc/ssh/sshd_config` file and add or modify the following line:
 
@@ -10798,7 +10934,15 @@ queries:
               echo "X11Forwarding no" >> /etc/ssh/sshd_config
             fi
 
-            systemctl restart sshd
+            # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
+            sshd -t
+
+            # Restart the SSH service. The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
+            if systemctl list-unit-files | grep -q '^ssh\.service'; then
+              systemctl restart ssh
+            else
+              systemctl restart sshd
+            fi
             ```
         - id: ansible
           desc: |
@@ -10820,9 +10964,13 @@ queries:
                     line: 'X11Forwarding no'
                   register: ssh_config_change
 
-                - name: Restart SSH service if config changed
+                - name: Gather service facts to detect the SSH unit name
+                  ansible.builtin.service_facts:
+                  when: ssh_config_change.changed
+
+                - name: Restart the SSH service
                   ansible.builtin.systemd:
-                    name: sshd
+                    name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
                     state: restarted
                   when: ssh_config_change.changed
             ```
@@ -10873,6 +11021,8 @@ queries:
         - id: cli
           desc: |
             **Using the CLI**
+
+            **Warning: avoid locking yourself out.** Before you restart SSH, keep your current session open. Validate the configuration with `sshd -t`, restart the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works.
 
             To set the SSH MaxAuthTries to 4 or less, edit the `/etc/ssh/sshd_config` file and add or modify the following line:
 
@@ -10925,7 +11075,15 @@ queries:
               echo "MaxAuthTries 4" >> /etc/ssh/sshd_config
             fi
 
-            systemctl restart sshd
+            # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
+            sshd -t
+
+            # Restart the SSH service. The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
+            if systemctl list-unit-files | grep -q '^ssh\.service'; then
+              systemctl restart ssh
+            else
+              systemctl restart sshd
+            fi
             ```
         - id: ansible
           desc: |
@@ -10947,9 +11105,13 @@ queries:
                     line: 'MaxAuthTries 4'
                   register: ssh_config_change
 
-                - name: Restart SSH service if config changed
+                - name: Gather service facts to detect the SSH unit name
+                  ansible.builtin.service_facts:
+                  when: ssh_config_change.changed
+
+                - name: Restart the SSH service
                   ansible.builtin.systemd:
-                    name: sshd
+                    name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
                     state: restarted
                   when: ssh_config_change.changed
             ```
@@ -10981,7 +11143,7 @@ queries:
 
         **Why this matters**
 
-        The `IgnoreRhosts` parameter ensures that `.rhosts` and `.shosts` files are not used in `RhostsRSAAuthentication` or `HostbasedAuthentication`. If these files are allowed:
+        The `IgnoreRhosts` parameter ensures that `.rhosts` and `.shosts` files are not used in `HostbasedAuthentication`. If these files are allowed:
 
         - Unauthorized users could exploit trusted host relationships to gain access to the system.
         - Malicious actors could use compromised `.rhosts` or `.shosts` files to bypass authentication mechanisms.
@@ -11000,6 +11162,8 @@ queries:
         - id: cli
           desc: |
             **Using the CLI**
+
+            **Warning: avoid locking yourself out.** Before you restart SSH, keep your current session open. Validate the configuration with `sshd -t`, restart the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works.
 
             To enable SSH IgnoreRhosts, edit the `/etc/ssh/sshd_config` file and add or modify the following line:
 
@@ -11052,7 +11216,15 @@ queries:
               echo "IgnoreRhosts yes" >> /etc/ssh/sshd_config
             fi
 
-            systemctl restart sshd
+            # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
+            sshd -t
+
+            # Restart the SSH service. The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
+            if systemctl list-unit-files | grep -q '^ssh\.service'; then
+              systemctl restart ssh
+            else
+              systemctl restart sshd
+            fi
             ```
         - id: ansible
           desc: |
@@ -11074,9 +11246,13 @@ queries:
                     line: 'IgnoreRhosts yes'
                   register: ssh_config_change
 
-                - name: Restart SSH service if config changed
+                - name: Gather service facts to detect the SSH unit name
+                  ansible.builtin.service_facts:
+                  when: ssh_config_change.changed
+
+                - name: Restart the SSH service
                   ansible.builtin.systemd:
-                    name: sshd
+                    name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
                     state: restarted
                   when: ssh_config_change.changed
             ```
@@ -11104,7 +11280,7 @@ queries:
       sshd.config.params["HostbasedAuthentication"] == "no"
     docs:
       desc: |
-        This check ensures that the `HostbasedAuthentication` parameter in the SSH configuration is properly set to prevent authentication through trusted hosts using `.rhosts` or `/etc/hosts.equiv` files, combined with public key client host authentication. This setting applies only to SSH Protocol Version 2.
+        This check ensures that the `HostbasedAuthentication` parameter in the SSH configuration is properly set to prevent authentication through trusted hosts using `.rhosts` or `/etc/hosts.equiv` files, combined with public key client host authentication.
 
         **Why this matters**
 
@@ -11127,6 +11303,8 @@ queries:
         - id: cli
           desc: |
             **Using the CLI**
+
+            **Warning: avoid locking yourself out.** Before you restart SSH, keep your current session open. Validate the configuration with `sshd -t`, restart the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works.
 
             To disable SSH HostbasedAuthentication, edit the `/etc/ssh/sshd_config` file and add or modify the following line:
 
@@ -11179,7 +11357,15 @@ queries:
               echo "HostbasedAuthentication no" >> /etc/ssh/sshd_config
             fi
 
-            systemctl restart sshd
+            # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
+            sshd -t
+
+            # Restart the SSH service. The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
+            if systemctl list-unit-files | grep -q '^ssh\.service'; then
+              systemctl restart ssh
+            else
+              systemctl restart sshd
+            fi
             ```
         - id: ansible
           desc: |
@@ -11201,9 +11387,13 @@ queries:
                     line: 'HostbasedAuthentication no'
                   register: ssh_config_change
 
-                - name: Restart SSH service if config changed
+                - name: Gather service facts to detect the SSH unit name
+                  ansible.builtin.service_facts:
+                  when: ssh_config_change.changed
+
+                - name: Restart the SSH service
                   ansible.builtin.systemd:
-                    name: sshd
+                    name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
                     state: restarted
                   when: ssh_config_change.changed
             ```
@@ -11254,6 +11444,8 @@ queries:
         - id: cli
           desc: |
             **Using the CLI**
+
+            **Warning: avoid locking yourself out.** Before you restart SSH, keep your current session open. Validate the configuration with `sshd -t`, restart the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works. If your only access to this host is as `root` over SSH, first create a non-root account with `sudo` privileges and confirm you can log in with it and run `sudo`, otherwise disabling root login will lock you out.
 
             To disable SSH root login or set it to prohibit password authentication, edit the `/etc/ssh/sshd_config` file and add or modify the following line:
 
@@ -11312,7 +11504,15 @@ queries:
               echo "PermitRootLogin no" >> /etc/ssh/sshd_config
             fi
 
-            systemctl restart sshd
+            # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
+            sshd -t
+
+            # Restart the SSH service. The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
+            if systemctl list-unit-files | grep -q '^ssh\.service'; then
+              systemctl restart ssh
+            else
+              systemctl restart sshd
+            fi
             ```
         - id: ansible
           desc: |
@@ -11334,9 +11534,13 @@ queries:
                     line: 'PermitRootLogin no'
                   register: ssh_config_change
 
-                - name: Restart SSH service if config changed
+                - name: Gather service facts to detect the SSH unit name
+                  ansible.builtin.service_facts:
+                  when: ssh_config_change.changed
+
+                - name: Restart the SSH service
                   ansible.builtin.systemd:
-                    name: sshd
+                    name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
                     state: restarted
                   when: ssh_config_change.changed
             ```
@@ -11387,6 +11591,8 @@ queries:
         - id: cli
           desc: |
             **Using the CLI**
+
+            **Warning: avoid locking yourself out.** Before you restart SSH, keep your current session open. Validate the configuration with `sshd -t`, restart the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works.
 
             To disable SSH PermitEmptyPasswords, edit the `/etc/ssh/sshd_config` file and add or modify the following line:
 
@@ -11439,7 +11645,15 @@ queries:
               echo "PermitEmptyPasswords no" >> /etc/ssh/sshd_config
             fi
 
-            systemctl restart sshd
+            # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
+            sshd -t
+
+            # Restart the SSH service. The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
+            if systemctl list-unit-files | grep -q '^ssh\.service'; then
+              systemctl restart ssh
+            else
+              systemctl restart sshd
+            fi
             ```
         - id: ansible
           desc: |
@@ -11461,9 +11675,13 @@ queries:
                     line: 'PermitEmptyPasswords no'
                   register: ssh_config_change
 
-                - name: Restart SSH service if config changed
+                - name: Gather service facts to detect the SSH unit name
+                  ansible.builtin.service_facts:
+                  when: ssh_config_change.changed
+
+                - name: Restart the SSH service
                   ansible.builtin.systemd:
-                    name: sshd
+                    name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
                     state: restarted
                   when: ssh_config_change.changed
             ```
@@ -11514,6 +11732,8 @@ queries:
         - id: cli
           desc: |
             **Using the CLI**
+
+            **Warning: avoid locking yourself out.** Before you restart SSH, keep your current session open. Validate the configuration with `sshd -t`, restart the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works.
 
             To disable SSH PermitUserEnvironment, edit the `/etc/ssh/sshd_config` file and add or modify the following line:
 
@@ -11566,7 +11786,15 @@ queries:
               echo "PermitUserEnvironment no" >> /etc/ssh/sshd_config
             fi
 
-            systemctl restart sshd
+            # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
+            sshd -t
+
+            # Restart the SSH service. The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
+            if systemctl list-unit-files | grep -q '^ssh\.service'; then
+              systemctl restart ssh
+            else
+              systemctl restart sshd
+            fi
             ```
         - id: ansible
           desc: |
@@ -11588,9 +11816,13 @@ queries:
                     line: 'PermitUserEnvironment no'
                   register: ssh_config_change
 
-                - name: Restart SSH service if config changed
+                - name: Gather service facts to detect the SSH unit name
+                  ansible.builtin.service_facts:
+                  when: ssh_config_change.changed
+
+                - name: Restart the SSH service
                   ansible.builtin.systemd:
-                    name: sshd
+                    name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
                     state: restarted
                   when: ssh_config_change.changed
             ```
@@ -11652,6 +11884,8 @@ queries:
           desc: |
             **Using the CLI**
 
+            **Warning: avoid locking yourself out.** Before you restart SSH, keep your current session open. Validate the configuration with `sshd -t`, restart the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works. Setting a cipher list that your SSH clients do not support is one of the most common causes of a total SSH lockout, so verify the new connection from each client type you rely on.
+
             To configure SSH to use only strong ciphers, edit the `/etc/ssh/sshd_config` file and add or modify the `Ciphers` parameter to include a comma-separated list of approved ciphers.
 
             On OpenSSH 7.0 or later:
@@ -11711,8 +11945,15 @@ queries:
               echo "$CIPHER_LINE" >> /etc/ssh/sshd_config
             fi
 
+            # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
             sshd -t
-            systemctl restart sshd
+
+            # Restart the SSH service. The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
+            if systemctl list-unit-files | grep -q '^ssh\.service'; then
+              systemctl restart ssh
+            else
+              systemctl restart sshd
+            fi
             ```
         - id: ansible
           desc: |
@@ -11736,9 +11977,13 @@ queries:
                     state: present
                   register: ssh_ciphers_config_change
 
-                - name: Restart SSH service to apply changes
+                - name: Gather service facts to detect the SSH unit name
+                  ansible.builtin.service_facts:
+                  when: ssh_ciphers_config_change.changed
+
+                - name: Restart the SSH service
                   ansible.builtin.systemd:
-                    name: sshd
+                    name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
                     state: restarted
                   when: ssh_ciphers_config_change.changed
             ```
@@ -11797,6 +12042,8 @@ queries:
           desc: |
             **Using the CLI**
 
+            **Warning: avoid locking yourself out.** Before you restart SSH, keep your current session open. Validate the configuration with `sshd -t`, restart the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works. Setting a MAC list that your SSH clients do not support is one of the most common causes of a total SSH lockout, so verify the new connection from each client type you rely on.
+
             To configure SSH to use only strong MAC algorithms, edit the `/etc/ssh/sshd_config` file and add or modify the `MACs` parameter to include a comma-separated list of approved MAC algorithms.
 
             Example:
@@ -11844,7 +12091,15 @@ queries:
               echo "$MAC_LINE" >> /etc/ssh/sshd_config
             fi
 
-            systemctl restart sshd
+            # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
+            sshd -t
+
+            # Restart the SSH service. The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
+            if systemctl list-unit-files | grep -q '^ssh\.service'; then
+              systemctl restart ssh
+            else
+              systemctl restart sshd
+            fi
             ```
         - id: ansible
           desc: |
@@ -11868,9 +12123,13 @@ queries:
                     state: present
                   register: ssh_mac_config_change
 
-                - name: Restart SSH service if config changed
+                - name: Gather service facts to detect the SSH unit name
+                  ansible.builtin.service_facts:
+                  when: ssh_mac_config_change.changed
+
+                - name: Restart the SSH service
                   ansible.builtin.systemd:
-                    name: sshd
+                    name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
                     state: restarted
                   when: ssh_mac_config_change.changed
             ```
@@ -11938,6 +12197,8 @@ queries:
           desc: |
             **Using the CLI**
 
+            **Warning: avoid locking yourself out.** Before you restart SSH, keep your current session open. Validate the configuration with `sshd -t`, restart the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works. A key exchange list that your SSH clients do not support is one of the most common causes of a total SSH lockout, so verify the new connection from each client type you rely on.
+
             To configure SSH to use only approved key exchange algorithms, edit the `/etc/ssh/sshd_config` file and add or modify the `KexAlgorithms` parameter based on your `openssh-server` version.
 
             First, determine your SSH server version:
@@ -11968,7 +12229,13 @@ queries:
               KexAlgorithms sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512
               ```
 
-            After editing the file, restart the SSH service:
+            Validate the configuration before restarting:
+
+            ```bash
+            sshd -t
+            ```
+
+            Restart the SSH service to apply the changes:
 
             Debian/Ubuntu distros:
 
@@ -12019,7 +12286,15 @@ queries:
               echo "KexAlgorithms $kex_algos" >> /etc/ssh/sshd_config
             fi
 
-            systemctl restart sshd
+            # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
+            sshd -t
+
+            # Restart the SSH service. The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
+            if systemctl list-unit-files | grep -q '^ssh\.service'; then
+              systemctl restart ssh
+            else
+              systemctl restart sshd
+            fi
             ```
         - id: ansible
           desc: |
@@ -12066,9 +12341,13 @@ queries:
                     state: present
                   register: kexalgos_config_change
 
-                - name: Restart SSHD to apply configuration
+                - name: Gather service facts to detect the SSH unit name
+                  ansible.builtin.service_facts:
+                  when: kexalgos_config_change.changed
+
+                - name: Restart the SSH service
                   ansible.builtin.systemd:
-                    name: sshd
+                    name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
                     state: restarted
                   when: kexalgos_config_change.changed
             ```
@@ -12141,6 +12420,8 @@ queries:
           desc: |
             **Using the CLI**
 
+            **Warning: avoid locking yourself out.** Before you restart SSH, keep your current session open. Validate the configuration with `sshd -t`, restart the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works.
+
             To set the SSH idle timeout interval, edit the `/etc/ssh/sshd_config` file and add or modify the `ClientAliveInterval` and `ClientAliveCountMax` parameters.
 
             Example:
@@ -12195,7 +12476,15 @@ queries:
               echo 'ClientAliveCountMax 2' >> /etc/ssh/sshd_config
             fi
 
-            systemctl restart sshd
+            # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
+            sshd -t
+
+            # Restart the SSH service. The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
+            if systemctl list-unit-files | grep -q '^ssh\.service'; then
+              systemctl restart ssh
+            else
+              systemctl restart sshd
+            fi
             ```
         - id: ansible
           desc: |
@@ -12225,9 +12514,12 @@ queries:
                     line: 'ClientAliveCountMax 2'
                     create: yes
                     state: present
-                - name: Restart SSH service to apply changes
+                - name: Gather service facts to detect the SSH unit name
+                  ansible.builtin.service_facts:
+
+                - name: Restart the SSH service
                   ansible.builtin.systemd:
-                    name: sshd
+                    name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
                     state: restarted
             ```
     refs:
@@ -12279,6 +12571,8 @@ queries:
           desc: |
             **Using the CLI**
 
+            **Warning: avoid locking yourself out.** Before you restart SSH, keep your current session open. Validate the configuration with `sshd -t`, restart the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works.
+
             To set the SSH LoginGraceTime, edit the `/etc/ssh/sshd_config` file and add or modify the `LoginGraceTime` parameter.
 
             Example:
@@ -12324,7 +12618,15 @@ queries:
               echo 'LoginGraceTime 60' >> /etc/ssh/sshd_config
             fi
 
-            systemctl restart sshd
+            # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
+            sshd -t
+
+            # Restart the SSH service. The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
+            if systemctl list-unit-files | grep -q '^ssh\.service'; then
+              systemctl restart ssh
+            else
+              systemctl restart sshd
+            fi
             ```
         - id: ansible
           desc: |
@@ -12346,9 +12648,12 @@ queries:
                     line: 'LoginGraceTime 60'
                     create: yes
                     state: present
-                - name: Restart SSH service to apply changes
+                - name: Gather service facts to detect the SSH unit name
+                  ansible.builtin.service_facts:
+
+                - name: Restart the SSH service
                   ansible.builtin.systemd:
-                    name: sshd
+                    name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
                     state: restarted
             ```
     refs:
@@ -12404,6 +12709,8 @@ queries:
           desc: |
             **Using the CLI**
 
+            **Warning: avoid locking yourself out.** Before you restart SSH, keep your current session open. Validate the configuration with `sshd -t`, restart the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works. Confirm that your own administrative account is a member of the allowed group or is named in `AllowUsers` before you apply the change, otherwise you will be denied access along with everyone else not on the list.
+
             To limit SSH access, edit the `/etc/ssh/sshd_config` file and add or modify one or more of the `AllowUsers`, `AllowGroups`, `DenyUsers`, or `DenyGroups` parameters as needed. Configure only the directives your site policy requires. Once `AllowUsers` or `AllowGroups` is set, every account not matched is denied SSH access, so make sure the list covers all administrative accounts before applying it.
 
             Example restricting access to one group:
@@ -12452,8 +12759,15 @@ queries:
               echo "AllowGroups $ALLOW_GROUPS" >> /etc/ssh/sshd_config
             fi
 
+            # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
             sshd -t
-            systemctl restart sshd
+
+            # Restart the SSH service. The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
+            if systemctl list-unit-files | grep -q '^ssh\.service'; then
+              systemctl restart ssh
+            else
+              systemctl restart sshd
+            fi
             ```
         - id: ansible
           desc: |
@@ -12478,9 +12792,13 @@ queries:
                     state: present
                   register: allow_groups_changed
 
-                - name: Restart sshd if config was changed
+                - name: Gather service facts to detect the SSH unit name
+                  ansible.builtin.service_facts:
+                  when: allow_groups_changed.changed
+
+                - name: Restart the SSH service
                   ansible.builtin.systemd:
-                    name: sshd
+                    name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
                     state: restarted
                   when: allow_groups_changed.changed
             ```
@@ -12532,6 +12850,8 @@ queries:
           desc: |
             **Using the CLI**
 
+            **Warning: avoid locking yourself out.** Before you restart SSH, keep your current session open. Validate the configuration with `sshd -t`, restart the service, then open a second SSH connection to confirm you can still log in. Only close your original session once the new one works.
+
             To set the SSH warning banner, edit the `/etc/ssh/sshd_config` file and add or modify the `Banner` parameter to point to the desired banner file.
 
             Example:
@@ -12578,7 +12898,15 @@ queries:
               echo "Banner /etc/issue.net" >> /etc/ssh/sshd_config
             fi
 
-            systemctl restart sshd
+            # Validate the new configuration before restarting. A syntax error here can lock you out of SSH.
+            sshd -t
+
+            # Restart the SSH service. The unit is "ssh" on Debian/Ubuntu and "sshd" on other distributions.
+            if systemctl list-unit-files | grep -q '^ssh\.service'; then
+              systemctl restart ssh
+            else
+              systemctl restart sshd
+            fi
             ```
         - id: ansible
           desc: |
@@ -12600,9 +12928,12 @@ queries:
                     line: 'Banner /etc/issue.net'
                     create: yes
                     state: present
-                - name: Restart SSH service to apply changes
+                - name: Gather service facts to detect the SSH unit name
+                  ansible.builtin.service_facts:
+
+                - name: Restart the SSH service
                   ansible.builtin.systemd:
-                    name: sshd
+                    name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
                     state: restarted
             ```
     refs:
@@ -12763,6 +13094,8 @@ queries:
         - id: cli
           desc: |
             **Using the CLI**
+
+            **Warning: wrong ownership or mode on `/etc/shadow` can break login.** PAM reads this file during authentication, so an incorrect owner, group, or mode can lock out every account. Apply the commands that match your distribution, and do not run the `root:shadow 640` variant on a system that has no `shadow` group. Keep a second session or console open and confirm you can still authenticate after the change before you log out.
 
             To set the ownership and permissions on the `/etc/shadow` file, run the commands for your distribution.
 
@@ -14003,7 +14336,7 @@ queries:
           desc: |
             **Using the CLI**
 
-            Edit the `/etc/login.defs` file and set UID_MIN:
+            This setting affects only accounts created after the change. It does not renumber existing accounts, so any current UID overlaps must be corrected separately. Edit the `/etc/login.defs` file and set UID_MIN:
 
             ```
             UID_MIN                  1000
@@ -14109,7 +14442,7 @@ queries:
           desc: |
             **Using a Bash Script**
 
-            To ensure that the `shadow` group is empty, you can run the following bash script:
+            **Warning: review the affected accounts before running.** This script reassigns the primary group of every user whose primary group is `shadow` to `users`, which can break service accounts that depend on their current primary group. List the affected users first with `getent group shadow` and `awk -F: -v g="$(getent group shadow | cut -d: -f3)" '$4==g{print $1}' /etc/passwd`, confirm each is safe to change, and choose the correct replacement group rather than assuming `users`. To ensure that the `shadow` group is empty, you can run the following bash script:
 
             ```bash
             #!/bin/bash
@@ -14218,7 +14551,7 @@ queries:
           desc: |
             **Using a Bash Script**
 
-            To ensure that the `root` group is empty, you can run the following bash script:
+            **Warning: review the affected accounts before running.** This script reassigns the primary group of every non-root user whose primary group is `root` (GID 0) to `users`, which can break service accounts that depend on their current primary group. List the affected users first with `awk -F: '$4==0 && $1!="root"{print $1}' /etc/passwd`, confirm each is safe to change, and choose the correct replacement group rather than assuming `users`. To ensure that the `root` group is empty, you can run the following bash script:
 
             ```bash
             #!/bin/bash
@@ -14455,6 +14788,8 @@ queries:
           desc: |
             **Using the CLI**
 
+            **Warning: confirm the `wheel` group has an administrator before you apply this.** With `pam_wheel.so use_uid` and no `group=` option, PAM allows `su` only for members of the `wheel` group. If that group is empty, no one can `su` to root. Debian and Ubuntu do not populate `wheel` by default because they rely on `sudo`, so add at least one trusted administrative account to `wheel` first and verify it can `su` in a separate session before you close your current one.
+
             To restrict access to the `su` command, you can edit the `/etc/pam.d/su` file and add the following line:
 
             ```bash
@@ -14482,7 +14817,7 @@ queries:
           desc: |
             **Using a Bash Script**
 
-            To restrict access to the `su` command to members of the `wheel` group, run the following bash script:
+            **Warning: confirm the `wheel` group has an administrator before you apply this.** If the `wheel` group is empty, this configuration prevents anyone from running `su` to root. Debian and Ubuntu do not populate `wheel` by default, so add a trusted administrative account to it first and verify `su` works in a separate session. To restrict access to the `su` command to members of the `wheel` group, run the following bash script:
 
             ```bash
             #!/bin/bash
@@ -14507,7 +14842,7 @@ queries:
           desc: |
             **Using Ansible**
 
-            To restrict access to the `su` command, you can use the following Ansible playbook:
+            **Warning: confirm the `wheel` group has an administrator before you apply this.** If the `wheel` group is empty, this configuration prevents anyone from running `su` to root. Debian and Ubuntu do not populate `wheel` by default, so add a trusted administrative account to it first and verify `su` works in a separate session. To restrict access to the `su` command, you can use the following Ansible playbook:
 
             ```yaml
             ---
@@ -14590,6 +14925,8 @@ queries:
             **Note:** Switching from disabled to enforcing requires a system relabel. On the next boot, SELinux will automatically relabel the filesystem, which may take several minutes depending on disk size.
         - id: ansible
           desc: |
+            The `ansible.posix.selinux` module updates the persistent configuration and applies enforcing mode at runtime where possible, but switching from disabled requires a relabel on the next boot. The module reports `reboot_required` when a reboot is needed to fully apply the policy, so gate a reboot on that result to keep the runtime state and the persistent config from diverging:
+
             ```yaml
             ---
             - name: Ensure SELinux is in enforcing mode
@@ -14601,6 +14938,11 @@ queries:
                   ansible.posix.selinux:
                     policy: targeted
                     state: enforcing
+                  register: selinux_state
+
+                - name: Reboot to complete the SELinux relabel and policy load
+                  ansible.builtin.reboot:
+                  when: selinux_state.reboot_required | default(false)
             ```
     refs:
       - url: https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/9/html/using_selinux/changing-selinux-states-and-modes_using-selinux
@@ -15056,8 +15398,13 @@ queries:
             ```bash
             CONF=/etc/dnf/dnf.conf
             [ -f "$CONF" ] || CONF=/etc/yum.conf
-            sed -i 's/^gpgcheck\s*=.*/gpgcheck=1/' "$CONF"
-            grep -q '^gpgcheck' "$CONF" || echo 'gpgcheck=1' >> "$CONF"
+            if grep -q '^gpgcheck' "$CONF"; then
+              sed -i 's/^gpgcheck\s*=.*/gpgcheck=1/' "$CONF"
+            else
+              # Insert under [main] so the directive is global rather than landing in a
+              # later section if [main] is not the last section in the file.
+              sed -i '/^\[main\]/a gpgcheck=1' "$CONF"
+            fi
             ```
         - id: bash
           desc: |
@@ -15075,7 +15422,9 @@ queries:
             if grep -qE '^gpgcheck' "$CONF"; then
               sed -i 's/^gpgcheck\s*=.*/gpgcheck=1/' "$CONF"
             else
-              echo 'gpgcheck=1' >> "$CONF"
+              # Insert under [main] so the directive is global rather than landing in a
+              # later section if [main] is not the last section in the file.
+              sed -i '/^\[main\]/a gpgcheck=1' "$CONF"
             fi
             ```
         - id: ansible
