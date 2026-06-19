@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-digitalocean-security
     name: Mondoo DigitalOcean Security
-    version: 1.4.1
+    version: 1.4.2
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -244,24 +244,33 @@ queries:
       remediation:
         - id: console
           desc: |
-            DigitalOcean does not support moving an existing Droplet into a VPC directly. To fix this in the DigitalOcean Cloud Control Panel, create a snapshot of the Droplet, create a replacement Droplet from the snapshot inside the target VPC, and retire the original:
+            DigitalOcean does not support moving an existing Droplet into a VPC directly. The fix is a destructive cutover that replaces the Droplet, so plan for downtime and treat it as a migration rather than an in-place edit.
 
-            1. Navigate to **Images** > **Snapshots** and take a snapshot of the affected Droplet.
-            2. Create a new Droplet from the snapshot and select a VPC (not the default) in the **VPC Network** section.
-            3. Update DNS, firewall rules, and monitoring to point at the new Droplet.
-            4. Destroy the original Droplet.
+            To fix this in the DigitalOcean Cloud Control Panel, create a snapshot of the Droplet, create a replacement Droplet from the snapshot inside the target VPC, and retire the original:
+
+            1. Power down the Droplet before snapshotting so the disk is in a consistent state. A snapshot of a running Droplet can capture an incomplete filesystem.
+            2. Navigate to **Images** > **Snapshots** and take a snapshot of the affected Droplet.
+            3. Create a new Droplet from the snapshot and select a VPC, not the default, in the **VPC Network** section.
+            4. Update DNS, firewall rules, and monitoring to point at the new Droplet. The replacement Droplet receives a new public IP address, so anything that references the old IP must be updated.
+            5. Verify the replacement is serving traffic before retiring the original.
+            6. Destroy the original Droplet only after the replacement is confirmed healthy.
         - id: cli
           desc: |
-            To fix this on the command line using the `doctl` CLI, snapshot the Droplet and create a replacement inside the target VPC:
+            This fix is a destructive cutover that replaces the Droplet, so plan for downtime, keep the original until the replacement is verified, and note that the new Droplet receives a new public IP address.
+
+            To fix this on the command line using the `doctl` CLI, power down the Droplet for a consistent snapshot, then create a replacement inside the target VPC:
 
             ```bash
-            doctl compute droplet-action snapshot <droplet-id> --snapshot-name <name>
+            doctl compute droplet-action power-off <droplet-id> --wait
+            doctl compute droplet-action snapshot <droplet-id> --snapshot-name <name> --wait
             doctl compute droplet create <new-name> \
               --image <snapshot-id> \
               --size <size> \
               --region <region> \
               --vpc-uuid <vpc-uuid>
             ```
+
+            Verify the replacement is serving traffic, then destroy the original Droplet.
         - id: terraform
           desc: |
             To deploy Droplets inside a VPC in Terraform, set `vpc_uuid` on the `digitalocean_droplet` resource:
@@ -1099,13 +1108,21 @@ queries:
       remediation:
         - id: console
           desc: |
-            DigitalOcean does not support moving an existing managed database into a VPC. To fix this in the DigitalOcean Cloud Control Panel, create a fork or a new cluster in the desired VPC, migrate the data, and retire the original:
+            DigitalOcean does not support moving an existing managed database into a VPC. The fix is a destructive cutover to a replacement cluster, so plan for downtime and treat it as a migration.
+
+            A fork or new cluster does not inherit the source's Trusted Sources, database users, or connection pools, so you must re-apply them before cutover. A fork must be created in the same region as the source cluster.
+
+            To fix this in the DigitalOcean Cloud Control Panel, create a fork or a new cluster in the desired VPC, migrate the data, and retire the original:
 
             1. Navigate to **Databases** and open the affected cluster.
-            2. Create a fork (point-in-time snapshot) and, in the creation flow, select a VPC under **Network**.
-            3. Cut applications over to the new cluster's private endpoint, then destroy the original.
+            2. Create a fork, a point-in-time snapshot, and select a VPC under **Network** in the creation flow. Keep the fork in the same region as the source.
+            3. Re-create the database users, connection pools, and Trusted Sources on the new cluster, since these are not carried over.
+            4. Cut applications over to the new cluster's private endpoint and verify connectivity.
+            5. Destroy the original cluster only after the replacement is confirmed healthy.
         - id: cli
           desc: |
+            This fix is a destructive cutover to a replacement cluster, so plan for downtime. A new cluster created with `--private-network-uuid` is empty and does not inherit the source's Trusted Sources, database users, or connection pools, so you must migrate the data and re-apply those settings before cutover.
+
             To fix this on the command line using the `doctl` CLI, create a replacement cluster inside the target VPC and migrate data into it:
 
             ```bash
@@ -1114,6 +1131,8 @@ queries:
               --region <region> \
               --private-network-uuid <vpc-uuid>
             ```
+
+            After the cluster is created, migrate the data, re-create the users and connection pools, re-apply the Trusted Sources, then cut applications over and destroy the original.
         - id: terraform
           desc: |
             To attach a managed database to a VPC in Terraform, set `private_network_uuid` on the `digitalocean_database_cluster` resource:
@@ -1202,15 +1221,17 @@ queries:
       audit: |
         ### Audit via Console
 
+        Treat the versions that DigitalOcean currently offers as the authoritative list of supported versions. The set of EOL versions changes over time, so check the live `doctl databases options versions` output for each engine rather than relying on a static list. The version ranges below are examples that were EOL at the time of writing and may be incomplete now.
+
         1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
         2. Navigate to **Databases** and review the **Engine Version** column for each cluster.
-        3. Compare each engine and version against the list of EOL versions: PostgreSQL 9.x through 13, MySQL 5.6 and 5.7, Redis 4 through 6, MongoDB 3.6 through 5.0, Kafka 2.8 through 3.4, and OpenSearch 1.x.
+        3. Compare each engine and version against the versions DigitalOcean currently offers for that engine. Examples of versions that were EOL at the time of writing include PostgreSQL 9.x through 13, MySQL 5.6 and 5.7, Redis 4 through 6, MongoDB 3.6 through 5.0, Kafka 2.8 through 3.4, and OpenSearch 1.x. Confirm the current set with the CLI step below.
 
-        A passing database cluster runs a currently supported engine version. A failing database cluster runs a version listed as EOL or end-of-support.
+        A passing database cluster runs a version that DigitalOcean still offers for its engine. A failing database cluster runs a version absent from the current supported list.
 
         ### Audit via CLI
 
-        1. List all clusters with their engine and version, then check available supported versions for comparison:
+        1. List all clusters with their engine and version, then check the versions DigitalOcean currently supports. Treat this live output as authoritative, since the supported set changes as versions reach EOL:
 
         ```bash
         doctl databases list --format ID,Name,Engine,Version,Region
@@ -1226,11 +1247,11 @@ queries:
       remediation:
         - id: console
           desc: |
-            Major-version upgrades for managed databases on DigitalOcean require a migration path. Review the DigitalOcean upgrade documentation for your engine, run the upgrade in a non-production clone first, then cut over. To fix this in the DigitalOcean Cloud Control Panel:
+            Major-version upgrades for managed databases on DigitalOcean require a migration path. First confirm the current supported target versions for your engine with `doctl databases options versions --engine <engine>`, since the supported set changes as versions reach EOL. Review the DigitalOcean upgrade documentation for your engine, run the upgrade in a non-production clone first, then cut over. To fix this in the DigitalOcean Cloud Control Panel:
 
             1. Navigate to **Databases** and open the affected cluster.
-            2. Go to **Settings** > **Upgrade Major Version** (availability depends on engine).
-            3. Follow the prompts; otherwise, create a new cluster on a supported version and migrate data using `pg_dump`/`mysqldump`/native replication.
+            2. Go to **Settings** > **Upgrade Major Version**. Availability depends on the engine.
+            3. Follow the prompts. Otherwise, create a new cluster on a supported version and migrate data using `pg_dump`, `mysqldump`, or native replication.
         - id: cli
           desc: |
             `doctl` does not perform an in-place major-version upgrade; `doctl databases migrate` only changes regions. Spin up a replacement cluster on a supported version and cut over with engine-native tools.
@@ -2172,7 +2193,9 @@ queries:
             3. Update any load balancers, CDN endpoints, or App Platform apps referencing the old certificate.
         - id: cli
           desc: |
-            To fix this on the command line using the `doctl` CLI, create a renewed Let's Encrypt certificate and then update any consumers to reference it:
+            To fix this on the command line using the `doctl` CLI, create a renewed certificate and then update any consumers to reference it. Choose the variant that matches how the domain's DNS is hosted.
+
+            If the domain's DNS is managed by DigitalOcean, create a Let's Encrypt certificate. The `--type lets_encrypt` flag only works when DigitalOcean controls the domain's DNS records, because DigitalOcean must publish the validation records itself:
 
             ```bash
             doctl compute certificate create \
@@ -2180,6 +2203,19 @@ queries:
               --type lets_encrypt \
               --dns-names <domain>
             ```
+
+            If the domain's DNS is hosted elsewhere or the certificate was issued by an external CA, upload it as a custom certificate instead:
+
+            ```bash
+            doctl compute certificate create \
+              --name <new-name> \
+              --type custom \
+              --leaf-certificate-path <cert.pem> \
+              --certificate-chain-path <chain.pem> \
+              --private-key-path <privkey.pem>
+            ```
+
+            After creating the replacement, update any load balancers, CDN endpoints, or App Platform apps to reference the new certificate.
         # No Terraform remediation: expiry is not a configurable field. A digitalocean_certificate resource can provision a replacement, but Terraform cannot express or assert the validity window of an issued certificate.
     refs:
       - url: https://docs.digitalocean.com/products/networking/certificates/
@@ -2503,15 +2539,18 @@ queries:
       remediation:
         - id: console
           desc: |
-            To remove anonymous read access from the Cloud Control Panel:
+            This finding is about the bucket's `public-read` ACL, which is a different control from the **File Listing** toggle in the Cloud Control Panel. The File Listing setting only governs anonymous directory browsing; it does not remove a `public-read` ACL grant, so objects can still be downloaded by anyone even after File Listing is restricted. The ACL is changed through the S3-compatible API or `s3cmd`, not the panel.
 
-            1. Navigate to **Spaces Object Storage** and open the affected bucket.
-            2. Open the **Settings** tab.
-            3. Under **File Listing**, switch the setting from **Enabled (Public)** to **Restricted (Signed URLs only)**.
-            4. Audit existing objects that have individual public ACLs and reset them with the API or `s3cmd setacl --acl-private`.
-            5. If the bucket must serve public content, route requests through a DigitalOcean CDN endpoint or a Worker-equivalent pattern that enforces auth or rate limits.
+            To remove anonymous read access:
+
+            1. Set the bucket ACL to private using `s3cmd setacl s3://<bucket> --acl-private` or the equivalent `aws s3api put-bucket-acl --acl private` call shown in the CLI remediation. This is the change that clears the finding.
+            2. Reset any individual objects that carry their own public ACLs to private, since a private bucket ACL does not override per-object grants.
+            3. In the Cloud Control Panel, navigate to **Spaces Object Storage**, open the bucket, and on the **Settings** tab set **File Listing** to **Restricted (Signed URLs only)** as defense in depth.
+            4. If the bucket must serve public content, route requests through a DigitalOcean CDN endpoint or a pattern that enforces auth or rate limits.
         - id: cli
           desc: |
+            DigitalOcean Spaces is S3-compatible, so you manage its ACLs with the AWS CLI or `s3cmd` pointed at the Spaces endpoint rather than with `doctl`. The `<spaces-key>` and `<spaces-secret>` are a Spaces access key pair generated on the **Spaces Keys** page in the API section of the control panel; they are not the DigitalOcean API token. Install the AWS CLI first, and set `<region>` to the Spaces region slug such as `nyc3`.
+
             To remove anonymous read access using the S3-compatible API:
 
             ```bash
@@ -2709,6 +2748,8 @@ queries:
             Spaces does not expose default-encryption configuration in the Cloud Control Panel for every region. Apply the configuration with the CLI or S3-compatible API instead; see the CLI remediation below.
         - id: cli
           desc: |
+            Spaces is S3-compatible, so use the AWS CLI pointed at the Spaces endpoint. The `<spaces-key>` and `<spaces-secret>` come from the **Spaces Keys** page in the API section of the control panel, not the DigitalOcean API token, and `<region>` is the Spaces region slug such as `nyc3`.
+
             Apply a bucket-level default encryption configuration with the S3-compatible API:
 
             ```bash
@@ -2816,6 +2857,8 @@ queries:
             4. Pair versioning with a lifecycle rule that expires noncurrent versions after a defined retention window so the bucket does not grow unbounded.
         - id: cli
           desc: |
+            Spaces is S3-compatible, so use the AWS CLI pointed at the Spaces endpoint. The `<spaces-key>` and `<spaces-secret>` come from the **Spaces Keys** page in the API section of the control panel, not the DigitalOcean API token, and `<region>` is the Spaces region slug such as `nyc3`.
+
             To enable versioning using the S3-compatible API:
 
             ```bash
