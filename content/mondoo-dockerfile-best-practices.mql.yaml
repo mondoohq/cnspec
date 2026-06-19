@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-docker-best-practices
     name: Mondoo Dockerfile Best Practices
-    version: 1.2.1
+    version: 1.2.2
     license: BUSL-1.1
     tags:
       mondoo.com/category: best-practices
@@ -90,14 +90,18 @@ queries:
       remediation:
         - id: dockerfile
           desc: |
-            Replace bare `apt` commands in `RUN` instructions with `apt-get`:
+            Replace bare `apt` commands in `RUN` instructions with `apt-get`.
+
+            The replacement also adds `--no-install-recommends` and the package-list cleanup. This satisfies the sibling checks in this policy and matches the canonical idiom used across Dockerfile guidance:
 
             ```dockerfile
             # Instead of:
             RUN apt update && apt install -y curl
 
             # Use:
-            RUN apt-get update && apt-get install -y curl
+            RUN apt-get update && \
+                apt-get install -y --no-install-recommends curl && \
+                rm -rf /var/lib/apt/lists/*
             ```
     refs:
       - url: https://docs.docker.com/build/building/best-practices/#run
@@ -228,6 +232,16 @@ queries:
                 apt-get install -y --no-install-recommends package && \
                 rm -rf /var/lib/apt/lists/*
             ```
+
+            With BuildKit you can instead keep the cache out of the image entirely by mounting it. Cache mounts persist across builds by default, so no extra option is needed to retain them. This speeds up rebuilds because the cache is reused while never landing in a layer. Disable apt's default auto-cleanup so it can use the mounted directory:
+
+            ```dockerfile
+            RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+                --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+                rm -f /etc/apt/apt.conf.d/docker-clean && \
+                apt-get update && \
+                apt-get install -y --no-install-recommends package
+            ```
     refs:
       - url: https://docs.docker.com/build/building/best-practices/#apt-get
         title: Dockerfile Best Practices - apt-get
@@ -269,6 +283,13 @@ queries:
                 yum clean all && \
                 rm -rf /var/cache/yum
             ```
+
+            With BuildKit you can keep the cache out of the image entirely by mounting it. The cache is reused across builds to speed up rebuilds while never landing in a layer:
+
+            ```dockerfile
+            RUN --mount=type=cache,target=/var/cache/yum,sharing=locked \
+                yum install -y package
+            ```
     refs:
       - url: https://docs.docker.com/build/building/best-practices/#run
         title: Dockerfile Best Practices - RUN
@@ -308,6 +329,13 @@ queries:
                 dnf clean all && \
                 rm -rf /var/cache/dnf
             ```
+
+            With BuildKit you can keep the cache out of the image entirely by mounting it. The cache is reused across builds to speed up rebuilds while never landing in a layer:
+
+            ```dockerfile
+            RUN --mount=type=cache,target=/var/cache/dnf,sharing=locked \
+                dnf install -y package
+            ```
     refs:
       - url: https://docs.docker.com/build/building/best-practices/#run
         title: Dockerfile Best Practices - RUN
@@ -345,6 +373,13 @@ queries:
             # Use:
             RUN zypper --non-interactive install package && \
                 zypper clean --all
+            ```
+
+            With BuildKit you can keep the cache out of the image entirely by mounting it. The cache is reused across builds to speed up rebuilds while never landing in a layer:
+
+            ```dockerfile
+            RUN --mount=type=cache,target=/var/cache/zypp,sharing=locked \
+                zypper --non-interactive install package
             ```
     refs:
       - url: https://docs.docker.com/build/building/best-practices/#run
@@ -386,6 +421,13 @@ queries:
             # Also works with requirements files:
             RUN pip install --no-cache-dir -r requirements.txt
             ```
+
+            If you want to keep the pip cache to speed up rebuilds without bloating the image, drop `--no-cache-dir` and mount the cache with BuildKit instead. The cache is reused across builds while never landing in a layer:
+
+            ```dockerfile
+            RUN --mount=type=cache,target=/root/.cache/pip \
+                pip install -r requirements.txt
+            ```
     refs:
       - url: https://docs.docker.com/build/building/best-practices/#run
         title: Dockerfile Best Practices - RUN
@@ -398,7 +440,7 @@ queries:
       docker.file.stages.all(run.where(commands.any(binary == "yarn" && subcommand == "install")).all(commands.any(binary == "yarn" && subcommand == "cache" && args.contains("clean"))))
     docs:
       desc: |
-        Dockerfile `RUN` instructions that use `yarn install` should also run `yarn cache clean` in the same layer.
+        Dockerfile `RUN` instructions that use `yarn install` should also run `yarn cache clean` in the same layer. This check targets Yarn Classic (Yarn 1.x), where the cache lives in a global directory. Yarn Berry (Yarn 2 and later) manages its cache differently through Plug'n'Play and zero-installs, so the `yarn cache clean` step does not apply there.
 
         **Why this matters**
 
@@ -424,6 +466,13 @@ queries:
 
             # Use:
             RUN yarn install && yarn cache clean
+            ```
+
+            With BuildKit you can keep the cache to speed up rebuilds without bloating the image by mounting it instead of cleaning it. The cache is reused across builds while never landing in a layer:
+
+            ```dockerfile
+            RUN --mount=type=cache,target=/usr/local/share/.cache/yarn \
+                yarn install
             ```
     refs:
       - url: https://docs.docker.com/build/building/best-practices/#run
@@ -466,6 +515,19 @@ queries:
             # Use:
             RUN npm install && npm cache clean --force
             RUN npm ci && npm cache clean --force
+            ```
+
+            For production images, prefer `npm ci --omit=dev`. It installs the exact versions from `package-lock.json` for reproducible builds and excludes development-only dependencies, which keeps the image smaller and reduces attack surface:
+
+            ```dockerfile
+            RUN npm ci --omit=dev && npm cache clean --force
+            ```
+
+            With BuildKit you can keep the cache to speed up rebuilds without bloating the image by mounting it instead of cleaning it. The cache is reused across builds while never landing in a layer:
+
+            ```dockerfile
+            RUN --mount=type=cache,target=/root/.npm \
+                npm ci --omit=dev
             ```
     refs:
       - url: https://docs.docker.com/build/building/best-practices/#run
@@ -537,14 +599,16 @@ queries:
       remediation:
         - id: dockerfile
           desc: |
-            Add the `-y` flag to all `apt-get install` commands:
+            Add the `-y` flag to all `apt-get install` commands. The example also keeps `--no-install-recommends` and the package-list cleanup so the result satisfies the sibling checks in this policy:
 
             ```dockerfile
             # Instead of:
             RUN apt-get install package
 
             # Use:
-            RUN apt-get install -y package
+            RUN apt-get update && \
+                apt-get install -y --no-install-recommends package && \
+                rm -rf /var/lib/apt/lists/*
             ```
     refs:
       - url: https://docs.docker.com/build/building/best-practices/#apt-get
@@ -672,6 +736,8 @@ queries:
         - **Traffic to broken containers:** Load balancers and orchestrators continue routing traffic to unhealthy containers, causing user-facing errors.
         - **Delayed recovery:** Without health information, orchestrators cannot automatically restart or replace failed containers, increasing downtime.
         - **Monitoring blind spots:** Container health status provides a basic monitoring signal that integrates with orchestrator dashboards and alerting.
+
+        Note that Kubernetes ignores the Dockerfile HEALTHCHECK instruction. Kubernetes determines container health through its own liveness, readiness, and startup probes defined in the pod specification. A HEALTHCHECK still benefits Docker, Docker Compose, and Docker Swarm, so it remains worth defining, but on Kubernetes you must configure the equivalent probes separately.
       audit: |
         Inspect the Dockerfile to confirm a HEALTHCHECK is defined:
 
@@ -876,6 +942,13 @@ queries:
             # Use:
             RUN microdnf install -y httpd && \
                 microdnf clean all
+            ```
+
+            With BuildKit you can keep the cache out of the image entirely by mounting it. The cache is reused across builds to speed up rebuilds while never landing in a layer:
+
+            ```dockerfile
+            RUN --mount=type=cache,target=/var/cache/dnf,sharing=locked \
+                microdnf install -y httpd
             ```
     refs:
       - url: https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/9/html/building_running_and_managing_containers/assembly_adding-software-to-a-ubi-container_building-running-and-managing-containers
