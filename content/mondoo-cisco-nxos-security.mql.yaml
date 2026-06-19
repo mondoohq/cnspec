@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-cisco-nxos-security
     name: Mondoo Cisco NX-OS Security
-    version: 1.0.0
+    version: 1.0.2
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -123,7 +123,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-7-2
       compliance/vda-isa-5: vda-isa-5-5-1-1
     mql: |
-      cisco.nxos.ssh.algorithm == "rsa" || cisco.nxos.ssh.algorithm == "ecdsa"
+      cisco.nxos.ssh.algorithm.in(["rsa", "ecdsa"])
     docs:
       desc: |
         This check verifies that the SSH key uses a strong algorithm such as RSA or ECDSA. DSA keys are considered cryptographically weak and should not be used.
@@ -153,17 +153,32 @@ queries:
           desc: |
             **Using the CLI**
 
+            Replacing the SSH host key requires temporarily disabling the SSH server. Perform this change from a console session, because disabling the SSH server drops all active SSH sessions.
+
             Generate an SSH key with a strong algorithm:
 
             ```
             configure terminal
-            ssh key rsa 2048
+            no feature ssh
+            ssh key rsa 2048 force
+            feature ssh
             ```
 
             Or for ECDSA:
 
             ```
-            ssh key ecdsa 256
+            configure terminal
+            no feature ssh
+            ssh key ecdsa 256 force
+            feature ssh
+            ```
+
+            The new host key invalidates cached host keys on SSH clients. Update known hosts entries on management stations after the change.
+
+            NX-OS does not automatically persist running-config changes. Save the configuration so the change survives a reload:
+
+            ```
+            copy running-config startup-config
             ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/security/cisco-nexus-9000-nx-os-security-configuration-guide-105x/m-configuring-ssh-scp.html
@@ -217,11 +232,23 @@ queries:
           desc: |
             **Using the CLI**
 
+            Replacing the SSH host key requires temporarily disabling the SSH server. Perform this change from a console session, because disabling the SSH server drops all active SSH sessions.
+
             Generate a 2048-bit RSA key:
 
             ```
             configure terminal
-            ssh key rsa 2048
+            no feature ssh
+            ssh key rsa 2048 force
+            feature ssh
+            ```
+
+            The new host key invalidates cached host keys on SSH clients. Update known hosts entries on management stations after the change.
+
+            NX-OS does not automatically persist running-config changes. Save the configuration so the change survives a reload:
+
+            ```
+            copy running-config startup-config
             ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/security/cisco-nexus-9000-nx-os-security-configuration-guide-105x/m-configuring-ssh-scp.html
@@ -263,13 +290,13 @@ queries:
         To verify that an SSH login attempts limit is configured:
 
         1. Open an authenticated session to the device CLI.
-        2. Display the running configuration for the SSH login attempts limit:
+        2. Display the effective SSH login attempts limit, including default values:
 
            ```
-           show running-config | include ssh login-attempts
+           show running-config security all | include "ssh login-attempts"
            ```
 
-        The device passes when `ssh login-attempts` is set to a value greater than 0 and 3 or fewer. A limit of 0 or greater than 3 is a failing result.
+        The device passes when `ssh login-attempts` is set to a value greater than 0 and 3 or fewer. The NX-OS default of 3 passes. A limit of 0 or greater than 3 is a failing result.
       remediation:
         - id: cli
           desc: |
@@ -280,6 +307,12 @@ queries:
             ```
             configure terminal
             ssh login-attempts 3
+            ```
+
+            NX-OS does not automatically persist running-config changes. Save the configuration so the change survives a reload:
+
+            ```
+            copy running-config startup-config
             ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/security/cisco-nexus-9000-nx-os-security-configuration-guide-105x/m-configuring-ssh-scp.html
@@ -333,12 +366,24 @@ queries:
           desc: |
             **Using the CLI**
 
-            Configure AAA authentication login:
+            Configure AAA authentication to use a TACACS+ or RADIUS server group with local fallback. The server group must already exist. For RADIUS, the predefined group named `radius` contains all globally configured RADIUS servers. For TACACS+, first enable `feature tacacs+` and create a named server group with `aaa group server tacacs+`. Keeping `local` as a fallback method and `local` on the console line prevents a lockout if the AAA servers become unreachable.
 
             ```
             configure terminal
-            aaa authentication login default group <tacacs+|radius> local
+            aaa authentication login default group <server-group-name> local
             aaa authentication login console local
+            ```
+
+            Verify the configuration from a second session before closing your current one:
+
+            ```
+            show running-config aaa | include "authentication login"
+            ```
+
+            NX-OS does not automatically persist running-config changes. Once you have confirmed access still works, save the configuration so the change survives a reload:
+
+            ```
+            copy running-config startup-config
             ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/security/cisco-nexus-9000-nx-os-security-configuration-guide-105x/m-configuring-aaa.html
@@ -391,13 +436,24 @@ queries:
           desc: |
             **Using the CLI**
 
-            Configure a TACACS+ server group:
+            Enable the TACACS+ feature, define the server, and create a server group. The `feature tacacs+` command must come first; NX-OS rejects all TACACS+ configuration while the feature is disabled.
 
             ```
             configure terminal
+            feature tacacs+
             tacacs-server host <server-ip> key <shared-secret>
             aaa group server tacacs+ <group-name>
-            server <server-ip>
+              server <server-ip>
+              use-vrf management
+              source-interface mgmt0
+            ```
+
+            Adjust the VRF and source interface to match how the device reaches the TACACS+ server.
+
+            NX-OS does not automatically persist running-config changes. Save the configuration so the change survives a reload:
+
+            ```
+            copy running-config startup-config
             ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/security/cisco-nexus-9000-nx-os-security-configuration-guide-105x/m-configuring-aaa.html
@@ -456,6 +512,12 @@ queries:
             configure terminal
             password strength-check
             ```
+
+            NX-OS does not automatically persist running-config changes. Save the configuration so the change survives a reload:
+
+            ```
+            copy running-config startup-config
+            ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/security/cisco-nexus-9000-nx-os-security-configuration-guide-105x/m-configuring-user-accounts-and-rbac.html
         title: Cisco NX-OS User Account Configuration Guide
@@ -508,12 +570,24 @@ queries:
           desc: |
             **Using the CLI**
 
-            Enable the encryption service:
+            Configure a master key and enable the AES password encryption feature. The `key config-key ascii` command prompts for the master key interactively; the key is not entered on the command line.
 
             ```
             configure terminal
+            key config-key ascii
             feature password encryption aes
-            key config-key ascii <master-key>
+            ```
+
+            To convert existing Type 7 encrypted secrets in the configuration to Type 6 AES encryption:
+
+            ```
+            encryption re-encrypt obfuscated
+            ```
+
+            NX-OS does not automatically persist running-config changes. Save the configuration so the change survives a reload:
+
+            ```
+            copy running-config startup-config
             ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/security/cisco-nexus-9000-nx-os-security-configuration-guide-105x/m-configuring-user-accounts-and-rbac.html
@@ -568,17 +642,23 @@ queries:
           desc: |
             **Using the CLI**
 
-            Configure users with encrypted passwords:
+            Reset the password for any user whose credential is stored in clear text. Enter the password in plain text; NX-OS hashes it before storing it in the configuration.
 
             ```
             configure terminal
-            username <user> password 5 <md5-hash> role <role>
+            username <user> password <strong-password> role <role>
             ```
 
-            Enable the encryption service for stronger protection:
+            Verify that no credential is stored with encryption type 0:
 
             ```
-            feature password encryption aes
+            show running-config | include ^username
+            ```
+
+            NX-OS does not automatically persist running-config changes. Save the configuration so the change survives a reload:
+
+            ```
+            copy running-config startup-config
             ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/security/cisco-nexus-9000-nx-os-security-configuration-guide-105x/m-configuring-user-accounts-and-rbac.html
@@ -636,6 +716,12 @@ queries:
             ```
             configure terminal
             userpassphrase min-length 15 max-length 127
+            ```
+
+            NX-OS does not automatically persist running-config changes. Save the configuration so the change survives a reload:
+
+            ```
+            copy running-config startup-config
             ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/security/cisco-nexus-9000-nx-os-security-configuration-guide-105x/m-configuring-user-accounts-and-rbac.html
@@ -696,7 +782,20 @@ queries:
             system login block-for 60 attempts 3 within 60
             ```
 
-            This blocks logins for 60 seconds after 3 failed attempts within 60 seconds.
+            This blocks logins for 60 seconds after 3 failed attempts within 60 seconds. During the block period the device denies all login attempts, which an attacker can abuse to lock out administrators. Permit trusted management hosts during the quiet period with an ACL:
+
+            ```
+            ip access-list LOGIN-QUIET-MODE
+              permit tcp <management-subnet> any eq 22
+            exit
+            system login quiet-mode access-class LOGIN-QUIET-MODE
+            ```
+
+            NX-OS does not automatically persist running-config changes. Save the configuration so the change survives a reload:
+
+            ```
+            copy running-config startup-config
+            ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/security/cisco-nexus-9000-nx-os-security-configuration-guide-105x/m-configuring-user-accounts-and-rbac.html
         title: Cisco NX-OS Login Configuration Guide
@@ -755,6 +854,12 @@ queries:
             ntp server <ntp-server-ip-1> use-vrf management
             ntp server <ntp-server-ip-2> use-vrf management
             ```
+
+            NX-OS does not automatically persist running-config changes. Save the configuration so the change survives a reload:
+
+            ```
+            copy running-config startup-config
+            ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/system-management/cisco-nexus-9000-nx-os-system-management-configuration-guide-105x/m-configuring-ntp.html
         title: Cisco NX-OS NTP Configuration Guide
@@ -810,6 +915,12 @@ queries:
             ```
             configure terminal
             clock timezone EST -5 0
+            ```
+
+            NX-OS does not automatically persist running-config changes. Save the configuration so the change survives a reload:
+
+            ```
+            copy running-config startup-config
             ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/system-management/cisco-nexus-9000-nx-os-system-management-configuration-guide-105x/m-configuring-ntp.html
@@ -870,6 +981,12 @@ queries:
             logging server <syslog-server-ip> 6 use-vrf management
             logging source-interface mgmt0
             ```
+
+            NX-OS does not automatically persist running-config changes. Save the configuration so the change survives a reload:
+
+            ```
+            copy running-config startup-config
+            ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/system-management/cisco-nexus-9000-nx-os-system-management-configuration-guide-105x/m-configuring-system-message-logging.html
         title: Cisco NX-OS Logging Configuration Guide
@@ -927,6 +1044,12 @@ queries:
             configure terminal
             logging timestamp milliseconds
             ```
+
+            NX-OS does not automatically persist running-config changes. Save the configuration so the change survives a reload:
+
+            ```
+            copy running-config startup-config
+            ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/system-management/cisco-nexus-9000-nx-os-system-management-configuration-guide-105x/m-configuring-system-message-logging.html
         title: Cisco NX-OS Logging Configuration Guide
@@ -983,6 +1106,12 @@ queries:
             ```
             configure terminal
             logging source-interface mgmt0
+            ```
+
+            NX-OS does not automatically persist running-config changes. Save the configuration so the change survives a reload:
+
+            ```
+            copy running-config startup-config
             ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/system-management/cisco-nexus-9000-nx-os-system-management-configuration-guide-105x/m-configuring-system-message-logging.html
@@ -1044,6 +1173,12 @@ queries:
             no snmp-server community private
             snmp-server community <unique-string> group network-operator
             ```
+
+            NX-OS does not automatically persist running-config changes. Save the configuration so the change survives a reload:
+
+            ```
+            copy running-config startup-config
+            ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/system-management/cisco-nexus-9000-nx-os-system-management-configuration-guide-105x/m-configuring-snmp.html
         title: Cisco NX-OS SNMP Configuration Guide
@@ -1095,11 +1230,22 @@ queries:
           desc: |
             **Using the CLI**
 
-            Enforce SNMPv3 encryption globally:
+            Before enforcing global privacy, make sure at least one SNMPv3 user is configured with both authentication and privacy. Global privacy enforcement requires every SNMP request to use SNMPv3 with encryption, so it silently stops all SNMPv1 and SNMPv2c community access. If no SNMPv3 auth and priv user exists when you enforce this, SNMP management of the device breaks entirely.
+
+            Create an SNMPv3 user with SHA authentication and AES-128 privacy, then enforce global privacy:
 
             ```
             configure terminal
+            snmp-server user <username> network-operator auth sha <auth-password> priv aes-128 <priv-password>
             snmp-server globalEnforcePriv
+            ```
+
+            The `snmp-server globalEnforcePriv` token is valid NX-OS syntax. Migrate any monitoring systems that still rely on v2c community strings to SNMPv3 before applying this change.
+
+            NX-OS does not automatically persist running-config changes. Save the configuration so the change survives a reload:
+
+            ```
+            copy running-config startup-config
             ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/system-management/cisco-nexus-9000-nx-os-system-management-configuration-guide-105x/m-configuring-snmp.html
@@ -1155,11 +1301,22 @@ queries:
           desc: |
             **Using the CLI**
 
-            Apply ACLs to SNMP communities:
+            The preferred fix is to migrate SNMP management to SNMPv3, which provides per-user authentication and encryption rather than shared community strings. Applying ACLs to v2c communities is a stopgap that limits which hosts can poll the device but does not encrypt the traffic or authenticate individual users. See the check that enforces SNMPv3 encryption globally for the SNMPv3 migration path.
+
+            If you must keep v2c communities in the interim, create an ACL that permits only authorized management stations, then bind it to each SNMP community. The ACL must exist before it is referenced. Include every monitoring system in the ACL; any station not permitted loses SNMP access to the device as soon as the ACL is applied.
 
             ```
             configure terminal
-            snmp-server community <community> use-ipv4acl <acl-name>
+            ip access-list SNMP-MGMT
+              permit ip <nms-ip>/32 any
+            exit
+            snmp-server community <community> use-ipv4acl SNMP-MGMT
+            ```
+
+            NX-OS does not automatically persist running-config changes. Save the configuration so the change survives a reload:
+
+            ```
+            copy running-config startup-config
             ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/system-management/cisco-nexus-9000-nx-os-system-management-configuration-guide-105x/m-configuring-snmp.html
@@ -1217,6 +1374,12 @@ queries:
             ```
             configure terminal
             no boot poap enable
+            ```
+
+            NX-OS does not automatically persist running-config changes. Save the configuration so the change survives a reload:
+
+            ```
+            copy running-config startup-config
             ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/fundamentals/cisco-nexus-9000-nx-os-fundamentals-configuration-guide-105x/m-using-poap.html
@@ -1276,6 +1439,12 @@ queries:
             configure terminal
             copp profile strict
             ```
+
+            NX-OS does not automatically persist running-config changes. Save the configuration so the change survives a reload:
+
+            ```
+            copy running-config startup-config
+            ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/security/cisco-nexus-9000-nx-os-security-configuration-guide-105x/m-configuring-copp.html
         title: Cisco NX-OS CoPP Configuration Guide
@@ -1317,13 +1486,13 @@ queries:
         To verify that VTY lines have an exec timeout configured:
 
         1. Open an authenticated session to the device CLI.
-        2. Display the running configuration for the VTY line:
+        2. Display the effective VTY line configuration, including default values:
 
            ```
-           show running-config | section "line vty"
+           show running-config all | section "line vty"
            ```
 
-        The device passes when the VTY line reports a non-zero `exec-timeout`. A VTY line with `exec-timeout 0` or no exec timeout is a failing result.
+        The device passes when the VTY line reports a non-zero `exec-timeout`. The NX-OS default of 30 minutes passes. A VTY line with `exec-timeout 0` is a failing result because a value of 0 disables the timeout.
       remediation:
         - id: cli
           desc: |
@@ -1335,6 +1504,12 @@ queries:
             configure terminal
             line vty
             exec-timeout 10
+            ```
+
+            NX-OS does not automatically persist running-config changes. Save the configuration so the change survives a reload:
+
+            ```
+            copy running-config startup-config
             ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/security/cisco-nexus-9000-nx-os-security-configuration-guide-105x/m-configuring-user-accounts-and-rbac.html
@@ -1376,13 +1551,13 @@ queries:
         To verify that the console line has an exec timeout configured:
 
         1. Open an authenticated session to the device CLI.
-        2. Display the running configuration for the console line:
+        2. Display the effective console line configuration, including default values:
 
            ```
-           show running-config | section "line console"
+           show running-config all | section "line console"
            ```
 
-        The device passes when the console line reports a non-zero `exec-timeout`. A console line with `exec-timeout 0` or no exec timeout is a failing result.
+        The device passes when the console line reports a non-zero `exec-timeout`. The NX-OS default of 30 minutes passes. A console line with `exec-timeout 0` is a failing result because a value of 0 disables the timeout.
       remediation:
         - id: cli
           desc: |
@@ -1394,6 +1569,12 @@ queries:
             configure terminal
             line console
             exec-timeout 10
+            ```
+
+            NX-OS does not automatically persist running-config changes. Save the configuration so the change survives a reload:
+
+            ```
+            copy running-config startup-config
             ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/security/cisco-nexus-9000-nx-os-security-configuration-guide-105x/m-configuring-user-accounts-and-rbac.html
@@ -1447,12 +1628,23 @@ queries:
           desc: |
             **Using the CLI**
 
-            Apply ACLs to VTY lines:
+            Create the ACL before applying it to the VTY lines and make sure it permits the management hosts you connect from. Applying an inbound access class that does not match your management stations immediately cuts off remote SSH access, including the session you are working in. Keep a console session available until you have verified remote access still works.
 
             ```
             configure terminal
+            ip access-list VTY-MGMT
+              permit tcp <management-subnet> any eq 22
+            exit
             line vty
-            access-class <acl-name> in
+              access-class VTY-MGMT in
+            ```
+
+            From a permitted management station, open a new SSH session to confirm access before closing your existing one.
+
+            NX-OS does not automatically persist running-config changes. Once you have confirmed remote access still works, save the configuration so the change survives a reload:
+
+            ```
+            copy running-config startup-config
             ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/security/cisco-nexus-9000-nx-os-security-configuration-guide-105x/m-configuring-user-accounts-and-rbac.html
@@ -1511,6 +1703,12 @@ queries:
             configure terminal
             banner motd @Authorized access only. All activity is monitored and logged.@
             ```
+
+            NX-OS does not automatically persist running-config changes. Save the configuration so the change survives a reload:
+
+            ```
+            copy running-config startup-config
+            ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/fundamentals/cisco-nexus-9000-nx-os-fundamentals-configuration-guide-105x.html
         title: Cisco NX-OS Banner Configuration Guide
@@ -1566,6 +1764,12 @@ queries:
             ```
             configure terminal
             banner exec @This system is for authorized use only. All activity is logged.@
+            ```
+
+            NX-OS does not automatically persist running-config changes. Save the configuration so the change survives a reload:
+
+            ```
+            copy running-config startup-config
             ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/fundamentals/cisco-nexus-9000-nx-os-fundamentals-configuration-guide-105x.html
@@ -1626,6 +1830,12 @@ queries:
             configure terminal
             hostname <unique-descriptive-name>
             ```
+
+            NX-OS does not automatically persist running-config changes. Save the configuration so the change survives a reload:
+
+            ```
+            copy running-config startup-config
+            ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/fundamentals/cisco-nexus-9000-nx-os-fundamentals-configuration-guide-105x.html
         title: Cisco NX-OS System Configuration Guide
@@ -1682,6 +1892,12 @@ queries:
             configure terminal
             no ip source-route
             ```
+
+            NX-OS does not automatically persist running-config changes. Save the configuration so the change survives a reload:
+
+            ```
+            copy running-config startup-config
+            ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/security/cisco-nexus-9000-nx-os-security-configuration-guide-105x.html
         title: Cisco NX-OS Security Configuration Guide
@@ -1734,12 +1950,20 @@ queries:
           desc: |
             **Using the CLI**
 
+            Apply this change to every routed interface flagged by the audit, not just one. The check fails while any interface still has `ip directed-broadcast` enabled, so repeat the interface block for each affected interface.
+
             Disable IP directed broadcast on interfaces:
 
             ```
             configure terminal
             interface <interface>
             no ip directed-broadcast
+            ```
+
+            NX-OS does not automatically persist running-config changes. Save the configuration so the change survives a reload:
+
+            ```
+            copy running-config startup-config
             ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/security/cisco-nexus-9000-nx-os-security-configuration-guide-105x.html
@@ -1795,13 +2019,27 @@ queries:
           desc: |
             **Using the CLI**
 
+            Coordinate this change with the operator of the remote peer. Setting a password on an established neighbor tears the BGP session down until the same password is configured on both sides, which interrupts routing through that peer.
+
             Configure BGP neighbor authentication:
 
             ```
             configure terminal
             router bgp <as-number>
-            neighbor <neighbor-ip>
-            password 7 <encrypted-password>
+              neighbor <neighbor-ip>
+                password <shared-secret>
+            ```
+
+            Enter the password in plain text; NX-OS stores it in encrypted form in the configuration. Verify the session returns to the established state:
+
+            ```
+            show bgp sessions
+            ```
+
+            NX-OS does not automatically persist running-config changes. Save the configuration so the change survives a reload:
+
+            ```
+            copy running-config startup-config
             ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/unicast-routing/cisco-nexus-9000-nx-os-unicast-routing-configuration-guide-105x/m-configuring-bgp.html
@@ -1863,6 +2101,12 @@ queries:
             router bgp <as-number>
             log-neighbor-changes
             ```
+
+            NX-OS does not automatically persist running-config changes. Save the configuration so the change survives a reload:
+
+            ```
+            copy running-config startup-config
+            ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/unicast-routing/cisco-nexus-9000-nx-os-unicast-routing-configuration-guide-105x/m-configuring-bgp.html
         title: Cisco NX-OS BGP Configuration Guide
@@ -1920,19 +2164,39 @@ queries:
           desc: |
             **Using the CLI**
 
-            Configure OSPF interface authentication:
+            Enabling authentication on a live OSPF interface drops the adjacency until the neighboring router is configured with the same key. Schedule this change together with the neighbor or during a maintenance window.
+
+            Configure OSPF interface authentication with message digest keys:
 
             ```
             configure terminal
             interface <interface>
-            ip ospf authentication message-digest
-            ip ospf message-digest-key 1 md5 <key>
+              ip ospf authentication message-digest
+              ip ospf message-digest-key 1 md5 <key>
             ```
 
-            Or use a key chain:
+            Or create a key chain and reference it on the interface:
 
             ```
-            ip ospf authentication key-chain <keychain-name>
+            configure terminal
+            key chain <keychain-name>
+              key 1
+                key-string <key>
+            exit
+            interface <interface>
+              ip ospf authentication key-chain <keychain-name>
+            ```
+
+            Verify the adjacency reforms:
+
+            ```
+            show ip ospf neighbors
+            ```
+
+            NX-OS does not automatically persist running-config changes. Once the adjacency has reformed, save the configuration so the change survives a reload:
+
+            ```
+            copy running-config startup-config
             ```
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/105x/unicast-routing/cisco-nexus-9000-nx-os-unicast-routing-configuration-guide-105x/m-configuring-ospfv2.html

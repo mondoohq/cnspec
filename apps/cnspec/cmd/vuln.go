@@ -4,13 +4,15 @@
 package cmd
 
 import (
+	"context"
+
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"go.mondoo.com/cnspec/v13/cli/reporter"
 	"go.mondoo.com/cnspec/v13/internal/sbom/generator"
 	"go.mondoo.com/cnspec/v13/internal/sbom/pack"
-	"go.mondoo.com/mql/v13/logger"
+	"go.mondoo.com/cnspec/v13/internal/scandump"
 	"go.mondoo.com/mql/v13/providers"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/plugin"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/mvd"
@@ -21,7 +23,7 @@ func init() {
 	vulnCmd.Flags().StringP("output", "o", "full", "Set the output format: "+reporter.AllFormats())
 	vulnCmd.Flags().String("platform-id", "", "Select a specific target asset by providing its platform ID")
 
-	// we need ths for config parsing but it should not be exposed to the user
+	// we need this for config parsing but it should not be exposed to the user
 	vulnCmd.Flags().String("asset-name", "", "Override the asset name")
 	vulnCmd.Flags().Lookup("asset-name").Hidden = true
 
@@ -44,6 +46,8 @@ var vulnCmd = &cobra.Command{
 }
 
 var vulnCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *plugin.ParseCLIRes) {
+	dumpCtx := setupDebugDumps(context.Background(), "cnspec-vuln-debug")
+
 	pb, err := pack.QueryPack()
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to load sbom query pack")
@@ -64,7 +68,7 @@ var vulnCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 		log.Fatal().Err(err).Msg("failed to parse config for reporter")
 	}
 
-	report, err := RunScan(conf)
+	report, err := RunScan(dumpCtx, conf)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to run scan")
 	}
@@ -73,7 +77,7 @@ var vulnCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 	if err == nil {
 		log.Debug().Msg("converted report to proto")
 		data, _ := cnspecReport.ToJSON()
-		logger.DebugDumpJSON("mondoo-sbom-report", data)
+		scandump.JSON(dumpCtx, "sbom-report", data)
 	}
 
 	boms := generator.GenerateBom(cnspecReport.ToCnqueryReport())
@@ -134,7 +138,7 @@ var vulnCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 
 	// print the output using the specified output format
 	r := reporter.NewReporter(printConf, false)
-	logger.DebugDumpJSON("vulnReport", report)
+	scandump.JSON(dumpCtx, "vulnReport", report)
 	if err := r.PrintVulns(vulnReport, bom.Asset.Name); err != nil {
 		log.Fatal().Err(err).Msg("failed to print")
 	}

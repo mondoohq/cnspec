@@ -9,6 +9,27 @@ resource "aws_s3_bucket" "pass_example" {
   bucket = "test_bucket"
 }
 
+resource "aws_s3_bucket_ownership_controls" "pass_example" {
+  bucket = aws_s3_bucket.pass_example.id
+  rule {
+    object_ownership = "BucketOwnerEnforced"
+  }
+}
+
+resource "aws_s3_bucket_ownership_controls" "pass_example_log1" {
+  bucket = aws_s3_bucket.pass_example_log1.id
+  rule {
+    object_ownership = "BucketOwnerEnforced"
+  }
+}
+
+resource "aws_s3_bucket_ownership_controls" "pass_example_log2" {
+  bucket = aws_s3_bucket.pass_example_log2.id
+  rule {
+    object_ownership = "BucketOwnerEnforced"
+  }
+}
+
 resource "aws_s3_bucket_acl" "pass_example" {
   bucket = aws_s3_bucket.pass_example.id
   acl = "private"

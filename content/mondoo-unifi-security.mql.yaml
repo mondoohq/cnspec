@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-unifi-security
     name: Mondoo Ubiquiti UniFi Security
-    version: 1.2.0
+    version: 1.3.2
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -36,6 +36,7 @@ policies:
           - uid: mondoo-unifi-security-no-open-wlans
           - uid: mondoo-unifi-security-wlans-use-wpa2-or-wpa3
           - uid: mondoo-unifi-security-wlans-wpa3-enabled
+          - uid: mondoo-unifi-security-wlans-wpa3-only
           - uid: mondoo-unifi-security-wlans-pmf-enabled
           - uid: mondoo-unifi-security-guest-wlans-isolated
           - uid: mondoo-unifi-security-wlans-strong-encryption-cipher
@@ -47,6 +48,7 @@ policies:
           - uid: mondoo-unifi-security-ips-enabled
           - uid: mondoo-unifi-security-dns-filtering-enabled
           - uid: mondoo-unifi-security-honeypot-enabled
+          - uid: mondoo-unifi-security-dpi-enabled
       - title: VPN Security
         filters: asset.platform == "unifi"
         checks:
@@ -60,6 +62,7 @@ policies:
           - uid: mondoo-unifi-security-broadcast-ping-disabled
           - uid: mondoo-unifi-security-icmp-redirects-disabled
           - uid: mondoo-unifi-security-syn-cookies-enabled
+          - uid: mondoo-unifi-security-geo-ip-filtering-enabled
       - title: Switch Security
         filters: asset.platform == "unifi"
         checks:
@@ -76,6 +79,8 @@ policies:
           - uid: mondoo-unifi-security-auto-upgrade-enabled
           - uid: mondoo-unifi-security-analytics-disabled
           - uid: mondoo-unifi-security-devices-firmware-uptodate
+          - uid: mondoo-unifi-security-no-eol-devices
+          - uid: mondoo-unifi-security-no-unsupported-devices
           - uid: mondoo-unifi-security-remote-syslog-enabled
       - title: Network Segmentation
         filters: asset.platform == "unifi"
@@ -155,12 +160,17 @@ queries:
             To declare a wireless network with WPA encryption in Terraform using the `ubiquiti-community/unifi` provider, set `security` to a non-open value (`wpapsk` for personal, `wpaeap` for enterprise) on every `unifi_wlan` resource:
 
             ```hcl
+            # The provider exposes UniFi user groups as client QOS rates; this
+            # looks up the default user group for the required user_group_id.
+            data "unifi_client_qos_rate" "default" {
+            }
+
             resource "unifi_wlan" "secure" {
-              name       = "internal"
-              security   = "wpapsk"
-              passphrase = var.wifi_passphrase
-              network_id = unifi_network.lan.id
-              user_group_id = data.unifi_user_group.default.id
+              name          = "internal"
+              security      = "wpapsk"
+              passphrase    = var.wifi_passphrase
+              network_id    = unifi_network.lan.id
+              user_group_id = data.unifi_client_qos_rate.default.id
             }
             ```
     refs:
@@ -174,7 +184,7 @@ queries:
   - uid: mondoo-unifi-security-no-open-wlans-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "unifi_wlan")
     mql: |
-      terraform.resources.where(nameLabel == "unifi_wlan").all(arguments["security"] != "open")
+      terraform.resources("unifi_wlan").all(arguments["security"] != "open")
   - uid: mondoo-unifi-security-no-open-wlans-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "unifi_wlan")
     mql: |
@@ -258,12 +268,17 @@ queries:
             To declare a wireless network with WPA2/WPA3 encryption in Terraform, set `security` to `wpapsk` (Personal) or `wpaeap` (Enterprise) on every `unifi_wlan` resource:
 
             ```hcl
+            # The provider exposes UniFi user groups as client QOS rates; this
+            # looks up the default user group for the required user_group_id.
+            data "unifi_client_qos_rate" "default" {
+            }
+
             resource "unifi_wlan" "personal" {
-              name       = "internal"
-              security   = "wpapsk"
-              passphrase = var.wifi_passphrase
-              network_id = unifi_network.lan.id
-              user_group_id = data.unifi_user_group.default.id
+              name          = "internal"
+              security      = "wpapsk"
+              passphrase    = var.wifi_passphrase
+              network_id    = unifi_network.lan.id
+              user_group_id = data.unifi_client_qos_rate.default.id
             }
             ```
     refs:
@@ -273,19 +288,19 @@ queries:
   - uid: mondoo-unifi-security-wlans-use-wpa2-or-wpa3-unifi
     filters: asset.platform == "unifi"
     mql: |
-      unifi.wlans.where(enabled == true).all(security == "wpapsk" || security == "wpaeap")
+      unifi.wlans.where(enabled == true).all(security.in(["wpapsk", "wpaeap"]))
   - uid: mondoo-unifi-security-wlans-use-wpa2-or-wpa3-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "unifi_wlan")
     mql: |
-      terraform.resources.where(nameLabel == "unifi_wlan").all(arguments["security"] == "wpapsk" || arguments["security"] == "wpaeap")
+      terraform.resources("unifi_wlan").all(arguments["security"].in(["wpapsk", "wpaeap"]))
   - uid: mondoo-unifi-security-wlans-use-wpa2-or-wpa3-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "unifi_wlan")
     mql: |
-      terraform.plan.resourceChanges.where(type == "unifi_wlan").all(change.after.security == "wpapsk" || change.after.security == "wpaeap")
+      terraform.plan.resourceChanges.where(type == "unifi_wlan").all(change.after.security.in(["wpapsk", "wpaeap"]))
   - uid: mondoo-unifi-security-wlans-use-wpa2-or-wpa3-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "unifi_wlan")
     mql: |
-      terraform.state.resources.where(type == "unifi_wlan").all(values.security == "wpapsk" || values.security == "wpaeap")
+      terraform.state.resources.where(type == "unifi_wlan").all(values.security.in(["wpapsk", "wpaeap"]))
 
   - uid: mondoo-unifi-security-wlans-wpa3-enabled
     title: Ensure WPA3 support is enabled on wireless networks
@@ -356,6 +371,11 @@ queries:
             To enable WPA3 support on a wireless network in Terraform, set `wpa3_support = true` (and optionally `wpa3_transition = true` for backward-compatible mode) on every secured `unifi_wlan` resource:
 
             ```hcl
+            # The provider exposes UniFi user groups as client QOS rates; this
+            # looks up the default user group for the required user_group_id.
+            data "unifi_client_qos_rate" "default" {
+            }
+
             resource "unifi_wlan" "modern" {
               name            = "internal"
               security        = "wpapsk"
@@ -363,7 +383,7 @@ queries:
               wpa3_support    = true
               wpa3_transition = true
               network_id      = unifi_network.lan.id
-              user_group_id   = data.unifi_user_group.default.id
+              user_group_id   = data.unifi_client_qos_rate.default.id
             }
             ```
     refs:
@@ -377,7 +397,7 @@ queries:
   - uid: mondoo-unifi-security-wlans-wpa3-enabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "unifi_wlan")
     mql: |
-      terraform.resources.where(nameLabel == "unifi_wlan" && arguments["security"] != "open").all(arguments["wpa3_support"] == true || arguments["wpa3_transition"] == true)
+      terraform.resources("unifi_wlan").where(arguments["security"] != "open").all(arguments["wpa3_support"] == true || arguments["wpa3_transition"] == true)
   - uid: mondoo-unifi-security-wlans-wpa3-enabled-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "unifi_wlan")
     mql: |
@@ -459,13 +479,18 @@ queries:
             To enable Protected Management Frames on a wireless network in Terraform, set `pmf_mode` to `"required"` or `"optional"` on every secured `unifi_wlan` resource:
 
             ```hcl
+            # The provider exposes UniFi user groups as client QOS rates; this
+            # looks up the default user group for the required user_group_id.
+            data "unifi_client_qos_rate" "default" {
+            }
+
             resource "unifi_wlan" "with_pmf" {
               name          = "internal"
               security      = "wpapsk"
               passphrase    = var.wifi_passphrase
               pmf_mode      = "optional"
               network_id    = unifi_network.lan.id
-              user_group_id = data.unifi_user_group.default.id
+              user_group_id = data.unifi_client_qos_rate.default.id
             }
             ```
     refs:
@@ -475,19 +500,19 @@ queries:
   - uid: mondoo-unifi-security-wlans-pmf-enabled-unifi
     filters: asset.platform == "unifi"
     mql: |
-      unifi.wlans.where(enabled == true && security != "open").all(pmfMode == "required" || pmfMode == "optional")
+      unifi.wlans.where(enabled == true && security != "open").all(pmfMode.in(["required", "optional"]))
   - uid: mondoo-unifi-security-wlans-pmf-enabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "unifi_wlan")
     mql: |
-      terraform.resources.where(nameLabel == "unifi_wlan" && arguments["security"] != "open").all(arguments["pmf_mode"] == "required" || arguments["pmf_mode"] == "optional")
+      terraform.resources("unifi_wlan").where(arguments["security"] != "open").all(arguments["pmf_mode"].in(["required", "optional"]))
   - uid: mondoo-unifi-security-wlans-pmf-enabled-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "unifi_wlan")
     mql: |
-      terraform.plan.resourceChanges.where(type == "unifi_wlan" && change.after.security != "open").all(change.after.pmf_mode == "required" || change.after.pmf_mode == "optional")
+      terraform.plan.resourceChanges.where(type == "unifi_wlan" && change.after.security != "open").all(change.after.pmf_mode.in(["required", "optional"]))
   - uid: mondoo-unifi-security-wlans-pmf-enabled-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "unifi_wlan")
     mql: |
-      terraform.state.resources.where(type == "unifi_wlan" && values.security != "open").all(values.pmf_mode == "required" || values.pmf_mode == "optional")
+      terraform.state.resources.where(type == "unifi_wlan" && values.security != "open").all(values.pmf_mode.in(["required", "optional"]))
 
   # No Terraform variants: the WPA encryption-cipher selector (`wpaEnc`, values like
   # `ccmp`/`gcmp256`) is not exposed on the ubiquiti-community/unifi unifi_wlan resource —
@@ -511,7 +536,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-7-2
       compliance/vda-isa-5: vda-isa-5-5-1-2
     mql: |
-      unifi.wlans.where(enabled == true && security != "open").all(wpaEnc == "ccmp" || wpaEnc == "gcmp256")
+      unifi.wlans.where(enabled == true && security != "open").all(wpaEnc == "ccmp" || wpaEnc == "gcmp-256")
     docs:
       desc: |
         This check ensures that all secured wireless networks use strong WPA encryption ciphers such as AES-CCMP or GCMP-256.
@@ -594,7 +619,7 @@ queries:
 
             1. Go to **Settings > WiFi**.
             2. Select each wireless network.
-            3. Under advanced settings, set the **Group Rekey Interval** to **3600** seconds or less.
+            3. Under advanced settings, set the **Group Rekey Interval** to a value between 1 and 3600 seconds, such as 3600. Do not set it to 0, which disables rekeying.
         # No cli remediation: wireless network security is a controller-managed site setting; the device SSH CLI cannot change it and the controller overwrites local changes on provision.
     refs:
       - url: https://help.ui.com/hc/en-us/articles/205231710
@@ -672,6 +697,11 @@ queries:
             To enable Layer 2 isolation on a guest wireless network in Terraform, set `l2_isolation = true` on every `unifi_wlan` resource that uses `is_guest = true`:
 
             ```hcl
+            # The provider exposes UniFi user groups as client QOS rates; this
+            # looks up the default user group for the required user_group_id.
+            data "unifi_client_qos_rate" "default" {
+            }
+
             resource "unifi_wlan" "guest" {
               name          = "guest"
               security      = "wpapsk"
@@ -679,7 +709,7 @@ queries:
               is_guest      = true
               l2_isolation  = true
               network_id    = unifi_network.guest.id
-              user_group_id = data.unifi_user_group.default.id
+              user_group_id = data.unifi_client_qos_rate.default.id
             }
             ```
     refs:
@@ -693,7 +723,7 @@ queries:
   - uid: mondoo-unifi-security-guest-wlans-l2-isolation-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "unifi_wlan")
     mql: |
-      terraform.resources.where(nameLabel == "unifi_wlan" && arguments["is_guest"] == true).all(arguments["l2_isolation"] == true)
+      terraform.resources("unifi_wlan").where(arguments["is_guest"] == true).all(arguments["l2_isolation"] == true)
   - uid: mondoo-unifi-security-guest-wlans-l2-isolation-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "unifi_wlan")
     mql: |
@@ -775,13 +805,18 @@ queries:
             To mark a wireless network with a `guest`-style name as a guest network in Terraform, set `is_guest = true` on the `unifi_wlan` resource so guest network policy applies:
 
             ```hcl
+            # The provider exposes UniFi user groups as client QOS rates; this
+            # looks up the default user group for the required user_group_id.
+            data "unifi_client_qos_rate" "default" {
+            }
+
             resource "unifi_wlan" "guest" {
               name          = "guest-wifi"
               security      = "wpapsk"
               passphrase    = var.guest_passphrase
               is_guest      = true
               network_id    = unifi_network.guest.id
-              user_group_id = data.unifi_user_group.default.id
+              user_group_id = data.unifi_client_qos_rate.default.id
             }
             ```
     refs:
@@ -795,7 +830,7 @@ queries:
   - uid: mondoo-unifi-security-guest-wlans-isolated-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "unifi_wlan")
     mql: |
-      terraform.resources.where(nameLabel == "unifi_wlan" && arguments["name"] == /guest/i).all(arguments["is_guest"] == true)
+      terraform.resources("unifi_wlan").where(arguments["name"] == /guest/i).all(arguments["is_guest"] == true)
   - uid: mondoo-unifi-security-guest-wlans-isolated-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "unifi_wlan")
     mql: |
@@ -808,9 +843,9 @@ queries:
   # ─── Threat Management ───────────────────────────────────────────────────────
   # No Terraform variants: the IPS/IDS toggle and `ipsMode` field live under UniFi's
   # Threat Management settings (`siteSettings.threatManagement.enabled` / `.ipsMode`).
-  # The ubiquiti-community/unifi provider exposes no threat-management settings —
-  # unifi_setting carries only `mgmt`, `radius`, and `usg` nested attributes. IPS can
-  # only be enabled in the controller UI under Settings > Security > Threat Management.
+  # The ubiquiti-community/unifi provider exposes the setting via the `ips` nested
+  # attribute on unifi_setting (`ips_mode`), so a Terraform remediation entry is
+  # provided below.
   - uid: mondoo-unifi-security-ips-enabled
     title: Ensure Intrusion Prevention System is enabled
     impact: 80
@@ -857,6 +892,8 @@ queries:
       remediation:
         - id: console
           desc: |
+            Threat Management and IPS require a UniFi gateway such as a UDM or USG and download a signature set before they can block traffic. The exact path varies by controller version.
+
             To enable Threat Management in IPS mode using the UniFi Network web application:
 
             1. Go to **Settings > Security > Threat Management**.
@@ -864,6 +901,19 @@ queries:
             3. Set the mode to **IPS** (Intrusion Prevention System).
             4. Review and enable appropriate threat categories for your environment.
         # No cli remediation: Threat Management is a controller-managed site setting; the device SSH CLI cannot change it and the controller overwrites local changes on provision.
+        - id: terraform
+          desc: |
+            To enable Threat Management in IPS mode in Terraform, set `ips_mode` to `ips` inside the `ips` attribute on the `unifi_setting` resource:
+
+            ```hcl
+            resource "unifi_setting" "ips" {
+              site = "default"
+
+              ips = {
+                ips_mode = "ips"
+              }
+            }
+            ```
     refs:
       - url: https://help.ui.com/hc/en-us/articles/360006893234
         title: UniFi Threat Management
@@ -914,6 +964,8 @@ queries:
       remediation:
         - id: console
           desc: |
+            DNS filtering is part of Threat Management and requires a UniFi gateway such as a UDM or USG, along with a downloaded signature set. The exact path varies by controller version.
+
             To enable DNS filtering using the UniFi Network web application:
 
             1. Go to **Settings > Security > Threat Management**.
@@ -970,10 +1022,13 @@ queries:
       remediation:
         - id: console
           desc: |
+            The internal honeypot is part of Threat Management and requires a UniFi gateway such as a UDM or USG, along with a downloaded signature set. The exact path varies by controller version.
+
             To enable the internal honeypot using the UniFi Network web application:
 
             1. Go to **Settings > Security > Threat Management**.
             2. Enable **Internal Honeypot**.
+            3. Select the network and choose an unused IP address on that network so it does not conflict with a real host.
         # No cli remediation: the internal honeypot is a controller-managed site setting; the device SSH CLI cannot change it and the controller overwrites local changes on provision.
     refs:
       - url: https://help.ui.com/hc/en-us/articles/360006893234
@@ -1071,7 +1126,7 @@ queries:
   - uid: mondoo-unifi-security-upnp-disabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "unifi_setting")
     mql: |
-      terraform.resources.where(nameLabel == "unifi_setting" && arguments["usg"] != empty).all(arguments["usg"]["upnp_enabled"] == false)
+      terraform.resources("unifi_setting").where(arguments["usg"] != empty).all(arguments["usg"]["upnp_enabled"] == false)
   - uid: mondoo-unifi-security-upnp-disabled-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "unifi_setting")
     mql: |
@@ -1167,7 +1222,7 @@ queries:
   - uid: mondoo-unifi-security-broadcast-ping-disabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "unifi_setting")
     mql: |
-      terraform.resources.where(nameLabel == "unifi_setting" && arguments["usg"] != empty).all(arguments["usg"]["broadcast_ping"] == false)
+      terraform.resources("unifi_setting").where(arguments["usg"] != empty).all(arguments["usg"]["broadcast_ping"] == false)
   - uid: mondoo-unifi-security-broadcast-ping-disabled-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "unifi_setting")
     mql: |
@@ -1263,7 +1318,7 @@ queries:
   - uid: mondoo-unifi-security-icmp-redirects-disabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "unifi_setting")
     mql: |
-      terraform.resources.where(nameLabel == "unifi_setting" && arguments["usg"] != empty).all(arguments["usg"]["receive_redirects"] == false)
+      terraform.resources("unifi_setting").where(arguments["usg"] != empty).all(arguments["usg"]["receive_redirects"] == false)
   - uid: mondoo-unifi-security-icmp-redirects-disabled-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "unifi_setting")
     mql: |
@@ -1357,7 +1412,7 @@ queries:
   - uid: mondoo-unifi-security-syn-cookies-enabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "unifi_setting")
     mql: |
-      terraform.resources.where(nameLabel == "unifi_setting" && arguments["usg"] != empty).all(arguments["usg"]["syn_cookies"] == true)
+      terraform.resources("unifi_setting").where(arguments["usg"] != empty).all(arguments["usg"]["syn_cookies"] == true)
   - uid: mondoo-unifi-security-syn-cookies-enabled-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "unifi_setting")
     mql: |
@@ -1423,6 +1478,8 @@ queries:
 
             1. Go to **Settings > Networks > Global Switch Settings**.
             2. Enable **DHCP Snooping**.
+
+            **Caution:** Any uplink port that carries the legitimate DHCP server must be marked as trusted. Otherwise DHCP snooping drops the upstream DHCP responses and clients cannot obtain or renew leases. After enabling, verify that clients still renew their leases successfully.
         # No cli remediation: global switch settings are controller-managed; the device SSH CLI cannot change them and the controller overwrites local changes on provision.
     refs:
       - url: https://help.ui.com/hc/en-us/articles/360042281174
@@ -1495,7 +1552,7 @@ queries:
         # No cli remediation: global switch settings are controller-managed; the device SSH CLI cannot change them and the controller overwrites local changes on provision.
         - id: terraform
           desc: |
-            To set the STP version to RSTP in Terraform, set `stp_version = "rstp"` on each `unifi_device` resource managing a switch. Note that the runtime check inspects the site-wide global switch STP version via `unifi.siteSettings.globalSwitch.stpVersion`; the ubiquiti-community/unifi provider only exposes STP per-device, so the variant scope is each declared switch device rather than the site default:
+            To set the STP version to RSTP in Terraform, set `stp_version = "rstp"` on each `unifi_device` resource that manages a switch. The check run against a live controller inspects the site-wide global switch STP version, while the ubiquiti-community/unifi provider only exposes STP per device, so this setting must be applied to every declared switch:
 
             ```hcl
             resource "unifi_device" "switch" {
@@ -1515,7 +1572,7 @@ queries:
   - uid: mondoo-unifi-security-stp-enabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "unifi_device")
     mql: |
-      terraform.resources.where(nameLabel == "unifi_device" && arguments["stp_version"] != empty).all(arguments["stp_version"] == "rstp")
+      terraform.resources("unifi_device").where(arguments["stp_version"] != empty).all(arguments["stp_version"] == "rstp")
   - uid: mondoo-unifi-security-stp-enabled-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "unifi_device")
     mql: |
@@ -1617,7 +1674,7 @@ queries:
   - uid: mondoo-unifi-security-ssh-disabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "unifi_setting")
     mql: |
-      terraform.resources.where(nameLabel == "unifi_setting" && arguments["mgmt"] != empty).all(arguments["mgmt"]["ssh_enabled"] == false)
+      terraform.resources("unifi_setting").where(arguments["mgmt"] != empty).all(arguments["mgmt"]["ssh_enabled"] == false)
   - uid: mondoo-unifi-security-ssh-disabled-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "unifi_setting")
     mql: |
@@ -1674,11 +1731,13 @@ queries:
       remediation:
         - id: console
           desc: |
+            **Warning:** Do not disable password authentication until at least one key-based login is confirmed working. If you disable it first, you can lose SSH access to every device.
+
             To disable device SSH password authentication using the UniFi Network web application:
 
             1. Go to **Settings > System > Advanced**.
-            2. If SSH must remain enabled, disable **SSH Password Authentication**.
-            3. Configure SSH key-based authentication instead.
+            2. Add an SSH public key for each administrator and verify key-based SSH access works.
+            3. Disable **SSH Password Authentication**.
         # No cli remediation: the device SSH authentication setting is a controller-managed site setting; the device SSH CLI cannot durably change it and the controller overwrites local changes on provision.
     refs:
       - url: https://help.ui.com/hc/en-us/articles/204909374
@@ -1739,7 +1798,7 @@ queries:
         title: UniFi advanced system settings
 
   # No Terraform variants: controller automatic backups are a controller-wide setting
-  # (controllerSettings.autobackupEnabled), not a site setting. The ubiquiti-community/unifi
+  # (controller.autobackupEnabled), not a site setting. The ubiquiti-community/unifi
   # provider exposes no `auto_backup` or `autobackup_enabled` attribute on any resource —
   # unifi_setting covers per-site mgmt/radius/usg only. Backups are configured via the
   # controller's System Settings UI.
@@ -1761,7 +1820,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc9-1-1
       compliance/vda-isa-5: false
     mql: |
-      unifi.controllerSettings.autobackupEnabled == true
+      unifi.controller.autobackupEnabled == true
     docs:
       desc: |
         This check ensures that automatic backups of the UniFi controller configuration are enabled.
@@ -1856,8 +1915,8 @@ queries:
           desc: |
             To enable automatic firmware upgrades using the UniFi Network web application:
 
-            1. Go to **Settings > System > Firmware**.
-            2. Enable **Auto Update**.
+            1. Go to **Settings > System > Firmware**. The exact path varies by controller version.
+            2. Enable **Auto Update** for device firmware.
             3. Configure the update window to a low-traffic period.
         # No cli remediation: the auto-update setting is a controller-managed site setting; the device SSH CLI cannot change it and the controller overwrites local changes on provision.
         - id: terraform
@@ -1884,7 +1943,7 @@ queries:
   - uid: mondoo-unifi-security-auto-upgrade-enabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "unifi_setting")
     mql: |
-      terraform.resources.where(nameLabel == "unifi_setting" && arguments["mgmt"] != empty).all(arguments["mgmt"]["auto_upgrade"] == true)
+      terraform.resources("unifi_setting").where(arguments["mgmt"] != empty).all(arguments["mgmt"]["auto_upgrade"] == true)
   - uid: mondoo-unifi-security-auto-upgrade-enabled-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "unifi_setting")
     mql: |
@@ -1895,7 +1954,7 @@ queries:
       terraform.state.resources.where(type == "unifi_setting" && values.mgmt != empty).all(values.mgmt.auto_upgrade == true)
 
   # No Terraform variants: the analytics/telemetry opt-out is a controller-wide setting
-  # (controllerSettings.enableAnalytics), not a site setting. The ubiquiti-community/unifi
+  # (controller.enableAnalytics), not a site setting. The ubiquiti-community/unifi
   # unifi_setting resource only exposes the per-site `mgmt`, `radius`, and `usg` blocks —
   # no analytics/telemetry toggle on either the unifi_setting resource or the unifi_site
   # resource. The setting can only be changed in the controller UI.
@@ -1917,7 +1976,7 @@ queries:
       compliance/soc2-2017: false
       compliance/vda-isa-5: false
     mql: |
-      unifi.controllerSettings.enableAnalytics == false
+      unifi.controller.enableAnalytics == false
     docs:
       desc: |
         This check ensures that analytics data collection is disabled on the UniFi controller.
@@ -2005,7 +2064,7 @@ queries:
             1. Go to **Settings > System > Remote Logging**.
             2. Enable **Remote Syslog**.
             3. Configure the syslog server IP address and port.
-            4. Enable **Log All Contents** for comprehensive logging.
+            4. Optionally enable **Log All Contents** for comprehensive logging. This greatly increases log volume and may include sensitive data, so enable it only if the syslog target is sized and access-controlled for it.
         # No cli remediation: remote logging is a controller-managed site setting; the device SSH CLI cannot change it and the controller overwrites local changes on provision.
     refs:
       - url: https://help.ui.com/hc/en-us/articles/204909374
@@ -2048,9 +2107,9 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no enabled port forwarding rules expose common management ports (SSH, HTTPS, UniFi controller) to the internet. Both the forwarded (external) port and the destination (internal) port are checked.
+        This check ensures that no enabled port forwarding rules expose common management ports (SSH, HTTPS, UniFi controller) to the internet, and that no rule forwards traffic directly to a UniFi-managed device. Both the forwarded (external) port and the destination (internal) port are checked, and the destination IP is compared against the IP addresses of adopted UniFi devices.
 
-        **Note:** This check matches exact port strings. Port ranges (e.g., "8000-8999") that include management ports are not detected by this check.
+        **Note:** This check matches exact port strings. Port ranges (e.g., "8000-8999") that include management ports are not detected by this check. The UniFi variant additionally fails any rule whose destination is an adopted device's IP (forwarding straight to an access point, switch, or gateway).
 
         **Why this matters**
 
@@ -2074,8 +2133,10 @@ queries:
 
             1. Go to **Settings > Routing > Port Forwarding**.
             2. Review all enabled port forwarding rules.
-            3. Remove or disable any rules forwarding ports 22, 443, 8443, or 8080.
-            4. Use a VPN to access management interfaces remotely instead of port forwarding.
+            3. Confirm whether each rule serves a legitimate application before removing it, since a rule on port 443 may front a real internal HTTPS service rather than a management interface. For a rule you must keep, restrict the allowed source IPs or move the service behind a VPN instead of deleting it.
+            4. Remove or disable any rules forwarding ports 22, 443, 8443, or 8080 that do not serve a legitimate application.
+            5. Remove or disable any rule whose destination IP belongs to an adopted UniFi device such as an access point, switch, or gateway.
+            6. Use a VPN to access management interfaces remotely instead of port forwarding.
         # No cli remediation: port forwarding rules are controller-managed; the device SSH CLI cannot change them and the controller overwrites local changes on provision.
         - id: terraform
           desc: |
@@ -2096,11 +2157,11 @@ queries:
   - uid: mondoo-unifi-security-no-port-forwards-to-mgmt-unifi
     filters: asset.platform == "unifi"
     mql: |
-      unifi.portForwards.where(enabled == true).none(fwdPort == "22" || fwdPort == "443" || fwdPort == "8443" || fwdPort == "8080" || dstPort == "22" || dstPort == "443" || dstPort == "8443" || dstPort == "8080")
+      unifi.portForwards.where(enabled == true).none(fwdPort.in(["22", "443", "8443", "8080"]) || dstPort.in(["22", "443", "8443", "8080"]) || fwd.in(unifi.devices.map(ip)))
   - uid: mondoo-unifi-security-no-port-forwards-to-mgmt-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "unifi_port_forward")
     mql: |
-      terraform.resources.where(nameLabel == "unifi_port_forward").all(
+      terraform.resources("unifi_port_forward").all(
         arguments["wan"]["port"] != "22" && arguments["wan"]["port"] != "443" && arguments["wan"]["port"] != "8443" && arguments["wan"]["port"] != "8080" &&
         arguments["forward"]["port"] != "22" && arguments["forward"]["port"] != "443" && arguments["forward"]["port"] != "8443" && arguments["forward"]["port"] != "8080"
       )
@@ -2120,9 +2181,9 @@ queries:
       )
 
   # No Terraform variants: DNS-over-HTTPS is configured under a `doh` site setting in the
-  # UniFi controller, but the ubiquiti-community/unifi unifi_setting resource only exposes
-  # `mgmt`, `radius`, and `usg` nested attributes — there is no `doh` block. The setting
-  # can only be toggled through the controller UI or the network-application API.
+  # UniFi controller. The ubiquiti-community/unifi provider exposes the setting via the
+  # `doh` nested attribute on unifi_setting (`state` accepts `off`, `auto`, `manual`, or
+  # `custom`), so a Terraform remediation entry is provided below.
   - uid: mondoo-unifi-security-dns-over-https-enabled
     title: Ensure DNS over HTTPS is enabled
     impact: 40
@@ -2141,10 +2202,10 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-7-2
       compliance/vda-isa-5: vda-isa-5-5-1-2
     mql: |
-      unifi.siteSettings.doh.state != "disabled"
+      unifi.siteSettings.doh.state != "off"
     docs:
       desc: |
-        This check ensures that DNS over HTTPS (DoH) is not disabled on the UniFi controller. Any active state (such as "auto" or "enabled") is considered compliant.
+        This check ensures that DNS over HTTPS (DoH) is not turned off on the UniFi controller. The check fails when the DoH state is "off"; any other state, such as "auto", "manual", or "custom", is considered compliant.
 
         **Why this matters**
 
@@ -2170,9 +2231,25 @@ queries:
           desc: |
             To enable DNS over HTTPS using the UniFi Network web application:
 
-            1. Go to **Settings > Security > DNS Shield** or **Settings > Internet**.
+            1. Go to **Settings > Security > DNS Shield** or **Settings > Internet**. The exact path varies by controller version.
             2. Enable **DNS over HTTPS**.
+
+            **Caution:** DoH bypasses local and split-horizon DNS, so forcing it at the gateway can break resolution of internal name zones. Choose an upstream and mode that remain compatible with your internal name resolution.
         # No cli remediation: DNS over HTTPS is a controller-managed site setting; the device SSH CLI cannot change it and the controller overwrites local changes on provision.
+        - id: terraform
+          desc: |
+            To enable DNS over HTTPS in Terraform, set `state` to a value other than `off` inside the `doh` attribute on the `unifi_setting` resource:
+
+            ```hcl
+            resource "unifi_setting" "doh" {
+              site = "default"
+
+              doh = {
+                state        = "auto"
+                server_names = ["cloudflare"]
+              }
+            }
+            ```
     refs:
       - url: https://help.ui.com/hc/en-us/articles/360052224054
         title: UniFi DNS settings
@@ -2305,18 +2382,20 @@ queries:
             1. Go to **Settings > Networks**.
             2. Select each LAN network.
             3. Under advanced settings, enable **IGMP Snooping**.
+
+            **Caution:** IGMP snooping requires an active IGMP querier on the VLAN. Without one, multicast applications such as mDNS, AirPlay, Sonos, and IPTV can stop working because their traffic is pruned. UniFi enables a querier alongside snooping, but test these applications on one network before rolling the change out broadly.
         # No cli remediation: network configuration is controller-managed; the device SSH CLI cannot change it and the controller overwrites local changes on provision.
         - id: terraform
           desc: |
-            To enable IGMP snooping in Terraform, set `igmp_snooping = true` on each `unifi_network` resource. Note that the runtime check filters by `networkGroup == "LAN"`; the ubiquiti-community/unifi provider has no `network_group` argument, so the variant applies the assertion to every declared network — keep that in mind for non-LAN networks where snooping may not be desired:
+            To enable IGMP snooping in Terraform, set `igmp_snooping = true` on each `unifi_network` resource. The check run against a live controller filters networks by the LAN interface group; the ubiquiti-community/unifi provider has no equivalent argument, so the assertion applies to every declared network. Keep that in mind for non-LAN networks where snooping may not be desired:
 
             ```hcl
             resource "unifi_network" "lan" {
-              name           = "Default"
-              purpose        = "corporate"
-              subnet         = "10.0.0.0/24"
-              vlan_id        = 1
-              igmp_snooping  = true
+              name          = "Default"
+              # The provider expects the gateway address in CIDR notation, not the network address.
+              subnet        = "10.0.0.1/24"
+              vlan          = 1
+              igmp_snooping = true
             }
             ```
     refs:
@@ -2330,7 +2409,7 @@ queries:
   - uid: mondoo-unifi-security-igmp-snooping-enabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "unifi_network")
     mql: |
-      terraform.resources.where(nameLabel == "unifi_network").all(arguments["igmp_snooping"] == true)
+      terraform.resources("unifi_network").all(arguments["igmp_snooping"] == true)
   - uid: mondoo-unifi-security-igmp-snooping-enabled-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "unifi_network")
     mql: |
@@ -2366,7 +2445,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-7-2
       compliance/vda-isa-5: vda-isa-5-5-1-2
     mql: |
-      unifi.vpnServers.where(enabled == true).all(protocol == "wireguard" || protocol == "ipsec")
+      unifi.vpnServers.where(enabled == true).all(protocol.in(["wireguard", "ipsec"]))
     docs:
       desc: |
         This check ensures that all enabled VPN servers use modern protocols such as WireGuard or IPsec rather than legacy protocols.
@@ -2389,12 +2468,12 @@ queries:
       remediation:
         - id: console
           desc: |
-            To set a modern protocol on a VPN server using the UniFi Network web application:
+            To replace a legacy VPN server using the UniFi Network web application:
 
             1. Go to **Settings > VPN > VPN Server**.
-            2. Select each VPN server configuration.
-            3. Set the protocol to **WireGuard** or **IPsec**.
-            4. Migrate any existing OpenVPN tunnels to a modern protocol.
+            2. Create a new VPN server that uses **WireGuard**, or create an IPsec tunnel under **Settings > VPN > Site-to-Site VPN**.
+            3. Migrate remote users to the new server configuration.
+            4. Remove the legacy OpenVPN server.
         # No cli remediation: VPN configuration is controller-managed; the device SSH CLI cannot change it and the controller overwrites local changes on provision.
     refs:
       - url: https://help.ui.com/hc/en-us/articles/115005445768
@@ -2482,7 +2561,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-7-2
       compliance/vda-isa-5: vda-isa-5-5-1-2
     mql: |
-      unifi.vpnClients.where(enabled == true).all(protocol == "wireguard" || protocol == "ipsec")
+      unifi.vpnClients.where(enabled == true).all(protocol.in(["wireguard", "ipsec"]))
     docs:
       desc: |
         This check ensures that all enabled VPN client connections use modern protocols such as WireGuard or IPsec.
@@ -2505,12 +2584,11 @@ queries:
       remediation:
         - id: console
           desc: |
-            To set a modern protocol on a VPN client using the UniFi Network web application:
+            To replace a legacy VPN client using the UniFi Network web application:
 
             1. Go to **Settings > VPN > VPN Client**.
-            2. Select each VPN client configuration.
-            3. Set the protocol to **WireGuard** or **IPsec**.
-            4. Coordinate with the remote site to ensure protocol compatibility.
+            2. Create a new VPN client connection that uses **WireGuard** or **IPsec**, coordinating with the remote site for protocol compatibility.
+            3. Verify the new tunnel is connected, then remove the legacy OpenVPN client.
         # No cli remediation: VPN configuration is controller-managed; the device SSH CLI cannot change it and the controller overwrites local changes on provision.
     refs:
       - url: https://help.ui.com/hc/en-us/articles/115005445768
@@ -2541,10 +2619,10 @@ queries:
       compliance/soc2-2017: soc2-control-cc7-1-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
     mql: |
-      unifi.devices.all(upgradable == false)
+      unifi.devices.all(upgradable == false && semver(version) >= semver(requiredVersion))
     docs:
       desc: |
-        This check ensures that all adopted UniFi devices are running the latest available firmware with no pending upgrades.
+        This check ensures that all adopted UniFi devices are running the latest available firmware with no pending upgrades, and that each device meets the controller's minimum required firmware version.
 
         **Why this matters**
 
@@ -2553,6 +2631,7 @@ queries:
           - Network devices are high-value targets because compromising them provides access to all traffic passing through.
           - Even with automatic upgrades enabled, devices may fail to update due to connectivity issues or adoption problems.
           - This check verifies the actual device state rather than just the auto-upgrade setting.
+          - It also fails any device running below the controller's minimum required firmware version (`requiredVersion`), using semantic-version comparison rather than a string match.
 
         Keeping firmware current ensures:
           - Known vulnerabilities are patched promptly.
@@ -2574,10 +2653,284 @@ queries:
             1. Go to **Devices** and review devices showing available updates.
             2. Click **Update** on each device with a pending firmware upgrade.
             3. If devices fail to update, verify they are properly adopted and can reach the update servers.
-            4. Enable **Auto Update** under **Settings > System > Firmware** to prevent future drift.
+            4. Enable automatic updates under **Settings > System > Updates** to prevent future drift.
         # No cli remediation: firmware updates are orchestrated by the controller; the device SSH CLI has no supported firmware-update path that the controller will not revert.
     refs:
       - url: https://help.ui.com/hc/en-us/articles/204911424
         title: UniFi firmware management
 
 
+  - uid: mondoo-unifi-security-no-eol-devices
+    title: Ensure no end-of-life devices are in use
+    impact: 90
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-tvm-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-8
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ip-12
+      compliance/nist-csf-2: nist-csf-2-pr-ps-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-1
+      compliance/pci-dss-4: pcidss-requirement-6-3-3
+      compliance/soc2-2017: soc2-control-cc7-1-1
+      compliance/vda-isa-5: vda-isa-5-5-2-1
+    mql: |
+      unifi.devices.all(modelEol == false)
+    docs:
+      desc: |
+        This check ensures that no adopted UniFi devices have reached end-of-life (EOL) status.
+
+        **Why this matters**
+
+        End-of-life hardware no longer receives firmware or security updates from Ubiquiti:
+          - Vulnerabilities discovered after a device reaches EOL are never patched.
+          - Network devices are high-value targets — a compromised access point, switch, or gateway exposes all traffic that flows through it.
+          - EOL devices accumulate unmitigated risk for as long as they remain in service.
+
+        Replacing end-of-life hardware ensures:
+          - Devices continue to receive security patches.
+          - The network is not anchored to permanently vulnerable equipment.
+      audit: |
+        To verify device lifecycle status using the UniFi Network web application:
+
+        1. Sign in to the UniFi Network web application.
+        2. Go to **Devices** and review each adopted device's model.
+        3. Cross-reference the model against Ubiquiti's end-of-life announcements.
+
+        If no adopted device is end-of-life, the check passes. If any device's model is end-of-life, the check fails.
+      remediation:
+        - id: console
+          desc: |
+            To remediate end-of-life devices using the UniFi Network web application:
+
+            1. Identify the devices reported as end-of-life under **Devices**.
+            2. Plan and budget replacement with a currently supported model.
+            3. Migrate configuration to the replacement device and decommission the end-of-life hardware.
+        # No cli remediation: device lifecycle status is reported by the controller; no device CLI action changes a model's end-of-life state.
+    refs:
+      - url: https://help.ui.com/hc/en-us/articles/204910134
+        title: UniFi device lifecycle and support
+
+  - uid: mondoo-unifi-security-no-unsupported-devices
+    title: Ensure no unsupported devices are adopted
+    impact: 50
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ccc-06
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ip-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-1
+      compliance/pci-dss-4: pcidss-requirement-2-2-1
+      compliance/soc2-2017: soc2-control-cc6-8-1
+      compliance/vda-isa-5: vda-isa-5-5-2-1
+    mql: |
+      unifi.devices.all(unsupported == false)
+    docs:
+      desc: |
+        This check ensures that the controller is not managing any devices it reports as unsupported.
+
+        **Why this matters**
+
+        A device flagged as unsupported is not fully managed by the controller's current software:
+          - Security settings and provisioning the controller applies may not take effect on the device.
+          - The device may run firmware the controller can neither audit nor update.
+          - Unsupported devices represent unmanaged, unverifiable attack surface on the network.
+
+        Keeping every adopted device supported ensures the controller's hardening and update mechanisms actually apply to it.
+      audit: |
+        To verify device support status using the UniFi Network web application:
+
+        1. Sign in to the UniFi Network web application.
+        2. Go to **Devices** and review each adopted device's status.
+
+        If no adopted device is reported as unsupported, the check passes. If any device is unsupported, the check fails.
+      remediation:
+        - id: console
+          desc: |
+            To remediate unsupported devices using the UniFi Network web application:
+
+            1. Identify the unsupported devices under **Devices**.
+            2. Update the controller (and the device firmware) to a version that supports the hardware, or replace the device with a supported model.
+        # No cli remediation: support status is determined by the controller software; the device CLI cannot change it.
+    refs:
+      - url: https://help.ui.com/hc/en-us/articles/204910134
+        title: UniFi device lifecycle and support
+
+  - uid: mondoo-unifi-security-dpi-enabled
+    title: Ensure Deep Packet Inspection is enabled
+    impact: 40
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
+      compliance/dora: dora-art-10
+      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
+      compliance/iso-27001-2022: iso-27001-2022-a-8-16
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-de-cm-1
+      compliance/nist-csf-2: nist-csf-2-de-cm-09
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-4
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-6
+      compliance/pci-dss-4: pcidss-requirement-10-2-1
+      compliance/soc2-2017: soc2-control-cc7-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-4
+    mql: |
+      unifi.siteSettings.dpiEnabled == true
+    docs:
+      desc: |
+        This check ensures that Deep Packet Inspection (DPI) is enabled on the UniFi controller.
+
+        **Why this matters**
+
+        DPI provides application-level visibility into the traffic crossing the network:
+          - Without DPI, traffic is only classified by port, which malware and tunneling tools routinely evade.
+          - DPI surfaces anomalous applications and destinations that flat flow logs miss.
+          - It is the data source behind UniFi's traffic-identification, fingerprinting, and several threat-management features.
+
+        Enabling DPI improves the network's detection and monitoring posture.
+      audit: |
+        To verify Deep Packet Inspection using the UniFi Network web application:
+
+        1. Sign in to the UniFi Network web application.
+        2. Go to **Settings > Security** (or **Settings > System**, depending on version).
+        3. Review the **Deep Packet Inspection** setting.
+
+        If DPI is enabled, the check passes. If it is disabled, the check fails.
+      remediation:
+        - id: console
+          desc: |
+            To enable Deep Packet Inspection using the UniFi Network web application:
+
+            1. Go to **Settings > Security**. On older versions, go to **Settings > System**.
+            2. Enable **Deep Packet Inspection**.
+        # No cli remediation: DPI is a controller-managed site setting; the device SSH CLI cannot change it and the controller overwrites local changes on provision.
+    refs:
+      - url: https://help.ui.com/hc/en-us/articles/360038690813
+        title: UniFi traffic identification and DPI
+
+  - uid: mondoo-unifi-security-geo-ip-filtering-enabled
+    title: Ensure geo-IP firewall filtering is enabled
+    impact: 40
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-2
+    mql: |
+      unifi.siteSettings.gateway.geoIpFilteringEnabled == true
+    docs:
+      desc: |
+        This check ensures that geo-IP firewall filtering is enabled on the UniFi gateway.
+
+        **Why this matters**
+
+        Geo-IP filtering blocks traffic to and from countries the organization has no legitimate business with:
+          - It removes large swaths of the internet (and the attackers operating from them) from the reachable attack surface.
+          - It reduces inbound scanning, brute-force, and command-and-control traffic from high-risk regions.
+          - Combined with explicit firewall rules, it provides defense-in-depth at the network boundary.
+
+        Note that geo-IP filtering is a coarse control and is not a substitute for proper firewall rules, but it meaningfully reduces exposure.
+      audit: |
+        To verify geo-IP filtering using the UniFi Network web application:
+
+        1. Sign in to the UniFi Network web application.
+        2. Go to **Settings > Security > Geo IP Filtering** (or **Settings > Internet Security**, depending on version).
+        3. Review whether geo-IP filtering is enabled and which countries and direction are configured.
+
+        If geo-IP filtering is enabled, the check passes. If it is disabled, the check fails.
+      remediation:
+        - id: console
+          desc: |
+            To enable geo-IP filtering using the UniFi Network web application:
+
+            1. Go to **Settings > Security > Geo IP Filtering**. On older versions, go to **Settings > Internet Security**.
+            2. Enable **Geo IP Filtering**.
+            3. Choose **Block** (or **Allow**) mode, select the countries, and set the traffic direction (both, ingress, or egress) appropriate for your environment.
+        # No cli remediation: gateway security is a controller-managed site setting; the device SSH CLI cannot change it and the controller overwrites local changes on provision.
+        - id: terraform
+          desc: |
+            To enable geo-IP filtering in Terraform, set the `geo_ip_filtering_*` attributes inside the `usg` attribute on the `unifi_setting` resource:
+
+            ```hcl
+            resource "unifi_setting" "gateway" {
+              site = "default"
+
+              usg = {
+                geo_ip_filtering_enabled           = true
+                geo_ip_filtering_block             = "block"
+                geo_ip_filtering_countries         = "KP,IR"
+                geo_ip_filtering_traffic_direction = "both"
+              }
+            }
+            ```
+    refs:
+      - url: https://help.ui.com/hc/en-us/articles/115003173168
+        title: UniFi gateway settings
+
+  - uid: mondoo-unifi-security-wlans-wpa3-only
+    title: Ensure wireless networks use WPA3 without WPA2 transition mode
+    impact: 50
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    mql: |
+      unifi.wlans.where(enabled == true && security != "open").all(wpa3Support == true && wpa3Transition == false)
+    docs:
+      desc: |
+        This check ensures that every enabled, encrypted wireless network uses WPA3 exclusively, with WPA2 transition (mixed) mode disabled.
+
+        **Why this matters**
+
+        This is a stricter, high-security tier on top of the baseline "WPA3 enabled" check. WPA3 transition mode keeps a network compatible with older WPA2-only clients, but in doing so it weakens security:
+          - Transition mode continues to accept WPA2 associations, so the network remains exposed to WPA2 weaknesses (including offline dictionary attacks against captured handshakes).
+          - A downgrade-capable network is only as strong as its weakest accepted protocol.
+          - WPA3-only mandates SAE (Simultaneous Authentication of Equals) and Protected Management Frames for every client.
+
+        Use this check for environments that can require WPA3-capable clients (for example, staff or high-sensitivity SSIDs). Networks that must support legacy WPA2-only devices will not pass and should be segmented onto their own SSID and VLAN.
+      audit: |
+        To verify WPA3-only mode using the UniFi Network web application:
+
+        1. Sign in to the UniFi Network web application.
+        2. Go to **Settings > WiFi** and select each enabled, encrypted network.
+        3. Review the **Security Protocol** setting.
+
+        If every encrypted network is set to **WPA3** (not **WPA2/WPA3** transition), the check passes. If any encrypted network uses WPA2-only or WPA2/WPA3 transition mode, the check fails.
+      remediation:
+        - id: console
+          desc: |
+            To require WPA3-only on a wireless network using the UniFi Network web application:
+
+            1. Go to **Settings > WiFi** and select the network.
+            2. Set the **Security Protocol** to **WPA3** (disable the WPA2/WPA3 transition option).
+            3. Confirm that all clients on the network support WPA3; move any legacy WPA2-only devices to a separate SSID and VLAN.
+        # No cli remediation: wireless security is a controller-managed site setting; the device SSH CLI cannot change it and the controller overwrites local changes on provision.
+    refs:
+      - url: https://help.ui.com/hc/en-us/articles/360015268353
+        title: UniFi WiFi security settings

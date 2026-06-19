@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-macos-security
     name: Mondoo macOS Security
-    version: 1.4.0
+    version: 1.4.3
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -159,13 +159,14 @@ queries:
           desc: |
             **Using the CLI**
 
-            Run the following commands to secure the audit logs and configuration files:
+            Run the following commands to secure the audit configuration file and audit logs:
 
             ```bash
             sudo chown root:wheel /etc/security/audit_control
             sudo chmod 600 /etc/security/audit_control
-            sudo chown -R root:wheel /var/audit/
-            sudo chmod -R 600 /var/audit/
+            sudo chown -R root:wheel /var/audit
+            sudo find /var/audit -type d -exec chmod 700 {} +
+            sudo find /var/audit -type f -exec chmod 600 {} +
             ```
 
             **Note:**
@@ -193,13 +194,12 @@ queries:
                     owner: root
                     group: wheel
                     mode: '0600'
-                - name: Set ownership and permissions for audit logs
-                  ansible.builtin.file:
-                    path: /var/audit/
-                    owner: root
-                    group: wheel
-                    mode: '0700'
-                    recurse: yes
+                - name: Set ownership of audit logs
+                  ansible.builtin.command: find /var/audit -exec chown root:wheel {} +
+                - name: Set audit log directory mode
+                  ansible.builtin.command: find /var/audit -type d -exec chmod 700 {} +
+                - name: Set audit log file mode
+                  ansible.builtin.command: find /var/audit -type f -exec chmod 600 {} +
             ```
 
             **Note:**
@@ -229,17 +229,7 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-2-2-1
       compliance/soc2-2017: soc2-control-cc6-8-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
-    mql: |
-      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
-        name
-        filePath1 = home + "/Library/Preferences/ByHost/com.apple.Bluetooth." + os.machineid.upcase + ".plist"
-        filePathsLocations = [filePath1]
-        filePathsLocations.where(file(_).exists) {
-          parse.plist(_) {
-            params['PrefKeyServicesEnabled'] == false || params['PrefKeyServicesEnabled'] == null
-          }
-        }
-      }
+    mql: macos.sharing.bluetoothSharing == false
     docs:
       desc: |-
         This check ensures that Bluetooth Sharing is disabled on macOS systems. Bluetooth Sharing allows files to be exchanged with Bluetooth-enabled devices, which can pose a security risk if not properly managed.
@@ -287,6 +277,8 @@ queries:
             sudo -u firstuser defaults -currentHost write com.apple.Bluetooth PrefKeyServicesEnabled -bool false
             ```
 
+            This preference is stored per user and per host, so repeat the command for every account on the system. For fleet-wide enforcement, deploy a configuration profile through your MDM instead, which applies the setting to all current and future users.
+
             **Impact:**
 
             Disabling Bluetooth Sharing prevents the system from accepting file transfers over Bluetooth, reducing the risk of unauthorized access or exploitation of Bluetooth vulnerabilities.
@@ -294,11 +286,12 @@ queries:
           desc: |
             **Using the GUI**
 
-            To disable Bluetooth Sharing using the graphical interface, follow these steps:
+            1. Open **System Settings**
+            2. Select **General**
+            3. Select **Sharing**
+            4. Turn off **Bluetooth Sharing**
 
-            1. Open **System Preferences**
-            2. Select **Sharing**
-            3. Uncheck **Bluetooth Sharing**
+            On macOS 12 and earlier, open **System Preferences**, select **Sharing**, and uncheck **Bluetooth Sharing**.
 
             **Impact:**
 
@@ -319,6 +312,8 @@ queries:
                 - name: Disable Bluetooth Sharing for user
                   ansible.builtin.command: defaults -currentHost write com.apple.Bluetooth PrefKeyServicesEnabled -bool false
             ```
+
+            This preference is stored per user and per host, so run the task with `become_user` set to each account on the system. For fleet-wide enforcement, deploy a configuration profile through your MDM instead, which applies the setting to all current and future users.
 
             **Impact:**
 
@@ -351,7 +346,7 @@ queries:
           parse.plist(filePath1).params["com.apple.mDNSResponder"]["NoMulticastAdvertisements"]["value"] == true
         }
         filePath2 = "/Library/Preferences/com.apple.mDNSResponder.plist"
-        b = file(filePath2).exists && parse.plist(filePath2).params["com.apple.mDNSResponder"]["NoMulticastAdvertisements"]["value"] == true
+        b = file(filePath2).exists && parse.plist(filePath2).params["NoMulticastAdvertisements"] == true
         filePath3 = "/Library/Managed Preferences/com.apple.mDNSResponder.plist"
         c = file(filePath3).exists && parse.plist(filePath3).params["NoMulticastAdvertisements"] == true
         a || b || c
@@ -394,24 +389,20 @@ queries:
             sudo defaults write /Library/Preferences/com.apple.mDNSResponder.plist NoMulticastAdvertisements -bool true
             ```
 
+            Restart the system for the change to take effect, because `mDNSResponder` only reads this preference at startup. The setting is inert until that reboot, so do not assume multicast advertising stops the moment the command runs. Plan the restart for a maintenance window on a server or shared Mac, where a reboot is disruptive.
+
             **Impact:**
 
-            Some applications, such as Final Cut Studio and AirPort Base Station management, may not operate properly if the `mDNSResponder` is turned off.
+            Some applications, such as Final Cut Studio and AirPort Base Station management, may not operate properly if multicast advertising is turned off.
         - id: gui
           desc: |
             **Using the GUI**
 
-            Perform the following to disable Bonjour advertising services:
-
-            _Graphical Method:_
-
-            1. Open **System Preferences**
-            2. Select **Sharing**
-            3. Uncheck **Bonjour** or any related service that advertises via Bonjour
+            macOS provides no graphical control for Bonjour multicast advertising. Use the CLI command above, or deploy a configuration profile that sets `NoMulticastAdvertisements` to true in the `com.apple.mDNSResponder` preference domain.
 
             **Impact:**
 
-            Some applications, such as Final Cut Studio and AirPort Base Station management, may not operate properly if the `mDNSResponder` is turned off.
+            Some applications, such as Final Cut Studio and AirPort Base Station management, may not operate properly if multicast advertising is turned off.
         - id: ansible
           desc: |
             **Using Ansible**
@@ -451,22 +442,7 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-2-2-1
       compliance/soc2-2017: soc2-control-cc6-8-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
-    mql: |
-      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
-        name
-        filePath1 = "/Library/Managed Preferences/" + name + "/complete.plist"
-        a = file(filePath1).exists == true && [filePath1].where(file(_).exists) {
-          parse.plist(filePath1).params["com.apple.applicationaccess"]["allowContentCaching"]["value"] == false &&
-            parse.plist(filePath1).params["com.apple.AssetCache"]["Activated"]["value"] == false
-        }
-        filePath2 = "/Library/Preferences/com.apple.AssetCache.plist"
-        filePath3 = "/Library/Preferences/com.apple.applicationaccess.plist"
-        b = file(filePath2).exists &&
-          parse.plist(filePath2).params["Activated"] == false &&
-            file(filePath3).exists &&
-              parse.plist(filePath3).params["allowContentCaching"] == false
-        a || b
-      }
+    mql: macos.sharing.contentCaching == false
     docs:
       desc: |
         This check ensures that Content Caching is disabled on macOS systems to prevent unnecessary resource usage and potential security risks associated with local content distribution.
@@ -522,9 +498,12 @@ queries:
           desc: |
             **Using the GUI**
 
-            1. Open **System Preferences**
-            2. Select **Sharing**
-            3. Uncheck **Content Caching**
+            1. Open **System Settings**
+            2. Select **General**
+            3. Select **Sharing**
+            4. Turn off **Content Caching**
+
+            On macOS 12 and earlier, open **System Preferences**, select **Sharing**, and uncheck **Content Caching**.
 
             **Impact:**
 
@@ -568,7 +547,7 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-2-2-1
       compliance/soc2-2017: soc2-control-cc6-8-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
-    mql: services.where( name == 'com.apple.smbd' ).all( enabled == false && running == false )
+    mql: macos.sharing.fileSharing == false
     docs:
       desc: |
         This check ensures that SMB file sharing is disabled on macOS systems to reduce the attack surface and enhance security.
@@ -609,11 +588,14 @@ queries:
           desc: |
             **Using the CLI**
 
-            Run this command to disable SMB file sharing:
+            Run these commands to disable SMB file sharing:
 
             ```bash
-            sudo launchctl unload -w /System/Library/LaunchDaemons/com.apple.smbd.plist
+            sudo launchctl disable system/com.apple.smbd
+            sudo launchctl bootout system/com.apple.smbd
             ```
+
+            The `bootout` command reports an error if the service is not currently running; that error is harmless. On older macOS versions you can use the legacy form `sudo launchctl unload -w /System/Library/LaunchDaemons/com.apple.smbd.plist`.
 
             **Impact:**
 
@@ -622,9 +604,12 @@ queries:
           desc: |
             **Using the GUI**
 
-            1. Open **System Preferences**
-            2. Select **Sharing**
-            3. Uncheck **File Sharing**
+            1. Open **System Settings**
+            2. Select **General**
+            3. Select **Sharing**
+            4. Turn off **File Sharing**
+
+            On macOS 12 and earlier, open **System Preferences**, select **Sharing**, and uncheck **File Sharing**.
 
             **Impact:**
 
@@ -641,9 +626,16 @@ queries:
               hosts: all
               become: true
               tasks:
-                - name: Disable File Sharing
-                  ansible.builtin.command: launchctl unload -w /System/Library/LaunchDaemons/com.apple.smbd.plist
+                - name: Disable the SMB daemon
+                  ansible.builtin.command: launchctl disable system/com.apple.smbd
+                - name: Stop the SMB daemon
+                  ansible.builtin.command: launchctl bootout system/com.apple.smbd
+                  register: bootout_result
+                  failed_when: false
+                  changed_when: bootout_result.rc == 0
             ```
+
+            The `bootout` task exits non-zero harmlessly when the daemon is not running; that failure is suppressed with `failed_when: false`, and `changed` is reported only when it actually stops the service. The `disable` task runs `launchctl` through `ansible.builtin.command`, which always reports `changed` even when the daemon is already disabled, so this playbook is not fully idempotent.
 
             **Impact:**
 
@@ -668,22 +660,7 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-2-2-1
       compliance/soc2-2017: soc2-control-cc6-8-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
-    mql: |
-      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
-        name
-        filePath1 = "/Library/Preferences/SystemConfiguration/com.apple.nat.plist"
-        a = file(filePath1).exists == true && [filePath1].where(file(_).exists) {
-          parse.plist(filePath1).params['NAT']['Enabled'] == 0
-        }
-        filePath2 = "/Library/Managed Preferences/" + name + "/complete.plist"
-        b = file(filePath2).exists == true && [filePath2].where(file(_).exists) {
-          parse.plist(filePath2).params["com.apple.MCX"]["forceInternetSharingOff"]["value"] == true
-        }
-        filePath3 = "/Library/Managed Preferences/com.apple.MCX.plist"
-        c = file(filePath3).exists == true &&
-          parse.plist(filePath3).params['forceInternetSharingOff'] == true
-        a || b || c
-      }
+    mql: macos.sharing.internetSharing == false
     docs:
       desc: |
         This check ensures that Internet Sharing is disabled on macOS systems to prevent unauthorized devices from accessing the network through the Mac. Internet Sharing allows the Mac to function as a router, sharing its internet connection with other devices, which can pose security risks.
@@ -735,9 +712,12 @@ queries:
           desc: |
             **Using the GUI**
 
-            1. Open **System Preferences**
-            2. Select **Sharing**
-            3. Uncheck **Internet Sharing**
+            1. Open **System Settings**
+            2. Select **General**
+            3. Select **Sharing**
+            4. Turn off **Internet Sharing**
+
+            On macOS 12 and earlier, open **System Preferences**, select **Sharing**, and uncheck **Internet Sharing**.
 
             **Impact:**
 
@@ -781,21 +761,7 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-2-2-1
       compliance/soc2-2017: soc2-control-cc6-8-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
-    mql: |
-      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
-        name
-        filePath = home + '/Library/Preferences/com.apple.amp.mediasharingd.plist'
-        a = file(filePath).exists == true && [filePath].where(file(_).exists) {
-            parse.plist(filePath).params['home-sharing-enabled'] == 0
-          }
-        filePath2 = "/Library/Managed Preferences/" + name + "/complete.plist"
-        b = file(filePath2).exists == true && [filePath2].where(file(_).exists) {
-            parse.plist(filePath2).params["com.apple.preferences.sharing.SharingPrefsExtension"]["homeSharingUIStatus"]["value"] == 0
-          }
-        filePath3 = "/Library/Managed Preferences/com.apple.preferences.sharing.SharingPrefsExtension.plist"
-        c = file(filePath3).exists && parse.plist(filePath3).params["homeSharingUIStatus"] == 0
-        a || b || c
-      }
+    mql: macos.sharing.mediaSharing == false
     docs:
       desc: |
         This check ensures that Media Sharing is disabled on macOS systems to prevent unauthorized access to shared media content. Media Sharing allows a Mac to share downloaded content, such as movies, music, or TV shows, with other Apple devices signed in with the same Apple ID or on the same network.
@@ -840,6 +806,8 @@ queries:
             sudo -u <username> defaults write com.apple.amp.mediasharingd home-sharing-enabled -int 0
             ```
 
+            This preference is stored per user, so repeat the command for every account on the system. For fleet-wide enforcement, deploy a configuration profile through your MDM instead, which applies the setting to all current and future users.
+
             **Impact:**
 
             Disabling Media Sharing prevents the system from being used as a media server, reducing its visibility and potential attack surface. For environments requiring media sharing, dedicated servers should be used instead of user endpoints.
@@ -847,9 +815,12 @@ queries:
           desc: |
             **Using the GUI**
 
-            1. Open **System Preferences**
-            2. Select **Sharing**
-            3. Uncheck **Media Sharing**
+            1. Open **System Settings**
+            2. Select **General**
+            3. Select **Sharing**
+            4. Turn off **Media Sharing**
+
+            On macOS 12 and earlier, open **System Preferences**, select **Sharing**, and uncheck **Media Sharing**.
 
             **Impact:**
 
@@ -858,17 +829,20 @@ queries:
           desc: |
             **Using Ansible**
 
-            To disable Media Sharing using Ansible, you can use the following playbook:
+            To disable Media Sharing using Ansible, run the task as the user whose preference you are changing:
 
             ```yaml
             ---
             - name: Disable Media Sharing
               hosts: all
               become: true
+              become_user: firstuser
               tasks:
-                - name: Disable Media Sharing
+                - name: Disable Media Sharing for the user
                   ansible.builtin.command: defaults write com.apple.amp.mediasharingd home-sharing-enabled -int 0
             ```
+
+            Replace `firstuser` with the account that has Media Sharing enabled. This preference is stored per user, so run the task with `become_user` set to each account on the system. For fleet-wide enforcement, deploy a configuration profile through your MDM instead, which applies the setting to all current and future users.
 
             **Impact:**
 
@@ -893,7 +867,7 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-2-2-1
       compliance/soc2-2017: soc2-control-cc6-8-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
-    mql: command('cupsctl | grep _share_printers' ).stdout.contains("_share_printers=0")
+    mql: macos.sharing.printerSharing == false
     docs:
       desc: |
         This check ensures that Printer Sharing is disabled on macOS systems to prevent the computer from being used as a print server. Printer Sharing allows other computers to send print jobs to the Mac, which can pose security risks and increase the attack surface.
@@ -945,9 +919,12 @@ queries:
           desc: |
             **Using the GUI**
 
-            1. Open **System Preferences**
-            2. Select **Sharing**
-            3. Uncheck **Printer Sharing**
+            1. Open **System Settings**
+            2. Select **General**
+            3. Select **Sharing**
+            4. Turn off **Printer Sharing**
+
+            On macOS 12 and earlier, open **System Preferences**, select **Sharing**, and uncheck **Printer Sharing**.
 
             **Impact:**
 
@@ -1036,6 +1013,8 @@ queries:
             sudo systemsetup -setremoteappleevents off
             ```
 
+            On macOS 13 and later, the terminal application running this command must be granted Full Disk Access in System Settings under Privacy & Security. Without it, `systemsetup` cannot change the setting.
+
             **Impact:**
 
             With Remote Apple Events enabled, an AppleScript program running on another Mac can interact with the local computer, potentially leading to unauthorized access or misuse.
@@ -1043,9 +1022,12 @@ queries:
           desc: |
             **Using the GUI**
 
-            1. Open **System Preferences**
-            2. Select **Sharing**
-            3. Uncheck **Remote Apple Events**
+            1. Open **System Settings**
+            2. Select **General**
+            3. Select **Sharing**
+            4. Turn off **Remote Apple Events**
+
+            On macOS 12 and earlier, open **System Preferences**, select **Sharing**, and uncheck **Remote Apple Events**.
 
             **Impact:**
 
@@ -1131,8 +1113,14 @@ queries:
             Run this command to disable Remote Login:
 
             ```bash
-            sudo systemsetup -setremotelogin off
+            sudo systemsetup -f -setremotelogin off
             ```
+
+            The `-f` flag suppresses the interactive confirmation prompt. On macOS 13 and later, the terminal application running this command must be granted Full Disk Access in System Settings under Privacy & Security.
+
+            **Warning:**
+
+            Disabling Remote Login immediately ends SSH access to this machine. If you are connected over SSH or manage this system remotely, you will lose access and must use the local console or another remote management channel to get back in. Confirm an alternative access path exists before running this command.
 
             **Impact:**
 
@@ -1141,9 +1129,12 @@ queries:
           desc: |
             **Using the GUI**
 
-            1. Open **System Preferences**
-            2. Select **Sharing**
-            3. Uncheck **Remote Login**
+            1. Open **System Settings**
+            2. Select **General**
+            3. Select **Sharing**
+            4. Turn off **Remote Login**
+
+            On macOS 12 and earlier, open **System Preferences**, select **Sharing**, and uncheck **Remote Login**.
 
             **Impact:**
 
@@ -1152,7 +1143,7 @@ queries:
           desc: |
             **Using Ansible**
 
-            To disable Remote Login using Ansible, you can use the following playbook:
+            To disable Remote Login using Ansible, you can use the following playbook. The `-f` flag is required so the command does not wait for interactive confirmation:
 
             ```yaml
             ---
@@ -1161,12 +1152,16 @@ queries:
               become: true
               tasks:
                 - name: Disable Remote Login
-                  ansible.builtin.command: systemsetup -setremotelogin off
+                  ansible.builtin.command: systemsetup -f -setremotelogin off
             ```
+
+            **Warning:**
+
+            If Ansible reaches this host over SSH, this task disconnects it and all subsequent tasks fail. Run it last, and confirm console or MDM access exists before applying.
 
             **Impact:**
 
-            Disabling Remote Login prevents the use of the SSH server on macOS. For systems requiring SSH access, ensure proper hardening measures are in place, such as restricting access to trusted IP addresses and using secure authentication methods. Standard user computers should not act as servers, especially in environments where they frequently change locations or IP addresses.
+            Disabling Remote Login prevents the use of the SSH server on macOS. For systems requiring SSH access, ensure proper hardening measures are in place, such as restricting access to trusted IP addresses and using secure authentication methods.
     refs:
       - url: https://support.apple.com/guide/mac-help/allow-a-remote-computer-to-access-your-mac-mchlp1066/mac
         title: Apple - Remote Access Settings
@@ -1187,7 +1182,7 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-2-2-1
       compliance/soc2-2017: soc2-control-cc6-8-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
-    mql: processes.none( command == /ARDAgent/)
+    mql: macos.sharing.remoteManagement == false
     docs:
       desc: |
         This check ensures that Remote Management is disabled on macOS systems to prevent unauthorized access and potential misuse of the Apple Remote Desktop (ARD) client.
@@ -1239,9 +1234,12 @@ queries:
           desc: |
             **Using the GUI**
 
-            1. Open **System Preferences**
-            2. Select **Sharing**
-            3. Uncheck **Remote Management**
+            1. Open **System Settings**
+            2. Select **General**
+            3. Select **Sharing**
+            4. Turn off **Remote Management**
+
+            On macOS 12 and earlier, open **System Preferences**, select **Sharing**, and uncheck **Remote Management**.
 
             **Impact:**
 
@@ -1285,7 +1283,7 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-2-2-1
       compliance/soc2-2017: soc2-control-cc6-8-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
-    mql: services.where( name == "com.apple.screensharing" ).all( enabled == false && running == false )
+    mql: macos.sharing.screenSharing == false
     docs:
       desc: |
         This check ensures that Screen Sharing is disabled on macOS systems to prevent unauthorized access and control of the system.
@@ -1324,11 +1322,14 @@ queries:
           desc: |
             **Using the CLI**
 
-            Run this command to disable Screen Sharing:
+            Run these commands to disable Screen Sharing:
 
             ```bash
-            sudo launchctl unload -w /System/Library/LaunchDaemons/com.apple.screensharing.plist
+            sudo launchctl disable system/com.apple.screensharing
+            sudo launchctl bootout system/com.apple.screensharing
             ```
+
+            The `disable` command marks the daemon disabled so it does not start again, and `bootout` stops it now. The `bootout` command reports an error if the service is not currently running; that error is harmless. On older macOS versions you can use the legacy form `sudo launchctl unload -w /System/Library/LaunchDaemons/com.apple.screensharing.plist`.
 
             **Impact:**
 
@@ -1337,9 +1338,12 @@ queries:
           desc: |
             **Using the GUI**
 
-            1. Open **System Preferences**
-            2. Select **Sharing**
-            3. Uncheck **Screen Sharing**
+            1. Open **System Settings**
+            2. Select **General**
+            3. Select **Sharing**
+            4. Turn off **Screen Sharing**
+
+            On macOS 12 and earlier, open **System Preferences**, select **Sharing**, and uncheck **Screen Sharing**.
 
             **Impact:**
 
@@ -1356,9 +1360,20 @@ queries:
               hosts: all
               become: true
               tasks:
-                - name: Disable Screen Sharing
-                  ansible.builtin.command: launchctl unload -w /System/Library/LaunchDaemons/com.apple.screensharing.plist
+                - name: Disable the Screen Sharing daemon
+                  ansible.builtin.command: launchctl disable system/com.apple.screensharing
+                - name: Stop the Screen Sharing daemon
+                  ansible.builtin.command: launchctl bootout system/com.apple.screensharing
+                  register: bootout_result
+                  failed_when: false
+                  changed_when: bootout_result.rc == 0
             ```
+
+            The `bootout` task exits non-zero harmlessly when the daemon is not running; that failure is suppressed with `failed_when: false`, and `changed` is reported only when it actually stops the service. The `disable` task runs `launchctl` through `ansible.builtin.command`, which always reports `changed` even when the daemon is already disabled, so this playbook is not fully idempotent.
+
+            **Impact:**
+
+            Disabling Screen Sharing prevents remote access to the system's screen. For environments requiring remote support, ensure alternative secure methods are in place, such as using dedicated remote management tools with proper access controls.
     refs:
       - url: https://support.apple.com/guide/mac-help/allow-a-remote-computer-to-access-your-mac-mchlp1066/mac
         title: Apple - Remote Access Settings
@@ -1417,6 +1432,8 @@ queries:
             sudo dsenableroot -d
             ```
 
+            The command prompts for an administrator account password before disabling root.
+
             **Impact:**
 
             Disabling the root account may affect legacy POSIX software that expects an available root account. Ensure alternative administrative methods are in place if required.
@@ -1436,7 +1453,7 @@ queries:
           desc: |
             **Using Ansible**
 
-            To disable the root account using Ansible, you can use the following playbook:
+            The `dsenableroot -d` command prompts interactively for an administrator password, so a plain command task hangs. Use the expect module and supply credentials from Ansible Vault:
 
             ```yaml
             ---
@@ -1445,8 +1462,14 @@ queries:
               become: true
               tasks:
                 - name: Disable root account
-                  ansible.builtin.command: dsenableroot -d
+                  ansible.builtin.expect:
+                    command: dsenableroot -d -u "{{ macos_admin_user }}"
+                    responses:
+                      'password:': "{{ macos_admin_password }}"
+                  no_log: true
             ```
+
+            Store `macos_admin_user` and `macos_admin_password` in Ansible Vault and never in plain text.
 
             **Impact:**
 
@@ -1472,7 +1495,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-10
       compliance/vda-isa-5: vda-isa-5-5-1-1
     mql: |
-      command('fdesetup status').stdout.contains('FileVault is On')
+      macos.filevault.enabled == true
       users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
         name
         filePath = "/Library/Managed Preferences/" + name + "/complete.plist"
@@ -1540,12 +1563,16 @@ queries:
 
             Perform the following to enable FileVault:
 
-            1. Open **System Preferences**
-            2. Select **Security & Privacy**
+            1. Open **System Settings**
+            2. Select **Privacy & Security**
             3. Select **FileVault**
-            4. Select **Turn on FileVault**
+            4. Select **Turn On**
 
-            Note: To pass this check and make sure encryption cannot be turned off by the system, you need to [make sure that the Device Management Profile property `dontAllowFDEDisable` is set to 'true'.](https://developer.apple.com/documentation/devicemanagement/fdefilevaultoptions). To do so you can use an macOS configuration profile [similar to this one.](https://github.com/gregneagle/profiles/blob/master/cant_disable_filevault.mobileconfig)
+            On macOS 12 and earlier, open **System Preferences**, select **Security & Privacy**, select **FileVault**, and select **Turn On FileVault**.
+
+            Record the recovery key shown during setup and store it securely. The recovery key is required to unlock the disk if every enabled account password is forgotten.
+
+            Note: To pass this check and ensure users cannot turn encryption off, the Device Management profile property [`dontAllowFDEDisable` must be set to true](https://developer.apple.com/documentation/devicemanagement/fdefilevaultoptions). You can deploy a macOS configuration profile [similar to this one](https://github.com/gregneagle/profiles/blob/master/cant_disable_filevault.mobileconfig).
 
             **Impact:**
 
@@ -1554,7 +1581,7 @@ queries:
           desc: |
             **Using Ansible**
 
-            To enable FileVault using Ansible, you can use the following playbook:
+            A bare `fdesetup enable` prompts for a password and cannot run unattended. Use deferred enablement, which activates FileVault at the user's next logout and writes the recovery key to a file you must collect and escrow:
 
             ```yaml
             ---
@@ -1562,12 +1589,21 @@ queries:
               hosts: all
               become: true
               tasks:
-                - name: Enable FileVault
-                  ansible.builtin.command: fdesetup enable
+                - name: Enable FileVault at next logout
+                  ansible.builtin.command: fdesetup enable -defer /var/db/filevault-recovery.plist
+                - name: Fetch the recovery key for escrow
+                  ansible.builtin.fetch:
+                    src: /var/db/filevault-recovery.plist
+                    dest: filevault-keys/
+                - name: Remove the local recovery key copy
+                  ansible.builtin.file:
+                    path: /var/db/filevault-recovery.plist
+                    state: absent
             ```
 
-            Note: To pass this check and make sure encryption cannot be turned off by the system, you need to [make sure that the Device Management Profile property `dontAllowFDEDisable` is set to 'true'.](https://developer.apple.com/documentation/devicemanagement/fdefilevaultoptions). To do so you can use an macOS configuration profile [similar to this one.](https://github.com/gregneagle/profiles/blob/master/cant_disable_filevault.mobileconfig)
+            Store the fetched recovery keys in a secure escrow location. If the recovery key is lost and a user forgets their password, the encrypted data cannot be recovered. In MDM-managed fleets, prefer enabling FileVault through an MDM profile with institutional key escrow instead.
 
+            Note: To pass this check and ensure users cannot turn encryption off, the Device Management profile property [`dontAllowFDEDisable` must be set to true](https://developer.apple.com/documentation/devicemanagement/fdefilevaultoptions).
 
             **Impact:**
 
@@ -1642,10 +1678,12 @@ queries:
           desc: |
             **Using the GUI**
 
-            1. Open **System Preferences**
-            2. Select **Security & Privacy**
+            1. Open **System Settings**
+            2. Select **Network**
             3. Select **Firewall**
-            4. Select **Turn On Firewall**
+            4. Turn on the **Firewall** toggle
+
+            On macOS 12 and earlier, open **System Preferences**, select **Security & Privacy**, select **Firewall**, and select **Turn On Firewall**.
 
             **Impact:**
 
@@ -1741,10 +1779,13 @@ queries:
           desc: |
             **Using the GUI**
 
-            1. Open **System Preferences**
-            2. Select **Security & Privacy**
-            3. Select **Firewall Options**
-            4. Turn on **Enable stealth mode**
+            1. Open **System Settings**
+            2. Select **Network**
+            3. Select **Firewall**
+            4. Select **Options**
+            5. Turn on **Enable stealth mode**
+
+            On macOS 12 and earlier, open **System Preferences**, select **Security & Privacy**, select **Firewall Options**, and turn on **Enable stealth mode**.
 
             **Impact:**
 
@@ -1789,7 +1830,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-8-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
     mql: |
-      command('spctl --status').stdout.contains("assessments enabled")
+      macos.gatekeeper.enabled == true
       users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
         name
         filePath1 = "/Library/Managed Preferences/" + name + "/complete.plist"
@@ -1840,11 +1881,15 @@ queries:
           desc: |
             **Using the CLI**
 
-            Run this command to enable Gatekeeper:
+            Run this command to enable Gatekeeper assessments:
 
             ```bash
-            sudo spctl --master-enable
+            sudo spctl --global-enable
             ```
+
+            On older macOS versions the equivalent command is `sudo spctl --master-enable`. Starting with macOS Sequoia, Apple restricts command-line changes to Gatekeeper policy; if the command reports the operation is not permitted, enforce the setting with a configuration profile instead.
+
+            Note: To pass this check, you must also deploy a Device Management configuration profile with the [`com.apple.systempolicy.control`](https://developer.apple.com/documentation/devicemanagement/systempolicycontrol) payload that sets `EnableAssessment` to true and `AllowIdentifiedDevelopers` to true. Without that managed preference the check fails even when `spctl --status` reports assessments enabled.
 
             **Impact:**
 
@@ -1853,10 +1898,13 @@ queries:
           desc: |
             **Using the GUI**
 
-            1. Open **System Preferences**
-            2. Select **Security & Privacy**
-            3. Select **General**
-            4. Set **Allow apps downloaded from** to **App Store and identified developers**
+            1. Open **System Settings**
+            2. Select **Privacy & Security**
+            3. Under **Security**, set **Allow applications downloaded from** to **App Store and identified developers**
+
+            On macOS 12 and earlier, open **System Preferences**, select **Security & Privacy**, select **General**, and set **Allow apps downloaded from** to **App Store and identified developers**.
+
+            Note: To pass this check, you must also deploy a Device Management configuration profile with the [`com.apple.systempolicy.control`](https://developer.apple.com/documentation/devicemanagement/systempolicycontrol) payload that sets `EnableAssessment` to true and `AllowIdentifiedDevelopers` to true.
 
             **Impact:**
 
@@ -1873,9 +1921,11 @@ queries:
               hosts: all
               become: true
               tasks:
-                - name: Enable Gatekeeper
-                  ansible.builtin.command: spctl --master-enable
+                - name: Enable Gatekeeper assessments
+                  ansible.builtin.command: spctl --global-enable
             ```
+
+            On macOS versions that restrict `spctl` policy changes, deploy a Device Management configuration profile with the `com.apple.systempolicy.control` payload instead. That profile is also required for this check to pass.
 
             **Impact:**
 
@@ -1932,11 +1982,14 @@ queries:
           desc: |
             **Using the CLI**
 
-            Run this command to enable `auditd`:
+            Run these commands to enable `auditd`:
 
             ```bash
-            sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.auditd.plist
+            sudo launchctl enable system/com.apple.auditd
+            sudo launchctl bootstrap system /System/Library/LaunchDaemons/com.apple.auditd.plist
             ```
+
+            The `enable` command clears the disabled override so the daemon starts again, and `bootstrap` loads it now. The `bootstrap` command reports an error if the service is already loaded; that error is harmless. On older macOS versions you can use the legacy form `sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.auditd.plist`.
 
             **Impact:**
 
@@ -1953,9 +2006,16 @@ queries:
               hosts: all
               become: true
               tasks:
-                - name: Enable security auditing
-                  ansible.builtin.command: launchctl load -w /System/Library/LaunchDaemons/com.apple.auditd.plist
+                - name: Clear the disabled override on the audit daemon
+                  ansible.builtin.command: launchctl enable system/com.apple.auditd
+                - name: Load the audit daemon
+                  ansible.builtin.command: launchctl bootstrap system /System/Library/LaunchDaemons/com.apple.auditd.plist
+                  register: bootstrap_result
+                  failed_when: false
+                  changed_when: bootstrap_result.rc == 0
             ```
+
+            The `bootstrap` task exits non-zero harmlessly when the daemon is already loaded; that failure is suppressed with `failed_when: false`, and `changed` is reported only when it actually loads the service. The `enable` task runs `launchctl` through `ansible.builtin.command`, which always reports `changed` even when the daemon is already enabled, so this playbook is not fully idempotent.
 
             **Impact:**
 
@@ -2052,6 +2112,8 @@ queries:
 
             _Note: Both `18` and `2` are valid values for this parameter._
 
+            This preference is stored per user, so repeat the command for every account on the system. For fleet-wide enforcement, deploy a configuration profile through your MDM instead, which applies the setting to all current and future users.
+
             **Impact:**
 
             Enabling the Wi-Fi status in the menu bar provides users with a quick and visible way to monitor their wireless network connectivity.
@@ -2059,10 +2121,11 @@ queries:
           desc: |
             **Using the GUI**
 
-            1. Open **System Preferences**
-            2. Select **Network**
-            3. Select **Wi-Fi**
-            4. Enable **Show Wi-Fi status in menu bar**
+            1. Open **System Settings**
+            2. Select **Control Center**
+            3. Set **Wi-Fi** to **Show in Menu Bar**
+
+            On macOS 12 and earlier, open **System Preferences**, select **Network**, select **Wi-Fi**, and enable **Show Wi-Fi status in menu bar**.
 
             **Impact:**
 
@@ -2071,32 +2134,20 @@ queries:
           desc: |
             **Using Ansible**
 
-            To enable the Wi-Fi status in the menu bar using Ansible, you can use the following playbook:
+            To enable the Wi-Fi status in the menu bar using Ansible, run the task as the user whose preference you are changing:
 
             ```yaml
             ---
             - name: Enable Wi-Fi status in menu bar
               hosts: all
               become: true
+              become_user: firstuser
               tasks:
                 - name: Enable Wi-Fi status in menu bar
                   ansible.builtin.command: defaults -currentHost write com.apple.controlcenter.plist WiFi -int 18
             ```
 
-            _Example:_
-
-            ```yaml
-            ---
-            - name: Enable Wi-Fi status in menu bar for firstuser
-              hosts: all
-              become: true
-              become_user: firstuser
-              tasks:
-                - name: Enable Wi-Fi status in menu bar for firstuser
-                  ansible.builtin.command: defaults -currentHost write com.apple.controlcenter.plist WiFi -int 18
-            ```
-
-            _Note: Both `18` and `2` are valid values for this parameter._
+            Replace `firstuser` with the account being configured. Both `18` and `2` are valid values for this parameter. This preference is stored per user, so run the task with `become_user` set to each account on the system. For fleet-wide enforcement, deploy a configuration profile through your MDM instead, which applies the setting to all current and future users.
 
             **Impact:**
 
@@ -2125,9 +2176,7 @@ queries:
       users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
         name
         filePath1 = home + "/Library/Preferences/com.apple.NetworkBrowser.plist"
-        a = file(filePath1).exists == true && [filePath1].where(file(_).exists) {
-            parse.plist(filePath1).params["allowAirDrop"]["value"] == false
-          }
+        a = file(filePath1).exists && parse.plist(filePath1).params["DisableAirDrop"] == true
         filePath2 = "/Library/Managed Preferences/" + name + "/complete.plist"
         b = file(filePath2).exists == true && [filePath2].where(file(_).exists) {
             parse.plist(filePath2).params["com.apple.applicationaccess"]["allowAirDrop"]["value"] == false
@@ -2186,6 +2235,8 @@ queries:
             sudo -u firstuser defaults write com.apple.NetworkBrowser DisableAirDrop -bool true
             ```
 
+            This preference is stored per user, so repeat the command for every account on the system. For fleet-wide enforcement, deploy a configuration profile through your MDM instead, which applies the setting to all current and future users.
+
             **Impact:**
 
             Disabling AirDrop can limit the ability to move files quickly over the network without using file shares.
@@ -2205,30 +2256,24 @@ queries:
           desc: |
             **Using Ansible**
 
-            To disable AirDrop using Ansible, you can use the following playbook:
+            To disable AirDrop using Ansible, run the task as the user whose preference you are changing:
 
             ```yaml
             ---
             - name: Disable AirDrop
               hosts: all
               become: true
-              tasks:
-                - name: Disable AirDrop
-                  ansible.builtin.command: defaults write com.apple.NetworkBrowser DisableAirDrop -bool true
-            ```
-
-            _Example:_
-
-            ```yaml
-            ---
-            - name: Disable AirDrop for firstuser
-              hosts: all
-              become: true
               become_user: firstuser
               tasks:
-                - name: Disable AirDrop for firstuser
+                - name: Disable AirDrop for the user
                   ansible.builtin.command: defaults write com.apple.NetworkBrowser DisableAirDrop -bool true
             ```
+
+            Replace `firstuser` with the account being configured. This preference is stored per user, so run the task with `become_user` set to each account on the system. For fleet-wide enforcement, deploy a configuration profile through your MDM instead, which applies the setting to all current and future users.
+
+            **Impact:**
+
+            Disabling AirDrop can limit the ability to move files quickly over the network without using file shares.
     refs:
       - url: https://support.apple.com/guide/security/welcome/web
         title: Apple Platform Security Guide
@@ -2301,11 +2346,11 @@ queries:
           desc: |
             **Using the GUI**
 
-            1. Open **System Preferences**
-            2. Select **Security & Privacy**
-            3. Select **Firewall**
-            4. Select **Firewall Options**
-            5. Enable **Enable logging**
+            macOS provides no graphical control for application firewall logging. Use the CLI command to enable it:
+
+            ```bash
+            sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setloggingmode on
+            ```
 
             **Impact:**
 
@@ -2397,9 +2442,11 @@ queries:
           desc: |
             **Using the GUI**
 
-            1. Open **System Preferences**
-            2. Select **Sharing**
-            3. Uncheck **Web Sharing**
+            macOS no longer provides a graphical control for the built-in Apache web server. Apple removed the Web Sharing option from the Sharing pane. Use the CLI command to disable the service:
+
+            ```bash
+            sudo launchctl unload -w /System/Library/LaunchDaemons/org.apache.httpd.plist
+            ```
 
             **Impact:**
 
@@ -2491,10 +2538,13 @@ queries:
           desc: |
             **Using the GUI**
 
-            1. Open **System Preferences**
-            2. Select **Sharing**
-            3. Uncheck **File Sharing**
-            4. Uncheck **NFS Sharing**
+            macOS provides no graphical control for the NFS server. The Sharing pane does not manage `nfsd`. Use the CLI command to disable it:
+
+            ```bash
+            sudo nfsd disable
+            ```
+
+            Also remove or empty `/etc/exports` so the service does not restart with active exports.
 
             **Impact:**
 
@@ -2542,7 +2592,7 @@ queries:
       file("/etc/security/audit_control").exists;
       ["/etc/security/audit_control"].where(file(_).exists) {
         file(_).content.lines.where( _ == /^expire-after/) {
-          _.split(":")[1] == /[6-9]\dd|\d{3,}d/ || _.split(":")[1] == /\d+0G|[1-9G]/
+          _.split(":")[1] == /^([6-9]\d|[1-9]\d{2,})d$/ || _.split(":")[1] == /^[1-9]\d*G$/
         }
       }
     docs:
@@ -2587,10 +2637,16 @@ queries:
             expire-after:60d
             ```
 
-            Alternatively, use `sed` to update the value:
+            If an `expire-after` line already exists, you can update it with `sed` instead:
 
             ```bash
             sudo sed -i '' 's/^expire-after:.*/expire-after:60d/' /etc/security/audit_control
+            ```
+
+            The `sed` command only changes an existing line. If the file has no `expire-after` line, add one with the editor. Then apply the new configuration:
+
+            ```bash
+            sudo audit -s
             ```
 
             **Note:** The `/etc/security/audit_control` file is a plain text configuration file, not a plist. Use a text editor or `sed` to modify it.
@@ -2707,10 +2763,7 @@ queries:
           desc: |
             **Using the GUI**
 
-            1. Open **System Preferences**
-            2. Select **Users & Groups**
-            3. Select **Login Options**
-            4. Set **Password expiration** to **365 days**
+            macOS provides no graphical setting for password expiration on local accounts. Use the CLI command, or deploy an MDM passcode configuration profile that sets `maxPINAgeInDays` to 365 or less.
 
             **Impact:**
 
@@ -2819,10 +2872,7 @@ queries:
           desc: |
             **Using the GUI**
 
-            1. Open **System Preferences**
-            2. Select **Users & Groups**
-            3. Select **Login Options**
-            4. Set **Password history** to **15 passwords**
+            macOS provides no graphical setting for password history on local accounts. Use the CLI command, or deploy an MDM passcode configuration profile that sets `pinHistory` to 15 or more.
 
             **Impact:**
 
@@ -2867,8 +2917,8 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-3-1
       compliance/vda-isa-5: vda-isa-5-4-1-1
     mql: |
-      command("sudo -V").stdout.contains("Authentication timestamp timeout: 0.0 minutes") ||
-        command("sudo -V").stdout.contains("Authentication timestamp timeout: 0,0 minutes")
+      sudoers.defaults.where(parameter == "timestamp_timeout") != empty
+      sudoers.defaults.where(parameter == "timestamp_timeout").all(value == "0")
     docs:
       desc: |
         This check ensures that the sudo timeout period is reduced to zero on macOS systems to minimize the risk of unauthorized access during the sudo grace period.
@@ -2899,7 +2949,7 @@ queries:
           desc: |
             **Using the CLI**
 
-            Run this command to reduce the sudo timeout period:
+            This is an interactive editor procedure rather than a single runnable command. Open the sudoers file with `visudo`, which checks the syntax when you save so a typo cannot be written out and silently break every `sudo` invocation:
 
             ```bash
             sudo visudo
@@ -2910,6 +2960,8 @@ queries:
             ```bash
             Defaults timestamp_timeout=0
             ```
+
+            Save and exit. If `visudo` reports a syntax error, return to the editor and correct it. Do not bypass that validation, because a malformed sudoers file can lock out all privileged access. Keep your existing root or `sudo` session open in a separate terminal until you have confirmed that `sudo` still works in a fresh session.
 
             **Impact:**
 
@@ -2960,7 +3012,7 @@ queries:
     mql: |
       file('/etc/asl/com.apple.install') {
         content != /all_max/
-        content == /ttl/
+        content == /ttl=(36[5-9]|3[7-9]\d|[4-9]\d{2}|[1-9]\d{3,})/
       }
     docs:
       desc: |
@@ -3144,21 +3196,7 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-6-3-3
       compliance/soc2-2017: soc2-control-cc7-1-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
-    mql: |
-      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
-        name
-        filePath1 = "/Library/Managed Preferences/" + name + "/complete.plist"
-        a = file(filePath1).exists == true && [filePath1].where(file(_).exists) {
-          parse.plist(filePath1).params["com.apple.SoftwareUpdate"]["AutomaticCheckEnabled"]["value"] == true
-        }
-        filePath2 = "/Library/Preferences/com.apple.SoftwareUpdate.plist"
-        b = file(filePath2).exists == true &&
-          parse.plist(filePath2).params['AutomaticCheckEnabled'] != false
-        filePath3 = "/Library/Managed Preferences/com.apple.SoftwareUpdate.plist"
-        c = file(filePath3).exists == true &&
-          parse.plist(filePath3).params['AutomaticCheckEnabled'] != false
-        a || b || c
-      }
+    mql: macos.softwareupdate.autoCheckEnabled == true
     docs:
       desc: |
         This check ensures that automatic checking for software updates is enabled on macOS systems to keep the system up to date with the latest patches and security updates.
@@ -3210,11 +3248,13 @@ queries:
           desc: |
             **Using the GUI**
 
-            1. Open **System Preferences**
+            1. Open **System Settings**
             2. Select **General**
             3. Select **Software Update**
-            4. Select **Advanced**
-            5. Enable **Check for updates**
+            4. Select the info button next to **Automatic updates**
+            5. Turn on **Check for updates**
+
+            On macOS 12 and earlier, open **System Preferences**, select **Software Update**, select **Advanced**, and enable **Check for updates**.
 
             **Impact:**
 
@@ -3258,21 +3298,7 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-6-3-3
       compliance/soc2-2017: soc2-control-cc7-1-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
-    mql: |
-      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
-        name
-        filePath1 = "/Library/Managed Preferences/" + name + "/complete.plist"
-        a = file(filePath1).exists == true && [filePath1].where(file(_).exists) {
-          parse.plist(filePath1).params["com.apple.SoftwareUpdate"]["AutomaticDownload"]["value"] == true
-        }
-        filePath2 = "/Library/Preferences/com.apple.SoftwareUpdate.plist"
-        b = file(filePath2).exists == true &&
-          parse.plist(filePath2).params['AutomaticDownload'] != false
-        filePath3 = "/Library/Managed Preferences/com.apple.SoftwareUpdate.plist"
-        c = file(filePath3).exists == true &&
-          parse.plist(filePath3).params['AutomaticDownload'] != false
-        a || b || c
-      }
+    mql: macos.softwareupdate.autoDownloadEnabled == true
     docs:
       desc: |
         This check ensures that automatic downloads of software updates are enabled on macOS systems to keep the system up to date with the latest patches and security updates.
@@ -3324,11 +3350,13 @@ queries:
           desc: |
             **Using the GUI**
 
-            1. Open **System Preferences**
+            1. Open **System Settings**
             2. Select **General**
             3. Select **Software Update**
-            4. Select **Advanced**
-            5. Enable **Download new updates when available**
+            4. Select the info button next to **Automatic updates**
+            5. Turn on **Download new updates when available**
+
+            On macOS 12 and earlier, open **System Preferences**, select **Software Update**, select **Advanced**, and enable **Download new updates when available**.
 
             **Impact:**
 
@@ -3348,6 +3376,10 @@ queries:
                 - name: Enable automatic downloads of software updates
                   ansible.builtin.command: /usr/bin/defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticDownload -bool true
             ```
+
+            **Impact:**
+
+            Enabling automatic downloads ensures that updates are readily available for installation. However, users must still manually approve or install updates unless additional automatic update settings are enabled.
     refs:
       - url: https://support.apple.com/guide/mac-help/keep-your-mac-up-to-date-mchlpx1065/mac
         title: Apple - Keep Your Mac Up to Date
@@ -3369,23 +3401,8 @@ queries:
       compliance/soc2-2017: soc2-control-cc7-1-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
     mql: |
-      users.where(name != /^_/ && shell != "/usr/bin/false" && name != "root") {
-        name
-        filePath1 = "/Library/Managed Preferences/" + name + "/complete.plist"
-        a = file(filePath1).exists == true && [filePath1].where(file(_).exists) {
-          parse.plist(filePath1).params["com.apple.SoftwareUpdate"]["ConfigDataInstall"]["value"] == true
-          parse.plist(filePath1).params["com.apple.SoftwareUpdate"]["CriticalUpdateInstall"]["value"] == true
-        }
-        filePath2 = "/Library/Preferences/com.apple.SoftwareUpdate.plist"
-        b = file(filePath2).exists &&
-          parse.plist(filePath2).params['ConfigDataInstall'] == true &&
-            parse.plist(filePath2).params['CriticalUpdateInstall'] == true
-        filePath3 = "/Library/Managed Preferences/com.apple.SoftwareUpdate.plist"
-        c = file(filePath3).exists == true &&
-          parse.plist(filePath3).params['ConfigDataInstall'] == true &&
-            parse.plist(filePath3).params['CriticalUpdateInstall'] == true
-        a || b || c
-      }
+      macos.softwareupdate.installSystemDataFiles == true
+      macos.softwareupdate.installSecurityResponses == true
     docs:
       desc: |
         This check ensures that critical software updates are installed automatically on macOS systems to maintain system security and stability.
@@ -3425,11 +3442,14 @@ queries:
           desc: |
             **Using the CLI**
 
-            Run this command to enable automatic installation of critical updates:
+            Run these commands to enable automatic installation of system data files and critical security updates:
 
             ```bash
+            sudo /usr/bin/defaults write /Library/Preferences/com.apple.SoftwareUpdate ConfigDataInstall -bool true
             sudo /usr/bin/defaults write /Library/Preferences/com.apple.SoftwareUpdate CriticalUpdateInstall -bool true
             ```
+
+            Both keys are required: `ConfigDataInstall` controls system data files such as XProtect definitions, and `CriticalUpdateInstall` controls security responses.
 
             **Impact:**
 
@@ -3438,11 +3458,13 @@ queries:
           desc: |
             **Using the GUI**
 
-            1. Open **System Preferences**
+            1. Open **System Settings**
             2. Select **General**
             3. Select **Software Update**
-            4. Select **Advanced**
-            5. Enable **Install system data files and security updates**
+            4. Select the info button next to **Automatic updates**
+            5. Turn on **Install Security Responses and system files**
+
+            On macOS 12 and earlier, open **System Preferences**, select **Software Update**, select **Advanced**, and enable **Install system data files and security updates**.
 
             **Impact:**
 
@@ -3454,11 +3476,14 @@ queries:
             To enable automatic installation of critical updates using Ansible, you can use the following playbook:
 
             ```yaml
+            ---
             - name: Enable automatic installation of critical updates
               hosts: all
               become: true
               tasks:
-                - name: Enable automatic installation of critical updates
+                - name: Enable automatic installation of system data files
+                  ansible.builtin.command: /usr/bin/defaults write /Library/Preferences/com.apple.SoftwareUpdate ConfigDataInstall -bool true
+                - name: Enable automatic installation of security responses
                   ansible.builtin.command: /usr/bin/defaults write /Library/Preferences/com.apple.SoftwareUpdate CriticalUpdateInstall -bool true
             ```
 
@@ -3486,7 +3511,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc7-1-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
     mql: |
-      parse.plist('/Library/Preferences/com.apple.SoftwareUpdate.plist').params['RecommendedUpdates'] == empty
+      macos.softwareupdate.updates.where(recommended == true) == empty
     docs:
       desc: |
         This check ensures that macOS is up to date with the latest patches to mitigate vulnerabilities and enhance system security.
@@ -3534,8 +3559,10 @@ queries:
             To install all available updates, run:
 
             ```bash
-            softwareupdate -i -a
+            sudo softwareupdate -i -a
             ```
+
+            Updates that require a restart will prompt for one; add `-R` to restart automatically after installation.
 
             **Impact:**
 
@@ -3544,10 +3571,12 @@ queries:
           desc: |
             **Using the GUI**
 
-            1. Open **System Preferences**
+            1. Open **System Settings**
             2. Select **General**
             3. Select **Software Update**
             4. Select **Update Now**
+
+            On macOS 12 and earlier, open **System Preferences**, select **Software Update**, and select **Update Now**.
 
             **Impact:**
 
@@ -3682,11 +3711,14 @@ queries:
             - name: Block all incoming firewall connections
               hosts: all
               become: true
-
               tasks:
                 - name: Block all incoming connections
                   ansible.builtin.command: /usr/libexec/ApplicationFirewall/socketfilterfw --setblockall on
             ```
+
+            **Impact:**
+
+            Blocking all incoming connections will prevent any application from receiving inbound network traffic, except for essential system services like DHCP and Bonjour. This may disrupt services that rely on incoming connections, such as file sharing, screen sharing, or remote management. Ensure this setting is appropriate for the device's role before enabling, especially when applying it to many machines at once.
     refs:
       - url: https://support.apple.com/guide/mac-help/block-connections-to-your-mac-with-a-firewall-mh34041/mac
         title: Apple - Block Connections with Firewall

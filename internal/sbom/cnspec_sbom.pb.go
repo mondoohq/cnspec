@@ -131,7 +131,7 @@ const (
 	// subscription.
 	ExternalIDType_EXTERNAL_ID_TYPE_AZURE_SUB ExternalIDType = 4
 	// EXTERNAL_ID_TYPE_AZURE_ID represents a fully qualified Azure resource
-	// identifier, a standarized format used by Azure to uniquely identify
+	// identifier, a standardized format used by Azure to uniquely identify
 	// resources within the Azure ecosystem.
 	ExternalIDType_EXTERNAL_ID_TYPE_AZURE_ID ExternalIDType = 5
 )

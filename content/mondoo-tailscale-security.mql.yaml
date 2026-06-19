@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-tailscale-security
     name: Mondoo Tailscale Security
-    version: 1.3.0
+    version: 1.3.3
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -25,6 +25,10 @@ policies:
         - Tailscale client software updates
         - User access controls and ACL configuration
         - Key expiry and rotation
+
+        **A note on API authentication**
+
+        The audit and command-line examples in this policy authenticate to the Tailscale API with a personal API key passed through HTTP basic auth, written as `curl -u "$TAILSCALE_API_KEY:"`. This is the simplest way to run a check interactively. Personal API keys are capped at a maximum lifetime of 90 days and must be rotated by hand, so they are a poor fit for unattended automation. For scheduled jobs and pipelines, Tailscale recommends an OAuth client instead. An OAuth client exchanges its credentials for a short-lived access token that you pass as a Bearer token, written as `curl -H "Authorization: Bearer $TAILSCALE_ACCESS_TOKEN"`, and each client is scoped to only the API capabilities it needs. Substitute Bearer-token authentication for the basic-auth examples below when wiring these commands into automation.
 
         Learn more about scanning Tailscale in the [cnspec Tailscale documentation](https://mondoo.com/docs/cnspec/saas/tailscale).
 
@@ -124,7 +128,7 @@ queries:
 
         ### Audit via API
 
-        Query the Tailscale API and inspect the result:
+        Query the Tailscale API and inspect the result. The example uses a personal API key for interactive use; for automation, authenticate with an OAuth client Bearer token as described in the policy overview.
 
         ```bash
         curl -s -u "$TAILSCALE_API_KEY:" \
@@ -139,15 +143,33 @@ queries:
 
             1. Go to the [Tailscale admin console](https://login.tailscale.com/admin/machines).
             2. Review devices that are not authorized.
-            3. Authorize legitimate devices or remove unknown ones.
+            3. For each legitimate device, open the device menu and select **Approve**.
+            4. Remove any device you do not recognize: open the device menu and select **Remove**.
 
             To require device authorization for all new devices:
 
-            1. Go to **Settings > Device management**.
+            1. Go to [Settings > Device management](https://login.tailscale.com/admin/settings/device-management).
             2. Enable **Device approval**.
+        - id: cli
+          desc: |
+            To authorize a device via the Tailscale API:
+
+            ```bash
+            curl -s -u "$TAILSCALE_API_KEY:" \
+              -H "Content-Type: application/json" \
+              -X POST "https://api.tailscale.com/api/v2/device/<device-id>/authorized" \
+              --data '{ "authorized": true }'
+            ```
+
+            To remove a device that should not be on the tailnet:
+
+            ```bash
+            curl -s -u "$TAILSCALE_API_KEY:" \
+              -X DELETE "https://api.tailscale.com/api/v2/device/<device-id>"
+            ```
         - id: terraform
           desc: |
-            To authorize a device in Terraform, declare a `tailscale_device_authorization` resource with `authorized = true`. Note this catches devices managed through Terraform; devices added directly through the admin console or via auth keys remain governed by the tailnet-wide approval setting (see `device-approval-required`):
+            To authorize a device in Terraform, declare a `tailscale_device_authorization` resource with `authorized = true`. This covers devices managed through Terraform; devices added directly through the admin console or via auth keys remain governed by the tailnet-wide device approval setting:
 
             ```hcl
             resource "tailscale_device_authorization" "example" {
@@ -169,7 +191,7 @@ queries:
   - uid: mondoo-tailscale-security-devices-authorized-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "tailscale_device_authorization")
     mql: |
-      terraform.resources.where(nameLabel == "tailscale_device_authorization").all(arguments["authorized"] == true)
+      terraform.resources("tailscale_device_authorization").all(arguments["authorized"] == true)
   - uid: mondoo-tailscale-security-devices-authorized-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "tailscale_device_authorization")
     mql: |
@@ -242,7 +264,7 @@ queries:
 
         ### Audit via API
 
-        Query the Tailscale API and inspect the result:
+        Query the Tailscale API and inspect the result. The example uses a personal API key for interactive use; for automation, authenticate with an OAuth client Bearer token as described in the policy overview.
 
         ```bash
         curl -s -u "$TAILSCALE_API_KEY:" \
@@ -256,20 +278,23 @@ queries:
             **Using Tailscale Admin Console**
 
             1. Go to the [Tailscale admin console](https://login.tailscale.com/admin/machines).
-            2. Find devices with key expiry disabled (shown as "Key expiry disabled").
-            3. Select the device and re-enable key expiry.
-
-            **Using Tailscale CLI**
-
-            Key expiry settings are managed per-device through the admin console. Devices can disable key expiry using:
+            2. Find devices labeled "Key expiry disabled".
+            3. Open the device menu and select **Enable key expiry**.
+        - id: cli
+          desc: |
+            To re-enable key expiry for a device via the Tailscale API:
 
             ```bash
-            # To check key expiry status
-            tailscale status --json | jq '.Self.KeyExpiry'
+            curl -s -u "$TAILSCALE_API_KEY:" \
+              -H "Content-Type: application/json" \
+              -X POST "https://api.tailscale.com/api/v2/device/<device-id>/key" \
+              --data '{ "keyExpiryDisabled": false }'
             ```
+
+            The device keeps its current key until it reaches the tailnet key expiry window, after which the device owner must re-authenticate.
         - id: terraform
           desc: |
-            To keep key expiry enabled in Terraform, leave `key_expiry_disabled` unset (defaults to `false`) or set it to `false` explicitly on any `tailscale_device_key` resource:
+            To keep key expiry enabled in Terraform, leave `key_expiry_disabled` unset, which defaults to `false`, or set it to `false` explicitly on any `tailscale_device_key` resource:
 
             ```hcl
             resource "tailscale_device_key" "example" {
@@ -291,7 +316,7 @@ queries:
   - uid: mondoo-tailscale-security-devices-key-expiry-enabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "tailscale_device_key")
     mql: |
-      terraform.resources.where(nameLabel == "tailscale_device_key").all(arguments["key_expiry_disabled"] != true)
+      terraform.resources("tailscale_device_key").all(arguments["key_expiry_disabled"] != true)
   - uid: mondoo-tailscale-security-devices-key-expiry-enabled-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "tailscale_device_key")
     mql: |
@@ -367,26 +392,37 @@ queries:
       remediation:
         - id: console
           desc: |
-            **Update Tailscale client**
-
-            Update the Tailscale client on each device:
-
-            - **macOS**: Update through the Mac App Store or `brew upgrade tailscale`.
-            - **Windows**: Update through the Microsoft Store or download from tailscale.com.
-            - **Linux**: Update via your package manager (e.g., `apt upgrade tailscale` or `dnf upgrade tailscale`).
-
             **Using Tailscale Admin Console**
 
             1. Go to the [Tailscale admin console](https://login.tailscale.com/admin/machines).
-            2. Devices with available updates are flagged.
-            3. Notify device owners to update their clients.
+            2. Devices with available updates are flagged with an update badge.
+            3. Notify device owners to update their clients, or enable tailnet-wide auto-updates under [Settings > Device management](https://login.tailscale.com/admin/settings/device-management).
+        - id: cli
+          desc: |
+            On platforms where the Tailscale client ships its own updater, update directly:
+
+            ```bash
+            sudo tailscale update
+            ```
+
+            Enable automatic updates on the device so future releases install without manual action:
+
+            ```bash
+            sudo tailscale set --auto-update=true
+            ```
+
+            Auto-update is not available on every install. It is unsupported on Tailscale clients installed through some Linux package managers and on static or musl builds, where the binary cannot replace itself. On those systems, keep the client current through the package manager or your patch management process instead.
+
+            Where the client was installed through a package manager or app store, update through that channel instead:
+
+            - **macOS**: Update through the Mac App Store, run `brew upgrade --cask tailscale-app` for the Homebrew GUI app, or `brew upgrade tailscale` for the Homebrew formula.
+            - **Windows**: Update through the Microsoft Store or download the installer from tailscale.com.
+            - **Linux**: Run `sudo apt-get update && sudo apt-get install --only-upgrade tailscale` on Debian and Ubuntu, or `sudo dnf upgrade tailscale` on Fedora and RHEL.
     refs:
       - url: https://tailscale.com/download
         title: Tailscale download and update
   - uid: mondoo-tailscale-security-devices-client-up-to-date-device
-    filters: |
-      asset.platform == 'tailscale-device'
-      tailscale.device.isExternal == false
+    filters: asset.platform == 'tailscale-device' && tailscale.device.isExternal == false
     mql: |
       tailscale.device.updateAvailable == false
   - uid: mondoo-tailscale-security-devices-client-up-to-date-tailnet
@@ -462,14 +498,21 @@ queries:
             **Using Tailscale Admin Console**
 
             1. Go to the [Tailscale admin console](https://login.tailscale.com/admin/machines).
-            2. Review devices showing tailnet lock errors.
-            3. For legitimate devices, sign them using a trusted node:
+            2. Review devices showing tailnet lock errors and decide whether each device belongs on the tailnet.
+            3. Remove any device that should not be on the tailnet.
+        - id: cli
+          desc: |
+            To sign a legitimate device, run the following on a device that holds a trusted tailnet lock signing key:
 
             ```bash
-            tailscale lock sign NODE_KEY
+            # List devices whose node keys are not yet signed
+            tailscale lock status
+
+            # Sign the device's node key
+            tailscale lock sign nodekey:<node-key-hex>
             ```
 
-            4. Remove any devices that should not be on the tailnet.
+            The node key also appears on the device's detail page in the admin console.
     refs:
       - url: https://tailscale.com/kb/1226/tailnet-lock
         title: Tailscale tailnet lock documentation
@@ -547,7 +590,16 @@ queries:
 
             1. Go to the [Tailscale admin console](https://login.tailscale.com/admin/users).
             2. Review users with "Needs approval" status.
-            3. Approve legitimate users or deny unauthorized requests.
+            3. For each expected user, open the user menu and select **Approve**.
+            4. For unknown or unexpected requests, deny the request and investigate how it was made.
+        - id: cli
+          desc: |
+            To approve a pending user via the Tailscale API:
+
+            ```bash
+            curl -s -u "$TAILSCALE_API_KEY:" \
+              -X POST "https://api.tailscale.com/api/v2/users/<user-id>/approve"
+            ```
     refs:
       - url: https://tailscale.com/kb/1138/user-management
         title: Tailscale user management documentation
@@ -618,7 +670,19 @@ queries:
 
             1. Go to the [Tailscale admin console](https://login.tailscale.com/admin/users).
             2. Review users with "Admin" and "Owner" roles.
-            3. Downgrade users who do not need elevated privileges to "Member" role.
+            3. For each user who does not need elevated privileges, open the user menu, select **Edit role**, and assign **Member**.
+
+            Keep at least one owner at all times. Tailscale prevents removing the last owner, so plan owner changes while a second owner exists.
+        - id: cli
+          desc: |
+            To downgrade a user to the member role via the Tailscale API:
+
+            ```bash
+            curl -s -u "$TAILSCALE_API_KEY:" \
+              -H "Content-Type: application/json" \
+              -X POST "https://api.tailscale.com/api/v2/users/<user-id>/role" \
+              --data '{ "role": "member" }'
+            ```
     refs:
       - url: https://tailscale.com/kb/1138/user-management
         title: Tailscale user roles documentation
@@ -685,9 +749,25 @@ queries:
             **Using Tailscale Admin Console**
 
             1. Go to the [Tailscale admin console](https://login.tailscale.com/admin/users).
-            2. Review users with "Idle" status (inactive for more than 28 days).
+            2. Review users with "Idle" status, meaning inactive for more than 28 days.
             3. Contact idle users to verify they still need access.
-            4. Suspend or remove users who no longer require tailnet access.
+            4. Suspend users who no longer require tailnet access: open the user menu and select **Suspend**. Suspension is reversible and blocks the user's devices without deleting them.
+            5. Delete a user only after confirming the account is permanently unneeded. Deleting a user also removes every device the user owns from the tailnet, including any servers registered under that account.
+        - id: cli
+          desc: |
+            To suspend an idle user via the Tailscale API:
+
+            ```bash
+            curl -s -u "$TAILSCALE_API_KEY:" \
+              -X POST "https://api.tailscale.com/api/v2/users/<user-id>/suspend"
+            ```
+
+            To delete the user once the account is confirmed permanently unneeded:
+
+            ```bash
+            curl -s -u "$TAILSCALE_API_KEY:" \
+              -X POST "https://api.tailscale.com/api/v2/users/<user-id>/delete"
+            ```
     refs:
       - url: https://tailscale.com/kb/1138/user-management
         title: Tailscale user management documentation
@@ -764,10 +844,21 @@ queries:
           desc: |
             **Using Tailscale Admin Console**
 
-            1. Go to the [Tailscale admin console settings](https://login.tailscale.com/admin/settings/general).
-            2. Locate the **Device approval** section.
+            1. Go to [Settings > Device management](https://login.tailscale.com/admin/settings/device-management) in the Tailscale admin console.
+            2. Locate the **Device approval** setting.
             3. Enable **Manually approve new devices**.
-            4. Save the change.
+
+            Devices already on the tailnet are unaffected; only newly joining devices wait for approval.
+        - id: cli
+          desc: |
+            To enable device approval via the Tailscale API:
+
+            ```bash
+            curl -s -u "$TAILSCALE_API_KEY:" \
+              -H "Content-Type: application/json" \
+              -X PATCH "https://api.tailscale.com/api/v2/tailnet/<tailnet>/settings" \
+              --data '{ "devicesApprovalOn": true }'
+            ```
         - id: terraform
           desc: |
             To enforce device approval in Terraform, set `devices_approval_on = true` on the `tailscale_tailnet_settings` resource:
@@ -787,7 +878,7 @@ queries:
   - uid: mondoo-tailscale-security-device-approval-required-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "tailscale_tailnet_settings")
     mql: |
-      terraform.resources.where(nameLabel == "tailscale_tailnet_settings").all(arguments["devices_approval_on"] == true)
+      terraform.resources("tailscale_tailnet_settings").all(arguments["devices_approval_on"] == true)
   - uid: mondoo-tailscale-security-device-approval-required-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "tailscale_tailnet_settings")
     mql: |
@@ -849,7 +940,7 @@ queries:
         ### Audit via Admin Console
 
         1. Sign in to the Tailscale admin console at login.tailscale.com/admin.
-        2. Open **Settings > Device management**.
+        2. Open **Settings > User management**.
         3. Review the user approval setting.
 
         A passing result shows that manual approval for new users is enabled; a failing result shows user approval turned off.
@@ -869,10 +960,21 @@ queries:
           desc: |
             **Using Tailscale Admin Console**
 
-            1. Go to the [Tailscale admin console settings](https://login.tailscale.com/admin/settings/general).
-            2. Locate the **User approval** section.
+            1. Go to [Settings > User management](https://login.tailscale.com/admin/settings/user-management) in the Tailscale admin console.
+            2. Locate the **User approval** setting.
             3. Enable **Manually approve new users**.
-            4. Save the change.
+
+            Existing users are unaffected; only newly joining users wait for approval.
+        - id: cli
+          desc: |
+            To enable user approval via the Tailscale API:
+
+            ```bash
+            curl -s -u "$TAILSCALE_API_KEY:" \
+              -H "Content-Type: application/json" \
+              -X PATCH "https://api.tailscale.com/api/v2/tailnet/<tailnet>/settings" \
+              --data '{ "usersApprovalOn": true }'
+            ```
         - id: terraform
           desc: |
             To enforce user approval in Terraform, set `users_approval_on = true` on the `tailscale_tailnet_settings` resource:
@@ -892,7 +994,7 @@ queries:
   - uid: mondoo-tailscale-security-user-approval-required-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "tailscale_tailnet_settings")
     mql: |
-      terraform.resources.where(nameLabel == "tailscale_tailnet_settings").all(arguments["users_approval_on"] == true)
+      terraform.resources("tailscale_tailnet_settings").all(arguments["users_approval_on"] == true)
   - uid: mondoo-tailscale-security-user-approval-required-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "tailscale_tailnet_settings")
     mql: |
@@ -974,10 +1076,19 @@ queries:
           desc: |
             **Using Tailscale Admin Console**
 
-            1. Go to the [Tailscale admin console settings](https://login.tailscale.com/admin/settings/general).
-            2. Locate the **Auto-updates** section.
-            3. Enable automatic updates for the tailnet.
-            4. Save the change.
+            1. Go to [Settings > Device management](https://login.tailscale.com/admin/settings/device-management) in the Tailscale admin console.
+            2. Locate the **Auto-updates** setting.
+            3. Enable automatic updates. When offered, apply the setting to existing devices as well as new ones so the whole fleet converges.
+        - id: cli
+          desc: |
+            To enable tailnet-wide automatic client updates via the Tailscale API:
+
+            ```bash
+            curl -s -u "$TAILSCALE_API_KEY:" \
+              -H "Content-Type: application/json" \
+              -X PATCH "https://api.tailscale.com/api/v2/tailnet/<tailnet>/settings" \
+              --data '{ "devicesAutoUpdatesOn": true }'
+            ```
         - id: terraform
           desc: |
             To enable tailnet-wide automatic client updates in Terraform, set `devices_auto_updates_on = true` on the `tailscale_tailnet_settings` resource:
@@ -997,7 +1108,7 @@ queries:
   - uid: mondoo-tailscale-security-devices-auto-updates-enabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "tailscale_tailnet_settings")
     mql: |
-      terraform.resources.where(nameLabel == "tailscale_tailnet_settings").all(arguments["devices_auto_updates_on"] == true)
+      terraform.resources("tailscale_tailnet_settings").all(arguments["devices_auto_updates_on"] == true)
   - uid: mondoo-tailscale-security-devices-auto-updates-enabled-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "tailscale_tailnet_settings")
     mql: |
@@ -1079,10 +1190,21 @@ queries:
           desc: |
             **Using Tailscale Admin Console**
 
-            1. Go to the [Tailscale admin console settings](https://login.tailscale.com/admin/settings/general).
-            2. Locate the **Device key duration** section.
-            3. Set the duration to a value of 180 days or less.
-            4. Save the change.
+            1. Go to [Settings > Device management](https://login.tailscale.com/admin/settings/device-management) in the Tailscale admin console.
+            2. Locate the **Key expiry** setting.
+            3. Set the expiry period to 180 days or less.
+
+            The new period applies to existing device keys. Devices whose keys are already older than the new period expire immediately and their owners must re-authenticate, so announce the change before applying it.
+        - id: cli
+          desc: |
+            To set the device key duration via the Tailscale API:
+
+            ```bash
+            curl -s -u "$TAILSCALE_API_KEY:" \
+              -H "Content-Type: application/json" \
+              -X PATCH "https://api.tailscale.com/api/v2/tailnet/<tailnet>/settings" \
+              --data '{ "devicesKeyDurationDays": 90 }'
+            ```
         - id: terraform
           desc: |
             To cap the device key duration in Terraform, set `devices_key_duration_days` on the `tailscale_tailnet_settings` resource to a value between 1 and 180:
@@ -1102,7 +1224,7 @@ queries:
   - uid: mondoo-tailscale-security-devices-key-duration-capped-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "tailscale_tailnet_settings")
     mql: |
-      terraform.resources.where(nameLabel == "tailscale_tailnet_settings").all(
+      terraform.resources("tailscale_tailnet_settings").all(
         arguments["devices_key_duration_days"] > 0 && arguments["devices_key_duration_days"] <= 180
       )
   - uid: mondoo-tailscale-security-devices-key-duration-capped-terraform-plan
@@ -1188,13 +1310,35 @@ queries:
 
             1. Go to the [Tailscale admin console access controls](https://login.tailscale.com/admin/acls/file).
             2. Open the policy file editor.
-            3. Remove or scope down any `acls` entry whose `src` is `["*"]`, `dst` is `["*:*"]`, and `action` is `"accept"`.
-            4. Replace it with explicit per-group, per-tag, or per-service rules that grant only the access each group needs.
-            5. Use the **Preview** button and the policy `tests` block to confirm the intended access still works.
+            3. Before removing the catch-all, add explicit per-group, per-tag, or per-service rules that grant the access each group needs, including a rule preserving administrator access to managed machines.
+            4. Remove or scope down any `acls` entry whose `src` is `["*"]`, `dst` is `["*:*"]`, and `action` is `"accept"`.
+            5. Use the **Preview** feature and the policy `tests` block to confirm the intended access still works. ACL changes take effect immediately on every device, and an over-tightened policy can cut off the operators applying it.
             6. Save the policy.
+        - id: cli
+          desc: |
+            To update the ACL policy via the Tailscale API:
+
+            ```bash
+            # Fetch the current policy; the ETag response header carries the version
+            curl -s -i -u "$TAILSCALE_API_KEY:" \
+              "https://api.tailscale.com/api/v2/tailnet/<tailnet>/acl"
+
+            # Validate the edited policy without applying it
+            curl -s -u "$TAILSCALE_API_KEY:" \
+              -H "Content-Type: application/hujson" \
+              -X POST "https://api.tailscale.com/api/v2/tailnet/<tailnet>/acl/validate" \
+              --data-binary @policy.hujson
+
+            # Apply it; If-Match prevents overwriting a concurrent edit
+            curl -s -u "$TAILSCALE_API_KEY:" \
+              -H "Content-Type: application/hujson" \
+              -H 'If-Match: "<etag>"' \
+              -X POST "https://api.tailscale.com/api/v2/tailnet/<tailnet>/acl" \
+              --data-binary @policy.hujson
+            ```
         - id: terraform
           desc: |
-            To manage the tailnet ACL in Terraform, declare a `tailscale_acl` resource whose `acl` argument is least-privilege HuJSON (no `src = ["*"]` paired with `dst = ["*:*"]` at `action = "accept"`). Use `jsonencode` so the structure is easy to review in diffs:
+            To manage the tailnet ACL in Terraform, declare a `tailscale_acl` resource whose `acl` argument is least-privilege HuJSON with no `src = ["*"]` paired with `dst = ["*:*"]` at `action = "accept"`. Use `jsonencode` so the structure is easy to review in diffs:
 
             ```hcl
             resource "tailscale_acl" "policy" {
@@ -1304,32 +1448,33 @@ queries:
             To replace a non-expiring pre-auth key from the admin console:
 
             1. Sign in to the [Tailscale admin console](https://login.tailscale.com/admin) and open **Settings** > **Keys**.
-            2. Generate a replacement key with an explicit expiration (the **Expires** picker offers fixed windows up to 90 days; pick the shortest that satisfies the automation that consumes it).
-            3. Update every consumer of the old key to use the new value.
-            4. Revoke the old non-expiring key on the same page.
+            2. Generate a replacement key with an explicit expiration. The **Expires** picker offers fixed windows up to 90 days; pick the shortest that satisfies the automation that consumes it.
+            3. Match the **Reusable**, **Ephemeral**, and **Pre-approved** options to the key being replaced so enrolled devices keep the same lifecycle behavior.
+            4. Update every consumer of the old key to use the new value.
+            5. Revoke the old non-expiring key on the same page.
         - id: cli
           desc: |
-            To replace a non-expiring pre-auth key via the Tailscale API:
+            To replace a non-expiring pre-auth key via the Tailscale API, create a key with an explicit expiration and the same capability flags as the key it replaces. Devices enrolled with an ephemeral key are removed automatically when they go offline, so set `ephemeral` to `true` only when the old key behaved that way:
 
             ```bash
-            # Create a replacement key with an explicit 90-day expiration (seconds).
+            # Create a replacement key with an explicit 90-day expiration in seconds
             curl -s -u "$TAILSCALE_API_KEY:" \
               -H "Content-Type: application/json" \
               -X POST "https://api.tailscale.com/api/v2/tailnet/<tailnet>/keys" \
               --data '{
                 "capabilities": {
-                  "devices": { "create": { "reusable": false, "ephemeral": true, "preauthorized": true, "tags": ["tag:ci"] } }
+                  "devices": { "create": { "reusable": false, "ephemeral": false, "preauthorized": true, "tags": ["tag:ci"] } }
                 },
                 "expirySeconds": 7776000
               }'
 
-            # Update consumers, then revoke the old key.
+            # Update consumers, then revoke the old key
             curl -s -u "$TAILSCALE_API_KEY:" \
               -X DELETE "https://api.tailscale.com/api/v2/tailnet/<tailnet>/keys/<old-key-id>"
             ```
         - id: terraform
           desc: |
-            To ensure a pre-auth key has a finite expiration in Terraform, leave `expiry` at its default (7776000 seconds / 90 days) or set it to an explicit positive integer on `tailscale_tailnet_key`. Setting `expiry = 0` disables expiry and is the failure case:
+            To ensure a pre-auth key has a finite expiration in Terraform, leave `expiry` at its default of 7776000 seconds, which is 90 days, or set it to an explicit positive integer on `tailscale_tailnet_key`. Setting `expiry = 0` disables expiry and is the failure case. Set `ephemeral` to match how the enrolled devices should behave; ephemeral devices are removed automatically when they go offline:
 
             ```hcl
             resource "tailscale_tailnet_key" "ci" {
@@ -1347,11 +1492,11 @@ queries:
   - uid: mondoo-tailscale-security-authkeys-have-expiration-tailscale
     filters: asset.platform == 'tailscale'
     mql: |
-      tailscale.authKeys.where(invalid == false && revoked.unix == 0).all(expires.unix > 0)
+      tailscale.authKeys.where(invalid == false && isRevoked == false).all(hasExpiration)
   - uid: mondoo-tailscale-security-authkeys-have-expiration-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "tailscale_tailnet_key")
     mql: |
-      terraform.resources.where(nameLabel == "tailscale_tailnet_key").all(arguments["expiry"] != 0)
+      terraform.resources("tailscale_tailnet_key").all(arguments["expiry"] != 0)
   - uid: mondoo-tailscale-security-authkeys-have-expiration-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "tailscale_tailnet_key")
     mql: |
@@ -1433,11 +1578,11 @@ queries:
             To replace a reusable pre-auth key:
 
             1. Sign in to the [Tailscale admin console](https://login.tailscale.com/admin) and open **Settings** > **Keys**.
-            2. Generate a replacement key with **Reusable** disabled. If the consuming workflow truly requires many enrollments, generate the new key per job from the CI pipeline using a short-lived API access token instead of issuing one reusable key.
+            2. Generate a replacement key with **Reusable** disabled, keeping the **Ephemeral** and **Pre-approved** options matched to the key being replaced. If the consuming workflow truly requires many enrollments, generate the new key per job from the CI pipeline using a short-lived API access token instead of issuing one reusable key.
             3. Update consumers to fetch a fresh single-use key per enrollment, then revoke the reusable key on the same page.
         - id: cli
           desc: |
-            To create a single-use pre-auth key and retire the reusable one via the Tailscale API:
+            To create a single-use pre-auth key and retire the reusable one via the Tailscale API. Devices enrolled with an ephemeral key are removed automatically when they go offline, so set `ephemeral` to `true` only for short-lived workloads such as CI runners:
 
             ```bash
             curl -s -u "$TAILSCALE_API_KEY:" \
@@ -1445,7 +1590,7 @@ queries:
               -X POST "https://api.tailscale.com/api/v2/tailnet/<tailnet>/keys" \
               --data '{
                 "capabilities": {
-                  "devices": { "create": { "reusable": false, "ephemeral": true, "preauthorized": true, "tags": ["tag:ci"] } }
+                  "devices": { "create": { "reusable": false, "ephemeral": false, "preauthorized": true, "tags": ["tag:ci"] } }
                 },
                 "expirySeconds": 86400
               }'
@@ -1455,7 +1600,7 @@ queries:
             ```
         - id: terraform
           desc: |
-            To declare single-use pre-auth keys in Terraform, leave `reusable` at its default (`false`) or set it explicitly on `tailscale_tailnet_key`. The failure case is `reusable = true`:
+            To declare single-use pre-auth keys in Terraform, leave `reusable` at its default of `false` or set it explicitly on `tailscale_tailnet_key`. The failure case is `reusable = true`. Set `ephemeral` to `true` only for short-lived workloads whose devices should be removed automatically when offline:
 
             ```hcl
             resource "tailscale_tailnet_key" "ci_job" {
@@ -1472,11 +1617,11 @@ queries:
   - uid: mondoo-tailscale-security-authkeys-not-reusable-tailscale
     filters: asset.platform == 'tailscale'
     mql: |
-      tailscale.authKeys.where(invalid == false && revoked.unix == 0).none(reusable)
+      tailscale.authKeys.where(invalid == false && isRevoked == false).none(reusable)
   - uid: mondoo-tailscale-security-authkeys-not-reusable-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "tailscale_tailnet_key")
     mql: |
-      terraform.resources.where(nameLabel == "tailscale_tailnet_key").all(arguments["reusable"] != true)
+      terraform.resources("tailscale_tailnet_key").all(arguments["reusable"] != true)
   - uid: mondoo-tailscale-security-authkeys-not-reusable-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "tailscale_tailnet_key")
     mql: |
@@ -1530,8 +1675,8 @@ queries:
         ### Audit via Admin Console
 
         1. Sign in to the [Tailscale admin console](https://login.tailscale.com/admin).
-        2. Open **Settings** > **Logs** > **Configuration log streaming**.
-        3. Confirm a destination (Splunk, Elastic, Panther, Cribl, Datadog, Axiom, or S3) is configured and the toggle is on.
+        2. Open the [Logs page](https://login.tailscale.com/admin/logs).
+        3. Under **Configuration audit logs**, confirm streaming is enabled with a destination such as Splunk, Elastic, Panther, Cribl, Datadog, Axiom, or S3.
 
         A passing tailnet shows an enabled configuration logstream with a destination URL or S3 bucket. A failing tailnet shows the section as **Not configured**.
 
@@ -1550,9 +1695,9 @@ queries:
           desc: |
             To configure the configuration audit log export from the admin console:
 
-            1. Sign in to the [Tailscale admin console](https://login.tailscale.com/admin) and open **Settings** > **Logs**.
-            2. Under **Configuration log streaming**, click **Add destination** and choose Splunk, Elastic, Panther, Cribl, Datadog, Axiom, or S3.
-            3. Provide the destination endpoint plus the auth credential the destination requires (token, basic auth, IAM access key, or assumed role for S3).
+            1. Sign in to the [Tailscale admin console](https://login.tailscale.com/admin) and open the [Logs page](https://login.tailscale.com/admin/logs).
+            2. Under **Configuration audit logs**, start streaming and choose a destination such as Splunk, Elastic, Panther, Cribl, Datadog, Axiom, or S3.
+            3. Provide the destination endpoint plus the auth credential the destination requires, such as a token, basic auth, or an IAM access key or assumed role for S3.
             4. Save and confirm the test event lands in the receiver.
         - id: cli
           desc: |
@@ -1576,7 +1721,7 @@ queries:
             Verify the configuration with `GET .../logging/configuration/stream` and confirm new events appear in the destination.
         - id: terraform
           desc: |
-            To declare the configuration audit log export in Terraform, use the `tailscale_logstream_configuration` resource with `log_type = "configuration"`. The example below sends to S3 using an assumed role; the resource also supports `splunk`, `elastic`, `panther`, `cribl`, `datadog`, `axiom`, and `gcs`:
+            To declare the configuration audit log export in Terraform, use the `tailscale_logstream_configuration` resource with `log_type = "configuration"`. The example below sends to S3 using an assumed role; the resource also supports `splunk`, `elastic`, `panther`, `cribl`, `datadog`, and `axiom` destinations:
 
             ```hcl
             resource "tailscale_logstream_configuration" "config_audit" {
@@ -1667,25 +1812,38 @@ queries:
           desc: |
             To switch a plaintext webhook to HTTPS from the admin console:
 
-            1. Sign in to the [Tailscale admin console](https://login.tailscale.com/admin) and open **Settings** > **Webhooks**.
-            2. Provision (or expose) the receiver behind an HTTPS endpoint; if it lives behind an internal service, front it with a reverse proxy that terminates TLS using a certificate signed by a CA Tailscale's outbound traffic trusts.
-            3. Edit the affected webhook and change the **Endpoint URL** to the `https://` form.
-            4. Trigger a test event and confirm the receiver still accepts it; rotate the shared secret if the URL change is part of a migration.
+            1. Provision the receiver behind an HTTPS endpoint; if it lives behind an internal service, front it with a reverse proxy that terminates TLS using a certificate from a publicly trusted CA.
+            2. Sign in to the [Tailscale admin console](https://login.tailscale.com/admin) and open **Settings** > **Webhooks**.
+            3. Create a new webhook with the `https://` endpoint URL and the same event subscriptions as the old one. The endpoint URL of an existing webhook cannot be edited, so replacing the webhook is the supported path.
+            4. Store the new webhook signing secret in the receiver and confirm a test event is accepted.
+            5. Delete the old plaintext webhook.
         - id: cli
           desc: |
-            To switch a plaintext webhook to HTTPS via the Tailscale API:
+            To replace a plaintext webhook via the Tailscale API: a webhook's endpoint URL cannot be changed after creation, so create a replacement webhook that posts to the HTTPS endpoint, then delete the plaintext one.
 
             ```bash
+            # Look up the plaintext webhook's id and subscriptions
+            curl -s -u "$TAILSCALE_API_KEY:" \
+              "https://api.tailscale.com/api/v2/tailnet/<tailnet>/webhooks"
+
+            # Create the HTTPS replacement with the same subscriptions; the
+            # response contains the new signing secret
             curl -s -u "$TAILSCALE_API_KEY:" \
               -H "Content-Type: application/json" \
-              -X PATCH "https://api.tailscale.com/api/v2/tailnet/<tailnet>/webhooks/<endpoint-id>" \
-              --data '{ "endpointUrl": "https://<receiver-host>/<path>" }'
-            ```
+              -X POST "https://api.tailscale.com/api/v2/tailnet/<tailnet>/webhooks" \
+              --data '{
+                "endpointUrl": "https://<receiver-host>/<path>",
+                "subscriptions": ["nodeApproved", "nodeNeedsApproval"]
+              }'
 
-            Then send a synthetic test event from the admin console or the API and confirm the receiver records the new URL.
+            # Store the secret in the receiver and verify delivery, then
+            # delete the old plaintext webhook
+            curl -s -u "$TAILSCALE_API_KEY:" \
+              -X DELETE "https://api.tailscale.com/api/v2/webhooks/<old-endpoint-id>"
+            ```
         - id: terraform
           desc: |
-            To require HTTPS webhook endpoints in Terraform, set `endpoint_url` to an `https://` URL on the `tailscale_webhook` resource:
+            To require HTTPS webhook endpoints in Terraform, set `endpoint_url` to an `https://` URL on the `tailscale_webhook` resource. Changing the URL forces replacement of the webhook and issues a new signing secret, which must be updated in the receiver:
 
             ```hcl
             resource "tailscale_webhook" "approvals" {
@@ -1703,7 +1861,7 @@ queries:
   - uid: mondoo-tailscale-security-webhooks-use-https-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "tailscale_webhook")
     mql: |
-      terraform.resources.where(nameLabel == "tailscale_webhook").all(arguments["endpoint_url"] == /^https:\/\//)
+      terraform.resources("tailscale_webhook").all(arguments["endpoint_url"] == /^https:\/\//)
   - uid: mondoo-tailscale-security-webhooks-use-https-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "tailscale_webhook")
     mql: |

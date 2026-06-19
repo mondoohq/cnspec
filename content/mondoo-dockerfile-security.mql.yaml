@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-docker-security
     name: Mondoo Dockerfile Security
-    version: 1.2.0
+    version: 1.3.2
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -57,6 +57,7 @@ policies:
           asset.platform == "dockerfile"
         checks:
           - uid: mondoo-docker-security-no-sensitive-volume-mounts
+          - uid: mondoo-docker-security-no-sensitive-bind-mount-sources
           - uid: mondoo-docker-security-no-workdir-system-dirs
       - title: Build Security
         filters: |
@@ -64,6 +65,8 @@ policies:
         checks:
           - uid: mondoo-docker-security-use-copy-instead-of-add
           - uid: mondoo-docker-security-no-secrets-in-env
+          - uid: mondoo-docker-security-no-run-security-insecure
+          - uid: mondoo-docker-security-no-run-network-host
           - uid: mondoo-docker-best-practice-no-latest-tag
           - uid: mondoo-docker-best-practice-from-tag-specified
       - title: Provenance & Ownership
@@ -151,7 +154,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-7-2
       compliance/vda-isa-5: vda-isa-5-5-1-2
     mql: |
-      docker.file.stages.all(run.none(script.contains("--allow-insecure-repositories")))
+      docker.file.stages.all(run.all(commands.none(flags.contains("--allow-insecure-repositories"))))
     docs:
       desc: |
         Dockerfile `RUN` instructions should not pass the `--allow-insecure-repositories` option to the APT package manager.
@@ -173,16 +176,25 @@ queries:
       remediation:
         - id: dockerfile
           desc: |
-            Remove the `--allow-insecure-repositories` option from APT commands and configure APT to use signed, secure repositories:
+            The proper fix is to make APT trust the repository, then remove the bypass. Removing `--allow-insecure-repositories` on its own breaks installs from an unsigned or keyless repository, because APT then refuses packages it cannot verify. Import the repository's GPG signing key so verification succeeds, then drop the flag.
+
+            Fetch the publisher's key, store it in `/etc/apt/keyrings`, and pin it to the repository with `signed-by` so only that key can authorize packages from that source:
 
             ```dockerfile
             # Instead of:
             RUN apt-get update --allow-insecure-repositories && apt-get install -y package
 
             # Use:
-            RUN apt-get update && apt-get install -y --no-install-recommends package && \
+            RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl gnupg && \
+                install -m 0755 -d /etc/apt/keyrings && \
+                curl -fsSL https://repo.example.com/gpg | gpg --dearmor -o /etc/apt/keyrings/example.gpg && \
+                echo "deb [signed-by=/etc/apt/keyrings/example.gpg] https://repo.example.com/apt stable main" \
+                  > /etc/apt/sources.list.d/example.list && \
+                apt-get update && apt-get install -y --no-install-recommends package && \
                 rm -rf /var/lib/apt/lists/*
             ```
+
+            With the key imported, APT validates package signatures and the insecure flag is no longer needed. The `rm -rf /var/lib/apt/lists/*` step clears the package index cache so it does not persist in the image layer.
     refs:
       - url: https://docs.docker.com/build/building/best-practices/
         title: Dockerfile Best Practices
@@ -206,11 +218,10 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-7-2
       compliance/vda-isa-5: vda-isa-5-5-1-2
     mql: |
-      docker.file.stages.all(run.where(script.contains("curl")).none(script.contains("--insecure")))
-      docker.file.stages.all(run.where(script.contains("curl")).none(script.contains(" -k")))
+      docker.file.stages.all(run.all(commands.where(binary == "curl").none(flags.contains("--insecure") || flags.any(_ == /^-[a-zA-Z]*k[a-zA-Z]*$/))))
     docs:
       desc: |
-        Dockerfile `RUN` instructions should not pass the `--insecure` or `-k` options to `curl`.
+        Dockerfile `RUN` instructions should not pass the `--insecure` or `-k` options to `curl`. The `-k` option also counts when it is bundled into a short-option cluster such as `-fsSLk`.
 
         **Why this matters**
 
@@ -223,7 +234,7 @@ queries:
 
         1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
         2. Locate every `RUN` instruction containing `curl`: `grep -nE 'RUN.*curl' Dockerfile`.
-        3. Confirm none of the matched instructions pass `--insecure` or `-k`.
+        3. Confirm none of the matched instructions pass `--insecure` or `-k`, including `-k` bundled into a short-option cluster such as `-fsSLk`.
 
         If no `curl` command disables certificate validation, the check passes. If any uses `--insecure` or `-k`, the check fails.
       remediation:
@@ -261,7 +272,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-7-2
       compliance/vda-isa-5: vda-isa-5-5-1-2
     mql: |
-      docker.file.stages.all(run.none(script.contains("--no-check-certificate")))
+      docker.file.stages.all(run.all(commands.none(flags.contains("--no-check-certificate"))))
     docs:
       desc: |
         Dockerfile `RUN` instructions should not pass the `--no-check-certificate` option to `wget`.
@@ -315,7 +326,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-3-1
       compliance/vda-isa-5: vda-isa-5-4-1-1
     mql: |
-      docker.file.stages.all(run.none(script.contains("sudo ")))
+      docker.file.stages.all(run.all(commands.none(binary == "sudo")))
     docs:
       desc: |
         Dockerfile `RUN` instructions should not use `sudo` to run commands.
@@ -344,7 +355,8 @@ queries:
             RUN sudo apt-get install -y package
 
             # Use:
-            RUN apt-get install -y --no-install-recommends package
+            RUN apt-get update && apt-get install -y --no-install-recommends package && \
+                rm -rf /var/lib/apt/lists/*
             USER appuser
             ```
     refs:
@@ -370,11 +382,10 @@ queries:
       compliance/soc2-2017: soc2-control-cc7-1-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
     mql: |
-      docker.file.stages.all(run.none(script.contains("--nogpgcheck")))
-      docker.file.stages.all(run.none(script.contains("--no-gpg-check")))
+      docker.file.stages.all(run.all(commands.none(flags.contains("--nogpgcheck") || flags.contains("--no-gpg-checks"))))
     docs:
       desc: |
-        Dockerfile `RUN` instructions should not pass GPG signature verification bypass options (`--nogpgcheck` for YUM/DNF, `--no-gpg-check` for zypper) to package managers.
+        Dockerfile `RUN` instructions should not pass GPG signature verification bypass options to package managers: `--nogpgcheck` for YUM and DNF, or `--no-gpg-checks` for zypper.
 
         **Why this matters**
 
@@ -386,22 +397,40 @@ queries:
         Inspect the Dockerfile to confirm GPG validation is not bypassed:
 
         1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
-        2. Search every `RUN` instruction for the bypass options: `grep -nE -- '--nogpgcheck|--no-gpg-check' Dockerfile`.
+        2. Search every `RUN` instruction for the bypass options: `grep -nE -- '--nogpgcheck|--no-gpg-checks' Dockerfile`.
         3. Confirm no `RUN` instruction passes either option to YUM, DNF, or zypper.
 
         If neither option is present, the check passes. If any `RUN` instruction uses one, the check fails.
       remediation:
         - id: dockerfile
           desc: |
-            Remove GPG bypass options from package manager commands so signature verification stays enabled:
+            The proper fix is to import the repository's GPG signing key so signature verification succeeds, then remove the bypass flag. Dropping `--nogpgcheck` or `--no-gpg-checks` on its own breaks installs from an unsigned or keyless repository, because the package manager then refuses packages whose signatures it cannot verify against a trusted key.
+
+            For YUM and DNF, import the publisher's key with `rpm --import`, then install without the bypass:
 
             ```dockerfile
             # Instead of:
             RUN dnf install -y --nogpgcheck package
 
             # Use:
-            RUN dnf install -y package && dnf clean all
+            RUN rpm --import https://repo.example.com/RPM-GPG-KEY-example && \
+                dnf install -y package && \
+                dnf clean all && rm -rf /var/cache/dnf
             ```
+
+            For zypper, import the key the same way, then install without `--no-gpg-checks`:
+
+            ```dockerfile
+            # Instead of:
+            RUN zypper --no-gpg-checks install -y package
+
+            # Use:
+            RUN rpm --import https://repo.example.com/RPM-GPG-KEY-example && \
+                zypper install -y package && \
+                zypper clean --all
+            ```
+
+            With the key imported, signature verification passes and the bypass flag is no longer needed. The `dnf clean all` / `zypper clean --all` and `rm -rf /var/cache/dnf` steps clear the package caches so they do not persist in the image layer.
     refs:
       - url: https://docs.docker.com/build/building/best-practices/
         title: Dockerfile Best Practices
@@ -447,12 +476,38 @@ queries:
       remediation:
         - id: dockerfile
           desc: |
-            Add a `USER` instruction that specifies a non-root user in the final stage of the Dockerfile. Make sure the user exists and has the permissions needed for the processes in that stage:
+            Add a `USER` instruction that specifies a non-root user in the final stage of the Dockerfile. Create the user first and make sure it has the permissions needed for the processes in that stage.
+
+            On Debian or Ubuntu based images:
 
             ```dockerfile
             RUN groupadd -r appgroup && useradd -r -g appgroup appuser
             USER appuser
             ```
+
+            On Alpine based images, which do not ship `groupadd` or `useradd`:
+
+            ```dockerfile
+            RUN addgroup -S appgroup && adduser -S -G appgroup appuser
+            USER appuser
+            ```
+
+            Prefer a numeric UID when the runtime platform must verify the user is non-root without resolving names, for example under Kubernetes `runAsNonRoot`:
+
+            ```dockerfile
+            USER 10001:10001
+            ```
+
+            After the `USER` switch, the process can no longer write to files and directories that earlier steps created as root. Anything the application needs to write at runtime, such as application directories, cache paths, log directories, or a writable temp area, must be owned by the new user. Place the `USER` instruction after those steps and grant ownership with `chown` so the switch does not break the running container:
+
+            ```dockerfile
+            RUN groupadd -r appgroup && useradd -r -g appgroup appuser && \
+                mkdir -p /app/data && chown -R appuser:appgroup /app
+            WORKDIR /app
+            USER appuser
+            ```
+
+            For files brought in with `COPY`, set ownership at copy time with `COPY --chown=appuser:appgroup` rather than running a separate `chown`, which avoids duplicating the file data into an extra image layer.
     refs:
       - url: https://docs.docker.com/build/building/best-practices/#user
         title: Dockerfile Best Practices - USER Instruction
@@ -497,7 +552,7 @@ queries:
       remediation:
         - id: dockerfile
           desc: |
-            Replace `ADD` instructions with `COPY` for file copying tasks. Reserve `ADD` for cases where its remote-fetch or archive-extraction behavior is genuinely needed and cannot be achieved with `COPY`:
+            Replace `ADD` instructions with `COPY` for file copying tasks:
 
             ```dockerfile
             # Instead of:
@@ -505,6 +560,20 @@ queries:
 
             # Use:
             COPY app/ /opt/app/
+            ```
+
+            For remote downloads, fetch the file explicitly in a `RUN` step and verify its checksum:
+
+            ```dockerfile
+            RUN curl -fsSL -o /tmp/app.tar.gz https://example.com/app.tar.gz && \
+                echo "expected-sha256-digest  /tmp/app.tar.gz" | sha256sum -c -
+            ```
+
+            For local archives that must be extracted, copy the archive and extract it explicitly:
+
+            ```dockerfile
+            COPY app.tar.gz /tmp/
+            RUN tar -xzf /tmp/app.tar.gz -C /opt/app && rm /tmp/app.tar.gz
             ```
     refs:
       - url: https://docs.docker.com/build/building/best-practices/#add-or-copy
@@ -583,10 +652,10 @@ queries:
       compliance/soc2-2017: soc2-control-cc7-1-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
     mql: |
-      docker.file.stages.all(from.tag != empty)
+      docker.file.stages.all(from.tag != empty || from.digest != empty || from.image == "scratch")
     docs:
       desc: |
-        Every `FROM` instruction in the Dockerfile should specify an explicit image tag. When no tag is provided, Docker implicitly uses the `:latest` tag, which defeats the purpose of version pinning.
+        Every `FROM` instruction in the Dockerfile should specify an explicit image tag or digest. When neither is provided, Docker implicitly uses the `:latest` tag, which defeats the purpose of version pinning. The reserved `scratch` base image is exempt because it is an empty starting point with no published tags.
 
         **Why this matters**
 
@@ -603,7 +672,7 @@ queries:
         2. Locate every `FROM` instruction: `grep -nE '^FROM' Dockerfile`.
         3. Confirm each image reference includes an explicit tag or digest.
 
-        If every `FROM` instruction specifies a tag, the check passes. If any omits the tag, the check fails.
+        If every `FROM` instruction specifies a tag or digest, the check passes. If any omits both, the check fails.
       remediation:
         - id: dockerfile
           desc: |
@@ -679,11 +748,18 @@ queries:
             # docker run --env-file .env myimage
             ```
 
-            For build-time secrets, use Docker BuildKit secret mounts so the value is never persisted in image layers:
+            For build-time secrets, use Docker BuildKit secret mounts so the value is never persisted in image layers. Point the consuming tool at the mounted file rather than printing the value, so the secret does not leak into build logs:
 
             ```dockerfile
             # syntax=docker/dockerfile:1
-            RUN --mount=type=secret,id=api_key cat /run/secrets/api_key
+            RUN --mount=type=secret,id=netrc,target=/root/.netrc \
+                curl -fsSL --netrc -o app.tar.gz https://internal.example.com/app.tar.gz
+            ```
+
+            Pass the secret at build time:
+
+            ```bash
+            docker build --secret id=netrc,src="$HOME/.netrc" .
             ```
     refs:
       - url: https://docs.docker.com/build/building/best-practices/#run---mounttypesecret
@@ -708,16 +784,10 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-3
       compliance/vda-isa-5: vda-isa-5-4-1-1
     mql: |
-      docker.file.stages.all(volumes.none(path == "/"))
-      docker.file.stages.all(volumes.none(path == "/etc"))
-      docker.file.stages.all(volumes.none(path == "/proc"))
-      docker.file.stages.all(volumes.none(path == "/sys"))
-      docker.file.stages.all(volumes.none(path == "/dev"))
-      docker.file.stages.all(volumes.none(path == "/boot"))
-      docker.file.stages.all(volumes.none(path == "/root"))
+      docker.file.stages.all(volumes.none(path == /^\/(etc|proc|sys|dev|boot|root)(\/|$)/ || path == "/"))
     docs:
       desc: |
-        Dockerfiles should not declare `VOLUME` instructions for sensitive host directories such as `/`, `/etc`, `/proc`, `/sys`, `/dev`, `/boot`, or `/root`. The `VOLUME` instruction declares a mount point within the image, and declaring sensitive paths creates a persistent risk when containers are later launched with host bind mounts.
+        Dockerfiles should not declare `VOLUME` instructions for sensitive host directories such as `/`, `/etc`, `/proc`, `/sys`, `/dev`, `/boot`, or `/root`, including their subpaths. The `VOLUME` instruction declares a mount point within the image, and declaring sensitive paths creates a persistent risk when containers are later launched with host bind mounts.
 
         **Why this matters**
 
@@ -731,7 +801,7 @@ queries:
 
         1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
         2. Locate every `VOLUME` instruction: `grep -nE '^VOLUME' Dockerfile`.
-        3. Confirm none reference `/`, `/etc`, `/proc`, `/sys`, `/dev`, `/boot`, or `/root`.
+        3. Confirm none reference `/`, `/etc`, `/proc`, `/sys`, `/dev`, `/boot`, or `/root`, or any subpath beneath them such as `/etc/ssl` or `/root/.ssh`.
 
         If only application data directories are declared as volumes, the check passes. If any sensitive directory is declared, the check fails.
       remediation:
@@ -826,10 +896,10 @@ queries:
       compliance/soc2-2017: soc2-control-cc7-1-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
     mql: |
-      docker.file.stages.all(run.where(script.contains("apt-get")).none(script.contains("dist-upgrade")))
+      docker.file.stages.all(run.all(commands.where(binary == "apt-get" || binary == "apt").none(subcommand == "dist-upgrade" || subcommand == "full-upgrade")))
     docs:
       desc: |
-        Dockerfile `RUN` instructions should not use `apt-get dist-upgrade`. Unlike `apt-get upgrade`, `dist-upgrade` can remove existing packages, install new dependencies, and make major changes to the package configuration, leading to unpredictable and unreproducible builds.
+        Dockerfile `RUN` instructions should not use `apt-get dist-upgrade` or its equivalent spellings `apt dist-upgrade` and `apt full-upgrade`. Unlike `apt-get upgrade`, `dist-upgrade` can remove existing packages, install new dependencies, and make major changes to the package configuration, leading to unpredictable and unreproducible builds.
 
         **Why this matters**
 
@@ -841,10 +911,10 @@ queries:
         Inspect the Dockerfile to confirm `apt-get dist-upgrade` is not used:
 
         1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
-        2. Search every `RUN` instruction for the command: `grep -nE 'RUN.*dist-upgrade' Dockerfile`.
-        3. Confirm no `RUN` instruction calls `apt-get dist-upgrade`.
+        2. Search every `RUN` instruction for the command: `grep -nE 'RUN.*(dist|full)-upgrade' Dockerfile`.
+        3. Confirm no `RUN` instruction calls `apt-get dist-upgrade`, `apt dist-upgrade`, or `apt full-upgrade`.
 
-        If `dist-upgrade` is absent, the check passes. If any `RUN` instruction uses it, the check fails.
+        If none of these commands is present, the check passes. If any `RUN` instruction uses one, the check fails.
       remediation:
         - id: dockerfile
           desc: |
@@ -881,7 +951,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-1
       compliance/vda-isa-5: false
     mql: |
-      docker.file.finalStage.labels["org.opencontainers.image.source"] != empty
+      docker.file.finalStage.oci.source != empty
     docs:
       desc: |
         The final stage of the Dockerfile should set the `org.opencontainers.image.source` label. This [OCI image annotation](https://github.com/opencontainers/image-spec/blob/main/annotations.md) records the URL of the source code repository that produced the image, so any running container can be traced back to the repository it was built from.
@@ -947,7 +1017,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-1
       compliance/vda-isa-5: false
     mql: |
-      docker.file.finalStage.labels["org.opencontainers.image.authors"] != empty
+      docker.file.finalStage.oci.authors != empty
     docs:
       desc: |
         The final stage of the Dockerfile should set the `org.opencontainers.image.authors` label. This [OCI image annotation](https://github.com/opencontainers/image-spec/blob/main/annotations.md) records the contact information for the people or team responsible for the image, so any running container can be traced back to a clear owner.
@@ -1040,3 +1110,184 @@ queries:
     refs:
       - url: https://docs.docker.com/reference/dockerfile/#workdir
         title: Dockerfile Reference - WORKDIR
+  - uid: mondoo-docker-security-no-run-security-insecure
+    title: Don't use --security=insecure with RUN instructions
+    impact: 100
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ccc-06
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ip-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-2
+      compliance/pci-dss-4: pcidss-requirement-2-2-1
+      compliance/soc2-2017: soc2-control-cc7-1-1
+      compliance/vda-isa-5: vda-isa-5-5-2-1
+    mql: |
+      docker.file.stages.all(run.none(security == "insecure"))
+    docs:
+      desc: |
+        Dockerfile `RUN` instructions should not use the BuildKit `--security=insecure` flag. This flag disables seccomp and AppArmor confinement for the build step, granting the command the same capabilities as the BuildKit daemon, including raw device access and unrestricted system calls.
+
+        **Why this matters**
+
+        - **Build host compromise:** A `RUN --security=insecure` step executes with the privileges of the BuildKit daemon, so a malicious or compromised command can read host files, attach to host processes, and modify the build environment.
+        - **Untrusted dependencies:** Build steps often invoke third-party scripts and package installers. Running them outside the default sandbox turns any supply-chain compromise in those tools into a build-host compromise.
+        - **Audit trail:** BuildKit emits no special record when `insecure` is used; reviewers reading scan output, not the Dockerfile, will miss that the build ran without confinement.
+        - **Least privilege:** The flag exists for narrow cases like nested containerization. Defaulting to it for convenience violates the principle of least functionality required by hardened build pipelines.
+      audit: |
+        Inspect the Dockerfile to confirm no `RUN` instruction requests the insecure security mode:
+
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Search every `RUN` instruction for the flag: `grep -nE 'RUN.*--security=insecure' Dockerfile`.
+        3. Confirm no match is returned.
+
+        If the search produces no results, the check passes. If any `RUN` instruction sets `--security=insecure`, the check fails.
+      remediation:
+        - id: dockerfile
+          desc: |
+            Remove `--security=insecure` from every `RUN` instruction. If a build step genuinely needs elevated capabilities, isolate it in a separate stage and document the requirement in code review:
+
+            ```dockerfile
+            # Instead of:
+            RUN --security=insecure ./build.sh
+
+            # Use:
+            RUN ./build.sh
+            ```
+
+            If the step truly requires privileged operations, run it outside the image build (for example, in a controlled CI job that produces an artifact) and `COPY` the artifact into the image.
+    refs:
+      - url: https://docs.docker.com/reference/dockerfile/#run---security
+        title: Dockerfile Reference - RUN --security
+      - url: https://docs.docker.com/build/buildkit/#security-modes
+        title: BuildKit security modes
+  - uid: mondoo-docker-security-no-run-network-host
+    title: Don't use --network=host with RUN instructions
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ccc-06
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ip-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-2
+      compliance/pci-dss-4: pcidss-requirement-2-2-1
+      compliance/soc2-2017: soc2-control-cc7-1-1
+      compliance/vda-isa-5: vda-isa-5-5-2-1
+    mql: |
+      docker.file.stages.all(run.none(network == "host"))
+    docs:
+      desc: |
+        Dockerfile `RUN` instructions should not use the BuildKit `--network=host` flag. This flag attaches the build step directly to the build host's network namespace, removing the network isolation that BuildKit applies by default.
+
+        **Why this matters**
+
+        - **Host network exposure:** A build step running in the host network namespace can reach loopback services, link-local metadata endpoints (`169.254.169.254`), and other internal addresses that are normally unreachable from a sandboxed build.
+        - **Credential and token theft:** Cloud-hosted build environments often expose instance metadata or workload identity tokens on loopback or link-local addresses. Host networking lets any installer script or malicious dependency exfiltrate them.
+        - **Reproducibility loss:** A build that depends on the host network behaves differently on developer laptops, CI runners, and air-gapped builders, undermining reproducible images.
+        - **Least privilege:** Host networking should be reserved for narrow cases like building network drivers; using it as a default convenience violates the principle of least functionality.
+      audit: |
+        Inspect the Dockerfile to confirm no `RUN` instruction joins the host network:
+
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Search every `RUN` instruction for the flag: `grep -nE 'RUN.*--network=host' Dockerfile`.
+        3. Confirm no match is returned.
+
+        If the search produces no results, the check passes. If any `RUN` instruction sets `--network=host`, the check fails.
+      remediation:
+        - id: dockerfile
+          desc: |
+            Remove `--network=host` from every `RUN` instruction and let BuildKit use the default isolated network. When a build genuinely needs a private network endpoint, expose it through a build secret or `--mount=type=bind` instead of joining the host network:
+
+            ```dockerfile
+            # Instead of:
+            RUN --network=host ./fetch-internal-deps.sh
+
+            # Use:
+            RUN ./fetch-internal-deps.sh
+            ```
+
+            For builds that must reach a private mirror, configure the mirror as a build argument or pre-stage the dependencies in an earlier stage rather than relaxing network isolation.
+    refs:
+      - url: https://docs.docker.com/reference/dockerfile/#run---network
+        title: Dockerfile Reference - RUN --network
+      - url: https://docs.docker.com/build/buildkit/#network-modes
+        title: BuildKit network modes
+  - uid: mondoo-docker-security-no-sensitive-bind-mount-sources
+    title: Don't bind-mount sensitive source paths into RUN instructions
+    impact: 100
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-2
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-1-1
+    mql: |
+      docker.file.stages.all(run.all(mounts.where(from == empty).where(type == "bind" || type == empty).none(source == /^\/(etc|proc|sys|dev|boot|root|home|tmp|var|run)?(\/|$)/)))
+    docs:
+      desc: |
+        Dockerfile `RUN` instructions should not declare bind mounts whose `source` points at sensitive system paths such as `/`, `/etc`, `/proc`, `/sys`, `/dev`, `/boot`, `/root`, `/home`, `/tmp`, `/var`, or `/run`, or at sub-paths beneath them such as `/etc/shadow`, `/root/.ssh`, or `/var/run/docker.sock`. A bind mount in a `RUN` instruction resolves its `source` inside the build context, or inside the stage or image named by `from`, never on the build host. A sensitive-looking absolute source therefore signals one of two problems: the author misunderstands the mount semantics and believes the build reads host files, or copies of sensitive system files and credentials were placed in the build context.
+
+        **Why this matters**
+
+        - **Secrets in the build context:** For such a mount to resolve, files like shadow copies, SSH keys, or credential stores must exist inside the build context. Everything in the context is sent to the builder, is readable by every build step, and is exposed to anyone who can read the context or the repository it comes from.
+        - **Supply-chain blast radius:** Build steps run third-party package managers and installers. Any sensitive material reachable through the mounted context can be exfiltrated by a compromised dependency during the build.
+        - **Misleading intent:** A Dockerfile that appears to mount host system paths confuses reviewers and incident responders, and the build silently reads different data than the author intended, which can mask broken or missing build inputs.
+        - **Wrong tool for the job:** Builds that genuinely need host resources, such as a Docker socket for Docker-in-Docker workflows, belong in dedicated CI jobs. An image build step can never reach those resources through a bind mount.
+
+        Mounts that set `from=` to an earlier build stage or a named image resolve inside that stage and are not flagged. Legitimate BuildKit caching uses `--mount=type=cache`, so this check only flags `type=bind` and the omitted-type case that BuildKit treats as `bind`.
+      audit: |
+        Inspect the Dockerfile to confirm no `RUN` instruction bind-mounts a sensitive source path from the build context:
+
+        1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
+        2. Search every `RUN` instruction for mounts: `grep -nE 'RUN.*--mount=' Dockerfile`.
+        3. For each `type=bind` mount, or mount that omits `type=`, that does not set `from=`, confirm the `source=` value is not `/` and does not point at `/etc`, `/proc`, `/sys`, `/dev`, `/boot`, `/root`, `/home`, `/tmp`, `/var`, or `/run`. Sub-paths beneath those directories also fail the check, so `source=/etc/shadow`, `source=/root/.ssh`, and `source=/var/run/docker.sock` are all violations. Mounts that set `from=` resolve inside that stage or image and are not flagged.
+        4. For any violation, inspect the build context. If it contains the corresponding sensitive files, remove them from the context; if it does not, the mount resolves to a missing path and the instruction should be rewritten to mount the intended build input.
+
+        If no context-sourced bind mount references a sensitive path, the check passes. If any does, the check fails.
+      remediation:
+        - id: dockerfile
+          desc: |
+            Remove `RUN --mount=type=bind` mounts whose `source` points at paths such as `/etc`, `/root`, `/home`, or `/var/run/docker.sock`. A bind mount in a `RUN` instruction resolves `source` inside the build context or the stage or image named by `from`, never on the build host, so these paths only resolve if the sensitive files were first copied into the build context. Keeping system files or credentials in the build context exposes them to every build step and to anyone who can read the context.
+
+            Mount only the specific build inputs you need, or stage them in an earlier build stage:
+
+            ```dockerfile
+            # Instead of:
+            RUN --mount=type=bind,source=/etc,target=/host-etc ./build.sh
+
+            # Use:
+            COPY ./build-config /etc/build-config
+            RUN ./build.sh
+
+            # Or stage the input in an earlier stage:
+            FROM alpine:3.20 AS deps
+            COPY ./deps /deps
+
+            FROM build
+            RUN --mount=type=bind,from=deps,source=/deps,target=/deps ./build.sh
+            ```
+
+            For credentials such as tokens or `.netrc` files, use `--mount=type=secret` instead of placing them in the build context. If the build needs Docker-in-Docker behavior, run it in a dedicated CI job rather than trying to reach a Docker socket from a build step.
+    refs:
+      - url: https://docs.docker.com/reference/dockerfile/#run---mounttypebind
+        title: Dockerfile Reference - RUN --mount=type=bind
+      - url: https://docs.docker.com/build/building/best-practices/
+        title: Dockerfile Best Practices

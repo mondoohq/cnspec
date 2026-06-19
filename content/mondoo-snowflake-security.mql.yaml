@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-snowflake-security
     name: Mondoo Snowflake Security
-    version: 1.2.0
+    version: 1.2.1
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -134,6 +134,8 @@ queries:
             4. Follow the Duo enrollment prompts.
 
             Administrators can monitor enrollment from **Admin** → **Users & Roles** → **Users**, where the **MFA** column shows enrolled vs not enrolled.
+
+            Note: this check reads the Duo MFA flag specifically, so a user who enrolls a non-Duo factor such as TOTP or a passkey still fails it. To enforce those factors and satisfy the check, pair this step with the SQL authentication-policy remediation, which requires MFA regardless of the enrollment method.
         - id: sql
           desc: |
             Run as `ACCOUNTADMIN` in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
@@ -159,15 +161,9 @@ queries:
             ALTER ACCOUNT SET AUTHENTICATION POLICY require_mfa_policy;
             ```
 
-            **Legacy account parameter (still supported)**
+            Snowflake has no account parameter that toggles MFA on its own. Enforcement comes entirely from the authentication policy above, so the `MFA_AUTHENTICATION_METHODS` and `MFA_ENROLLMENT` settings are what require users to register and use a second factor.
 
-            On accounts not yet using authentication policies, the older parameter forces MFA enrollment on the next login:
-
-            ```sql
-            ALTER ACCOUNT SET REQUIRE_MFA = TRUE;
-            ```
-
-            Note: `REQUIRE_MFA` only enforces enrollment for *new* logins — it does not retroactively log out sessions that authenticated before the change.
+            Note: the policy enforces MFA enrollment on the next login. It does not retroactively log out sessions that authenticated before the policy was attached.
         - id: terraform
           desc: |
             The `snowflakedb/snowflake` provider cannot set a per-user Duo enrollment flag, but it can enforce MFA account-wide with an authentication policy. Define a `snowflake_authentication_policy` that requires MFA enrollment and attach it to the account:
@@ -361,8 +357,8 @@ queries:
                 ```sql
                 SELECT NAME, CREATED_ON, LAST_SUCCESS_LOGIN, MUST_CHANGE_PASSWORD
                 FROM SNOWFLAKE.ACCOUNT_USAGE.USERS
-                WHERE MUST_CHANGE_PASSWORD = 'true'
-                  AND DISABLED = 'false';
+                WHERE MUST_CHANGE_PASSWORD = TRUE
+                  AND DISABLED = FALSE;
                 ```
 
                 `ACCOUNT_USAGE` views can lag the live state by up to ~3 hours. For an authoritative snapshot, run `SHOW USERS;` and inspect the `must_change_password` column.
@@ -603,7 +599,7 @@ queries:
 
                 ```sql
                 ALTER PASSWORD POLICY <policy_name> SET
-                  PASSWORD_MAX_RETRIES       = 5,
+                  PASSWORD_MAX_RETRIES       = 5
                   PASSWORD_LOCKOUT_TIME_MINS = 15;
                 ```
 
@@ -713,9 +709,11 @@ queries:
             **Using Snowsight**
 
             1. In Snowsight, go to **Admin** → **Security** → **Network Policies**.
-            2. Click **+ Network Policy**, give it a name, and add **Allowed IP addresses** (CIDR ranges representing your office, VPN, or data center egress).
+            2. Click **+ Network Policy**, give it a name, and add **Allowed IP addresses** as CIDR ranges representing your office, VPN, or data center egress.
             3. Save the policy.
-            4. Open **Account Details** (top-right user menu) → **Network policy** and select the policy you just created so it is enforced account-wide.
+            4. Open **Account Details** from the top-right user menu, then **Network policy**, and select the policy you just created so it is enforced account-wide.
+
+            > **Warning:** Attaching a network policy that omits your own current public IP locks you, and everyone else outside the allowed ranges, out of the account. Confirm your egress IP is covered before you attach the policy, because the lockout takes effect immediately.
         - id: sql
           desc: |
             Run as `ACCOUNTADMIN` (or `SECURITYADMIN`) in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
@@ -729,7 +727,7 @@ queries:
                 SHOW PARAMETERS LIKE 'NETWORK_POLICY' IN ACCOUNT;
                 ```
 
-            2. Create the policy with the CIDR ranges your organization actually uses (replace the example ranges):
+            2. Create the policy with the CIDR ranges your organization actually uses. The `203.0.113.0/24` and `198.51.100.0/24` values below are reserved documentation ranges from RFC 5737, so they are placeholders you must replace with your real egress ranges. Be sure the list includes your own current public IP, or attaching the policy will lock you out:
 
                 ```sql
                 CREATE NETWORK POLICY <policy_name>
@@ -737,7 +735,7 @@ queries:
                   BLOCKED_IP_LIST = ();
                 ```
 
-            3. Attach it to the account:
+            3. Attach it to the account. This takes effect immediately, so anyone connecting from outside the allowed ranges, including you, loses access at once:
 
                 ```sql
                 ALTER ACCOUNT SET NETWORK_POLICY = <policy_name>;
@@ -840,8 +838,10 @@ queries:
 
             1. In Snowsight, go to **Admin** → **Security** → **Network Policies**.
             2. Open the policy whose **Allowed IPs** include `0.0.0.0/0` (or the IPv6 wildcard `::/0`).
-            3. Replace `0.0.0.0/0` with the specific CIDR ranges your organization actually uses (office, VPN, data-center egress).
+            3. Replace `0.0.0.0/0` with the specific CIDR ranges your organization actually uses, such as office, VPN, and data center egress.
             4. Save the policy.
+
+            > **Warning:** Removing the wildcard restricts access immediately. Confirm your own current public IP is one of the allowed ranges before you save, or you will lock yourself out of the account.
         - id: sql
           desc: |
             Run as `ACCOUNTADMIN` (or `SECURITYADMIN`) in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
@@ -853,7 +853,7 @@ queries:
                 DESC NETWORK POLICY <policy_name>;
                 ```
 
-            2. Replace the open `0.0.0.0/0` (and/or IPv6 `::/0`) entry with the specific CIDR ranges your organization actually uses:
+            2. Replace the open `0.0.0.0/0` (and/or IPv6 `::/0`) entry with the specific CIDR ranges your organization actually uses. The `203.0.113.0/24` and `198.51.100.0/24` values below are reserved documentation ranges from RFC 5737, so replace them with your real egress ranges. Removing the wildcard restricts access immediately, so make sure the new list includes your own current public IP or you will be locked out:
 
                 ```sql
                 ALTER NETWORK POLICY <policy_name>
@@ -965,7 +965,7 @@ queries:
                 SELECT NAME, DEFAULT_ROLE
                 FROM SNOWFLAKE.ACCOUNT_USAGE.USERS
                 WHERE DEFAULT_ROLE = 'ACCOUNTADMIN'
-                  AND DISABLED = 'false';
+                  AND DISABLED = FALSE;
                 ```
 
             2. For each affected user, change their default role to the least-privilege role they need day-to-day (`SYSADMIN`, `SECURITYADMIN`, or a custom role):
@@ -1081,9 +1081,9 @@ queries:
 
                 ```sql
                 ALTER PASSWORD POLICY <policy_name> SET
-                  PASSWORD_MIN_UPPER_CASE_CHARS = 1,
-                  PASSWORD_MIN_LOWER_CASE_CHARS = 1,
-                  PASSWORD_MIN_NUMERIC_CHARS    = 1,
+                  PASSWORD_MIN_UPPER_CASE_CHARS = 1
+                  PASSWORD_MIN_LOWER_CASE_CHARS = 1
+                  PASSWORD_MIN_NUMERIC_CHARS    = 1
                   PASSWORD_MIN_SPECIAL_CHARS    = 1;
                 ```
 
@@ -1556,7 +1556,7 @@ queries:
   - uid: mondoo-snowflake-security-network-policies-configured-snowflake
     filters: asset.platform == 'snowflake'
     mql: |
-      snowflake.account.parameters.where(key == "NETWORK_POLICY").any(value != "")
+      snowflake.account.networkPolicy != ""
   - uid: mondoo-snowflake-security-network-policies-configured-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'snowflake_account_parameter')
@@ -1587,21 +1587,21 @@ queries:
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'snowflake_network_policy')
     mql: |
       terraform.resources('snowflake_network_policy').all(
-        arguments['allowed_ip_list'] == null || arguments['allowed_ip_list'].none(_ == "0.0.0.0/0" || _ == "::/0")
+        arguments['allowed_ip_list'] == null || arguments['allowed_ip_list'].containsNone(["0.0.0.0/0", "::/0"])
       )
   - uid: mondoo-snowflake-security-network-policies-no-unrestricted-access-terraform-plan
     filters: |
       asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'snowflake_network_policy')
     mql: |
       terraform.plan.resourceChanges.where(type == 'snowflake_network_policy').all(
-        change.after['allowed_ip_list'] == null || change.after['allowed_ip_list'].none(_ == "0.0.0.0/0" || _ == "::/0")
+        change.after['allowed_ip_list'] == null || change.after['allowed_ip_list'].containsNone(["0.0.0.0/0", "::/0"])
       )
   - uid: mondoo-snowflake-security-network-policies-no-unrestricted-access-terraform-state
     filters: |
       asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'snowflake_network_policy')
     mql: |
       terraform.state.resources.where(type == 'snowflake_network_policy').all(
-        values['allowed_ip_list'] == null || values['allowed_ip_list'].none(_ == "0.0.0.0/0" || _ == "::/0")
+        values['allowed_ip_list'] == null || values['allowed_ip_list'].containsNone(["0.0.0.0/0", "::/0"])
       )
   - uid: mondoo-snowflake-security-no-accountadmin-default-role-snowflake
     filters: asset.platform == 'snowflake'

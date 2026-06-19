@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-kubernetes-best-practices
     name: Mondoo Kubernetes Best Practices
-    version: 1.2.0
+    version: 1.2.2
     license: BUSL-1.1
     tags:
       mondoo.com/category: best-practices
@@ -137,7 +137,39 @@ queries:
         kubectl get pods -A -o json | jq -r '.items[] | [(.metadata.ownerReferences | length), .metadata.namespace, .metadata.name] | @tsv'
         ```
       remediation: |
-        For each Pod without an owner, ensure the Pod is owned by an appropriate Kubernetes object (eg Deployment, Job, DaemonSet, etc.) that will manage relaunching the Pod in the event of a failure.
+        Recreate the Pod through a workload controller such as a Deployment, which sets `ownerReferences` automatically and manages the Pod lifecycle:
+
+        ```yaml
+        ---
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: example-app
+          namespace: example-namespace
+        spec:
+          replicas: 1
+          selector:
+            matchLabels:
+              app: example-app
+          template:
+            metadata:
+              labels:
+                app: example-app
+            spec:
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1
+        ```
+
+        Give the Deployment a `selector` and pod labels that do not collide with the standalone Pod's labels. If they match, the new controller may adopt or fight over the existing Pod instead of creating its own.
+
+        After the controller-managed Pod is running, delete the standalone Pod:
+
+        ```bash
+        kubectl delete pod <pod-name> -n <namespace>
+        ```
+
+        If the standalone Pod was serving traffic, expect a brief gap while the controller-managed Pod takes over.
     refs:
       - url: https://kubernetes.io/docs/concepts/workloads/controllers/
         title: Kubernetes Workload Resources
@@ -184,13 +216,19 @@ queries:
                   cpu: "250m" # <-- set CPU requests
         ```
       remediation: |
-        Define the required resources for CPU `requests` in the container spec:
+        Define CPU `requests` for every container and init container in the Pod spec:
 
         ```yaml
         ---
         apiVersion: v1
         kind: Pod
         spec:
+          initContainers:
+            - name: init
+              image: images.my-company.example/init:v1
+              resources:
+                requests:
+                  cpu: "250m" # <-- set CPU requests
           containers:
             - name: app
               image: images.my-company.example/app:v1
@@ -244,19 +282,29 @@ queries:
                   cpu: "250m" # <-- set CPU requests
         ```
       remediation: |
-        Define the required resources for CPU `requests` in the container spec:
+        Define CPU `requests` for every container and init container in the CronJob's Pod template:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: batch/v1
+        kind: CronJob
         spec:
-          containers:
-            - name: app
-              image: images.my-company.example/app:v1
-              resources:
-                requests:
-                  cpu: "250m" # <-- set CPU requests
+          jobTemplate:
+            spec:
+              template:
+                spec:
+                  initContainers:
+                    - name: init
+                      image: images.my-company.example/init:v1
+                      resources:
+                        requests:
+                          cpu: "250m" # <-- set CPU requests
+                  containers:
+                    - name: app
+                      image: images.my-company.example/app:v1
+                      resources:
+                        requests:
+                          cpu: "250m" # <-- set CPU requests
         ```
     refs:
       - url: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
@@ -304,19 +352,27 @@ queries:
                   cpu: "250m" # <-- set CPU requests
         ```
       remediation: |
-        Define the required resources for CPU `requests` in the container spec:
+        Define CPU `requests` for every container and init container in the StatefulSet's Pod template:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: apps/v1
+        kind: StatefulSet
         spec:
-          containers:
-            - name: app
-              image: images.my-company.example/app:v1
-              resources:
-                requests:
-                  cpu: "250m" # <-- set CPU requests
+          template:
+            spec:
+              initContainers:
+                - name: init
+                  image: images.my-company.example/init:v1
+                  resources:
+                    requests:
+                      cpu: "250m" # <-- set CPU requests
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1
+                  resources:
+                    requests:
+                      cpu: "250m" # <-- set CPU requests
         ```
     refs:
       - url: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
@@ -364,19 +420,27 @@ queries:
                   cpu: "250m" # <-- set CPU requests
         ```
       remediation: |
-        Define the required resources for CPU `requests` in the container spec:
+        Define CPU `requests` for every container and init container in the Deployment's Pod template:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: apps/v1
+        kind: Deployment
         spec:
-          containers:
-            - name: app
-              image: images.my-company.example/app:v1
-              resources:
-                requests:
-                  cpu: "250m" # <-- set CPU requests
+          template:
+            spec:
+              initContainers:
+                - name: init
+                  image: images.my-company.example/init:v1
+                  resources:
+                    requests:
+                      cpu: "250m" # <-- set CPU requests
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1
+                  resources:
+                    requests:
+                      cpu: "250m" # <-- set CPU requests
         ```
     refs:
       - url: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
@@ -424,19 +488,27 @@ queries:
                   cpu: "250m" # <-- set CPU requests
         ```
       remediation: |
-        Define the required resources for CPU `requests` in the container spec:
+        Define CPU `requests` for every container and init container in the Job's Pod template:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: batch/v1
+        kind: Job
         spec:
-          containers:
-            - name: app
-              image: images.my-company.example/app:v1
-              resources:
-                requests:
-                  cpu: "250m" # <-- set CPU requests
+          template:
+            spec:
+              initContainers:
+                - name: init
+                  image: images.my-company.example/init:v1
+                  resources:
+                    requests:
+                      cpu: "250m" # <-- set CPU requests
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1
+                  resources:
+                    requests:
+                      cpu: "250m" # <-- set CPU requests
         ```
     refs:
       - url: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
@@ -484,19 +556,27 @@ queries:
                   cpu: "250m" # <-- set CPU requests
         ```
       remediation: |
-        Define the required resources for CPU `requests` in the container spec:
+        Define CPU `requests` for every container and init container in the ReplicaSet's Pod template:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: apps/v1
+        kind: ReplicaSet
         spec:
-          containers:
-            - name: app
-              image: images.my-company.example/app:v1
-              resources:
-                requests:
-                  cpu: "250m" # <-- set CPU requests
+          template:
+            spec:
+              initContainers:
+                - name: init
+                  image: images.my-company.example/init:v1
+                  resources:
+                    requests:
+                      cpu: "250m" # <-- set CPU requests
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1
+                  resources:
+                    requests:
+                      cpu: "250m" # <-- set CPU requests
         ```
     refs:
       - url: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
@@ -544,19 +624,27 @@ queries:
                   cpu: "250m" # <-- set CPU requests
         ```
       remediation: |
-        Define the required resources for CPU `requests` in the container spec:
+        Define CPU `requests` for every container and init container in the DaemonSet's Pod template:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: apps/v1
+        kind: DaemonSet
         spec:
-          containers:
-            - name: app
-              image: images.my-company.example/app:v1
-              resources:
-                requests:
-                  cpu: "250m" # <-- set CPU requests
+          template:
+            spec:
+              initContainers:
+                - name: init
+                  image: images.my-company.example/init:v1
+                  resources:
+                    requests:
+                      cpu: "250m" # <-- set CPU requests
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1
+                  resources:
+                    requests:
+                      cpu: "250m" # <-- set CPU requests
         ```
     refs:
       - url: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
@@ -604,13 +692,19 @@ queries:
                   memory: "1Gi" # <-- set memory requests
         ```
       remediation: |
-        Define the required resources for memory `requests` in the container spec:
+        Define memory `requests` for every container and init container in the Pod spec:
 
         ```yaml
         ---
         apiVersion: v1
         kind: Pod
         spec:
+          initContainers:
+            - name: init
+              image: images.my-company.example/init:v1
+              resources:
+                requests:
+                  memory: "1Gi" # <-- set memory requests
           containers:
             - name: app
               image: images.my-company.example/app:v1
@@ -664,19 +758,29 @@ queries:
                   memory: "1Gi" # <-- set memory requests
         ```
       remediation: |
-        Define the required resources for memory `requests` in the container spec:
+        Define memory `requests` for every container and init container in the CronJob's Pod template:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: batch/v1
+        kind: CronJob
         spec:
-          containers:
-            - name: app
-              image: images.my-company.example/app:v1
-              resources:
-                requests:
-                  memory: "1Gi" # <-- set memory requests
+          jobTemplate:
+            spec:
+              template:
+                spec:
+                  initContainers:
+                    - name: init
+                      image: images.my-company.example/init:v1
+                      resources:
+                        requests:
+                          memory: "1Gi" # <-- set memory requests
+                  containers:
+                    - name: app
+                      image: images.my-company.example/app:v1
+                      resources:
+                        requests:
+                          memory: "1Gi" # <-- set memory requests
         ```
     refs:
       - url: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
@@ -724,19 +828,27 @@ queries:
                   memory: "1Gi" # <-- set memory requests
         ```
       remediation: |
-        Define the required resources for memory `requests` in the container spec:
+        Define memory `requests` for every container and init container in the StatefulSet's Pod template:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: apps/v1
+        kind: StatefulSet
         spec:
-          containers:
-            - name: app
-              image: images.my-company.example/app:v1
-              resources:
-                requests:
-                  memory: "1Gi" # <-- set memory requests
+          template:
+            spec:
+              initContainers:
+                - name: init
+                  image: images.my-company.example/init:v1
+                  resources:
+                    requests:
+                      memory: "1Gi" # <-- set memory requests
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1
+                  resources:
+                    requests:
+                      memory: "1Gi" # <-- set memory requests
         ```
     refs:
       - url: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
@@ -784,19 +896,27 @@ queries:
                   memory: "1Gi" # <-- set memory requests
         ```
       remediation: |
-        Define the required resources for memory `requests` in the container spec:
+        Define memory `requests` for every container and init container in the Deployment's Pod template:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: apps/v1
+        kind: Deployment
         spec:
-          containers:
-            - name: app
-              image: images.my-company.example/app:v1
-              resources:
-                requests:
-                  memory: "1Gi" # <-- set memory requests
+          template:
+            spec:
+              initContainers:
+                - name: init
+                  image: images.my-company.example/init:v1
+                  resources:
+                    requests:
+                      memory: "1Gi" # <-- set memory requests
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1
+                  resources:
+                    requests:
+                      memory: "1Gi" # <-- set memory requests
         ```
     refs:
       - url: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
@@ -844,19 +964,27 @@ queries:
                   memory: "1Gi" # <-- set memory requests
         ```
       remediation: |
-        Define the required resources for memory `requests` in the container spec:
+        Define memory `requests` for every container and init container in the Job's Pod template:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: batch/v1
+        kind: Job
         spec:
-          containers:
-            - name: app
-              image: images.my-company.example/app:v1
-              resources:
-                requests:
-                  memory: "1Gi" # <-- set memory requests
+          template:
+            spec:
+              initContainers:
+                - name: init
+                  image: images.my-company.example/init:v1
+                  resources:
+                    requests:
+                      memory: "1Gi" # <-- set memory requests
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1
+                  resources:
+                    requests:
+                      memory: "1Gi" # <-- set memory requests
         ```
     refs:
       - url: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
@@ -904,19 +1032,27 @@ queries:
                   memory: "1Gi" # <-- set memory requests
         ```
       remediation: |
-        Define the required resources for memory `requests` in the container spec:
+        Define memory `requests` for every container and init container in the ReplicaSet's Pod template:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: apps/v1
+        kind: ReplicaSet
         spec:
-          containers:
-            - name: app
-              image: images.my-company.example/app:v1
-              resources:
-                requests:
-                  memory: "1Gi" # <-- set memory requests
+          template:
+            spec:
+              initContainers:
+                - name: init
+                  image: images.my-company.example/init:v1
+                  resources:
+                    requests:
+                      memory: "1Gi" # <-- set memory requests
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1
+                  resources:
+                    requests:
+                      memory: "1Gi" # <-- set memory requests
         ```
     refs:
       - url: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
@@ -964,19 +1100,27 @@ queries:
                   memory: "1Gi" # <-- set memory requests
         ```
       remediation: |
-        Define the required resources for memory `requests` in the container spec:
+        Define memory `requests` for every container and init container in the DaemonSet's Pod template:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: apps/v1
+        kind: DaemonSet
         spec:
-          containers:
-            - name: app
-              image: images.my-company.example/app:v1
-              resources:
-                requests:
-                  memory: "1Gi" # <-- set memory requests
+          template:
+            spec:
+              initContainers:
+                - name: init
+                  image: images.my-company.example/init:v1
+                  resources:
+                    requests:
+                      memory: "1Gi" # <-- set memory requests
+              containers:
+                - name: app
+                  image: images.my-company.example/app:v1
+                  resources:
+                    requests:
+                      memory: "1Gi" # <-- set memory requests
         ```
     refs:
       - url: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
@@ -988,7 +1132,7 @@ queries:
       if (k8s.pod.manifest['metadata']['ownerReferences'].none(_['kind'] == 'Job')) {
         k8s.pod {
           containers {
-            probeSpecified = livenessProbe['httpGet'] != empty || livenessProbe['tcpSocket'] != empty || livenessProbe['exec'] != empty
+            probeSpecified = livenessProbe['httpGet'] != empty || livenessProbe['tcpSocket'] != empty || livenessProbe['exec'] != empty || livenessProbe['grpc'] != empty
 
             probeSpecified == true
           }
@@ -1052,7 +1196,7 @@ queries:
     mql: |
       k8s.statefulset {
         containers {
-          probeSpecified = livenessProbe['httpGet'] != empty || livenessProbe['tcpSocket'] != empty || livenessProbe['exec'] != empty
+          probeSpecified = livenessProbe['httpGet'] != empty || livenessProbe['tcpSocket'] != empty || livenessProbe['exec'] != empty || livenessProbe['grpc'] != empty
 
           probeSpecified == true
         }
@@ -1090,21 +1234,23 @@ queries:
                 periodSeconds: 5
         ```
       remediation: |
-        Define a `livenessProbe` in the container spec:
+        Define a `livenessProbe` in each container of the StatefulSet's Pod template:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: apps/v1
+        kind: StatefulSet
         spec:
-          containers:
-            - name: container-name
-              image: index.docker.io/yournamespace/repository
-              livenessProbe: # <--- Set a livenessProbe like this
-                tcpSocket:
-                  port: 8080
-                initialDelaySeconds: 5
-                periodSeconds: 5
+          template:
+            spec:
+              containers:
+                - name: container-name
+                  image: index.docker.io/yournamespace/repository
+                  livenessProbe: # <--- Set a livenessProbe like this
+                    tcpSocket:
+                      port: 8080
+                    initialDelaySeconds: 5
+                    periodSeconds: 5
         ```
     refs:
       - url: https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#container-probes
@@ -1115,7 +1261,7 @@ queries:
     mql: |
       k8s.deployment {
         containers {
-          probeSpecified = livenessProbe['httpGet'] != empty || livenessProbe['tcpSocket'] != empty || livenessProbe['exec'] != empty
+          probeSpecified = livenessProbe['httpGet'] != empty || livenessProbe['tcpSocket'] != empty || livenessProbe['exec'] != empty || livenessProbe['grpc'] != empty
           probeSpecified == true
         }
       }
@@ -1152,21 +1298,23 @@ queries:
                 periodSeconds: 5
         ```
       remediation: |
-        Define a `livenessProbe` in the container spec:
+        Define a `livenessProbe` in each container of the Deployment's Pod template:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: apps/v1
+        kind: Deployment
         spec:
-          containers:
-            - name: container-name
-              image: index.docker.io/yournamespace/repository
-              livenessProbe: # <--- Set a livenessProbe like this
-                tcpSocket:
-                  port: 8080
-                initialDelaySeconds: 5
-                periodSeconds: 5
+          template:
+            spec:
+              containers:
+                - name: container-name
+                  image: index.docker.io/yournamespace/repository
+                  livenessProbe: # <--- Set a livenessProbe like this
+                    tcpSocket:
+                      port: 8080
+                    initialDelaySeconds: 5
+                    periodSeconds: 5
         ```
     refs:
       - url: https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#container-probes
@@ -1177,7 +1325,7 @@ queries:
     mql: |
       k8s.replicaset {
         containers {
-          probeSpecified = livenessProbe['httpGet'] != empty || livenessProbe['tcpSocket'] != empty || livenessProbe['exec'] != empty
+          probeSpecified = livenessProbe['httpGet'] != empty || livenessProbe['tcpSocket'] != empty || livenessProbe['exec'] != empty || livenessProbe['grpc'] != empty
 
           probeSpecified == true
         }
@@ -1215,21 +1363,23 @@ queries:
                 periodSeconds: 5
         ```
       remediation: |
-        Define a `livenessProbe` in the container spec:
+        Define a `livenessProbe` in each container of the ReplicaSet's Pod template:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: apps/v1
+        kind: ReplicaSet
         spec:
-          containers:
-            - name: container-name
-              image: index.docker.io/yournamespace/repository
-              livenessProbe: # <--- Set a livenessProbe like this
-                tcpSocket:
-                  port: 8080
-                initialDelaySeconds: 5
-                periodSeconds: 5
+          template:
+            spec:
+              containers:
+                - name: container-name
+                  image: index.docker.io/yournamespace/repository
+                  livenessProbe: # <--- Set a livenessProbe like this
+                    tcpSocket:
+                      port: 8080
+                    initialDelaySeconds: 5
+                    periodSeconds: 5
         ```
     refs:
       - url: https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#container-probes
@@ -1240,7 +1390,7 @@ queries:
     mql: |
       k8s.daemonset {
         containers {
-          probeSpecified = livenessProbe['httpGet'] != empty || livenessProbe['tcpSocket'] != empty || livenessProbe['exec'] != empty
+          probeSpecified = livenessProbe['httpGet'] != empty || livenessProbe['tcpSocket'] != empty || livenessProbe['exec'] != empty || livenessProbe['grpc'] != empty
 
           probeSpecified == true
         }
@@ -1278,21 +1428,23 @@ queries:
                 periodSeconds: 5
         ```
       remediation: |
-        Define a `livenessProbe` in the container spec:
+        Define a `livenessProbe` in each container of the DaemonSet's Pod template:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: apps/v1
+        kind: DaemonSet
         spec:
-          containers:
-            - name: container-name
-              image: index.docker.io/yournamespace/repository
-              livenessProbe: # <--- Set a livenessProbe like this
-                tcpSocket:
-                  port: 8080
-                initialDelaySeconds: 5
-                periodSeconds: 5
+          template:
+            spec:
+              containers:
+                - name: container-name
+                  image: index.docker.io/yournamespace/repository
+                  livenessProbe: # <--- Set a livenessProbe like this
+                    tcpSocket:
+                      port: 8080
+                    initialDelaySeconds: 5
+                    periodSeconds: 5
         ```
     refs:
       - url: https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#container-probes
@@ -1304,7 +1456,7 @@ queries:
       if (k8s.pod.manifest['metadata']['ownerReferences'].none(_['kind'] == 'Job')) {
         k8s.pod {
           containers {
-            probeSpecified = readinessProbe['httpGet'] != empty || readinessProbe['tcpSocket'] != empty || readinessProbe['exec'] != empty
+            probeSpecified = readinessProbe['httpGet'] != empty || readinessProbe['tcpSocket'] != empty || readinessProbe['exec'] != empty || readinessProbe['grpc'] != empty
 
             probeSpecified == true
           }
@@ -1368,7 +1520,7 @@ queries:
     mql: |
       k8s.statefulset {
         containers {
-          probeSpecified = readinessProbe['httpGet'] != empty || readinessProbe['tcpSocket'] != empty || readinessProbe['exec'] != empty
+          probeSpecified = readinessProbe['httpGet'] != empty || readinessProbe['tcpSocket'] != empty || readinessProbe['exec'] != empty || readinessProbe['grpc'] != empty
 
           probeSpecified == true
         }
@@ -1406,21 +1558,23 @@ queries:
                 periodSeconds: 5
         ```
       remediation: |
-        Define a `readinessProbe` in the container spec:
+        Define a `readinessProbe` in each container of the StatefulSet's Pod template:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: apps/v1
+        kind: StatefulSet
         spec:
-          containers:
-            - name: container-name
-              image: index.docker.io/yournamespace/repository
-              readinessProbe: # <--- Set a readinessProbe like this
-                tcpSocket:
-                  port: 8080
-                initialDelaySeconds: 5
-                periodSeconds: 5
+          template:
+            spec:
+              containers:
+                - name: container-name
+                  image: index.docker.io/yournamespace/repository
+                  readinessProbe: # <--- Set a readinessProbe like this
+                    tcpSocket:
+                      port: 8080
+                    initialDelaySeconds: 5
+                    periodSeconds: 5
         ```
     refs:
       - url: https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#container-probes
@@ -1431,7 +1585,7 @@ queries:
     mql: |
       k8s.deployment {
         containers {
-          probeSpecified = readinessProbe['httpGet'] != empty || readinessProbe['tcpSocket'] != empty || readinessProbe['exec'] != empty
+          probeSpecified = readinessProbe['httpGet'] != empty || readinessProbe['tcpSocket'] != empty || readinessProbe['exec'] != empty || readinessProbe['grpc'] != empty
           probeSpecified == true
         }
       }
@@ -1468,21 +1622,23 @@ queries:
                 periodSeconds: 5
         ```
       remediation: |
-        Define a `readinessProbe` in the container spec:
+        Define a `readinessProbe` in each container of the Deployment's Pod template:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: apps/v1
+        kind: Deployment
         spec:
-          containers:
-            - name: container-name
-              image: index.docker.io/yournamespace/repository
-              readinessProbe: # <--- Set a readinessProbe like this
-                tcpSocket:
-                  port: 8080
-                initialDelaySeconds: 5
-                periodSeconds: 5
+          template:
+            spec:
+              containers:
+                - name: container-name
+                  image: index.docker.io/yournamespace/repository
+                  readinessProbe: # <--- Set a readinessProbe like this
+                    tcpSocket:
+                      port: 8080
+                    initialDelaySeconds: 5
+                    periodSeconds: 5
         ```
     refs:
       - url: https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#container-probes
@@ -1493,7 +1649,7 @@ queries:
     mql: |
       k8s.replicaset {
         containers {
-          probeSpecified = readinessProbe['httpGet'] != empty || readinessProbe['tcpSocket'] != empty || readinessProbe['exec'] != empty
+          probeSpecified = readinessProbe['httpGet'] != empty || readinessProbe['tcpSocket'] != empty || readinessProbe['exec'] != empty || readinessProbe['grpc'] != empty
 
           probeSpecified == true
         }
@@ -1531,21 +1687,23 @@ queries:
                 periodSeconds: 5
         ```
       remediation: |
-        Define a `readinessProbe` in the container spec:
+        Define a `readinessProbe` in each container of the ReplicaSet's Pod template:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: apps/v1
+        kind: ReplicaSet
         spec:
-          containers:
-            - name: container-name
-              image: index.docker.io/yournamespace/repository
-              readinessProbe: # <--- Set a readinessProbe like this
-                tcpSocket:
-                  port: 8080
-                initialDelaySeconds: 5
-                periodSeconds: 5
+          template:
+            spec:
+              containers:
+                - name: container-name
+                  image: index.docker.io/yournamespace/repository
+                  readinessProbe: # <--- Set a readinessProbe like this
+                    tcpSocket:
+                      port: 8080
+                    initialDelaySeconds: 5
+                    periodSeconds: 5
         ```
     refs:
       - url: https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#container-probes
@@ -1556,7 +1714,7 @@ queries:
     mql: |
       k8s.daemonset {
         containers {
-          probeSpecified = readinessProbe['httpGet'] != empty || readinessProbe['tcpSocket'] != empty || readinessProbe['exec'] != empty
+          probeSpecified = readinessProbe['httpGet'] != empty || readinessProbe['tcpSocket'] != empty || readinessProbe['exec'] != empty || readinessProbe['grpc'] != empty
 
           probeSpecified == true
         }
@@ -1594,21 +1752,23 @@ queries:
                 periodSeconds: 5
         ```
       remediation: |
-        Define a `readinessProbe` in the container spec:
+        Define a `readinessProbe` in each container of the DaemonSet's Pod template:
 
         ```yaml
         ---
-        apiVersion: v1
-        kind: Pod
+        apiVersion: apps/v1
+        kind: DaemonSet
         spec:
-          containers:
-            - name: container-name
-              image: index.docker.io/yournamespace/repository
-              readinessProbe: # <--- Set a readinessProbe like this
-                tcpSocket:
-                  port: 8080
-                initialDelaySeconds: 5
-                periodSeconds: 5
+          template:
+            spec:
+              containers:
+                - name: container-name
+                  image: index.docker.io/yournamespace/repository
+                  readinessProbe: # <--- Set a readinessProbe like this
+                    tcpSocket:
+                      port: 8080
+                    initialDelaySeconds: 5
+                    periodSeconds: 5
         ```
     refs:
       - url: https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#container-probes
@@ -1651,7 +1811,8 @@ queries:
             - name: example-app
               image: index.docker.io/yournamespace/repository
         ```
-      remediation: Remove the `hostAliases` setting from the Pod spec. Instead, use a proper DNS service or Kubernetes DNS for managing DNS entries.
+      remediation: |
+        Remove the `hostAliases` setting from the Pod spec. `hostAliases` injects static entries into each container's `/etc/hosts`, which drifts from cluster DNS over time. The entries are easy to forget and keep resolving to stale addresses long after the real target moves, which hides outages and routes traffic to the wrong place. Resolve names through cluster DNS instead. Create a headless Service for in-cluster targets, or an `ExternalName` Service to alias an external hostname, so name resolution stays in one managed place.
     refs:
       - url: https://kubernetes.io/docs/tasks/network/customize-hosts-file-for-pods/
         title: Adding entries to Pod /etc/hosts with HostAliases
@@ -1693,7 +1854,8 @@ queries:
             - name: example-app
               image: index.docker.io/yournamespace/repository
         ```
-      remediation: Remove the `hostAliases` setting from the Pod spec. Instead, use a proper DNS service or Kubernetes DNS for managing DNS entries.
+      remediation: |
+        Remove the `hostAliases` setting from the Pod spec. `hostAliases` injects static entries into each container's `/etc/hosts`, which drifts from cluster DNS over time. The entries are easy to forget and keep resolving to stale addresses long after the real target moves, which hides outages and routes traffic to the wrong place. Resolve names through cluster DNS instead. Create a headless Service for in-cluster targets, or an `ExternalName` Service to alias an external hostname, so name resolution stays in one managed place.
     refs:
       - url: https://kubernetes.io/docs/tasks/network/customize-hosts-file-for-pods/
         title: Adding entries to Pod /etc/hosts with HostAliases
@@ -1735,7 +1897,8 @@ queries:
             - name: example-app
               image: index.docker.io/yournamespace/repository
         ```
-      remediation: Remove the `hostAliases` setting from the Pod spec. Instead, use a proper DNS service or Kubernetes DNS for managing DNS entries.
+      remediation: |
+        Remove the `hostAliases` setting from the Pod spec. `hostAliases` injects static entries into each container's `/etc/hosts`, which drifts from cluster DNS over time. The entries are easy to forget and keep resolving to stale addresses long after the real target moves, which hides outages and routes traffic to the wrong place. Resolve names through cluster DNS instead. Create a headless Service for in-cluster targets, or an `ExternalName` Service to alias an external hostname, so name resolution stays in one managed place.
     refs:
       - url: https://kubernetes.io/docs/tasks/network/customize-hosts-file-for-pods/
         title: Adding entries to Pod /etc/hosts with HostAliases
@@ -1779,7 +1942,8 @@ queries:
             - name: example-app
               image: index.docker.io/yournamespace/repository
         ```
-      remediation: Remove the `hostAliases` setting from the Pod spec. Instead, use a proper DNS service or Kubernetes DNS for managing DNS entries.
+      remediation: |
+        Remove the `hostAliases` setting from the Pod spec. `hostAliases` injects static entries into each container's `/etc/hosts`, which drifts from cluster DNS over time. The entries are easy to forget and keep resolving to stale addresses long after the real target moves, which hides outages and routes traffic to the wrong place. Resolve names through cluster DNS instead. Create a headless Service for in-cluster targets, or an `ExternalName` Service to alias an external hostname, so name resolution stays in one managed place.
     refs:
       - url: https://kubernetes.io/docs/tasks/network/customize-hosts-file-for-pods/
         title: Adding entries to Pod /etc/hosts with HostAliases
@@ -1821,7 +1985,8 @@ queries:
             - name: example-app
               image: index.docker.io/yournamespace/repository
         ```
-      remediation: Remove the `hostAliases` setting from the Pod spec. Instead, use a proper DNS service or Kubernetes DNS for managing DNS entries.
+      remediation: |
+        Remove the `hostAliases` setting from the Pod spec. `hostAliases` injects static entries into each container's `/etc/hosts`, which drifts from cluster DNS over time. The entries are easy to forget and keep resolving to stale addresses long after the real target moves, which hides outages and routes traffic to the wrong place. Resolve names through cluster DNS instead. Create a headless Service for in-cluster targets, or an `ExternalName` Service to alias an external hostname, so name resolution stays in one managed place.
     refs:
       - url: https://kubernetes.io/docs/tasks/network/customize-hosts-file-for-pods/
         title: Adding entries to Pod /etc/hosts with HostAliases
@@ -1863,7 +2028,8 @@ queries:
             - name: example-app
               image: index.docker.io/yournamespace/repository
         ```
-      remediation: Remove the `hostAliases` setting from the Pod spec. Instead, use a proper DNS service or Kubernetes DNS for managing DNS entries.
+      remediation: |
+        Remove the `hostAliases` setting from the Pod spec. `hostAliases` injects static entries into each container's `/etc/hosts`, which drifts from cluster DNS over time. The entries are easy to forget and keep resolving to stale addresses long after the real target moves, which hides outages and routes traffic to the wrong place. Resolve names through cluster DNS instead. Create a headless Service for in-cluster targets, or an `ExternalName` Service to alias an external hostname, so name resolution stays in one managed place.
     refs:
       - url: https://kubernetes.io/docs/tasks/network/customize-hosts-file-for-pods/
         title: Adding entries to Pod /etc/hosts with HostAliases
@@ -1905,7 +2071,8 @@ queries:
             - name: example-app
               image: index.docker.io/yournamespace/repository
         ```
-      remediation: Remove the `hostAliases` setting from the Pod spec. Instead, use a proper DNS service or Kubernetes DNS for managing DNS entries.
+      remediation: |
+        Remove the `hostAliases` setting from the Pod spec. `hostAliases` injects static entries into each container's `/etc/hosts`, which drifts from cluster DNS over time. The entries are easy to forget and keep resolving to stale addresses long after the real target moves, which hides outages and routes traffic to the wrong place. Resolve names through cluster DNS instead. Create a headless Service for in-cluster targets, or an `ExternalName` Service to alias an external hostname, so name resolution stays in one managed place.
     refs:
       - url: https://kubernetes.io/docs/tasks/network/customize-hosts-file-for-pods/
         title: Adding entries to Pod /etc/hosts with HostAliases
@@ -1941,7 +2108,7 @@ queries:
         For any Pods running in the default Namespace, update/redeploy the Pods (or the parent Deployment, CronJob, etc) to a non-default Namespace:
 
         ```yaml
-        apiVersion:v1
+        apiVersion: v1
         kind: Pod
         metadata:
           name: examplePod
@@ -1986,7 +2153,7 @@ queries:
         For any Daemonsets running in the default Namespace, update/redeploy the DaemonSets to a non-default Namespace:
 
         ```yaml
-        apiVersion:apps/v1
+        apiVersion: apps/v1
         kind: DaemonSet
         metadata:
           name: exampleDaemonSet
@@ -2031,7 +2198,7 @@ queries:
         For any ReplicaSets running in the default Namespace, update/redeploy the ReplicaSets (or the parent Deployment) to a non-default Namespace:
 
         ```yaml
-        apiVersion:apps/v1
+        apiVersion: apps/v1
         kind: ReplicaSet
         metadata:
           name: exampleReplicaSet
@@ -2076,7 +2243,7 @@ queries:
         For any Jobs running in the default Namespace, update/redeploy the Jobs (or the parent CronJobs) to a non-default Namespace:
 
         ```yaml
-        apiVersion:batch/v1
+        apiVersion: batch/v1
         kind: Job
         metadata:
           name: exampleJob
@@ -2121,7 +2288,7 @@ queries:
         For any Deployments running in the default Namespace, update/redeploy the Deployments to a non-default Namespace:
 
         ```yaml
-        apiVersion:apps/v1
+        apiVersion: apps/v1
         kind: Deployment
         metadata:
           name: exampleDeployment
@@ -2166,7 +2333,7 @@ queries:
         For any StatefulSets running in the default Namespace, update/redeploy the StatefulSets to a non-default Namespace:
 
         ```yaml
-        apiVersion:apps/v1
+        apiVersion: apps/v1
         kind: StatefulSet
         metadata:
           name: exampleStatefulset
@@ -2211,7 +2378,7 @@ queries:
         For any CronJobs running in the default Namespace, update/redeploy the CronJobs to a non-default Namespace:
 
         ```yaml
-        apiVersion:batch/v1
+        apiVersion: batch/v1
         kind: CronJob
         metadata:
           name: exampleCronJob
@@ -2419,7 +2586,7 @@ queries:
         kubectl get jobs -A -o json | jq -r '.items[] | select( (.spec.template.spec.containers[].ports | . != empty and any(.[].hostPort; . != empty)  ) ) | .metadata.namespace + "/" + .metadata.name'  | uniq
         ```
       remediation: |
-        For any ReplicaSets that bind to a host port, update the Jobs to ensure they do not bind to a host port:
+        For any Jobs that bind to a host port, update the Jobs to ensure they do not bind to a host port:
 
         ```yaml
         apiVersion: batch/v1
@@ -2648,7 +2815,13 @@ queries:
         kubectl get secret --namespace NAMESPACE_OF_INGRESS NAME_OF_SECRET -o json | jq -r '.data["tls.crt"]' | base64 -d | openssl x509 -noout -text | grep "Not After"
         ```
       remediation: |
-        For all Secrets with expired or soon-to-expire certificates, update the Secret data with refreshed certificates.
+        Renew the certificate, then replace the data in the Secret referenced by the Ingress under `spec.tls[].secretName`:
+
+        ```bash
+        kubectl create secret tls <secret-name> --cert=tls.crt --key=tls.key -n <namespace> --dry-run=client -o yaml | kubectl apply -f -
+        ```
+
+        To avoid manual renewals, deploy cert-manager to issue and rotate Ingress certificates automatically.
     refs:
       - url: https://kubernetes.io/docs/concepts/services-networking/ingress/#tls
         title: Kubernetes Ingress TLS
@@ -2689,7 +2862,9 @@ queries:
         kubectl taint nodes <control-plane-node> node-role.kubernetes.io/control-plane:NoSchedule
         ```
 
-        Most Kubernetes distributions (kubeadm, EKS, GKE, AKS) apply this taint by default. If it has been removed, re-apply it and migrate any user workloads to worker nodes.
+        Most Kubernetes distributions, including kubeadm, EKS, GKE, and AKS, apply this taint by default. If it has been removed, re-apply it and migrate any user workloads to worker nodes.
+
+        Adding the taint immediately evicts any running pods that do not tolerate it, so plan for a brief disruption to those workloads. Do not apply this on single-node clusters such as kind, minikube, or k3s. On a single node the control plane and your workloads share the same machine, and the taint would make everything unschedulable.
     refs:
       - url: https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/
         title: Kubernetes Taints and Tolerations

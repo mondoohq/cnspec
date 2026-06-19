@@ -249,16 +249,31 @@ The `content/validation/` directory contains tooling to verify that CLI commands
 # Validate all clouds
 python3 content/validation/validate_remediation_commands.py
 
-# Validate a specific cloud
+# Validate a specific cloud CLI
 python3 content/validation/validate_remediation_commands.py aws
 python3 content/validation/validate_remediation_commands.py azure
 python3 content/validation/validate_remediation_commands.py oci
 python3 content/validation/validate_remediation_commands.py gcp
 python3 content/validation/validate_remediation_commands.py digitalocean
+python3 content/validation/validate_remediation_commands.py nutanix
+
+# Validate a Cobra-based CLI (kubectl / gh / glab / hcloud)
+python3 content/validation/validate_remediation_commands.py kubernetes
+python3 content/validation/validate_remediation_commands.py github
+python3 content/validation/validate_remediation_commands.py gitlab
+python3 content/validation/validate_remediation_commands.py hetzner
+
+# Validate a specific REST API (curl commands against a vendor API)
 python3 content/validation/validate_remediation_commands.py cloudflare
+python3 content/validation/validate_remediation_commands.py tailscale
+python3 content/validation/validate_remediation_commands.py slack
+python3 content/validation/validate_remediation_commands.py atlassian
+python3 content/validation/validate_remediation_commands.py grafana
 ```
 
-The validator scans each `aws`/`az`/`oci`/`gcloud`/`doctl` CLI command — and `curl` calls against `api.cloudflare.com` — in ```` ```bash ```` code blocks within `id: cli` remediation sections. Output shows `[PASS]` or `[FAIL]` with the check UID and the offending command.
+The validator scans each `aws`/`az`/`oci`/`gcloud`/`doctl`/`ncli`/`kubectl`/`gh`/`glab`/`hcloud` CLI command — and `curl` calls against the registered vendor API hosts — in ```` ```bash ```` code blocks within `id: cli` remediation sections. For the REST API and Cobra CLI targets, ```` ```bash ```` blocks in `audit:` sections are validated too (these products' verification paths use the same CLI/API surface, and the new validators have no backlog of unvalidated audit blocks). Output shows `[PASS]` or `[FAIL]` with the check UID and the offending command.
+
+The code lives in the `content/validation/validators/` package — one module per validator family (`aws.py`, `azure.py`, …, `openapi.py` for all REST APIs), shared helpers in `common.py` — with `validate_remediation_commands.py` as the entry-point shim.
 
 The `azure` target validates **both** `mondoo-azure-security.mql.yaml` and `mondoo-m365-security.mql.yaml`, because the M365 policy's `id: cli` remediations also use the Azure CLI (`az`).
 
@@ -270,19 +285,28 @@ For `aws`, `oci`, `gcp`, and `digitalocean`, the database is built **in-memory**
 - **oci**: walks the Click command tree from the `oci_cli` Python package
 - **gcp**: reads the Google Cloud SDK's static completion tree
 - **digitalocean**: walks the `doctl --help` Cobra tree breadth-first (parallelized; ~1s for the full ~475-command tree)
-- **cloudflare**: downloads Cloudflare's published OpenAPI spec from [`cloudflare/api-schemas`](https://github.com/cloudflare/api-schemas) at a pinned commit (no Cloudflare CLI required — the validator scans `curl` calls against `api.cloudflare.com/client/v4` and verifies each path + HTTP method against the spec). Bump `CLOUDFLARE_OPENAPI_SHA` in `validate_remediation_commands.py` when refreshing the spec.
+- **kubernetes / github / gitlab / hetzner**: walk the CLI's hidden Cobra `__complete` command (`kubectl`/`gh`/`glab`/`hcloud` must be on PATH), which returns machine-readable subcommand and flag candidates regardless of each CLI's custom help layout. Valid flags are the union of flag completions and flag lines parsed from `--help` (hcloud filters its flag completions to required-only). The walk runs with cloud credentials stripped (`KUBECONFIG=/dev/null`, tokens unset) so positional-value completions stay empty, and only tab-described candidates count as subcommands (kubectl's `rollout restart` statically completes resource types as bare names). Each CLI is an entry in the `COBRA_CLIS` registry in `validators/cobra.py`.
+
+The REST API targets (**cloudflare**, **tailscale**, **slack**, **atlassian**, **grafana**) need no CLI: each provider is an entry in the `API_PROVIDERS` registry in `validators/openapi.py` that maps an API host to the vendor's OpenAPI (or Swagger 2.0) spec. The validator verifies each curl call's path + HTTP method, plus the `--data` JSON payload against the operation's `requestBody` schema: field names, types, enums, and required properties. Angle-bracket (`<account-name>`) and environment-variable (`$ORG_ID`) placeholders act as wildcards. Known spec-vs-docs divergences are listed per provider under `body_exemptions`; Cloudflare additionally narrows the generic `/zones/{zone_id}/settings/{setting_id}` schema to the per-setting component via its `path_hook`.
+
+API specs are sourced two ways:
+
+- **Pinned download** (cloudflare, slack, grafana): the spec lives in a git repo, so it's downloaded at validation time from a raw URL pinned to a commit SHA (cached under `~/.cache/cnspec-validation/`). Bump the `*_OPENAPI_SHA` constant in `validators/openapi.py` to refresh.
+- **Checked-in dump** (tailscale, atlassian): the vendor serves the spec from a live, unversioned endpoint, so it's checked into `cmd_data/` and refreshed with `python3 content/validation/dump_api_specs.py`.
 
 If a required CLI is missing, the validator prints actionable install hints and exits non-zero.
 
-**azure** is the exception: it uses a checked-in `content/validation/cmd_data/azure_commands.json` because refreshing Azure CLI metadata is slow enough that doing it on every run would significantly extend CI.
+**azure** is the exception among the CLI targets: it uses a checked-in `content/validation/cmd_data/azure_commands.json` because refreshing Azure CLI metadata is slow enough that doing it on every run would significantly extend CI.
 
-**Regenerate Azure command data** (when the Azure CLI version changes):
+**Regenerate checked-in command/spec data**:
 
 ```bash
-python3 content/validation/dump_azure_commands.py
+python3 content/validation/dump_azure_commands.py   # when the Azure CLI version changes
+python3 content/validation/dump_ncli_commands.py    # when bumping the pinned AOS release
+python3 content/validation/dump_api_specs.py        # Tailscale + Atlassian API specs
 ```
 
-**Never hand-edit** `azure_commands.json`.
+**Never hand-edit** the files in `cmd_data/`.
 
 ## Resources
 

@@ -83,12 +83,12 @@ func ExecuteResolvedPolicy(ctx context.Context, runtime llx.Runtime, collectorSv
 		return err
 	}
 
-	ge.Debug("resolved-policy")
+	ge.Debug(ctx, "resolved-policy")
 
 	return ge.Execute()
 }
 
-func ExecuteFilterQueries(runtime llx.Runtime, queries []*policy.Mquery, timeout time.Duration) ([]*policy.Mquery, []error) {
+func ExecuteFilterQueries(ctx context.Context, runtime llx.Runtime, queries []*policy.Mquery, timeout time.Duration) ([]*policy.Mquery, []error) {
 	log.Debug().Msg("executing filter queries")
 	queryMap := map[string]*policy.Mquery{}
 
@@ -141,7 +141,7 @@ func ExecuteFilterQueries(runtime llx.Runtime, queries []*policy.Mquery, timeout
 	}
 	log.Debug().Msg("finished executing filter queries")
 
-	ge.Debug("filter-queries")
+	ge.Debug(ctx, "filter-queries")
 
 	filteredQueries := []*policy.Mquery{}
 	for id, query := range queryMap {

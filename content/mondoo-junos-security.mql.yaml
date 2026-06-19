@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-junos-security
     name: Mondoo Juniper Junos Security
-    version: 1.1.0
+    version: 1.1.1
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -149,17 +149,25 @@ queries:
           desc: |
             **Using the CLI**
 
-            Disable root login via SSH:
+            Before denying root login, verify that at least one named account with the super-user class exists and that you can open an SSH session with it. Denying root login while root is the only usable account cuts off remote management.
+
+            Disable root login via SSH and commit with automatic rollback in case access is lost:
 
             ```
             set system services ssh root-login deny
-            commit
+            commit confirmed 5
             ```
 
             Or allow key-based root login only:
 
             ```
             set system services ssh root-login deny-password
+            commit confirmed 5
+            ```
+
+            Open a new SSH session as a named user to confirm access still works, then make the change permanent:
+
+            ```
             commit
             ```
     refs:
@@ -184,14 +192,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-7-1
       compliance/vda-isa-5: vda-isa-5-5-1-2
     mql: |
-      junos.sshConfig.ciphers.none(
-        _ == "arcfour" ||
-        _ == "arcfour128" ||
-        _ == "arcfour256" ||
-        _ == "3des-cbc" ||
-        _ == "blowfish-cbc" ||
-        _ == "cast128-cbc"
-      )
+      junos.sshConfig.ciphers.containsNone(["arcfour", "arcfour128", "arcfour256", "3des-cbc", "blowfish-cbc", "cast128-cbc"])
     docs:
       desc: |
         This check verifies that no weak or deprecated SSH ciphers are configured on the Junos device. Using only strong ciphers protects the confidentiality of SSH sessions against cryptographic attacks.
@@ -224,14 +225,21 @@ queries:
           desc: |
             **Using the CLI**
 
-            Configure only strong ciphers:
+            The `set` command appends to the existing cipher list, so first remove the current list including any weak entries, then configure only strong ciphers. Commit with automatic rollback so a cipher mismatch with your SSH client cannot lock you out:
 
             ```
-            set system services ssh ciphers aes256-ctr
-            set system services ssh ciphers aes128-ctr
+            delete system services ssh ciphers
             set system services ssh ciphers aes256-gcm@openssh.com
             set system services ssh ciphers aes128-gcm@openssh.com
             set system services ssh ciphers chacha20-poly1305@openssh.com
+            set system services ssh ciphers aes256-ctr
+            set system services ssh ciphers aes128-ctr
+            commit confirmed 5
+            ```
+
+            Open a new SSH session to confirm connectivity, then make the change permanent:
+
+            ```
             commit
             ```
     refs:
@@ -256,13 +264,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-7-1
       compliance/vda-isa-5: vda-isa-5-5-1-2
     mql: |
-      junos.sshConfig.macs.none(
-        _ == "hmac-md5" ||
-        _ == "hmac-md5-96" ||
-        _ == "hmac-sha1-96" ||
-        _ == "hmac-md5-etm@openssh.com" ||
-        _ == "hmac-md5-96-etm@openssh.com"
-      )
+      junos.sshConfig.macs.containsNone(["hmac-md5", "hmac-md5-96", "hmac-sha1-96", "hmac-md5-etm@openssh.com", "hmac-md5-96-etm@openssh.com"])
     docs:
       desc: |
         This check verifies that no weak SSH message authentication codes (MACs) are configured. Strong MACs ensure that SSH session data has not been modified in transit.
@@ -295,13 +297,20 @@ queries:
           desc: |
             **Using the CLI**
 
-            Configure only strong MACs:
+            The `set` command appends to the existing MAC list, so first remove the current list including any weak entries, then configure only strong MACs. Commit with automatic rollback so a MAC mismatch with your SSH client cannot lock you out:
 
             ```
+            delete system services ssh macs
             set system services ssh macs hmac-sha2-256
             set system services ssh macs hmac-sha2-512
             set system services ssh macs hmac-sha2-256-etm@openssh.com
             set system services ssh macs hmac-sha2-512-etm@openssh.com
+            commit confirmed 5
+            ```
+
+            Open a new SSH session to confirm connectivity, then make the change permanent:
+
+            ```
             commit
             ```
     refs:
@@ -326,10 +335,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-7-1
       compliance/vda-isa-5: vda-isa-5-5-1-2
     mql: |
-      junos.sshConfig.keyExchanges.none(
-        _ == "diffie-hellman-group1-sha1" ||
-        _ == "diffie-hellman-group-exchange-sha1"
-      )
+      junos.sshConfig.keyExchanges.containsNone(["diffie-hellman-group1-sha1", "diffie-hellman-group-exchange-sha1"])
     docs:
       desc: |
         This check verifies that weak SSH key exchange algorithms are not configured. Strong key exchange algorithms ensure that session keys are securely negotiated and that past sessions remain protected.
@@ -362,14 +368,21 @@ queries:
           desc: |
             **Using the CLI**
 
-            Configure only strong key exchange algorithms:
+            The `set` command appends to the existing key-exchange list, so first remove the current list including any weak entries, then configure only strong algorithms. Commit with automatic rollback so an algorithm mismatch with your SSH client cannot lock you out:
 
             ```
-            set system services ssh key-exchange group-exchange-sha2
+            delete system services ssh key-exchange
+            set system services ssh key-exchange curve25519-sha256
             set system services ssh key-exchange ecdh-sha2-nistp256
             set system services ssh key-exchange ecdh-sha2-nistp384
             set system services ssh key-exchange ecdh-sha2-nistp521
-            set system services ssh key-exchange curve25519-sha256
+            set system services ssh key-exchange group-exchange-sha2
+            commit confirmed 5
+            ```
+
+            Open a new SSH session to confirm connectivity, then make the change permanent:
+
+            ```
             commit
             ```
     refs:
@@ -609,7 +622,14 @@ queries:
           desc: |
             **Using the CLI**
 
-            Set a password for user accounts:
+            Set a password interactively. Junos prompts for the password and stores only the hash:
+
+            ```
+            set system login user <username> authentication plain-text-password
+            commit
+            ```
+
+            Or supply a pre-computed password hash directly:
 
             ```
             set system login user <username> authentication encrypted-password "<hash>"
@@ -619,7 +639,14 @@ queries:
             Or configure SSH key authentication:
 
             ```
-            set system login user <username> authentication ssh-rsa "<public-key>"
+            set system login user <username> authentication ssh-ed25519 "<public-key>"
+            commit
+            ```
+
+            If the account is no longer needed, remove it instead of adding credentials:
+
+            ```
+            delete system login user <username>
             commit
             ```
     refs:
@@ -676,11 +703,13 @@ queries:
           desc: |
             **Using the CLI**
 
-            Reassign users to more restrictive login classes:
+            Do not demote the account you are currently logged in with, and always keep at least one working super-user account. The `operator` class cannot enter configuration mode, so accounts moved to it lose the ability to change the device configuration.
+
+            Reassign users who do not need full access to a more restrictive login class, committing with automatic rollback:
 
             ```
             set system login user <username> class operator
-            commit
+            commit confirmed 5
             ```
 
             Or create a custom login class with targeted permissions:
@@ -689,6 +718,12 @@ queries:
             set system login class limited-admin permissions configure
             set system login class limited-admin permissions view
             set system login user <username> class limited-admin
+            commit confirmed 5
+            ```
+
+            Confirm that affected users retain the access they need and that a super-user session still works, then make the change permanent:
+
+            ```
             commit
             ```
     refs:
@@ -748,11 +783,25 @@ queries:
           desc: |
             **Using the CLI**
 
-            Disable Telnet:
+            Before removing Telnet, ensure SSH is enabled and verify that you can open an SSH session to the device. If Telnet is your only working management path, removing it without a tested SSH login cuts off remote access.
+
+            Enable SSH if it is not already configured:
+
+            ```
+            set system services ssh
+            commit
+            ```
+
+            Open an SSH session to confirm access, then remove Telnet with automatic rollback:
 
             ```
             delete system services telnet
-            set system services ssh
+            commit confirmed 5
+            ```
+
+            Confirm that your SSH session still works, then make the change permanent:
+
+            ```
             commit
             ```
     refs:
@@ -816,10 +865,10 @@ queries:
             commit
             ```
 
-            SCP is automatically available when SSH is enabled. Verify SSH is configured:
+            SCP is automatically available when SSH is enabled. From operational mode, verify SSH is configured:
 
             ```
-            show system services ssh
+            show configuration system services ssh
             ```
 
             To transfer files using SCP from an external host:
@@ -912,9 +961,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-3
       compliance/vda-isa-5: vda-isa-5-4-1-3
     mql: |
-      junos.snmpCommunities.none(
-        name == "public" || name == "private"
-      )
+      junos.snmpCommunities.none(name.in(["public", "private"]))
     docs:
       desc: |
         This check verifies that default SNMP community strings ("public" and "private") are not configured. Default community strings are universally known and are the first credentials attackers attempt when probing SNMP services.
@@ -1197,17 +1244,18 @@ queries:
           desc: |
             **Using the CLI**
 
-            Configure syslog with TCP or TLS transport:
-
-            ```
-            set system syslog host <syslog-server> transport tcp
-            commit
-            ```
-
-            Or for encrypted syslog:
+            Configure TLS transport for encrypted and reliable log delivery. The collector must accept syslog over TLS, which conventionally uses port 6514:
 
             ```
             set system syslog host <syslog-server> transport tls
+            set system syslog host <syslog-server> port 6514
+            commit
+            ```
+
+            If the collector does not support TLS, configure TCP transport. TCP provides reliable delivery but does not encrypt log data in transit:
+
+            ```
+            set system syslog host <syslog-server> transport tcp
             commit
             ```
     refs:
@@ -1363,14 +1411,7 @@ queries:
       compliance/vda-isa-5: vda-isa-5-5-2-1
     mql: |
       junos.securityZones.where(name == "untrust").all(
-        hostInboundServices.none(
-          _ == "telnet" ||
-          _ == "ftp" ||
-          _ == "finger" ||
-          _ == "http" ||
-          _ == "snmp" ||
-          _ == "all"
-        )
+        hostInboundServices.containsNone(["telnet", "ftp", "finger", "http", "snmp", "all"])
       )
     docs:
       desc: |
@@ -1404,14 +1445,34 @@ queries:
           desc: |
             **Using the CLI**
 
-            Remove unnecessary host-inbound services from the untrust zone:
+            If the device is managed through the untrust zone, removing the `all` keyword also removes SSH and every other inbound service. Explicitly allow the secure services you still need in the same commit, and use automatic rollback in case access is lost.
+
+            Remove the `all` keyword and the insecure host-inbound services from the untrust zone:
 
             ```
+            delete security zones security-zone untrust host-inbound-traffic system-services all
             delete security zones security-zone untrust host-inbound-traffic system-services telnet
             delete security zones security-zone untrust host-inbound-traffic system-services ftp
             delete security zones security-zone untrust host-inbound-traffic system-services finger
             delete security zones security-zone untrust host-inbound-traffic system-services http
             delete security zones security-zone untrust host-inbound-traffic system-services snmp
+            ```
+
+            If management traffic such as SSH or IKE must still reach the device through this zone, allow only those services explicitly:
+
+            ```
+            set security zones security-zone untrust host-inbound-traffic system-services ssh
+            ```
+
+            Commit with automatic rollback:
+
+            ```
+            commit confirmed 5
+            ```
+
+            Verify management access still works, then make the change permanent:
+
+            ```
             commit
             ```
     refs:
@@ -1838,16 +1899,30 @@ queries:
           desc: |
             **Using the CLI**
 
-            Check license status:
+            These are operational mode commands and require no commit.
+
+            Check license status and identify expired entries:
 
             ```
             show system license
             ```
 
-            Install renewed licenses:
+            Obtain renewed license keys from the Juniper Agile Licensing portal, then install them by pasting at the terminal:
 
             ```
-            request system license add <license-key>
+            request system license add terminal
+            ```
+
+            Paste the license key text and press Ctrl+D to finish. Alternatively, install from a file or URL:
+
+            ```
+            request system license add <filename-or-url>
+            ```
+
+            Verify the new license state:
+
+            ```
+            show system license
             ```
     refs:
       - url: https://www.juniper.net/documentation/us/en/software/junos/system-mgmt/topics/topic-map/license-management.html

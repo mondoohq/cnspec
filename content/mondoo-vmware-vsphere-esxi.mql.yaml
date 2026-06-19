@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-vmware-vsphere-esxi-security-baseline
     name: Mondoo VMware vSphere ESXi Security
-    version: 2.0.1
+    version: 2.0.4
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -101,7 +101,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-4
       compliance/vda-isa-5: vda-isa-5-4-1-2
     mql: |
-      vsphere.host.advancedSettings['Security.AccountUnlockTime'] == 900
+      vsphere.host.accountUnlockTime == 900
     docs:
       desc: |-
         This check ensures that a locked account is automatically released after 15 minutes. ESXi locks an account once it reaches the maximum number of failed consecutive login attempts, and a defined unlock window restores access for legitimate users without leaving the account locked indefinitely.
@@ -138,7 +138,7 @@ queries:
           desc: |
             To set the account lockout to 15 minutes using the vSphere Client:
 
-            1. From the vSphere Web Client, select the host.
+            1. From the vSphere Client, select the host.
             2. Select `Configure` then expand `System`.
             3. Select `Advanced System Settings` then select `Edit`.
             4. Enter `Security.AccountUnlockTime` in the filter.
@@ -229,7 +229,7 @@ queries:
                ```
 
             3. For any module reporting `Signed Status: Unsigned`, remove the associated VIB or replace it with a signed version from the vendor.
-            4. Reboot the host so the updated module set is loaded.
+            4. Place the host in maintenance mode, migrate or shut down running virtual machines, and reboot the host so the updated module set is loaded.
 
             Configure the host image profile acceptance level so that unsigned VIBs cannot be installed in the first place. See "Ensure the Image Profile VIB acceptance level is configured properly".
         # No Terraform remediation: kernel module signing is verified against live host state, not declarable Terraform configuration.
@@ -256,10 +256,10 @@ queries:
       compliance/vda-isa-5: vda-isa-5-4-1-2
     mql: |
       vsphere.host.properties['config']['storageDevice']['hostBusAdapter'].where( _['driver'] == 'iscsi_vmk' ).all( _['authenticationProperties']['chapAuthEnabled'] == true )
-      vsphere.host.properties['config']['storageDevice']['hostBusAdapter'].where( _['driver'] == 'iscsi_vmk' ).all( _['authenticationProperties']['chapAuthenticationType'] == 'chapPreferred' )
+      vsphere.host.properties['config']['storageDevice']['hostBusAdapter'].where( _['driver'] == 'iscsi_vmk' ).all( _['authenticationProperties']['chapAuthenticationType'] == 'chapRequired' )
       vsphere.host.properties['config']['storageDevice']['hostBusAdapter'].where( _['driver'] == 'iscsi_vmk' ).all( _['authenticationProperties']['chapName'] != empty )
       vsphere.host.properties['config']['storageDevice']['hostBusAdapter'].where( _['driver'] == 'iscsi_vmk' ).all( _['authenticationProperties']['chapSecret'] != empty )
-      vsphere.host.properties['config']['storageDevice']['hostBusAdapter'].where( _['driver'] == 'iscsi_vmk' ).all( _['authenticationProperties']['mutualChapAuthenticationType'] == 'chapPreferred' )
+      vsphere.host.properties['config']['storageDevice']['hostBusAdapter'].where( _['driver'] == 'iscsi_vmk' ).all( _['authenticationProperties']['mutualChapAuthenticationType'] == 'chapRequired' )
       vsphere.host.properties['config']['storageDevice']['hostBusAdapter'].where( _['driver'] == 'iscsi_vmk' ).all( _['authenticationProperties']['mutualChapName'] != empty )
       vsphere.host.properties['config']['storageDevice']['hostBusAdapter'].where( _['driver'] == 'iscsi_vmk' ).all( _['authenticationProperties']['mutualChapSecret'] != empty )
     docs:
@@ -294,13 +294,13 @@ queries:
              Select-Object Device, ChapType, AuthenticationProperties
            ```
 
-        The host passes when every iSCSI adapter has CHAP enabled with `chapPreferred` for both the outgoing and mutual authentication types, and both the CHAP name and secret and the mutual CHAP name and secret are set. An adapter with CHAP disabled, with a non-`chapPreferred` type, or with an empty name or secret is a failing result.
+        The host passes when every iSCSI adapter has CHAP enabled with `chapRequired` for both the outgoing and mutual authentication types, and both the CHAP name and secret and the mutual CHAP name and secret are set. An adapter with CHAP disabled, with a non-`chapRequired` type, or with an empty name or secret is a failing result.
       remediation:
         - id: vsphere-client
           desc: |
             To enable bidirectional CHAP authentication for iSCSI traffic using the vSphere Client:
 
-            1. From the vSphere Web Client, select the host.
+            1. From the vSphere Client, select the host.
             2. Select `Configure` then expand `Storage`.
             3. Select `Storage Adapters` then select the iSCSI Adapter.
             4. Under `Properties` select `Edit` next to `Authentication`.
@@ -311,16 +311,16 @@ queries:
                 - To set the CHAP name to the iSCSI adapter name, select "Use initiator name".
                 - To set the CHAP name to anything other than the iSCSI initiator name, deselect "Use initiator name" and type a name in the Name text box.
 
-            1. Enter an outgoing CHAP secret to be used as part of authentication. Use the same secret as your storage side secret.
-            2. Specify incoming CHAP credentials. Make sure your outgoing and incoming secrets do not match.
-            3. Select `OK`.
-            4. Select the second to last symbol labeled `Rescan Adapter`.
+            7. Enter an outgoing CHAP secret to be used as part of authentication. Use the same secret as your storage side secret.
+            8. Specify incoming CHAP credentials. Make sure your outgoing and incoming secrets do not match.
+            9. Select `OK`.
+            10. Select the second to last symbol labeled `Rescan Adapter`.
         - id: powershell
           desc: |
-            To set the CHAP settings for the iSCSI adapter using PowerCLI:
+            To configure bidirectional CHAP for the iSCSI adapter using PowerCLI, replacing the names and secrets with values that match the storage array configuration:
 
             ```powershell
-            Get-VMHost | Get-VMHostHba | Where {$_.Type -eq "Iscsi"} | Set-VMHostHba # Use desired parameters here
+            Get-VMHost | Get-VMHostHba -Type Iscsi | Set-VMHostHba -ChapType Required -ChapName "esxi-host-01" -ChapPassword "OutgoingChapSecret1" -MutualChapEnabled $true -MutualChapName "storage-array-01" -MutualChapPassword "IncomingChapSecret1"
             ```
         # No Terraform remediation: iSCSI CHAP credentials are configured on the live storage adapter and have no Terraform resource.
   # No Terraform variants: the vsphere Terraform provider does not manage ESXi host DNS network configuration.
@@ -392,8 +392,19 @@ queries:
             To configure static DNS using the ESXi shell:
 
             ```bash
-            esxcli network ip dns server add --server=<dns-ip>
-            esxcli network ip interface ipv4 set --interface-name=vmk0 --type=static
+            esxcli network ip dns server add --server=192.0.2.53
+            ```
+
+            If the management interface currently obtains its settings from DHCP, convert it to a static configuration. Supply the address and netmask explicitly:
+
+            ```bash
+            esxcli network ip interface ipv4 set --interface-name=vmk0 --type=static --ipv4=192.0.2.10 --netmask=255.255.255.0
+            ```
+
+            **Warning:** Reconfiguring a management VMkernel interface can strand the host at the wrong address and cut off management connectivity. Run this from the DCUI or a direct console session, not over an SSH or vSphere connection that depends on the interface, and have console access ready in case the host becomes unreachable. Confirm that `vmk0` is the management interface before changing it, since the management VMkernel is not always `vmk0`. After setting a static address you may also need to set the default gateway explicitly:
+
+            ```bash
+            esxcli network ip route ipv4 add --gateway=192.0.2.1 --network=default
             ```
         # No Terraform remediation: the host DNS configuration is runtime network state with no Terraform resource.
     refs:
@@ -418,7 +429,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc7-1-1
       compliance/vda-isa-5: vda-isa-5-5-2-3
     mql: |
-      vsphere.host.advancedSettings['Net.DVFilterBindIpAddress'] == empty
+      vsphere.host.dvFilterBindIpAddress == empty
     docs:
       desc: |-
         This check ensures that the dvfilter network API is left unconfigured when no security appliance uses it. The dvfilter API allows certain network security products to inspect virtual machine traffic, and an unused binding address needlessly exposes VM network data.
@@ -468,10 +479,10 @@ queries:
             This will prevent a dvfilter-based network security appliance such as a firewall from functioning if not configured correctly.
         - id: powershell
           desc: |
-            To set Net.DVFilterBindIpAddress to null on all hosts using PowerCLI:
+            To set Net.DVFilterBindIpAddress to an empty value on all hosts using PowerCLI:
 
             ```powershell
-            Get-VMHost HOST1 | Foreach { Set-AdvancedSetting -VMHost $_ -Name Net.DVFilterBindIpAddress -IPValue "" }
+            Get-VMHost | Get-AdvancedSetting -Name Net.DVFilterBindIpAddress | Set-AdvancedSetting -Value ""
             ```
         # No Terraform remediation: the dvfilter bind address is a runtime host advanced setting with no Terraform resource.
     refs:
@@ -496,8 +507,8 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-3
       compliance/vda-isa-5: vda-isa-5-4-1-2
     mql: |
-      vsphere.host.advancedSettings['UserVars.ESXiShellInteractiveTimeOut'] <= 300
-      vsphere.host.advancedSettings['UserVars.ESXiShellInteractiveTimeOut'] != 0
+      vsphere.host.esxiShellInteractiveTimeOut <= 300
+      vsphere.host.esxiShellInteractiveTimeOut != 0
     docs:
       desc: |-
         This check ensures that idle ESXi shell and SSH sessions are automatically terminated after no more than 300 seconds. An interactive timeout closes sessions that an operator opened but left unattended, so an open prompt does not remain available indefinitely.
@@ -534,7 +545,7 @@ queries:
           desc: |
             To set the timeout to the desired value using the vSphere Client:
 
-            1. From the vSphere Web Client, select the host.
+            1. From the vSphere Client, select the host.
             2. Select `Configure` then expand `System`.
             3. Select `Advanced System Settings` then select `Edit`.
             4. Enter `ESXiShellInteractiveTimeOut` in the filter.
@@ -573,7 +584,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc7-1-1
       compliance/vda-isa-5: vda-isa-5-5-2-3
     mql: |
-      vsphere.host.advancedSettings['Config.HostAgent.plugins.solo.enableMob'] == false
+      vsphere.host.mobEnabled == false
     docs:
       desc: |-
         This check ensures that the Managed Object Browser, or MOB, is disabled on the ESXi host. The MOB is a web-based interface that exposes the host's internal object model and allows configuration changes, and it serves no purpose in normal operations.
@@ -681,7 +692,7 @@ queries:
           desc: |
             To enable lockdown mode using the vSphere Client:
 
-            1. From the vSphere Web Client, select the host.
+            1. From the vSphere Client, select the host.
             2. Select `Configure` then expand `System` and select `Security Profile`.
             3. Across from `Lockdown Mode` select `Edit`.
             4. Select the radio button for `Normal`.
@@ -695,8 +706,12 @@ queries:
             To enable lockdown mode for each host using PowerCLI:
 
             ```powershell
-            Get-VMHost | Foreach { $_.EnterLockdownMode() }
+            Get-VMHost | ForEach-Object { $_.ExtensionData.EnterLockdownMode() }
             ```
+
+            **Impact:**
+
+            With lockdown mode enabled the host will only be accessible through vCenter preventing 'local' access.
         # No Terraform remediation: host lockdown mode is runtime host configuration with no Terraform resource.
   # No Terraform variants: the vsphere Terraform provider does not manage ESXi host services such as the ntpd time-synchronization daemon.
   - uid: mondoo-vmware-vsphere-esxi-security-baseline-ensure-ntp-time-synchronization-is-configured-properly
@@ -764,14 +779,19 @@ queries:
             6. Select `OK`.
         - id: powershell
           desc: |
-            To implement the recommended NTP configuration state using PowerCLI:
+            This requires VMware PowerCLI. First connect to vCenter Server with `Connect-VIServer`:
 
+            ```powershell
+            Connect-VIServer -Server <vcenter-fqdn>
             ```
-            Set the NTP Settings for all hosts
-            If an internal NTP server is used, replace pool.ntp.org with
-            the IP address or the Fully Qualified Domain Name (FQDN) of the internal NTP server
-            $NTPServers = "pool.ntp.org", "pool2.ntp.org"
-            Get-VMHost | Add-VmHostNtpServer $NTPServers
+
+            To implement the recommended NTP configuration state using PowerCLI, run the following. If an internal NTP server is used, replace the pool hostnames with the IP address or fully qualified domain name of the internal NTP server:
+
+            ```powershell
+            $ntpServers = "0.pool.ntp.org", "1.pool.ntp.org"
+            Get-VMHost | Add-VMHostNtpServer -NtpServer $ntpServers
+            Get-VMHost | Get-VMHostService | Where-Object { $_.Key -eq "ntpd" } | Set-VMHostService -Policy On
+            Get-VMHost | Get-VMHostService | Where-Object { $_.Key -eq "ntpd" } | Start-VMHostService
             ```
         # No Terraform remediation: NTP service state and startup policy are runtime host configuration with no Terraform resource.
   # No Terraform variants: the vsphere Terraform provider does not manage ESXi host advanced settings such as Syslog.global.logDir.
@@ -793,8 +813,8 @@ queries:
       compliance/soc2-2017: soc2-control-cc7-2-1
       compliance/vda-isa-5: vda-isa-5-5-2-4
     mql: |
-      vsphere.host.advancedSettings['Syslog.global.logDir'] != ""
-      vsphere.host.advancedSettings['Syslog.global.logDir'] != /scratch/
+      vsphere.host.syslogLogDir != ""
+      vsphere.host.syslogLogDir != /scratch/
     docs:
       desc: |-
         This check ensures that the ESXi host writes its log files to a persistent datastore location rather than an in-memory file system. When the log directory points at a non-persistent location such as `/scratch`, only a single day of logs is retained and all log files are reinitialized on every reboot.
@@ -833,16 +853,15 @@ queries:
 
             1. Select the host
             2. Select `Configure` then expand `System` then select `Advanced System Settings`.
-            3. Select `Edit` then enter `Syslog.global.LogDir` in the filter.
+            3. Select `Edit` then enter `Syslog.global.logDir` in the filter.
             4. Set `Syslog.global.logDir` to a persistent location specified as [datastorename] path\_to\_file where the path is relative to the datastore. For example, [datastore1] /systemlogs.
             5. Select `OK`.
         - id: powershell
           desc: |
-            To configure persistent logging using PowerCLI:
+            To configure persistent logging using PowerCLI, replacing the datastore and path with a persistent location in your environment:
 
-            ```
-            Set Syslog.global.logDir for each host
-            Get-VMHost | Foreach { Set-AdvancedConfiguration -VMHost $_ -Name Syslog.global.logDir -Value "<NewLocation>" }
+            ```powershell
+            Get-VMHost | Get-AdvancedSetting -Name Syslog.global.logDir | Set-AdvancedSetting -Value "[datastore1] systemlogs"
             ```
         # No Terraform remediation: the persistent log directory is a runtime host advanced setting with no Terraform resource.
     refs:
@@ -918,7 +937,7 @@ queries:
           desc: |
             To stop using the native VLAN ID for port groups using the vSphere Client:
 
-            1. From the vSphere Web Client, select the host.
+            1. From the vSphere Client, select the host.
             2. Select `Configure` then expand `Networking`.
             3. Select `Virtual switches`.
             4. Expand the Standard vSwitch.
@@ -1015,7 +1034,7 @@ queries:
           desc: |
             To set port groups to values other than 4095 and 0 unless VGT is required using the vSphere Client:
 
-            1. From the vSphere Web Client, select the host.
+            1. From the vSphere Client, select the host.
             2. Select `Configure` then expand `Networking`.
             3. Select `Virtual switches`.
             4. Expand the Standard vSwitch.
@@ -1058,7 +1077,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc7-2-1
       compliance/vda-isa-5: vda-isa-5-5-2-4
     mql: |
-      vsphere.host.advancedSettings['Syslog.global.logHost'] != ""
+      vsphere.host.syslogLogHost != ""
     docs:
       desc: |-
         This check ensures that the ESXi host forwards its logs to a central syslog server. By default ESXi stores logs only on a local scratch volume or ramdisk, so a remote log host is needed to preserve a copy off the host.
@@ -1105,11 +1124,10 @@ queries:
             When setting a remote log host, it is also recommended to set the "Syslog.global.logDirUnique" to true. You must configure the syslog settings for each host.
         - id: powershell
           desc: |
-            To configure remote logging using PowerCLI:
+            To configure remote logging using PowerCLI, replacing the example with the hostname or IP address of the central log server:
 
-            ```
-            Set Syslog.global.logHost for each host
-            Get-VMHost | Foreach { Set-AdvancedSetting -VMHost $_ -Name Syslog.global.logHost -Value "<NewLocation>" }
+            ```powershell
+            Get-VMHost | Get-AdvancedSetting -Name Syslog.global.logHost | Set-AdvancedSetting -Value "syslog.example.com"
             ```
         # No Terraform remediation: the remote syslog host is a runtime host advanced setting with no Terraform resource.
   # No Terraform variants: the vsphere Terraform provider does not manage ESXi host services such as the TSM-SSH daemon.
@@ -1170,24 +1188,28 @@ queries:
           desc: |
             To disable SSH using the vSphere Client:
 
-            1. From the vSphere Web Client, select the host.
+            1. From the vSphere Client, select the host.
             2. Select `Configure` then expand `System` and select `Services`.
             3. Select `SSH` then select `Edit Startup Policy`.
             4. Set the Startup Policy is set to `Start and Stop Manually`.
             5. Select `OK`.
-            6. While `ESXi Shell`is still selected select `Stop`.
+            6. While `SSH` is still selected, select `Stop`.
+
+            **Warning:** Stopping the SSH service ends any SSH session that is currently connected to the host. Perform this change from the vSphere Client or the host console (DCUI) rather than from an SSH session you depend on. If lockdown mode is enabled, SSH cannot be re-enabled from a local SSH session, so make sure you retain vSphere Client or DCUI access before disabling it.
 
             **Impact:**
 
             In troubleshooting and assessment scenarios having SSH disabled, which is the default, may prevent connections to the host by tools or via other methods.
         - id: powershell
           desc: |
-            To set SSH to start manually rather than automatically for all hosts using PowerCLI:
+            To stop the SSH service and set it to start manually on all hosts using PowerCLI:
 
+            ```powershell
+            Get-VMHost | Get-VMHostService | Where-Object { $_.Key -eq "TSM-SSH" } | Set-VMHostService -Policy Off
+            Get-VMHost | Get-VMHostService | Where-Object { $_.Key -eq "TSM-SSH" } | Stop-VMHostService -Confirm:$false
             ```
-            Set SSH to start manually rather than automatically for all hosts
-            Get-VMHost | Get-VMHostService | Where { $_.key -eq "TSM-SSH" } | Set-VMHostService -Policy Off
-            ```
+
+            **Warning:** Run this from a vCenter-connected PowerCLI session, not from an SSH session on the host, because stopping the service ends any active SSH connection. With lockdown mode enabled, SSH cannot be re-enabled locally, so confirm you retain vSphere Client or DCUI access first.
         # No Terraform remediation: SSH service state and startup policy are runtime host configuration with no Terraform resource.
   # No Terraform variants: the vsphere Terraform provider does not manage ESXi host lockdown mode.
   - uid: mondoo-vmware-vsphere-esxi-security-baseline-ensure-strict-lockdown-mode-is-enabled
@@ -1244,7 +1266,7 @@ queries:
           desc: |
             To enable lockdown mode using the vSphere Client:
 
-            1. From the vSphere Web Client, select the host.
+            1. From the vSphere Client, select the host.
             2. Select `Configure`, then expand `System` and select `Security Profile`.
             3. Across from `Lockdown Mode` select `Edit`.
             4. Select the radio button for `Strict`.
@@ -1255,12 +1277,18 @@ queries:
             With lockdown mode enabled, the host will only be accessible through vCenter preventing 'local' access. Disabling the DCUI can create a potential "lockout" situation, should the host become isolated from vCenter Server. Recovering from a "lockout" scenario requires reinstalling ESXi. Consider leaving DCUI enabled, and instead enable lockdown mode and limit the users allowed to access the DCUI using the DCUI. Access list.
         - id: powershell
           desc: |
-            To enable lockdown mode for each host using PowerCLI:
+            To enable strict lockdown mode for each host using PowerCLI:
 
+            ```powershell
+            Get-VMHost | ForEach-Object {
+              $accessManager = Get-View $_.ExtensionData.ConfigManager.HostAccessManager
+              $accessManager.ChangeLockdownMode("lockdownStrict")
+            }
             ```
-            Enable lockdown mode for each host
-            Get-VMHost | Foreach { $_.EnterLockdownMode() }
-            ```
+
+            **Impact:**
+
+            Strict lockdown mode disables the DCUI. If the host loses connectivity to vCenter Server, recovery can require reinstalling ESXi, so confirm recovery procedures before applying this at scale.
         # No Terraform remediation: host lockdown mode is runtime host configuration with no Terraform resource.
   # No Terraform variants: the vsphere Terraform provider does not manage ESXi host advanced settings such as UserVars.DcuiTimeOut.
   - uid: mondoo-vmware-vsphere-esxi-security-baseline-ensure-the-dcui-timeout-is-set-to-600-seconds-or-less
@@ -1281,8 +1309,8 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-3
       compliance/vda-isa-5: vda-isa-5-4-1-2
     mql: |
-      vsphere.host.advancedSettings['UserVars.DcuiTimeOut'] <= 600
-      vsphere.host.advancedSettings['UserVars.DcuiTimeOut'] != 0
+      vsphere.host.dcuiTimeOut <= 600
+      vsphere.host.dcuiTimeOut != 0
     docs:
       desc: |-
         This check ensures that an idle Direct Console User Interface session is terminated after no more than 600 seconds. The Direct Console User Interface allows local login and host management, and an idle timeout closes sessions an operator opened but left unattended.
@@ -1319,7 +1347,7 @@ queries:
           desc: |
             To correct the DCUI timeout setting using the vSphere Client:
 
-            1. From the vSphere Web Client, select the host.
+            1. From the vSphere Client, select the host.
             2. Select `Configure`, then under `System` select `Advanced System Settings`.
             3. Select `Edit` then enter `UserVars.DcuiTimeOut` in the filter.
             4. Change the current value to 600 seconds or less.
@@ -1327,7 +1355,7 @@ queries:
           desc: |
             To correct the DCUI timeout setting using PowerCLI:
 
-            ```
+            ```powershell
             Get-VMHost | Get-AdvancedSetting -Name UserVars.DcuiTimeOut | Set-AdvancedSetting -Value 600
             ```
         # No Terraform remediation: the DCUI timeout is a runtime host advanced setting with no Terraform resource.
@@ -1349,7 +1377,7 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-2-2-6
       compliance/soc2-2017: soc2-control-cc7-1-1
       compliance/vda-isa-5: vda-isa-5-5-3-1
-    mql: vsphere.host.advancedSettings['Mem.ShareForceSalting'] == 2
+    mql: vsphere.host.memShareForceSalting == 2
     docs:
       desc: |-
         This check ensures that per-virtual-machine salting for Transparent Page Sharing is set to its default of 2. With this setting each virtual machine receives a distinct salt, so memory pages are shared only within a single virtual machine and never across virtual machines.
@@ -1399,7 +1427,7 @@ queries:
           desc: |
             To configure per-VM salting using PowerCLI:
 
-            ```
+            ```powershell
             Get-VMHost | Get-AdvancedSetting -Name Mem.ShareForceSalting | Set-AdvancedSetting -Value 2
             ```
         # No Terraform remediation: the Transparent Page Sharing salt setting is a runtime host advanced setting with no Terraform resource.
@@ -1600,18 +1628,18 @@ queries:
           desc: |
             To disable the ESXi shell using the vSphere Client:
 
-            1. From the vSphere Web Client, select the host.
-            2. Select `Configure`m then expand `System` and select `Services`.
+            1. From the vSphere Client, select the host.
+            2. Select `Configure`, then expand `System` and select `Services`.
             3. Select `ESXi Shell`, then select `Edit Startup Policy`.
             4. Set the Startup Policy is set to `Start and Stop Manually`.
             5. Select `OK`.
         - id: powershell
           desc: |
-            To set the ESXi shell to start manually rather than automatically for all hosts using PowerCLI:
+            To stop the ESXi shell service and set it to start manually on all hosts using PowerCLI:
 
-            ```
-            Set the ESXi shell to start manually rather than automatically for all hosts
-            Get-VMHost | Get-VMHostService | Where { $_.key -eq "TSM" } | Set-VMHostService -Policy Off
+            ```powershell
+            Get-VMHost | Get-VMHostService | Where-Object { $_.Key -eq "TSM" } | Set-VMHostService -Policy Off
+            Get-VMHost | Get-VMHostService | Where-Object { $_.Key -eq "TSM" } | Stop-VMHostService -Confirm:$false
             ```
         # No Terraform remediation: ESXi Shell service state and startup policy are runtime host configuration with no Terraform resource.
   # No Terraform variants: the vsphere Terraform provider does not manage the ESXi host image profile VIB acceptance level.
@@ -1668,7 +1696,7 @@ queries:
           desc: |
             To set the host image profile acceptance level using the vSphere Client:
 
-            1. From the vSphere Web Client, select the host.
+            1. From the vSphere Client, select the host.
             2. Select `Configure`, then under `System` and select `Security Profile`.
             3. Under `Host Image Profile Acceptance Level` select `Edit`
             4. In the dropdown select one of the following - `VMware Certified`, `VMware Accepted`, or `Partner Supported`.
@@ -1678,13 +1706,12 @@ queries:
             Unsigned (Community Supported) VIBs will not be able to be utilized on a host.
         - id: powershell
           desc: |
-            To set the host image profile acceptance level using PowerCLI (in the example code, the level is Partner Supported):
+            To set the host image profile acceptance level using PowerCLI. In the example code the level is Partner Supported:
 
-            ```
-            Set the Software AcceptanceLevel for each host<span>
-            Foreach ($VMHost in Get-VMHost ) {
-            $ESXCli = Get-EsxCli -VMHost $VMHost
-            $ESXCli.software.acceptance.Set("PartnerSupported")
+            ```powershell
+            foreach ($vmHost in Get-VMHost) {
+              $esxcli = Get-EsxCli -VMHost $vmHost
+              $esxcli.software.acceptance.Set("PartnerSupported")
             }
             ```
         # No Terraform remediation: the image profile acceptance level is runtime host configuration with no Terraform resource.
@@ -1707,7 +1734,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-4
       compliance/vda-isa-5: vda-isa-5-4-1-2
     mql: |
-      vsphere.host.advancedSettings['Security.AccountLockFailures'] == 5
+      vsphere.host.accountLockFailures == 5
     docs:
       desc: |-
         This check ensures that an account is locked after 5 consecutive failed login attempts. A bounded failure count locks an account that is under attack before an attacker can work through a large set of password guesses.
@@ -1744,7 +1771,7 @@ queries:
           desc: |
             To set the maximum failed login attempts correctly using the vSphere Client:
 
-            1. From the vSphere Web Client, select the host.
+            1. From the vSphere Client, select the host.
             2. Select `Configure`, then expand `System`.
             3. Select `Advanced System Settings` then select `Edit`.
             4. Enter `Security.AccountLockFailures` in the filter.
@@ -1780,8 +1807,8 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-3
       compliance/vda-isa-5: vda-isa-5-4-1-2
     mql: |
-      vsphere.host.advancedSettings['UserVars.ESXiShellTimeOut'] <= 3600
-      vsphere.host.advancedSettings['UserVars.ESXiShellTimeOut'] != 0
+      vsphere.host.esxiShellTimeOut <= 3600
+      vsphere.host.esxiShellTimeOut != 0
     docs:
       desc: |-
         This check ensures that the ESXi shell and SSH services automatically stop after no more than 1 hour. Without this timeout the services run indefinitely once enabled, leaving remote access available long after the work that required it is finished.
@@ -1818,7 +1845,7 @@ queries:
           desc: |
             To set the timeout to the desired value using the vSphere Client:
 
-            1. From the vSphere Web Client, select the host.
+            1. From the vSphere Client, select the host.
             2. Select `Configure`, then expand `System`.
             3. Select `Advanced System Settings`, then select `Edit`.
             4. Enter `ESXiShellTimeOut` in the filter.
@@ -1893,7 +1920,7 @@ queries:
           desc: |
             To disable the SLP service using the vSphere Client:
 
-            1. From the vSphere Web Client, select the host.
+            1. From the vSphere Client, select the host.
             2. Select `Configure`, then expand `System` and select `Services`.
             3. Select `slpd`, then select `Stop`.
             4. Select `Edit Startup Policy` and set it to `Start and stop manually`.
@@ -1902,19 +1929,26 @@ queries:
           desc: |
             To disable the SLP service using the ESXi shell:
 
-            ```bash
-            esxcli system slp stats get
-            /etc/init.d/slpd stop
-            esxcli network firewall ruleset set --ruleset-id CIMSLP --enabled false
-            chkconfig slpd off
-            ```
+            1. Verify the SLP service is not in use:
+
+               ```bash
+               esxcli system slp stats get
+               ```
+
+            2. Stop the service, block its firewall ruleset, and prevent it from starting at boot:
+
+               ```bash
+               /etc/init.d/slpd stop
+               esxcli network firewall ruleset set --ruleset-id CIMSLP --enabled false
+               chkconfig slpd off
+               ```
         # No Terraform remediation: SLP service state and startup policy are runtime host configuration with no Terraform resource.
     refs:
       - url: https://knowledge.broadcom.com/external/article/318251
         title: VMware ESXi SLP Service Security Advisory
   # No Terraform variants: the vsphere Terraform provider does not manage ESXi host services such as the snmpd daemon.
   - uid: mondoo-vmware-vsphere-esxi-security-baseline-ensure-the-snmp-service-is-disabled
-    title: Ensure the SNMP service is disabled
+    title: Ensure SNMP is disabled or restricted to SNMPv3
     impact: 70
     tags:
       compliance/bsi-sys-1-5: bsi-sys-1-5-a22
@@ -1931,11 +1965,19 @@ queries:
       compliance/soc2-2017: soc2-control-cc7-1-1
       compliance/vda-isa-5: vda-isa-5-5-2-3
     mql: |
-      vsphere.host.services.where( key == "snmpd" ).all( running == false )
-      vsphere.host.services.where( key == "snmpd" ).all( policy == "off" )
+      if (vsphere.host.snmp["Enable"] == "true") {
+        vsphere.host.snmp["Communities"] == null || vsphere.host.snmp["Communities"] == ""
+        vsphere.host.snmp["Targets"] == null || vsphere.host.snmp["Targets"] == ""
+        vsphere.host.snmp["Users"] != null && vsphere.host.snmp["Users"] != "" || vsphere.host.snmp["V3targets"] != null && vsphere.host.snmp["V3targets"] != ""
+      } else {
+        vsphere.host.services.where( key == "snmpd" ).all( running == false )
+        vsphere.host.services.where( key == "snmpd" ).all( policy == "off" )
+      }
     docs:
       desc: |-
-        This check ensures that the SNMP daemon, `snmpd`, is stopped and set to start manually unless monitoring explicitly requires it. SNMP v1 and v2c rely on community strings sent in clear text, which can be sniffed and replayed to read host data or change settings.
+        This check ensures that the SNMP agent is either disabled or restricted to SNMPv3. SNMP v1 and v2c rely on community strings sent in clear text, which can be sniffed and replayed to read host data or change settings. SNMPv3 authenticates users and encrypts traffic, so hosts that require SNMP monitoring can keep the agent enabled when only SNMPv3 is configured.
+
+        The host passes when the SNMP agent is disabled and the `snmpd` service is stopped with a manual startup policy. It also passes when the agent is enabled with no v1 or v2c community strings or trap targets, and at least one SNMPv3 user or SNMPv3 notification target is configured.
 
         **Why this matters**
 
@@ -1964,13 +2006,21 @@ queries:
              Select-Object VMHost, Key, Running, Policy
            ```
 
-        The host passes when the `snmpd` service is not running and its `Policy` is `off`. A running service or a policy of `on` is a failing result.
+        ### Audit via the ESXi shell
+
+        1. Inspect the SNMP agent configuration:
+
+           ```bash
+           esxcli system snmp get
+           ```
+
+        The host passes when the SNMP agent is disabled and the `snmpd` service is not running with its `Policy` set to `off`. A host that keeps SNMP enabled passes only when `Communities` and `Targets` are empty and `Users` or `V3targets` is configured.
       remediation:
         - id: vsphere-client
           desc: |
             To disable the SNMP service using the vSphere Client:
 
-            1. From the vSphere Web Client, select the host.
+            1. From the vSphere Client, select the host.
             2. Select `Configure`, then expand `System` and select `Services`.
             3. Select `snmpd`, then select `Stop`.
             4. Select `Edit Startup Policy` and set it to `Start and stop manually`.
@@ -1983,11 +2033,16 @@ queries:
             esxcli system snmp set --enable false
             ```
 
-            If SNMP monitoring is required, enable SNMPv3 instead:
+            If SNMP monitoring is required, configure SNMPv3 with authentication and privacy instead of SNMP v1 or v2c. Community and target settings overwrite the previous values, so setting them to an empty string removes any v1 and v2c configuration:
 
             ```bash
-            esxcli system snmp set --v3targets <target> --authentication SHA1 --privacy AES128
+            esxcli system snmp set --communities ""
+            esxcli system snmp set --targets ""
+            esxcli system snmp set --v3targets monitor.example.com@161/poller/priv --authentication SHA1 --privacy AES128
+            esxcli system snmp set --enable true
             ```
+
+            The check passes for hosts that keep SNMP enabled with an SNMPv3-only configuration.
         # No Terraform remediation: SNMP service state and startup policy are runtime host configuration with no Terraform resource.
   - uid: mondoo-vmware-vsphere-esxi-security-baseline-ensure-the-vswitch-forged-transmits-policy-is-set-to-reject
     title: Ensure the vSwitch Forged Transmits policy is set to reject
@@ -2059,8 +2114,8 @@ queries:
           desc: |
             To set the policy to reject forged transmissions using the vSphere Client:
 
-            1. From the vSphere Web Client, select the host.
-            2. Select `Configure,  then expand `Networking`.
+            1. From the vSphere Client, select the host.
+            2. Select `Configure`, then expand `Networking`.
             3. Select `Virtual switches`, then select `Edit`.
             4. Select `Security`.
             5. Set `Forged transmits` to `Reject` in the dropdown.
@@ -2076,6 +2131,8 @@ queries:
             ```bash
             esxcli network vswitch standard policy security set -v vSwitch2 -f false
             ```
+
+            Replace `vSwitch2` with the target switch and run the command for each standard vSwitch on the host. List them with `esxcli network vswitch standard list`. Distributed switches and any per-port-group security overrides are configured separately and are not changed by this command.
         - id: terraform
           desc: |
             To reject forged transmits on a standard vSwitch using Terraform, set `allow_forged_transmits` to `false` on the `vsphere_host_virtual_switch` resource:
@@ -2162,7 +2219,7 @@ queries:
           desc: |
             To set the MAC Address Change policy to reject using the vSphere Client:
 
-            1. From the vSphere Web Client, select the host.
+            1. From the vSphere Client, select the host.
             2. Select `Configure`, then expand `Networking`.
             3. Select `Virtual switches`, then select `Edit`.
             4. Select `Security`.
@@ -2179,6 +2236,8 @@ queries:
             ```bash
             esxcli network vswitch standard policy security set -v vSwitch2 -m false
             ```
+
+            Replace `vSwitch2` with the target switch and run the command for each standard vSwitch on the host. List them with `esxcli network vswitch standard list`. Distributed switches and any per-port-group security overrides are configured separately and are not changed by this command.
         - id: terraform
           desc: |
             To reject MAC address changes on a standard vSwitch using Terraform, set `allow_mac_changes` to `false` on the `vsphere_host_virtual_switch` resource:
@@ -2265,7 +2324,7 @@ queries:
           desc: |
             To set the Promiscuous Mode policy to reject using the vSphere Client:
 
-            1. From the vSphere Web Client, select the host.
+            1. From the vSphere Client, select the host.
             2. Select `Configure`, then expand `Networking`.
             3. Select `Virtual switches`, then select `Edit`.
             4. Select `Security`.
@@ -2282,6 +2341,8 @@ queries:
             ```bash
             esxcli network vswitch standard policy security set -v vSwitch2 -p false
             ```
+
+            Replace `vSwitch2` with the target switch and run the command for each standard vSwitch on the host. List them with `esxcli network vswitch standard list`. Distributed switches and any per-port-group security overrides are configured separately and are not changed by this command.
         - id: terraform
           desc: |
             To reject promiscuous mode on a standard vSwitch using Terraform, set `allow_promiscuous` to `false` on the `vsphere_host_virtual_switch` resource:
@@ -2364,8 +2425,9 @@ queries:
                /usr/lib/vmware/secureboot/bin/secureBoot.py -c
                ```
 
-            3. Reboot the host, enter the firmware setup, and enable `Secure Boot`.
-            4. Boot ESXi and confirm Secure Boot is active:
+            3. Place the host in maintenance mode and migrate or shut down all running virtual machines.
+            4. Reboot the host, enter the firmware setup, and enable `Secure Boot`.
+            5. Boot ESXi and confirm Secure Boot is active:
 
                ```bash
                /usr/lib/vmware/secureboot/bin/secureBoot.py -s
@@ -2383,7 +2445,11 @@ queries:
     mql: |
       vsphere.host.standardSwitch.all( securityPolicySettings.allowForgedTransmits == false )
       vsphere.host.properties['config']['network']['portgroup'].all( _['computedPolicy']['security']['forgedTransmits'] == false )
-      vsphere.host.properties['config']['network']['portgroup'].all( _['spec']['policy']['security']['forgedTransmits'] == false )
+      // The spec policy carries only explicit per-portgroup overrides and is null
+      // when the portgroup inherits from the vSwitch, so this line uses != true to
+      // flag only an explicit override; the computedPolicy line above enforces the
+      // effective value for inheriting portgroups.
+      vsphere.host.properties['config']['network']['portgroup'].all( _['spec']['policy']['security']['forgedTransmits'] != true )
   - uid: mondoo-vmware-vsphere-esxi-security-baseline-ensure-the-vswitch-forged-transmits-policy-is-set-to-reject-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'vsphere_host_virtual_switch')

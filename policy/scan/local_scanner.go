@@ -22,6 +22,7 @@ import (
 	"go.mondoo.com/cnspec/v13/cli/progress"
 	"go.mondoo.com/cnspec/v13/internal/datalakes/inmemory"
 	"go.mondoo.com/cnspec/v13/internal/datalakes/sqlite"
+	"go.mondoo.com/cnspec/v13/internal/scandump"
 	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/cnspec/v13/policy/executor"
 	"go.mondoo.com/mql/v13"
@@ -67,7 +68,20 @@ type LocalScanner struct {
 	reportType          ReportType
 	autoUpdate          bool
 	refreshInterval     int
+	// scanSource records how the scan was triggered (e.g. "interactive" or
+	// "service"). When set, it is applied as a label to every scanned asset.
+	scanSource string
 }
+
+const (
+	// LabelScanSource is the asset label that records how a scan was triggered.
+	LabelScanSource = "mondoo.com/scan-source"
+	// ScanSourceInteractive marks scans started interactively via `cnspec scan`.
+	ScanSourceInteractive = "interactive"
+	// ScanSourceService marks scans started by a long-running service, e.g.
+	// `cnspec serve` or the scan REST API.
+	ScanSourceService = "service"
+)
 
 type ScannerOption func(*LocalScanner)
 
@@ -116,6 +130,15 @@ func WithRefreshInterval(refreshInterval int) ScannerOption {
 func WithRuntime(r *providers.Runtime) ScannerOption {
 	return func(s *LocalScanner) {
 		s.runtime = r
+	}
+}
+
+// WithScanSource records how scans run by this scanner were triggered. The
+// value (e.g. ScanSourceInteractive or ScanSourceService) is stamped onto every
+// scanned asset as the LabelScanSource label so it can be aggregated upstream.
+func WithScanSource(source string) ScannerOption {
+	return func(s *LocalScanner) {
+		s.scanSource = source
 	}
 }
 
@@ -314,7 +337,22 @@ func createReporter(ctx context.Context, job *Job, upstream *upstream.UpstreamCo
 	return reporter, nil
 }
 
+// stampScanSource applies the configured scan source (e.g. "interactive" or
+// "service") as the LabelScanSource label to every asset in the job inventory.
+// It is a no-op when no scan source was configured or there is no inventory.
+func (s *LocalScanner) stampScanSource(job *Job) {
+	if s.scanSource == "" || job == nil || job.Inventory == nil {
+		return
+	}
+	job.Inventory.ApplyLabels(map[string]string{LabelScanSource: s.scanSource})
+}
+
 func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *upstream.UpstreamConfig) (*ScanResult, error) {
+	// Stamp the scan source (interactive vs. service) onto every asset so it can
+	// be aggregated upstream. This is the single chokepoint for Run/RunIncognito
+	// and the admission-review and queue paths.
+	s.stampScanSource(job)
+
 	reporter, err := createReporter(ctx, job, upstream)
 	if err != nil {
 		return nil, err
@@ -768,6 +806,19 @@ func (s *LocalScanner) runMotorizedAsset(job *AssetJob) (*AssetReport, error) {
 		// stack injected (e.g. sqlite.WithOutputDir for --output-scan-db)
 		// flow into runPolicy via job.Ctx.
 		job.Ctx = ctx
+		// Reserve a per-asset debug dump directory; downstream dump calls
+		// (assetBundle, resolvedPolicy, graph dot files, etc.) write here.
+		// No-op when no scandump.Run is attached.
+		var assetDir string
+		var assetErr error
+		job.Ctx, assetDir, assetErr = scandump.WithAsset(job.Ctx, job.Asset.Name)
+		if assetErr != nil {
+			log.Warn().Err(assetErr).Str("asset", job.Asset.Name).
+				Msg("failed to reserve asset debug-dump directory; continuing without dumps for this asset")
+		} else if assetDir != "" {
+			log.Debug().Str("asset", job.Asset.Name).Str("dir", assetDir).
+				Msg("debug dumps for this asset will be written here")
+		}
 		scanner := &localAssetScanner{
 			services:         services,
 			job:              job,
@@ -1158,8 +1209,10 @@ func (s *localAssetScanner) runPolicy() (*policy.ResolvedPolicy, error) {
 	var hub policy.PolicyHub = s.services
 	var resolver policy.PolicyResolver = s.services
 
-	// If we run in debug mode, download the asset bundle and dump it to disk
-	if val, ok := os.LookupEnv("DEBUG"); ok && (val == "1" || val == "true") {
+	// If a scandump.Run is attached to ctx, fetch + dump the asset bundle.
+	// The fetch is an RPC, so we gate it on scandump.Active to avoid the
+	// round-trip when dumps are off.
+	if scandump.Active(s.job.Ctx) {
 		log.Debug().Str("asset", s.job.Asset.Mrn).Msg("client> request policies bundle for asset")
 		assetBundle, err := hub.GetBundle(s.job.Ctx, &policy.Mrn{Mrn: s.job.Asset.Mrn})
 		if err != nil {
@@ -1167,7 +1220,7 @@ func (s *localAssetScanner) runPolicy() (*policy.ResolvedPolicy, error) {
 		}
 		log.Debug().Msg("client> got policy bundle")
 		logger.TraceJSON(assetBundle)
-		logger.DebugDumpYAML("assetBundle", assetBundle)
+		scandump.YAML(s.job.Ctx, "assetBundle", assetBundle)
 	}
 
 	rawFilters, err := hub.GetPolicyFilters(s.job.Ctx, &policy.Mrn{Mrn: s.job.Asset.Mrn})
@@ -1176,7 +1229,7 @@ func (s *localAssetScanner) runPolicy() (*policy.ResolvedPolicy, error) {
 	}
 	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("client> got policy filters")
 	logger.TraceJSON(rawFilters)
-	logger.DebugDumpYAML("policyFilters", rawFilters)
+	scandump.YAML(s.job.Ctx, "policyFilters", rawFilters)
 
 	filters, err := s.UpdateFilters(&policy.Mqueries{Items: rawFilters.Items}, 5*time.Second)
 	if err != nil {
@@ -1184,7 +1237,7 @@ func (s *localAssetScanner) runPolicy() (*policy.ResolvedPolicy, error) {
 	}
 	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("client> shell update filters")
 	logger.DebugJSON(filters)
-	logger.DebugDumpYAML("assetFilters", filters)
+	scandump.YAML(s.job.Ctx, "assetFilters", filters)
 
 	// Surface the filters to the datalake so persistent stores (e.g. the
 	// SQLite scandb) can record them. Server-side datalakes can no-op.
@@ -1200,7 +1253,7 @@ func (s *localAssetScanner) runPolicy() (*policy.ResolvedPolicy, error) {
 		return resolvedPolicy, err
 	}
 	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("client> got resolved policy bundle for asset")
-	logger.DebugDumpJSON("resolvedPolicy", resolvedPolicy)
+	scandump.JSON(s.job.Ctx, "resolvedPolicy", resolvedPolicy)
 
 	features := mql.GetFeatures(s.job.Ctx)
 	err = executor.ExecuteResolvedPolicy(s.job.Ctx, s.Runtime, resolver, s.job.Asset.Mrn, resolvedPolicy, features, s.ProgressReporter)
@@ -1216,13 +1269,22 @@ func (s *localAssetScanner) getReport(resolvedPolicy *policy.ResolvedPolicy) (*p
 
 	// TODO: we do not needs this anymore since we receive updates already
 	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("client> send all results")
-	_, err := policy.WaitUntilDone(resolver, s.job.Asset.Mrn, s.job.Asset.Mrn, 1*time.Second)
+	done, err := policy.WaitUntilDone(resolver, s.job.Asset.Mrn, s.job.Asset.Mrn, 1*time.Second)
 	// handle error
 	if err != nil {
 		return &policy.Report{
 			EntityMrn:  s.job.Asset.Mrn,
 			ScoringMrn: s.job.Asset.Mrn,
 		}, err
+	}
+	// If the asset score has not reached full completion, individual check
+	// scores may still be in flight (the buffered collector flushes on an
+	// interval). Generating the report now can silently drop those late
+	// scores from the output, so surface it rather than failing quietly.
+	if !done {
+		log.Warn().
+			Str("asset", s.job.Asset.Mrn).
+			Msg("client> report generated before all scores reported completion; some check scores may be missing from the report")
 	}
 
 	log.Debug().Str("asset", s.job.Asset.Mrn).Msg("generate report")
@@ -1243,7 +1305,7 @@ func (s *localAssetScanner) getReport(resolvedPolicy *policy.ResolvedPolicy) (*p
 
 // FilterQueries returns all queries whose result is truthy
 func (s *localAssetScanner) FilterQueries(queries []*policy.Mquery, timeout time.Duration) ([]*policy.Mquery, []error) {
-	return executor.ExecuteFilterQueries(s.Runtime, queries, timeout)
+	return executor.ExecuteFilterQueries(s.job.Ctx, s.Runtime, queries, timeout)
 }
 
 // UpdateFilters takes a list of test filters and runs them against the backend

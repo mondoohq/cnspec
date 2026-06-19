@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
@@ -18,6 +20,8 @@ import (
 	"github.com/spf13/viper"
 	"go.mondoo.com/cnspec/v13/cli/reporter"
 	"go.mondoo.com/cnspec/v13/internal/datalakes/sqlite"
+	"go.mondoo.com/cnspec/v13/internal/scandump"
+	"go.mondoo.com/cnspec/v13/internal/supportbundle"
 	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/cnspec/v13/policy/scan"
 	"go.mondoo.com/mql/v13"
@@ -83,6 +87,8 @@ func init() {
 	_ = scanCmd.Flags().Int("parallelism", 1, "Set the number of assets to scan in parallel. A value of 0 or 1 means sequential")
 	_ = scanCmd.Flags().String("output-scan-db", "", "Save each asset's scan database (SQLite) to this directory in addition to uploading. Used to capture seeds for the cnspec loadtest tool")
 	_ = scanCmd.Flags().MarkHidden("output-scan-db")
+	_ = scanCmd.Flags().Bool("collect-support-bundle", false, "Collect a support bundle (debug logs, asset bundle, inventory, resolved policy, report, provider versions) for sharing with Mondoo support. By default writes to a timestamped directory in the current working dir; override with --support-bundle-dir.")
+	_ = scanCmd.Flags().String("support-bundle-dir", "", "Directory to write the support bundle into. Only used when --collect-support-bundle is set. Defaults to ./cnspec-support-bundle-<timestamp>/.")
 }
 
 var scanCmd = &cobra.Command{
@@ -143,6 +149,8 @@ To manually configure a policy, use this:
 		_ = viper.BindPFlag("output-target", cmd.Flags().Lookup("output-target"))
 		_ = viper.BindPFlag("parallelism", cmd.Flags().Lookup("parallelism"))
 		_ = viper.BindPFlag("output-scan-db", cmd.Flags().Lookup("output-scan-db"))
+		_ = viper.BindPFlag("collect-support-bundle", cmd.Flags().Lookup("collect-support-bundle"))
+		_ = viper.BindPFlag("support-bundle-dir", cmd.Flags().Lookup("support-bundle-dir"))
 	},
 	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		if len(args) == 0 {
@@ -157,6 +165,30 @@ To manually configure a policy, use this:
 var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *plugin.ParseCLIRes) {
 	ctx := context.Background()
 
+	// Wire up debug dumping: --collect-support-bundle takes precedence over
+	// DEBUG=1, which produces just the dump directory without manifest/log.
+	var support *supportbundle.Bundle
+	if viper.GetBool("collect-support-bundle") {
+		var err error
+		support, err = supportbundle.New(viper.GetString("support-bundle-dir"))
+		if err != nil {
+			log.Fatal().Err(err).Msg("failed to prepare support bundle")
+		}
+		support.Args = os.Args
+		ctx, err = support.Activate(ctx)
+		if err != nil {
+			log.Fatal().Err(err).Msg("failed to activate support bundle")
+		}
+		// zerolog calls os.Exit(1) after Fatal hooks run, so HookFatal is
+		// our only chance to flush on log.Fatal paths.
+		support.HookFatal()
+		// Defer covers panics and normal returns; the os.Exit branches below
+		// call FinalizeAndAnnounce directly.
+		defer support.FinalizeAndAnnounce(os.Stderr)
+	} else {
+		ctx = setupDebugDumps(ctx, "cnspec-debug")
+	}
+
 	conf, err := getCobraScanConfig(cmd, runtime, cliRes)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to prepare config")
@@ -166,13 +198,18 @@ var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to resolve policies")
 	}
+	// Dump the aggregated bundle at the run level (used to fire inside
+	// policy.BundleLoader.BundleFromPaths via the mql logger; moved here so
+	// it can be ctx-aware and only fires for scan, not policy lint).
+	scandump.YAML(ctx, "resolved_mql_bundle.mql", conf.Bundle)
 
-	report, err := RunScan(conf, scan.WithReportType(conf.ReportType), scan.WithAutoUpdate(viper.GetBool("auto-update")))
+	report, err := RunScan(ctx, conf, scan.WithReportType(conf.ReportType), scan.WithAutoUpdate(viper.GetBool("auto-update")))
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to run scan")
 	}
 
-	logger.DebugDumpJSON("report", report)
+	scandump.JSON(ctx, "report", report)
+	recordResolvedAssets(ctx, report)
 
 	handlerConf := reporter.HandlerConfig{
 		Format:        conf.OutputFormat,
@@ -190,17 +227,67 @@ var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 		log.Fatal().Err(err).Msg("failed to write report to output target")
 	}
 
-	// if we had asset errors, we return a non-zero exit code
-	// asset errors are only connection issues
+	// If we had asset errors or the worst-case score exceeds the threshold,
+	// return non-zero. Flush the support bundle first so the user gets it.
 	if report != nil {
 		if len(report.Errors) > 0 {
+			if support != nil {
+				support.FinalizeAndAnnounce(os.Stderr)
+			}
 			os.Exit(1)
 		}
 
 		if (100 - report.GetWorstScore()) >= uint32(conf.RiskThreshold) {
+			if support != nil {
+				support.FinalizeAndAnnounce(os.Stderr)
+			}
 			os.Exit(1)
 		}
 	}
+}
+
+// isDebugDumpEnabled mirrors the gate the cnspec logger uses to flip into
+// debug level (DEBUG=1 or DEBUG=true). TRACE=1 also flips logging but doesn't
+// need to imply dump capture — DEBUG is the user's "I want files" signal.
+func isDebugDumpEnabled() bool {
+	v := os.Getenv("DEBUG")
+	return v == "1" || v == "true"
+}
+
+// setupDebugDumps wires a scandump.Run when DEBUG=1 is set and returns the
+// augmented context. The dirPrefix is the directory name to use ("cnspec-debug",
+// "cnspec-sbom-debug", etc.) — a timestamp is appended. Used by sbom and vuln
+// which don't have the --collect-support-bundle flag but should still
+// benefit from the per-asset folder layout when DEBUG=1.
+func setupDebugDumps(ctx context.Context, dirPrefix string) context.Context {
+	if !isDebugDumpEnabled() {
+		return ctx
+	}
+	runDir := dirPrefix + "-" + time.Now().UTC().Format("20060102T150405Z")
+	run, err := scandump.NewRun(runDir)
+	if err != nil {
+		log.Warn().Err(err).Str("dir", runDir).Msg("failed to set up debug dumps; continuing without")
+		return ctx
+	}
+	logger.DumpLocal = filepath.Join(run.Dir, "mondoo-debug-")
+	log.Info().Str("dir", run.Dir).Msg("debug dumps will be written here")
+	return scandump.WithRun(ctx, run)
+}
+
+// recordResolvedAssets dumps the asset list as the scan saw them, so support
+// can see what got resolved from the inventory.
+func recordResolvedAssets(ctx context.Context, report *policy.ReportCollection) {
+	if report == nil {
+		return
+	}
+	resolved := struct {
+		Assets map[string]*inventory.Asset `json:"assets"`
+		Errors map[string]string           `json:"errors,omitempty"`
+	}{
+		Assets: report.Assets,
+		Errors: report.Errors,
+	}
+	scandump.JSON(ctx, "assets-resolved", resolved)
 }
 
 // helper method to retrieve the list of policies for autocomplete
@@ -548,15 +635,21 @@ func (c *scanConfig) loadPolicies(ctx context.Context) error {
 	return nil
 }
 
-func RunScan(config *scanConfig, scannerOpts ...scan.ScannerOption) (*policy.ReportCollection, error) {
-	opts := scannerOpts
+func RunScan(parentCtx context.Context, config *scanConfig, scannerOpts ...scan.ScannerOption) (*policy.ReportCollection, error) {
+	// RunScan is the entry point for the interactive CLI scan commands (scan,
+	// vuln, sbom, aibom, ...), so default the scan source to interactive. It is
+	// prepended so callers (e.g. `serve`) can override it via WithScanSource.
+	opts := append([]scan.ScannerOption{scan.WithScanSource(scan.ScanSourceInteractive)}, scannerOpts...)
 	if config.runtime.UpstreamConfig != nil {
 		opts = append(opts, scan.WithUpstream(config.runtime.UpstreamConfig))
 	}
 	opts = append(opts, scan.WithRecording(config.runtime.Recording()))
 
 	scanner := scan.NewLocalScanner(opts...)
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	// parentCtx carries scandump.WithRun (when debug dumping is on) plus
+	// anything the caller wants surfaced; signal.NotifyContext layers
+	// interrupt cancellation on top.
+	ctx, stop := signal.NotifyContext(parentCtx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	ctx = mql.SetFeatures(ctx, config.Features)
 	// Carry --output-scan-db through ctx so the SQLite datalake knows where

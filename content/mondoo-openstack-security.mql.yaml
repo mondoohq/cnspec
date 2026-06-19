@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-openstack-security
     name: Mondoo OpenStack Security
-    version: 1.0.1
+    version: 1.1.2
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -13,20 +13,23 @@ policies:
     authors:
       - name: Mondoo, Inc.
         email: hello@mondoo.com
-    summary: Secure OpenStack projects across Keystone, Nova, Neutron, Cinder, Glance, Swift, and Octavia
+    summary: Secure OpenStack projects across Keystone, Nova, Neutron, Cinder, Glance, Swift, Octavia, Manila, Magnum, and Trove
     docs:
       desc: |
         The Mondoo OpenStack Security policy identifies critical misconfigurations that could leave your OpenStack project exposed to attackers. The policy focuses on security-relevant controls and helps organizations harden against unauthorized network access, weak credentials, unencrypted data, and accidental exposure of project-owned assets.
 
         This policy provides security checks across the following OpenStack services:
 
-        - Keystone (identity, users, application credentials)
+        - Keystone (identity, users, application credentials, trusts)
         - Nova (compute servers and keypairs)
         - Neutron (networks, ports, security groups)
         - Cinder (block-storage volumes)
         - Glance (images)
         - Swift (object-storage containers)
         - Octavia (load balancers and TLS termination)
+        - Manila (shared file systems)
+        - Magnum (container infrastructure clusters)
+        - Trove (managed databases)
 
         Learn more about scanning OpenStack in the [cnspec OpenStack documentation](https://mondoo.com/docs/cnspec/cloud/openstack).
 
@@ -36,6 +39,7 @@ policies:
         checks:
           - uid: mondoo-openstack-security-app-credentials-restricted
           - uid: mondoo-openstack-security-app-credentials-have-expiry
+          - uid: mondoo-openstack-security-trust-impersonation-expiry
       - title: Compute (Nova)
         checks:
           - uid: mondoo-openstack-security-server-uses-keypair
@@ -60,6 +64,17 @@ policies:
       - title: Load Balancers (Octavia)
         checks:
           - uid: mondoo-openstack-security-listener-modern-tls
+      - title: Shared File Systems (Manila)
+        checks:
+          - uid: mondoo-openstack-security-share-not-public
+          - uid: mondoo-openstack-security-share-no-world-access
+      - title: Container Infrastructure (Magnum)
+        checks:
+          - uid: mondoo-openstack-security-cluster-template-tls-enabled
+          - uid: mondoo-openstack-security-cluster-template-no-insecure-registry
+      - title: Databases (Trove)
+        checks:
+          - uid: mondoo-openstack-security-database-not-public
     scoring_system: highest impact
 queries:
   - uid: mondoo-openstack-security-app-credentials-restricted
@@ -132,16 +147,16 @@ queries:
         - id: console
           desc: |
             1. Navigate to **Identity → Application Credentials** in Horizon.
-            2. Delete the offending credential and create a replacement.
-            3. Leave **Unrestricted** unchecked when creating the replacement.
-            4. Rotate any automation that consumed the old credential.
+            2. Create a replacement credential and leave **Unrestricted** unchecked.
+            3. Update every automation consumer to use the replacement credential.
+            4. Delete the unrestricted credential once nothing depends on it.
         - id: cli
           desc: |
             ```bash
-            # Create a new restricted credential (the default), then revoke the old one
+            # Create a restricted replacement first, cut consumers over, then revoke the old credential
             openstack application credential create automation-job \
               --role member --expiration 2026-12-31T00:00:00
-            openstack application credential delete <old-credential-id>
+            openstack application credential delete old-automation-job
             ```
         - id: terraform
           desc: |
@@ -166,7 +181,7 @@ queries:
   - uid: mondoo-openstack-security-app-credentials-restricted-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "openstack_identity_application_credential_v3")
     mql: |
-      terraform.resources.where(nameLabel == "openstack_identity_application_credential_v3").all(
+      terraform.resources("openstack_identity_application_credential_v3").all(
         arguments['unrestricted'] != true
       )
   - uid: mondoo-openstack-security-app-credentials-restricted-terraform-plan
@@ -252,16 +267,16 @@ queries:
         - id: console
           desc: |
             1. Navigate to **Identity → Application Credentials** in Horizon.
-            2. Delete any credential without an expiration date.
-            3. Create a replacement with an **Expiration** value that matches your rotation policy.
-            4. Update any automation that consumed the old credential.
+            2. Create a replacement credential with an **Expiration** value that matches your rotation policy.
+            3. Update every automation consumer to use the replacement credential.
+            4. Delete the non-expiring credential once nothing depends on it.
         - id: cli
           desc: |
             ```bash
-            # Re-issue with an explicit expiration
+            # Re-issue with an explicit expiration, cut consumers over, then revoke the old credential
             openstack application credential create automation-job \
               --role member --expiration 2026-12-31T00:00:00
-            openstack application credential delete <old-credential-id>
+            openstack application credential delete old-automation-job
             ```
         - id: terraform
           desc: |
@@ -285,7 +300,7 @@ queries:
   - uid: mondoo-openstack-security-app-credentials-have-expiry-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "openstack_identity_application_credential_v3")
     mql: |
-      terraform.resources.where(nameLabel == "openstack_identity_application_credential_v3").all(
+      terraform.resources("openstack_identity_application_credential_v3").all(
         arguments['expires_at'] != null && arguments['expires_at'] != ""
       )
   - uid: mondoo-openstack-security-app-credentials-have-expiry-terraform-plan
@@ -372,14 +387,17 @@ queries:
           desc: |
             1. Navigate to **Compute → Instances** in Horizon.
             2. The keypair cannot be added to an existing server. Snapshot the workload, then launch a replacement with **Key Pair** set to a managed keypair.
-            3. Delete the original instance.
+            3. Move any floating IPs and attached volumes to the replacement.
+            4. Delete the original instance; the check keeps failing while the keyless server exists.
         - id: cli
           desc: |
             ```bash
             # Boot a replacement instance with a keypair injected at launch
             openstack server create replacement \
-              --image <image> --flavor <flavor> --network <network> \
-              --key-name <keypair-name>
+              --image ubuntu-24.04 --flavor m1.small --network app-net \
+              --key-name ops-key
+            # Move floating IPs and volumes over, confirm access, then remove the keyless server
+            openstack server delete original-server
             ```
         - id: terraform
           desc: |
@@ -409,7 +427,7 @@ queries:
   - uid: mondoo-openstack-security-server-uses-keypair-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "openstack_compute_instance_v2")
     mql: |
-      terraform.resources.where(nameLabel == "openstack_compute_instance_v2").all(
+      terraform.resources("openstack_compute_instance_v2").all(
         arguments['key_pair'] != null && arguments['key_pair'] != ""
       )
   - uid: mondoo-openstack-security-server-uses-keypair-terraform-plan
@@ -495,11 +513,12 @@ queries:
         - id: console
           desc: |
             1. Navigate to **Compute → Instances** in Horizon.
-            2. Open the instance, go to the **Security Groups** tab, and add the security group that matches its role.
+            2. From the instance's action menu, select **Edit Security Groups**.
+            3. Add the security group that matches the instance's role and save.
         - id: cli
           desc: |
             ```bash
-            openstack server add security group <server> <security-group>
+            openstack server add security group web-01 app-sg
             ```
         - id: terraform
           desc: |
@@ -530,7 +549,7 @@ queries:
   - uid: mondoo-openstack-security-server-has-security-group-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "openstack_compute_instance_v2")
     mql: |
-      terraform.resources.where(nameLabel == "openstack_compute_instance_v2").all(
+      terraform.resources("openstack_compute_instance_v2").all(
         arguments['security_groups'] != null && arguments['security_groups'].length > 0
       )
   - uid: mondoo-openstack-security-server-has-security-group-terraform-plan
@@ -615,19 +634,21 @@ queries:
       remediation:
         - id: console
           desc: |
-            1. Navigate to **Network → Security Groups** in Horizon.
-            2. Open the affected security group and remove the offending ingress rule.
-            3. Re-add the rule with **CIDR** set to a specific trusted range.
+            1. Navigate to **Network → Security Groups** in Horizon and open the affected security group.
+            2. Add a new ingress rule for TCP port 22 with **CIDR** set to a specific trusted range.
+            3. Confirm you can still reach the affected instances from the trusted range, then delete the rule open to `0.0.0.0/0` or `::/0`. Removing the open rule drops live SSH sessions that arrived through it.
         - id: cli
           desc: |
             ```bash
-            openstack security group rule delete <rule-id>
-            openstack security group rule create <security-group> \
-              --proto tcp --dst-port 22 --remote-ip <your-trusted-cidr>
+            # Add the scoped rule first so management access survives the change
+            openstack security group rule create web-sg \
+              --ingress --protocol tcp --dst-port 22 --remote-ip 203.0.113.0/24
+            # Then remove the world-open rule; live sessions through it are dropped
+            openstack security group rule delete 4a4ee176-43e6-4b48-8bcf-5acd1c403fbf
             ```
         - id: terraform
           desc: |
-            Scope inbound SSH `remote_ip_prefix` to a specific trusted CIDR — never `0.0.0.0/0` or `::/0`:
+            Scope inbound SSH `remote_ip_prefix` to a specific trusted CIDR, never `0.0.0.0/0` or `::/0`:
 
             ```hcl
             resource "openstack_networking_secgroup_rule_v2" "ssh" {
@@ -655,7 +676,7 @@ queries:
   - uid: mondoo-openstack-security-no-unrestricted-ssh-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "openstack_networking_secgroup_rule_v2")
     mql: |
-      terraform.resources.where(nameLabel == "openstack_networking_secgroup_rule_v2").where(arguments['direction'] == "ingress").where(arguments['remote_ip_prefix'] == "0.0.0.0/0" || arguments['remote_ip_prefix'] == "::/0").where(arguments['protocol'] == "tcp" || arguments['protocol'] == "").none(
+      terraform.resources("openstack_networking_secgroup_rule_v2").where(arguments['direction'] == "ingress").where(arguments['remote_ip_prefix'] == "0.0.0.0/0" || arguments['remote_ip_prefix'] == "::/0").where(arguments['protocol'] == "tcp" || arguments['protocol'] == "").none(
         arguments['port_range_min'] <= 22 && arguments['port_range_max'] >= 22
       )
   - uid: mondoo-openstack-security-no-unrestricted-ssh-terraform-plan
@@ -740,19 +761,21 @@ queries:
       remediation:
         - id: console
           desc: |
-            1. Navigate to **Network → Security Groups** in Horizon.
-            2. Open the affected security group and remove the offending ingress rule.
-            3. Re-add the rule with **CIDR** scoped to a specific trusted range.
+            1. Navigate to **Network → Security Groups** in Horizon and open the affected security group.
+            2. Add a new ingress rule for TCP port 3389 with **CIDR** set to a specific trusted range.
+            3. Confirm RDP still works from the trusted range, then delete the rule open to `0.0.0.0/0` or `::/0`. Removing the open rule drops live RDP sessions that arrived through it.
         - id: cli
           desc: |
             ```bash
-            openstack security group rule delete <rule-id>
-            openstack security group rule create <security-group> \
-              --proto tcp --dst-port 3389 --remote-ip <your-trusted-cidr>
+            # Add the scoped rule first so management access survives the change
+            openstack security group rule create windows-sg \
+              --ingress --protocol tcp --dst-port 3389 --remote-ip 203.0.113.0/24
+            # Then remove the world-open rule; live sessions through it are dropped
+            openstack security group rule delete 4a4ee176-43e6-4b48-8bcf-5acd1c403fbf
             ```
         - id: terraform
           desc: |
-            Scope inbound RDP `remote_ip_prefix` to a specific trusted CIDR — never `0.0.0.0/0` or `::/0`:
+            Scope inbound RDP `remote_ip_prefix` to a specific trusted CIDR, never `0.0.0.0/0` or `::/0`:
 
             ```hcl
             resource "openstack_networking_secgroup_rule_v2" "rdp" {
@@ -780,7 +803,7 @@ queries:
   - uid: mondoo-openstack-security-no-unrestricted-rdp-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "openstack_networking_secgroup_rule_v2")
     mql: |
-      terraform.resources.where(nameLabel == "openstack_networking_secgroup_rule_v2").where(arguments['direction'] == "ingress").where(arguments['remote_ip_prefix'] == "0.0.0.0/0" || arguments['remote_ip_prefix'] == "::/0").where(arguments['protocol'] == "tcp" || arguments['protocol'] == "").none(
+      terraform.resources("openstack_networking_secgroup_rule_v2").where(arguments['direction'] == "ingress").where(arguments['remote_ip_prefix'] == "0.0.0.0/0" || arguments['remote_ip_prefix'] == "::/0").where(arguments['protocol'] == "tcp" || arguments['protocol'] == "").none(
         arguments['port_range_min'] <= 3389 && arguments['port_range_max'] >= 3389
       )
   - uid: mondoo-openstack-security-no-unrestricted-rdp-terraform-plan
@@ -865,19 +888,21 @@ queries:
       remediation:
         - id: console
           desc: |
-            1. Navigate to **Network → Security Groups** in Horizon.
-            2. Open the affected security group and remove the offending ingress rule.
-            3. Re-add the rule with **CIDR** scoped to a specific trusted range, or replace it with a **Remote Security Group** rule that allows only the application tier's security group.
+            1. Navigate to **Network → Security Groups** in Horizon and open the affected security group.
+            2. Add a replacement ingress rule for the database port with **CIDR** scoped to a specific trusted range, or a **Remote Security Group** rule that allows only the application tier's security group.
+            3. Confirm the application tier can still reach the database, then delete the rule open to `0.0.0.0/0` or `::/0`. Removing the open rule drops connections established through it.
         - id: cli
           desc: |
             ```bash
-            openstack security group rule delete <rule-id>
-            openstack security group rule create <db-security-group> \
-              --proto tcp --dst-port 3306 --remote-group <app-security-group>
+            # Add the scoped rule first so the application tier keeps its database access
+            openstack security group rule create db-sg \
+              --ingress --protocol tcp --dst-port 3306 --remote-group app-sg
+            # Then remove the world-open rule; connections established through it are dropped
+            openstack security group rule delete 4a4ee176-43e6-4b48-8bcf-5acd1c403fbf
             ```
         - id: terraform
           desc: |
-            Constrain database ingress with `remote_group_id` (preferred) or a private `remote_ip_prefix`:
+            Constrain database ingress with `remote_group_id` or a private `remote_ip_prefix`:
 
             ```hcl
             resource "openstack_networking_secgroup_rule_v2" "db_from_app" {
@@ -912,7 +937,7 @@ queries:
   - uid: mondoo-openstack-security-no-unrestricted-db-ports-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "openstack_networking_secgroup_rule_v2")
     mql: |
-      terraform.resources.where(nameLabel == "openstack_networking_secgroup_rule_v2").where(arguments['direction'] == "ingress").where(arguments['remote_ip_prefix'] == "0.0.0.0/0" || arguments['remote_ip_prefix'] == "::/0").where(arguments['protocol'] == "tcp" || arguments['protocol'] == "").none(
+      terraform.resources("openstack_networking_secgroup_rule_v2").where(arguments['direction'] == "ingress").where(arguments['remote_ip_prefix'] == "0.0.0.0/0" || arguments['remote_ip_prefix'] == "::/0").where(arguments['protocol'] == "tcp" || arguments['protocol'] == "").none(
         arguments['port_range_min'] <= 3306 && arguments['port_range_max'] >= 3306 ||
         arguments['port_range_min'] <= 5432 && arguments['port_range_max'] >= 5432 ||
         arguments['port_range_min'] <= 27017 && arguments['port_range_max'] >= 27017 ||
@@ -1018,15 +1043,19 @@ queries:
       remediation:
         - id: console
           desc: |
-            1. Navigate to **Network → Security Groups** in Horizon.
-            2. Remove the wide-open ingress rule.
-            3. Replace it with narrow per-service rules scoped to specific ports and trusted source CIDRs.
+            1. Navigate to **Network → Security Groups** in Horizon and open the affected security group.
+            2. Add narrow per-service ingress rules scoped to the specific ports and source CIDRs the workload needs, including the port you manage the instance over.
+            3. Confirm the services and your management path still work, then delete the allow-all rule. Removing it drops every connection that was admitted through it.
         - id: cli
           desc: |
             ```bash
-            openstack security group rule delete <rule-id>
-            openstack security group rule create <security-group> \
-              --proto tcp --dst-port 443 --remote-ip 0.0.0.0/0
+            # Add the narrow per-service rules first
+            openstack security group rule create web-sg \
+              --ingress --protocol tcp --dst-port 443 --remote-ip 0.0.0.0/0
+            openstack security group rule create web-sg \
+              --ingress --protocol tcp --dst-port 22 --remote-ip 203.0.113.0/24
+            # Then remove the allow-all rule; connections admitted through it are dropped
+            openstack security group rule delete 4a4ee176-43e6-4b48-8bcf-5acd1c403fbf
             ```
         - id: terraform
           desc: |
@@ -1052,13 +1081,14 @@ queries:
     mql: |
       openstack.securityGroups.all(
         rules.where(direction == "ingress").where(remoteIpPrefix == "0.0.0.0/0" || remoteIpPrefix == "::/0").none(
-          portRangeMin == 0 && portRangeMax == 0
+          portRangeMin == 0 && portRangeMax == 0 ||
+          portRangeMin <= 1 && portRangeMax >= 65535
         )
       )
   - uid: mondoo-openstack-security-no-all-ports-open-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "openstack_networking_secgroup_rule_v2")
     mql: |
-      terraform.resources.where(nameLabel == "openstack_networking_secgroup_rule_v2").where(arguments['direction'] == "ingress").where(arguments['remote_ip_prefix'] == "0.0.0.0/0" || arguments['remote_ip_prefix'] == "::/0").none(
+      terraform.resources("openstack_networking_secgroup_rule_v2").where(arguments['direction'] == "ingress").where(arguments['remote_ip_prefix'] == "0.0.0.0/0" || arguments['remote_ip_prefix'] == "::/0").none(
         arguments['port_range_min'] == 0 && arguments['port_range_max'] == 0 ||
         arguments['port_range_min'] == null && arguments['port_range_max'] == null
       )
@@ -1146,17 +1176,19 @@ queries:
       remediation:
         - id: console
           desc: |
-            1. Navigate to **Network → Networks** in Horizon, open the network, then the port.
-            2. Re-enable **Port Security**.
-            3. Reattach any security groups the port needs.
+            1. Navigate to **Network → Networks** in Horizon, open the network, then edit the port.
+            2. In the same edit, attach the security groups the port needs and re-enable **Port Security**. A port with port security on and no security group drops all traffic.
+            3. If the workload legitimately sends traffic from additional addresses, for example a VRRP virtual IP, add those addresses as allowed address pairs before saving.
         - id: cli
           desc: |
             ```bash
-            openstack port set --enable-port-security <port-id>
+            # Attach a security group in the same call that re-enables port security;
+            # a port with port security on and no security group drops all traffic
+            openstack port set --security-group app-sg --enable-port-security 9c4ad8a0-2b7e-4d61-b8a4-3f1e5c6d7a8b
             ```
         - id: terraform
           desc: |
-            Either omit `port_security_enabled` on `openstack_networking_port_v2` (the default is `true`) or set it explicitly:
+            Either omit `port_security_enabled` on `openstack_networking_port_v2` (the default is `true`) or set it explicitly, and always pair it with the security groups the port needs:
 
             ```hcl
             resource "openstack_networking_port_v2" "app" {
@@ -1177,7 +1209,7 @@ queries:
   - uid: mondoo-openstack-security-port-security-enabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "openstack_networking_port_v2")
     mql: |
-      terraform.resources.where(nameLabel == "openstack_networking_port_v2").all(
+      terraform.resources("openstack_networking_port_v2").all(
         arguments['port_security_enabled'] != false
       )
   - uid: mondoo-openstack-security-port-security-enabled-terraform-plan
@@ -1250,18 +1282,23 @@ queries:
       remediation:
         - id: console
           desc: |
-            1. Snapshot the unencrypted volume.
-            2. Create a new volume from the snapshot using a volume type that is configured with an encryption provider (LUKS or a backend-native provider).
-            3. Detach the original volume and attach the encrypted replacement.
+            1. Confirm with your cloud administrator which volume types provide encryption.
+            2. Navigate to **Volumes → Volumes** in Horizon and detach the volume from its server if it is attached.
+            3. From the volume's action menu, select **Change Volume Type**, choose the encrypted type, and set **Migration Policy** to **On Demand**.
+            4. Reattach the volume once the retype completes.
         - id: cli
           desc: |
             ```bash
             # Confirm which volume types are encrypted
             openstack volume type list --long
 
-            # Create a new volume on the encrypted type, then copy data over
-            openstack volume create --size <gb> --type <encrypted-type> encrypted-volume
+            # Detach if needed, then retype the volume onto an encrypted type with data migration
+            openstack server remove volume web-01 data-volume
+            openstack volume set --type encrypted-lvm --migration-policy on-demand data-volume
+            openstack server add volume web-01 data-volume
             ```
+
+            If the backend rejects the retype, create a new volume on the encrypted type, attach both volumes, copy the data at the operating system level, and delete the unencrypted original.
     refs:
       - url: https://docs.openstack.org/cinder/latest/configuration/block-storage/volume-encryption.html
         title: OpenStack Cinder volume encryption
@@ -1370,7 +1407,7 @@ queries:
   - uid: mondoo-openstack-security-image-not-public-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "openstack_images_image_v2")
     mql: |
-      terraform.resources.where(nameLabel == "openstack_images_image_v2").all(
+      terraform.resources("openstack_images_image_v2").all(
         arguments['visibility'] != "public"
       )
   - uid: mondoo-openstack-security-image-not-public-terraform-plan
@@ -1501,7 +1538,7 @@ queries:
   - uid: mondoo-openstack-security-image-signed-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "openstack_images_image_v2")
     mql: |
-      terraform.resources.where(nameLabel == "openstack_images_image_v2").all(
+      terraform.resources("openstack_images_image_v2").all(
         arguments['properties'] != null && arguments['properties']['img_signature'] != null
       )
   - uid: mondoo-openstack-security-image-signed-terraform-plan
@@ -1586,15 +1623,15 @@ queries:
       remediation:
         - id: console
           desc: |
-            1. Open Horizon's **Object Store → Containers** view.
-            2. Open the affected container's metadata, remove the public read ACL entry, and save.
+            1. Navigate to **Object Store → Containers** in Horizon.
+            2. Select the affected container and clear the **Public Access** checkbox.
         - id: cli
           desc: |
             ```bash
             # Clear the read ACL entirely
-            swift post <container> -r ""
+            swift post backups -r ""
             # Or restrict to the project's authenticated users only
-            swift post <container> -r "<project-id>:*"
+            swift post backups -r "f47ac10b58cc4372a5670e02b2c3d479:*"
             ```
         - id: terraform
           desc: |
@@ -1617,7 +1654,7 @@ queries:
   - uid: mondoo-openstack-security-container-not-public-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "openstack_objectstorage_container_v1")
     mql: |
-      terraform.resources.where(nameLabel == "openstack_objectstorage_container_v1").all(
+      terraform.resources("openstack_objectstorage_container_v1").all(
         arguments['container_read'] == null || arguments['container_read'].contains(".r:*") == false
       )
   - uid: mondoo-openstack-security-container-not-public-terraform-plan
@@ -1702,12 +1739,11 @@ queries:
       remediation:
         - id: console
           desc: |
-            1. Navigate to **Network → Load Balancers** in Horizon and open the listener.
-            2. Edit **TLS Versions** so only `TLSv1.2` and `TLSv1.3` are checked.
+            The Horizon load balancer panels expose the TLS cipher string but not the allowed TLS protocol versions; use the CLI to restrict TLS versions.
         - id: cli
           desc: |
             ```bash
-            openstack loadbalancer listener set <listener> \
+            openstack loadbalancer listener set https-listener \
               --tls-version TLSv1.2 --tls-version TLSv1.3
             ```
         - id: terraform
@@ -1739,7 +1775,7 @@ queries:
   - uid: mondoo-openstack-security-listener-modern-tls-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "openstack_lb_listener_v2")
     mql: |
-      terraform.resources.where(nameLabel == "openstack_lb_listener_v2").all(
+      terraform.resources("openstack_lb_listener_v2").all(
         arguments['protocol'] != "TERMINATED_HTTPS" ||
         arguments['tls_versions'] != null && arguments['tls_versions'].none(
           _ == "TLSv1.0" || _ == "TLSv1.1" || _ == "SSLv2" || _ == "SSLv3"
@@ -1763,3 +1799,640 @@ queries:
           _ == "TLSv1.0" || _ == "TLSv1.1" || _ == "SSLv2" || _ == "SSLv3"
         )
       )
+
+  # No Terraform variants: terraform-provider-openstack has no Keystone trust resource. Trusts are created imperatively (CLI/API or by the Keystone-to-Keystone federation flow), so there is no HCL/plan/state representation to assert against. Re-evaluate if an openstack_identity_trust_v3 resource is added upstream.
+  - uid: mondoo-openstack-security-trust-impersonation-expiry
+    title: Ensure Keystone trusts allowing impersonation have an expiration
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-10
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-2
+      compliance/pci-dss-4: pcidss-requirement-8-2-6
+      compliance/soc2-2017: soc2-control-cc6-1-9
+      compliance/vda-isa-5: vda-isa-5-4-1-1
+    filters: asset.platform == "openstack-project"
+    mql: |
+      openstack.trusts.where(impersonation == true).all(expiresAt != null)
+    docs:
+      desc: |
+        This check ensures that every Keystone trust permitting impersonation carries an expiration timestamp. A trust that allows impersonation lets the trustee act fully as the trustor, and without an `expires_at` value that delegation never lapses on its own.
+
+        **Why this matters**
+
+        - **Standing impersonation is high-value:** An impersonating trust grants the trustee the trustor's identity for the delegated roles, so a non-expiring one is a permanent escalation path.
+        - **Forced review cycle:** An expiration date pushes each delegation through renewal, where trusts nobody owns naturally fall away.
+        - **Offboarding hygiene:** Non-expiring trusts survive the departure of the trustor or trustee and leave delegated access that no one is tracking.
+
+        **Risk mitigation**
+
+        - **Persistent escalation:** Prevents a leaked or forgotten trust from acting as a permanent way to assume another principal's roles.
+        - **Credential sprawl:** Limits the accumulation of long-lived delegations across the project over time.
+      audit: |
+        ### Audit via Horizon
+
+        The Horizon dashboard does not expose trust management. Use the CLI.
+
+        ### Audit via CLI
+
+        Run the OpenStack CLI and inspect the result:
+
+        ```bash
+        openstack trust list
+        openstack trust show <trust-id>
+        ```
+
+        A passing result shows every trust with `impersonation` set to `True` carrying a populated `expires_at` value; a failing result shows an impersonating trust with an empty `expires_at`.
+      remediation:
+        - id: console
+          desc: |
+            Horizon does not expose trust management; use the CLI to create the replacement trust with an expiration before deleting the old one.
+        - id: cli
+          desc: |
+            ```bash
+            # Trusts are immutable; create the replacement first, then delete the old trust.
+            # Run the create command as the trustor, since Keystone only lets a user
+            # delegate their own roles.
+            openstack trust create alice deploy-bot \
+              --project web-project --role member \
+              --impersonate --expiration 2026-12-31T00:00:00
+            # Update consumers to the new trust ID, then remove the non-expiring trust
+            openstack trust delete 9d3b2c1a-5f6e-4d7c-8b9a-0e1f2a3b4c5d
+            ```
+        # No Terraform remediation: terraform-provider-openstack has no Keystone trust resource (see the note above the check). Trusts are managed only through the CLI/API.
+    refs:
+      - url: https://docs.openstack.org/keystone/latest/user/trusts.html
+        title: OpenStack Keystone trusts
+
+  - uid: mondoo-openstack-security-share-not-public
+    title: Ensure Manila shares are not visible to all projects
+    impact: 85
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-16
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-22
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-openstack-security-share-not-public-openstack
+        tags:
+          mondoo.com/filter-title: OpenStack Project
+          mondoo.com/filter-icon: openstack
+      - uid: mondoo-openstack-security-share-not-public-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-openstack-security-share-not-public-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-openstack-security-share-not-public-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that no Manila shared file system is created with `is_public = true`. A public share is visible to every project on the cloud, and any project that can see it can mount it within the access rules the share allows.
+
+        **Why this matters**
+
+        - **Shares hold working data:** Manila exports back home directories, application state, and shared datasets that are not meant for cloud-wide discovery.
+        - **Visibility widens the blast radius:** A public share is enumerable by every tenant, turning a single weak access rule into a cross-tenant exposure.
+        - **Safe defaults:** Shares should stay private to the owning project and be exposed deliberately, not advertised to the whole cloud.
+
+        **Risk mitigation**
+
+        - **Cross-tenant discovery:** Prevents other projects from listing and targeting the share.
+        - **Data disclosure:** Keeps the contents of file shares from being reachable by tenants that should never see them.
+      audit: |
+        ### Audit via Horizon
+
+        1. Sign in to the OpenStack Horizon dashboard as a project member.
+        2. Open **Share** then **Shares**.
+        3. Select each share and review its **Public** attribute.
+
+        A passing result shows **Public** set to **No** for every share; a failing result shows a share marked **Public: Yes**.
+
+        ### Audit via CLI
+
+        Run the OpenStack CLI and inspect the result:
+
+        ```bash
+        openstack share show <share>
+        ```
+
+        A passing result shows `is_public` set to `False`; a failing result shows `is_public` set to `True`.
+      remediation:
+        - id: console
+          desc: |
+            1. Navigate to **Share → Shares** in Horizon.
+            2. Open the affected share's **Edit Share** dialog and clear the **Public** setting.
+        - id: cli
+          desc: |
+            ```bash
+            openstack share set --public false data-share
+            ```
+        - id: terraform
+          desc: |
+            Either omit `is_public` on `openstack_sharedfilesystem_share_v2` (the default is `false`) or set it explicitly:
+
+            ```hcl
+            resource "openstack_sharedfilesystem_share_v2" "data" {
+              name        = "data"
+              share_proto = "NFS"
+              size        = 10
+              is_public   = false
+            }
+            ```
+    refs:
+      - url: https://docs.openstack.org/manila/latest/user/create-and-manage-shares.html
+        title: OpenStack Manila shared file systems
+
+  - uid: mondoo-openstack-security-share-not-public-openstack
+    filters: asset.platform == "openstack-project"
+    mql: |
+      openstack.shares.all(isPublic == false)
+  - uid: mondoo-openstack-security-share-not-public-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "openstack_sharedfilesystem_share_v2")
+    mql: |
+      terraform.resources("openstack_sharedfilesystem_share_v2").all(
+        arguments['is_public'] != true
+      )
+  - uid: mondoo-openstack-security-share-not-public-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "openstack_sharedfilesystem_share_v2")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "openstack_sharedfilesystem_share_v2").all(
+        change.after.is_public != true
+      )
+  - uid: mondoo-openstack-security-share-not-public-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "openstack_sharedfilesystem_share_v2")
+    mql: |
+      terraform.state.resources.where(type == "openstack_sharedfilesystem_share_v2").all(
+        values.is_public != true
+      )
+
+  - uid: mondoo-openstack-security-share-no-world-access
+    title: Ensure Manila shares are not exported to all source IP addresses
+    impact: 90
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    variants:
+      - uid: mondoo-openstack-security-share-no-world-access-openstack
+        tags:
+          mondoo.com/filter-title: OpenStack Project
+          mondoo.com/filter-icon: openstack
+      - uid: mondoo-openstack-security-share-no-world-access-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-openstack-security-share-no-world-access-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-openstack-security-share-no-world-access-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that no Manila share has an IP-based access rule whose `access_to` is `0.0.0.0/0` or `::/0`. An access rule covering every source address lets any host that can route to the share server mount the export, subject only to the protocol's own (often weak) authentication.
+
+        **Why this matters**
+
+        - **NFS trusts the network:** NFS access rules grant mount rights by source address, so an all-addresses rule effectively removes the access control entirely.
+        - **Designed for known clients:** Share access rules are meant to enumerate specific client CIDRs, not to publish the export to everything that can reach it.
+        - **Read-write exposure:** A world-scoped rule that grants read-write turns the export into shared, attacker-writable storage.
+
+        **Risk mitigation**
+
+        - **Unauthorized mounts:** Confines mount rights to the specific client networks that need the share.
+        - **Data tampering:** Stops untrusted hosts from reading or overwriting the contents of the export.
+      audit: |
+        ### Audit via Horizon
+
+        1. Sign in to the OpenStack Horizon dashboard as a project member.
+        2. Open **Share** then **Shares**.
+        3. Select each share, open its **Rules** tab, and review the IP access rules.
+
+        A passing result shows no IP access rule with **Access to** set to `0.0.0.0/0` or `::/0`; a failing result shows such a rule.
+
+        ### Audit via CLI
+
+        Run the OpenStack CLI and inspect the result:
+
+        ```bash
+        openstack share access list <share>
+        ```
+
+        A passing result shows no `ip` access rule whose **Access To** is `0.0.0.0/0` or `::/0`; a failing result shows one.
+      remediation:
+        - id: console
+          desc: |
+            1. Navigate to **Share → Shares** in Horizon and open the share's **Rules** tab.
+            2. Add a replacement rule scoped to the specific client CIDR that needs the share, with the access level those clients require.
+            3. Confirm the clients can still reach the share, then delete the rule whose **Access to** is `0.0.0.0/0` or `::/0`. Removing it cuts off any client still relying on it.
+        - id: cli
+          desc: |
+            ```bash
+            # Grant the scoped rule first so existing clients keep access;
+            # match the access level the clients actually need
+            openstack share access create data-share ip 203.0.113.0/24 --access-level rw
+            # Then remove the world-open rule
+            openstack share access delete data-share 4a4ee176-43e6-4b48-8bcf-5acd1c403fbf
+            ```
+        - id: terraform
+          desc: |
+            Scope `access_to` on `openstack_sharedfilesystem_share_access_v2` to a specific trusted CIDR, never `0.0.0.0/0` or `::/0`:
+
+            ```hcl
+            resource "openstack_sharedfilesystem_share_access_v2" "clients" {
+              share_id     = openstack_sharedfilesystem_share_v2.data.id
+              access_type  = "ip"
+              access_to    = "203.0.113.0/24"
+              access_level = "ro"
+            }
+            ```
+    refs:
+      - url: https://docs.openstack.org/manila/latest/user/share-management.html
+        title: OpenStack Manila share access rules
+
+  - uid: mondoo-openstack-security-share-no-world-access-openstack
+    filters: asset.platform == "openstack-project"
+    mql: |
+      openstack.shares.all(
+        accessRules.where(accessType == "ip").none(accessTo == "0.0.0.0/0" || accessTo == "::/0")
+      )
+  - uid: mondoo-openstack-security-share-no-world-access-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "openstack_sharedfilesystem_share_access_v2")
+    mql: |
+      terraform.resources("openstack_sharedfilesystem_share_access_v2").where(arguments['access_type'] == "ip").none(
+        arguments['access_to'] == "0.0.0.0/0" || arguments['access_to'] == "::/0"
+      )
+  - uid: mondoo-openstack-security-share-no-world-access-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "openstack_sharedfilesystem_share_access_v2")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "openstack_sharedfilesystem_share_access_v2").where(change.after.access_type == "ip").none(
+        change.after.access_to == "0.0.0.0/0" || change.after.access_to == "::/0"
+      )
+  - uid: mondoo-openstack-security-share-no-world-access-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "openstack_sharedfilesystem_share_access_v2")
+    mql: |
+      terraform.state.resources.where(type == "openstack_sharedfilesystem_share_access_v2").where(values.access_type == "ip").none(
+        values.access_to == "0.0.0.0/0" || values.access_to == "::/0"
+      )
+
+  - uid: mondoo-openstack-security-cluster-template-tls-enabled
+    title: Ensure Magnum cluster templates do not disable control plane TLS
+    impact: 95
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    variants:
+      - uid: mondoo-openstack-security-cluster-template-tls-enabled-openstack
+        tags:
+          mondoo.com/filter-title: OpenStack Project
+          mondoo.com/filter-icon: openstack
+      - uid: mondoo-openstack-security-cluster-template-tls-enabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-openstack-security-cluster-template-tls-enabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-openstack-security-cluster-template-tls-enabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that no Magnum cluster template sets `tls_disabled = true`. With TLS disabled, the cluster's orchestration API — the Kubernetes API server on a Kubernetes cluster — accepts unauthenticated, unencrypted connections, and every cluster built from the template inherits that posture.
+
+        **Why this matters**
+
+        - **The control plane is the keys to the cluster:** An unauthenticated orchestration API lets anyone who can reach it schedule workloads, read secrets, and take over every node.
+        - **Plaintext credentials:** Without TLS, client certificates and bearer tokens cross the network in the clear and can be captured on the path.
+        - **Template inheritance:** A single insecure template silently weakens every cluster created from it, so the fix belongs at the template.
+
+        **Risk mitigation**
+
+        - **Cluster takeover:** Prevents an attacker from issuing API calls against an unauthenticated control plane.
+        - **Credential interception:** Keeps API traffic encrypted so tokens and certificates cannot be sniffed in transit.
+      audit: |
+        ### Audit via Horizon
+
+        1. Sign in to the OpenStack Horizon dashboard as a project member.
+        2. Open **Container Infra** then **Cluster Templates**.
+        3. Select each template and review whether **Disable TLS** is set.
+
+        A passing result shows **Disable TLS** unset for every template; a failing result shows a template with TLS disabled.
+
+        ### Audit via CLI
+
+        Run the OpenStack CLI and inspect the result:
+
+        ```bash
+        openstack coe cluster template show <template>
+        ```
+
+        A passing result shows `tls_disabled` set to `False`; a failing result shows `tls_disabled` set to `True`.
+      remediation:
+        - id: console
+          desc: |
+            1. Open **Container Infra → Cluster Templates** in Horizon.
+            2. If no cluster references the template, fix it in place with the CLI, since Horizon does not expose template patching.
+            3. If clusters reference the template, create a replacement template with **Disable TLS** left unset. Existing clusters cannot switch templates: rebuild each cluster from the new template, move its workloads, then delete the old cluster and template.
+        - id: cli
+          desc: |
+            ```bash
+            # Fix the template in place while no clusters reference it
+            openstack coe cluster template update secure-template replace tls_disabled=false
+
+            # If clusters reference it, create a TLS-enabled replacement
+            # (tls_disabled defaults to false) and rebuild clusters from it
+            openstack coe cluster template create secure-template \
+              --image fedora-coreos-38 --keypair ops-key \
+              --external-network public --coe kubernetes \
+              --flavor m1.small --docker-volume-size 10
+            ```
+        - id: terraform
+          desc: |
+            Either omit `tls_disabled` on `openstack_containerinfra_clustertemplate_v1` (the default is `false`) or set it explicitly:
+
+            ```hcl
+            resource "openstack_containerinfra_clustertemplate_v1" "k8s" {
+              name                  = "k8s"
+              image                 = "fedora-coreos"
+              coe                   = "kubernetes"
+              external_network_id   = openstack_networking_network_v2.public.id
+              tls_disabled          = false
+            }
+            ```
+    refs:
+      - url: https://docs.openstack.org/magnum/latest/user/index.html
+        title: OpenStack Magnum cluster templates
+
+  - uid: mondoo-openstack-security-cluster-template-tls-enabled-openstack
+    filters: asset.platform == "openstack-project"
+    mql: |
+      openstack.clusterTemplates.all(tlsDisabled == false)
+  - uid: mondoo-openstack-security-cluster-template-tls-enabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "openstack_containerinfra_clustertemplate_v1")
+    mql: |
+      terraform.resources("openstack_containerinfra_clustertemplate_v1").all(
+        arguments['tls_disabled'] != true
+      )
+  - uid: mondoo-openstack-security-cluster-template-tls-enabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "openstack_containerinfra_clustertemplate_v1")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "openstack_containerinfra_clustertemplate_v1").all(
+        change.after.tls_disabled != true
+      )
+  - uid: mondoo-openstack-security-cluster-template-tls-enabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "openstack_containerinfra_clustertemplate_v1")
+    mql: |
+      terraform.state.resources.where(type == "openstack_containerinfra_clustertemplate_v1").all(
+        values.tls_disabled != true
+      )
+
+  - uid: mondoo-openstack-security-cluster-template-no-insecure-registry
+    title: Ensure Magnum cluster templates do not allow insecure registries
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    variants:
+      - uid: mondoo-openstack-security-cluster-template-no-insecure-registry-openstack
+        tags:
+          mondoo.com/filter-title: OpenStack Project
+          mondoo.com/filter-icon: openstack
+      - uid: mondoo-openstack-security-cluster-template-no-insecure-registry-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-openstack-security-cluster-template-no-insecure-registry-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-openstack-security-cluster-template-no-insecure-registry-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that no Magnum cluster template sets an `insecure_registry`. An insecure registry is one the cluster is allowed to pull container images from over plaintext HTTP with no certificate validation, and every cluster built from the template trusts it.
+
+        **Why this matters**
+
+        - **Images become attacker-controlled:** Pulling over an unvalidated channel lets a network attacker substitute a malicious image for the one the cluster expected.
+        - **No integrity guarantee:** Without TLS the cluster cannot confirm the registry's identity or that the image arrived unmodified.
+        - **Template inheritance:** Configuring this at the template level silently extends the trusted-registry list to every cluster created from it.
+
+        **Risk mitigation**
+
+        - **Supply-chain compromise:** Prevents tampered or impersonated images from being pulled into the cluster.
+        - **Man-in-the-middle:** Keeps image pulls on an authenticated, encrypted channel an attacker cannot transparently intercept.
+      audit: |
+        ### Audit via Horizon
+
+        1. Sign in to the OpenStack Horizon dashboard as a project member.
+        2. Open **Container Infra** then **Cluster Templates**.
+        3. Select each template and review the **Insecure Registry** field.
+
+        A passing result shows an empty **Insecure Registry** for every template; a failing result shows a template with an insecure registry set.
+
+        ### Audit via CLI
+
+        Run the OpenStack CLI and inspect the result:
+
+        ```bash
+        openstack coe cluster template show <template>
+        ```
+
+        A passing result shows `insecure_registry` empty; a failing result shows a host:port value in `insecure_registry`.
+      remediation:
+        - id: console
+          desc: |
+            1. Open **Container Infra → Cluster Templates** in Horizon.
+            2. If no cluster references the template, fix it in place with the CLI, since Horizon does not expose template patching.
+            3. If clusters reference the template, create a replacement template with **Insecure Registry** left empty. Existing clusters cannot switch templates: rebuild each cluster from the new template, move its workloads, then delete the old cluster and template.
+        - id: cli
+          desc: |
+            ```bash
+            # Fix the template in place while no clusters reference it
+            openstack coe cluster template update secure-template remove insecure_registry
+
+            # If clusters reference it, create a replacement that omits --insecure-registry
+            # and rebuild clusters from it
+            openstack coe cluster template create secure-template \
+              --image fedora-coreos-38 --keypair ops-key \
+              --external-network public --coe kubernetes \
+              --flavor m1.small --docker-volume-size 10
+            ```
+        - id: terraform
+          desc: |
+            Do not set `insecure_registry` on `openstack_containerinfra_clustertemplate_v1`; rely on a TLS-protected registry instead:
+
+            ```hcl
+            resource "openstack_containerinfra_clustertemplate_v1" "k8s" {
+              name                = "k8s"
+              image               = "fedora-coreos"
+              coe                 = "kubernetes"
+              external_network_id = openstack_networking_network_v2.public.id
+              # insecure_registry intentionally omitted; pull only from TLS-protected registries
+            }
+            ```
+    refs:
+      - url: https://docs.openstack.org/magnum/latest/user/index.html
+        title: OpenStack Magnum cluster templates
+
+  - uid: mondoo-openstack-security-cluster-template-no-insecure-registry-openstack
+    filters: asset.platform == "openstack-project"
+    mql: |
+      openstack.clusterTemplates.all(insecureRegistry == "")
+  - uid: mondoo-openstack-security-cluster-template-no-insecure-registry-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "openstack_containerinfra_clustertemplate_v1")
+    mql: |
+      terraform.resources("openstack_containerinfra_clustertemplate_v1").all(
+        arguments['insecure_registry'] == null || arguments['insecure_registry'] == ""
+      )
+  - uid: mondoo-openstack-security-cluster-template-no-insecure-registry-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "openstack_containerinfra_clustertemplate_v1")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "openstack_containerinfra_clustertemplate_v1").all(
+        change.after.insecure_registry == null || change.after.insecure_registry == ""
+      )
+  - uid: mondoo-openstack-security-cluster-template-no-insecure-registry-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "openstack_containerinfra_clustertemplate_v1")
+    mql: |
+      terraform.state.resources.where(type == "openstack_containerinfra_clustertemplate_v1").all(
+        values.insecure_registry == null || values.insecure_registry == ""
+      )
+
+  # No Terraform variants: this check inspects the runtime network addresses Trove assigned to the instance (operational telemetry), which has no configuration analog. The terraform-provider-openstack openstack_db_instance_v1 resource attaches the instance to a network by UUID, and whether that network is publicly reachable is a cross-resource property the check cannot assert from the resource alone. Re-evaluate if a first-class public/private toggle is added upstream.
+  - uid: mondoo-openstack-security-database-not-public
+    title: Ensure Trove database instances are not publicly reachable
+    impact: 90
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    filters: asset.platform == "openstack-project"
+    mql: |
+      openstack.databaseInstances.all(
+        addresses.none(_['type'] == "public")
+      )
+    docs:
+      desc: |
+        This check ensures that no Trove managed database instance has a network address of type `public`. A database with a public address is reachable from outside the tenant network, exposing the database engine's listener directly to untrusted clients.
+
+        **Why this matters**
+
+        - **Databases assume a private network:** Trove engine defaults for authentication and encryption are built for a trusted internal network, not direct internet exposure.
+        - **High-value target:** A publicly reachable database listener invites credential-stuffing and version-specific exploits against the engine.
+        - **Tiered architecture:** Managed databases belong behind an application tier and should accept connections only from the private network that hosts that tier.
+
+        **Risk mitigation**
+
+        - **Data exfiltration:** Prevents direct connections to the database from anywhere on the internet.
+        - **Targeted exploitation:** Removes the engine's listener from internet-wide scanning that probes for known vulnerable versions.
+      audit: |
+        ### Audit via Horizon
+
+        1. Sign in to the OpenStack Horizon dashboard as a project member.
+        2. Open **Database** then **Instances**.
+        3. Select each instance and review the addresses listed on its **Overview** tab.
+
+        A passing result shows only private addresses for every instance; a failing result shows an instance with a public address.
+
+        ### Audit via CLI
+
+        Run the OpenStack CLI and inspect the result:
+
+        ```bash
+        openstack database instance show <instance>
+        ```
+
+        A passing result shows no address of type `public`; a failing result shows a public address assigned to the instance.
+      remediation:
+        - id: console
+          desc: |
+            The Horizon database panel does not expose the instance access setting; use the CLI.
+        - id: cli
+          desc: |
+            ```bash
+            # Remove public access in place; Trove releases the public address
+            openstack database instance update db-instance-1 --is-private
+            ```
+
+            If the instance was built directly on an external network rather than made public by Trove, launch a replacement on a private network, migrate the data, and delete the original:
+
+            ```bash
+            openstack database instance create db-private \
+              --flavor m1.small --size 10 \
+              --datastore mysql --datastore-version 8.0 \
+              --nic net-id=6f2c1b3a-7e8d-4a5b-9c0d-1e2f3a4b5c6d
+            ```
+        # No Terraform remediation: see the note above the check — the public/private posture is a property of the network the instance attaches to, not a setting on the openstack_db_instance_v1 resource itself.
+    refs:
+      - url: https://docs.openstack.org/trove/latest/user/index.html
+        title: OpenStack Trove database instances

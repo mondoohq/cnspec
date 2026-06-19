@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-windows-workstation-security
     name: Mondoo Microsoft Windows Workstation Security
-    version: 0.4.0
+    version: 0.4.2
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -98,30 +98,46 @@ queries:
             Turn on device encryption:
 
             1. Sign in to Windows with an administrator account.
-            2. Select **Start** > **Settings** > **Update & Security** > **Device encryption**.
+            2. On Windows 11, select **Start** > **Settings** > **Privacy & security** > **Device encryption**. On Windows 10, select **Start** > **Settings** > **Update & Security** > **Device encryption**.
             3. If device encryption is turned off, select **Turn on**.
 
             If Device encryption is not available, use standard BitLocker encryption:
 
             1. Sign in to your Windows device with an administrator account.
             2. In the search box on the taskbar, type **Manage BitLocker** and select it from the list of results.
-            3. Select **Turn on BitLocker** and follow the instructions.
+            3. Select **Turn on BitLocker** and follow the instructions. When prompted, save the recovery key to your Microsoft account, to Active Directory, or to a file stored off the device. Do not skip this step; without the recovery key the data is unrecoverable after a TPM or hardware fault.
+            4. Repeat for every fixed data drive shown in the BitLocker control panel, or turn on auto-unlock for data drives.
 
             Note: BitLocker is not available on Windows 10/11 Home edition.
         - id: powershell
           desc: |
             **Using PowerShell**
 
-            Enable BitLocker on the operating system drive:
+            Warning: Always add and back up a recovery password before enabling BitLocker. Without an escrowed recovery key, a TPM fault, firmware update, or hardware change makes the data permanently unrecoverable.
+
+            Add a recovery password protector, escrow it, and enable BitLocker on the operating system drive:
 
             ```powershell
+            Add-BitLockerKeyProtector -MountPoint "C:" -RecoveryPasswordProtector
+            $rp = (Get-BitLockerVolume -MountPoint "C:").KeyProtector | Where-Object KeyProtectorType -eq "RecoveryPassword"
+            Backup-BitLockerKeyProtector -MountPoint "C:" -KeyProtectorId $rp[0].KeyProtectorId
             Enable-BitLocker -MountPoint "C:" -EncryptionMethod XtsAes256 -UsedSpaceOnly -TpmProtector
             ```
+
+            `Backup-BitLockerKeyProtector` escrows to Active Directory. On Microsoft Entra joined devices, use `BackupToAAD-BitLockerKeyProtector` instead. On standalone devices, record the `RecoveryPassword` value from `$rp` and store it off the device.
 
             If your device does not have a TPM, use a password protector instead:
 
             ```powershell
-            Enable-BitLocker -MountPoint "C:" -EncryptionMethod XtsAes256 -UsedSpaceOnly -PasswordProtector
+            $pw = Read-Host -AsSecureString -Prompt "BitLocker password"
+            Enable-BitLocker -MountPoint "C:" -EncryptionMethod XtsAes256 -UsedSpaceOnly -PasswordProtector -Password $pw
+            ```
+
+            This check requires every volume to be protected. Encrypt each remaining fixed data drive and let it unlock automatically once the operating system drive is protected:
+
+            ```powershell
+            Enable-BitLocker -MountPoint "D:" -EncryptionMethod XtsAes256 -UsedSpaceOnly -RecoveryPasswordProtector
+            Enable-BitLockerAutoUnlock -MountPoint "D:"
             ```
 
             To check the current BitLocker status:
@@ -133,7 +149,7 @@ queries:
           desc: |
             **Using Ansible**
 
-            Enable BitLocker on the operating system drive using the following Ansible playbook:
+            No BitLocker module exists in the ansible.windows or community.windows collections, so run the BitLocker cmdlets through `win_powershell`:
 
             ```yaml
             ---
@@ -141,12 +157,20 @@ queries:
               hosts: all
 
               tasks:
-                - name: Enable BitLocker with a TPM protector
-                  community.windows.win_bitlocker:
-                    drive: C
-                    state: present
-                    encryption_method: xts_aes256
-                    used_space_only: true
+                - name: Enable BitLocker with a TPM protector and an escrowed recovery password
+                  ansible.windows.win_powershell:
+                    script: |
+                      $vol = Get-BitLockerVolume -MountPoint "C:"
+                      if ($vol.ProtectionStatus -eq "On") {
+                        $Ansible.Changed = $false
+                      } else {
+                        Add-BitLockerKeyProtector -MountPoint "C:" -RecoveryPasswordProtector | Out-Null
+                        $rp = (Get-BitLockerVolume -MountPoint "C:").KeyProtector |
+                          Where-Object KeyProtectorType -eq "RecoveryPassword"
+                        Backup-BitLockerKeyProtector -MountPoint "C:" -KeyProtectorId $rp[0].KeyProtectorId
+                        Enable-BitLocker -MountPoint "C:" -EncryptionMethod XtsAes256 -UsedSpaceOnly -TpmProtector
+                        $Ansible.Changed = $true
+                      }
             ```
     refs:
       - url: https://support.microsoft.com/en-us/windows/turn-on-device-encryption-0c453637-bc88-5f74-5105-741561aae838#:~:text=Turn%20on%20standard%20BitLocker%20encryption,-Sign%20in%20to&text=In%20the%20search%20box%20on,is%20available%20for%20your%20device.
@@ -169,7 +193,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc7-1-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
     mql: |
-      powershell("Confirm-SecureBootUEFI").stdout.trim.downcase == 'true'
+      machine.secureboot.enabled == true
     docs:
       desc: |
         This check ensures that Secure Boot is active. Secure Boot is a boot-integrity feature of the Unified Extensible Firmware Interface (UEFI) standard that allows the system to start only with firmware and boot loaders signed by trusted keys.
@@ -203,12 +227,20 @@ queries:
           desc: |
             **Using the UEFI firmware interface**
 
+            Warning: If Windows was installed in legacy BIOS mode on an MBR disk, switching the firmware to UEFI with Secure Boot leaves the system unable to boot. Before changing firmware settings, press **Windows + R**, run `msinfo32`, and confirm **BIOS Mode** reports **UEFI**. If it reports **Legacy**, first convert the system disk from an elevated command prompt:
+
+            ```powershell
+            mbr2gpt /validate /allowFullOS
+            mbr2gpt /convert /allowFullOS
+            ```
+
             To enable Secure Boot, access the UEFI firmware settings on your computer. The steps vary by manufacturer, but generally:
 
-            1. Restart your computer and enter the UEFI firmware settings. This is usually done by pressing a specific key during startup (for example F2, F10, DEL, or ESC).
-            2. Look for the **Secure Boot** option in the UEFI settings. It is usually located under the **Boot** or **Security** tab.
-            3. Change the Secure Boot setting to **Enabled**.
-            4. Save the changes and exit the UEFI settings.
+            1. Restart your computer and enter the UEFI firmware settings. This is usually done by pressing a specific key during startup, commonly F2, F10, DEL, or ESC.
+            2. Disable any **Legacy Boot** or **CSM** compatibility option if it is enabled.
+            3. Look for the **Secure Boot** option, usually under the **Boot** or **Security** tab.
+            4. Change the Secure Boot setting to **Enabled**.
+            5. Save the changes and exit the UEFI settings.
     refs:
       - url: https://media.defense.gov/2020/Sep/15/2002497594/-1/-1/0/CTR-UEFI-Secure-Boot-Customization-UOO168873-20.PDF
         title: UEFI Secure Boot Customization
@@ -269,39 +301,25 @@ queries:
           desc: |
             **Using Group Policy**
 
-            Under `Computer Configuration\Administrative Templates\Windows Components\Windows update\Configure Automatic Updates`, you must select one of the following options:
+            1. Press **Windows + R**, run `gpedit.msc` to open the Local Group Policy Editor.
+            2. Go to **Computer Configuration** > **Administrative Templates** > **Windows Components** > **Windows Update** > **Manage end user experience**. On older Windows 10 releases the settings sit directly under **Windows Update**.
+            3. Open **Configure Automatic Updates**, select **Enabled**, and choose **4 - Auto download and schedule the install**. Options 2 and 3 leave installation dependent on the user and do not satisfy this requirement. Option 5 is not available on Windows 10 or later, and option 7 applies only to Windows Server.
+            4. In the same dialog, set **Scheduled install day** to **0 - Every day**.
+            5. Select **Apply** > **OK**.
 
-            2 - Notify for download and auto install - When Windows finds updates that apply to this device, users will be notified that updates are ready to be downloaded. After going to Settings > Update & security > Windows Update, users can download and install any available updates.
+            Critical operating system updates and service packs then download and install every day at a scheduled time. The install time is configurable through the **Scheduled install time** setting in the same policy.
+        - id: powershell
+          desc: |
+            **Using PowerShell**
 
-            3 - Auto download and notify for Install - Windows finds updates that apply to the device and downloads them in the background (the user is not notified or interrupted during this process). When the downloads are complete, users will be notified that they are ready to install. After going to Settings > Update & security > Windows Update, users can install them.
-
-            4 - Auto download and schedule the install - Specify the schedule using the options in the Group Policy Setting. For more information about this setting, see Schedule update installation.
-
-            5 - Allow local admin to choose setting - With this option, local administrators will be allowed to use the settings app to select a configuration option of their choice. Local administrators will not be allowed to disable the configuration for Automatic Updates. This option is not available in any Windows 10 or later versions.
-
-            7 - Notify for install and notify for restart (Windows Server 2016 and later only) - With this option, when Windows finds updates that apply to this device, they will be downloaded, then users will be notified that updates are ready to be installed. Once updates are installed, a notification will be displayed to users to restart the device.
-
-            ```powershell
-            $keypath = "Registry::HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Windows\WindowsUpdate\AU"
-            $keyname = "AUOptions"
-            New-Item -Path $keypath -Name $keyname -Force
-            Set-ItemProperty -Path $keypath -Name $keyname -Value "4"
-            ```
-
-            Configure Scheduled install day for every day (set to 0) under
-
-            ```text
-            Computer Configuration\Policies\Administrative Templates\Windows Components\Windows Update\Manage end user experience\Configure Automatic Updates: Scheduled install day
-            ```
+            Create the policy key and set both values as DWORDs in an elevated PowerShell session:
 
             ```powershell
-            $keypath = "Registry::HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Windows\WindowsUpdate\AU"
-            $keyname = "ScheduledInstallDay"
-            New-Item -Path $keypath -Name $keyname -Force
-            Set-ItemProperty -Path $keypath -Name $keyname -Value "0"
+            $keypath = "HKLM:\Software\Policies\Microsoft\Windows\WindowsUpdate\AU"
+            New-Item -Path $keypath -Force | Out-Null
+            Set-ItemProperty -Path $keypath -Name "AUOptions" -Value 4 -Type DWord
+            Set-ItemProperty -Path $keypath -Name "ScheduledInstallDay" -Value 0 -Type DWord
             ```
-
-            Critical operating system updates and service packs will automatically download every day (at 3:00 A.M., by default).
         - id: ansible
           desc: |
             **Using Ansible**
@@ -356,11 +374,11 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-8-4
       compliance/vda-isa-5: vda-isa-5-5-2-1
     mql: |
-      windows.security.products.one(
+      windows.security.products.any(
         type == "antivirus" &&
         productState == "ON" &&
         signatureState == "UP-TO-DATE" &&
-        timestamp - time.now < 25 * time.hour
+        time.now - timestamp < 25 * time.hour
       )
     docs:
       desc: |
@@ -395,16 +413,28 @@ queries:
           desc: |
             **Using the Windows interface**
 
-            Complete the following steps to turn on Microsoft Defender Antivirus on your device.
+            If a third-party antivirus product is installed, enable its real-time protection and update its definitions using that product's console. The steps below enable Microsoft Defender Antivirus. Active malware protection is what blocks threats as files are accessed, so the goal is to confirm real-time protection is on and signatures are current.
+
+            The Windows Security path is the supported route on modern Windows because it works whether or not Tamper Protection is enabled.
+
+            1. Open **Windows Security** and select **Virus & threat protection**.
+            2. Under **Virus & threat protection settings**, select **Manage settings**.
+            3. Turn **Real-time protection** on.
+            4. Return to **Virus & threat protection**, open **Protection updates**, and select **Check for updates** so the signatures are current.
+
+            **Using Group Policy (Tamper Protection must be off)**
+
+            Tamper Protection blocks changes to Microsoft Defender settings made through Group Policy, PowerShell, or the registry. The steps in this section and the PowerShell commands below only take effect when Tamper Protection is turned off. If Tamper Protection is on, use the Windows Security steps above instead.
 
             1. Select the Start menu.
             2. In the search bar, type Group Policy. Then select Edit Group Policy from the listed results. The Local Group Policy Editor opens.
             3. Select Computer Configuration > Administrative Templates > Windows Components > Microsoft Defender Antivirus.
             4. Scroll to the bottom of the list and select Turn off Microsoft Defender Antivirus.
-            5. Select Disabled or Not configured. It might feel counter-intuitive to select these options because the names suggest that you're turning Microsoft Defender Antivirus off. Don't worry, these options actually ensure that it's turned on.
+            5. Select Disabled or Not configured. The names suggest that you are turning Microsoft Defender Antivirus off, but selecting Disabled or Not configured keeps it turned on.
             6. Select Apply > OK.
+            7. Open Windows Security > Virus & threat protection > Protection updates and select Check for updates so the signatures are current.
 
-            If running these manually, they must be run line by line in order to function properly.
+            With Tamper Protection off, you can also run these commands one at a time in an elevated PowerShell session:
 
             ```powershell
             Set-MpPreference -DisableRealtimeMonitoring $false
@@ -414,8 +444,9 @@ queries:
             New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection" -Name "DisableOnAccessProtection" -Value 0 -PropertyType DWORD -Force
             New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection" -Name "DisableScanOnRealtimeEnable" -Value 0 -PropertyType DWORD -Force
             New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender" -Name "DisableAntiSpyware" -Value 0 -PropertyType DWORD -Force
-            start-service WinDefend
-            start-service WdNisSvc
+            Start-Service WinDefend
+            Start-Service WdNisSvc
+            Update-MpSignature
             ```
         - id: ansible
           desc: |
@@ -475,6 +506,11 @@ queries:
                   loop:
                     - WinDefend
                     - WdNisSvc
+
+                - name: Update Defender signatures
+                  ansible.windows.win_powershell:
+                    script: |
+                      Update-MpSignature
             ```
     refs:
       - url: https://learn.microsoft.com/en-us/mem/intune/user-help/turn-on-defender-windows

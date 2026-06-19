@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-freebsd-security
     name: Mondoo FreeBSD Security
-    version: 1.0.0
+    version: 1.0.4
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -183,6 +183,10 @@ queries:
                 ```ini
                 kern.elf64.aslr.enable=1
                 ```
+
+            ASLR only takes effect when a binary is executed, so enabling it does not protect processes that are already running. Restart long-running services or reboot the system so they start with randomized address spaces.
+
+            `kern.elf64.aslr.enable` covers 64-bit binaries. If the system also runs 32-bit binaries, enable ASLR for them too with `kern.elf32.aslr.enable`, both at runtime and in `/etc/sysctl.conf`.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -1046,7 +1050,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-8-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
     mql: |
-      file("/etc/inetd.conf").exists == false || file("/etc/inetd.conf").content.lines.none(_ == /^ftp/)
+      inetd.config.serviceNames.none(_ == "ftp")
     docs:
       refs:
         - url: https://man.freebsd.org/cgi/man.cgi?query=inetd&sektion=8
@@ -1076,6 +1080,12 @@ queries:
             sed -i '' 's/^ftp/#ftp/' /etc/inetd.conf
             ```
 
+            Reload inetd so the change takes effect:
+
+            ```bash
+            service inetd reload
+            ```
+
             If `inetd` is not needed at all, disable it:
 
             ```bash
@@ -1093,6 +1103,7 @@ queries:
             echo "Disabling FTP server..."
             if [ -f /etc/inetd.conf ]; then
               sed -i '' 's/^ftp/#ftp/' /etc/inetd.conf
+              service inetd reload 2>/dev/null || true
               echo "FTP entries commented out in /etc/inetd.conf."
             fi
 
@@ -1111,6 +1122,12 @@ queries:
                 path: /etc/inetd.conf
                 regexp: '^ftp'
                 replace: '#ftp'
+
+            - name: Reload inetd to apply the change
+              ansible.builtin.service:
+                name: inetd
+                state: reloaded
+              failed_when: false
             ```
   - uid: mondoo-freebsd-security-telnet-server-is-not-enabled
     title: Ensure telnet server is not enabled
@@ -1130,7 +1147,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-8-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
     mql: |
-      file("/etc/inetd.conf").exists == false || file("/etc/inetd.conf").content.lines.none(_ == /^telnet/)
+      inetd.config.serviceNames.none(_ == "telnet")
     docs:
       refs:
         - url: https://man.freebsd.org/cgi/man.cgi?query=inetd&sektion=8
@@ -1159,6 +1176,12 @@ queries:
             ```bash
             sed -i '' 's/^telnet/#telnet/' /etc/inetd.conf
             ```
+
+            Reload inetd so the change takes effect:
+
+            ```bash
+            service inetd reload
+            ```
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -1170,6 +1193,7 @@ queries:
             echo "Disabling telnet server..."
             if [ -f /etc/inetd.conf ]; then
               sed -i '' 's/^telnet/#telnet/' /etc/inetd.conf
+              service inetd reload 2>/dev/null || true
               echo "Telnet entries commented out in /etc/inetd.conf."
             fi
 
@@ -1188,6 +1212,12 @@ queries:
                 path: /etc/inetd.conf
                 regexp: '^telnet'
                 replace: '#telnet'
+
+            - name: Reload inetd to apply the change
+              ansible.builtin.service:
+                name: inetd
+                state: reloaded
+              failed_when: false
             ```
   - uid: mondoo-freebsd-security-nis-server-is-not-enabled
     title: Ensure NIS server is not enabled
@@ -1399,12 +1429,18 @@ queries:
           desc: |
             **Using the CLI**
 
-            Disable and stop the NFS daemon:
+            The NFS server is not a single process. It is several cooperating daemons: `nfsd` serves file data, `mountd` handles mount requests and reads `/etc/exports`, and `rpcbind` advertises which ports those services listen on. Disabling only `nfsd` can leave `mountd` and `rpcbind` running, so the network surface stays partly open.
+
+            Disable and stop both the NFS daemon and `mountd`:
 
             ```bash
             sysrc nfs_server_enable="NO"
+            sysrc mountd_enable="NO"
             service nfsd stop
+            service mountd stop
             ```
+
+            If no other RPC services are needed on this host, also disable `rpcbind` using the dedicated rpcbind check in this policy. Leave `rpcbind` running only if another service requires it.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -1415,7 +1451,9 @@ queries:
 
             echo "Disabling NFS server..."
             sysrc nfs_server_enable="NO"
+            sysrc mountd_enable="NO"
             service nfsd onestop 2>/dev/null || true
+            service mountd onestop 2>/dev/null || true
 
             echo "NFS server disabled."
             ```
@@ -1545,7 +1583,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-8-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
     mql: |
-      file("/etc/inetd.conf").exists == false || file("/etc/inetd.conf").content.lines.none(_ == /^tftp/)
+      inetd.config.serviceNames.none(_ == "tftp")
     docs:
       refs:
         - url: https://man.freebsd.org/cgi/man.cgi?query=inetd&sektion=8
@@ -1574,6 +1612,12 @@ queries:
             ```bash
             sed -i '' 's/^tftp/#tftp/' /etc/inetd.conf
             ```
+
+            Reload inetd so the change takes effect:
+
+            ```bash
+            service inetd reload
+            ```
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -1585,6 +1629,7 @@ queries:
             echo "Disabling TFTP server..."
             if [ -f /etc/inetd.conf ]; then
               sed -i '' 's/^tftp/#tftp/' /etc/inetd.conf
+              service inetd reload 2>/dev/null || true
               echo "TFTP entries commented out in /etc/inetd.conf."
             fi
 
@@ -1603,6 +1648,12 @@ queries:
                 path: /etc/inetd.conf
                 regexp: '^tftp'
                 replace: '#tftp'
+
+            - name: Reload inetd to apply the change
+              ansible.builtin.service:
+                name: inetd
+                state: reloaded
+              failed_when: false
             ```
   - uid: mondoo-freebsd-security-imap-and-pop3-server-is-not-enabled
     title: Ensure IMAP and POP3 server is not enabled
@@ -1624,8 +1675,8 @@ queries:
     mql: |
       service("dovecot").running == false
       service("dovecot").enabled == false
-      service("cyrus_imapd").running == false
-      service("cyrus_imapd").enabled == false
+      service("imapd").running == false
+      service("imapd").enabled == false
     docs:
       refs:
         - url: https://man.freebsd.org/cgi/man.cgi?query=rc.conf&sektion=5
@@ -1657,8 +1708,10 @@ queries:
             sysrc dovecot_enable="NO"
             service dovecot stop
             sysrc cyrus_imapd_enable="NO"
-            service cyrus_imapd stop
+            service imapd stop
             ```
+
+            The cyrus-imapd port installs its rc script as `imapd` while keeping `cyrus_imapd_enable` as the rc.conf variable, so the two names differ by design.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -1671,7 +1724,7 @@ queries:
             sysrc dovecot_enable="NO" 2>/dev/null || true
             service dovecot onestop 2>/dev/null || true
             sysrc cyrus_imapd_enable="NO" 2>/dev/null || true
-            service cyrus_imapd onestop 2>/dev/null || true
+            service imapd onestop 2>/dev/null || true
 
             echo "IMAP and POP3 services disabled."
             ```
@@ -1697,7 +1750,7 @@ queries:
                 state: stopped
               loop:
                 - dovecot
-                - cyrus_imapd
+                - imapd
               failed_when: false
             ```
   - uid: mondoo-freebsd-security-web-proxy-server-is-not-enabled
@@ -1808,9 +1861,9 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-8-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
     filters: |
-      package("postfix").installed
+      package("postfix").installed && service("postfix").running
     mql: |
-      file("/usr/local/etc/postfix/main.cf").content.lines.where(_ == /^\s*inet_interfaces\s*=/).all(_ == /localhost/)
+      postfix.inetInterfaces.containsOnly(["localhost", "loopback-only", "127.0.0.1", "::1"])
     docs:
       refs:
         - url: https://docs.freebsd.org/en/books/handbook/network-servers/
@@ -2030,11 +2083,11 @@ queries:
           desc: |
             **Using the CLI**
 
-            Set the correct ownership and permissions on all SSH private host key files:
+            Set the correct ownership and permissions on all SSH private host key files. The `! -name '*.pub'` guard excludes the public key files so they are not tightened to 0600, which would prevent clients from reading them:
 
             ```bash
-            find /etc/ssh -name 'ssh_host_*key' -exec chown root:wheel {} \;
-            find /etc/ssh -name 'ssh_host_*key' -exec chmod 0600 {} \;
+            find /etc/ssh -name 'ssh_host_*key' ! -name '*.pub' -exec chown root:wheel {} \;
+            find /etc/ssh -name 'ssh_host_*key' ! -name '*.pub' -exec chmod 0600 {} \;
             ```
         - id: sh
           desc: |
@@ -2213,11 +2266,13 @@ queries:
             Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr
             ```
 
-            Then restart the SSH daemon:
+            Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
             ```bash
-            service sshd restart
+            sshd -t && service sshd restart
             ```
+
+            If `sshd -t` reports an error, fix the configuration before restarting. Keep your current SSH session open and confirm that a new connection succeeds before you log out.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -2236,7 +2291,9 @@ queries:
               echo "Ciphers ${CIPHERS}" >> "$SSHD_CONFIG"
             fi
 
-            service sshd restart
+            # Validate the configuration before restarting so a syntax error
+            # cannot stop sshd and lock out future logins.
+            sshd -t && service sshd restart
 
             echo "Strong SSH ciphers configured."
             ```
@@ -2310,11 +2367,13 @@ queries:
             MACs umac-128-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com,umac-128@openssh.com,hmac-sha2-256,hmac-sha2-512
             ```
 
-            Then restart the SSH daemon:
+            Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
             ```bash
-            service sshd restart
+            sshd -t && service sshd restart
             ```
+
+            If `sshd -t` reports an error, fix the configuration before restarting. Keep your current SSH session open and confirm that a new connection succeeds before you log out.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -2333,7 +2392,9 @@ queries:
               echo "MACs ${MACS}" >> "$SSHD_CONFIG"
             fi
 
-            service sshd restart
+            # Validate the configuration before restarting so a syntax error
+            # cannot stop sshd and lock out future logins.
+            sshd -t && service sshd restart
 
             echo "Strong SSH MAC algorithms configured."
             ```
@@ -2407,11 +2468,13 @@ queries:
             KexAlgorithms sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,curve25519-sha256,diffie-hellman-group18-sha512,diffie-hellman-group16-sha512
             ```
 
-            Then restart the SSH daemon:
+            Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
             ```bash
-            service sshd restart
+            sshd -t && service sshd restart
             ```
+
+            If `sshd -t` reports an error, fix the configuration before restarting. Keep your current SSH session open and confirm that a new connection succeeds before you log out.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -2430,7 +2493,9 @@ queries:
               echo "KexAlgorithms ${KEXS}" >> "$SSHD_CONFIG"
             fi
 
-            service sshd restart
+            # Validate the configuration before restarting so a syntax error
+            # cannot stop sshd and lock out future logins.
+            sshd -t && service sshd restart
 
             echo "Strong SSH key exchange algorithms configured."
             ```
@@ -2473,7 +2538,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-4
       compliance/vda-isa-5: vda-isa-5-4-1-3
     mql: |
-      sshd.config.params["PermitRootLogin"] == "no" || sshd.config.params["PermitRootLogin"] == "prohibit-password" || sshd.config.params["PermitRootLogin"] == "without-password"
+      sshd.config.params["PermitRootLogin"].in(["no", "prohibit-password", "without-password"])
     docs:
       refs:
         - url: https://www.openssh.com/cgi-bin/man.cgi?query=sshd_config
@@ -2503,11 +2568,13 @@ queries:
             PermitRootLogin no
             ```
 
-            Then restart the SSH daemon:
+            Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
             ```bash
-            service sshd restart
+            sshd -t && service sshd restart
             ```
+
+            If `sshd -t` reports an error, fix the configuration before restarting. Keep your current SSH session open and confirm that a new connection succeeds before you log out.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -2527,7 +2594,9 @@ queries:
               echo 'PermitRootLogin no' >> "$SSHD_CONFIG"
             fi
 
-            service sshd restart
+            # Validate the configuration before restarting so a syntax error
+            # cannot stop sshd and lock out future logins.
+            sshd -t && service sshd restart
 
             echo "SSH root login disabled."
             ```
@@ -2600,11 +2669,13 @@ queries:
             PermitEmptyPasswords no
             ```
 
-            Then restart the SSH daemon:
+            Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
             ```bash
-            service sshd restart
+            sshd -t && service sshd restart
             ```
+
+            If `sshd -t` reports an error, fix the configuration before restarting. Keep your current SSH session open and confirm that a new connection succeeds before you log out.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -2624,7 +2695,9 @@ queries:
               echo 'PermitEmptyPasswords no' >> "$SSHD_CONFIG"
             fi
 
-            service sshd restart
+            # Validate the configuration before restarting so a syntax error
+            # cannot stop sshd and lock out future logins.
+            sshd -t && service sshd restart
 
             echo "SSH empty passwords disabled."
             ```
@@ -2697,11 +2770,13 @@ queries:
             HostbasedAuthentication no
             ```
 
-            Then restart the SSH daemon:
+            Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
             ```bash
-            service sshd restart
+            sshd -t && service sshd restart
             ```
+
+            If `sshd -t` reports an error, fix the configuration before restarting. Keep your current SSH session open and confirm that a new connection succeeds before you log out.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -2721,7 +2796,9 @@ queries:
               echo 'HostbasedAuthentication no' >> "$SSHD_CONFIG"
             fi
 
-            service sshd restart
+            # Validate the configuration before restarting so a syntax error
+            # cannot stop sshd and lock out future logins.
+            sshd -t && service sshd restart
 
             echo "SSH host-based authentication disabled."
             ```
@@ -2794,11 +2871,13 @@ queries:
             PermitUserEnvironment no
             ```
 
-            Then restart the SSH daemon:
+            Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
             ```bash
-            service sshd restart
+            sshd -t && service sshd restart
             ```
+
+            If `sshd -t` reports an error, fix the configuration before restarting. Keep your current SSH session open and confirm that a new connection succeeds before you log out.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -2818,7 +2897,9 @@ queries:
               echo 'PermitUserEnvironment no' >> "$SSHD_CONFIG"
             fi
 
-            service sshd restart
+            # Validate the configuration before restarting so a syntax error
+            # cannot stop sshd and lock out future logins.
+            sshd -t && service sshd restart
 
             echo "SSH PermitUserEnvironment disabled."
             ```
@@ -2891,11 +2972,13 @@ queries:
             IgnoreRhosts yes
             ```
 
-            Then restart the SSH daemon:
+            Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
             ```bash
-            service sshd restart
+            sshd -t && service sshd restart
             ```
+
+            If `sshd -t` reports an error, fix the configuration before restarting. Keep your current SSH session open and confirm that a new connection succeeds before you log out.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -2915,7 +2998,9 @@ queries:
               echo 'IgnoreRhosts yes' >> "$SSHD_CONFIG"
             fi
 
-            service sshd restart
+            # Validate the configuration before restarting so a syntax error
+            # cannot stop sshd and lock out future logins.
+            sshd -t && service sshd restart
 
             echo "SSH IgnoreRhosts enabled."
             ```
@@ -2988,11 +3073,13 @@ queries:
             MaxAuthTries 4
             ```
 
-            Then restart the SSH daemon:
+            Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
             ```bash
-            service sshd restart
+            sshd -t && service sshd restart
             ```
+
+            If `sshd -t` reports an error, fix the configuration before restarting. Keep your current SSH session open and confirm that a new connection succeeds before you log out.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -3012,7 +3099,9 @@ queries:
               echo 'MaxAuthTries 4' >> "$SSHD_CONFIG"
             fi
 
-            service sshd restart
+            # Validate the configuration before restarting so a syntax error
+            # cannot stop sshd and lock out future logins.
+            sshd -t && service sshd restart
 
             echo "SSH MaxAuthTries set to 4."
             ```
@@ -3086,11 +3175,13 @@ queries:
             LoginGraceTime 60
             ```
 
-            Then restart the SSH daemon:
+            Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
             ```bash
-            service sshd restart
+            sshd -t && service sshd restart
             ```
+
+            If `sshd -t` reports an error, fix the configuration before restarting. Keep your current SSH session open and confirm that a new connection succeeds before you log out.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -3110,7 +3201,9 @@ queries:
               echo 'LoginGraceTime 60' >> "$SSHD_CONFIG"
             fi
 
-            service sshd restart
+            # Validate the configuration before restarting so a syntax error
+            # cannot stop sshd and lock out future logins.
+            sshd -t && service sshd restart
 
             echo "SSH LoginGraceTime set to 60."
             ```
@@ -3183,11 +3276,13 @@ queries:
             LogLevel VERBOSE
             ```
 
-            Then restart the SSH daemon:
+            Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
             ```bash
-            service sshd restart
+            sshd -t && service sshd restart
             ```
+
+            If `sshd -t` reports an error, fix the configuration before restarting. Keep your current SSH session open and confirm that a new connection succeeds before you log out.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -3207,7 +3302,9 @@ queries:
               echo 'LogLevel VERBOSE' >> "$SSHD_CONFIG"
             fi
 
-            service sshd restart
+            # Validate the configuration before restarting so a syntax error
+            # cannot stop sshd and lock out future logins.
+            sshd -t && service sshd restart
 
             echo "SSH LogLevel set to VERBOSE."
             ```
@@ -3283,11 +3380,13 @@ queries:
             ClientAliveCountMax 3
             ```
 
-            Then restart the SSH daemon:
+            Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
             ```bash
-            service sshd restart
+            sshd -t && service sshd restart
             ```
+
+            If `sshd -t` reports an error, fix the configuration before restarting. Keep your current SSH session open and confirm that a new connection succeeds before you log out.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -3318,7 +3417,9 @@ queries:
               echo 'ClientAliveCountMax 3' >> "$SSHD_CONFIG"
             fi
 
-            service sshd restart
+            # Validate the configuration before restarting so a syntax error
+            # cannot stop sshd and lock out future logins.
+            sshd -t && service sshd restart
 
             echo "SSH idle timeout configured."
             ```
@@ -3394,11 +3495,13 @@ queries:
             DisableForwarding yes
             ```
 
-            Then restart the SSH daemon:
+            Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
             ```bash
-            service sshd restart
+            sshd -t && service sshd restart
             ```
+
+            If `sshd -t` reports an error, fix the configuration before restarting. Keep your current SSH session open and confirm that a new connection succeeds before you log out.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -3418,7 +3521,9 @@ queries:
               echo 'DisableForwarding yes' >> "$SSHD_CONFIG"
             fi
 
-            service sshd restart
+            # Validate the configuration before restarting so a syntax error
+            # cannot stop sshd and lock out future logins.
+            sshd -t && service sshd restart
 
             echo "SSH DisableForwarding enabled."
             ```
@@ -3491,11 +3596,13 @@ queries:
             UsePAM yes
             ```
 
-            Then restart the SSH daemon:
+            Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
             ```bash
-            service sshd restart
+            sshd -t && service sshd restart
             ```
+
+            If `sshd -t` reports an error, fix the configuration before restarting. Keep your current SSH session open and confirm that a new connection succeeds before you log out.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -3515,7 +3622,9 @@ queries:
               echo 'UsePAM yes' >> "$SSHD_CONFIG"
             fi
 
-            service sshd restart
+            # Validate the configuration before restarting so a syntax error
+            # cannot stop sshd and lock out future logins.
+            sshd -t && service sshd restart
 
             echo "SSH UsePAM enabled."
             ```
@@ -4018,7 +4127,13 @@ queries:
             awk -F: '$3 == 0 { print $1 }' /etc/passwd
             ```
 
-            Remove or change the UID of any account other than `root` that has UID 0.
+            FreeBSD ships a `toor` account that shares UID 0 with `root`. If it is not needed, remove it:
+
+            ```bash
+            pw userdel toor
+            ```
+
+            Remove any other UID 0 account with `pw userdel`, or assign it a unique UID with `pw usermod -u`.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -4099,21 +4214,43 @@ queries:
           desc: |
             **Using the CLI**
 
-            Identify duplicate UIDs and assign unique UIDs to each user:
+            First identify the duplicated UIDs:
 
             ```bash
-            awk -F: '{print $3}' /etc/passwd | sort -n | uniq -d
+            awk -F: '$3 != 0 { print $3 }' /etc/passwd | sort -n | uniq -d
             ```
+
+            For each duplicated UID, list the accounts that share it so you can decide which one to renumber:
+
+            ```bash
+            awk -F: -v u=<uid> '$3 == u { print $1 }' /etc/passwd
+            ```
+
+            Assign a new, unused UID to the account you chose to change:
+
+            ```bash
+            pw usermod <name> -u <new-uid>
+            ```
+
+            Changing a UID does not update files that the account already owns. Those files keep the old numeric UID, so re-own them to the new UID:
+
+            ```bash
+            find / -uid <old-uid> -exec chown <new-uid> {} +
+            ```
+
+            Confirm that the new UID is not already in use before assigning it, and verify the account can still log in and access its files afterward.
         - id: sh
           desc: |
             **Using a Shell Script**
+
+            This script reports duplicate UIDs but does not change them, because choosing which account to renumber and re-owning its files must be done deliberately. Use the CLI steps to apply the fix.
 
             ```sh
             #!/bin/sh
             set -e
 
             echo "Checking for duplicate UIDs..."
-            DUPES=$(awk -F: '{print $3}' /etc/passwd | sort -n | uniq -d)
+            DUPES=$(awk -F: '$3 != 0 { print $3 }' /etc/passwd | sort -n | uniq -d)
 
             if [ -n "$DUPES" ]; then
               echo "WARNING: Duplicate UIDs found:"
@@ -4135,7 +4272,7 @@ queries:
 
             ```yaml
             - name: Find duplicate UIDs
-              ansible.builtin.shell: "awk -F: '{print $3}' /etc/passwd | sort -n | uniq -d"
+              ansible.builtin.shell: "awk -F: '$3 != 0 { print $3 }' /etc/passwd | sort -n | uniq -d"
               register: dup_uids
               changed_when: false
 
@@ -4186,14 +4323,36 @@ queries:
           desc: |
             **Using the CLI**
 
-            Identify duplicate GIDs and assign unique GIDs to each group:
+            First identify the duplicated GIDs:
 
             ```bash
             awk -F: '{print $3}' /etc/group | sort -n | uniq -d
             ```
+
+            For each duplicated GID, list the groups that share it so you can decide which one to renumber:
+
+            ```bash
+            awk -F: -v g=<gid> '$3 == g { print $1 }' /etc/group
+            ```
+
+            Assign a new, unused GID to the group you chose to change:
+
+            ```bash
+            pw groupmod <name> -g <new-gid>
+            ```
+
+            Changing a GID does not update files that already carry the old group ownership. Re-group them to the new GID:
+
+            ```bash
+            find / -gid <old-gid> -exec chgrp <new-gid> {} +
+            ```
+
+            Confirm that the new GID is not already in use before assigning it, and verify that members of the group still have the access they need afterward.
         - id: sh
           desc: |
             **Using a Shell Script**
+
+            This script reports duplicate GIDs but does not change them, because choosing which group to renumber and re-grouping its files must be done deliberately. Use the CLI steps to apply the fix.
 
             ```sh
             #!/bin/sh
@@ -4436,20 +4595,22 @@ queries:
         To verify that every user's primary group exists in `/etc/group`, run the following command:
 
         ```bash
-        pwck -r
+        awk -F: 'NR==FNR { gids[$3]; next } !($4 in gids) { print $1 " GID " $4 }' /etc/group /etc/passwd
         ```
 
-        If `pwck` reports no missing groups, the check passes. If it reports a primary group that does not exist in `/etc/group`, the check fails.
+        If the command returns no output, the check passes. If it lists a user whose primary group does not exist in `/etc/group`, the check fails.
       remediation:
         - id: cli
           desc: |
             **Using the CLI**
 
-            Identify users with missing groups and create the missing groups or reassign users:
+            Identify users whose primary group is missing from `/etc/group`:
 
             ```bash
-            pwck -r
+            awk -F: 'NR==FNR { gids[$3]; next } !($4 in gids) { print $1 " GID " $4 }' /etc/group /etc/passwd
             ```
+
+            Create each missing group with `pw groupadd -g <gid> <name>` or reassign the user's primary group with `pw usermod`.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -4483,16 +4644,15 @@ queries:
             2. Run the playbook, then create the missing groups or reassign the reported users.
 
             ```yaml
-            - name: Check passwd consistency
-              ansible.builtin.command: pwck -r
-              register: pwck_result
+            - name: Find users whose primary group is missing
+              ansible.builtin.shell: "awk -F: 'NR==FNR { gids[$3]; next } !($4 in gids) { print $1 }' /etc/group /etc/passwd"
+              register: missing_groups
               changed_when: false
-              failed_when: false
 
             - name: Fail when a primary group is missing
               ansible.builtin.fail:
-                msg: "pwck reported missing primary groups: {{ pwck_result.stdout }}"
-              when: "'no group' in pwck_result.stdout"
+                msg: "Users with missing primary groups: {{ missing_groups.stdout }}"
+              when: missing_groups.stdout | length > 0
             ```
   - uid: mondoo-freebsd-security-syslogd-is-enabled-and-running
     title: Ensure syslogd is enabled and running
@@ -4621,7 +4781,7 @@ queries:
             Enable secure mode for syslogd:
 
             ```bash
-            sysrc syslogd_flags="-s"
+            sysrc syslogd_flags+=" -s"
             service syslogd restart
             ```
         - id: sh
@@ -4637,7 +4797,7 @@ queries:
             if echo "$CURRENT_FLAGS" | grep -q -- '-s'; then
               echo "syslogd_flags already contains -s."
             else
-              sysrc syslogd_flags="-s"
+              sysrc syslogd_flags+=" -s"
             fi
 
             service syslogd restart
@@ -4656,6 +4816,7 @@ queries:
               community.general.sysrc:
                 name: syslogd_flags
                 value: '-s'
+                state: value_present
 
             - name: Restart the syslogd service
               ansible.builtin.service:
@@ -4721,6 +4882,11 @@ queries:
             if command -v sudo >/dev/null 2>&1; then
               echo "sudo is already installed."
             else
+              # Refresh the package catalog first; on a fresh host it may be
+              # stale or absent, which would make `pkg install` fail or install
+              # an outdated version. On a minimal install where pkg itself is
+              # not yet present, run `pkg bootstrap` before this step.
+              pkg update
               pkg install -y sudo
               echo "sudo installed."
             fi
@@ -4758,8 +4924,7 @@ queries:
     filters: |
       package("sudo").installed
     mql: |
-      sudoersFiles = files.find(from: "/usr/local/etc/sudoers.d/", type: 'file').list.map(path) + ["/usr/local/etc/sudoers"]
-      sudoersFiles.map(file(_).content.lines.where(_ == /^[^#]/)).flat.where(_ == /Defaults/).any(_ == /\s*use_pty/)
+      sudoers.defaults.any(parameter == "use_pty" && negated == false)
     docs:
       refs:
         - url: https://docs.freebsd.org/en/books/handbook/security/
@@ -4802,12 +4967,12 @@ queries:
             echo "Configuring sudo to use pty..."
             # Check if use_pty is already configured
             HAS_USE_PTY=false
-            if grep -q 'use_pty' "$SUDOERS" 2>/dev/null; then
+            if grep -Eq '^[^#!]*Defaults[^#]*[[:space:],]use_pty' "$SUDOERS" 2>/dev/null; then
               HAS_USE_PTY=true
             fi
             if [ -d "$SUDOERS_D" ]; then
               for f in "$SUDOERS_D"/*; do
-                if [ -f "$f" ] && grep -q 'use_pty' "$f" 2>/dev/null; then
+                if [ -f "$f" ] && grep -Eq '^[^#!]*Defaults[^#]*[[:space:],]use_pty' "$f" 2>/dev/null; then
                   HAS_USE_PTY=true
                 fi
               done
@@ -4858,10 +5023,7 @@ queries:
     filters: |
       package("sudo").installed
     mql: |
-      sudoerFiles = files.find(from: "/usr/local/etc/sudoers.d", type: "file").map(path) + ["/usr/local/etc/sudoers"]
-      sudoerFiles.where(file(_).exists).all(
-        file(_).content.lines.where( _ == /^[^#]/ ).where(_ == /nopasswd/i) == []
-      )
+      sudoers.userSpecs.none( tags.any( _.downcase == "nopasswd" ) )
     docs:
       refs:
         - url: https://docs.freebsd.org/en/books/handbook/security/
@@ -4885,13 +5047,25 @@ queries:
           desc: |
             **Using the CLI**
 
-            Edit the sudoers file using `visudo` and remove any `NOPASSWD` entries:
+            Always edit the sudoers files with `visudo`. It checks the syntax before saving and refuses to write a broken file. A syntax error in `sudoers` can break sudo for every user, including the administrator, so do not bypass `visudo` by editing the file directly.
 
             ```bash
             visudo
             ```
 
-            Replace lines containing `NOPASSWD:` with `PASSWD:` or simply remove the `NOPASSWD` tag.
+            Remove the `NOPASSWD` tag from any rule so that sudo prompts for a password. For example, change a line like:
+
+            ```
+            alice ALL=(ALL) NOPASSWD: ALL
+            ```
+
+            to:
+
+            ```
+            alice ALL=(ALL) PASSWD: ALL
+            ```
+
+            Files under `/usr/local/etc/sudoers.d/` are included by the main sudoers file, so check and fix those too. Edit each one with `visudo -f /usr/local/etc/sudoers.d/<file>`.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -4987,15 +5161,21 @@ queries:
           desc: |
             **Using the CLI**
 
-            Enable `ipfw`:
+            Warning: Starting a firewall on a remote system can terminate your SSH session and lock you out. Run these commands from the system console, and confirm the rule set allows SSH before starting the firewall.
+
+            Enable `ipfw`. The `workstation` profile opens the ports in `firewall_myservices` to the networks in `firewall_allowservices`. The example below allows SSH from a single admin network instead of from any source, which keeps the management surface small:
 
             ```bash
             sysrc firewall_enable="YES"
             sysrc firewall_type="workstation"
+            sysrc firewall_myservices="22/tcp"
+            sysrc firewall_allowservices="<admin-network>/24"
             service ipfw start
             ```
 
-            Or enable `pf`:
+            Before you run `service ipfw start`, replace `22/tcp` with the real SSH port if this host listens on a non-default port, and replace `<admin-network>/24` with your actual administrative network in CIDR notation. If `firewall_myservices` does not list the port you are connected on, or `firewall_allowservices` does not include your source network, starting the firewall will drop your session.
+
+            Or enable `pf` after creating an `/etc/pf.conf` rule set that allows SSH:
 
             ```bash
             sysrc pf_enable="YES"
@@ -5004,6 +5184,8 @@ queries:
         - id: sh
           desc: |
             **Using a Shell Script**
+
+            Warning: Starting a firewall on a remote system can terminate your SSH session and lock you out. Run this script from the system console, and confirm the rule set allows SSH before starting the firewall.
 
             ```sh
             #!/bin/sh
@@ -5019,6 +5201,8 @@ queries:
               echo "No firewall enabled. Enabling ipfw in workstation mode..."
               sysrc firewall_enable="YES"
               sysrc firewall_type="workstation"
+              sysrc firewall_myservices="22/tcp"
+              sysrc firewall_allowservices="any"
               service ipfw start
 
               echo "ipfw firewall enabled in workstation mode."
@@ -5039,6 +5223,8 @@ queries:
               loop:
                 - { name: firewall_enable, value: 'YES' }
                 - { name: firewall_type, value: 'workstation' }
+                - { name: firewall_myservices, value: '22/tcp' }
+                - { name: firewall_allowservices, value: 'any' }
 
             - name: Start the ipfw service
               ansible.builtin.service:

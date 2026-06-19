@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-linux-workstation-security
     name: Mondoo Linux Workstation Security
-    version: 1.1.0
+    version: 1.1.1
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -191,42 +191,32 @@ queries:
           desc: |
             **Using the CLI**
 
-            The grub configuration files should be owned by the `root` user and group, and should not be readable or writable by other users.
-
-            Run these commands to set ownership and permissions on your grub configuration file(s):
+            Bootloader configuration files must be owned by `root:root` with no group or other access. Run these commands to secure each bootloader configuration file present on the system:
 
             ```bash
-            chown root:root /boot/grub/grub.cfg
-            chmod og-rwx /boot/grub/grub.cfg
-            chown root:root /boot/grub/menu.lst
-            chmod og-rwx /boot/grub/menu.lst
+            for f in /boot/grub/grub.cfg /boot/grub/menu.lst /boot/grub2/grub.cfg /boot/grub2/user.cfg /boot/loader/loader.conf; do
+              if [ -e "$f" ]; then
+                chown root:root "$f"
+                chmod og-rwx "$f"
+              fi
+            done
             ```
 
-            Run these commands to set ownership and permissions on your grub2 configuration file(s):
-
-            ```bash
-            chown root:root /boot/grub2/grub.cfg
-            chmod og-rwx /boot/grub2/grub.cfg
-            chown root:root /boot/grub2/user.cfg
-            chmod og-rwx /boot/grub2/user.cfg
-            ```
-
-            Run these commands to set ownership and permissions on your systemd-boot loader configuration file:
-
-            ```bash
-            chown root:root /boot/loader/loader.conf
-            chmod og-rwx /boot/loader/loader.conf
-            ```
-
-            **OR If the system uses UEFI, edit `/etc/fstab` and add the `fmask=0077`, `uid=0`, and `gid=0` options to the /boot/efi mount:**
+            **If the system uses UEFI**, edit `/etc/fstab` and set restrictive masks on the `/boot/efi` mount:
 
             _Example:_
 
             ```text
-            <device> /boot/efi vfat defaults,umask=0027,fmask=0077,uid=0,gid=0 0 0
+            <device> /boot/efi vfat defaults,fmask=0077,dmask=0077,uid=0,gid=0 0 2
             ```
 
-            _Note: This may require a re-boot to enable the change_
+            Then apply the new options:
+
+            ```bash
+            mount -o remount /boot/efi
+            ```
+
+            If the remount does not apply the new options, reboot the system.
         - id: bash
           desc: |
             **Using a Bash Script**
@@ -235,22 +225,24 @@ queries:
 
             ```bash
             #!/bin/bash
-            set -e
+            set -eu
 
-            echo "Securing bootloader configuration files..."
-            chown root:root /boot/grub/grub.cfg
-            chmod og-rwx /boot/grub/grub.cfg
-            chown root:root /boot/grub/menu.lst
-            chmod og-rwx /boot/grub/menu.lst
-            chown root:root /boot/grub2/grub.cfg
-            chmod og-rwx /boot/grub2/grub.cfg
-            chown root:root /boot/grub2/user.cfg
-            chmod og-rwx /boot/grub2/user.cfg
-            chown root:root /boot/loader/loader.conf
-            chmod og-rwx /boot/loader/loader.conf
+            for f in /boot/grub/grub.cfg /boot/grub/menu.lst /boot/grub2/grub.cfg /boot/grub2/user.cfg /boot/loader/loader.conf; do
+              if [ -e "$f" ]; then
+                echo "Securing $f"
+                chown root:root "$f"
+                chmod og-rwx "$f"
+              fi
+            done
 
-            echo "Securing /boot/efi mount options..."
-            sed -i 's|^UUID=.* /boot/efi vfat|UUID=.* /boot/efi vfat defaults,umask=0027,fmask=0077,uid=0,gid=0|' /etc/fstab
+            if findmnt -n -t vfat /boot/efi > /dev/null; then
+              if ! grep -Eq '^[^#]+[[:space:]]/boot/efi[[:space:]]+vfat[[:space:]]+\S*fmask=0077' /etc/fstab; then
+                cp -p /etc/fstab /etc/fstab.bak
+                sed -i -E 's|^(\S+\s+/boot/efi\s+vfat\s+)\S+|\1defaults,fmask=0077,dmask=0077,uid=0,gid=0|' /etc/fstab
+                mount -o remount /boot/efi
+                echo "Updated /boot/efi mount options; a backup was saved to /etc/fstab.bak"
+              fi
+            fi
             ```
         - id: ansible
           desc: |
@@ -265,26 +257,36 @@ queries:
               become: true
 
               tasks:
-                - name: Set ownership and permissions on GRUB config files
-                  ansible.builtin.file:
+                - name: Check which bootloader config files exist
+                  ansible.builtin.stat:
                     path: "{{ item }}"
-                    owner: root
-                    group: root
-                    mode: '0600'
                   loop:
                     - /boot/grub/grub.cfg
                     - /boot/grub/menu.lst
                     - /boot/grub2/grub.cfg
                     - /boot/grub2/user.cfg
                     - /boot/loader/loader.conf
-                  when: item is ansible.builtin.file
+                  register: bootloader_files
 
-                - name: Set fmask for /boot/efi in /etc/fstab
-                  ansible.builtin.lineinfile:
+                - name: Set ownership and permissions on bootloader config files
+                  ansible.builtin.file:
+                    path: "{{ item.stat.path }}"
+                    owner: root
+                    group: root
+                    mode: '0600'
+                  loop: "{{ bootloader_files.results | selectattr('stat.exists') | list }}"
+
+                - name: Set restrictive masks for /boot/efi in /etc/fstab
+                  ansible.builtin.replace:
                     path: /etc/fstab
-                    regexp: '(\S+\s+/boot/efi\s+vfat\s+)\S+(.*)'
-                    line: '\1defaults,umask=0027,fmask=0077,uid=0,gid=0\2'
-                    backrefs: true
+                    regexp: '^(\S+\s+/boot/efi\s+vfat\s+)\S+'
+                    replace: '\1defaults,fmask=0077,dmask=0077,uid=0,gid=0'
+                  when: ansible_mounts | selectattr('mount', 'equalto', '/boot/efi') | list | length > 0
+
+                - name: Remount /boot/efi with the new options
+                  ansible.posix.mount:
+                    path: /boot/efi
+                    state: remounted
                   when: ansible_mounts | selectattr('mount', 'equalto', '/boot/efi') | list | length > 0
             ```
   - uid: mondoo-linux-workstation-security-secure-boot-is-enabled
@@ -389,13 +391,29 @@ queries:
           desc: |
             **Using the CLI**
 
-            Encrypt your complete disk with this command:
+            > **Warning:** Encrypting an existing installation rewrites the entire device and any mistake destroys data. Back up all data to external storage before you begin. The root filesystem cannot be encrypted while it is mounted, so both procedures below run from the distribution installer or a live system.
+
+            The recommended path is a reinstall with full-disk encryption:
+
+            1. Back up all user data to external storage.
+            2. Boot the distribution installer and select the encrypted disk or encrypted LVM layout option.
+            3. Restore user data after the installation completes.
+
+            Alternatively, encrypt the existing filesystem in place from a live system. The `--reduce-device-size` option shrinks the device by 32 MiB to make room for the LUKS header, so the filesystem inside it must first be shrunk by at least that amount or it is truncated and data is lost. For an ext4 filesystem:
 
             ```bash
-            cryptsetup luksFormat --type luks2 --cipher aes-xts-benbi --key-size 512 --hash sha512 --iter-time 5000 --label <label> /dev/disk/by-partlabel/<device>
+            DEVICE=/dev/sdX2
+            e2fsck -f "$DEVICE"
+            resize2fs -M "$DEVICE"
+            cryptsetup reencrypt --encrypt --type luks2 --cipher aes-xts-plain64 --key-size 512 --reduce-device-size 32m "$DEVICE"
+            cryptsetup open "$DEVICE" root
+            resize2fs /dev/mapper/root
             ```
 
-            Replace `<device>` with the device name serving `/` and `/home`.
+            The final `resize2fs` grows the filesystem back to fill the encrypted volume. For other filesystem types, use that filesystem's shrink tooling before re-encrypting.
+
+            Replace `/dev/sdX2` with the partition serving `/` or `/home`. After encrypting, update `/etc/crypttab` and `/etc/fstab` to reference the mapped device, then regenerate the initramfs with `update-initramfs -u -k all` on Debian and Ubuntu or `dracut -f --regenerate-all` on Red Hat and SUSE distributions so the system can unlock the volume at boot.
+        # No bash or ansible remediation: encrypting existing volumes is an offline, interactive, data-destructive procedure that must not be automated against a running system.
   - uid: mondoo-linux-workstation-security-aes-encryption-algorithm
     title: Ensure AES encryption algorithm is used
     impact: 90
@@ -414,7 +432,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-10
       compliance/vda-isa-5: vda-isa-5-5-1-1
     mql: |
-      lsblk.list.where( fstype == /crypt/).length >= 1
+      lsblk.list.any( fstype == /crypt/ )
       lsblk.list.where( fstype == /crypt/).all(
         parse.json(
           content: command('cryptsetup --dump-json-metadata luksDump /dev/disk/by-uuid/' + uuid).stdout
@@ -445,11 +463,30 @@ queries:
           desc: |
             **Using the CLI**
 
-            Encrypt your complete disk with this command:
+            > **Warning:** Converting the cipher rewrites every sector of the volume. Back up all data and ensure reliable power before you begin. Run the conversion from a live system with the filesystem unmounted.
+
+            For LUKS2 volumes, convert the cipher in place without destroying data:
 
             ```bash
-            cryptsetup luksFormat --type luks2 --cipher aes-xts-benbi --key-size 512 --hash sha512 --iter-time 5000 --label <label> /dev/disk/by-partlabel/<device>
+            DEVICE=/dev/sdX2
+            cryptsetup reencrypt --cipher aes-xts-plain64 --key-size 512 "$DEVICE"
             ```
+
+            For LUKS1 volumes, first convert the header to LUKS2, then re-encrypt:
+
+            ```bash
+            DEVICE=/dev/sdX2
+            cryptsetup convert --type luks2 "$DEVICE"
+            cryptsetup reencrypt --cipher aes-xts-plain64 --key-size 512 "$DEVICE"
+            ```
+
+            Replace `/dev/sdX2` with the LUKS partition. Verify the cipher after the conversion completes:
+
+            ```bash
+            DEVICE=/dev/sdX2
+            cryptsetup luksDump "$DEVICE"
+            ```
+        # No bash or ansible remediation: cipher conversion is an offline, data-rewriting procedure that must not be automated against a running system.
   - uid: mondoo-linux-workstation-security-bios-uptodate
     title: Ensure system BIOS is running the latest available version
     impact: 60
@@ -493,16 +530,35 @@ queries:
           desc: |
             **Using the CLI**
 
-            The BIOS firmware should be updated to the latest version. You can use the `fwupdmgr` tool to check for updates and apply them.
-
-            Run these commands to update your BIOS firmware:
+            The BIOS firmware should be updated to the latest version available from the Linux Vendor Firmware Service. Refresh the metadata first so the update check reflects the latest releases:
 
             ```bash
+            fwupdmgr refresh --force
             fwupdmgr get-updates
             fwupdmgr update
             ```
 
+            BIOS updates are staged and installed during the next boot. Reboot the system when prompted to complete the update.
+
             If the `fwupdmgr` tool is not available, you may need to download the latest BIOS firmware from your hardware vendor's website and follow their instructions to update it.
+        - id: bash
+          desc: |
+            **Using a Bash Script**
+
+            Use this Bash script to refresh firmware metadata and stage any available updates:
+
+            ```bash
+            #!/bin/bash
+            set -eu
+
+            fwupdmgr refresh --force
+            if fwupdmgr get-updates; then
+              fwupdmgr update -y --no-reboot-check
+              echo "Firmware updates staged. Reboot the system to complete installation."
+            else
+              echo "No firmware updates available."
+            fi
+            ```
         - id: ansible
           desc: |
             **Using Ansible**

@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-cisco-iosxe-security
     name: Mondoo Cisco IOS-XE Security
-    version: 1.0.0
+    version: 1.0.2
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -156,15 +156,23 @@ queries:
           desc: |
             **Using the CLI**
 
-            Enable SSH by configuring a hostname, domain name, and generating RSA keys:
+            SSH requires a hostname, a domain name, and an RSA key pair. Set the hostname and domain name only if they are not already configured, because changing them renames the device in logs and management systems:
 
             ```
             configure terminal
             hostname <hostname>
-            ip domain-name <domain.com>
+            ip domain name <domain.com>
             crypto key generate rsa modulus 2048
             ip ssh version 2
+            end
+            write memory
             ```
+
+            Exit configuration mode with `end` and save the configuration with `write memory`. Changes are written to the running configuration first, which is volatile, so saving copies them to the startup configuration and ensures they survive a reload.
+
+            If an RSA key pair already exists, the key generation command asks for confirmation before replacing it. Replacing the key pair changes the SSH host identity, so clients that stored the old host key must accept the new one.
+
+            Generating the host key alone does not let anyone log in over SSH. The VTY lines must accept SSH and use a login method. Configure `transport input ssh` and a login method such as `login local` or AAA on the VTY lines, which the SSH transport check and the AAA authentication check cover, or remote access still fails.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/sec_usr_ssh/configuration/xe-16/sec-usr-ssh-xe-16-book/sec-secure-shell-v2.html
         title: Cisco IOS-XE SSH Configuration Guide
@@ -221,7 +229,11 @@ queries:
             ```
             configure terminal
             ip ssh version 2
+            end
+            write memory
             ```
+
+            Exit configuration mode with `end` and save the configuration with `write memory`. Changes are written to the running configuration first, which is volatile, so saving copies them to the startup configuration and ensures they survive a reload.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/sec_usr_ssh/configuration/xe-16/sec-usr-ssh-xe-16-book/sec-secure-shell-v2.html
         title: Cisco IOS-XE SSH Configuration Guide
@@ -278,7 +290,11 @@ queries:
             ```
             configure terminal
             ip ssh time-out 60
+            end
+            write memory
             ```
+
+            Exit configuration mode with `end` and save the configuration with `write memory`. Changes are written to the running configuration first, which is volatile, so saving copies them to the startup configuration and ensures they survive a reload.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/sec_usr_ssh/configuration/xe-16/sec-usr-ssh-xe-16-book/sec-secure-shell-v2.html
         title: Cisco IOS-XE SSH Configuration Guide
@@ -334,7 +350,13 @@ queries:
             ```
             configure terminal
             crypto key generate rsa modulus 2048
+            end
+            write memory
             ```
+
+            Exit configuration mode with `end` and save the configuration with `write memory`. Changes are written to the running configuration first, which is volatile, so saving copies them to the startup configuration and ensures they survive a reload.
+
+            The device asks for confirmation before replacing an existing key pair. Replacing the key pair changes the SSH host identity, so SSH clients that stored the old host key receive a host key change warning and must accept the new key. Existing sessions stay connected. Notify administrators and update any automation that verifies the host key.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/sec_usr_ssh/configuration/xe-16/sec-usr-ssh-xe-16-book/sec-secure-shell-v2.html
         title: Cisco IOS-XE SSH Configuration Guide
@@ -387,12 +409,20 @@ queries:
           desc: |
             **Using the CLI**
 
-            Enable the AAA new model:
+            Enabling the AAA new model immediately changes authentication on every line, including the VTY lines you use for remote management. If no local user and no default login method list exist, you can lose access to the device. Create a local user and a default login method list in the same session, and keep that session open until you verify access:
 
             ```
             configure terminal
+            username <admin-user> privilege 15 algorithm-type scrypt secret <strong-password>
             aaa new-model
+            aaa authentication login default local
+            end
+            write memory
             ```
+
+            Exit configuration mode with `end` and save the configuration with `write memory`. Changes are written to the running configuration first, which is volatile, so saving copies them to the startup configuration and ensures they survive a reload.
+
+            Open a second session and confirm that you can still log in before closing your current session.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/sec_usr_aaa/configuration/xe-16/sec-usr-aaa-xe-16-book/sec-cfg-authentification.html
         title: Cisco IOS-XE AAA Configuration Guide
@@ -444,13 +474,22 @@ queries:
           desc: |
             **Using the CLI**
 
-            Configure AAA authentication login:
+            Define the TACACS+ server, then configure the default login method list with a local fallback. The default list takes effect on all lines as soon as it is entered, so create a local user first and keep your current session open until you verify login from a second session:
 
             ```
             configure terminal
+            username <admin-user> privilege 15 algorithm-type scrypt secret <strong-password>
             aaa new-model
+            tacacs server <server-name>
+             address ipv4 <tacacs-server-ip>
+             key <shared-secret>
+            exit
             aaa authentication login default group tacacs+ local
+            end
+            write memory
             ```
+
+            Exit configuration mode with `end` and save the configuration with `write memory`. Changes are written to the running configuration first, which is volatile, so saving copies them to the startup configuration and ensures they survive a reload.
 
             The `local` fallback ensures access is maintained if AAA servers are unreachable.
     refs:
@@ -504,13 +543,19 @@ queries:
           desc: |
             **Using the CLI**
 
-            Configure AAA accounting:
+            AAA accounting requires the AAA new model and a configured TACACS+ server. With those prerequisites in place, enable accounting for EXEC sessions and privileged commands:
 
             ```
             configure terminal
             aaa accounting exec default start-stop group tacacs+
             aaa accounting commands 15 default start-stop group tacacs+
+            end
+            write memory
             ```
+
+            Exit configuration mode with `end` and save the configuration with `write memory`. Changes are written to the running configuration first, which is volatile, so saving copies them to the startup configuration and ensures they survive a reload.
+
+            Verify that records arrive on the TACACS+ server after the next login.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/sec_usr_aaa/configuration/xe-16/sec-usr-aaa-xe-16-book/sec-cfg-acctng.html
         title: Cisco IOS-XE AAA Accounting Guide
@@ -564,18 +609,19 @@ queries:
           desc: |
             **Using the CLI**
 
-            Configure users with secret:
+            Cisco IOS XE does not allow a user account to have both a password and a secret, so accounts configured with `password` must be removed and recreated with `secret`. Deleting the account removes its credentials until the next command recreates it. Before you begin, confirm that a second administrator account exists or that you have console access, so that a dropped session between the two commands cannot lock you out. If you are converting the account you are logged in with, keep your session open and verify the new credential from a second session before closing:
 
             ```
             configure terminal
-            username <user> privilege <level> secret 0 <password>
+            no username <user>
+            username <user> privilege <level> algorithm-type scrypt secret <password>
+            end
+            write memory
             ```
 
-            Use type 9 (SCRYPT) for the strongest hashing:
+            Exit configuration mode with `end` and save the configuration with `write memory`. Changes are written to the running configuration first, which is volatile, so saving copies them to the startup configuration and ensures they survive a reload.
 
-            ```
-            username <user> privilege <level> secret 9 <scrypt-hash>
-            ```
+            The `algorithm-type scrypt` keyword stores the credential as a type 9 hash, which is the strongest option. Repeat for every account that still uses `password`.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/sec_usr_aaa/configuration/xe-16/sec-usr-aaa-xe-16-book/sec-cfg-authentification.html
         title: Cisco IOS-XE User Configuration Guide
@@ -627,13 +673,19 @@ queries:
           desc: |
             **Using the CLI**
 
-            Configure enable secret:
+            Configure the enable secret with the strongest available hash first, then remove the legacy enable password so the device is never left without a privileged EXEC credential. Use `algorithm-type scrypt`, which stores the credential as a Type 9 hash that resists offline cracking far better than the older Type 5 MD5 hash:
 
             ```
             configure terminal
+            enable algorithm-type scrypt secret <strong-password>
             no enable password
-            enable secret 0 <strong-password>
+            end
+            write memory
             ```
+
+            On releases that do not support `algorithm-type scrypt`, the legacy `enable secret 0 <strong-password>` form is acceptable as a fallback, but it stores the credential as the weaker Type 5 hash.
+
+            Exit configuration mode with `end` and save the configuration with `write memory`. Changes are written to the running configuration first, which is volatile, so saving copies them to the startup configuration and ensures they survive a reload.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/sec_usr_aaa/configuration/xe-16/sec-usr-aaa-xe-16-book/sec-cfg-authentification.html
         title: Cisco IOS-XE Password Configuration Guide
@@ -690,7 +742,11 @@ queries:
             ```
             configure terminal
             service password-encryption
+            end
+            write memory
             ```
+
+            Exit configuration mode with `end` and save the configuration with `write memory`. Changes are written to the running configuration first, which is volatile, so saving copies them to the startup configuration and ensures they survive a reload.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/sec_usr_aaa/configuration/xe-16/sec-usr-aaa-xe-16-book/sec-cfg-authentification.html
         title: Cisco IOS-XE Password Configuration Guide
@@ -747,7 +803,11 @@ queries:
             ```
             configure terminal
             no ip http server
+            end
+            write memory
             ```
+
+            Exit configuration mode with `end` and save the configuration with `write memory`. Changes are written to the running configuration first, which is volatile, so saving copies them to the startup configuration and ensures they survive a reload.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/https/configuration/xe-16/https-xe-16-book/nm-https.html
         title: Cisco IOS-XE HTTP Configuration Guide
@@ -803,7 +863,11 @@ queries:
             ```
             configure terminal
             ip http secure-server
+            end
+            write memory
             ```
+
+            Exit configuration mode with `end` and save the configuration with `write memory`. Changes are written to the running configuration first, which is volatile, so saving copies them to the startup configuration and ensures they survive a reload.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/https/configuration/xe-16/https-xe-16-book/nm-https.html
         title: Cisco IOS-XE HTTPS Configuration Guide
@@ -860,7 +924,13 @@ queries:
             ```
             configure terminal
             no cdp run
+            end
+            write memory
             ```
+
+            Exit configuration mode with `end` and save the configuration with `write memory`. Changes are written to the running configuration first, which is volatile, so saving copies them to the startup configuration and ensures they survive a reload.
+
+            Before disabling CDP, confirm that nothing depends on it. Cisco IP phones use CDP for voice VLAN assignment and power negotiation, and some monitoring and topology tools rely on CDP data. Plan the change with the teams that operate those systems.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/cdp/configuration/xe-16/cdp-xe-16-book/nm-cdp-discover.html
         title: Cisco IOS-XE CDP Configuration Guide
@@ -916,7 +986,11 @@ queries:
             ```
             configure terminal
             no ip bootp server
+            end
+            write memory
             ```
+
+            Exit configuration mode with `end` and save the configuration with `write memory`. Changes are written to the running configuration first, which is volatile, so saving copies them to the startup configuration and ensures they survive a reload.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ipaddr_dhcp/configuration/xe-16/dhcp-xe-16-book.html
         title: Cisco IOS-XE DHCP/BOOTP Configuration Guide
@@ -973,7 +1047,11 @@ queries:
             ```
             configure terminal
             no ip source-route
+            end
+            write memory
             ```
+
+            Exit configuration mode with `end` and save the configuration with `write memory`. Changes are written to the running configuration first, which is volatile, so saving copies them to the startup configuration and ensures they survive a reload.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ipaddr_nat/configuration/xe-16/nat-xe-16-book.html
         title: Cisco IOS-XE IP Configuration Guide
@@ -1029,7 +1107,11 @@ queries:
             ```
             configure terminal
             no service pad
+            end
+            write memory
             ```
+
+            Exit configuration mode with `end` and save the configuration with `write memory`. Changes are written to the running configuration first, which is volatile, so saving copies them to the startup configuration and ensures they survive a reload.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/fundamentals/configuration/xe-16/fundamentals-xe-16-book.html
         title: Cisco IOS-XE Service Configuration Guide
@@ -1089,7 +1171,13 @@ queries:
             ntp authentication-key 1 md5 <key-value>
             ntp trusted-key 1
             ntp server <server-ip> key 1
+            end
+            write memory
             ```
+
+            MD5 is a weak hash and should be treated as the minimum. On releases that support a stronger keyed hash such as HMAC-SHA2, configure the authentication key with that algorithm instead of `md5`. The key number, the key value, and the trusted-key setting must match exactly on the NTP server, or authentication fails and the device rejects time updates.
+
+            Exit configuration mode with `end` and save the configuration with `write memory`. Changes are written to the running configuration first, which is volatile, so saving copies them to the startup configuration and ensures they survive a reload.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/bsm/configuration/xe-16/bsm-xe-16-book/bsm-time-calendar-set.html
         title: Cisco IOS-XE NTP Configuration Guide
@@ -1147,7 +1235,11 @@ queries:
             configure terminal
             ntp server <ntp-server-ip-1>
             ntp server <ntp-server-ip-2>
+            end
+            write memory
             ```
+
+            Exit configuration mode with `end` and save the configuration with `write memory`. Changes are written to the running configuration first, which is volatile, so saving copies them to the startup configuration and ensures they survive a reload.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/bsm/configuration/xe-16/bsm-xe-16-book/bsm-time-calendar-set.html
         title: Cisco IOS-XE NTP Configuration Guide
@@ -1206,7 +1298,11 @@ queries:
             archive
             log config
             logging enable
+            end
+            write memory
             ```
+
+            Exit configuration mode with `end` and save the configuration with `write memory`. Changes are written to the running configuration first, which is volatile, so saving copies them to the startup configuration and ensures they survive a reload.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/config-mgmt/configuration/xe-16/config-mgmt-xe-16-book/cm-config-logger.html
         title: Cisco IOS-XE Configuration Change Logging Guide
@@ -1265,7 +1361,11 @@ queries:
             logging host <syslog-server-ip>
             logging trap informational
             logging source-interface <interface>
+            end
+            write memory
             ```
+
+            Exit configuration mode with `end` and save the configuration with `write memory`. Changes are written to the running configuration first, which is volatile, so saving copies them to the startup configuration and ensures they survive a reload.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/config-mgmt/configuration/xe-16/config-mgmt-xe-16-book/cm-config-logger.html
         title: Cisco IOS-XE Logging Configuration Guide
@@ -1322,7 +1422,11 @@ queries:
             ```
             configure terminal
             login on-failure log
+            end
+            write memory
             ```
+
+            Exit configuration mode with `end` and save the configuration with `write memory`. Changes are written to the running configuration first, which is volatile, so saving copies them to the startup configuration and ensures they survive a reload.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/sec_usr_aaa/configuration/xe-16/sec-usr-aaa-xe-16-book/sec-login-enhance.html
         title: Cisco IOS-XE Login Enhancement Guide
@@ -1377,14 +1481,23 @@ queries:
           desc: |
             **Using the CLI**
 
-            Remove default community strings:
+            The secure path is SNMPv3 with both authentication and privacy, because v3 encrypts traffic and authenticates each request, while SNMPv1 and v2c send the community string in clear text. Where SNMPv3 cannot be used yet, removing the default community strings and restricting a unique community string with an ACL is a v2c stopgap that reduces but does not eliminate the exposure.
+
+            Remove the default community strings, create an ACL that permits only your management stations, and configure a unique community string restricted by that ACL:
 
             ```
             configure terminal
             no snmp-server community public
             no snmp-server community private
-            snmp-server community <unique-string> RO <acl-number>
+            access-list 10 permit <nms-ip>
+            snmp-server community <unique-string> RO 10
+            end
+            write memory
             ```
+
+            Exit configuration mode with `end` and save the configuration with `write memory`. Changes are written to the running configuration first, which is volatile, so saving copies them to the startup configuration and ensures they survive a reload.
+
+            Any monitoring system still polling with the removed community strings loses access immediately. Update all pollers to the new community string as part of the same change.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/snmp/configuration/xe-16/snmp-xe-16-book/nm-snmp-cfg-snmp-support.html
         title: Cisco IOS-XE SNMP Configuration Guide
@@ -1437,12 +1550,20 @@ queries:
           desc: |
             **Using the CLI**
 
-            Apply ACLs to SNMP community strings:
+            Create an ACL that permits only your management stations, then reapply each community string with the ACL. Re-entering a community string with the same name replaces the existing entry:
 
             ```
             configure terminal
-            snmp-server community <community-string> RO <acl-number>
+            access-list 10 permit <nms-ip-1>
+            access-list 10 permit <nms-ip-2>
+            snmp-server community <community-string> RO 10
+            end
+            write memory
             ```
+
+            Exit configuration mode with `end` and save the configuration with `write memory`. Changes are written to the running configuration first, which is volatile, so saving copies them to the startup configuration and ensures they survive a reload.
+
+            Make sure the ACL permits every monitoring server before applying it. Servers not matched by the ACL lose SNMP access immediately.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/snmp/configuration/xe-16/snmp-xe-16-book/nm-snmp-cfg-snmp-support.html
         title: Cisco IOS-XE SNMP Configuration Guide
@@ -1497,13 +1618,23 @@ queries:
           desc: |
             **Using the CLI**
 
-            Configure VTY lines for SSH-only:
+            Before restricting transport to SSH, verify that SSH login to the device works. Once applied, telnet connections are refused immediately, including the session you may be using. Display all VTY lines with `show line` and apply the setting to every VTY range, not just lines 0 to 15:
 
             ```
+            ! Before proceeding, open a new SSH session to this device and confirm login succeeds.
+            ! Do not close your current session until SSH access is verified.
             configure terminal
             line vty 0 15
             transport input ssh
+            line vty 16 31
+            transport input ssh
+            end
+            write memory
             ```
+
+            Adjust the second range to match the highest VTY line your platform provides.
+
+            Exit configuration mode with `end` and save the configuration with `write memory`. Changes are written to the running configuration first, which is volatile, so saving copies them to the startup configuration and ensures they survive a reload.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/sec_usr_ssh/configuration/xe-16/sec-usr-ssh-xe-16-book/sec-secure-shell-v2.html
         title: Cisco IOS-XE SSH Configuration Guide
@@ -1563,7 +1694,11 @@ queries:
             configure terminal
             line vty 0 15
             exec-timeout 10 0
+            end
+            write memory
             ```
+
+            Exit configuration mode with `end` and save the configuration with `write memory`. Changes are written to the running configuration first, which is volatile, so saving copies them to the startup configuration and ensures they survive a reload.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/fundamentals/configuration/xe-16/fundamentals-xe-16-book.html
         title: Cisco IOS-XE Line Configuration Guide
@@ -1616,13 +1751,22 @@ queries:
           desc: |
             **Using the CLI**
 
-            Apply ACLs to VTY lines:
+            Create an ACL that permits your management hosts, then apply it inbound on every VTY line. The ACL takes effect immediately, so make sure it includes the address you are connecting from, keep your current session open, and verify that a new session still succeeds before closing:
 
             ```
             configure terminal
+            access-list 11 permit <management-subnet> <wildcard-mask>
             line vty 0 15
-            access-class <acl-number> in
+            access-class 11 in
+            line vty 16 31
+            access-class 11 in
+            end
+            write memory
             ```
+
+            Exit configuration mode with `end` and save the configuration with `write memory`. Changes are written to the running configuration first, which is volatile, so saving copies them to the startup configuration and ensures they survive a reload.
+
+            Display all VTY lines with `show line` and apply the access class to every range your platform provides.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/fundamentals/configuration/xe-16/fundamentals-xe-16-book.html
         title: Cisco IOS-XE Line Configuration Guide
@@ -1680,7 +1824,11 @@ queries:
             configure terminal
             line aux 0
             no exec
+            end
+            write memory
             ```
+
+            Exit configuration mode with `end` and save the configuration with `write memory`. Changes are written to the running configuration first, which is volatile, so saving copies them to the startup configuration and ensures they survive a reload.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/fundamentals/configuration/xe-16/fundamentals-xe-16-book.html
         title: Cisco IOS-XE Line Configuration Guide
@@ -1737,7 +1885,11 @@ queries:
             configure terminal
             line con 0
             exec-timeout 10 0
+            end
+            write memory
             ```
+
+            Exit configuration mode with `end` and save the configuration with `write memory`. Changes are written to the running configuration first, which is volatile, so saving copies them to the startup configuration and ensures they survive a reload.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/fundamentals/configuration/xe-16/fundamentals-xe-16-book.html
         title: Cisco IOS-XE Line Configuration Guide
@@ -1794,7 +1946,11 @@ queries:
             ```
             configure terminal
             banner login ^Authorized access only. All activity is monitored and logged.^
+            end
+            write memory
             ```
+
+            Exit configuration mode with `end` and save the configuration with `write memory`. Changes are written to the running configuration first, which is volatile, so saving copies them to the startup configuration and ensures they survive a reload.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/fundamentals/configuration/xe-16/fundamentals-xe-16-book.html
         title: Cisco IOS-XE Banner Configuration Guide
@@ -1850,7 +2006,11 @@ queries:
             ```
             configure terminal
             banner motd ^Unauthorized access is prohibited. All activity is subject to monitoring.^
+            end
+            write memory
             ```
+
+            Exit configuration mode with `end` and save the configuration with `write memory`. Changes are written to the running configuration first, which is volatile, so saving copies them to the startup configuration and ensures they survive a reload.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/fundamentals/configuration/xe-16/fundamentals-xe-16-book.html
         title: Cisco IOS-XE Banner Configuration Guide
@@ -1909,7 +2069,11 @@ queries:
             ```
             configure terminal
             hostname <unique-descriptive-name>
+            end
+            write memory
             ```
+
+            Exit configuration mode with `end` and save the configuration with `write memory`. Changes are written to the running configuration first, which is volatile, so saving copies them to the startup configuration and ensures they survive a reload.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/fundamentals/configuration/xe-16/fundamentals-xe-16-book.html
         title: Cisco IOS-XE System Configuration Guide
@@ -1965,8 +2129,12 @@ queries:
 
             ```
             configure terminal
-            ip domain-name <your-domain.com>
+            ip domain name <your-domain.com>
+            end
+            write memory
             ```
+
+            Exit configuration mode with `end` and save the configuration with `write memory`. Changes are written to the running configuration first, which is volatile, so saving copies them to the startup configuration and ensures they survive a reload.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/fundamentals/configuration/xe-16/fundamentals-xe-16-book.html
         title: Cisco IOS-XE System Configuration Guide
@@ -2022,7 +2190,11 @@ queries:
             ```
             configure terminal
             service tcp-keepalives-in
+            end
+            write memory
             ```
+
+            Exit configuration mode with `end` and save the configuration with `write memory`. Changes are written to the running configuration first, which is volatile, so saving copies them to the startup configuration and ensures they survive a reload.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/fundamentals/configuration/xe-16/fundamentals-xe-16-book.html
         title: Cisco IOS-XE Service Configuration Guide
@@ -2078,7 +2250,11 @@ queries:
             ```
             configure terminal
             service tcp-keepalives-out
+            end
+            write memory
             ```
+
+            Exit configuration mode with `end` and save the configuration with `write memory`. Changes are written to the running configuration first, which is volatile, so saving copies them to the startup configuration and ensures they survive a reload.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/fundamentals/configuration/xe-16/fundamentals-xe-16-book.html
         title: Cisco IOS-XE Service Configuration Guide
@@ -2131,13 +2307,19 @@ queries:
           desc: |
             **Using the CLI**
 
-            Configure BGP neighbor authentication:
+            Configure MD5 authentication for each BGP neighbor. The same password must be configured on both peers, and adding or changing the password resets the BGP session until the two sides match. Coordinate the change with the peer operator and schedule it during a maintenance window:
 
             ```
             configure terminal
             router bgp <as-number>
             neighbor <neighbor-ip> password <password>
+            end
+            write memory
             ```
+
+            Exit configuration mode with `end` and save the configuration with `write memory`. Changes are written to the running configuration first, which is volatile, so saving copies them to the startup configuration and ensures they survive a reload.
+
+            When neighbors belong to a peer group, set the password on the peer group so every member inherits it.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/iproute_bgp/configuration/xe-16/irg-xe-16-book.html
         title: Cisco IOS-XE BGP Configuration Guide
@@ -2193,13 +2375,22 @@ queries:
           desc: |
             **Using the CLI**
 
-            Configure OSPF area authentication:
+            Configure a message digest key on every OSPF interface in the area, then enable message digest authentication for the area. Routers drop adjacencies with neighbors whose authentication does not match, so apply the same key on all routers in the area and schedule the change during a maintenance window:
 
             ```
             configure terminal
+            interface <interface>
+            ip ospf message-digest-key 1 md5 <key>
+            exit
             router ospf <process-id>
             area <area-id> authentication message-digest
+            end
+            write memory
             ```
+
+            Exit configuration mode with `end` and save the configuration with `write memory`. Changes are written to the running configuration first, which is volatile, so saving copies them to the startup configuration and ensures they survive a reload.
+
+            Repeat the interface step for each OSPF interface in the area, then verify adjacencies with `show ip ospf neighbor`.
     refs:
       - url: https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/iproute_ospf/configuration/xe-16/iro-xe-16-book.html
         title: Cisco IOS-XE OSPF Configuration Guide

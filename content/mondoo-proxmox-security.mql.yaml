@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-proxmox-security
     name: Mondoo Proxmox VE Security
-    version: 1.1.1
+    version: 1.1.3
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -231,42 +231,59 @@ queries:
           desc: |
             **Using the CLI**
 
-            Enforce TFA for the realm so users must enrol a second factor on next login:
+            Require a time-based one-time password factor on each authentication
+            realm so every user must enrol a token at their next login.
+
+            **Verify the command surface for your PVE 8.x version first.** The
+            realm-level `--tfa type=oath` form and the per-user TFA verbs have
+            changed across Proxmox VE releases. Before applying, confirm the
+            exact flags and subcommands for your version with
+            `pveum realm modify --help` and `pveum user --help` (and check the
+            `/access/tfa` API path with `pvesh ls /access/tfa`). Substitute the
+            verified commands for the examples below if they differ:
 
             ```bash
-            pveum realm modify pam --tfa type=totp
-            pveum realm modify pve --tfa type=totp
+            pveum realm modify pam --tfa type=oath
+            pveum realm modify pve --tfa type=oath
             ```
 
-            Enrol a TOTP secret for an existing user:
+            Realm enforcement alone does not create any token. Each user must
+            enrol a factor, which writes an entry to `/etc/pve/priv/tfa.cfg`.
+            Enrolment is done in the web interface: open Datacenter, then
+            Permissions, then Two Factor, select Add, then TOTP, and scan the
+            QR code with an authenticator app. To list enrolled factors, use the
+            verb confirmed for your PVE 8.x version (for example query the TFA
+            API with `pvesh get /access/tfa`):
 
             ```bash
-            pveum user tfa set <user>@<realm> --type totp --issuer "Proxmox VE"
+            pvesh get /access/tfa
             ```
         - id: bash
           desc: |
             **Using a Bash Script**
 
-            Enforce TFA on every authentication realm and verify the resulting `tfa.cfg`:
+            Enforce TOTP enrolment on every authentication realm and verify the
+            resulting `tfa.cfg`:
 
             ```bash
             #!/bin/bash
             set -e
 
-            for realm in $(pveum realm list --output-format json | jq -r '.[].realm'); do
-              echo "Enforcing TOTP TFA on realm $realm"
-              pveum realm modify "$realm" --tfa type=totp
-            done
+            while IFS= read -r realm; do
+              echo "Requiring TOTP enrolment on realm $realm"
+              pveum realm modify "$realm" --tfa type=oath
+            done < <(pveum realm list --output-format json | jq -r '.[].realm')
 
             if [ ! -s /etc/pve/priv/tfa.cfg ]; then
-              echo "WARNING: /etc/pve/priv/tfa.cfg is empty - users must still enrol TFA tokens" >&2
+              echo "WARNING: /etc/pve/priv/tfa.cfg is empty - users must still enrol TFA tokens in the web interface" >&2
             fi
             ```
         - id: ansible
           desc: |
             **Using Ansible**
 
-            Use this Ansible playbook to enforce TOTP on every realm:
+            Use this Ansible playbook to require TOTP enrolment on every realm.
+            Users must still enrol their individual tokens in the web interface:
 
             ```yaml
             ---
@@ -280,8 +297,8 @@ queries:
                   register: pve_realms
                   changed_when: false
 
-                - name: Enforce TOTP TFA on each realm
-                  ansible.builtin.command: "pveum realm modify {{ item.realm }} --tfa type=totp"
+                - name: Require TOTP enrolment on each realm
+                  ansible.builtin.command: "pveum realm modify {{ item.realm }} --tfa type=oath"
                   loop: "{{ pve_realms.stdout | from_json }}"
                   loop_control:
                     label: "{{ item.realm }}"
@@ -348,40 +365,43 @@ queries:
           desc: |
             **Using the CLI**
 
-            List existing ACL entries and the principals that hold the `Administrator` role:
+            List existing ACL entries and the principals that hold the
+            `Administrator` role:
 
             ```bash
             pveum acl list
-            grep ',Administrator' /etc/pve/user.cfg
+            grep -E '[:,]Administrator[,:]' /etc/pve/user.cfg
             ```
 
-            Replace `Administrator` with a least-privilege role for a given subject (delete the over-broad ACL, then re-add a scoped role):
+            Replace `Administrator` with a least-privilege role for a given
+            subject by deleting the over-broad ACL and re-adding a scoped role:
 
             ```bash
-            pveum acl delete / --user <user>@<realm> --role Administrator
-            pveum acl modify /vms --user <user>@<realm> --role PVEVMAdmin
+            pveum acl delete / --users <user>@<realm> --roles Administrator
+            pveum acl modify /vms --users <user>@<realm> --roles PVEVMAdmin
             ```
         - id: bash
           desc: |
             **Using a Bash Script**
 
-            Print every ACL entry that grants `Administrator` so an operator can review and downgrade them:
+            Print every ACL entry that grants `Administrator` so an operator can
+            review and downgrade them:
 
             ```bash
             #!/bin/bash
             set -e
 
             echo "Subjects holding the Administrator role:"
-            grep ',Administrator' /etc/pve/user.cfg || echo "  (none)"
+            grep -E '[:,]Administrator[,:]' /etc/pve/user.cfg || echo "  (none)"
 
             cat <<'EOF'
 
             Review each entry above. For every subject that does not need full
             cluster-wide control, delete the Administrator ACL and replace it
-            with a scoped role (PVEVMAdmin, PVEDatastoreAdmin, PVEAuditor, ...):
+            with a scoped role such as PVEVMAdmin, PVEDatastoreAdmin, or PVEAuditor:
 
-              pveum acl delete <path> --user <user>@<realm> --role Administrator
-              pveum acl modify <scoped-path> --user <user>@<realm> --role <scoped-role>
+              pveum acl delete <path> --users <user>@<realm> --roles Administrator
+              pveum acl modify <scoped-path> --users <user>@<realm> --roles <scoped-role>
             EOF
             ```
         - id: ansible
@@ -403,13 +423,13 @@ queries:
 
               tasks:
                 - name: Revoke Administrator on the cluster root
-                  ansible.builtin.command: "pveum acl delete / --user {{ pve_user }} --role Administrator"
+                  ansible.builtin.command: "pveum acl delete / --users {{ pve_user }} --roles Administrator"
                   register: revoke
                   changed_when: revoke.rc == 0
                   failed_when: revoke.rc not in [0, 2]
 
                 - name: Grant a scoped role instead
-                  ansible.builtin.command: "pveum acl modify {{ pve_scope }} --user {{ pve_user }} --role {{ pve_scoped_role }}"
+                  ansible.builtin.command: "pveum acl modify {{ pve_scope }} --users {{ pve_user }} --roles {{ pve_scoped_role }}"
             ```
 
   - uid: mondoo-proxmox-security-user-cfg-permissions
@@ -433,6 +453,7 @@ queries:
       - title: CWE-732 Incorrect Permission Assignment for Critical Resource
         url: https://cwe.mitre.org/data/definitions/732.html
     mql: |
+      mount.list.one(path == "/etc/pve")
       file("/etc/pve/user.cfg") {
         permissions.other_readable == false
       }
@@ -465,46 +486,61 @@ queries:
           desc: |
             **Using the CLI**
 
-            Tighten ownership and permissions on the user database:
+            The Proxmox cluster filesystem mounted at `/etc/pve` enforces
+            ownership root:www-data and mode 0640 on `user.cfg` and does not
+            allow those permissions to be changed. A failing result therefore
+            means `/etc/pve` is not mounted by the cluster filesystem and the
+            scanner saw a plain directory on the root filesystem. Restore the
+            cluster filesystem service:
 
             ```bash
-            chown root:www-data /etc/pve/user.cfg
-            chmod 0640 /etc/pve/user.cfg
+            findmnt /etc/pve
+            systemctl enable --now pve-cluster
+            stat -c '%U:%G %a' /etc/pve/user.cfg
             ```
         - id: bash
           desc: |
             **Using a Bash Script**
 
-            Apply correct ownership and mode if the current value is permissive:
+            Verify the cluster filesystem is mounted and start it when it is not:
 
             ```bash
             #!/bin/bash
             set -e
 
-            target=/etc/pve/user.cfg
-            chown root:www-data "$target"
-            chmod 0640 "$target"
-            stat -c '%U:%G %a %n' "$target"
+            if findmnt /etc/pve >/dev/null; then
+              echo "/etc/pve is mounted by pmxcfs; permissions are enforced as root:www-data 0640."
+              exit 0
+            fi
+
+            echo "/etc/pve is not a pmxcfs mount; starting pve-cluster"
+            systemctl enable --now pve-cluster
+            findmnt /etc/pve
+            stat -c '%U:%G %a %n' /etc/pve/user.cfg
             ```
         - id: ansible
           desc: |
             **Using Ansible**
 
-            Use this Ansible playbook to enforce mode 0640 root:www-data on `user.cfg`:
+            Use this Ansible playbook to ensure the cluster filesystem service
+            is running, which enforces the correct permissions on `user.cfg`:
 
             ```yaml
             ---
-            - name: Restrict permissions on /etc/pve/user.cfg
+            - name: Ensure the Proxmox cluster filesystem is mounted
               hosts: proxmox
               become: true
 
               tasks:
-                - name: Set owner, group, and mode on user.cfg
-                  ansible.builtin.file:
-                    path: /etc/pve/user.cfg
-                    owner: root
-                    group: www-data
-                    mode: '0640'
+                - name: Ensure pve-cluster is enabled and running
+                  ansible.builtin.systemd:
+                    name: pve-cluster
+                    state: started
+                    enabled: true
+
+                - name: Verify /etc/pve is a pmxcfs mount
+                  ansible.builtin.command: findmnt /etc/pve
+                  changed_when: false
             ```
 
   - uid: mondoo-proxmox-security-ssh-root-login-is-key-only
@@ -530,9 +566,7 @@ queries:
       - title: Proxmox VE Cluster SSH Requirements
         url: https://pve.proxmox.com/wiki/Cluster_Manager#_preparation
     mql: |
-      sshd.config.params["PermitRootLogin"] == "prohibit-password" ||
-      sshd.config.params["PermitRootLogin"] == "without-password" ||
-      sshd.config.params["PermitRootLogin"] == "forced-commands-only"
+      sshd.config.params["PermitRootLogin"].in(["prohibit-password", "without-password", "forced-commands-only"])
     docs:
       desc: |
         This check ensures that SSH root login on Proxmox nodes is permitted only with a key and never with a password. Proxmox VE relies on root SSH access for cluster operations and live migration, so the standard Linux baseline value of PermitRootLogin no would break the cluster, while prohibit-password keeps key-based access working safely.
@@ -867,7 +901,7 @@ queries:
       - title: CWE-258 Empty Password in Configuration File
         url: https://cwe.mitre.org/data/definitions/258.html
     mql: |
-      file("/etc/shadow").content.lines.where(_ == /^[^:]+::/).length == 0
+      file("/etc/shadow").content.lines.none(_ == /^[^:]+::/)
     docs:
       desc: |
         This check ensures that no account in /etc/shadow has an empty password field on a Proxmox node. An empty hash lets the account authenticate with no credential at all, which is one of the most direct routes onto a host.
@@ -985,7 +1019,7 @@ queries:
     mql: |
       file("/etc/pve/firewall/cluster.fw") {
         exists
-        content.lines.where(_ == /^enable:\s*1/).length > 0
+        content.lines.any(_ == /^enable:\s*1/)
       }
     docs:
       desc: |
@@ -1024,20 +1058,52 @@ queries:
           desc: |
             **Using the CLI**
 
-            Enable the cluster firewall via the API:
+            Create enabled allow rules for your management networks first.
+            Enabling the cluster firewall blocks inbound traffic to all hosts,
+            with a built-in exception for the web UI and SSH from the local
+            subnet only, so administrators on other networks are cut off
+            without these rules.
+
+            **Lockout warning:** Replace the `10.0.0.0/24` placeholder below
+            with the real CIDR of the network you administer the cluster from
+            before you run these commands. If you allow the wrong source and
+            then enable the firewall, you lose web UI and SSH access to every
+            node. Keep an existing session open until you confirm the new
+            rules work.
 
             ```bash
+            # Replace 10.0.0.0/24 with YOUR management network CIDR.
+            pvesh create /cluster/firewall/rules \
+              --type in --action ACCEPT --proto tcp --dport 22 \
+              --source 10.0.0.0/24 --enable 1 --comment "Allow SSH from management"
+            pvesh create /cluster/firewall/rules \
+              --type in --action ACCEPT --proto tcp --dport 8006 \
+              --source 10.0.0.0/24 --enable 1 --comment "Allow PVE Web UI from management"
+
             pvesh set /cluster/firewall/options --enable 1
             ```
         - id: bash
           desc: |
             **Using a Bash Script**
 
-            Enable the cluster firewall and verify it is active:
+            Seed enabled management allow rules, then enable the cluster
+            firewall and verify it is active. Pass your real management CIDR as
+            the first argument; the `10.0.0.0/24` default is only a placeholder
+            and will lock out administrators on other networks if left
+            unchanged:
 
             ```bash
             #!/bin/bash
             set -e
+
+            mgmt_net="${1:-10.0.0.0/24}"
+
+            pvesh create /cluster/firewall/rules \
+              --type in --action ACCEPT --proto tcp --dport 22 \
+              --source "$mgmt_net" --enable 1 --comment "Allow SSH from management"
+            pvesh create /cluster/firewall/rules \
+              --type in --action ACCEPT --proto tcp --dport 8006 \
+              --source "$mgmt_net" --enable 1 --comment "Allow PVE Web UI from management"
 
             pvesh set /cluster/firewall/options --enable 1
             pvesh get /cluster/firewall/options --output-format json | jq '.enable'
@@ -1046,7 +1112,8 @@ queries:
           desc: |
             **Using Ansible**
 
-            Use this Ansible playbook to enable the cluster firewall:
+            Use this Ansible playbook to create enabled management allow rules
+            and then enable the cluster firewall:
 
             ```yaml
             ---
@@ -1054,8 +1121,30 @@ queries:
               hosts: proxmox
               become: true
               run_once: true
+              vars:
+                management_cidr: "10.0.0.0/24"
 
               tasks:
+                - name: Allow SSH from management network
+                  ansible.builtin.command: >-
+                    pvesh create /cluster/firewall/rules
+                    --type in --action ACCEPT --proto tcp --dport 22
+                    --source {{ management_cidr }} --enable 1
+                    --comment "Allow SSH from management"
+                  register: ssh_rule
+                  changed_when: ssh_rule.rc == 0
+                  failed_when: ssh_rule.rc not in [0, 2]
+
+                - name: Allow PVE Web UI from management network
+                  ansible.builtin.command: >-
+                    pvesh create /cluster/firewall/rules
+                    --type in --action ACCEPT --proto tcp --dport 8006
+                    --source {{ management_cidr }} --enable 1
+                    --comment "Allow PVE Web UI from management"
+                  register: gui_rule
+                  changed_when: gui_rule.rc == 0
+                  failed_when: gui_rule.rc not in [0, 2]
+
                 - name: Enable cluster firewall via pvesh
                   ansible.builtin.command: pvesh set /cluster/firewall/options --enable 1
                   changed_when: true
@@ -1084,7 +1173,7 @@ queries:
     mql: |
       file("/etc/pve/firewall/cluster.fw") {
         exists
-        content.lines.where(_ == /^policy_in:\s*DROP/).length > 0
+        content.lines.any(_ == /^policy_in:\s*DROP/)
       }
     docs:
       desc: |
@@ -1123,17 +1212,40 @@ queries:
           desc: |
             **Using the CLI**
 
-            Set the cluster default input policy to `DROP`:
+            Create enabled allow rules for management traffic first, then set
+            the default input policy to `DROP`. Setting `DROP` without enabled
+            allow rules cuts off SSH and web UI access from non-local networks.
+
+            **Lockout warning:** This is the most dangerous firewall change in
+            this policy. Once the input policy is `DROP`, anything not covered
+            by an enabled allow rule is silently dropped, including your own
+            management session. Replace the `10.0.0.0/24` placeholder below
+            with the real CIDR of the network you administer the cluster from,
+            confirm the allow rules are present and enabled, and keep a working
+            session open until you have verified access still works after the
+            switch to `DROP`. If you are locked out, you must recover through
+            the node console or IPMI.
 
             ```bash
+            # Replace 10.0.0.0/24 with YOUR management network CIDR.
+            pvesh create /cluster/firewall/rules \
+              --type in --action ACCEPT --proto tcp --dport 22 \
+              --source 10.0.0.0/24 --enable 1 --comment "Allow SSH from management"
+            pvesh create /cluster/firewall/rules \
+              --type in --action ACCEPT --proto tcp --dport 8006 \
+              --source 10.0.0.0/24 --enable 1 --comment "Allow PVE Web UI from management"
+
             pvesh set /cluster/firewall/options --policy_in DROP
             ```
         - id: bash
           desc: |
             **Using a Bash Script**
 
-            Add explicit allow rules for management traffic, then flip the
-            default policy to `DROP`:
+            Add explicit, enabled allow rules for management traffic, then flip
+            the default policy to `DROP`. Pass your real management CIDR as the
+            first argument; the `10.0.0.0/24` default is only a placeholder and
+            will lock out administrators on other networks once the policy is
+            `DROP`:
 
             ```bash
             #!/bin/bash
@@ -1143,10 +1255,10 @@ queries:
 
             pvesh create /cluster/firewall/rules \
               --type in --action ACCEPT --proto tcp --dport 22 \
-              --source "$mgmt_net" --comment "Allow SSH from management"
+              --source "$mgmt_net" --enable 1 --comment "Allow SSH from management"
             pvesh create /cluster/firewall/rules \
               --type in --action ACCEPT --proto tcp --dport 8006 \
-              --source "$mgmt_net" --comment "Allow PVE Web UI from management"
+              --source "$mgmt_net" --enable 1 --comment "Allow PVE Web UI from management"
 
             pvesh set /cluster/firewall/options --policy_in DROP
             ```
@@ -1155,7 +1267,7 @@ queries:
             **Using Ansible**
 
             Use this Ansible playbook to set the default input policy to `DROP`
-            after asserting that management allow rules already exist:
+            after creating enabled management allow rules:
 
             ```yaml
             ---
@@ -1171,7 +1283,7 @@ queries:
                   ansible.builtin.command: >-
                     pvesh create /cluster/firewall/rules
                     --type in --action ACCEPT --proto tcp --dport 22
-                    --source {{ management_cidr }}
+                    --source {{ management_cidr }} --enable 1
                     --comment "Allow SSH from management"
                   register: ssh_rule
                   changed_when: ssh_rule.rc == 0
@@ -1181,7 +1293,7 @@ queries:
                   ansible.builtin.command: >-
                     pvesh create /cluster/firewall/rules
                     --type in --action ACCEPT --proto tcp --dport 8006
-                    --source {{ management_cidr }}
+                    --source {{ management_cidr }} --enable 1
                     --comment "Allow PVE Web UI from management"
                   register: gui_rule
                   changed_when: gui_rule.rc == 0
@@ -1211,7 +1323,7 @@ queries:
       compliance/vda-isa-5: vda-isa-5-5-2-7
     mql: |
       files.find(from: "/etc/pve/nodes", regex: "host.fw$", type: "file").list.all(
-        file(_.path).content.lines.where(_ == /^enable:\s*1/).length > 0
+        file(_.path).content.lines.any(_ == /^enable:\s*1/)
       )
     docs:
       desc: |
@@ -1312,7 +1424,7 @@ queries:
     mql: |
       file("/etc/pve/firewall/cluster.fw") {
         exists
-        content.lines.where(_ == /^(IN|OUT|GROUP)/).length > 0
+        content.lines.any(_ == /^(IN|OUT|GROUP)/)
       }
     docs:
       desc: |
@@ -1351,22 +1463,24 @@ queries:
           desc: |
             **Using the CLI**
 
-            Create at least one explicit rule. Adjust to match your environment:
+            Create at least one explicit, enabled rule. Rules created without
+            `--enable 1` are stored disabled and do not filter traffic. Adjust
+            to match your environment:
 
             ```bash
             pvesh create /cluster/firewall/rules \
               --type in --action ACCEPT --proto tcp --dport 22 \
-              --source 10.0.0.0/24 --comment "Allow SSH from management"
+              --source 10.0.0.0/24 --enable 1 --comment "Allow SSH from management"
 
             pvesh create /cluster/firewall/rules \
               --type in --action ACCEPT --proto tcp --dport 8006 \
-              --source 10.0.0.0/24 --comment "Allow PVE Web UI from management"
+              --source 10.0.0.0/24 --enable 1 --comment "Allow PVE Web UI from management"
             ```
         - id: bash
           desc: |
             **Using a Bash Script**
 
-            Seed a baseline rule set if none exists:
+            Seed a baseline of enabled rules if none exists:
 
             ```bash
             #!/bin/bash
@@ -1382,17 +1496,18 @@ queries:
 
             pvesh create /cluster/firewall/rules \
               --type in --action ACCEPT --proto tcp --dport 22 \
-              --source "$mgmt_net" --comment "Allow SSH from management"
+              --source "$mgmt_net" --enable 1 --comment "Allow SSH from management"
 
             pvesh create /cluster/firewall/rules \
               --type in --action ACCEPT --proto tcp --dport 8006 \
-              --source "$mgmt_net" --comment "Allow PVE Web UI from management"
+              --source "$mgmt_net" --enable 1 --comment "Allow PVE Web UI from management"
             ```
         - id: ansible
           desc: |
             **Using Ansible**
 
-            Use this Ansible playbook to create baseline cluster firewall rules:
+            Use this Ansible playbook to create enabled baseline cluster
+            firewall rules:
 
             ```yaml
             ---
@@ -1408,7 +1523,7 @@ queries:
                   ansible.builtin.command: >-
                     pvesh create /cluster/firewall/rules
                     --type in --action ACCEPT --proto tcp --dport 22
-                    --source {{ management_cidr }}
+                    --source {{ management_cidr }} --enable 1
                     --comment "Allow SSH from management"
                   register: ssh_rule
                   changed_when: ssh_rule.rc == 0
@@ -1418,7 +1533,7 @@ queries:
                   ansible.builtin.command: >-
                     pvesh create /cluster/firewall/rules
                     --type in --action ACCEPT --proto tcp --dport 8006
-                    --source {{ management_cidr }}
+                    --source {{ management_cidr }} --enable 1
                     --comment "Allow PVE Web UI from management"
                   register: gui_rule
                   changed_when: gui_rule.rc == 0
@@ -1452,7 +1567,8 @@ queries:
       - title: Proxmox VE Certificate Management
         url: https://pve.proxmox.com/wiki/Certificate_Management
     mql: |
-      command("openssl x509 -in /etc/pve/local/pve-ssl.pem -noout -issuer").stdout.contains("Proxmox Virtual Environment") == false
+      file("/etc/pve/local/pveproxy-ssl.pem").exists
+      command("openssl x509 -in /etc/pve/local/pveproxy-ssl.pem -noout -issuer").stdout.contains("Proxmox Virtual Environment") == false
     docs:
       desc: |
         This check ensures that the Proxmox web interface presents a TLS certificate issued by a trusted authority rather than the cluster-internal Proxmox CA. A default install ships a certificate signed by the internal CA named Proxmox Virtual Environment, which no browser or external client trusts.
@@ -1491,7 +1607,14 @@ queries:
             **Using the CLI**
 
             Register an ACME account and order a Let's Encrypt certificate for
-            this node:
+            this node.
+
+            **Verify the ACME flag syntax for your PVE 8.x version first.** The
+            way ACME domains are set on `pvenode config set` has drifted across
+            Proxmox VE releases. Confirm the documented form for your version
+            with `pvenode config set --help`; on current builds the per-domain
+            flag form `pvenode config set -acmedomain0=<fqdn>` is documented.
+            Substitute the verified flag below:
 
             ```bash
             pvenode acme account register default <email>
@@ -1611,24 +1734,32 @@ queries:
           desc: |
             **Using the CLI**
 
-            Renew the ACME certificate on demand:
+            Regenerate the cluster-CA-issued node certificate, which is the
+            certificate this check inspects, and restart the API proxy:
+
+            ```bash
+            pvecm updatecerts --force
+            systemctl restart pveproxy
+            ```
+
+            If the node also serves an ACME certificate that is close to
+            expiry, renew it as well.
+
+            **Verify the ACME renew subcommand for your PVE 8.x version first.**
+            `pvenode acme cert renew` is not present on every PVE 8.x build.
+            Confirm the available verbs with `pvenode acme help`; if `renew` is
+            absent, re-order the certificate instead with
+            `pvenode acme cert order --force`. Substitute the verified command:
 
             ```bash
             pvenode acme cert renew --force
-            ```
-
-            Or, for a non-ACME certificate, replace it with a freshly issued
-            one (PEM-formatted certificate and key):
-
-            ```bash
-            pvenode cert set /path/to/fullchain.pem /path/to/privkey.pem --force
             ```
         - id: bash
           desc: |
             **Using a Bash Script**
 
-            Trigger an ACME renewal whenever the active certificate is within
-            30 days of expiry:
+            Regenerate the node certificate when it is within 30 days of
+            expiry, and renew any ACME certificate in the same window:
 
             ```bash
             #!/bin/bash
@@ -1637,19 +1768,25 @@ queries:
             cert=/etc/pve/local/pve-ssl.pem
 
             if openssl x509 -in "$cert" -checkend 2592000 -noout >/dev/null 2>&1; then
-              echo "Certificate not yet within renewal window."
-              exit 0
+              echo "Node certificate not yet within the renewal window."
+            else
+              echo "Node certificate expires within 30 days; regenerating via the cluster CA"
+              pvecm updatecerts --force
+              systemctl restart pveproxy
             fi
 
-            echo "Certificate expires within 30 days; renewing via ACME"
-            pvenode acme cert renew --force
+            proxy_cert=/etc/pve/local/pveproxy-ssl.pem
+            if [ -s "$proxy_cert" ] && ! openssl x509 -in "$proxy_cert" -checkend 2592000 -noout >/dev/null 2>&1; then
+              echo "Custom certificate expires within 30 days; renewing via ACME"
+              pvenode acme cert renew --force
+            fi
             ```
         - id: ansible
           desc: |
             **Using Ansible**
 
-            Use this Ansible playbook to renew the ACME certificate when the
-            current one is within 30 days of expiry:
+            Use this Ansible playbook to regenerate the node certificate when
+            it is within 30 days of expiry:
 
             ```yaml
             ---
@@ -1664,10 +1801,16 @@ queries:
                   failed_when: false
                   changed_when: false
 
-                - name: Renew certificate via ACME if needed
-                  ansible.builtin.command: pvenode acme cert renew --force
+                - name: Regenerate the node certificate via the cluster CA
+                  ansible.builtin.command: pvecm updatecerts --force
                   when: cert_check.rc != 0
                   changed_when: true
+
+                - name: Restart pveproxy to pick up the new certificate
+                  ansible.builtin.systemd:
+                    name: pveproxy
+                    state: restarted
+                  when: cert_check.rc != 0
             ```
 
   # =================================================================
@@ -1867,20 +2010,27 @@ queries:
           desc: |
             **Using the CLI**
 
-            Remove the `nesting=1` feature from every container that has it:
+            Inspect the current feature list, then remove the option entirely
+            when nesting was the only feature, or re-set the list without
+            `nesting=1`. Restart the container to apply the change:
 
             ```bash
-            pct set <ctid> -features keyctl=1
-            ```
+            pct config <ctid> | grep '^features:'
 
-            (Set `features` to the desired feature list without `nesting=1`.
-            Use `pct config <ctid>` to inspect the current feature list.)
+            # nesting was the only feature:
+            pct set <ctid> --delete features
+
+            # other features must be kept, for example keyctl:
+            pct set <ctid> --features keyctl=1
+
+            pct reboot <ctid>
+            ```
         - id: bash
           desc: |
             **Using a Bash Script**
 
-            Locate every container config that enables nesting and reset the
-            features line so nesting is removed:
+            Rebuild the feature list of every container without `nesting=1`,
+            using the supported `pct` interface:
 
             ```bash
             #!/bin/bash
@@ -1889,15 +2039,18 @@ queries:
             shopt -s nullglob
             for conf in /etc/pve/lxc/[0-9]*.conf; do
               ctid=$(basename "$conf" .conf)
-              if grep -q 'nesting=1' "$conf"; then
-                features=$(grep '^features:' "$conf" | sed -E 's/(^|,)nesting=1//; s/^features:\s*,?/features: /; s/,\s*$//')
-                if [ -z "${features#features: }" ]; then
-                  sed -i '/^features:/d' "$conf"
-                else
-                  sed -i "s|^features:.*|$features|" "$conf"
-                fi
-                echo "Removed nesting=1 from container $ctid"
+              features=$(awk -F': ' '/^features:/ {print $2}' "$conf")
+              case ",$features," in
+                *,nesting=1,*) ;;
+                *) continue ;;
+              esac
+              new=$(printf '%s\n' "$features" | tr ',' '\n' | grep -v '^nesting=1$' | paste -sd, -)
+              if [ -z "$new" ]; then
+                pct set "$ctid" --delete features
+              else
+                pct set "$ctid" --features "$new"
               fi
+              echo "Removed nesting=1 from container $ctid; restart it to apply"
             done
             ```
         - id: ansible
@@ -2001,7 +2154,7 @@ queries:
 
             ```bash
             sed -i '/^lxc\.apparmor\.profile:[[:space:]]*unconfined$/d' /etc/pve/lxc/<ctid>.conf
-            pct restart <ctid>
+            pct reboot <ctid>
             ```
         - id: bash
           desc: |
@@ -2020,7 +2173,7 @@ queries:
               if grep -q '^lxc\.apparmor\.profile:[[:space:]]*unconfined' "$conf"; then
                 sed -i '/^lxc\.apparmor\.profile:[[:space:]]*unconfined$/d' "$conf"
                 echo "Restored AppArmor profile on container $ctid"
-                pct restart "$ctid" || true
+                pct reboot "$ctid" || true
               fi
             done
             ```
@@ -2242,19 +2395,27 @@ queries:
           desc: |
             **Using the CLI**
 
-            Remove `mknod=1` from the container's feature list:
+            Inspect the current feature list, then remove the option entirely
+            when mknod was the only feature, or re-set the list without
+            `mknod=1`. Restart the container to apply the change:
 
             ```bash
-            pct set <ctid> -features keyctl=1
-            ```
+            pct config <ctid> | grep '^features:'
 
-            (Re-set `features` without `mknod=1`. Use `pct config <ctid>` to
-            see the current value.)
+            # mknod was the only feature:
+            pct set <ctid> --delete features
+
+            # other features must be kept, for example keyctl:
+            pct set <ctid> --features keyctl=1
+
+            pct reboot <ctid>
+            ```
         - id: bash
           desc: |
             **Using a Bash Script**
 
-            Strip `mknod=1` from every container config that has it:
+            Rebuild the feature list of every container without `mknod=1`,
+            using the supported `pct` interface:
 
             ```bash
             #!/bin/bash
@@ -2263,15 +2424,18 @@ queries:
             shopt -s nullglob
             for conf in /etc/pve/lxc/[0-9]*.conf; do
               ctid=$(basename "$conf" .conf)
-              if grep -q 'mknod=1' "$conf"; then
-                features=$(grep '^features:' "$conf" | sed -E 's/(^|,)mknod=1//; s/^features:\s*,?/features: /; s/,\s*$//')
-                if [ -z "${features#features: }" ]; then
-                  sed -i '/^features:/d' "$conf"
-                else
-                  sed -i "s|^features:.*|$features|" "$conf"
-                fi
-                echo "Removed mknod=1 from container $ctid"
+              features=$(awk -F': ' '/^features:/ {print $2}' "$conf")
+              case ",$features," in
+                *,mknod=1,*) ;;
+                *) continue ;;
+              esac
+              new=$(printf '%s\n' "$features" | tr ',' '\n' | grep -v '^mknod=1$' | paste -sd, -)
+              if [ -z "$new" ]; then
+                pct set "$ctid" --delete features
+              else
+                pct set "$ctid" --features "$new"
               fi
+              echo "Removed mknod=1 from container $ctid; restart it to apply"
             done
             ```
         - id: ansible
@@ -2375,19 +2539,27 @@ queries:
           desc: |
             **Using the CLI**
 
-            Remove `fuse=1` from the container's feature list:
+            Inspect the current feature list, then remove the option entirely
+            when fuse was the only feature, or re-set the list without
+            `fuse=1`. Restart the container to apply the change:
 
             ```bash
-            pct set <ctid> -features keyctl=1
-            ```
+            pct config <ctid> | grep '^features:'
 
-            (Re-set `features` without `fuse=1`. Use `pct config <ctid>` to
-            see the current value.)
+            # fuse was the only feature:
+            pct set <ctid> --delete features
+
+            # other features must be kept, for example keyctl:
+            pct set <ctid> --features keyctl=1
+
+            pct reboot <ctid>
+            ```
         - id: bash
           desc: |
             **Using a Bash Script**
 
-            Strip `fuse=1` from every container config that has it:
+            Rebuild the feature list of every container without `fuse=1`,
+            using the supported `pct` interface:
 
             ```bash
             #!/bin/bash
@@ -2396,15 +2568,18 @@ queries:
             shopt -s nullglob
             for conf in /etc/pve/lxc/[0-9]*.conf; do
               ctid=$(basename "$conf" .conf)
-              if grep -q 'fuse=1' "$conf"; then
-                features=$(grep '^features:' "$conf" | sed -E 's/(^|,)fuse=1//; s/^features:\s*,?/features: /; s/,\s*$//')
-                if [ -z "${features#features: }" ]; then
-                  sed -i '/^features:/d' "$conf"
-                else
-                  sed -i "s|^features:.*|$features|" "$conf"
-                fi
-                echo "Removed fuse=1 from container $ctid"
+              features=$(awk -F': ' '/^features:/ {print $2}' "$conf")
+              case ",$features," in
+                *,fuse=1,*) ;;
+                *) continue ;;
+              esac
+              new=$(printf '%s\n' "$features" | tr ',' '\n' | grep -v '^fuse=1$' | paste -sd, -)
+              if [ -z "$new" ]; then
+                pct set "$ctid" --delete features
+              else
+                pct set "$ctid" --features "$new"
               fi
+              echo "Removed fuse=1 from container $ctid; restart it to apply"
             done
             ```
         - id: ansible
@@ -2472,7 +2647,7 @@ queries:
         url: https://cwe.mitre.org/data/definitions/400.html
     mql: |
       files.find(from: "/etc/pve/lxc", regex: "[0-9]+.conf$", type: "file").list.all(
-        file(_.path).content.lines.where(_ == /^memory:/).length > 0
+        file(_.path).content.lines.any(_ == /^memory:/)
       )
     docs:
       desc: |
@@ -2604,7 +2779,7 @@ queries:
     mql: |
       files.find(from: "/etc/pve/qemu-server", regex: "[0-9]+.conf$", type: "file").list.all(
         file(_.path).content.lines.where(_ == /^cpu:/).all(
-          _ == /[,=]\+?spec-ctrl\b/ || _ == /[,=]\+?ssbd\b/
+          _ == /[,=;]\+?spec-ctrl\b/ || _ == /[,=;]\+?ssbd\b/
         )
       )
     docs:
@@ -2644,20 +2819,34 @@ queries:
           desc: |
             **Using the CLI**
 
-            Set the CPU type and add the mitigation flags. The exact CPU
-            string depends on whether you want host pass-through or a stable
-            named CPU. Restart the VM for changes to take effect:
+            Append the mitigation flags to the VM's existing CPU type. Quote
+            the value so the shell does not split it at the semicolon, and
+            restart the VM cleanly for the change to take effect.
+
+            First read the VM's current `cpu:` value, then substitute it for
+            `<existing-cpu-type>` below. Do not paste `kvm64` blindly; that would
+            overwrite a `host` or custom CPU type the VM already uses. If the
+            VM has no `cpu:` line it defaults to `kvm64`, so use `kvm64` only in
+            that case:
 
             ```bash
-            qm set <vmid> --cpu host,flags=+spec-ctrl;+ssbd
-            qm stop <vmid> && qm start <vmid>
+            # Read the VM's current CPU type and copy the value after "cpu:".
+            qm config <vmid> | grep '^cpu:'
+
+            # Replace <existing-cpu-type> with that value (for example host, x86-64-v2-AES, or kvm64).
+            qm set <vmid> --cpu '<existing-cpu-type>,flags=+spec-ctrl;+ssbd'
+            qm shutdown <vmid>
+            qm start <vmid>
             ```
+
+            Keep the CPU type the VM already uses and only add the flags. Use
+            `host` only when all cluster nodes share the same CPU model.
         - id: bash
           desc: |
             **Using a Bash Script**
 
-            Append the mitigation flags to every VM whose `cpu:` line is
-            missing them:
+            Append the mitigation flags to every VM while preserving the
+            configured CPU type:
 
             ```bash
             #!/bin/bash
@@ -2666,25 +2855,28 @@ queries:
             shopt -s nullglob
             for conf in /etc/pve/qemu-server/[0-9]*.conf; do
               vmid=$(basename "$conf" .conf)
-              cpu_line=$(grep '^cpu:' "$conf" || true)
-              if [ -z "$cpu_line" ]; then
-                echo "Setting cpu=host with mitigations on VM $vmid"
-                qm set "$vmid" --cpu 'host,flags=+spec-ctrl;+ssbd'
-                continue
+              cpu_spec=$(awk -F': ' '/^cpu:/ {print $2}' "$conf")
+              case "$cpu_spec" in
+                *spec-ctrl*|*ssbd*) continue ;;
+              esac
+              if [ -z "$cpu_spec" ]; then
+                new="kvm64,flags=+spec-ctrl;+ssbd"
+              elif [ "${cpu_spec#*flags=}" != "$cpu_spec" ]; then
+                new=${cpu_spec/flags=/flags=+spec-ctrl;+ssbd;}
+              else
+                new="$cpu_spec,flags=+spec-ctrl;+ssbd"
               fi
-              if [[ "$cpu_line" != *spec-ctrl* ]] || [[ "$cpu_line" != *ssbd* ]]; then
-                echo "Adding +spec-ctrl;+ssbd to VM $vmid (current: $cpu_line)"
-                # Resync existing options without mutating bridge/host overrides:
-                qm set "$vmid" --cpu 'host,flags=+spec-ctrl;+ssbd'
-              fi
+              echo "Setting CPU mitigations on VM $vmid"
+              qm set "$vmid" --cpu "$new"
+              echo "Restart VM $vmid cleanly to apply: qm shutdown $vmid && qm start $vmid"
             done
             ```
         - id: ansible
           desc: |
             **Using Ansible**
 
-            Use this Ansible playbook to set `cpu: host,flags=+spec-ctrl;+ssbd`
-            on every QEMU VM:
+            Use this Ansible playbook to add the mitigation flags while keeping
+            each VM's configured CPU type:
 
             ```yaml
             ---
@@ -2699,10 +2891,22 @@ queries:
                     patterns: "*.conf"
                   register: vm_confs
 
-                - name: Set CPU mitigations on each VM
-                  ansible.builtin.command: >-
-                    qm set {{ item.path | basename | regex_replace('\\.conf$', '') }}
-                    --cpu host,flags=+spec-ctrl;+ssbd
+                - name: Add mitigation flags while keeping the configured CPU type
+                  ansible.builtin.shell: |
+                    set -e
+                    vmid=$(basename "{{ item.path }}" .conf)
+                    cpu_spec=$(awk -F': ' '/^cpu:/ {print $2}' "{{ item.path }}")
+                    case "$cpu_spec" in
+                      *spec-ctrl*|*ssbd*) exit 0 ;;
+                    esac
+                    if [ -z "$cpu_spec" ]; then
+                      new="kvm64,flags=+spec-ctrl;+ssbd"
+                    elif [ "${cpu_spec#*flags=}" != "$cpu_spec" ]; then
+                      new=$(printf '%s' "$cpu_spec" | sed 's/flags=/flags=+spec-ctrl;+ssbd;/')
+                    else
+                      new="$cpu_spec,flags=+spec-ctrl;+ssbd"
+                    fi
+                    qm set "$vmid" --cpu "$new"
                   loop: "{{ vm_confs.files }}"
                   changed_when: true
             ```
@@ -2857,7 +3061,7 @@ queries:
         url: https://cwe.mitre.org/data/definitions/94.html
     mql: |
       files.find(from: "/etc/pve/qemu-server", regex: "[0-9]+.conf$", type: "file").list.all(
-        file(_.path).content.lines.where(_ == /^args:/).length == 0
+        file(_.path).content.lines.none(_ == /^args:/)
       )
     docs:
       desc: |
@@ -2896,11 +3100,12 @@ queries:
           desc: |
             **Using the CLI**
 
-            Stop the VM, remove the `args:` directive, and start it again:
+            Remove the `args:` directive, then restart the VM cleanly so the
+            change takes effect:
 
             ```bash
-            qm stop <vmid>
             qm set <vmid> --delete args
+            qm shutdown <vmid>
             qm start <vmid>
             ```
         - id: bash
@@ -2923,6 +3128,7 @@ queries:
                 grep '^args:' "$conf"
                 echo "  -> running 'qm set $vmid --delete args'"
                 qm set "$vmid" --delete args
+                echo "  -> restart VM $vmid cleanly to apply: qm shutdown $vmid && qm start $vmid"
               fi
             done
             ```
@@ -3009,59 +3215,104 @@ queries:
           desc: |
             **Using the CLI**
 
-            On any node, edit `/etc/pve/corosync.conf` to use knet transport
-            and bump `config_version`:
+            Edit a working copy outside `/etc/pve`, then activate it in a
+            single step so the cluster never sees a partial configuration.
+
+            **Quorum-loss warning:** Overwriting the live
+            `/etc/pve/corosync.conf` is the riskiest operation in this policy.
+            A bad edit, a stale `config_version`, or a node that fails to reload
+            can drop quorum and freeze the cluster. Only do this while the
+            cluster is healthy and quorate. Confirm quorum first with
+            `pvecm status` (or `corosync-cfgtool -s`), make the change, then
+            re-run `corosync-cfgtool -s` on each node to confirm every link is
+            connected and corosync reloaded cleanly. If quorum drops, restore
+            the backup with `cp /root/corosync.conf.bak /etc/pve/corosync.conf`.
 
             ```bash
-            cp /etc/pve/corosync.conf /etc/pve/corosync.conf.bak
+            cp /etc/pve/corosync.conf /root/corosync.conf.bak
+            cp /etc/pve/corosync.conf /root/corosync.conf.new
 
-            # Inside the totem { } block, ensure these lines exist:
+            # Confirm the cluster is quorate before changing anything.
+            corosync-cfgtool -s
+
+            # Edit /root/corosync.conf.new. Inside the totem { } block ensure:
             #   transport: knet
             #   crypto_cipher: aes256
             #   crypto_hash: sha256
-            #   config_version: <current+1>
+            # and increment config_version by 1.
 
-            # The file is replicated automatically across the cluster.
+            cp /root/corosync.conf.new /etc/pve/corosync.conf
+
+            # Verify every node reloaded and links are connected.
+            corosync-cfgtool -s
             ```
+
+            The file replicates automatically across the cluster and corosync
+            reloads when it sees the higher config_version. If a node does not
+            come back, roll back from `/root/corosync.conf.bak`.
         - id: bash
           desc: |
             **Using a Bash Script**
 
-            Patch `corosync.conf` to enable knet encryption and increment
-            `config_version`. Run on a single node:
+            Patch a working copy of `corosync.conf`, bump `config_version`,
+            and activate the result with one copy. Run on a single node.
+
+            **Quorum-loss warning:** This rewrites the live
+            `/etc/pve/corosync.conf` and can drop cluster quorum if the result
+            is wrong. Run it only on a healthy, quorate cluster. The script
+            keeps a backup at `/root/corosync.conf.bak`; if quorum drops after
+            the change, restore it with
+            `cp /root/corosync.conf.bak /etc/pve/corosync.conf`. After it runs,
+            confirm every node with `corosync-cfgtool -s`:
 
             ```bash
             #!/bin/bash
             set -e
 
-            conf=/etc/pve/corosync.conf
-            cp "$conf" "${conf}.bak"
+            src=/etc/pve/corosync.conf
+            work=/root/corosync.conf.new
 
-            current=$(awk '/^[[:space:]]*config_version:/ {print $2}' "$conf")
+            cp "$src" /root/corosync.conf.bak
+            cp "$src" "$work"
+
+            current=$(awk '/^[[:space:]]*config_version:/ {print $2}' "$work")
             next=$((current + 1))
 
-            # Ensure transport/crypto settings exist inside totem { }:
-            python3 - "$conf" "$next" <<'PY'
+            python3 - "$work" "$next" <<'PY'
             import re, sys
             path, next_ver = sys.argv[1], sys.argv[2]
-            text = open(path).read()
+            with open(path) as fh:
+                text = fh.read()
             for key, value in (('transport', 'knet'), ('crypto_cipher', 'aes256'), ('crypto_hash', 'sha256')):
                 if re.search(rf'^\s*{key}:', text, re.M):
                     text = re.sub(rf'^\s*{key}:.*$', f'  {key}: {value}', text, flags=re.M)
                 else:
                     text = re.sub(r'(totem\s*\{)', rf'\1\n  {key}: {value}', text, count=1)
-            text = re.sub(r'^(\s*)config_version:.*$', rf'\1config_version: {next_ver}', text, flags=re.M)
-            open(path, 'w').write(text)
+            text = re.sub(r'^(\s*)config_version:.*$', rf'\g<1>config_version: {next_ver}', text, flags=re.M)
+            with open(path, 'w') as fh:
+                fh.write(text)
             PY
 
-            echo "Updated config_version to $next; cluster will replicate the change."
+            cp "$work" "$src"
+            echo "Updated config_version to $next; corosync reloads and replicates the change."
+            echo "Verify every node reloaded and links are connected:"
+            corosync-cfgtool -s
             ```
         - id: ansible
           desc: |
             **Using Ansible**
 
-            Use this Ansible playbook to enforce knet encryption on the cluster
-            (run once against any node):
+            Use this Ansible playbook to stage the change in a working copy and
+            activate it in one step (run once against any node).
+
+            **Quorum-loss warning:** This task overwrites the live
+            `/etc/pve/corosync.conf` on a running cluster, which can drop quorum
+            if the result is invalid. Run it only against a healthy, quorate
+            cluster, and after the run confirm each node with
+            `corosync-cfgtool -s`. The playbook saves a backup at
+            `/root/corosync.conf.bak` so you can roll back with
+            `cp /root/corosync.conf.bak /etc/pve/corosync.conf` if a node fails
+            to rejoin:
 
             ```yaml
             ---
@@ -3070,34 +3321,53 @@ queries:
               become: true
 
               tasks:
-                - name: Read current corosync config_version
-                  ansible.builtin.shell: awk '/^\s*config_version:/ {print $2}' /etc/pve/corosync.conf
+                - name: Back up the live corosync.conf for rollback
+                  ansible.builtin.copy:
+                    src: /etc/pve/corosync.conf
+                    dest: /root/corosync.conf.bak
+                    remote_src: true
+
+                - name: Stage a working copy of corosync.conf
+                  ansible.builtin.copy:
+                    src: /etc/pve/corosync.conf
+                    dest: /root/corosync.conf.new
+                    remote_src: true
+
+                - name: Read current config_version
+                  ansible.builtin.shell: awk '/^\s*config_version:/ {print $2}' /root/corosync.conf.new
                   register: config_version
                   changed_when: false
 
-                - name: Set encrypted knet transport
-                  ansible.builtin.replace:
-                    path: /etc/pve/corosync.conf
-                    regexp: '^\s*transport:.*$'
-                    replace: '  transport: knet'
-
-                - name: Set crypto cipher
+                - name: Set encrypted knet transport in the working copy
                   ansible.builtin.lineinfile:
-                    path: /etc/pve/corosync.conf
-                    insertafter: '^\s*transport:'
+                    path: /root/corosync.conf.new
+                    regexp: '^\s*transport:'
+                    line: '  transport: knet'
+                    insertafter: 'totem \{'
+
+                - name: Set crypto cipher in the working copy
+                  ansible.builtin.lineinfile:
+                    path: /root/corosync.conf.new
+                    regexp: '^\s*crypto_cipher:'
                     line: '  crypto_cipher: aes256'
+                    insertafter: '^\s*transport:'
 
-                - name: Set crypto hash
+                - name: Set crypto hash in the working copy
                   ansible.builtin.lineinfile:
-                    path: /etc/pve/corosync.conf
-                    insertafter: '^\s*crypto_cipher:'
+                    path: /root/corosync.conf.new
+                    regexp: '^\s*crypto_hash:'
                     line: '  crypto_hash: sha256'
+                    insertafter: '^\s*crypto_cipher:'
 
-                - name: Bump config_version so corosync reloads
+                - name: Bump config_version in the working copy
                   ansible.builtin.replace:
-                    path: /etc/pve/corosync.conf
+                    path: /root/corosync.conf.new
                     regexp: '^(\s*config_version:\s*).*$'
                     replace: '\g<1>{{ (config_version.stdout | int) + 1 }}'
+
+                - name: Activate the new configuration in one step
+                  ansible.builtin.command: cp /root/corosync.conf.new /etc/pve/corosync.conf
+                  changed_when: true
             ```
 
   - uid: mondoo-proxmox-security-migration-is-encrypted
@@ -3267,16 +3537,21 @@ queries:
           desc: |
             **Using the CLI**
 
-            Tag a VM or container interface with a VLAN ID. Replace `<id>`,
-            `<netN>` and `<vlan>` with real values:
+            Read the current interface definition first, then re-set it with
+            all existing values kept and `tag=<vlan>` appended. Reusing the
+            existing MAC address is essential, because a new MAC disrupts the
+            guest's network configuration:
 
             ```bash
-            qm set <vmid> -<netN> virtio=...,bridge=vmbr0,firewall=1,tag=<vlan>
-            pct set <ctid> -<netN> name=eth0,bridge=vmbr0,firewall=1,tag=<vlan>
+            qm config <vmid> | grep '^net'
+            qm set <vmid> --net0 virtio=<current-mac>,bridge=vmbr0,firewall=1,tag=<vlan>
+
+            pct config <ctid> | grep '^net'
+            pct set <ctid> --net0 name=eth0,bridge=vmbr0,hwaddr=<current-mac>,firewall=1,tag=<vlan>
             ```
 
-            Make sure the underlying bridge (`vmbr0`) is configured as
-            VLAN-aware in `/etc/network/interfaces`.
+            Make sure the underlying bridge is configured as VLAN-aware in
+            `/etc/network/interfaces`.
         - id: bash
           desc: |
             **Using a Bash Script**
@@ -3313,9 +3588,10 @@ queries:
           desc: |
             **Using Ansible**
 
-            Use this Ansible playbook to tag a specific guest interface with a
-            VLAN. The playbook is illustrative - apply it per workload with the
-            VLAN ID that matches your network design:
+            Use this Ansible playbook to append a VLAN tag to a specific guest
+            interface while keeping every existing setting, including the MAC
+            address. Apply it per workload with the VLAN ID that matches your
+            network design:
 
             ```yaml
             ---
@@ -3325,15 +3601,17 @@ queries:
               vars:
                 vmid: 100
                 interface: net0
-                bridge: vmbr0
-                model: virtio
                 vlan_tag: 20
 
               tasks:
-                - name: Tag VM interface with VLAN
-                  ansible.builtin.command: >-
-                    qm set {{ vmid }} -{{ interface }}
-                    {{ model }}=,bridge={{ bridge }},firewall=1,tag={{ vlan_tag }}
+                - name: Append the VLAN tag to the existing interface settings
+                  ansible.builtin.shell: |
+                    set -e
+                    spec=$(qm config {{ vmid }} | awk -F': ' '/^{{ interface }}:/ {print $2}')
+                    case "$spec" in
+                      *tag=*) exit 0 ;;
+                    esac
+                    qm set {{ vmid }} --{{ interface }} "$spec,tag={{ vlan_tag }}"
                   changed_when: true
             ```
 
@@ -3403,48 +3681,46 @@ queries:
           desc: |
             **Using the CLI**
 
-            Generate an encryption key and attach it to a PBS storage entry:
+            Let Proxmox generate and attach a client-side encryption key for
+            the PBS storage. The key is created without a passphrase, which is
+            required for unattended backups, and stored at
+            `/etc/pve/priv/storage/<storage>.enc`:
 
             ```bash
-            proxmox-backup-client key create /etc/pve/priv/storage/<storage>.enc
-
-            pvesm set <storage> --encryption-key /etc/pve/priv/storage/<storage>.enc
+            pvesm set <storage> --encryption-key autogen
             ```
 
-            Back up `/etc/pve/priv/storage/<storage>.enc` somewhere safe -
-            without the key, existing backups are unrecoverable.
+            Back up the generated key file somewhere safe. Without the key,
+            existing backups are unrecoverable.
         - id: bash
           desc: |
             **Using a Bash Script**
 
             Generate and attach an encryption key for every PBS storage that
-            does not have one. Prompts for a passphrase per key:
+            does not have one:
 
             ```bash
             #!/bin/bash
             set -e
 
-            mkdir -p /etc/pve/priv/storage
-
-            for storage in $(awk '/^pbs:/ {print $2}' /etc/pve/storage.cfg); do
+            while IFS= read -r storage; do
               key="/etc/pve/priv/storage/${storage}.enc"
               if [ -s "$key" ]; then
                 echo "$storage already has an encryption key at $key"
                 continue
               fi
+              echo "Generating encryption key for storage $storage"
+              pvesm set "$storage" --encryption-key autogen
+            done < <(awk '/^pbs:/ {print $2}' /etc/pve/storage.cfg)
 
-              echo "Creating encryption key for storage $storage"
-              proxmox-backup-client key create "$key"
-              pvesm set "$storage" --encryption-key "$key"
-            done
+            echo "Back up every key under /etc/pve/priv/storage/ offline; without a key its backups are unrecoverable."
             ```
         - id: ansible
           desc: |
             **Using Ansible**
 
             Use this Ansible playbook to ensure every PBS storage has an
-            encryption key. Reads the list of PBS storages from
-            `/etc/pve/storage.cfg` and creates a key per entry that is missing:
+            encryption key generated by Proxmox itself:
 
             ```yaml
             ---
@@ -3458,13 +3734,12 @@ queries:
                   register: pbs_storages
                   changed_when: false
 
-                - name: Create encryption key per storage when missing
+                - name: Generate an encryption key per storage when missing
                   ansible.builtin.shell: |
                     set -e
                     key=/etc/pve/priv/storage/{{ item }}.enc
                     if [ ! -s "$key" ]; then
-                      proxmox-backup-client key create "$key"
-                      pvesm set {{ item }} --encryption-key "$key"
+                      pvesm set {{ item }} --encryption-key autogen
                     fi
                   loop: "{{ pbs_storages.stdout_lines }}"
             ```
@@ -3526,53 +3801,65 @@ queries:
           desc: |
             **Using the CLI**
 
-            Create a master key pair and attach it:
+            Create a master key pair and attach the public half. The key files
+            are written to the current directory.
+
+            The `proxmox-backup-client` command is not installed on a base PVE
+            node. Install it first with
+            `apt-get update && apt-get install -y proxmox-backup-client`, or
+            create the master key on the PBS host and copy only the public half
+            to the PVE node:
 
             ```bash
+            cd /root || exit
             proxmox-backup-client key create-master-key
-
-            cp ~/master-public.pem /etc/pve/priv/storage/<storage>.master.pem
-            pvesm set <storage> --master-pubkey /etc/pve/priv/storage/<storage>.master.pem
+            pvesm set <storage> --master-pubkey /root/master-public.pem
             ```
+
+            Move `/root/master-private.pem` to offline storage and then delete
+            it from the node. It is required to recover encrypted backups.
         - id: bash
           desc: |
             **Using a Bash Script**
 
-            Generate the master key pair and install the public half on every
-            PBS storage that lacks one:
+            Generate the master key pair once and install the public half on
+            every PBS storage that lacks one. The private key is kept on disk
+            until the operator moves it offline:
 
             ```bash
             #!/bin/bash
             set -e
 
-            tmp=$(mktemp -d)
-            trap 'rm -rf "$tmp"' EXIT
+            keydir=/root/pbs-master-key
+            mkdir -p "$keydir"
+            chmod 0700 "$keydir"
 
-            (cd "$tmp" && proxmox-backup-client key create-master-key)
+            if [ ! -s "$keydir/master-public.pem" ]; then
+              (cd "$keydir" && proxmox-backup-client key create-master-key)
+            fi
 
-            mkdir -p /etc/pve/priv/storage
-
-            for storage in $(awk '/^pbs:/ {print $2}' /etc/pve/storage.cfg); do
+            while IFS= read -r storage; do
               dest="/etc/pve/priv/storage/${storage}.master.pem"
               if [ -s "$dest" ]; then
                 echo "$storage already has a master pubkey at $dest"
                 continue
               fi
-              cp "$tmp/master-public.pem" "$dest"
-              pvesm set "$storage" --master-pubkey "$dest"
+              pvesm set "$storage" --master-pubkey "$keydir/master-public.pem"
               echo "Installed master pubkey for $storage"
-            done
+            done < <(awk '/^pbs:/ {print $2}' /etc/pve/storage.cfg)
 
             echo
-            echo "Move $tmp/master-private.pem to offline storage NOW; it is required to recover encrypted backups."
+            echo "Move $keydir/master-private.pem to offline storage and then delete it from this node."
             ```
         - id: ansible
           desc: |
             **Using Ansible**
 
-            Use this Ansible playbook to install a previously generated master
-            public key on every PBS storage. The corresponding private key
-            must already live offline; it is never created by Ansible:
+            Use this Ansible playbook to register a previously generated master
+            public key with every PBS storage. The corresponding private key
+            must already live offline; it is never created by Ansible. The
+            `pvesm` command writes the key into `/etc/pve/priv/storage/` with
+            the correct ownership itself:
 
             ```yaml
             ---
@@ -3588,18 +3875,9 @@ queries:
                   register: pbs_storages
                   changed_when: false
 
-                - name: Copy master public key into each storage slot
-                  ansible.builtin.copy:
-                    src: "{{ master_pubkey_path }}"
-                    dest: "/etc/pve/priv/storage/{{ item }}.master.pem"
-                    owner: root
-                    group: root
-                    mode: '0600'
-                  loop: "{{ pbs_storages.stdout_lines }}"
-
-                - name: Register master public key with PBS storage
+                - name: Register master public key with each PBS storage
                   ansible.builtin.command: >-
-                    pvesm set {{ item }} --master-pubkey /etc/pve/priv/storage/{{ item }}.master.pem
+                    pvesm set {{ item }} --master-pubkey {{ master_pubkey_path }}
                   loop: "{{ pbs_storages.stdout_lines }}"
                   changed_when: true
             ```
@@ -3662,25 +3940,31 @@ queries:
           desc: |
             **Using the CLI**
 
-            Stop KSM immediately and prevent the tuner from re-enabling it on
-            boot:
+            Stop the KSM services so they cannot re-enable merging, unmerge
+            all currently shared pages, and leave KSM stopped.
+
+            On most Proxmox installs only `ksmtuned.service` exists; a bare
+            `ksm.service` may be absent, so the `systemctl` calls below tolerate
+            a missing unit with `2>/dev/null || true`. The authoritative control
+            is writing to `/sys/kernel/mm/ksm/run`: writing `2` unmerges already
+            shared pages, and `0` leaves KSM stopped:
 
             ```bash
+            systemctl stop ksmtuned ksm 2>/dev/null || true
+            systemctl disable ksmtuned ksm 2>/dev/null || true
+            echo 2 > /sys/kernel/mm/ksm/run
             echo 0 > /sys/kernel/mm/ksm/run
-            systemctl stop ksmtuned ksm
-            systemctl disable ksmtuned ksm
             ```
         - id: bash
           desc: |
             **Using a Bash Script**
 
-            Disable KSM at runtime and on boot. The script is idempotent:
+            Disable KSM at runtime and on boot, including unmerging pages that
+            are already shared. The script is idempotent:
 
             ```bash
             #!/bin/bash
             set -e
-
-            echo 0 > /sys/kernel/mm/ksm/run
 
             for unit in ksmtuned ksm; do
               if systemctl list-unit-files | awk '{print $1}' | grep -qx "${unit}.service"; then
@@ -3689,13 +3973,17 @@ queries:
               fi
             done
 
+            echo 2 > /sys/kernel/mm/ksm/run
+            echo 0 > /sys/kernel/mm/ksm/run
+
             cat /sys/kernel/mm/ksm/run
             ```
         - id: ansible
           desc: |
             **Using Ansible**
 
-            Use this Ansible playbook to stop and disable KSM:
+            Use this Ansible playbook to stop and disable KSM and unmerge
+            already-shared pages:
 
             ```yaml
             ---
@@ -3704,12 +3992,6 @@ queries:
               become: true
 
               tasks:
-                - name: Write 0 to /sys/kernel/mm/ksm/run (sysfs pseudo-file)
-                  ansible.builtin.copy:
-                    dest: /sys/kernel/mm/ksm/run
-                    content: "0\n"
-                    unsafe_writes: true
-
                 - name: Stop and disable KSM systemd units
                   ansible.builtin.systemd:
                     name: "{{ item }}"
@@ -3719,6 +4001,13 @@ queries:
                     - ksmtuned
                     - ksm
                   failed_when: false
+
+                - name: Unmerge shared pages and stop KSM
+                  ansible.builtin.shell: |
+                    set -e
+                    echo 2 > /sys/kernel/mm/ksm/run
+                    echo 0 > /sys/kernel/mm/ksm/run
+                  changed_when: true
             ```
 
   - uid: mondoo-proxmox-security-no-pci-acs-override
@@ -3904,12 +4193,20 @@ queries:
             **Using the CLI**
 
             Add the appropriate IOMMU flag to the kernel command line. For an
-            Intel system:
+            Intel system booting with GRUB:
 
             ```bash
             sed -i -E 's|^(GRUB_CMDLINE_LINUX_DEFAULT=")(.*)"$|\1\2 intel_iommu=on iommu=pt"|' /etc/default/grub
             update-grub
-            command -v proxmox-boot-tool >/dev/null && proxmox-boot-tool refresh
+            echo 'Reboot required for the change to take effect.'
+            ```
+
+            For an Intel system booting with systemd-boot, which Proxmox uses
+            for ZFS root on UEFI, the arguments live in `/etc/kernel/cmdline`:
+
+            ```bash
+            sed -i 's|$| intel_iommu=on iommu=pt|' /etc/kernel/cmdline
+            proxmox-boot-tool refresh
             echo 'Reboot required for the change to take effect.'
             ```
 
@@ -3918,8 +4215,8 @@ queries:
           desc: |
             **Using a Bash Script**
 
-            Detect CPU vendor, append the right flag if absent, and refresh
-            the boot loader:
+            Detect the CPU vendor, append the right flag to both possible boot
+            configurations, and refresh the boot loader:
 
             ```bash
             #!/bin/bash
@@ -3932,24 +4229,30 @@ queries:
               *) echo "Unknown CPU vendor: $vendor" >&2; exit 1;;
             esac
 
-            if grep -qE 'GRUB_CMDLINE_LINUX_DEFAULT=.*('"intel_iommu=on|amd_iommu=on"')' /etc/default/grub; then
-              echo "IOMMU already configured in /etc/default/grub"
-              exit 0
+            changed=0
+
+            if [ -f /etc/default/grub ] && ! grep -qE 'intel_iommu=on|amd_iommu=on' /etc/default/grub; then
+              sed -i -E "s|^(GRUB_CMDLINE_LINUX_DEFAULT=\")(.*)\"$|\\1\\2 ${flag}\"|" /etc/default/grub
+              changed=1
             fi
 
-            sed -i -E "s|^(GRUB_CMDLINE_LINUX_DEFAULT=\")(.*)\"$|\\1\\2 ${flag}\"|" /etc/default/grub
+            if [ -f /etc/kernel/cmdline ] && ! grep -qE 'intel_iommu=on|amd_iommu=on' /etc/kernel/cmdline; then
+              sed -i "s|\$| ${flag}|" /etc/kernel/cmdline
+              changed=1
+            fi
 
-            if command -v update-grub >/dev/null; then update-grub; fi
-            if command -v proxmox-boot-tool >/dev/null; then proxmox-boot-tool refresh; fi
-
-            echo "Reboot required for IOMMU change to take effect."
+            if [ "$changed" -eq 1 ]; then
+              if command -v update-grub >/dev/null; then update-grub; fi
+              if command -v proxmox-boot-tool >/dev/null; then proxmox-boot-tool refresh; fi
+              echo "Reboot required for IOMMU change to take effect."
+            fi
             ```
         - id: ansible
           desc: |
             **Using Ansible**
 
-            Use this Ansible playbook to add the right IOMMU flag based on CPU
-            vendor:
+            Use this Ansible playbook to add the right IOMMU flag to both GRUB
+            and systemd-boot configurations based on CPU vendor:
 
             ```yaml
             ---
@@ -3959,7 +4262,8 @@ queries:
 
               tasks:
                 - name: Determine CPU vendor
-                  ansible.builtin.shell: awk -F: '/vendor_id/ {print $2; exit}' /proc/cpuinfo | tr -d ' '
+                  ansible.builtin.shell: |
+                    awk -F: '/vendor_id/ {print $2; exit}' /proc/cpuinfo | tr -d ' '
                   register: cpu_vendor
                   changed_when: false
 
@@ -3975,13 +4279,22 @@ queries:
                     regexp: '^(GRUB_CMDLINE_LINUX_DEFAULT="(?:(?!{{ iommu_flag }}).)*)"$'
                     replace: '\1 {{ iommu_flag }}"'
                   register: grub_change
+                  failed_when: false
 
-                - name: Refresh boot loader if grub changed
+                - name: Add IOMMU flag to /etc/kernel/cmdline for systemd-boot
+                  ansible.builtin.replace:
+                    path: /etc/kernel/cmdline
+                    regexp: '^((?:(?!{{ iommu_flag }}).)*)$'
+                    replace: '\1 {{ iommu_flag }}'
+                  register: cmdline_change
+                  failed_when: false
+
+                - name: Refresh boot loader if anything changed
                   ansible.builtin.shell: |
                     set -e
                     if command -v update-grub >/dev/null; then update-grub; fi
                     if command -v proxmox-boot-tool >/dev/null; then proxmox-boot-tool refresh; fi
-                  when: grub_change.changed
+                  when: (grub_change.changed | default(false)) or (cmdline_change.changed | default(false))
             ```
 
   - uid: mondoo-proxmox-security-auditd-watches-pve-directory
@@ -4124,7 +4437,9 @@ queries:
       compliance/vda-isa-5: vda-isa-5-5-2-5
     mql: |
       file("/etc/apt/sources.list.d/pve-enterprise.list").exists ||
-      file("/etc/apt/sources.list.d/pve-no-subscription.list").exists
+      file("/etc/apt/sources.list.d/pve-no-subscription.list").exists ||
+      file("/etc/apt/sources.list.d/pve-enterprise.sources").exists ||
+      file("/etc/apt/sources.list.d/proxmox.sources").exists
     docs:
       desc: |
         This check ensures that the node has a Proxmox VE apt source configured so that security updates for PVE packages can be installed. Without a PVE-specific repository the host cannot receive fixes for the hypervisor stack, and the enterprise repository is used with an active subscription while the no-subscription repository is used otherwise.
@@ -4154,27 +4469,46 @@ queries:
           desc: |
             **Using the CLI**
 
-            Configure either the enterprise (preferred) or the no-subscription
-            repository:
+            Configure either the enterprise repository, which requires a
+            subscription, or the no-subscription repository. On Proxmox VE 8
+            use the one-line list format:
 
             ```bash
-            # Enterprise (requires subscription):
-            cat > /etc/apt/sources.list.d/pve-enterprise.list <<EOF
-            deb https://enterprise.proxmox.com/debian/pve $(lsb_release -cs) pve-enterprise
-            EOF
+            codename=$(awk -F= '$1 == "VERSION_CODENAME" {print $2}' /etc/os-release)
 
-            # No-subscription (community):
             cat > /etc/apt/sources.list.d/pve-no-subscription.list <<EOF
-            deb http://download.proxmox.com/debian/pve $(lsb_release -cs) pve-no-subscription
+            deb http://download.proxmox.com/debian/pve $codename pve-no-subscription
             EOF
 
             apt-get update
             ```
+
+            On Proxmox VE 9 and later use the deb822 format:
+
+            ```bash
+            codename=$(awk -F= '$1 == "VERSION_CODENAME" {print $2}' /etc/os-release)
+
+            cat > /etc/apt/sources.list.d/proxmox.sources <<EOF
+            Types: deb
+            URIs: http://download.proxmox.com/debian/pve
+            Suites: $codename
+            Components: pve-no-subscription
+            Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
+            EOF
+
+            apt-get update
+            ```
+
+            For the enterprise repository, use
+            `https://enterprise.proxmox.com/debian/pve` with component
+            `pve-enterprise` and the file name `pve-enterprise.list` or
+            `pve-enterprise.sources` respectively.
         - id: bash
           desc: |
             **Using a Bash Script**
 
-            Add a repository if none is present. Pass `enterprise` or
+            Add a repository if none is present, choosing the format that
+            matches the installed release. Pass `enterprise` or
             `no-subscription` as the first argument:
 
             ```bash
@@ -4182,29 +4516,42 @@ queries:
             set -e
 
             mode=${1:-no-subscription}
-            codename=$(lsb_release -cs)
+            codename=$(awk -F= '$1 == "VERSION_CODENAME" {print $2}' /etc/os-release)
 
-            if [ -f /etc/apt/sources.list.d/pve-enterprise.list ] || [ -f /etc/apt/sources.list.d/pve-no-subscription.list ]; then
+            if compgen -G '/etc/apt/sources.list.d/pve-*' >/dev/null || [ -f /etc/apt/sources.list.d/proxmox.sources ]; then
               echo "A PVE repository is already configured."
               exit 0
             fi
 
-            case "$mode" in
-              enterprise)
+            if [ "$codename" = bookworm ]; then
+              if [ "$mode" = enterprise ]; then
                 cat > /etc/apt/sources.list.d/pve-enterprise.list <<EOF
             deb https://enterprise.proxmox.com/debian/pve $codename pve-enterprise
             EOF
-                ;;
-              no-subscription)
+              else
                 cat > /etc/apt/sources.list.d/pve-no-subscription.list <<EOF
             deb http://download.proxmox.com/debian/pve $codename pve-no-subscription
             EOF
-                ;;
-              *)
-                echo "Unknown mode: $mode" >&2
-                exit 1
-                ;;
-            esac
+              fi
+            else
+              if [ "$mode" = enterprise ]; then
+                cat > /etc/apt/sources.list.d/pve-enterprise.sources <<EOF
+            Types: deb
+            URIs: https://enterprise.proxmox.com/debian/pve
+            Suites: $codename
+            Components: pve-enterprise
+            Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
+            EOF
+              else
+                cat > /etc/apt/sources.list.d/proxmox.sources <<EOF
+            Types: deb
+            URIs: http://download.proxmox.com/debian/pve
+            Suites: $codename
+            Components: pve-no-subscription
+            Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
+            EOF
+              fi
+            fi
 
             apt-get update
             ```
@@ -4212,47 +4559,54 @@ queries:
           desc: |
             **Using Ansible**
 
-            Use this Ansible playbook to install the no-subscription repo when
-            no PVE repo is present:
+            Use this Ansible playbook to install the no-subscription repository
+            when no PVE repository is present, in the format matching the
+            installed release:
 
             ```yaml
             ---
             - name: Ensure a Proxmox VE apt repository is configured
               hosts: proxmox
               become: true
-              vars:
-                pve_repo_mode: no-subscription   # or enterprise
 
               tasks:
-                - name: Detect existing PVE repo
-                  ansible.builtin.stat:
-                    path: "/etc/apt/sources.list.d/pve-{{ pve_repo_mode }}.list"
-                  register: repo_file
-
                 - name: Get Debian codename
-                  ansible.builtin.command: lsb_release -cs
+                  ansible.builtin.shell: awk -F= '$1 == "VERSION_CODENAME" {print $2}' /etc/os-release
                   register: codename
                   changed_when: false
 
-                - name: Write enterprise repo
-                  ansible.builtin.copy:
-                    dest: /etc/apt/sources.list.d/pve-enterprise.list
-                    mode: '0644'
-                    content: |
-                      deb https://enterprise.proxmox.com/debian/pve {{ codename.stdout }} pve-enterprise
-                  when:
-                    - pve_repo_mode == 'enterprise'
-                    - not repo_file.stat.exists
+                - name: Detect existing PVE repository files
+                  ansible.builtin.find:
+                    paths: /etc/apt/sources.list.d
+                    patterns:
+                      - "pve-*.list"
+                      - "pve-*.sources"
+                      - "proxmox.sources"
+                  register: repo_files
 
-                - name: Write no-subscription repo
+                - name: Write one-line repo on Proxmox VE 8
                   ansible.builtin.copy:
                     dest: /etc/apt/sources.list.d/pve-no-subscription.list
                     mode: '0644'
                     content: |
                       deb http://download.proxmox.com/debian/pve {{ codename.stdout }} pve-no-subscription
                   when:
-                    - pve_repo_mode == 'no-subscription'
-                    - not repo_file.stat.exists
+                    - repo_files.matched == 0
+                    - codename.stdout == 'bookworm'
+
+                - name: Write deb822 repo on Proxmox VE 9 and later
+                  ansible.builtin.copy:
+                    dest: /etc/apt/sources.list.d/proxmox.sources
+                    mode: '0644'
+                    content: |
+                      Types: deb
+                      URIs: http://download.proxmox.com/debian/pve
+                      Suites: {{ codename.stdout }}
+                      Components: pve-no-subscription
+                      Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
+                  when:
+                    - repo_files.matched == 0
+                    - codename.stdout != 'bookworm'
 
                 - name: Refresh apt cache
                   ansible.builtin.apt:
@@ -4407,8 +4761,7 @@ queries:
       - title: CVE-2022-23222 eBPF privilege escalation
         url: https://nvd.nist.gov/vuln/detail/CVE-2022-23222
     mql: |
-      kernel.parameters["kernel.unprivileged_bpf_disabled"] == 1 ||
-      kernel.parameters["kernel.unprivileged_bpf_disabled"] == 2
+      kernel.parameters["kernel.unprivileged_bpf_disabled"].inRange(1, 2)
     docs:
       desc: |
         This check ensures that the kernel is configured to disable BPF for unprivileged users by setting `kernel.unprivileged_bpf_disabled` to `1` or `2`. Unprivileged BPF has been a recurring source of privilege-escalation flaws, and a value of `2` also makes the setting itself immutable until reboot.
@@ -4887,7 +5240,10 @@ queries:
       compliance/soc2-2017: soc2-control-cc7-1-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
     mql: |
-      kernel.parameters["kernel.unprivileged_userns_clone"] != null
+      files.find(from: "/etc/sysctl.d", regex: ".conf$", type: "file").list.any(
+        file(_.path).content.lines.any(_ == /^\s*kernel\.unprivileged_userns_clone\s*=/)
+      ) ||
+      file("/etc/sysctl.conf").content.lines.any(_ == /^\s*kernel\.unprivileged_userns_clone\s*=/)
     docs:
       desc: |
         This check ensures that the policy decision around `kernel.unprivileged_userns_clone` is made explicit and persisted on the node. The value should be set to `1` when unprivileged LXC containers must create user namespaces, which is the Proxmox default, or `0` to disable user namespaces entirely, and persisting it stops the setting from silently changing.
@@ -4918,7 +5274,16 @@ queries:
             **Using the CLI**
 
             Persist either `1` (allow unprivileged user namespaces) or `0`
-            (disallow). The Proxmox default for unprivileged LXC is `1`:
+            (disallow). The Proxmox default for unprivileged LXC is `1`.
+
+            **Verify the key exists on your Proxmox kernel first.**
+            `kernel.unprivileged_userns_clone` is a Debian downstream knob, and
+            some Proxmox kernels do not expose it. Check with
+            `sysctl kernel.unprivileged_userns_clone` before relying on it; if
+            it reports an error, the key is absent on this kernel and the
+            runtime `sysctl -w` line will fail. On those kernels user namespaces
+            are governed by `user.max_user_namespaces` instead, so confirm which
+            knob your kernel honors:
 
             ```bash
             sysctl -w kernel.unprivileged_userns_clone=1
@@ -5223,8 +5588,7 @@ queries:
       - title: CWE-916 Use of Password Hash With Insufficient Computational Effort
         url: https://cwe.mitre.org/data/definitions/916.html
     mql: |
-      logindefs.params["ENCRYPT_METHOD"].trim == "SHA512" ||
-      logindefs.params["ENCRYPT_METHOD"].trim == "YESCRYPT"
+      logindefs.params["ENCRYPT_METHOD"].trim.in(["SHA512", "YESCRYPT"])
     docs:
       desc: |
         This check ensures that `/etc/login.defs` is configured with an `ENCRYPT_METHOD` of `SHA512` or `YESCRYPT` so that new password hashes use a strong algorithm. This setting controls the algorithm used by `passwd` and `chpasswd`, and weaker choices such as DES or MD5 must not be used. Existing hashes are not rewritten until each user changes their password.

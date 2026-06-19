@@ -1,0 +1,40 @@
+name: Grafana Release Annotation
+
+# Emit an org-level Grafana annotation whenever a cnspec GitHub release is
+# published, so releases show up on any dashboard via a tag-filtered annotation
+# query (tags: release, cnspec).
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to annotate (manual test only)"
+        required: false
+        default: "test"
+
+permissions:
+  contents: read
+
+jobs:
+  annotate:
+    name: Annotate Grafana
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create org-level Grafana annotation
+        # Non-blocking: a Grafana failure must never fail the release, but we
+        # still want the step to go red so a broken token/URL is visible.
+        continue-on-error: true
+        env:
+          GRAFANA_URL: ${{ secrets.GRAFANA_URL }}
+          GRAFANA_API_TOKEN: ${{ secrets.GRAFANA_API_TOKEN }}
+          VERSION: ${{ github.event.release.tag_name || inputs.version }}
+        run: |
+          # Build JSON with jq so an unusual VERSION can't break the payload
+          # (ubuntu-latest ships jq).
+          payload=$(jq -nc --arg v "$VERSION" '{text: "cnspec \($v) released", tags: ["release","cnspec"]}')
+          curl -sS --fail -X POST "${GRAFANA_URL%/}/api/annotations" \
+            -H "Authorization: Bearer ${GRAFANA_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "$payload" \
+            || { echo "::warning::Failed to create Grafana annotation"; exit 1; }

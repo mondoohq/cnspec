@@ -358,14 +358,14 @@ func AdjustRiskScore(score *Score, sortedRisks ...[]*ScoredRiskInfo) {
 func mergeSorted[T any](cmp func(i, j T) int, ts ...[]T) iter.Seq[T] {
 	cursors := make([]int, len(ts))
 	scratch := make([]T, len(ts))
-	scrachIdx := make([]int, len(ts))
+	scratchIdx := make([]int, len(ts))
 	return func(yield func(T) bool) {
 		for {
 			s := 0
 			for i := range ts {
 				if cursors[i] < len(ts[i]) {
 					scratch[s] = ts[i][cursors[i]]
-					scrachIdx[s] = i
+					scratchIdx[s] = i
 					s++
 				}
 			}
@@ -374,7 +374,7 @@ func mergeSorted[T any](cmp func(i, j T) int, ts ...[]T) iter.Seq[T] {
 			}
 
 			min := minF(scratch[:s], cmp)
-			cursors[scrachIdx[min]]++
+			cursors[scratchIdx[min]]++
 			if !yield(scratch[min]) {
 				return
 			}

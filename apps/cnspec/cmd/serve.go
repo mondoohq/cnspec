@@ -154,7 +154,7 @@ var serveCmd = &cobra.Command{
 				}
 			}
 			// TODO: check in every 5 min via timer, init time in Background job
-			result, err := RunScan(scanConf, scan.DisableProgressBar(), scan.WithReportType(scan.ReportType_ERROR))
+			result, err := RunScan(ctx, scanConf, scan.DisableProgressBar(), scan.WithReportType(scan.ReportType_ERROR), scan.WithScanSource(scan.ScanSourceService))
 			if err != nil {
 				return cli_errors.NewCommandError(errors.Wrap(err, "could not successfully complete scan"), 1)
 			}

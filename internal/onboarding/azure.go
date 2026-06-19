@@ -227,10 +227,10 @@ func generateAllSubscriptionsBlocks(integration AzureIntegration, resourceADServ
 	resources = append(resources, dataRMAllSubscriptions)
 	dependsOn = append(dependsOn, dataRMAllSubscriptions.TraverseRef())
 
-	// Filter only active subscriptions
+	// Filter only active subscriptions, excluding developer sandbox subscriptions.
 	varActiveSubscriptions := tfgen.NewLocal("active_subscriptions",
 		tfgen.CreateSimpleTraversal(
-			`[for sub in `+dataRMAllSubscriptions.TraverseRefString("subscriptions")+` : sub if sub.state == "Enabled" ]`,
+			`[for sub in `+dataRMAllSubscriptions.TraverseRefString("subscriptions")+` : sub if sub.state == "Enabled" && !startswith(coalesce(sub.quota_id, "none"), "MSDN") && !startswith(coalesce(sub.quota_id, "none"), "MPN") ]`,
 		),
 	)
 	resources = append(resources, varActiveSubscriptions)
@@ -368,6 +368,7 @@ var assetPrintableKeys = []string{"name", "subscription-id"}
 func (a AzAccount) PrintableKeys() []string {
 	return assetPrintableKeys
 }
+
 func (a AzAccount) PrintableValue(index int) string {
 	switch assetPrintableKeys[index] {
 	case "name":
@@ -391,7 +392,7 @@ func (az AzAccount) Display() string {
 }
 
 func generateAzureIntegrationName(subscription string) string {
-	var subsSplit = strings.Split(subscription, "-")
+	subsSplit := strings.Split(subscription, "-")
 	return "subscription-" + subsSplit[len(subsSplit)-1]
 }
 
@@ -405,7 +406,7 @@ func generateAzureIntegrationName(subscription string) string {
 // Azure SDK which will make the binary much bigger, which is unnecessary for the amount
 // of checks we are running today.
 func VerifyUserRoleAssignments() error {
-	var BuiltInRoles = map[string]string{
+	BuiltInRoles := map[string]string{
 		"Privileged Role Administrator": "e8611ab8-c189-46e8-94e1-60213ab1f814",
 		"Global Administrator":          "62e90394-69f5-4237-9190-012177145e10",
 	}

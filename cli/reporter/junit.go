@@ -60,9 +60,9 @@ func ConvertToJunit(r *policy.ReportCollection, out iox.OutputHelper) error {
 			ts := assetPolicyTests(r, assetMrn, assetObj, queries)
 			suites.Suites = append(suites.Suites, ts)
 
-			vulernabilityTests := assetMvdTests(r, assetMrn, assetObj)
-			if vulernabilityTests != nil {
-				suites.Suites = append(suites.Suites, *vulernabilityTests)
+			vulnerabilityTests := assetMvdTests(r, assetMrn, assetObj)
+			if vulnerabilityTests != nil {
+				suites.Suites = append(suites.Suites, *vulnerabilityTests)
 			}
 		}
 	}
