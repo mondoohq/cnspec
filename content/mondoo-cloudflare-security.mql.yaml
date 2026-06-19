@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-cloudflare-security
     name: Mondoo Cloudflare Security
-    version: 1.1.1
+    version: 1.1.2
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -136,29 +136,35 @@ queries:
 
             1. Log in and select the affected zone.
             2. Navigate to **SSL/TLS** > **Overview**.
-            3. Set the encryption mode to at least "Flexible", though "Full" or "Full (Strict)" is strongly recommended.
-            4. Verify that your origin server supports HTTPS if using "Full" or "Full (Strict)" mode.
+            3. Set the encryption mode to **Full (Strict)**. This is the only mode that encrypts and authenticates both the visitor-to-Cloudflare and the Cloudflare-to-origin hops, matching the target enforced by the `ssl-strict` check.
+            4. If your origin does not yet have a valid certificate, set the mode to **Full** as an interim step while you install an origin certificate, then move to **Full (Strict)**.
+
+            Avoid the **Flexible** mode. It leaves the Cloudflare-to-origin hop in plaintext, so an on-path attacker at the origin can read and modify traffic even though visitors see HTTPS. Cloudflare has deprecated Flexible for new zones.
         - id: cli
           desc: |
-            To fix this on the command line using the Cloudflare API, set the `ssl` zone setting to `full` (or `strict` if your origin has a valid certificate):
+            To fix this on the command line using the Cloudflare API, set the `ssl` zone setting to `strict`, which corresponds to Full (Strict) mode. This is the target end state and matches the `ssl-strict` check.
 
             ```bash
             curl -X PATCH "https://api.cloudflare.com/client/v4/zones/<zone-id>/settings/ssl" \
               -H "Authorization: Bearer <api-token>" \
               -H "Content-Type: application/json" \
-              --data '{"value":"full"}'
+              --data '{"value":"strict"}'
             ```
+
+            If your origin does not yet have a valid certificate, set `value` to `full` as an interim step while you install an origin certificate, then switch to `strict`. Do not use `flexible`: it leaves the Cloudflare-to-origin hop in plaintext and is deprecated by Cloudflare for new zones.
         - id: terraform
           desc: |
-            To enable SSL/TLS encryption with Terraform, manage the zone's `ssl` setting with the `cloudflare_zone_setting` resource and set `value` to `full` (or `strict` if your origin has a valid certificate):
+            To enable SSL/TLS encryption with Terraform, manage the zone's `ssl` setting with the `cloudflare_zone_setting` resource and set `value` to `strict`, which corresponds to Full (Strict) mode. This is the target end state and matches the `ssl-strict` check.
 
             ```hcl
             resource "cloudflare_zone_setting" "ssl" {
               zone_id    = var.zone_id
               setting_id = "ssl"
-              value      = "full"
+              value      = "strict"
             }
             ```
+
+            If your origin does not yet have a valid certificate, set `value` to `full` as an interim step while you install an origin certificate, then switch to `strict`. Avoid `flexible`: it leaves the Cloudflare-to-origin hop in plaintext and is deprecated by Cloudflare for new zones.
     refs:
       - url: https://developers.cloudflare.com/ssl/origin-configuration/ssl-modes/
         title: Cloudflare SSL/TLS encryption modes
@@ -440,8 +446,8 @@ queries:
 
             1. Log in and select the affected zone.
             2. Navigate to **SSL/TLS** > **Edge Certificates**.
-            3. Set the "Minimum TLS Version" to 1.2 (or 1.3 if your audience supports it).
-            4. Monitor traffic for any impact on legitimate clients that may not support TLS 1.2.
+            3. Set the "Minimum TLS Version" to 1.2. Raise it to 1.3 if your audience supports it.
+            4. TLS 1.2 client support is effectively universal today, so the compatibility impact of this change is minimal. To confirm before and after the change, review the TLS version breakdown in Cloudflare's SSL/TLS analytics under **Analytics & Logs** for the zone.
         - id: cli
           desc: |
             To fix this on the command line using the Cloudflare API, set the `min_tls_version` zone setting to `1.2`:
@@ -542,8 +548,10 @@ queries:
             To fix this in the Cloudflare dashboard:
 
             1. Log in and select the affected zone.
-            2. Navigate to **SSL/TLS** > **Edge Certificates**.
-            3. Enable TLS 1.3 (set to "on" or "zrt" for Zero Round Trip Time resumption).
+            2. Navigate to the Edge Certificates settings for SSL/TLS. The exact menu label and location vary by dashboard version, so use the in-dashboard search if you cannot find it.
+            3. Enable TLS 1.3. To also turn on Zero Round Trip Time resumption, choose the ZRT option.
+
+            The authoritative control is the `tls_1_3` zone setting, which accepts the values `on`, `off`, and `zrt`. If the dashboard layout has changed, use the API or Terraform steps below.
         - id: cli
           desc: |
             To fix this on the command line using the Cloudflare API, enable the `tls_1_3` zone setting:
@@ -849,9 +857,11 @@ queries:
             To fix this in the Cloudflare dashboard:
 
             1. Log in and select the affected zone.
-            2. Navigate to **Security** > **Settings**.
-            3. Set the Security Level to "Medium" (recommended) or at minimum "Low".
+            2. Open the zone's security settings. The exact menu path for Security Level varies by dashboard version and plan, and on newer accounts this control is being superseded by Bot Fight Mode and WAF custom rules. Use the in-dashboard search for "Security Level" if you cannot find it.
+            3. Set the Security Level to "Medium" as the recommended value, or "Low" at minimum.
             4. Monitor traffic to ensure legitimate visitors are not being blocked unnecessarily.
+
+            The authoritative control is the `security_level` zone setting. If you cannot locate it in the dashboard, use the API or Terraform steps below.
         - id: cli
           desc: |
             To fix this on the command line using the Cloudflare API, set the `security_level` zone setting to `medium` (or `low` at minimum):
@@ -950,8 +960,10 @@ queries:
             To fix this in the Cloudflare dashboard:
 
             1. Log in and select the affected zone.
-            2. Navigate to **Security** > **Settings**.
+            2. Open the zone's security settings. The exact menu path for Browser Integrity Check varies by dashboard version, so use the in-dashboard search for "Browser Integrity Check" if you cannot find it.
             3. Enable "Browser Integrity Check".
+
+            The authoritative control is the `browser_check` zone setting. If you cannot locate it in the dashboard, use the API or Terraform steps below.
         - id: cli
           desc: |
             To fix this on the command line using the Cloudflare API, enable the `browser_check` zone setting:
@@ -1352,10 +1364,11 @@ queries:
             To fix this in the Cloudflare dashboard:
 
             1. Log in to the dashboard.
-            2. Navigate to **Manage Account** > **Members**.
-            3. Go to **Authentication** settings.
-            4. Enable "Enforce two-factor authentication" for all account members.
-            5. Notify all team members to set up 2FA on their individual accounts before enforcement takes effect.
+            2. Open the account-level authentication settings under Manage Account. The exact menu path for enforcing two-factor authentication varies by dashboard version, so use the in-dashboard search for "two-factor" or "authentication" if you cannot find it.
+            3. Enable "Enforce two-factor authentication" for all account members.
+            4. Notify all team members to set up 2FA on their individual accounts before enforcement takes effect. Once enforcement is active, members without a second factor lose access until they enroll.
+
+            The authoritative control is the account `settings.enforce_twofactor` field, set via `PUT /accounts/{account_id}`. If you cannot locate the toggle in the dashboard, use the API or Terraform steps below.
         - id: cli
           desc: |
             To fix this on the command line using the Cloudflare API, set `settings.enforce_twofactor` to `true` on the account. The account `name` is required by the API on `PUT /accounts/{account_id}`. Confirm every member has enrolled a second factor first; once enforcement is active, members without two-factor authentication lose access to the account until they enroll:
@@ -2123,12 +2136,14 @@ queries:
             4. Save the token. The token secret is unchanged, so consumers do not need to rotate.
         - id: cli
           desc: |
-            The token update endpoint replaces the full token definition, so retrieve the current token, add `expires_on`, and send the complete object back:
+            The token update endpoint replaces the full token definition, so retrieve the current token, add `expires_on`, and send the complete object back. Compute the expiration relative to the current date so the example never produces an already-expired token. The literal you send must be a future RFC 3339 timestamp:
 
             ```bash
+            EXPIRES_ON=$(date -u -d '+1 year' +%Y-%m-%dT%H:%M:%SZ)
+
             curl -s -X GET "https://api.cloudflare.com/client/v4/user/tokens/<token-id>" \
               -H "Authorization: Bearer <api-token>" \
-              | jq '.result | {name, policies, condition, status, expires_on: "2027-01-01T00:00:00Z"}' \
+              | jq --arg expires_on "$EXPIRES_ON" '.result | {name, policies, condition, status, expires_on: $expires_on}' \
               > token.json
 
             curl -X PUT "https://api.cloudflare.com/client/v4/user/tokens/<token-id>" \
@@ -2136,6 +2151,8 @@ queries:
               -H "Content-Type: application/json" \
               --data @token.json
             ```
+
+            On macOS or BSD, the equivalent date command is `date -u -v+1y +%Y-%m-%dT%H:%M:%SZ`.
         - id: terraform
           desc: |
             For tokens managed with the `cloudflare_api_token` resource, set the `expires_on` attribute to a finite timestamp so the token cannot remain valid indefinitely:
@@ -2342,10 +2359,10 @@ queries:
             To bring every member into compliance from the Cloudflare dashboard:
 
             1. Log in and select the account.
-            2. Navigate to **Manage Account** > **Members**.
+            2. Open the account members list under Manage Account. The exact menu path varies by dashboard version, so use the in-dashboard search for "members" if you cannot find it.
             3. Identify each active member whose **Two-Factor Authentication** column is **Disabled**.
             4. Contact each member and have them enable 2FA on their personal Cloudflare account under **My Profile** > **Authentication** by configuring a TOTP authenticator app or security key.
-            5. With 2FA in place for every member, enable the account-level **Enforce two-factor authentication** toggle under **Members** > **Authentication** so new members must configure 2FA before joining.
+            5. With 2FA in place for every member, enable the account-level **Enforce two-factor authentication** toggle so new members must configure 2FA before joining. The authoritative control is the account `settings.enforce_twofactor` field, set via `PUT /accounts/{account_id}`; see the enforce-two-factor check for details.
         - id: cli
           desc: |
             The per-user 2FA enrollment cannot be performed by an account administrator through the API; each affected member must enroll on their own Cloudflare user account. After contacting affected members, verify their state with the members list endpoint:
