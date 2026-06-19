@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-openstack-security
     name: Mondoo OpenStack Security
-    version: 1.1.2
+    version: 1.1.3
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -386,9 +386,9 @@ queries:
         - id: console
           desc: |
             1. Navigate to **Compute → Instances** in Horizon.
-            2. The keypair cannot be added to an existing server. Snapshot the workload, then launch a replacement with **Key Pair** set to a managed keypair.
-            3. Move any floating IPs and attached volumes to the replacement.
-            4. Delete the original instance; the check keeps failing while the keyless server exists.
+            2. The keypair cannot be added to an existing server. Snapshot the workload, then launch a replacement with **Key Pair** set to a managed keypair. An instance snapshot captures the root disk only, so it may not include data on attached Cinder volumes; those volumes migrate separately in the next step.
+            3. Move any floating IPs and attached volumes to the replacement, then confirm you can log in to the replacement over SSH with the new keypair.
+            4. Delete the original instance only after SSH access to the replacement is verified. Deleting it first risks locking you out if the new keypair was not injected correctly. The check keeps failing while the keyless server exists.
         - id: cli
           desc: |
             ```bash
@@ -396,7 +396,8 @@ queries:
             openstack server create replacement \
               --image ubuntu-24.04 --flavor m1.small --network app-net \
               --key-name ops-key
-            # Move floating IPs and volumes over, confirm access, then remove the keyless server
+            # Move floating IPs and volumes over, then confirm SSH access to the
+            # replacement with the new keypair before deleting the original
             openstack server delete original-server
             ```
         - id: terraform
@@ -512,6 +513,8 @@ queries:
       remediation:
         - id: console
           desc: |
+            Attaching a security group gives the instance an enforceable per-VM firewall instead of leaving its exposure to whatever the network plane defaults to. Pick a group scoped to the instance's role so it only opens the ports that role needs.
+
             1. Navigate to **Compute → Instances** in Horizon.
             2. From the instance's action menu, select **Edit Security Groups**.
             3. Add the security group that matches the instance's role and save.
@@ -1282,6 +1285,8 @@ queries:
       remediation:
         - id: console
           desc: |
+            Encryption can only be applied by moving the volume onto an encryption-capable volume type, because the type is what binds the volume to a key. The retype copies the data to encrypted storage, so plan for the volume to be offline during the migration.
+
             1. Confirm with your cloud administrator which volume types provide encryption.
             2. Navigate to **Volumes → Volumes** in Horizon and detach the volume from its server if it is attached.
             3. From the volume's action menu, select **Change Volume Type**, choose the encrypted type, and set **Migration Policy** to **On Demand**.
@@ -1298,7 +1303,22 @@ queries:
             openstack server add volume web-01 data-volume
             ```
 
-            If the backend rejects the retype, create a new volume on the encrypted type, attach both volumes, copy the data at the operating system level, and delete the unencrypted original.
+            If the backend rejects the retype, migrate the data manually. Treat this as a data-loss-prone operation and keep the original intact until the copy is verified:
+
+            ```bash
+            # 1. Create a new, empty volume of the same size on the encrypted type
+            openstack volume create --type encrypted-lvm --size 50 data-volume-enc
+
+            # 2. Stop writes to the source so the copy is consistent, then attach both
+            #    volumes to a helper instance
+            openstack server add volume helper-01 data-volume
+            openstack server add volume helper-01 data-volume-enc
+
+            # 3. Copy the data at the operating system level on the helper instance,
+            #    for example `dd` or `rsync` between the two block devices
+            ```
+
+            After the copy completes, mount the encrypted volume and verify the data is complete and readable. Delete the unencrypted original only after this verification succeeds; if anything looks wrong, keep the original and retry the copy.
     refs:
       - url: https://docs.openstack.org/cinder/latest/configuration/block-storage/volume-encryption.html
         title: OpenStack Cinder volume encryption
@@ -1383,6 +1403,8 @@ queries:
             openstack image set --shared <image>
             openstack image add project <image> <member-project>
             ```
+
+            Making the image private stops new downloads but does not recall copies already taken. While it was public, any other tenant could have downloaded or cached it, so rotate any secret material the image carries (embedded credentials, keys, tokens) after restricting visibility.
         - id: terraform
           desc: |
             Either omit `visibility` on `openstack_images_image_v2` (the default is `private`) or set it explicitly to `private` or `shared`:
@@ -1492,19 +1514,43 @@ queries:
       remediation:
         - id: console
           desc: |
-            Horizon does not expose signature upload directly; use the CLI.
+            Horizon does not expose signature upload directly. Use the CLI procedure below, which builds the certificate, signature, and image properties in order.
         - id: cli
           desc: |
+            Image signing has a prerequisite: the signing certificate must live in Barbican so Nova can fetch it at boot to verify the signature. Build the chain in order so the `img_signature_certificate_uuid` you attach to the image actually resolves to the certificate that signed the image data.
+
             ```bash
-            # Sign the image data, upload the certificate to Barbican, then attach
-            # img_signature properties to the image record. See the Glance image
-            # signature verification docs for the full procedure.
+            # 1. Generate a signing key and a self-signed certificate (or use one
+            #    issued by your CA) that will validate the image signature
+            openssl genrsa -out signing.key 3072
+            openssl req -new -x509 -key signing.key -out signing.cert -days 365 \
+              -subj "/CN=image-signing"
+
+            # 2. Store the certificate in Barbican and capture its secret UUID; this
+            #    UUID is what Nova uses to verify the signature at boot time
+            openstack secret store --name image-signing-cert \
+              --algorithm RSA --secret-type certificate \
+              --payload-content-type "application/octet-stream" \
+              --payload-content-encoding base64 \
+              --payload "$(base64 -w0 signing.cert)"
+            # Note the "Secret href" / UUID returned by the command above
+
+            # 3. Sign the image data with the matching private key and base64-encode it
+            openssl dgst -sha256 -sign signing.key \
+              -sigopt rsa_padding_mode:pss -sigopt rsa_pss_saltlen:-1 \
+              -out image.sig golden-app.qcow2
+            base64 -w0 image.sig > image.sig.b64
+
+            # 4. Attach the signature properties to the image record, pointing
+            #    img_signature_certificate_uuid at the Barbican secret from step 2
             openstack image set <image> \
-              --property img_signature="<base64-signature>" \
+              --property img_signature="$(cat image.sig.b64)" \
               --property img_signature_hash_method="SHA-256" \
               --property img_signature_key_type="RSA-PSS" \
               --property img_signature_certificate_uuid="<barbican-cert-uuid>"
             ```
+
+            See the Glance image signature verification docs for the full procedure, including how to enable signature verification in Nova so the attached signature is enforced at boot.
         - id: terraform
           desc: |
             Set the `properties` map on `openstack_images_image_v2` so the signature fields ship with the image record:
@@ -2182,13 +2228,20 @@ queries:
             3. If clusters reference the template, create a replacement template with **Disable TLS** left unset. Existing clusters cannot switch templates: rebuild each cluster from the new template, move its workloads, then delete the old cluster and template.
         - id: cli
           desc: |
+            Magnum locks a cluster template once any cluster references it: a referenced template cannot be updated or deleted until every cluster built from it is gone. In-place patching therefore only works on templates that no cluster references yet. Even then, the docs do not enumerate which attributes accept a patch, so a `tls_disabled` update may be rejected; if it is, fall back to creating a replacement template.
+
             ```bash
-            # Fix the template in place while no clusters reference it
+            # Confirm no cluster references the template before attempting a patch
+            openstack coe cluster list
+
+            # Patch the template in place only while it is unreferenced; this may be
+            # rejected if Magnum treats tls_disabled as non-updatable
             openstack coe cluster template update secure-template replace tls_disabled=false
 
-            # If clusters reference it, create a TLS-enabled replacement
-            # (tls_disabled defaults to false) and rebuild clusters from it
-            openstack coe cluster template create secure-template \
+            # If clusters reference it (or the patch is rejected), create a
+            # TLS-enabled replacement (tls_disabled defaults to false) and rebuild
+            # clusters from it, then retire the old clusters and template
+            openstack coe cluster template create secure-template-v2 \
               --image fedora-coreos-38 --keypair ops-key \
               --external-network public --coe kubernetes \
               --flavor m1.small --docker-volume-size 10
