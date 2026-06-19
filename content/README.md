@@ -63,6 +63,7 @@ Our comprehensive collection of security policies covers major platforms and ser
 - **Kubernetes Best Practices** - `mondoo-kubernetes-best-practices.mql.yaml` - Kubernetes operational best practices
 - **Nutanix** - `mondoo-nutanix-security.mql.yaml` - Secure Nutanix clusters, hosts, virtual machines, identity, and storage managed through Prism Central
 - **Portainer** - `mondoo-portainer-security.mql.yaml` - Secure Portainer authentication, RBAC, user privileges, Edge trust, and connection settings
+- **Kubernetes Kyverno Integration** - `mondoo-kubernetes-kyverno.mql.yaml` - Kyverno policy, PolicyReport, OpenReports, PolicyException, and Mondoo mapping visibility
 - **Proxmox VE Security** - `mondoo-proxmox-security.mql.yaml` - Proxmox Virtual Environment hypervisor, VM, and container security
 - **VMware vSphere** - `mondoo-vmware-vsphere.mql.yaml` - Security baseline for virtual machines running on VMware vSphere
 - **VMware ESXi** - `mondoo-vmware-vsphere-esxi.mql.yaml` - VMware ESXi host hardening and configuration
