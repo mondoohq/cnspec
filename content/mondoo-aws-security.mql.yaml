@@ -4494,18 +4494,18 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that the resource-based policy attached to each AWS Lambda function contains no statements that grant invocation rights to the wildcard principal (`*`). By default, Lambda functions have no resource-based policy, but policies added for service integrations or cross-account access can inadvertently include a wildcard principal that exposes the function to any AWS identity or unauthenticated caller.
+        This check ensures that the resource-based policy attached to each AWS Lambda function contains no statements that grant unscoped invocation rights to the wildcard principal (`*`). By default, Lambda functions have no resource-based policy, but policies added for service integrations or cross-account access can inadvertently include a wildcard principal that exposes the function to any AWS identity or unauthenticated caller unless constrained by a condition such as `AWS:SourceArn`, `AWS:SourceAccount`, or `aws:PrincipalOrgID`. Source conditions should be specific; avoid wildcard source ARN values that effectively grant broad invoke access.
 
         **Why this matters**
 
-        - **Unauthorized invocation:** A wildcard principal in an Allow statement lets any AWS account or unauthenticated caller trigger the function, potentially executing privileged business logic or reading sensitive data processed by the handler.
+        - **Unauthorized invocation:** An unscoped wildcard principal in an Allow statement lets any AWS account or unauthenticated caller trigger the function, potentially executing privileged business logic or reading sensitive data processed by the handler.
         - **Data exposure:** Functions that process customer records, access databases, or call downstream services can become a path to sensitive information when invocable by arbitrary callers.
         - **Amplification risk:** Publicly invocable functions can be used as a compute amplifier in denial-of-service or cryptomining attacks at the account owner's expense.
         - **Least-privilege enforcement:** Restricting invocation to named principals enforces the minimum-access model required by most security frameworks for compute resources.
 
         **Risk mitigation**
 
-        - **Explicit principal scoping:** Replacing wildcard principals with specific AWS account IDs, service principals, or ARNs ensures only authorized callers can invoke the function.
+        - **Explicit principal scoping:** Replacing wildcard principals with specific AWS account IDs, service principals, or ARNs ensures only authorized callers can invoke the function. If wildcard access is required, bind it to a fixed source ARN, source account, or organization condition.
         - **Reduced attack surface:** Removing public invoke permissions eliminates the most direct exploitation path for functions that handle sensitive workloads or privileged AWS API calls.
       audit: |
         ### Audit via Console
@@ -4514,9 +4514,9 @@ queries:
         2. In the left navigation pane, select **Functions**.
         3. Select a function and open the **Configuration** tab.
         4. Select **Permissions** in the sub-navigation.
-        5. Under **Resource-based policy statements**, review each statement for a `Principal` of `*` or `{"AWS": "*"}`.
+        5. Under **Resource-based policy statements**, review each `Allow` statement for a `Principal` of `*` or `{"AWS": "*"}` without a scoping condition such as `AWS:SourceArn`, `AWS:SourceAccount`, or `aws:PrincipalOrgID`.
 
-        A passing function either has no resource-based policy or has a policy with no statements granting `Allow` to principal `*`. A failing function has one or more policy statements with `Effect: Allow` and `Principal: *` (or `AWS: *`).
+        A passing function either has no resource-based policy or has no unscoped wildcard-principal `Allow` statements. A failing function has one or more policy statements with `Effect: Allow` and `Principal: *` (or `AWS: *`) without a restrictive condition.
 
         ### Audit via CLI
 
@@ -4529,9 +4529,9 @@ queries:
           --output text | python3 -m json.tool
         ```
 
-        Inspect each statement in the returned policy document for `"Principal": "*"` or `"Principal": {"AWS": "*"}` combined with `"Effect": "Allow"`.
+        Inspect each statement in the returned policy document for `"Principal": "*"` or `"Principal": {"AWS": "*"}` combined with `"Effect": "Allow"` and no restrictive `Condition`.
 
-        A passing function has no such statement (or returns a `ResourceNotFoundException` indicating no resource-based policy exists). A failing function has at least one `Allow` statement with a wildcard principal.
+        A passing function has no such statement (or returns a `ResourceNotFoundException` indicating no resource-based policy exists). A failing function has at least one unscoped `Allow` statement with a wildcard principal.
 
       remediation:
         - id: console
@@ -4542,7 +4542,7 @@ queries:
             2. Select Functions in the left panel.
             3. Select the Lambda function that has public access.
             4. Go to the Configuration tab and select Permissions.
-            5. Under Resource-based policy, check for any policy statements with "Principal": "*" or "Principal": {"AWS": "*"}.
+            5. Under Resource-based policy, check for any `Allow` statements with "Principal": "*" or "Principal": {"AWS": "*"} and no restrictive `Condition`.
             6. Select Edit to modify the resource-based policy.
             7. Remove or update any policy statements that allow public access, restricting access to specific AWS accounts or services.
             8. Select Save to apply the changes.
@@ -4583,7 +4583,7 @@ queries:
               filename      = "lambda.zip"
             }
 
-            # Use a proper permission policy without public access
+            # Use a specific service principal and restrict it to the intended source
             resource "aws_lambda_permission" "secure_permission" {
               statement_id  = "AllowExecutionFromSpecificAccount"
               action        = "lambda:InvokeFunction"
@@ -4630,24 +4630,85 @@ queries:
     filters: |
       asset.platform == "aws-lambda-function"
     mql: |
-      aws.lambda.function.policy.Statement.where(Effect == "Allow").all(Principal {AWS {_ != "*"}})
+      # Null covers functions without a resource policy; empty covers empty policy documents.
+      # MQL short-circuits before Statement access when the policy is absent.
+      aws.lambda.function.policy == null ||
+      aws.lambda.function.policy == empty ||
+      aws.lambda.function.policy.Statement == null ||
+      aws.lambda.function.policy.Statement == empty ||
+      aws.lambda.function.policy.Statement.where(Effect == "Allow").where(
+        # AWS principals can be encoded as a string or a list; contains(/^\*$/) covers list entries exactly equal to "*".
+        Principal == "*" ||
+        Principal['AWS'] == "*" ||
+        Principal['AWS'].contains(/^\*$/) ||
+        Principal['Service'] == "*" ||
+        Principal['Service'].contains(/^\*$/)
+      ).all(
+        # Require at least one recognized source condition without a bare wildcard value.
+        Condition != null &&
+        Condition.values.any(
+          _.where(key == /aws:(SourceArn|SourceAccount|PrincipalOrgID)/i) != empty &&
+          # values.contains catches scalar values; values.any catches list-valued condition values.
+          _.where(key == /aws:(SourceArn|SourceAccount|PrincipalOrgID)/i).values.contains(/^\*$/) == false &&
+          _.where(key == /aws:(SourceArn|SourceAccount|PrincipalOrgID)/i).values.any(_.contains(/^\*$/)) == false
+        )
+      )
   - uid: mondoo-aws-security-lambda-function-public-access-prohibited-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_lambda_permission")
     mql: |
-      terraform.resources("aws_lambda_permission").none(
-        arguments.principal == "*"
+      terraform.resources.where(nameLabel == "aws_lambda_permission").where(arguments.principal == "*").all(
+        arguments.source_arn != empty ||
+        arguments.source_account != empty ||
+        arguments.principal_org_id != empty
+      ) &&
+      # Validate each provided scope separately after requiring at least one scope.
+      # Partial source ARN wildcards are intentionally treated as broad access.
+      terraform.resources.where(nameLabel == "aws_lambda_permission").where(arguments.principal == "*" && arguments.source_arn != empty).all(
+        arguments.source_arn != /\*/
+      ) &&
+      terraform.resources.where(nameLabel == "aws_lambda_permission").where(arguments.principal == "*" && arguments.source_account != empty).all(
+        arguments.source_account != "*"
+      ) &&
+      terraform.resources.where(nameLabel == "aws_lambda_permission").where(arguments.principal == "*" && arguments.principal_org_id != empty).all(
+        arguments.principal_org_id != "*"
       )
   - uid: mondoo-aws-security-lambda-function-public-access-prohibited-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_lambda_permission")
     mql: |
-      terraform.plan.resourceChanges.where(type == "aws_lambda_permission").none(
-        change.after.principal == "*"
+      terraform.plan.resourceChanges.where(type == "aws_lambda_permission").where(change.after.principal == "*").all(
+        change.after.source_arn != empty ||
+        change.after.source_account != empty ||
+        change.after.principal_org_id != empty
+      ) &&
+      # Validate each provided scope separately after requiring at least one scope.
+      # Partial source ARN wildcards are intentionally treated as broad access.
+      terraform.plan.resourceChanges.where(type == "aws_lambda_permission").where(change.after.principal == "*" && change.after.source_arn != empty).all(
+        change.after.source_arn != /\*/
+      ) &&
+      terraform.plan.resourceChanges.where(type == "aws_lambda_permission").where(change.after.principal == "*" && change.after.source_account != empty).all(
+        change.after.source_account != "*"
+      ) &&
+      terraform.plan.resourceChanges.where(type == "aws_lambda_permission").where(change.after.principal == "*" && change.after.principal_org_id != empty).all(
+        change.after.principal_org_id != "*"
       )
   - uid: mondoo-aws-security-lambda-function-public-access-prohibited-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_lambda_permission")
     mql: |
-      terraform.state.resources.where(type == "aws_lambda_permission").none(
-        values.principal == "*"
+      terraform.state.resources.where(type == "aws_lambda_permission").where(values.principal == "*").all(
+        values.source_arn != empty ||
+        values.source_account != empty ||
+        values.principal_org_id != empty
+      ) &&
+      # Validate each provided scope separately after requiring at least one scope.
+      # Partial source ARN wildcards are intentionally treated as broad access.
+      terraform.state.resources.where(type == "aws_lambda_permission").where(values.principal == "*" && values.source_arn != empty).all(
+        values.source_arn != /\*/
+      ) &&
+      terraform.state.resources.where(type == "aws_lambda_permission").where(values.principal == "*" && values.source_account != empty).all(
+        values.source_account != "*"
+      ) &&
+      terraform.state.resources.where(type == "aws_lambda_permission").where(values.principal == "*" && values.principal_org_id != empty).all(
+        values.principal_org_id != "*"
       )
   # No Terraform variants: Pending OS upgrades are runtime telemetry on the live instance (`pendingMaintenanceActions`), not configuration. There is no Terraform attribute that represents pending maintenance actions.
   - uid: mondoo-aws-security-rds-instance-no-pending-os-upgrades
@@ -5662,18 +5723,18 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that Amazon RDS cluster instances are not configured as publicly accessible and that the VPC subnets hosting the cluster do not route traffic through an internet gateway. By default, the AWS console offers a publicly accessible option during cluster creation, and it is easy to inadvertently expose a cluster to the internet.
+        This check ensures that Amazon RDS cluster instances are not configured as publicly accessible. Aurora exposes public accessibility on the member DB instances, while non-Aurora Multi-AZ DB clusters also expose a cluster-level public accessibility field. By default, the AWS console offers a publicly accessible option during cluster creation, and it is easy to inadvertently expose a cluster to the internet.
 
         **Why this matters**
 
         - **Direct internet exposure:** A publicly accessible RDS cluster has a DNS endpoint resolvable from the internet, making the database authentication layer directly reachable to any attacker worldwide.
         - **Brute-force attack surface:** Once a database endpoint is reachable from the internet, automated credential stuffing and brute-force tools can target it continuously without needing to first compromise any other resource.
-        - **Compliance boundary violation:** Most security frameworks explicitly prohibit placing production database clusters on network segments with internet gateway routes, treating such configuration as a boundary control failure.
+        - **Compliance boundary violation:** Most security frameworks explicitly prohibit configuring production database clusters for direct public reachability, treating such configuration as a boundary control failure.
         - **Lateral movement risk:** A compromised publicly accessible cluster becomes a pivot point from which attackers can reach other private resources within the same VPC.
 
         **Risk mitigation**
 
-        - **Network perimeter enforcement:** Deploying clusters in private subnets and removing internet gateway routes ensures the database is only reachable through controlled paths such as VPN, bastion host, or AWS PrivateLink.
+        - **Network perimeter enforcement:** Disabling public accessibility on every cluster member ensures the database is only reachable through controlled paths such as VPN, bastion host, or AWS PrivateLink.
         - **Reduced credential exposure:** Removing internet reachability eliminates the entire class of attacks that require only a network path to the database port, requiring attackers to first compromise an internal resource.
       audit: |
         ### Audit via Console
@@ -5682,10 +5743,10 @@ queries:
         2. In the left navigation pane, select **Databases**.
         3. Select an RDS cluster and open the **Connectivity & security** tab.
         4. Under **Security**, review the VPC, subnet group, and security groups.
-        5. Verify that the subnet group uses private subnets (no route to an internet gateway with destination `0.0.0.0/0`).
-        6. For each DB instance in the cluster, check the **Publicly accessible** field.
+        5. For each DB instance in the cluster, check the **Publicly accessible** field.
+        6. For non-Aurora Multi-AZ DB clusters, also check the cluster-level **Publicly accessible** field.
 
-        A passing cluster and its instances either show **Not publicly accessible** or are in subnets with no internet gateway route. A failing cluster has instances that are publicly accessible or has a security group associated with a VPC whose route table includes a `0.0.0.0/0` route via an internet gateway.
+        A passing cluster and its instances show **Not publicly accessible**. A failing cluster has at least one member DB instance, or the non-Aurora cluster itself, configured as publicly accessible.
 
         ### Audit via CLI
 
@@ -5697,16 +5758,15 @@ queries:
           --output table
         ```
 
-        2. Verify that the VPC route tables used by the cluster's subnets do not have an internet gateway route:
+        2. Check non-Aurora cluster-level public accessibility:
 
         ```bash
-        aws ec2 describe-route-tables \
-          --filters "Name=vpc-id,Values=<vpc-id>" \
-          --query "RouteTables[*].Routes[?GatewayId!=null && starts_with(GatewayId, 'igw-')].{DestinationCidrBlock:DestinationCidrBlock,GatewayId:GatewayId}" \
+        aws rds describe-db-clusters \
+          --query "DBClusters[*].{ClusterId:DBClusterIdentifier,PubliclyAccessible:PubliclyAccessible}" \
           --output table
         ```
 
-        A passing cluster has all instances with `PubliclyAccessible: false` and no internet gateway routes (`igw-*`) with destination `0.0.0.0/0` in its VPC route tables. A failing cluster has at least one instance with `PubliclyAccessible: true` or has an internet gateway route reachable from the cluster's security groups.
+        A passing cluster has all member instances with `PubliclyAccessible: false` and, when AWS exposes the cluster-level field, the cluster also has `PubliclyAccessible: false`. A failing cluster has at least one member instance or cluster-level field set to `true`.
 
       remediation:
         - id: console
@@ -5852,27 +5912,34 @@ queries:
     filters: |
       asset.platform == "aws-rds-dbcluster"
     mql: |
-      aws.rds.dbcluster.securityGroups.where(
-        vpc.routeTables.where(
-          routeEntries.any(gatewayId == /igw-/ && destinationCidrBlock == "0.0.0.0/0")
-        ).length > 0
-      ).length == 0
+      # Aurora clusters do not expose a cluster-level PubliclyAccessible field.
+      aws.rds.dbcluster.publiclyAccessible != true &&
+      aws.rds.dbcluster.members.all(publiclyAccessible == false)
   - uid: mondoo-aws-security-rds-cluster-public-access-check-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_rds_cluster")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_rds_cluster" || nameLabel == "aws_rds_cluster_instance")
     mql: |
       terraform.resources("aws_rds_cluster").all(
         arguments['publicly_accessible'] != true
+      ) &&
+      terraform.resources.where(nameLabel == "aws_rds_cluster_instance").all(
+        arguments['publicly_accessible'] != true
       )
   - uid: mondoo-aws-security-rds-cluster-public-access-check-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_rds_cluster")
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_rds_cluster" || type == "aws_rds_cluster_instance")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_rds_cluster").all(
         change.after.publicly_accessible != true
+      ) &&
+      terraform.plan.resourceChanges.where(type == "aws_rds_cluster_instance").all(
+        change.after.publicly_accessible != true
       )
   - uid: mondoo-aws-security-rds-cluster-public-access-check-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_rds_cluster")
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_rds_cluster" || type == "aws_rds_cluster_instance")
     mql: |
       terraform.state.resources.where(type == "aws_rds_cluster").all(
+        values.publicly_accessible != true
+      ) &&
+      terraform.state.resources.where(type == "aws_rds_cluster_instance").all(
         values.publicly_accessible != true
       )
   - uid: mondoo-aws-security-rds-instance-public-access-check
