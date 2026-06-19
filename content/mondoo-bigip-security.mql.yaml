@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-bigip-security
     name: Mondoo F5 BIG-IP Security
-    version: 1.0.1
+    version: 1.0.2
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -389,36 +389,45 @@ queries:
       remediation:
         - id: console
           desc: |
-            To remove weak ciphers from client SSL profiles using the BIG-IP Configuration utility:
+            The most maintainable approach on BIG-IP 13.0 and later is a cipher group built from F5's `f5-secure` cipher rule, which resolves to ECDHE key exchange with AES-GCM suites only. To configure one using the BIG-IP Configuration utility:
 
-            1. Navigate to **Local Traffic → Profiles → SSL → Client**
-            2. Click on the affected profile
-            3. Set the **Configuration** selector to **Advanced**
-            4. In the **Ciphers** setting, select **Cipher String** and enter a list built only from strong suites, for example:
-               `ECDHE+AES-GCM:DHE+AES-GCM:ECDHE+AES:DHE+AES`
-            5. Click **Update**
+            1. Navigate to **Local Traffic → Ciphers → Groups** and click **Create**
+            2. Give the group a name, add the `f5-secure` rule to the **Allowed** column, and click **Finished**
+            3. Navigate to **Local Traffic → Profiles → SSL → Client** and click the affected profile
+            4. Set the **Configuration** selector to **Advanced**
+            5. In the **Ciphers** setting, select **Cipher Group** and choose the group you created
+            6. Click **Update**
+
+            If you must specify a cipher string directly instead of a group, select **Cipher String** and enter a list restricted to AES-GCM suites, for example `ECDHE+AES-GCM:DHE+AES-GCM`. Prefer GCM, an authenticated AEAD mode, over the older CBC suites such as `ECDHE+AES` or `DHE+AES`. GCM authenticates the ciphertext as part of decryption, which closes the padding-oracle and timing weaknesses such as BEAST and Lucky 13 that affect CBC suites in TLS.
 
             **Note**: Clients that support only the removed cipher suites can no longer connect to virtual servers using this profile. Validate the change against your client population in a maintenance window.
         - id: cli
           desc: |
-            To remove weak ciphers from client SSL profiles using tmsh:
+            On BIG-IP 13.0 and later, the recommended approach is a cipher group built from F5's `f5-secure` cipher rule, which resolves to ECDHE key exchange with AES-GCM suites only:
 
             1. Open an SSH session to the BIG-IP and enter the tmsh shell.
-            2. Update the cipher string on the client SSL profile:
+            2. Create a cipher group that allows the `f5-secure` rule:
 
                ```
-               tmsh modify ltm profile client-ssl <profile-name> ciphers 'ECDHE+AES-GCM:DHE+AES-GCM:ECDHE+AES:DHE+AES'
+               tmsh create ltm cipher group secure-gcm allow add { f5-secure }
                ```
-            3. From the advanced shell, list the cipher suites the string expands to and confirm no weak suites remain:
+            3. Attach the cipher group to the client SSL profile. The `ciphers none` argument clears any inline cipher string so the group takes effect:
 
                ```
-               tmm --clientciphers 'ECDHE+AES-GCM:DHE+AES-GCM:ECDHE+AES:DHE+AES'
+               tmsh modify ltm profile client-ssl <profile-name> cipher-group secure-gcm ciphers none
                ```
-            4. Save the configuration:
+            4. Confirm the group resolves to AES-GCM suites only and that no weak suites remain:
+
+               ```
+               tmsh show ltm cipher group secure-gcm
+               ```
+            5. Save the configuration:
 
                ```
                tmsh save sys config
                ```
+
+            If your release does not support cipher groups, set an inline cipher string restricted to AES-GCM suites instead with `tmsh modify ltm profile client-ssl <profile-name> ciphers 'ECDHE+AES-GCM:DHE+AES-GCM'`, then verify the expansion with `tmm --clientciphers 'ECDHE+AES-GCM:DHE+AES-GCM'`. Prefer GCM, an authenticated AEAD mode, over CBC suites such as `ECDHE+AES` or `DHE+AES`. GCM authenticates the ciphertext during decryption, which closes the padding-oracle and timing weaknesses such as BEAST and Lucky 13 that affect CBC suites in TLS.
     refs:
       - url: https://my.f5.com/manage/s/article/K13156
         title: F5 - Configuring the cipher strength for SSL profiles
@@ -551,6 +560,10 @@ queries:
         - Compliance frameworks such as PCI DSS require authentication of all parties in a communication channel.
 
         Enabling server authentication ensures the BIG-IP validates the backend server's certificate against a trusted CA before establishing the connection.
+
+        **Mapping the setting across the GUI, tmsh, and the scanner**
+
+        The same control has a different label in each place a junior engineer encounters it. In the BIG-IP Configuration utility it is the **Server Certificate** setting under **Server Authentication**, with the values **ignore** and **require**. In tmsh that setting is the `peer-cert-mode` field, where **ignore** maps to `peer-cert-mode ignore` and **require** maps to `peer-cert-mode require`. To satisfy the control, configure **Server Certificate: require**, which is `peer-cert-mode require`. When auditing a profile by hand, the `peer-cert-mode` value is the field to read.
       audit: |
         ### Audit via the BIG-IP Configuration utility
 
