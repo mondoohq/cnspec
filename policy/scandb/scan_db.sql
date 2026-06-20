@@ -71,6 +71,15 @@ CREATE TABLE asset_filters (
     code_id TEXT NOT NULL PRIMARY KEY
 );
 
+-- Query execution durations - one row per query executed during the scan.
+-- code_id holds the llx query checksum, or the query MRN when the scanner
+-- can resolve one from the resolved policy. duration_ms is the wall-clock
+-- time the underlying MQL executor spent on the query.
+CREATE TABLE query_durations (
+    code_id TEXT NOT NULL PRIMARY KEY,
+    duration_ms INTEGER NOT NULL
+);
+
 -- Primary key indexes are automatically created for scores(qr_id) and data(code_id)
 -- No additional indexes needed since we're using the primary keys for lookups
 

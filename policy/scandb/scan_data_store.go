@@ -40,6 +40,7 @@ type ScanDataStoreReader interface {
 	StreamData(ctx context.Context, callback func(string, *llx.Result) error) error
 	StreamRisks(ctx context.Context, callback func(*policy.ScoredRiskFactor) error) error
 	StreamResources(ctx context.Context, callback func(*llx.ResourceRecording) error) error
+	StreamQueryDurations(ctx context.Context, callback func(codeId string, durationMs int64) error) error
 
 	// Reader methods for specific items
 	GetScore(ctx context.Context, qrId string) (*policy.Score, error)
@@ -54,6 +55,7 @@ type ScanDataStoreWriter interface {
 	WriteData(ctx context.Context, data []*llx.Result) error
 	WriteRisk(ctx context.Context, risk *policy.ScoredRiskFactor) error
 	WriteResource(ctx context.Context, resource *llx.ResourceRecording) error
+	WriteQueryDuration(ctx context.Context, codeId string, durationMs int64) error
 	Finalize() (string, error)
 	Close() error
 }
@@ -282,6 +284,47 @@ func (s *SqliteScanDataStore) WriteAsset(ctx context.Context, asset *inventory.A
 		return fmt.Errorf("failed to write asset: %w", err)
 	}
 	return nil
+}
+
+// WriteQueryDuration records the wall-clock time the MQL executor spent on
+// a single query. codeId is normally the llx query checksum, but callers
+// may substitute a resolved query MRN when one is available — see the
+// scandb-wrapper helper that performs the conversion.
+func (s *SqliteScanDataStore) WriteQueryDuration(ctx context.Context, codeId string, durationMs int64) error {
+	if s.readOnly {
+		return fmt.Errorf("cannot write query duration in read-only mode")
+	}
+	if codeId == "" {
+		return nil
+	}
+	if err := s.queries.InsertQueryDuration(ctx, sqlc.InsertQueryDurationParams{
+		CodeID:     codeId,
+		DurationMs: durationMs,
+	}); err != nil {
+		return fmt.Errorf("failed to write query duration %s: %w", codeId, err)
+	}
+	return nil
+}
+
+// StreamQueryDurations iterates over recorded per-query execution times.
+func (s *SqliteScanDataStore) StreamQueryDurations(ctx context.Context, callback func(codeId string, durationMs int64) error) error {
+	rows, err := s.queries.StreamQueryDurations(ctx)
+	if err != nil {
+		if isMissingQueryDurationsTable(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to query query_durations: %w", err)
+	}
+	for _, row := range rows {
+		if err := callback(row.CodeID, row.DurationMs); err != nil {
+			return fmt.Errorf("callback error for query duration %s: %w", row.CodeID, err)
+		}
+	}
+	return nil
+}
+
+func isMissingQueryDurationsTable(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "no such table: query_durations")
 }
 
 // WriteRisk writes a single risk factor

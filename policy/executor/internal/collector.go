@@ -36,6 +36,13 @@ type ScoreCollector interface {
 	SinkScore([]*policy.Score)
 }
 
+// DurationCollector receives the wall-clock time the MQL executor spent
+// on a query, keyed by its llx code_id. Invoked once per ExecutionQuery
+// from the executionManager after the executor returns.
+type DurationCollector interface {
+	SinkDuration(codeID string, duration time.Duration)
+}
+
 type Collector interface {
 	DatapointCollector
 	ScoreCollector

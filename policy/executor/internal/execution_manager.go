@@ -43,6 +43,10 @@ type executionManager struct {
 	wg       sync.WaitGroup
 
 	dumpDatapoints bool
+
+	// durationCollectors receive the wall-clock execution time of each
+	// query after the executor returns
+	durationCollectors []DurationCollector
 }
 
 type runQueueItem struct {
@@ -52,15 +56,17 @@ type runQueueItem struct {
 
 func newExecutionManager(runtime llx.Runtime, runQueue chan runQueueItem,
 	resultChan chan *llx.RawResult, timeout time.Duration, dumpDatapoints bool,
+	durationCollectors []DurationCollector,
 ) *executionManager {
 	return &executionManager{
-		runQueue:       runQueue,
-		runtime:        runtime,
-		resultChan:     resultChan,
-		errChan:        make(chan error, 1),
-		stopChan:       make(chan struct{}),
-		timeout:        timeout,
-		dumpDatapoints: dumpDatapoints,
+		runQueue:           runQueue,
+		runtime:            runtime,
+		resultChan:         resultChan,
+		errChan:            make(chan error, 1),
+		stopChan:           make(chan struct{}),
+		timeout:            timeout,
+		dumpDatapoints:     dumpDatapoints,
+		durationCollectors: durationCollectors,
 	}
 }
 
@@ -190,10 +196,14 @@ func (em *executionManager) executeCodeBundle(codeBundle *llx.CodeBundle, props 
 	startTime := time.Now()
 	log.Debug().Str("qrid", codeID).Msg("starting query execution")
 	defer func() {
+		duration := time.Since(startTime)
 		log.Debug().
 			Str("qrid", codeID).
-			Dur("duration", time.Since(startTime)).
+			Dur("duration", duration).
 			Msg("finished query execution")
+		for _, c := range em.durationCollectors {
+			c.SinkDuration(codeID, duration)
+		}
 	}()
 	// TODO(jaym): sendResult may not be correct. We may need to fill in the
 	// checksum

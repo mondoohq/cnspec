@@ -33,6 +33,9 @@ type GraphBuilder struct {
 	// scoreCollectors contains the collectors which will receive
 	// scores
 	scoreCollectors []ScoreCollector
+	// durationCollectors contains the collectors which will receive
+	// per-query wall-clock execution times
+	durationCollectors []DurationCollector
 	// reportingJobs is a list of reporting jobs, sourced from the
 	// resolved policy
 	reportingJobs []*policy.ReportingJob
@@ -138,6 +141,12 @@ func (b *GraphBuilder) AddDatapointCollector(c DatapointCollector) {
 	b.datapointCollectors = append(b.datapointCollectors, c)
 }
 
+// AddDurationCollector adds a per-query duration collector. The executor
+// invokes SinkDuration once for every ExecutionQuery it runs.
+func (b *GraphBuilder) AddDurationCollector(c DurationCollector) {
+	b.durationCollectors = append(b.durationCollectors, c)
+}
+
 // WithProgressReporter sets the interface which will receive progress updates
 func (b *GraphBuilder) WithProgressReporter(r progress.Progress) {
 	b.progressReporter = r
@@ -190,7 +199,7 @@ func (b *GraphBuilder) Build(runtime llx.Runtime, assetMrn string) (*GraphExecut
 		resultChan := make(chan *llx.RawResult, 128)
 		ge.resultChan = resultChan
 		ge.executionManager = newExecutionManager(runtime, make(chan runQueueItem, len(queries)),
-			resultChan, b.queryTimeout, b.dumpDatapoints)
+			resultChan, b.queryTimeout, b.dumpDatapoints, b.durationCollectors)
 	}
 
 	ge.nodes[DatapointCollectorID] = &Node{
