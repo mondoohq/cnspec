@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-hetzner-security
     name: Mondoo Hetzner Cloud Security
-    version: 2.1.0
+    version: 2.2.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -42,6 +42,7 @@ policies:
           - uid: mondoo-hetzner-security-firewall-no-unrestricted-rdp
           - uid: mondoo-hetzner-security-firewall-no-unrestricted-db-ports
           - uid: mondoo-hetzner-security-firewall-no-all-ports-open
+          - uid: mondoo-hetzner-security-firewall-no-unrestricted-egress
           - uid: mondoo-hetzner-security-firewall-has-rules
       - title: Load Balancers
         checks:
@@ -1129,6 +1130,165 @@ queries:
           _['direction'] != "in" ||
           _['port'].notIn(["any", "1-65535", "0-65535"]) ||
           _['source_ips'].containsNone(["0.0.0.0/0", "::/0"])
+        )
+      )
+
+  - uid: mondoo-hetzner-security-firewall-no-unrestricted-egress
+    title: Ensure no firewall allows unrestricted outbound on all ports
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-06
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/pci-dss-4: pcidss-requirement-1-3-2
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    variants:
+      - uid: mondoo-hetzner-security-firewall-no-unrestricted-egress-hetzner
+        tags:
+          mondoo.com/filter-title: Hetzner Cloud
+          mondoo.com/filter-icon: hetzner
+      - uid: mondoo-hetzner-security-firewall-no-unrestricted-egress-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-hetzner-security-firewall-no-unrestricted-egress-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-hetzner-security-firewall-no-unrestricted-egress-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that no Hetzner Cloud Firewall defines an outbound rule that permits traffic on all ports (`any`, `1-65535`, or `0-65535`) to the public internet at destination `0.0.0.0/0` or `::/0`. Hetzner allows all outbound traffic by default when a firewall defines no egress rules, so this check flags the case where an explicit egress rule widens outbound access back to every port and every destination.
+
+        **Why this matters**
+
+        - **Exfiltration path:** An all-ports egress rule to the internet lets a compromised server reach any external host on any port, which is the channel data theft and command-and-control traffic use.
+        - **Defeats egress hardening:** Defining narrow egress rules is only effective if a broad all-ports rule does not sit alongside them and re-open everything.
+        - **Containment:** Restricting outbound destinations and ports limits how far a compromised workload can pivot or call out.
+
+        **Risk mitigation**
+
+        - **Command-and-control:** Scoping egress to the specific destinations and ports a workload needs removes the open channel malware uses to reach external infrastructure.
+        - **Data exfiltration:** Constraining outbound traffic reduces the routes by which sensitive data can leave the environment.
+      audit: |
+        ### Audit via Console
+
+        1. Log in to the [Hetzner Cloud Console](https://console.hetzner.cloud) and select the project.
+        2. Navigate to **Firewalls** and open each firewall.
+        3. Review the **Rules** tab, focusing on outbound rules.
+        4. Check whether any outbound rule has the port set to `Any`, `1-65535`, or `0-65535` with a destination of `Any IPv4` (`0.0.0.0/0`) or `Any IPv6` (`::/0`).
+
+        A passing firewall defines no outbound rule permitting the full port range to the public internet. A failing firewall has an outbound rule with an unrestricted port range and an unrestricted destination.
+
+        ### Audit via CLI
+
+        1. List all firewalls and inspect their rules:
+
+        ```bash
+        hcloud firewall list -o columns=id,name
+        hcloud firewall describe <firewall> -o json
+        ```
+
+        Review the `rules` array for entries where `direction` is `out`, `port` is `any`, `1-65535`, or `0-65535`, and `destination_ips` contains `0.0.0.0/0` or `::/0`.
+
+        A passing firewall returns no such rule. A failing firewall returns at least one outbound rule that opens the full port range to an unrestricted destination.
+      remediation:
+        - id: console
+          desc: |
+            Remove the wide-open outbound rule and replace it with narrow rules that permit only the specific ports and destinations the workload needs to reach.
+        - id: cli
+          desc: |
+            `delete-rule` removes one rule at a time, matched by direction, protocol, port, and destination. Because the check fails on any outbound all-ports rule, repeat the deletion for every protocol that has a wide-open rule and for every unrestricted destination, including IPv6.
+
+            Run `hcloud firewall describe <firewall> -o json` first to enumerate the offending rules, then delete each one:
+
+            ```bash
+            hcloud firewall delete-rule <firewall> \
+              --direction out --protocol tcp --port any --destination-ips 0.0.0.0/0
+            hcloud firewall delete-rule <firewall> \
+              --direction out --protocol tcp --port any --destination-ips ::/0
+            hcloud firewall delete-rule <firewall> \
+              --direction out --protocol udp --port any --destination-ips 0.0.0.0/0
+            hcloud firewall delete-rule <firewall> \
+              --direction out --protocol udp --port any --destination-ips ::/0
+            ```
+
+            Adjust the `--port` value to match the rule actually in place (`any`, `1-65535`, or `0-65535`). After deleting the wide-open rules, add narrow per-destination rules that permit only the required outbound ports.
+        - id: terraform
+          desc: |
+            Never declare an outbound `rule` whose `port` is `any`, `1-65535`, or `0-65535` with `destination_ips` of `0.0.0.0/0` or `::/0`. Replace it with narrow per-destination rules:
+
+            ```hcl
+            resource "hcloud_firewall" "default" {
+              name = "default"
+
+              rule {
+                direction       = "out"
+                protocol        = "tcp"
+                port            = "443"
+                destination_ips = ["0.0.0.0/0", "::/0"]
+              }
+
+              rule {
+                direction       = "out"
+                protocol        = "tcp"
+                port            = "5432"
+                destination_ips = ["10.0.0.0/16"]
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.hetzner.com/cloud/firewalls/overview/
+        title: Hetzner Cloud Firewalls overview
+
+  - uid: mondoo-hetzner-security-firewall-no-unrestricted-egress-hetzner
+    filters: asset.platform == "hetzner-firewall"
+    mql: |
+      hetzner.firewall.rules.none(_["direction"] == "out" && _["port"] == "any" && _["destinationIps"].contains("0.0.0.0/0"))
+      hetzner.firewall.rules.none(_["direction"] == "out" && _["port"] == "any" && _["destinationIps"].contains("::/0"))
+      hetzner.firewall.rules.none(_["direction"] == "out" && _["port"] == "1-65535" && _["destinationIps"].contains("0.0.0.0/0"))
+      hetzner.firewall.rules.none(_["direction"] == "out" && _["port"] == "1-65535" && _["destinationIps"].contains("::/0"))
+      hetzner.firewall.rules.none(_["direction"] == "out" && _["port"] == "0-65535" && _["destinationIps"].contains("0.0.0.0/0"))
+      hetzner.firewall.rules.none(_["direction"] == "out" && _["port"] == "0-65535" && _["destinationIps"].contains("::/0"))
+  - uid: mondoo-hetzner-security-firewall-no-unrestricted-egress-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "hcloud_firewall")
+    mql: |
+      terraform.resources("hcloud_firewall").all(
+        blocks.where(type == "rule").all(
+          arguments['direction'] != "out" ||
+          arguments['port'].notIn(["any", "1-65535", "0-65535"]) ||
+          arguments['destination_ips'].containsNone(["0.0.0.0/0", "::/0"])
+        )
+      )
+  - uid: mondoo-hetzner-security-firewall-no-unrestricted-egress-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "hcloud_firewall")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "hcloud_firewall").all(
+        change.after.rule == null || change.after.rule.all(
+          _['direction'] != "out" ||
+          _['port'].notIn(["any", "1-65535", "0-65535"]) ||
+          _['destination_ips'].containsNone(["0.0.0.0/0", "::/0"])
+        )
+      )
+  - uid: mondoo-hetzner-security-firewall-no-unrestricted-egress-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "hcloud_firewall")
+    mql: |
+      terraform.state.resources.where(type == "hcloud_firewall").all(
+        values.rule == null || values.rule.all(
+          _['direction'] != "out" ||
+          _['port'].notIn(["any", "1-65535", "0-65535"]) ||
+          _['destination_ips'].containsNone(["0.0.0.0/0", "::/0"])
         )
       )
 

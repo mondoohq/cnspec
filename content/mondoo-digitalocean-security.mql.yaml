@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-digitalocean-security
     name: Mondoo DigitalOcean Security
-    version: 2.1.0
+    version: 2.2.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -57,12 +57,14 @@ policies:
         checks:
           - uid: mondoo-digitalocean-security-db-firewall-configured
           - uid: mondoo-digitalocean-security-db-in-private-network
+          - uid: mondoo-digitalocean-security-db-not-internet-reachable
           - uid: mondoo-digitalocean-security-db-engine-supported-version
           - uid: mondoo-digitalocean-security-db-ca-certificate-not-expired
       - title: Load Balancers
         filters: asset.platform == "digitalocean-loadbalancer"
         checks:
           - uid: mondoo-digitalocean-security-lb-http-redirected-to-https
+          - uid: mondoo-digitalocean-security-lb-strong-tls-cipher-policy
           - uid: mondoo-digitalocean-security-lb-in-vpc
       - title: Kubernetes (DOKS)
         filters: asset.platform == "digitalocean-kubernetes-cluster"
@@ -72,6 +74,7 @@ policies:
           - uid: mondoo-digitalocean-security-doks-sso-enabled
           - uid: mondoo-digitalocean-security-doks-sso-required
           - uid: mondoo-digitalocean-security-doks-in-vpc
+          - uid: mondoo-digitalocean-security-doks-control-plane-firewall-enabled
       - title: TLS Certificates
         filters: asset.platform == "digitalocean"
         checks:
@@ -107,6 +110,7 @@ policies:
         filters: asset.platform == "digitalocean"
         checks:
           - uid: mondoo-digitalocean-security-gradientai-agent-not-publicly-deployed
+          - uid: mondoo-digitalocean-security-gradientai-agent-has-guardrails
           - uid: mondoo-digitalocean-security-gradientai-knowledge-base-not-public
     scoring_system: highest impact
 queries:
@@ -1252,6 +1256,93 @@ queries:
     mql: |
       terraform.state.resources.where(type == "digitalocean_database_cluster").all(values.private_network_uuid != empty)
 
+  # No Terraform variants: internetReachable resolves the cluster's live public connection
+  # endpoint against its effective trusted-source firewall rules. The digitalocean_database_cluster
+  # Terraform resource exposes neither the resolved public reachability nor the evaluated
+  # trusted-source decision, so there is nothing equivalent to assert in HCL, plan, or state.
+  # The db-in-private-network and db-firewall-configured checks already cover the
+  # Terraform-expressible posture.
+  - uid: mondoo-digitalocean-security-db-not-internet-reachable
+    title: Ensure managed databases are not reachable from the internet
+    impact: 85
+    filters: asset.platform == "digitalocean-database"
+    mql: |
+      digitalocean.database.internetReachable == false
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-06
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-5
+      compliance/pci-dss-4: pcidss-requirement-1-4-1
+      compliance/soc2-2017: soc2-control-cc6-1-5
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    docs:
+      desc: |
+        This check ensures that no managed database cluster is reachable from the public internet. `internetReachable` is true when the cluster has a public connection endpoint and its trusted-source firewall rules admit any address, including the case where no trusted sources are configured at all and the public endpoint is left open to every host. It is a higher-fidelity signal than the presence of a public endpoint alone because it accounts for whether the trusted-source rules actually restrict access.
+
+        **Why this matters**
+
+        - **Reduced attack surface:** A database that no internet host can reach is removed from the pool of targets for credential-stuffing and protocol-level attacks against the database engine.
+        - **Misconfiguration resilience:** Correlating the public endpoint with the trusted-source rules catches the common failure where a cluster keeps its public endpoint and the trusted-source list is empty or world-open.
+        - **Defense in depth:** Keeping the cluster private supplements engine authentication, so a weak or leaked credential is not directly exploitable from the internet.
+
+        **Risk mitigation**
+
+        - **Data exfiltration:** Removes the direct internet path an attacker would use to reach the database with stolen or brute-forced credentials.
+        - **Internet-wide scanning:** Takes the database endpoint off the public scanning grid entirely.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+        2. Navigate to **Databases** and open each cluster.
+        3. On the **Overview** tab, review the **Connection Details** for a public host, and on the **Settings** tab review the **Trusted Sources** list.
+
+        A passing database cluster either exposes no public connection endpoint or restricts its trusted sources to specific resources or CIDRs. A failing database cluster exposes a public endpoint while its trusted sources admit any address or are empty.
+
+        ### Audit via CLI
+
+        1. List clusters and inspect each cluster's trusted-source firewall rules:
+
+        ```bash
+        doctl databases list --format ID,Name,Engine
+        doctl databases firewalls list <database-id>
+        ```
+
+        A passing database cluster returns trusted-source rules that name specific droplets, tags, Kubernetes clusters, or narrow CIDRs. A failing database cluster returns an `ip_addr` rule of `0.0.0.0/0` or `::/0`, or no trusted-source rules at all while a public endpoint is in use.
+      remediation:
+        - id: console
+          desc: |
+            To close the internet-reachable path in the DigitalOcean Cloud Control Panel:
+
+            1. Navigate to **Databases** and open the affected cluster.
+            2. On the **Settings** tab, edit **Trusted Sources** and add the specific droplets, tags, Kubernetes clusters, or narrow CIDRs that need access.
+            3. Remove any trusted-source entry of `0.0.0.0/0` or `::/0`, and confirm at least one restrictive trusted source remains so the public endpoint is no longer open to every host.
+            4. Where the cluster does not need a public edge, attach it to a VPC and connect over the private endpoint instead.
+        - id: cli
+          desc: |
+            To restrict the trusted sources on the command line using the `doctl` CLI, replace any world-open rule with specific sources:
+
+            ```bash
+            doctl databases firewalls append <database-id> --rule ip_addr:203.0.113.10
+            doctl databases firewalls append <database-id> --rule droplet:<droplet-id>
+            doctl databases firewalls list <database-id>
+            ```
+
+            After confirming the restrictive rules are in place, remove the world-open rule by re-applying the full rule set without it using `doctl databases firewalls replace <database-id> --rule ...`.
+        # No Terraform remediation: internetReachable is a runtime correlation of the live
+        # public endpoint with the effective trusted-source rules and has no single
+        # configuration analog. Express the desired posture with the db-in-private-network
+        # and db-firewall-configured Terraform remediations instead.
+    refs:
+      - url: https://docs.digitalocean.com/products/databases/postgresql/how-to/secure/
+        title: Secure a managed database cluster
+
   - uid: mondoo-digitalocean-security-db-engine-supported-version
     title: Ensure managed database engines are not running an EOL version
     impact: 70
@@ -1665,6 +1756,92 @@ queries:
         values["forwarding_rule"].none(_["entry_protocol"] == "http") ||
         values.redirect_http_to_https == true
       )
+
+  # No Terraform variants: tlsCipherPolicy reflects the minimum TLS cipher policy resolved by
+  # the DigitalOcean load balancer service. The digitalocean_loadbalancer Terraform resource
+  # has no argument that selects between the DEFAULT and STRONG cipher policies, so the setting
+  # cannot be asserted in HCL, plan, or state.
+  - uid: mondoo-digitalocean-security-lb-strong-tls-cipher-policy
+    title: Ensure TLS load balancers enforce the strong TLS cipher policy
+    impact: 70
+    filters: asset.platform == "digitalocean-loadbalancer"
+    mql: |
+      digitalocean.loadBalancer {
+        forwardingRules.none(_["entry_protocol"] == "https" || _["entry_protocol"] == "tls") || tlsCipherPolicy == "STRONG"
+      }
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    docs:
+      desc: |
+        This check ensures that any load balancer terminating TLS uses the `STRONG` minimum TLS cipher policy rather than the `DEFAULT` policy. The `STRONG` policy negotiates only TLS 1.2 and later with a restricted set of modern, forward-secret cipher suites, whereas the default policy permits a broader, weaker set for backward compatibility.
+
+        **Why this matters**
+
+        - **Modern ciphers only:** The strong policy removes cipher suites that lack forward secrecy or rely on weaker primitives, so captured traffic cannot be decrypted later if a key is compromised.
+        - **Downgrade resistance:** Restricting the negotiable protocol versions and ciphers narrows the room an attacker has to force a client onto a weaker connection.
+        - **Compliance alignment:** Frameworks that require strong cryptography for data in transit are satisfied by the restricted policy but not by the permissive default.
+
+        **Risk mitigation**
+
+        - **Traffic interception:** Enforcing strong cipher suites keeps TLS sessions resistant to passive decryption and known cipher-level attacks.
+        - **Standards drift:** Pinning the load balancer to the strong policy prevents weak ciphers from being negotiated as client populations change over time.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+        2. Navigate to **Networking** > **Load Balancers** and open each load balancer that has an HTTPS or TLS forwarding rule.
+        3. Go to **Settings** and review the **TLS Cipher Policy** value.
+
+        A passing load balancer terminating TLS shows the cipher policy set to **Strong**. A failing load balancer terminating TLS shows the **Default** cipher policy.
+
+        ### Audit via CLI
+
+        1. List load balancers and inspect the `tls_cipher_policy` field alongside the forwarding rules:
+
+        ```bash
+        doctl compute load-balancer list --output json | jq -r '.[] | [.id, .name, .tls_cipher_policy] | @tsv'
+        ```
+
+        A passing load balancer that terminates TLS returns `STRONG`. A failing load balancer that terminates TLS returns `DEFAULT` or an empty value.
+      remediation:
+        - id: console
+          desc: |
+            To enforce the strong cipher policy in the DigitalOcean Cloud Control Panel:
+
+            1. Navigate to **Networking** > **Load Balancers** and open the affected load balancer.
+            2. Go to **Settings** and set the **TLS Cipher Policy** to **Strong**.
+            3. Confirm that clients still negotiate successfully, since the strong policy drops TLS 1.1 and older and legacy ciphers.
+        - id: cli
+          desc: |
+            The `doctl compute load-balancer update` command replaces the full load balancer configuration, so any attribute you do not pass is reset to its default. Read the current configuration first, then re-apply it together with the strong cipher policy:
+
+            ```bash
+            doctl compute load-balancer get "<lb-id>" \
+              --format Name,Region,ForwardingRules,DropletIDs --no-header
+            doctl compute load-balancer update "<lb-id>" \
+              --name "<name>" \
+              --region "<region>" \
+              --forwarding-rules "<current-forwarding-rules>" \
+              --droplet-ids "<droplet-ids>" \
+              --tls-cipher-policy strong
+            ```
+        # No Terraform remediation: the digitalocean_loadbalancer resource has no argument for the
+        # minimum TLS cipher policy, so the STRONG policy cannot be set through Terraform.
+    refs:
+      - url: https://docs.digitalocean.com/products/networking/load-balancers/how-to/ssl-termination/
+        title: Load balancer SSL termination
 
   - uid: mondoo-digitalocean-security-lb-in-vpc
     title: Ensure load balancers are deployed inside a VPC
@@ -2335,6 +2512,95 @@ queries:
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "digitalocean_kubernetes_cluster")
     mql: |
       terraform.state.resources.where(type == "digitalocean_kubernetes_cluster").all(values.vpc_uuid != empty)
+
+  # No Terraform variants: the control-plane firewall is enforced by the managed DOKS control
+  # plane and surfaced as live posture. controlPlaneFirewallEnabled is null until the feature is
+  # configured through the API, and the check correlates that flag with the resolved
+  # allowed-address list to reject a world-open allowlist. Expressing both the null-until-set
+  # state and the public-CIDR exclusion across digitalocean_kubernetes_cluster HCL, plan, and
+  # state would be fragile, so this check is runtime-only.
+  - uid: mondoo-digitalocean-security-doks-control-plane-firewall-enabled
+    title: Ensure DOKS clusters restrict API server access with a firewall
+    impact: 90
+    filters: asset.platform == "digitalocean-kubernetes-cluster"
+    mql: |
+      digitalocean.kubernetes.cluster.controlPlaneFirewallEnabled == true
+      digitalocean.kubernetes.cluster.controlPlaneFirewallAllowedAddresses == empty || digitalocean.kubernetes.cluster.controlPlaneFirewallAllowedAddresses.containsNone(["0.0.0.0/0", "::/0"])
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-06
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-5
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-1-5
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    docs:
+      desc: |
+        This check ensures that every DigitalOcean Kubernetes (DOKS) cluster enables the control-plane firewall and does not list `0.0.0.0/0` or `::/0` among its allowed addresses. The control-plane firewall restricts which source addresses can reach the cluster's Kubernetes API server. When it is disabled, the API server accepts connections from any internet host; when it is enabled but allows any address, the restriction is effectively removed.
+
+        **Why this matters**
+
+        - **The API server is the cluster's control surface:** Anyone who can reach the Kubernetes API server can attempt authentication, exploit an API-level vulnerability, or probe for misconfigurations that grant access to workloads and secrets.
+        - **Authentication is not the only layer:** Even with strong authentication, an internet-reachable API server remains a target for credential attacks and for any future flaw in the API server itself.
+        - **A scoped allowlist contains blast radius:** Restricting the API server to known administrative and CI/CD source ranges removes it from internet-wide scanning entirely.
+
+        **Risk mitigation**
+
+        - **Cluster takeover:** Limiting which sources can reach the API server cuts off the primary network path an attacker would use to compromise the control plane.
+        - **Internet-wide scanning:** A firewalled API server is not discoverable by mass scanners probing for exposed Kubernetes endpoints.
+
+        Administrative and CI/CD source ranges that legitimately need API access should be added to the allowed-address list rather than leaving the firewall open.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+        2. Navigate to **Kubernetes** and open each cluster.
+        3. On the **Settings** tab, review the **Control plane firewall** configuration.
+
+        A passing cluster has the control plane firewall enabled with the allowed addresses scoped to specific trusted CIDRs. A failing cluster has the firewall disabled, or enabled with `0.0.0.0/0` or `::/0` in the allowed addresses.
+
+        ### Audit via CLI
+
+        1. List clusters, then inspect each cluster's control-plane firewall settings:
+
+        ```bash
+        doctl kubernetes cluster list --format ID,Name
+        doctl kubernetes cluster get <cluster-id> --output json | jq -r '.[] | [.name, .control_plane_firewall.enabled, (.control_plane_firewall.allowed_addresses | join(","))] | @tsv'
+        ```
+
+        A passing cluster returns `true` for the firewall with an allowed-address list that excludes `0.0.0.0/0` and `::/0`. A failing cluster returns `false`, or `true` with an unrestricted address in the list.
+      remediation:
+        - id: console
+          desc: |
+            To restrict API server access in the DigitalOcean Cloud Control Panel:
+
+            1. Navigate to **Kubernetes** and open the affected cluster.
+            2. On the **Settings** tab, enable the **Control plane firewall**.
+            3. Add the specific administrative and CI/CD source CIDRs that need API access, and ensure neither `0.0.0.0/0` nor `::/0` is present.
+            4. Confirm that your management tooling can still reach the cluster after the change.
+        - id: cli
+          desc: |
+            To enable and scope the control-plane firewall on the command line using the `doctl` CLI:
+
+            ```bash
+            doctl kubernetes cluster update <cluster-id> \
+              --enable-control-plane-firewall=true \
+              --control-plane-firewall-allowed-addresses "203.0.113.0/24,198.51.100.10/32"
+            ```
+
+            Replace the addresses with the trusted source ranges that need API access. Verify connectivity from an allowed range afterward.
+        # No Terraform remediation: controlPlaneFirewallEnabled is a managed control-plane posture
+        # surfaced only by the live API; the digitalocean_kubernetes_cluster resource does not
+        # express the control-plane firewall, so it cannot be remediated through Terraform.
+    refs:
+      - url: https://docs.digitalocean.com/products/kubernetes/how-to/configure-control-plane-firewall/
+        title: Configure the DOKS control plane firewall
 
   # No Terraform variants: this check inspects the certificate's notAfter validity
   # window — runtime telemetry set at issuance, not a configuration field. The
@@ -3751,6 +4017,80 @@ queries:
     refs:
       - url: https://docs.digitalocean.com/products/gradientai-platform/
         title: DigitalOcean GradientAI platform
+  # No Terraform variants: GradientAI agents are managed through the GradientAI API and control
+  # panel; the digitalocean Terraform provider has no resource representing an agent or its
+  # attached guardrails, so there is nothing to assert in HCL, plan, or state.
+  - uid: mondoo-digitalocean-security-gradientai-agent-has-guardrails
+    title: Ensure GradientAI agents have a content guardrail attached
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: false
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: false
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    mql: |
+      digitalocean.gradientai.agents.all(guardrails.where(isAttached == true).length > 0)
+    docs:
+      desc: |
+        This check ensures that every GradientAI agent has at least one content guardrail attached. Guardrails inspect the prompts an agent receives and the responses it returns, blocking content that violates the configured policy and returning a canned response instead. An agent with no attached guardrail applies no content filtering to its inputs or outputs.
+
+        **Why this matters**
+
+        - **Prompt-injection resistance:** A guardrail can intercept adversarial prompts that attempt to override the agent's instructions or extract its system prompt and connected data.
+        - **Output safety:** Guardrails keep an agent from returning sensitive, unsafe, or policy-violating content to its users.
+        - **Consistent enforcement:** Attaching a guardrail enforces content policy at the platform layer rather than relying on the agent's instruction text alone, which a determined user can work around.
+
+        **Risk mitigation**
+
+        - **Data leakage:** A guardrail reduces the chance that an agent grounded on private knowledge bases discloses that content in response to a crafted prompt.
+        - **Abuse:** Filtering inputs and outputs limits how an exposed agent can be misused for harmful generation.
+
+        Agents that are intentionally unfiltered for a trusted internal audience can be exempted from this check.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+        2. Open the **GradientAI** platform and select each agent.
+        3. Review the agent's **Guardrails** configuration.
+
+        A passing account has every agent with at least one attached guardrail. A failing account has one or more agents with no guardrail attached.
+
+        ### Audit via CLI
+
+        1. List the GradientAI agents and review their attached guardrails:
+
+        ```bash
+        doctl genai agent list --output json | jq -r '.[] | [.name, .uuid, ([.guardrails[]? | select(.is_attached)] | length)] | @tsv'
+        ```
+
+        A passing account returns an attached-guardrail count of at least 1 for every agent. A failing account returns `0` for one or more agents.
+      remediation:
+        - id: console
+          desc: |
+            To attach a content guardrail using the DigitalOcean Cloud Control Panel:
+
+            1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+            2. Open the **GradientAI** platform and select the agent.
+            3. Open the **Guardrails** configuration, attach an appropriate guardrail, and set its default response.
+            4. Redeploy the agent so the guardrail takes effect.
+        # No CLI remediation: doctl genai exposes agent lifecycle operations but no command to
+        # attach a guardrail to an agent; guardrail attachment is performed through the GradientAI
+        # control panel or the GradientAI API.
+        # No Terraform remediation: GradientAI agents have no digitalocean Terraform resource, so
+        # guardrail attachment cannot be expressed in Terraform.
+    refs:
+      - url: https://docs.digitalocean.com/products/gradientai-platform/
+        title: DigitalOcean GradientAI platform
+
   # No Terraform variants: GradientAI knowledge bases are managed through the GradientAI
   # API and control panel; the digitalocean Terraform provider has no resource representing
   # a knowledge base or its public flag, so there is nothing to assert in HCL, plan, or state.
