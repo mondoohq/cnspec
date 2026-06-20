@@ -20782,6 +20782,8 @@ queries:
       desc: |
         This check ensures that Amazon Machine Images (AMIs) owned by the account are not shared outside the account, whether through public launch permissions or by sharing with specific external AWS accounts. Shared AMIs can be launched by accounts you do not control, potentially exposing proprietary software, embedded secrets, internal configurations, and sensitive data baked into the image during its build process.
 
+        Note: The Terraform variants flag any explicit external grant because infrastructure-as-code cannot distinguish a same-organization account from a third-party account. Exempt intra-organization shares as appropriate for your environment.
+
         **Why this matters**
 
         - **Credential exposure:** AMIs created from running instances may contain embedded SSH keys, API tokens, database connection strings, or application secrets that become accessible to anyone who launches the image.
@@ -20887,19 +20889,19 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_ami_launch_permission")
     mql: |
       terraform.resources("aws_ami_launch_permission").none(
-        arguments.group == "all"
+        arguments.group == "all" || arguments.account_id != null && arguments.account_id != ""
       )
   - uid: mondoo-aws-security-ec2-ami-public-sharing-prohibited-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_ami_launch_permission")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_ami_launch_permission").none(
-        change.after.group == "all"
+        change.after.group == "all" || change.after.account_id != null && change.after.account_id != ""
       )
   - uid: mondoo-aws-security-ec2-ami-public-sharing-prohibited-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_ami_launch_permission")
     mql: |
       terraform.state.resources.where(type == "aws_ami_launch_permission").none(
-        values.group == "all"
+        values.group == "all" || values.account_id != null && values.account_id != ""
       )
   - uid: mondoo-aws-security-ecs-container-non-root-user
     title: Ensure ECS task definitions specify a non-root user for containers
@@ -44400,14 +44402,14 @@ queries:
 
         ```bash
         aws ec2 describe-security-groups \
-          --query "SecurityGroups[?IpPermissionsEgress[?IpProtocol=='-1' && IpRanges[?CidrIp=='0.0.0.0/0']]].{GroupId:GroupId,GroupName:GroupName,VpcId:VpcId}"
+          --query "SecurityGroups[?IpPermissionsEgress[?IpRanges[?CidrIp=='0.0.0.0/0']]].{GroupId:GroupId,GroupName:GroupName,VpcId:VpcId}"
         ```
 
         2. Also check for IPv6 unrestricted egress:
 
         ```bash
         aws ec2 describe-security-groups \
-          --query "SecurityGroups[?IpPermissionsEgress[?IpProtocol=='-1' && Ipv6Ranges[?CidrIpv6=='::/0']]].{GroupId:GroupId,GroupName:GroupName,VpcId:VpcId}"
+          --query "SecurityGroups[?IpPermissionsEgress[?Ipv6Ranges[?CidrIpv6=='::/0']]].{GroupId:GroupId,GroupName:GroupName,VpcId:VpcId}"
         ```
 
         A passing account returns an empty list for both commands. A failing account returns one or more security groups with unrestricted egress rules.
@@ -44429,7 +44431,7 @@ queries:
 
             ```bash
             aws ec2 describe-security-groups \
-              --query "SecurityGroups[?IpPermissionsEgress[?IpProtocol=='-1' && (IpRanges[?CidrIp=='0.0.0.0/0'] || Ipv6Ranges[?CidrIpv6=='::/0'])]].{GroupId:GroupId,GroupName:GroupName}"
+              --query "SecurityGroups[?IpPermissionsEgress[?IpRanges[?CidrIp=='0.0.0.0/0'] || Ipv6Ranges[?CidrIpv6=='::/0']]].{GroupId:GroupId,GroupName:GroupName}"
             ```
 
             Remove the unrestricted IPv4 egress rule:
@@ -44504,26 +44506,26 @@ queries:
   - uid: mondoo-aws-security-secgroup-no-unrestricted-egress-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_security_group" || nameLabel == "aws_security_group_rule" || nameLabel == "aws_vpc_security_group_egress_rule")
     mql: |
-      terraform.resources("aws_security_group").all(arguments["egress"] == empty || arguments["egress"].where(_["protocol"] == "-1").none(_["cidr_blocks"] != null && _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"] != null && _["ipv6_cidr_blocks"].contains("::/0")))
-      terraform.resources("aws_security_group_rule").where(arguments["type"] == "egress").where(arguments["protocol"] == "-1").none(arguments["cidr_blocks"] != null && arguments["cidr_blocks"].contains("0.0.0.0/0") || arguments["ipv6_cidr_blocks"] != null && arguments["ipv6_cidr_blocks"].contains("::/0"))
-      terraform.resources("aws_vpc_security_group_egress_rule").where(arguments["ip_protocol"] == "-1").none(arguments["cidr_ipv4"] == "0.0.0.0/0" || arguments["cidr_ipv6"] == "::/0")
+      terraform.resources("aws_security_group").all(arguments["egress"] == empty || arguments["egress"].none(_["cidr_blocks"] != null && _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"] != null && _["ipv6_cidr_blocks"].contains("::/0")))
+      terraform.resources("aws_security_group_rule").where(arguments["type"] == "egress").none(arguments["cidr_blocks"] != null && arguments["cidr_blocks"].contains("0.0.0.0/0") || arguments["ipv6_cidr_blocks"] != null && arguments["ipv6_cidr_blocks"].contains("::/0"))
+      terraform.resources("aws_vpc_security_group_egress_rule").none(arguments["cidr_ipv4"] == "0.0.0.0/0" || arguments["cidr_ipv6"] == "::/0")
   - uid: mondoo-aws-security-secgroup-no-unrestricted-egress-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_security_group")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_security_group").all(
-      change.after.egress == empty || change.after.egress.none(cidr_blocks.contains("0.0.0.0/0"))
+      change.after.egress == empty || change.after.egress.none(cidr_blocks != null && cidr_blocks.contains("0.0.0.0/0") || ipv6_cidr_blocks != null && ipv6_cidr_blocks.contains("::/0"))
       )
   - uid: mondoo-aws-security-secgroup-no-unrestricted-egress-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_security_group")
     mql: |
       terraform.state.resources.where(type == "aws_security_group").all(
-      values.egress == empty || values.egress.none(cidr_blocks.contains("0.0.0.0/0"))
+      values.egress == empty || values.egress.none(cidr_blocks != null && cidr_blocks.contains("0.0.0.0/0") || ipv6_cidr_blocks != null && ipv6_cidr_blocks.contains("::/0"))
       )
   - uid: mondoo-aws-security-secgroup-no-unrestricted-egress-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::SecurityGroup")
     mql: |
       cloudformation.template.resources.where(type == "AWS::EC2::SecurityGroup").all(
-      properties['SecurityGroupEgress'] == empty || properties['SecurityGroupEgress'].none(_['CidrIp'] == "0.0.0.0/0")
+      properties['SecurityGroupEgress'] == empty || properties['SecurityGroupEgress'].none(_['CidrIp'] == "0.0.0.0/0" || _['CidrIpv6'] == "::/0")
       )
   # No Terraform variants: The root user's MFA configuration is reported via `aws.iam.credentialReport` and `aws.iam.virtualMfaDevices`; the AWS root account itself is not a Terraform-managed resource.
   - uid: mondoo-aws-security-iam-root-hardware-mfa
@@ -49915,6 +49917,8 @@ queries:
       desc: |
         This check ensures that EBS snapshots are not shared outside the account, whether publicly or privately with specific external AWS accounts. Shared snapshots expose volume data to accounts you do not control, potentially leaking sensitive information such as application data, credentials, or encryption keys stored on the volume.
 
+        Note: The Terraform variants flag any explicit external grant because infrastructure-as-code cannot distinguish a same-organization account from a third-party account. Exempt intra-organization shares as appropriate for your environment.
+
         **Why this matters**
 
         - **Data exposure:** Any AWS account can copy and mount a public snapshot, gaining full access to all data on the volume.
@@ -50038,20 +50042,20 @@ queries:
   - uid: mondoo-aws-security-ec2-snapshot-not-public-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_snapshot_create_volume_permission")
     mql: |
-      terraform.resources("aws_snapshot_create_volume_permission").all(
-        arguments.account_id != "all"
+      terraform.resources("aws_snapshot_create_volume_permission").none(
+        arguments.group == "all" || arguments.account_id != null && arguments.account_id != ""
       )
   - uid: mondoo-aws-security-ec2-snapshot-not-public-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_snapshot_create_volume_permission")
     mql: |
-      terraform.plan.resourceChanges.where(type == "aws_snapshot_create_volume_permission").all(
-        change.after["account_id"] != "all"
+      terraform.plan.resourceChanges.where(type == "aws_snapshot_create_volume_permission").none(
+        change.after["group"] == "all" || change.after["account_id"] != null && change.after["account_id"] != ""
       )
   - uid: mondoo-aws-security-ec2-snapshot-not-public-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_snapshot_create_volume_permission")
     mql: |
-      terraform.state.resources.where(type == "aws_snapshot_create_volume_permission").all(
-        values["account_id"] != "all"
+      terraform.state.resources.where(type == "aws_snapshot_create_volume_permission").none(
+        values["group"] == "all" || values["account_id"] != null && values["account_id"] != ""
       )
   # Security-only check (compliance mapping intentionally omitted per maintainer).
   # No Terraform variants: internetReachable is a runtime-computed exposure signal with no static config analog.
