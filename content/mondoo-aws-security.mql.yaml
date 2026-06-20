@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-aws-security
     name: Mondoo AWS Security
-    version: 12.2.2
+    version: 12.3.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -192,6 +192,7 @@ policies:
           - uid: mondoo-aws-security-rds-deletion-protection
           - uid: mondoo-aws-security-rds-instance-cmk-encryption
           - uid: mondoo-aws-security-rds-snapshot-cmk-encryption
+          - uid: mondoo-aws-security-rds-instance-not-internet-reachable
       - title: Amazon RDS Proxy
         checks:
           - uid: mondoo-aws-security-rds-proxy-tls-required
@@ -240,6 +241,7 @@ policies:
           - uid: mondoo-aws-security-ec2-serial-console-disabled
           - uid: mondoo-aws-security-ec2-ami-block-public-access
           - uid: mondoo-aws-security-ec2-launch-template-imdsv2
+          - uid: mondoo-aws-security-ec2-instance-not-internet-reachable
       - title: Amazon ECR
         checks:
           - uid: mondoo-aws-security-ecr-image-scan-on-push
@@ -290,6 +292,7 @@ policies:
           - uid: mondoo-aws-security-elb-ssl-listener
           - uid: mondoo-aws-security-elb-drop-invalid-headers
           - uid: mondoo-aws-security-elbv2-listener-tls-1-2-minimum
+          - uid: mondoo-aws-security-elb-not-internet-reachable
       - title: AWS Elasticsearch Domain
         checks:
           - uid: mondoo-aws-security-elasticsearch-encrypted-at-rest
@@ -373,6 +376,7 @@ policies:
           - uid: mondoo-aws-security-eks-nodegroup-encrypted-volumes
           - uid: mondoo-aws-security-eks-cluster-iam-auth-mode
           - uid: mondoo-aws-security-eks-addon-healthy
+          - uid: mondoo-aws-security-eks-control-plane-egress-customer-routed
       - title: Amazon GuardDuty
         checks:
           - uid: mondoo-aws-security-guardduty-enabled
@@ -397,6 +401,7 @@ policies:
       - title: IAM Access Analyzer
         checks:
           - uid: mondoo-aws-security-iam-access-analyzer-enabled
+          - uid: mondoo-aws-security-access-analyzer-no-external-access-findings
       - title: Amazon SNS
         checks:
           - uid: mondoo-aws-security-sns-topic-encrypted
@@ -493,6 +498,7 @@ policies:
         checks:
           - uid: mondoo-aws-security-cognito-user-pool-mfa-enforced
           - uid: mondoo-aws-security-cognito-user-pool-advanced-security-enforced
+          - uid: mondoo-aws-security-cognito-domain-min-tls-1-2
       - title: Amazon Cognito Identity Pool
         checks:
           - uid: mondoo-aws-security-cognito-identity-pool-no-unauthenticated
@@ -530,6 +536,7 @@ policies:
           - uid: mondoo-aws-security-documentdb-no-default-security-groups
           - uid: mondoo-aws-security-documentdb-cluster-auto-minor-version-upgrade
           - uid: mondoo-aws-security-documentdb-instance-public-access-check
+          - uid: mondoo-aws-security-documentdb-instance-not-internet-reachable
       - title: AWS Glue
         checks:
           - uid: mondoo-aws-security-glue-job-security-configuration
@@ -6137,6 +6144,120 @@ queries:
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::RDS::DBInstance")
     mql: |
       cloudformation.template.resources.where(type == "AWS::RDS::DBInstance").all( properties['PubliclyAccessible'] != true )
+  # Security-only check (compliance mapping intentionally omitted per maintainer).
+  # No Terraform variants: internetReachable is a runtime-computed exposure signal with no static config analog.
+  - uid: mondoo-aws-security-rds-instance-not-internet-reachable
+    title: Ensure RDS instances are not reachable from the internet
+    impact: 87
+    filters: asset.platform == "aws"
+    mql: |
+      aws.rds.instances.all( exposure.internetReachable == false )
+    docs:
+      desc: |
+        This check ensures that RDS database instances are not directly reachable from the internet. The `internetReachable` verdict combines the instance's publicly-accessible flag with the ingress rules of its attached security groups, so an instance is flagged only when AWS resolves its endpoint to a public address *and* a security group permits inbound traffic from the internet. This removes false positives from databases that carry the public-access flag but sit behind a closed security group, and surfaces databases that are genuinely accessible from arbitrary hosts.
+
+        **Why this matters**
+
+        - **Sensitive data at the edge:** Databases hold the records attackers most want; direct internet reachability puts that data one authentication bypass or unpatched CVE away from exposure.
+        - **Continuous probing:** Internet-reachable database endpoints are scanned and brute-forced around the clock, consuming connections and inviting credential-stuffing attacks.
+        - **High-fidelity signal:** Fusing the public-access flag with security group ingress flags only databases that are actually exposed, not every instance that merely has the flag set.
+
+        **Risk mitigation**
+
+        - **Network isolation:** Placing databases in private subnets and disabling public access removes the direct path from the internet.
+        - **Tightened ingress:** Restricting security groups to known application sources breaks the reachability chain even where the public-access flag is set.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the AWS Management Console and open the **RDS** console.
+        2. In the left navigation pane, choose **Databases**.
+        3. Select each instance and open the **Connectivity & security** tab.
+        4. Review the **Public access** field and the inbound rules of the attached VPC security groups.
+
+        A passing instance shows **Public access: No**, or its security groups permit no internet ingress. A failing instance shows **Public access: Yes** with a security group open to `0.0.0.0/0` on the database port.
+
+        ### Audit via CLI
+
+        1. List instances and their public-access setting:
+
+        ```bash
+        aws rds describe-db-instances \
+          --query "DBInstances[*].{Id:DBInstanceIdentifier,Public:PubliclyAccessible,SecurityGroups:VpcSecurityGroups[*].VpcSecurityGroupId}" \
+          --output table
+        ```
+
+        2. For any instance returned with `"Public": true`, inspect its security groups for internet-open ingress:
+
+        ```bash
+        aws ec2 describe-security-groups \
+          --group-ids <sg-id> \
+          --query "SecurityGroups[*].IpPermissions[?IpRanges[?CidrIp=='0.0.0.0/0']]"
+        ```
+
+        A passing instance returns `"Public": false`, or its security groups return no internet-open ingress rule. A failing instance returns `"Public": true` with a security group open to `0.0.0.0/0`.
+      remediation:
+        - id: console
+          desc: |
+            To remove internet reachability from an RDS instance using the AWS Console:
+
+            1. Navigate to the **RDS Console** and choose **Databases**.
+            2. Select the instance and choose **Modify**.
+            3. Under **Connectivity** > **Additional configuration**, set **Public access** to **Not publicly accessible**.
+            4. Choose **Continue** and apply the change.
+            5. Confirm the instance's subnet group covers only private subnets and that its security groups allow traffic only from authorized application sources.
+        - id: cli
+          desc: |
+            To remove internet reachability from an RDS instance using the AWS CLI, disable public access:
+
+            ```bash
+            aws rds modify-db-instance \
+              --db-instance-identifier <instance-id> \
+              --no-publicly-accessible \
+              --apply-immediately
+            ```
+
+            Restrict the attached security group so it no longer permits internet ingress:
+
+            ```bash
+            aws ec2 revoke-security-group-ingress \
+              --group-id <sg-id> \
+              --ip-permissions IpProtocol=tcp,FromPort=5432,ToPort=5432,IpRanges='[{CidrIp=0.0.0.0/0}]'
+            ```
+        - id: terraform
+          desc: |
+            To keep RDS instances off the public internet in Terraform, disable public access and place the instance in private subnets:
+
+            ```hcl
+            resource "aws_db_instance" "example" {
+              identifier             = "example"
+              engine                 = "postgres"
+              instance_class         = "db.t3.micro"
+              publicly_accessible    = false
+              db_subnet_group_name   = aws_db_subnet_group.private.name
+              vpc_security_group_ids = [aws_security_group.db.id]
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To keep RDS instances off the public internet in CloudFormation, disable public access and place the instance in private subnets:
+
+            ```yaml
+            Resources:
+              Database:
+                Type: AWS::RDS::DBInstance
+                Properties:
+                  Engine: postgres
+                  DBInstanceClass: db.t3.micro
+                  PubliclyAccessible: false
+                  DBSubnetGroupName: !Ref PrivateSubnetGroup
+                  VPCSecurityGroups:
+                    - !Ref DatabaseSecurityGroup
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_VPC.WorkingWithRDSInstanceinaVPC.html
+        title: AWS Documentation - Working with a DB instance in a VPC
+      - url: https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Overview.RDSSecurityGroups.html
+        title: AWS Documentation - Controlling access with security groups
   - uid: mondoo-aws-security-redshift-cluster-public-access-check
     title: Ensure Redshift clusters are not publicly accessible
     impact: 90
@@ -8543,6 +8664,123 @@ queries:
       properties['LoadBalancerAttributes'].any(_['Key'] == "deletion_protection.enabled") &&
       properties['LoadBalancerAttributes'].where(_['Key'] == "deletion_protection.enabled").all(_['Value'] == "true")
       )
+  # Security-only check (compliance mapping intentionally omitted per maintainer).
+  # No Terraform variants: internetReachable is a runtime-computed exposure signal with no static config analog.
+  - uid: mondoo-aws-security-elb-not-internet-reachable
+    title: Ensure load balancers are not unexpectedly internet-reachable
+    impact: 80
+    filters: asset.platform == "aws"
+    mql: |
+      aws.elb.loadBalancers.all( exposure.internetReachable == false )
+    docs:
+      desc: |
+        This check ensures that load balancers are not reachable from the internet unless intentionally designed to be. The `internetReachable` verdict combines the load balancer's scheme (internet-facing versus internal) with the ingress rules of its attached security groups, so a balancer is flagged only when its scheme is internet-facing *and* a security group permits inbound traffic from the internet.
+
+        Many ALBs and NLBs are deliberately public — they front web applications and APIs that must be reachable. Those load balancers will fail this check and should be exempted through your policy exception process. The value of the check is surfacing *unexpected* exposure: a balancer that became internet-facing through configuration drift, a copy-paste of a public template into an internal tier, or a security group that was opened wider than intended.
+
+        **Why this matters**
+
+        - **Drift detection:** Internal services occasionally acquire an internet-facing balancer through misconfiguration; this check catches that drift before an attacker does.
+        - **Reduced attack surface:** Every internet-reachable balancer is an entry point that must be patched, monitored, and protected with a WAF; eliminating unexpected ones shrinks what you must defend.
+        - **High-fidelity signal:** Fusing scheme with security group ingress flags only balancers that are actually exposed, not every balancer with an internet-facing scheme behind a closed security group.
+
+        **Risk mitigation**
+
+        - **Scheme correctness:** Internal-tier load balancers should use the `internal` scheme so they never resolve to public addresses.
+        - **Ingress tightening:** Restricting balancer security groups to known sources breaks reachability even where the scheme is internet-facing.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the AWS Management Console and open the **EC2** console.
+        2. Under **Load Balancing**, choose **Load Balancers**.
+        3. For each load balancer, review the **Scheme** column and open the **Security** tab to inspect the attached security groups.
+        4. Identify internet-facing balancers whose security groups permit inbound traffic from `0.0.0.0/0`, and confirm each is intentionally public.
+
+        A passing load balancer uses the `internal` scheme, or its security groups permit no internet ingress, or it is a documented intentional public endpoint. A failing load balancer is internet-facing with an internet-open security group and no exemption.
+
+        ### Audit via CLI
+
+        1. List load balancers and their scheme:
+
+        ```bash
+        aws elbv2 describe-load-balancers \
+          --query "LoadBalancers[*].{Name:LoadBalancerName,Scheme:Scheme,SecurityGroups:SecurityGroups}" \
+          --output table
+        ```
+
+        2. For each internet-facing balancer, inspect its security groups for internet-open ingress:
+
+        ```bash
+        aws ec2 describe-security-groups \
+          --group-ids <sg-id> \
+          --query "SecurityGroups[*].IpPermissions[?IpRanges[?CidrIp=='0.0.0.0/0']]"
+        ```
+
+        A passing balancer is `internal`, or its security groups return no internet-open ingress. A failing balancer is `internet-facing` with a security group open to `0.0.0.0/0` and is not an approved public endpoint.
+      remediation:
+        - id: console
+          desc: |
+            To remove unexpected internet reachability from a load balancer using the AWS Console:
+
+            1. Navigate to the **EC2 Console** and choose **Load Balancers** under **Load Balancing**.
+            2. Confirm whether the load balancer is intended to be public. If it is, document the exemption and stop here.
+            3. For an internal service, recreate the load balancer with the **internal** scheme — the scheme cannot be changed on an existing balancer.
+            4. Open the **Security** tab and tighten the attached security groups so inbound rules permit only known sources instead of `0.0.0.0/0`.
+        - id: cli
+          desc: |
+            To remove unexpected internet reachability from a load balancer using the AWS CLI, tighten the attached security group:
+
+            ```bash
+            aws ec2 revoke-security-group-ingress \
+              --group-id <sg-id> \
+              --ip-permissions IpProtocol=tcp,FromPort=443,ToPort=443,IpRanges='[{CidrIp=0.0.0.0/0}]'
+            ```
+
+            The scheme of an existing balancer cannot be changed; recreate an internal-tier balancer with the `internal` scheme:
+
+            ```bash
+            aws elbv2 create-load-balancer \
+              --name internal-app-lb \
+              --scheme internal \
+              --subnets <private-subnet-1> <private-subnet-2> \
+              --security-groups <sg-id>
+            ```
+        - id: terraform
+          desc: |
+            To keep internal-tier load balancers off the public internet in Terraform, set `internal = true` and restrict the attached security groups:
+
+            ```hcl
+            resource "aws_lb" "internal" {
+              name               = "internal-app-lb"
+              internal           = true
+              load_balancer_type = "application"
+              subnets            = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+              security_groups    = [aws_security_group.lb.id]
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To keep internal-tier load balancers off the public internet in CloudFormation, set the scheme to `internal` and restrict the attached security groups:
+
+            ```yaml
+            Resources:
+              InternalLoadBalancer:
+                Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+                Properties:
+                  Name: internal-app-lb
+                  Scheme: internal
+                  Type: application
+                  Subnets:
+                    - !Ref PrivateSubnet1
+                    - !Ref PrivateSubnet2
+                  SecurityGroups:
+                    - !Ref LoadBalancerSecurityGroup
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/elasticloadbalancing/latest/application/load-balancer-internal.html
+        title: AWS Documentation - Internal Application Load Balancers
+      - url: https://docs.aws.amazon.com/elasticloadbalancing/latest/userguide/how-elastic-load-balancing-works.html
+        title: AWS Documentation - How Elastic Load Balancing works
   - uid: mondoo-aws-security-elasticsearch-encrypted-at-rest
     title: Ensure Elasticsearch Service domains have encryption at rest
     impact: 70
@@ -18077,6 +18315,129 @@ queries:
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::AccessAnalyzer::Analyzer")
     mql: |
       cloudformation.template.resources.where(type == "AWS::AccessAnalyzer::Analyzer").length > 0
+  # Security-only check (compliance mapping intentionally omitted per maintainer).
+  # No Terraform variants: an active external-access finding is observed runtime exposure with no static config analog.
+  - uid: mondoo-aws-security-access-analyzer-no-external-access-findings
+    title: Ensure IAM Access Analyzer has no active external-access findings
+    impact: 80
+    filters: asset.platform == "aws"
+    mql: |
+      aws.iam.accessAnalyzer.findings.where( status == "ACTIVE" ) == []
+    docs:
+      desc: |
+        This check ensures that IAM Access Analyzer reports no active external-access findings. An active finding is observed external exposure: Access Analyzer has determined that a resource — such as an S3 bucket, an IAM role trust policy, a KMS key, an SNS topic, an SQS queue, or a Lambda function — grants access to a principal outside your account or organization. Unlike a static policy review, these findings reflect access paths that Access Analyzer's automated reasoning has actually confirmed are reachable from an external principal.
+
+        An account with no analyzer configured returns an empty result and passes this check, which means a passing result does not by itself prove the absence of external access. Enable an analyzer for every account and region and cross-reference `mondoo-aws-security-iam-access-analyzer-enabled` to confirm an analyzer exists before relying on this check.
+
+        **Why this matters**
+
+        - **Confirmed exposure:** Each active finding is a resource Access Analyzer has proven is shared with an external principal, not a theoretical risk.
+        - **Cross-service coverage:** A single check covers S3, IAM roles, KMS, SNS, SQS, Lambda, and other supported resource types in one place.
+        - **Drift detection:** New external grants introduced by deployments or manual changes surface as fresh active findings.
+
+        **Risk mitigation**
+
+        - **Timely review:** Triage each finding to either remove the external grant or archive it as an intended, documented exception.
+        - **Continuous monitoring:** Keeping an analyzer enabled in every region ensures new external access is detected as it appears.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the AWS Management Console and open the **IAM** console.
+        2. In the left navigation pane, under **Access reports**, choose **Access Analyzer**.
+        3. Select the active analyzer and review the **Findings** tab, filtering by **Status: Active**.
+        4. Examine each active finding's resource and external principal.
+
+        A passing account shows no active findings (and has an analyzer enabled). A failing account shows one or more active findings indicating external access.
+
+        ### Audit via CLI
+
+        1. List the analyzers configured in the account:
+
+        ```bash
+        aws accessanalyzer list-analyzers --query "analyzers[*].{Name:name,Type:type,Status:status,Arn:arn}"
+        ```
+
+        2. List active findings for the analyzer:
+
+        ```bash
+        aws accessanalyzer list-findings \
+          --analyzer-arn <analyzer-arn> \
+          --filter '{"status":{"eq":["ACTIVE"]}}' \
+          --query "findings[*].{Resource:resource,Type:resourceType,Status:status}"
+        ```
+
+        A passing analyzer returns an empty findings list. A failing analyzer returns one or more findings with `"status": "ACTIVE"`.
+      remediation:
+        - id: console
+          desc: |
+            To resolve active external-access findings using the AWS Console:
+
+            1. Navigate to the **IAM Console** and choose **Access Analyzer** under **Access reports**.
+            2. Open the **Findings** tab and select an active finding.
+            3. Review the resource and the external principal it is shared with.
+            4. If the access is unintended, edit the resource policy to remove the external grant; the finding resolves automatically on the next scan.
+            5. If the access is intended, choose **Archive** to suppress the finding, and document the exception.
+        - id: cli
+          desc: |
+            To resolve active external-access findings using the AWS CLI, inspect a finding to identify the resource and external principal:
+
+            ```bash
+            aws accessanalyzer get-finding \
+              --analyzer-arn <analyzer-arn> \
+              --id <finding-id>
+            ```
+
+            After removing the external grant from the resource's policy, or to suppress an intended finding, archive it:
+
+            ```bash
+            aws accessanalyzer update-findings \
+              --analyzer-arn <analyzer-arn> \
+              --ids <finding-id> \
+              --status ARCHIVED
+            ```
+        - id: terraform
+          desc: |
+            To suppress intended external-access findings in Terraform, define an archive rule on the analyzer so matching findings are archived automatically; remove genuinely unintended grants by editing the offending resource's policy:
+
+            ```hcl
+            resource "aws_accessanalyzer_analyzer" "account" {
+              analyzer_name = "account-analyzer"
+              type          = "ACCOUNT"
+            }
+
+            resource "aws_accessanalyzer_archive_rule" "trusted_account" {
+              analyzer_name = aws_accessanalyzer_analyzer.account.analyzer_name
+              rule_name     = "archive-trusted-account"
+
+              filter {
+                criteria = "principal.AWS"
+                eq       = ["123456789012"]
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To suppress intended external-access findings in CloudFormation, define an analyzer with an archive rule so matching findings are archived automatically; remove genuinely unintended grants by editing the offending resource's policy:
+
+            ```yaml
+            Resources:
+              AccountAnalyzer:
+                Type: AWS::AccessAnalyzer::Analyzer
+                Properties:
+                  AnalyzerName: account-analyzer
+                  Type: ACCOUNT
+                  ArchiveRules:
+                    - RuleName: archive-trusted-account
+                      Filter:
+                        - Property: principal.AWS
+                          Eq:
+                            - "123456789012"
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/IAM/latest/UserGuide/access-analyzer-findings.html
+        title: AWS Documentation - IAM Access Analyzer findings
+      - url: https://docs.aws.amazon.com/IAM/latest/UserGuide/access-analyzer-work-with-findings.html
+        title: AWS Documentation - Working with findings
   - uid: mondoo-aws-security-sns-topic-encrypted
     title: Ensure SNS topics are encrypted with KMS
     impact: 70
@@ -20419,7 +20780,7 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that Amazon Machine Images (AMIs) owned by the account are not configured with public launch permissions. Publicly shared AMIs can be launched by any AWS account globally, potentially exposing proprietary software, embedded secrets, internal configurations, and sensitive data baked into the image during its build process.
+        This check ensures that Amazon Machine Images (AMIs) owned by the account are not shared outside the account, whether through public launch permissions or by sharing with specific external AWS accounts. Shared AMIs can be launched by accounts you do not control, potentially exposing proprietary software, embedded secrets, internal configurations, and sensitive data baked into the image during its build process.
 
         **Why this matters**
 
@@ -20521,9 +20882,7 @@ queries:
   - uid: mondoo-aws-security-ec2-ami-public-sharing-prohibited-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.ec2.images.all(
-        launchPermissions.none(group == "all")
-      )
+      aws.ec2.images.all( sharedExternally == false )
   - uid: mondoo-aws-security-ec2-ami-public-sharing-prohibited-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_ami_launch_permission")
     mql: |
@@ -25278,6 +25637,106 @@ queries:
     filters: asset.platform == "aws-eks-cluster"
     mql: |
       aws.eks.cluster.addons.all(status == "ACTIVE")
+  # Security-only check (compliance mapping intentionally omitted per maintainer).
+  # No Terraform variants: controlPlaneEgressMode is a runtime-computed exposure signal with no static config analog.
+  - uid: mondoo-aws-security-eks-control-plane-egress-customer-routed
+    title: Ensure EKS control-plane egress is customer-routed
+    impact: 60
+    filters: asset.platform == "aws"
+    mql: |
+      aws.eks.clusters.all( controlPlaneEgressMode == "CUSTOMER_ROUTED" )
+    docs:
+      desc: |
+        This check ensures that EKS clusters route control-plane egress through your own VPC subnets rather than letting Amazon EKS manage the egress path. With `CUSTOMER_ROUTED`, the control plane's outbound traffic to endpoints such as webhook servers and OIDC providers flows through subnets you control, so it can be filtered, inspected, and logged with your existing network controls. With `AWS_MANAGED`, Amazon EKS handles egress and you have no control point on that traffic.
+
+        This is a hardening posture rather than a universal requirement. Clusters intentionally left on `AWS_MANAGED` — for example, where you have deliberately delegated control-plane egress to AWS — will fail this check and should be exempted through your policy exception process.
+
+        **Why this matters**
+
+        - **Egress inspection:** Routing control-plane egress through your VPC lets you apply firewall rules, network ACLs, and flow logs to traffic that would otherwise be opaque.
+        - **Policy enforcement:** Customer-routed egress can be forced through egress proxies or restricted to approved destinations, consistent with the rest of your workload traffic.
+        - **Visibility:** Traffic that traverses your subnets appears in VPC Flow Logs, supporting detection and forensic analysis.
+
+        **Risk mitigation**
+
+        - **Controlled reachability:** You decide which external endpoints the control plane can reach, reducing the risk of unexpected or malicious egress paths.
+        - **Consistent network posture:** The control plane is governed by the same egress controls as your data-plane workloads.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the AWS Management Console and open the **EKS** console.
+        2. In the left navigation pane, choose **Clusters** and select a cluster.
+        3. Open the **Networking** tab and review the control-plane egress (remote network) configuration.
+        4. Confirm whether control-plane egress is routed through your VPC subnets or managed by Amazon EKS.
+
+        A passing cluster routes control-plane egress through customer subnets (`CUSTOMER_ROUTED`). A failing cluster leaves egress managed by Amazon EKS (`AWS_MANAGED`).
+
+        ### Audit via CLI
+
+        1. Describe each cluster and inspect its control-plane egress configuration:
+
+        ```bash
+        aws eks describe-cluster \
+          --name <cluster-name> \
+          --query "cluster.{Name:name,RemoteNetworkConfig:remoteNetworkConfig}"
+        ```
+
+        A passing cluster routes control-plane egress through customer-owned subnets. A failing cluster relies on the Amazon EKS-managed egress path.
+      remediation:
+        - id: console
+          desc: |
+            To route EKS control-plane egress through your VPC using the AWS Console:
+
+            1. Navigate to the **EKS Console** and select the cluster.
+            2. Open the **Networking** tab and edit the remote network / control-plane egress configuration.
+            3. Set control-plane egress to route through your VPC subnets (`CUSTOMER_ROUTED`).
+            4. Provide the subnets the control plane should use for egress, and confirm their route tables and security controls permit the required destinations such as webhook and OIDC endpoints.
+        - id: cli
+          desc: |
+            To route EKS control-plane egress through your VPC using the AWS CLI, update the cluster's VPC configuration so the control plane uses customer-routed egress:
+
+            ```bash
+            aws eks update-cluster-config \
+              --name <cluster-name> \
+              --resources-vpc-config subnetIds=<subnet-1>,<subnet-2>
+            ```
+
+            Confirm that the supplied subnets' route tables and network controls allow the control plane to reach required endpoints such as webhook servers and OIDC providers.
+        - id: terraform
+          desc: |
+            To route EKS control-plane egress through your VPC in Terraform, provide the cluster's subnets so the control plane egresses through customer-owned networking:
+
+            ```hcl
+            resource "aws_eks_cluster" "example" {
+              name     = "example"
+              role_arn = aws_iam_role.eks.arn
+
+              vpc_config {
+                subnet_ids = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To route EKS control-plane egress through your VPC in CloudFormation, provide the cluster's subnets so the control plane egresses through customer-owned networking:
+
+            ```yaml
+            Resources:
+              EksCluster:
+                Type: AWS::EKS::Cluster
+                Properties:
+                  Name: example
+                  RoleArn: !GetAtt EksClusterRole.Arn
+                  ResourcesVpcConfig:
+                    SubnetIds:
+                      - !Ref PrivateSubnetA
+                      - !Ref PrivateSubnetB
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/eks/latest/userguide/network-reqs.html
+        title: AWS Documentation - Amazon EKS networking requirements
+      - url: https://docs.aws.amazon.com/eks/latest/userguide/eks-networking.html
+        title: AWS Documentation - Amazon EKS cluster networking
   - uid: mondoo-aws-security-ecs-cluster-container-insights
     title: Ensure ECS clusters have Container Insights enabled
     impact: 60
@@ -29868,6 +30327,136 @@ queries:
       cloudformation.template.resources.where(type == "AWS::DocDB::DBInstance").all(
       properties['PubliclyAccessible'] != true
       )
+  # Security-only check (compliance mapping intentionally omitted per maintainer).
+  # No Terraform variants: internetReachable is a runtime-computed exposure signal with no static config analog.
+  - uid: mondoo-aws-security-documentdb-instance-not-internet-reachable
+    title: Ensure DocumentDB instances are not reachable from the internet
+    impact: 85
+    filters: asset.platform == "aws"
+    mql: |
+      aws.documentdb.instances.all( exposure.internetReachable == false )
+    docs:
+      desc: |
+        This check ensures that Amazon DocumentDB instances are not directly reachable from the internet. The `internetReachable` verdict combines the instance's publicly-accessible flag with the ingress rules of its attached security groups, so an instance is flagged only when AWS resolves its endpoint to a public address *and* a security group permits inbound traffic from the internet. This surfaces databases that are genuinely accessible from arbitrary hosts, rather than every instance that merely carries the public-access flag behind a closed security group.
+
+        **Why this matters**
+
+        - **Sensitive application data:** DocumentDB instances often hold user records, session state, and business data that should never be reachable from arbitrary internet hosts.
+        - **MongoDB-compatible attack surface:** Internet reachability exposes the MongoDB-compatible protocol to brute-force authentication attempts, vulnerability scans, and targeted exploits.
+        - **High-fidelity signal:** Fusing the public-access flag with security group ingress flags only databases that are actually exposed, not every instance with the flag set.
+
+        **Risk mitigation**
+
+        - **Network isolation:** Deploying instances in private subnets and reaching them only through bastion hosts, VPC peering, AWS PrivateLink, or VPN removes the direct internet path.
+        - **Ingress tightening:** Restricting security groups to known application sources breaks reachability even where the public-access flag is set.
+      audit: |
+        ### Audit via Console
+
+        1. Navigate to the **Amazon DocumentDB Console** at Services > DocumentDB.
+        2. Select **Clusters** in the left navigation panel, then open the cluster's **Instances** tab.
+        3. Select an instance and review the **Connectivity & security** section, including the **Publicly accessible** field and the attached VPC security groups.
+
+        A passing instance shows **Publicly accessible: No**, or its security groups permit no internet ingress. A failing instance shows **Publicly accessible: Yes** with a security group open to `0.0.0.0/0` on the cluster port.
+
+        ### Audit via CLI
+
+        1. List instances and their public-access setting:
+
+        ```bash
+        aws docdb describe-db-instances \
+          --query "DBInstances[*].{Id:DBInstanceIdentifier,Public:PubliclyAccessible,SecurityGroups:VpcSecurityGroups[*].VpcSecurityGroupId}" \
+          --output table
+        ```
+
+        2. For any instance returned with `"Public": true`, inspect its security groups for internet-open ingress:
+
+        ```bash
+        aws ec2 describe-security-groups \
+          --group-ids <sg-id> \
+          --query "SecurityGroups[*].IpPermissions[?IpRanges[?CidrIp=='0.0.0.0/0']]"
+        ```
+
+        A passing instance returns `"Public": false`, or its security groups return no internet-open ingress rule. A failing instance returns `"Public": true` with a security group open to `0.0.0.0/0`.
+      remediation:
+        - id: console
+          desc: |
+            To remove internet reachability from a DocumentDB instance using the AWS Console:
+
+            1. Navigate to the **Amazon DocumentDB Console** and choose **Clusters**.
+            2. Confirm the cluster's subnet group covers only private subnets; DocumentDB instances inherit network placement from the cluster.
+            3. Open the **Security** settings and tighten the attached security groups so inbound rules permit only known application sources instead of `0.0.0.0/0`.
+            4. If the cluster sits in public subnets, migrate it onto private subnets by restoring a snapshot into a new cluster with a private subnet group.
+        - id: cli
+          desc: |
+            To remove internet reachability from a DocumentDB instance using the AWS CLI, tighten the attached security group:
+
+            ```bash
+            aws ec2 revoke-security-group-ingress \
+              --group-id <sg-id> \
+              --ip-permissions IpProtocol=tcp,FromPort=27017,ToPort=27017,IpRanges='[{CidrIp=0.0.0.0/0}]'
+            ```
+
+            DocumentDB does not support changing the subnet group of an existing cluster. Move the cluster onto private subnets by restoring a snapshot into a new cluster:
+
+            ```bash
+            aws docdb create-db-subnet-group \
+              --db-subnet-group-name private-docdb \
+              --db-subnet-group-description "Private subnets for DocumentDB" \
+              --subnet-ids <private-subnet-1> <private-subnet-2>
+
+            aws docdb create-db-cluster-snapshot \
+              --db-cluster-identifier <cluster-id> \
+              --db-cluster-snapshot-identifier <snapshot-id>
+
+            aws docdb restore-db-cluster-from-snapshot \
+              --db-cluster-identifier <new-cluster-id> \
+              --snapshot-identifier <snapshot-id> \
+              --engine docdb \
+              --db-subnet-group-name private-docdb
+            ```
+        - id: terraform
+          desc: |
+            To keep DocumentDB instances off the public internet in Terraform, place the cluster in private subnets and restrict its security groups; instances inherit network placement from the cluster:
+
+            ```hcl
+            resource "aws_docdb_subnet_group" "private" {
+              name       = "private-docdb"
+              subnet_ids = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+            }
+
+            resource "aws_docdb_cluster" "example" {
+              cluster_identifier     = "example-cluster"
+              engine                 = "docdb"
+              db_subnet_group_name   = aws_docdb_subnet_group.private.name
+              vpc_security_group_ids = [aws_security_group.docdb.id]
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To keep DocumentDB instances off the public internet in CloudFormation, place the cluster in private subnets and restrict its security groups:
+
+            ```yaml
+            Resources:
+              DocDBSubnetGroup:
+                Type: AWS::DocDB::DBSubnetGroup
+                Properties:
+                  DBSubnetGroupDescription: Private subnets for DocumentDB
+                  SubnetIds:
+                    - !Ref PrivateSubnetA
+                    - !Ref PrivateSubnetB
+              DocDBCluster:
+                Type: AWS::DocDB::DBCluster
+                Properties:
+                  DBClusterIdentifier: example-cluster
+                  DBSubnetGroupName: !Ref DocDBSubnetGroup
+                  VpcSecurityGroupIds:
+                    - !Ref DocDBSecurityGroup
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/documentdb/latest/developerguide/security.networking.html
+        title: Amazon DocumentDB - Network security
+      - url: https://docs.aws.amazon.com/documentdb/latest/developerguide/security-groups.html
+        title: Amazon DocumentDB - Security groups
   - uid: mondoo-aws-security-cognito-user-pool-mfa-enforced
     title: Ensure Cognito user pools enforce multi-factor authentication
     impact: 90
@@ -30211,6 +30800,110 @@ queries:
       cloudformation.template.resources.where(type == "AWS::Cognito::UserPool").all(
       properties['UserPoolAddOns'] != empty && properties['UserPoolAddOns']['AdvancedSecurityMode'] == "ENFORCED"
       )
+  # Security-only check (compliance mapping intentionally omitted per maintainer).
+  # No Terraform variants: tlsSecurityPolicy is a runtime-computed exposure signal with no static config analog.
+  - uid: mondoo-aws-security-cognito-domain-min-tls-1-2
+    title: Ensure Cognito custom domains enforce TLS 1.2 or higher
+    impact: 70
+    filters: asset.platform == "aws"
+    mql: |
+      aws.cognito.userPools.all( domain == null || domain.tlsSecurityPolicy == "" || domain.tlsSecurityPolicy != "TLS_V1" )
+    docs:
+      desc: |
+        This check ensures that Cognito custom domains enforce a minimum TLS version of 1.2. The hosted-UI login endpoint for a custom domain carries a configurable TLS security policy; setting it to `TLS_V1` allows clients to negotiate TLS 1.0, an obsolete protocol with known weaknesses. A custom domain should enforce `TLS_V1_2_2021` or higher so that all sign-in traffic uses modern transport encryption.
+
+        Prefix-style domains carry no configurable security policy and report an empty policy; user pools without any configured domain have nothing to enforce. Both cases are not applicable and pass this check.
+
+        **Why this matters**
+
+        - **Credential protection:** The login endpoint transmits usernames, passwords, and tokens; enforcing TLS 1.2 protects those secrets against downgrade and interception attacks.
+        - **Obsolete protocol removal:** TLS 1.0 is deprecated and disallowed by PCI DSS and other frameworks; pinning a modern floor prevents clients from negotiating it.
+        - **Consistent transport posture:** Aligning the Cognito login endpoint with the TLS floor you enforce elsewhere removes a weak link in the authentication path.
+
+        **Risk mitigation**
+
+        - **Downgrade resistance:** A modern minimum TLS policy prevents attackers from forcing a weaker protocol.
+        - **Compliance alignment:** Satisfies transport-encryption requirements that prohibit deprecated TLS versions.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the AWS Management Console and open the **Amazon Cognito** console.
+        2. Choose **User pools** and select a pool that has a custom domain configured.
+        3. Open the **App integration** tab and review the **Domain** section.
+        4. For a custom domain, confirm the minimum TLS version is set to 1.2 or higher.
+
+        A passing pool has no custom domain, or its custom domain enforces TLS 1.2 or higher. A failing pool has a custom domain whose minimum TLS version is set to TLS 1.0.
+
+        ### Audit via CLI
+
+        1. List the user pools in the account:
+
+        ```bash
+        aws cognito-idp list-user-pools --max-results 60 \
+          --query "UserPools[*].{Id:Id,Name:Name}"
+        ```
+
+        2. For each pool with a custom domain, inspect the domain's TLS configuration:
+
+        ```bash
+        aws cognito-idp describe-user-pool-domain \
+          --domain <custom-domain> \
+          --query "DomainDescription.{Domain:Domain,CustomDomainConfig:CustomDomainConfig,Version:Version}"
+        ```
+
+        A passing custom domain reports a minimum TLS version of `TLS_V1_2_2021` or higher. A failing custom domain reports `TLS_V1`.
+      remediation:
+        - id: console
+          desc: |
+            To enforce TLS 1.2 on a Cognito custom domain using the AWS Console:
+
+            1. Navigate to the **Amazon Cognito** console and choose **User pools**.
+            2. Select the affected pool and open the **App integration** tab.
+            3. In the **Domain** section, edit the custom domain configuration.
+            4. Set the minimum TLS version to 1.2 or higher and save the change.
+        - id: cli
+          desc: |
+            To enforce TLS 1.2 on a Cognito custom domain using the AWS CLI, update the custom domain's TLS security policy:
+
+            ```bash
+            aws cognito-idp update-user-pool-domain \
+              --user-pool-id <user-pool-id> \
+              --domain <custom-domain> \
+              --custom-domain-config CertificateArn=<acm-cert-arn> \
+              --managed-login-version 2
+            ```
+
+            When recreating the domain, supply a custom-domain configuration that pins the minimum TLS version to `TLS_V1_2_2021` or higher.
+        - id: terraform
+          desc: |
+            To enforce TLS 1.2 on a Cognito custom domain in Terraform, attach an ACM certificate so the domain provisions a CloudFront distribution with a modern minimum TLS policy:
+
+            ```hcl
+            resource "aws_cognito_user_pool_domain" "example" {
+              domain          = "auth.example.com"
+              certificate_arn = aws_acm_certificate.example.arn
+              user_pool_id    = aws_cognito_user_pool.example.id
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To enforce TLS 1.2 on a Cognito custom domain in CloudFormation, attach an ACM certificate so the domain provisions a CloudFront distribution with a modern minimum TLS policy:
+
+            ```yaml
+            Resources:
+              UserPoolDomain:
+                Type: AWS::Cognito::UserPoolDomain
+                Properties:
+                  Domain: auth.example.com
+                  UserPoolId: !Ref UserPool
+                  CustomDomainConfig:
+                    CertificateArn: !Ref CertificateArn
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/cognito/latest/developerguide/cognito-user-pools-add-custom-domain.html
+        title: AWS Documentation - Using your own domain for the hosted UI
+      - url: https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_UpdateUserPoolDomain.html
+        title: AWS API Reference - UpdateUserPoolDomain
   - uid: mondoo-aws-security-cognito-identity-pool-no-unauthenticated
     title: Ensure Cognito identity pools do not allow unauthenticated identities
     impact: 80
@@ -43677,7 +44370,7 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check ensures that AWS VPC security groups are configured to deny unrestricted outbound traffic to all destinations on all protocols. By default, newly created security groups in AWS include an outbound rule allowing all traffic to `0.0.0.0/0`; restricting egress to only required destinations and ports limits the damage an attacker can do with a compromised resource.
+        This check ensures that AWS VPC security groups are configured to deny unrestricted outbound traffic to all destinations, flagging any egress rule that opens `0.0.0.0/0` or `::/0` on any protocol rather than only the all-protocols rule. By default, newly created security groups in AWS include an outbound rule allowing all traffic to `0.0.0.0/0`; restricting egress to only required destinations and ports limits the damage an attacker can do with a compromised resource.
 
         **Why this matters**
 
@@ -43805,12 +44498,9 @@ queries:
       - url: https://docs.aws.amazon.com/securityhub/latest/userguide/ec2-controls.html
         title: AWS Security Hub - EC2 controls reference
   - uid: mondoo-aws-security-secgroup-no-unrestricted-egress-aws
-    filters: asset.platform == "aws-security-group"
+    filters: asset.platform == "aws"
     mql: |
-      aws.ec2.securitygroup.ipPermissionsEgress.where(
-        ipProtocol == "-1").none(
-          ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
-          )
+      aws.ec2.securityGroups.all( allowsUnrestrictedEgress == false )
   - uid: mondoo-aws-security-secgroup-no-unrestricted-egress-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_security_group" || nameLabel == "aws_security_group_rule" || nameLabel == "aws_vpc_security_group_egress_rule")
     mql: |
@@ -49223,7 +49913,7 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that EBS snapshots are not publicly shared. Public snapshots expose volume data to any AWS account, potentially leaking sensitive information such as application data, credentials, or encryption keys stored on the volume.
+        This check ensures that EBS snapshots are not shared outside the account, whether publicly or privately with specific external AWS accounts. Shared snapshots expose volume data to accounts you do not control, potentially leaking sensitive information such as application data, credentials, or encryption keys stored on the volume.
 
         **Why this matters**
 
@@ -49342,9 +50032,9 @@ queries:
       - url: https://docs.aws.amazon.com/ebs/latest/userguide/ebs-snapshots.html
         title: AWS Documentation - Amazon EBS snapshots
   - uid: mondoo-aws-security-ec2-snapshot-not-public-aws
-    filters: asset.platform == "aws-ebs-snapshot"
+    filters: asset.platform == "aws"
     mql: |
-      aws.ec2.snapshot.isPublic == false
+      aws.ec2.snapshots.all( sharedExternally == false )
   - uid: mondoo-aws-security-ec2-snapshot-not-public-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_snapshot_create_volume_permission")
     mql: |
@@ -49363,6 +50053,149 @@ queries:
       terraform.state.resources.where(type == "aws_snapshot_create_volume_permission").all(
         values["account_id"] != "all"
       )
+  # Security-only check (compliance mapping intentionally omitted per maintainer).
+  # No Terraform variants: internetReachable is a runtime-computed exposure signal with no static config analog.
+  - uid: mondoo-aws-security-ec2-instance-not-internet-reachable
+    title: Ensure EC2 instances are not reachable from the internet
+    impact: 87
+    filters: asset.platform == "aws"
+    mql: |
+      aws.ec2.instances.all( exposure.internetReachable == false )
+    docs:
+      desc: |
+        This check ensures that EC2 instances are not directly reachable from the internet. The `internetReachable` verdict fuses four independent signals into one high-fidelity result: a public IP address on the instance, a subnet route to an internet gateway, a security group rule that permits inbound traffic from the internet, and a network ACL that allows that traffic through. An instance is flagged only when all of these align, so the finding represents actual exposure rather than any single risky attribute in isolation.
+
+        **Why this matters**
+
+        - **Real exposure, not theoretical:** A public IP alone, or an open security group alone, does not make an instance reachable. Fusing the signals removes the noise and surfaces hosts that are genuinely accessible from the internet.
+        - **Reduced attack surface:** Internet-reachable instances are continuously scanned, fingerprinted, and probed; removing direct reachability eliminates the most direct path an attacker can take.
+        - **Blast-radius containment:** Keeping compute behind private subnets, load balancers, or bastion hosts limits what an attacker can reach if a single workload is compromised.
+
+        **Risk mitigation**
+
+        - **Network boundary enforcement:** Placing instances in private subnets and fronting them with managed ingress points keeps them off the public internet.
+        - **Defense in depth:** Tightening any one of the contributing signals (public IP, route, security group, network ACL) breaks the reachability chain.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the AWS Management Console and open the **EC2** console.
+        2. In the left navigation pane, choose **Instances**.
+        3. For each running instance, review the **Public IPv4 address** column and open the **Networking** tab.
+        4. Confirm whether the instance is in a public subnet (a subnet whose route table has a route to an internet gateway) and whether its security groups permit inbound traffic from `0.0.0.0/0`.
+
+        A passing instance has no public IP, sits in a private subnet, or has no security group rule permitting internet ingress. A failing instance has a public IP in a public subnet with an open security group and a permitting network ACL.
+
+        ### Audit via CLI
+
+        1. List running instances with a public IP address:
+
+        ```bash
+        aws ec2 describe-instances \
+          --filters "Name=instance-state-name,Values=running" \
+          --query "Reservations[*].Instances[?PublicIpAddress!=null].{Id:InstanceId,PublicIp:PublicIpAddress,SubnetId:SubnetId}" \
+          --output table
+        ```
+
+        2. For each instance returned, inspect the attached security groups for rules that open ports to `0.0.0.0/0`:
+
+        ```bash
+        aws ec2 describe-security-groups \
+          --group-ids <sg-id> \
+          --query "SecurityGroups[*].IpPermissions[?IpRanges[?CidrIp=='0.0.0.0/0']]"
+        ```
+
+        A passing instance returns no public IP, or its security groups return no internet-open ingress rules. A failing instance has a public IP and at least one security group rule open to `0.0.0.0/0`.
+      remediation:
+        - id: console
+          desc: |
+            To remove internet reachability from an EC2 instance using the AWS Console:
+
+            1. Navigate to the **EC2 Console** and choose **Instances**.
+            2. Select the instance, choose **Actions** > **Networking** > **Manage IP addresses**, or disassociate its Elastic IP under **Elastic IPs**.
+            3. To keep the instance private, relaunch or move it into a private subnet that has no route to an internet gateway.
+            4. Tighten the attached security groups so inbound rules no longer permit `0.0.0.0/0`, and restrict the subnet's network ACL accordingly.
+            5. Front any required public access with an internet-facing load balancer that targets the instance privately.
+        - id: cli
+          desc: |
+            To remove internet reachability from an EC2 instance using the AWS CLI, disassociate the Elastic IP address:
+
+            ```bash
+            aws ec2 disassociate-address --association-id <eipassoc-id>
+            ```
+
+            Remove the security group rule that opens the instance to the internet:
+
+            ```bash
+            aws ec2 revoke-security-group-ingress \
+              --group-id <sg-id> \
+              --ip-permissions IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges='[{CidrIp=0.0.0.0/0}]'
+            ```
+
+            For new instances, launch into a private subnet without a public IP by setting `AssociatePublicIpAddress=false` on the network interface:
+
+            ```bash
+            aws ec2 run-instances \
+              --image-id <ami-id> \
+              --instance-type <type> \
+              --network-interfaces '[{"DeviceIndex":0,"SubnetId":"<private-subnet-id>","AssociatePublicIpAddress":false,"Groups":["<sg-id>"]}]'
+            ```
+        - id: terraform
+          desc: |
+            To keep EC2 instances off the public internet in Terraform, launch them in private subnets without a public IP and restrict their security groups:
+
+            ```hcl
+            resource "aws_instance" "example" {
+              ami                         = var.ami_id
+              instance_type               = "t3.micro"
+              subnet_id                   = aws_subnet.private.id
+              associate_public_ip_address = false
+              vpc_security_group_ids      = [aws_security_group.private.id]
+            }
+
+            resource "aws_security_group" "private" {
+              name   = "private-no-internet-ingress"
+              vpc_id = aws_vpc.example.id
+
+              ingress {
+                from_port   = 443
+                to_port     = 443
+                protocol    = "tcp"
+                cidr_blocks = ["10.0.0.0/8"]
+                description = "Allow HTTPS from internal network only"
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To keep EC2 instances off the public internet in CloudFormation, launch them in private subnets without a public IP and restrict their security groups:
+
+            ```yaml
+            Resources:
+              PrivateInstance:
+                Type: AWS::EC2::Instance
+                Properties:
+                  ImageId: !Ref AmiId
+                  InstanceType: t3.micro
+                  SubnetId: !Ref PrivateSubnet
+                  SecurityGroupIds:
+                    - !Ref PrivateSecurityGroup
+              PrivateSecurityGroup:
+                Type: AWS::EC2::SecurityGroup
+                Properties:
+                  GroupDescription: No internet ingress
+                  VpcId: !Ref VPC
+                  SecurityGroupIngress:
+                    - IpProtocol: tcp
+                      FromPort: 443
+                      ToPort: 443
+                      CidrIp: 10.0.0.0/8
+                      Description: Allow HTTPS from internal network only
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-instance-addressing.html
+        title: AWS Documentation - Amazon EC2 instance IP addressing
+      - url: https://docs.aws.amazon.com/vpc/latest/userguide/vpc-security-groups.html
+        title: AWS Documentation - Control traffic using security groups
   - uid: mondoo-aws-security-ec2-launch-config-encrypted-volumes
     title: Ensure launch configuration EBS volumes are encrypted
     impact: 80
