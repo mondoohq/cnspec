@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-freebsd-security
     name: Mondoo FreeBSD Security
-    version: 1.0.4
+    version: 1.1.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -124,6 +124,16 @@ policies:
           asset.platform == "freebsd"
         checks:
           - uid: mondoo-freebsd-security-firewall-is-enabled
+      - title: System Services
+        filters: |
+          asset.platform == "freebsd"
+        checks:
+          - uid: mondoo-freebsd-security-time-synchronization-is-enabled
+      - title: Software Integrity
+        filters: |
+          asset.platform == "freebsd"
+        checks:
+          - uid: mondoo-freebsd-security-pkg-signature-verification-is-enabled
     scoring_system: highest impact
 queries:
   - uid: mondoo-freebsd-security-aslr-is-enabled
@@ -5230,4 +5240,214 @@ queries:
               ansible.builtin.service:
                 name: ipfw
                 state: started
+            ```
+  - uid: mondoo-freebsd-security-time-synchronization-is-enabled
+    title: Ensure a time synchronization daemon is enabled
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: bsi-sys-1-5-a7
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-06
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-17
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-45
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-7
+      compliance/pci-dss-4: pcidss-requirement-10-6-1
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    mql: |
+      service("ntpd").enabled && service("ntpd").running ||
+      service("openntpd").enabled && service("openntpd").running ||
+      service("chronyd").enabled && service("chronyd").running
+    docs:
+      refs:
+        - url: https://man.freebsd.org/cgi/man.cgi?query=ntpd&sektion=8
+          title: FreeBSD ntpd(8)
+      desc: |
+        This check verifies that a time synchronization daemon is enabled and running. FreeBSD ships `ntpd` in the base system, but it is not enabled by default; OpenNTPD and chrony are available as alternatives from packages.
+
+        **Why this matters**
+
+        - **Log and forensic correlation:** Accurate clocks let events from multiple hosts be lined up on a single timeline. Skewed clocks make it impossible to reconstruct the true order of events during an incident investigation.
+        - **Kerberos and certificate validity:** Kerberos authentication rejects tickets when clocks drift beyond a few minutes, and TLS certificate `notBefore`/`notAfter` checks depend on a correct system time. A drifting clock breaks authentication and can cause valid certificates to be rejected or expired ones to be accepted.
+        - **Audit-trail integrity:** Time stamps on audit and system logs are only trustworthy when the clock is synchronized to an authoritative source, which is a prerequisite for many compliance regimes.
+      audit: |
+        To verify that a time synchronization daemon is active, run the following commands:
+
+        ```bash
+        service ntpd status
+        sysrc -n ntpd_enable
+        ```
+
+        If `service ntpd status` reports the service is running and `ntpd_enable` is `YES`, the check passes. If you run OpenNTPD or chrony instead, check the equivalent service and rc.conf variable (`service openntpd status` / `sysrc -n openntpd_enable`, or `service chronyd status` / `sysrc -n chronyd_enable`). If no time synchronization daemon is enabled and running, the check fails.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            Enable and start `ntpd` from the base system. The `ntpd_sync_on_start` option steps the clock at startup so large initial offsets are corrected immediately rather than slewed slowly:
+
+            ```bash
+            sysrc ntpd_enable="YES"
+            sysrc ntpd_sync_on_start="YES"
+            service ntpd start
+            ```
+        - id: sh
+          desc: |
+            **Using a Shell Script**
+
+            ```sh
+            #!/bin/sh
+            set -e
+
+            echo "Enabling time synchronization daemon (ntpd)..."
+            sysrc ntpd_enable="YES"
+            sysrc ntpd_sync_on_start="YES"
+            service ntpd start 2>/dev/null || service ntpd onestart 2>/dev/null || true
+
+            echo "ntpd enabled and started."
+            ```
+        - id: ansible
+          desc: |
+            To enable a time synchronization daemon using Ansible:
+
+            1. Add the following tasks to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Enable ntpd in rc.conf
+              community.general.sysrc:
+                name: "{{ item.name }}"
+                value: "{{ item.value }}"
+              loop:
+                - { name: ntpd_enable, value: 'YES' }
+                - { name: ntpd_sync_on_start, value: 'YES' }
+
+            - name: Start the ntpd service
+              ansible.builtin.service:
+                name: ntpd
+                state: started
+            ```
+  - uid: mondoo-freebsd-security-pkg-signature-verification-is-enabled
+    title: Ensure pkg repository signature verification is enabled
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-19
+      compliance/nis-2: nis-2-21-2-d
+      compliance/nist-csf-1: nist-csf-1-pr-ds-6
+      compliance/nist-csf-2: nist-csf-2-id-ra-09
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-14
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-8
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    mql: |
+      file("/etc/pkg/FreeBSD.conf").content.contains(/signature_type:\s*"fingerprints"/)
+    docs:
+      refs:
+        - url: https://man.freebsd.org/cgi/man.cgi?query=pkg.conf&sektion=5
+          title: FreeBSD pkg.conf(5)
+      desc: |
+        This check verifies that the base FreeBSD pkg repository enforces fingerprint-based signature verification, so that tampered or man-in-the-middle-modified packages are rejected at install time. The default `/etc/pkg/FreeBSD.conf` sets `signature_type: "fingerprints"`; downgrading it to `"none"` disables verification entirely.
+
+        **Why this matters**
+
+        - **Supply-chain integrity:** Packages are downloaded from a network mirror. Without signature verification, an attacker who controls a mirror or sits on the network path can substitute a malicious package that runs with root privileges during installation.
+        - **Tamper detection:** Fingerprint verification checks each package against trusted signing keys, so any modification to the package contents in transit or at rest on the mirror causes the install to fail rather than silently proceed.
+        - **Trusted provenance:** Enforcing signatures guarantees that installed software originates from the official FreeBSD signing infrastructure rather than an unverified source.
+
+        This check inspects the base repository configuration in `/etc/pkg/FreeBSD.conf`. The audit step shows how to confirm the effective signature setting across all configured repositories.
+      audit: |
+        To verify that signature verification is enabled for the base repository, inspect its configuration:
+
+        ```bash
+        cat /etc/pkg/FreeBSD.conf
+        ```
+
+        If the `FreeBSD` repository block sets `signature_type: "fingerprints"`, the check passes. If it sets `signature_type: "none"`, verification is disabled and the check fails.
+
+        To confirm the effective per-repository setting across all configured repositories, run:
+
+        ```bash
+        pkg -vv | grep -i signature_type
+        ```
+
+        Every active repository should report `signature_type = "fingerprints"`. A repository reporting `"none"` accepts unsigned packages and the check fails.
+      remediation:
+        - id: cli
+          desc: |
+            **Using the CLI**
+
+            1. Restore fingerprint verification for the base repository by editing `/etc/pkg/FreeBSD.conf` so the `FreeBSD` block contains:
+
+                ```ini
+                signature_type: "fingerprints",
+                fingerprints: "/usr/share/keys/pkg"
+                ```
+
+            2. Ensure the fingerprint keys are present. They ship with the base system under `/usr/share/keys/pkg`:
+
+                ```bash
+                ls /usr/share/keys/pkg/trusted
+                ```
+
+            If the directory is missing or empty, reinstall the keys from your FreeBSD source tree or restore them from a known-good host before re-running `pkg update`.
+        - id: sh
+          desc: |
+            **Using a Shell Script**
+
+            ```sh
+            #!/bin/sh
+            set -e
+
+            CONF=/etc/pkg/FreeBSD.conf
+
+            echo "Restoring pkg signature verification..."
+            if grep -q 'signature_type:[[:space:]]*"none"' "$CONF" 2>/dev/null; then
+              sed -i '' 's/signature_type:[[:space:]]*"none"/signature_type: "fingerprints"/' "$CONF"
+              echo "signature_type set to fingerprints in $CONF."
+            fi
+
+            if [ ! -d /usr/share/keys/pkg/trusted ]; then
+              echo "WARNING: /usr/share/keys/pkg/trusted is missing; restore the fingerprint keys before running pkg update." >&2
+            fi
+
+            echo "pkg signature verification configured."
+            ```
+        - id: ansible
+          desc: |
+            To restore pkg signature verification using Ansible:
+
+            1. Add the following tasks to a playbook targeting the FreeBSD host.
+            2. Run the playbook.
+
+            ```yaml
+            - name: Enforce fingerprint signature verification for the base repository
+              ansible.builtin.lineinfile:
+                path: /etc/pkg/FreeBSD.conf
+                regexp: '^\s*signature_type:'
+                line: '  signature_type: "fingerprints",'
+
+            - name: Ensure the fingerprints path is configured
+              ansible.builtin.lineinfile:
+                path: /etc/pkg/FreeBSD.conf
+                regexp: '^\s*fingerprints:'
+                line: '  fingerprints: "/usr/share/keys/pkg"'
+
+            - name: Confirm the trusted fingerprint keys are present
+              ansible.builtin.stat:
+                path: /usr/share/keys/pkg/trusted
+              register: pkg_keys
+
+            - name: Fail when the fingerprint keys are missing
+              ansible.builtin.fail:
+                msg: "/usr/share/keys/pkg/trusted is missing; restore the fingerprint keys before running pkg update."
+              when: not pkg_keys.stat.exists
             ```
