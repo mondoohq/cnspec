@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-hetzner-security
     name: Mondoo Hetzner Cloud Security
-    version: 2.0.0
+    version: 2.1.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -35,6 +35,7 @@ policies:
           - uid: mondoo-hetzner-security-server-in-private-network
           - uid: mondoo-hetzner-security-server-has-firewall
           - uid: mondoo-hetzner-security-server-image-not-deprecated
+          - uid: mondoo-hetzner-security-server-not-internet-reachable
       - title: Firewalls
         checks:
           - uid: mondoo-hetzner-security-firewall-no-unrestricted-ssh
@@ -416,6 +417,110 @@ queries:
     refs:
       - url: https://docs.hetzner.com/cloud/servers/faq/#what-does-it-mean-when-an-image-is-deprecated
         title: Hetzner image deprecation policy
+
+  # Security-only check (compliance mapping intentionally omitted per maintainer).
+  # No Terraform variants: internetReachable is a runtime-computed exposure signal (IP + security group/firewall reachability) with no static config analog.
+  - uid: mondoo-hetzner-security-server-not-internet-reachable
+    title: Ensure servers are not reachable from the internet
+    impact: 85
+    filters: asset.platform == "hetzner-project"
+    mql: |
+      hetzner.servers.all( exposure.internetReachable == false )
+    docs:
+      desc: |
+        This check ensures that no Hetzner Cloud server is reachable from the public internet. `internetReachable` combines a public IP with firewall ingress that actually admits inbound traffic from any address — including the case where no firewall is attached at all — so it reports a server as exposed only when both conditions hold. This is a higher-fidelity "actually exposed" signal than a public-IP flag alone.
+
+        **Why this matters**
+
+        - **Reduced attack surface:** A server with no internet-reachable path keeps its listening services off the public scanning grid entirely.
+        - **Defense in depth:** A public IP is harmless until a firewall rule (or a missing firewall) admits traffic to it; removing either side closes the path.
+        - **Fewer false alarms:** Because the signal correlates the IP with the firewall ingress, it surfaces servers that are genuinely exposed rather than every server that merely holds a public address.
+
+        **Risk mitigation**
+
+        - **Internet-wide exploitation:** Prevents listening services from being probed and attacked by arbitrary internet hosts.
+        - **Lateral movement entry:** Removes a public foothold an attacker could use to reach the rest of the project network.
+
+        Intentionally public hosts such as bastions and public web servers will fail this check and should be exempted.
+      audit: |
+        ### Audit via Console
+
+        1. Log in to the [Hetzner Cloud Console](https://console.hetzner.cloud) and select the project.
+        2. Navigate to **Servers** and open each server, then review the **Networking** tab for an assigned public IPv4 or IPv6 address.
+        3. Open the **Firewalls** tab and review the inbound rules of every applied firewall; a server with no firewall admits all inbound traffic.
+
+        A passing server either has no public IP, or has firewalls whose inbound rules admit no `0.0.0.0/0` or `::/0` source. A failing server has a public IP and a firewall rule (or absent firewall) that admits traffic from any address.
+
+        ### Audit via CLI
+
+        1. List servers and inspect each server's public IP and applied firewalls:
+
+        ```bash
+        hcloud server list -o columns=id,name,ipv4,ipv6
+        hcloud server describe <server> -o json | grep -A5 'firewall'
+        hcloud firewall describe <firewall> -o json
+        ```
+
+        A passing server either reports no public IP, or has firewall inbound rules whose `source_ips` exclude `0.0.0.0/0` and `::/0`. A failing server has a public IP combined with an inbound rule sourced from `0.0.0.0/0` or `::/0`, or no firewall applied.
+      remediation:
+        - id: console
+          desc: |
+            Close the internet-reachable path by restricting the firewall or removing the public edge.
+
+            1. Navigate to **Firewalls** and open the firewall applied to the affected server (create one and apply it first if the server has none).
+            2. Edit any inbound rule whose source is `Any IPv4` (`0.0.0.0/0`) or `Any IPv6` (`::/0`) and scope it to a specific trusted CIDR.
+            3. If the server does not need a public IP at all, open the server's **Networking** tab and remove its public IPv4/IPv6, reaching it over a private network or a bastion instead.
+        - id: cli
+          desc: |
+            Scope every world-open inbound rule on the applied firewall to a trusted CIDR. If the server has no firewall, create one and apply it first:
+
+            ```bash
+            hcloud firewall delete-rule <firewall> \
+              --direction in --protocol tcp --port 443 --source-ips 0.0.0.0/0
+            hcloud firewall add-rule <firewall> \
+              --direction in --protocol tcp --port 443 --source-ips 203.0.113.0/24
+            hcloud firewall apply-to-resource <firewall> --type server --server <server>
+            ```
+
+            A public IP cannot be detached from a running server in place; to remove the public edge entirely, rebuild the server with the public interface disabled (Terraform below).
+        - id: terraform
+          desc: |
+            Keep servers off the public internet by attaching a firewall whose inbound rules are scoped to trusted CIDRs, and disabling the public interface where it is not needed:
+
+            ```hcl
+            resource "hcloud_firewall" "scoped" {
+              name = "scoped"
+
+              rule {
+                direction  = "in"
+                protocol   = "tcp"
+                port       = "443"
+                source_ips = ["203.0.113.0/24"]
+              }
+            }
+
+            resource "hcloud_server" "example" {
+              name         = "example"
+              image        = "ubuntu-24.04"
+              server_type  = "cx22"
+              location     = "nbg1"
+              firewall_ids = [hcloud_firewall.scoped.id]
+
+              public_net {
+                ipv4_enabled = false
+                ipv6_enabled = false
+              }
+
+              network {
+                network_id = hcloud_network.main.id
+              }
+
+              depends_on = [hcloud_network_subnet.main]
+            }
+            ```
+    refs:
+      - url: https://docs.hetzner.com/cloud/firewalls/overview/
+        title: Hetzner Cloud Firewalls overview
 
   - uid: mondoo-hetzner-security-firewall-no-unrestricted-ssh
     title: Ensure no firewall allows unrestricted inbound SSH (port 22)

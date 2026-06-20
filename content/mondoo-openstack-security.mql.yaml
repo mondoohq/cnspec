@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-openstack-security
     name: Mondoo OpenStack Security
-    version: 1.1.3
+    version: 1.2.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -44,6 +44,7 @@ policies:
         checks:
           - uid: mondoo-openstack-security-server-uses-keypair
           - uid: mondoo-openstack-security-server-has-security-group
+          - uid: mondoo-openstack-security-server-not-internet-reachable
       - title: Network (Neutron)
         checks:
           - uid: mondoo-openstack-security-no-unrestricted-ssh
@@ -567,6 +568,71 @@ queries:
       terraform.state.resources.where(type == "openstack_compute_instance_v2").all(
         values.security_groups != null && values.security_groups.length > 0
       )
+
+  # Security-only check (compliance mapping intentionally omitted per maintainer).
+  # No Terraform variants: internetReachable is a runtime-computed exposure signal (IP + security group/firewall reachability) with no static config analog.
+  - uid: mondoo-openstack-security-server-not-internet-reachable
+    title: Ensure compute servers are not reachable from the internet
+    impact: 85
+    filters: asset.platform == "openstack-project"
+    mql: |
+      openstack.servers.all( exposure.internetReachable == false )
+    docs:
+      desc: |
+        This check ensures that no Nova compute server is reachable from the public internet. `internetReachable` combines a public edge (a floating IP or a port on an external network) with a security-group rule that actually permits inbound traffic from a public source, so it reports a server as exposed only when both conditions hold — a higher-fidelity "actually exposed" signal than a public-IP flag alone.
+
+        **Why this matters**
+
+        - **Reduced attack surface:** A server with no internet-reachable path keeps its listening services off the public scanning grid entirely.
+        - **Defense in depth:** Combining a public IP with a permissive security-group rule is what turns a reachable address into an exploitable one; removing either side closes the path.
+        - **Fewer false alarms:** Because the signal correlates the IP and the security-group rules, it surfaces servers that are genuinely exposed rather than every server that merely holds a floating IP.
+
+        **Risk mitigation**
+
+        - **Internet-wide exploitation:** Prevents listening services from being probed and attacked by arbitrary internet hosts.
+        - **Lateral movement entry:** Removes a public foothold an attacker could use to reach the rest of the project network.
+
+        Intentionally public hosts such as bastions and public web servers will fail this check and should be exempted.
+      audit: |
+        ### Audit via Horizon
+
+        1. Sign in to the OpenStack Horizon dashboard as a project member.
+        2. Open **Compute** then **Instances** and review each instance's **IP Address** and floating IP assignment.
+        3. Open **Network** then **Security Groups** and review the ingress rules of the groups attached to each reachable instance.
+
+        A passing result shows that any instance with a floating IP or an external-network port has no security-group ingress rule permitting traffic from `0.0.0.0/0` or `::/0`; a failing result shows an instance that has both a public edge and a permissive ingress rule.
+
+        ### Audit via CLI
+
+        Run the OpenStack CLI and inspect the result:
+
+        ```bash
+        openstack server list --long
+        openstack security group rule list <group>
+        ```
+
+        A passing result shows no server that combines a floating IP (or external-network port) with an ingress rule open to `0.0.0.0/0` or `::/0`; a failing result shows a server that has both.
+      remediation:
+        - id: console
+          desc: |
+            Close the internet-reachable path by tightening the security group or removing the public edge. Keep management access while you do it.
+
+            1. Navigate to **Network → Security Groups** in Horizon and open the group attached to the affected instance.
+            2. Replace any ingress rule sourced from `0.0.0.0/0` or `::/0` with a rule scoped to a specific trusted CIDR, then confirm legitimate clients still reach the service.
+            3. If the server does not need a public edge at all, navigate to **Compute → Instances**, open the instance, and disassociate its floating IP under the action menu.
+        - id: cli
+          desc: |
+            ```bash
+            # Scope the world-open ingress rule to a trusted CIDR
+            openstack security group rule create app-sg \
+              --ingress --protocol tcp --dst-port 443 --remote-ip 203.0.113.0/24
+            openstack security group rule delete 4a4ee176-43e6-4b48-8bcf-5acd1c403fbf
+            # Or, if the server needs no public edge, remove its floating IP
+            openstack server remove floating ip web-01 203.0.113.50
+            ```
+    refs:
+      - url: https://docs.openstack.org/security-guide/networking.html
+        title: OpenStack Neutron security groups
 
   - uid: mondoo-openstack-security-no-unrestricted-ssh
     title: Ensure no security group allows unrestricted inbound SSH (port 22)

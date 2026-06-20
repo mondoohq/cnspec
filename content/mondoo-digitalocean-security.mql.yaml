@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-digitalocean-security
     name: Mondoo DigitalOcean Security
-    version: 2.0.0
+    version: 2.1.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -44,6 +44,7 @@ policies:
         checks:
           - uid: mondoo-digitalocean-security-droplet-in-vpc
           - uid: mondoo-digitalocean-security-droplet-firewall-coverage
+          - uid: mondoo-digitalocean-security-droplet-not-internet-reachable
       - title: Cloud Firewalls
         filters: asset.platform == "digitalocean-firewall"
         checks:
@@ -402,6 +403,88 @@ queries:
     refs:
       - url: https://docs.digitalocean.com/products/networking/firewalls/
         title: DigitalOcean Cloud Firewalls overview
+
+  # Security-only check (compliance mapping intentionally omitted per maintainer).
+  # No Terraform variants: internetReachable is a runtime-computed exposure signal (IP + security group/firewall reachability) with no static config analog.
+  - uid: mondoo-digitalocean-security-droplet-not-internet-reachable
+    title: Ensure Droplets are not reachable from the internet
+    impact: 85
+    filters: asset.platform == "digitalocean"
+    mql: |
+      digitalocean.droplets.all( exposure.internetReachable == false )
+    docs:
+      desc: |
+        This check ensures that no Droplet is reachable from the public internet. `internetReachable` combines a public IP with firewall ingress that actually admits inbound traffic from any address — including the case where no Cloud Firewall covers the Droplet at all — so it reports a Droplet as exposed only when both conditions hold. This is a higher-fidelity "actually exposed" signal than a public-IP flag alone.
+
+        **Why this matters**
+
+        - **Reduced attack surface:** A Droplet with no internet-reachable path keeps its listening services off the public scanning grid entirely.
+        - **Defense in depth:** A public IP is harmless until a firewall rule (or a missing firewall) admits traffic to it; removing either side closes the path.
+        - **Fewer false alarms:** Because the signal correlates the IP with the firewall ingress, it surfaces Droplets that are genuinely exposed rather than every Droplet that merely holds a public address.
+
+        **Risk mitigation**
+
+        - **Internet-wide exploitation:** Prevents listening services from being probed and attacked by arbitrary internet hosts.
+        - **Lateral movement entry:** Removes a public foothold an attacker could use to reach the rest of the account's resources.
+
+        Intentionally public hosts such as bastions and public web servers will fail this check and should be exempted.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+        2. Navigate to **Droplets**, open each Droplet, and check the **Networking** tab for an assigned public IPv4 or IPv6 address.
+        3. In the same **Networking** tab, review the attached Cloud Firewalls and their inbound rules; a Droplet with no firewall admits all inbound traffic.
+
+        A passing Droplet either has no public IP, or is covered by firewalls whose inbound rules admit no `0.0.0.0/0` or `::/0` source. A failing Droplet has a public IP and a firewall rule (or no firewall coverage) that admits traffic from any address.
+
+        ### Audit via CLI
+
+        1. List Droplets with their public addresses, then cross-reference the firewalls that cover each:
+
+        ```bash
+        doctl compute droplet list --format ID,Name,PublicIPv4,PublicIPv6
+        doctl compute firewall list --format ID,Name,DropletIDs,Tags,InboundRules
+        ```
+
+        A passing Droplet either reports no public IP, or is covered by firewall inbound rules whose `address` values exclude `0.0.0.0/0` and `::/0`. A failing Droplet has a public IP combined with an inbound rule sourced from `0.0.0.0/0` or `::/0`, or no firewall coverage at all.
+      remediation:
+        - id: console
+          desc: |
+            To close the internet-reachable path in the DigitalOcean Cloud Control Panel:
+
+            1. Navigate to **Networking** > **Firewalls** and open (or create and attach) a firewall covering the affected Droplet.
+            2. Edit any inbound rule whose source is `All IPv4` (`0.0.0.0/0`) or `All IPv6` (`::/0`) and scope it to a specific trusted CIDR, tag, or Droplet ID.
+            3. If the Droplet does not need a public edge, plan a VPC-only cutover so it is reachable solely over private networking.
+        - id: cli
+          desc: |
+            To scope the world-open path on the command line using the `doctl` CLI, remove the unrestricted inbound rules and replace them with a trusted source. If the Droplet has no firewall, create one and attach it first:
+
+            ```bash
+            doctl compute firewall remove-rules "<firewall-id>" \
+              --inbound-rules "protocol:tcp,ports:443,address:0.0.0.0/0 protocol:tcp,ports:443,address:::/0"
+            doctl compute firewall add-rules "<firewall-id>" \
+              --inbound-rules "protocol:tcp,ports:443,address:203.0.113.0/24"
+            doctl compute firewall add-droplets "<firewall-id>" --droplet-ids <droplet-id>
+            ```
+        - id: terraform
+          desc: |
+            Keep Droplets off the public internet by covering them with a firewall whose `inbound_rule` blocks are scoped to trusted CIDRs rather than `0.0.0.0/0` or `::/0`:
+
+            ```hcl
+            resource "digitalocean_firewall" "scoped" {
+              name        = "scoped"
+              droplet_ids = [digitalocean_droplet.example.id]
+
+              inbound_rule {
+                protocol         = "tcp"
+                port_range       = "443"
+                source_addresses = ["203.0.113.0/24"]
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.digitalocean.com/products/networking/firewalls/how-to/configure-rules/
+        title: Configure Cloud Firewall rules
 
   - uid: mondoo-digitalocean-security-firewall-no-unrestricted-ssh
     title: Ensure no firewall allows unrestricted inbound SSH (port 22)
