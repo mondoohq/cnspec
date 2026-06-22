@@ -4,7 +4,7 @@
 packs:
   - uid: mondoo-windows-asset-inventory
     name: Windows Asset Inventory Pack
-    version: 1.8.0
+    version: 1.9.0
     license: BUSL-1.1
     require:
       - provider: os
@@ -144,6 +144,36 @@ packs:
         docs:
           desc: Returns comprehensive Windows computer and OS information.
         mql: windows.computerInfo
+      - uid: mondoo-windows-ad-distinguished-name
+        title: Active Directory distinguished name (OU path)
+        docs:
+          desc: |
+            Returns the computer object's Active Directory distinguished name (DN) as cached by the
+            Group Policy client under
+            HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Group Policy\State\Machine. The DN encodes
+            the system's full Organizational Unit path, e.g.
+            "CN=HOST01,OU=Servers,OU=Production,DC=corp,DC=example,DC=com" — so the OU a system lives
+            in can be read straight from it. Returns nothing on workgroup / non-domain-joined hosts.
+            No command execution required (registry read), so it works over WinRM and agent scans.
+        mql: |
+          if (registrykey.property( path: 'HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Group Policy\State\Machine', name: 'Distinguished-Name' ).exists) {
+            registrykey.property( path: 'HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Group Policy\State\Machine', name: 'Distinguished-Name' ).data
+          }
+      - uid: mondoo-windows-organizational-unit
+        title: Active Directory Organizational Unit (OU)
+        docs:
+          desc: |
+            Resolves which Active Directory Organizational Unit the system lives in. It queries the
+            directory for this computer object (via ADSI — no RSAT or AD module required) and parses
+            the OU path out of the returned distinguished name. The result is a record with:
+            DistinguishedName (full DN), OrganizationalUnit (the immediate / most-specific OU the
+            computer sits in), OUPath (the complete OU chain, leaf to root, joined with "/"),
+            Domain, and PartOfDomain. Fields are empty / false on non-domain-joined hosts. This is the
+            authoritative live-directory lookup; the registry-based DN query is the no-command
+            fallback.
+        filters: mondoo.capabilities.contains("run-command")
+        mql: |
+          parse.json(content: powershell("$cn=$env:COMPUTERNAME; $dn=$null; try { $s=[ADSISearcher]('(&(objectCategory=computer)(cn=' + $cn + '))'); $r=$s.FindOne(); if ($r) { $dn=[string]$r.Properties['distinguishedname'][0] } } catch {}; $ous=@(); if ($dn) { $ous=@([regex]::Matches($dn, 'OU=([^,]+)') | ForEach-Object { $_.Groups[1].Value }) }; $cs=Get-CimInstance Win32_ComputerSystem; [pscustomobject]@{ DistinguishedName=$dn; OrganizationalUnit=$(if ($ous.Count -gt 0) { $ous[0] } else { $null }); OUPath=$(if ($ous.Count -gt 0) { [string]::Join('/', $ous) } else { $null }); Domain=$cs.Domain; PartOfDomain=$cs.PartOfDomain } | ConvertTo-Json -Compress").stdout).params
       - uid: mondoo-windows-security-products
         title: Installed Security Products
         docs:
