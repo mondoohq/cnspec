@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-shodan
     name: Mondoo Shodan Security
-    version: 1.1.1
+    version: 1.2.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -32,6 +32,11 @@ policies:
         filters: asset.platform == "shodan-org"
         checks:
           - uid: mondoo-shodan-membership
+      - title: Domain checks
+        filters: asset.platform == "shodan-domain"
+        checks:
+          - uid: mondoo-shodan-domain-no-vulnerable-hosts
+          - uid: mondoo-shodan-domain-ns-redundancy
     scoring_system: average
 queries:
   - uid: mondoo-shodan-membership
@@ -250,3 +255,141 @@ queries:
         title: Shodan
       - url: https://nvd.nist.gov/
         title: National Vulnerability Database (NVD)
+  - uid: mondoo-shodan-domain-no-vulnerable-hosts
+    title: Ensure no hosts the domain resolves to have known vulnerabilities
+    impact: 90
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-tvm-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-8
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-id-ra-1
+      compliance/nist-csf-2: nist-csf-2-id-ra-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-1
+      compliance/pci-dss-4: pcidss-requirement-6-3-3
+      compliance/soc2-2017: soc2-control-cc7-1-5
+      compliance/vda-isa-5: vda-isa-5-5-2-5
+    filters: asset.platform == "shodan-domain"
+    mql: shodan.domain.hosts.all(vulns == empty)
+    docs:
+      desc: |
+        This check ensures that none of the IP addresses the domain and its subdomains resolve to have known vulnerabilities associated with them in Shodan. Shodan correlates the service banners it observes against published CVEs, so a flagged host reachable through the domain is very likely running software with a documented weakness.
+
+        **Why this matters**
+
+        - **Domain-wide visibility:** A domain is the entry point attackers enumerate first, and every address it resolves to inherits the domain's exposure. Assessing the resolved hosts surfaces weaknesses that a per-IP review can miss.
+        - **Known exploit paths:** Vulnerabilities surfaced by Shodan are public, so attackers can find and target any reachable host with readily available exploit code.
+        - **Subdomain sprawl:** Forgotten or staging subdomains often point to unmaintained hosts, and those are the addresses most likely to carry unpatched CVEs.
+
+        **Risk mitigation**
+
+        - **Prevents exploitation:** Remediating flagged CVEs on every resolved host closes the documented paths attackers use to gain access or disrupt service.
+        - **Reduces blast radius:** Keeping the full set of internet-facing hosts behind a domain current limits how far an attacker can move after a single foothold.
+      audit: |-
+        Check the vulnerabilities Shodan associates with the hosts the domain resolves to using Shodan's own tooling:
+
+        ### Audit via the Shodan website
+
+        1. Browse to `https://www.shodan.io/domain/<domain>`, replacing `<domain>` with the domain name, and note the IP addresses listed in the **DNS** records.
+        2. For each address, browse to `https://www.shodan.io/host/<ip-address>` and review the **Vulnerabilities** section for any listed CVEs.
+
+        A passing domain resolves only to hosts that show no Vulnerabilities section; a failing domain resolves to one or more hosts that list CVEs.
+
+        ### Audit via the Shodan CLI
+
+        1. Run `shodan domain <domain>` to list the domain's DNS records and the IP addresses it resolves to.
+        2. For each address, run `shodan host <ip-address>` and review the output for a `Vulnerabilities:` section.
+
+        A passing domain resolves only to hosts with no `Vulnerabilities:` section; a failing domain resolves to one or more hosts that list CVEs.
+      remediation:
+        - id: host
+          desc: |
+            **On the affected hosts**
+
+            Review the vulnerabilities Shodan identified on each host the domain resolves to and remediate them at the source:
+
+            1. Run `shodan domain <domain>` to enumerate the resolved IP addresses, then `shodan host <ip-address>` to list the CVEs on each.
+            2. Cross-reference the detected CVEs with vendor advisories and the National Vulnerability Database (NVD).
+            3. Apply available patches or upgrade the affected services to a fixed release. Shodan derives most findings from the version string in the service banner, so the fix must change the version the service reports. Backported fixes that keep the old version string can leave Shodan reporting the CVE even after the host is patched.
+            4. If a vulnerable service is not required, stop and disable it and block its port at the firewall. If a subdomain points to a host that should no longer be exposed, remove the DNS record.
+            5. Request an on-demand Shodan re-scan, which consumes a scan credit, or wait for Shodan's next crawl:
+
+            ```bash
+            shodan scan submit 198.51.100.7
+            ```
+
+            This check reads Shodan's cached view of each host, so it continues to fail until Shodan re-scans the hosts and its records reflect the remediated services.
+    refs:
+      - url: https://www.shodan.io/
+        title: Shodan
+      - url: https://nvd.nist.gov/
+        title: National Vulnerability Database (NVD)
+  - uid: mondoo-shodan-domain-ns-redundancy
+    title: Ensure the domain has at least two nameservers
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-bcr-11
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-14
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-pt-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cp-8
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: vda-isa-5-5-3-2
+    filters: asset.platform == "shodan-domain"
+    mql: shodan.domain.nsrecords.where(type == "NS").length >= 2
+    docs:
+      desc: |
+        This check ensures that the domain is served by at least two nameservers. DNS is the entry point to every service published under a domain, and a single nameserver is a single point of failure: if it becomes unreachable, the entire domain stops resolving and all of its services become inaccessible. RFC 2182 recommends operating multiple, independently reachable nameservers.
+
+        **Why this matters**
+
+        - **Availability:** Multiple nameservers keep a domain resolvable when one server fails, is overloaded, or is taken offline by a denial-of-service attack.
+        - **Resilience to disruption:** Independent nameservers reduce the chance that a single network outage or maintenance window makes the whole domain disappear.
+        - **Graceful degradation:** Resolvers automatically retry against the remaining nameservers, so transient failures stay invisible to users.
+
+        **Risk mitigation**
+
+        - **Avoids total outage:** Removing the single point of failure prevents one server's downtime from taking every service under the domain with it.
+        - **Limits denial-of-service impact:** An attacker must overwhelm every nameserver at once rather than a single target to disrupt resolution.
+      audit: |-
+        Check the nameservers Shodan has recorded for the domain using Shodan's own tooling:
+
+        ### Audit via the Shodan website
+
+        1. Browse to `https://www.shodan.io/domain/<domain>`, replacing `<domain>` with the domain name.
+        2. Review the **DNS** records for entries of type `NS`.
+
+        A passing domain shows two or more `NS` records; a failing domain shows fewer than two.
+
+        ### Audit via the Shodan CLI
+
+        1. Run `shodan domain <domain>`.
+        2. Count the records whose type is `NS`.
+
+        A passing domain lists two or more `NS` records; a failing domain lists fewer than two.
+      remediation:
+        - id: console
+          desc: |
+            **At your DNS hosting provider**
+
+            Add at least one additional nameserver so the domain is served by two or more:
+
+            1. Sign in to the DNS hosting provider or registrar that manages the domain.
+            2. Provision a second nameserver, ideally on a separate network and in a different location from the first for genuine independence.
+            3. Publish identical zone data on every nameserver so they answer consistently, using zone transfers or your provider's replication.
+            4. Update the domain's delegation (the `NS` records at the registrar) to list all nameservers.
+            5. Confirm each nameserver answers authoritatively for the domain, then allow time for Shodan's next crawl to reflect the change.
+    refs:
+      - url: https://www.shodan.io/
+        title: Shodan
+      - url: https://www.rfc-editor.org/rfc/rfc2182
+        title: "RFC 2182: Selection and Operation of Secondary DNS Servers"
