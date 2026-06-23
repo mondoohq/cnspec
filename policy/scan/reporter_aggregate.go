@@ -4,7 +4,6 @@
 package scan
 
 import (
-	"fmt"
 	"strings"
 	"sync"
 
@@ -77,8 +76,8 @@ func (r *AggregateReporter) AddVulnReport(asset *inventory.Asset, vulnReport *gq
 }
 
 func (r *AggregateReporter) AddScanError(asset *inventory.Asset, err error) {
-	log.Warn().Str("error", fmt.Sprintf("%v", err)).Str("asset", asset.Name).Msg("add scan error to report")
-	if err != nil && strings.Contains(err.Error(), "TOOMANYREQUESTS") {
+	log.Debug().Err(err).Str("asset", asset.Name).Msg("add scan error to report")
+	if err != nil && strings.Contains(strings.ToUpper(err.Error()), "TOOMANYREQUESTS") {
 		log.Warn().Msg("container registry rate limit reached. Configure registry credentials to authenticate and increase your pull rate limit. See https://www.docker.com/increase-rate-limit")
 	}
 	r.mu.Lock()

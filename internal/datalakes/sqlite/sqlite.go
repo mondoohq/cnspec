@@ -127,6 +127,7 @@ func withSqliteDataStore(ctx context.Context, assetMrn string, f func(scanDataSt
 	}
 	defer func() {
 		if keep {
+			log.Info().Str("path", tmpFile.Name()).Msg("scan database saved")
 			return
 		}
 		if debugMem {
