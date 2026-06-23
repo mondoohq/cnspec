@@ -121,10 +121,19 @@ func withSqliteDataStore(ctx context.Context, assetMrn string, f func(scanDataSt
 		return err
 	}
 	tmpFile.Close() // nolint: errcheck
+	debugMem := os.Getenv("DEBUG_PROVIDER_MEMORY") != ""
+	if debugMem {
+		log.Info().Str("path", tmpFile.Name()).Bool("keep", keep).Msg("created scan database")
+	}
 	defer func() {
 		if keep {
 			log.Info().Str("path", tmpFile.Name()).Msg("scan database saved")
 			return
+		}
+		if debugMem {
+			if info, err := os.Stat(tmpFile.Name()); err == nil {
+				log.Info().Str("path", tmpFile.Name()).Int64("size_bytes", info.Size()).Msg("removing scan database")
+			}
 		}
 		if err := os.Remove(tmpFile.Name()); err != nil {
 			log.Warn().Err(err).Msg("failed to remove temporary scan data store file")

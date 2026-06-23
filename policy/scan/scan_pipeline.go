@@ -6,6 +6,10 @@ package scan
 import (
 	"context"
 	"fmt"
+	"os"
+	goruntime "runtime"
+	"runtime/debug"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -17,14 +21,24 @@ import (
 	"go.mondoo.com/mql/v13/cli/config"
 	"go.mondoo.com/mql/v13/discovery"
 	"go.mondoo.com/mql/v13/llx"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/health"
 )
 
 const (
-	maxConnections = 50 // max assets connected (with runtimes open) at a time
-	syncBatchSize  = 5  // how many assets to batch for upstream sync calls
+	defaultMaxConnections = 50
+	syncBatchSize         = 5 // how many assets to batch for upstream sync calls
 )
+
+func getMaxConnections() int {
+	if v := os.Getenv("MONDOO_MAX_PROVIDER_CONNECTIONS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return defaultMaxConnections
+}
 
 // ---------------------------------------------------------------------------
 // syncBatcher: accumulates connected assets and syncs them with upstream
@@ -278,6 +292,47 @@ func (d *scanDispatcher) scanSingleAsset(ctx context.Context, tracked *discovery
 	// Close asset after scanning to free the gRPC connection.
 	if err := d.explorer.CloseAsset(tracked); err != nil {
 		log.Error().Err(err).Str("asset", tracked.Asset.Name).Msg("failed to close asset")
+	}
+
+	debug.FreeOSMemory()
+
+	if os.Getenv("DEBUG_PROVIDER_MEMORY") != "" {
+		d.logMemoryStats(asset)
+	}
+}
+
+// logMemoryStats emits memory diagnostics after an asset scan completes.
+// Only called when DEBUG_PROVIDER_MEMORY is set.
+func (d *scanDispatcher) logMemoryStats(asset *inventory.Asset) {
+	var m goruntime.MemStats
+	goruntime.ReadMemStats(&m)
+
+	ev := log.Info().
+		Str("asset", asset.Name).
+		Int64("scanned_assets", d.scannedAssets.Load()).
+		Int("goroutines", goruntime.NumGoroutine()).
+		Uint64("heap_alloc_mb", m.Alloc/1024/1024).
+		Uint64("heap_sys_mb", m.HeapSys/1024/1024).
+		Uint64("total_alloc_mb", m.TotalAlloc/1024/1024)
+
+	if cgroup, err := os.ReadFile("/sys/fs/cgroup/memory.current"); err == nil {
+		ev = ev.Str("cgroup_bytes", strings.TrimSpace(string(cgroup)))
+	}
+	if cgroupMax, err := os.ReadFile("/sys/fs/cgroup/memory.max"); err == nil {
+		ev = ev.Str("cgroup_max", strings.TrimSpace(string(cgroupMax)))
+	}
+
+	ev.Msg("memory after asset scan")
+
+	if ar, ok := d.reporter.(*AggregateReporter); ok {
+		rptBytes, rpBytes, vrBytes, aBytes := ar.AccumulatedBytes()
+		log.Info().
+			Int("reports", rptBytes).
+			Int("resolved_policies", rpBytes).
+			Int("vuln_reports", vrBytes).
+			Int("assets", aBytes).
+			Int("total", rptBytes+rpBytes+vrBytes+aBytes).
+			Msg("reporter accumulated bytes")
 	}
 }
 

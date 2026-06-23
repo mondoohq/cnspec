@@ -4,6 +4,7 @@
 package scan
 
 import (
+	"strings"
 	"sync"
 
 	"github.com/hashicorp/go-multierror"
@@ -75,7 +76,10 @@ func (r *AggregateReporter) AddVulnReport(asset *inventory.Asset, vulnReport *gq
 }
 
 func (r *AggregateReporter) AddScanError(asset *inventory.Asset, err error) {
-	log.Debug().Str("asset", asset.Name).Msg("add scan error to report")
+	log.Debug().Err(err).Str("asset", asset.Name).Msg("add scan error to report")
+	if err != nil && strings.Contains(strings.ToUpper(err.Error()), "TOOMANYREQUESTS") {
+		log.Warn().Msg("container registry rate limit reached. Configure registry credentials to authenticate and increase your pull rate limit. See https://www.docker.com/increase-rate-limit")
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.assets[asset.Mrn] = asset
@@ -104,6 +108,24 @@ func (r *AggregateReporter) Reports() *ScanResult {
 			},
 		},
 	}
+}
+
+func (r *AggregateReporter) AccumulatedBytes() (reports, resolvedPolicies, vulnReports, assets int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, rpt := range r.assetReports {
+		reports += rpt.SizeVT()
+	}
+	for _, rp := range r.resolvedPolicies {
+		resolvedPolicies += rp.SizeVT()
+	}
+	for _, vr := range r.assetVulnReports {
+		vulnReports += vr.SizeVT()
+	}
+	for _, a := range r.assets {
+		assets += a.SizeVT()
+	}
+	return
 }
 
 func (r *AggregateReporter) Error() error {

@@ -457,7 +457,9 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		parallelism = 1
 	}
 
-	connSem := make(chan struct{}, maxConnections)
+	maxConn := getMaxConnections()
+	log.Info().Int("max_connections", maxConn).Int("parallelism", parallelism).Msg("scan pipeline configuration")
+	connSem := make(chan struct{}, maxConn)
 	var scannedAssets atomic.Int64
 
 	dispatcher := newScanDispatcher(
