@@ -113,7 +113,7 @@ packs:
       - uid: mondoo-windows-cloud-instance
         title: Cloud instance metadata
         docs:
-          desc: Returns cloud provider instance identity (public and private IPs, hostnames, and the raw instance metadata dict carrying account/subscription, region, and instance type) from the instance metadata service. Returns an unknown provider on non-cloud hosts.
+          desc: Returns cloud provider instance identity (public and private IPs, hostnames, and the raw instance metadata dict carrying account/subscription, region, and instance type) from the instance metadata service. On non-cloud hosts the provider resolves to "Unknown" and the instance fields are unavailable (the instance lookup reports an error).
         mql: cloud { provider instance { publicHostname privateHostname publicIpv4 { ip } privateIpv4 { ip } metadata } }
       - uid: mondoo-windows-network-neighbors
         title: ARP/NDP neighbor cache
@@ -153,7 +153,10 @@ packs:
             HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Group Policy\State\Machine. The DN encodes
             the system's full Organizational Unit path, e.g.
             "CN=HOST01,OU=Servers,OU=Production,DC=corp,DC=example,DC=com" — so the OU a system lives
-            in can be read straight from it. Returns nothing on workgroup / non-domain-joined hosts.
+            in can be read straight from it. Returns nothing on workgroup / non-domain-joined hosts, and
+            also on domain-joined hosts that have not yet completed a machine Group Policy refresh (the
+            Group Policy client populates this value), e.g. right after a domain join — use the
+            mondoo-windows-organizational-unit live lookup as the authoritative source.
             No command execution required (registry read), so it works over WinRM and agent scans.
         mql: |
           if (registrykey.property( path: 'HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Group Policy\State\Machine', name: 'Distinguished-Name' ).exists) {
@@ -169,32 +172,53 @@ packs:
             record with: DistinguishedName (full DN), OrganizationalUnit (the immediate / most-specific
             OU the computer sits in), OUPath (the complete OU chain, leaf to root, joined with "/"),
             Domain, PartOfDomain, and Error (the directory-lookup failure message, or null on success).
-            The directory lookup is skipped entirely on workgroup / non-domain-joined hosts, so those
-            fields are empty / false and Error is null there. A non-null Error on a domain-joined host
-            flags a genuine lookup failure (e.g., an unreachable domain controller or query timeout)
+            The directory lookup is skipped entirely on workgroup / non-domain-joined hosts: there
+            DistinguishedName, OrganizationalUnit, and OUPath are null, PartOfDomain is false, and Error
+            is null, while Domain still reports the host's workgroup name (e.g. "WORKGROUP") — so use
+            PartOfDomain, not a non-empty Domain, to tell domain members from standalone hosts. A non-null
+            Error on a domain-joined host flags a genuine lookup failure — an unreachable domain controller,
+            a query timeout, a WMI/CIM error, or the computer object simply not being found in the directory —
             rather than letting it vanish silently. This is the authoritative live-directory lookup;
             the registry-based DN query is the no-command fallback.
         filters: mondoo.capabilities.contains("run-command")
         mql: |
           parse.json(content: powershell("
-            $cs = Get-CimInstance Win32_ComputerSystem
             $dn = $null
             $err = $null
-            if ($cs.PartOfDomain) {
-              try {
-                # Escape LDAP filter metacharacters (RFC 4515) in the host name; $bs is a literal backslash.
-                $bs = [char]92
+            $cs = $null
+            $bs = [string][char]92
+            try {
+              # -ErrorAction Stop routes a WMI/CIM failure into the catch (and thus into Error) instead
+              # of leaving $cs null, which would make a domain-joined host look like a healthy workgroup
+              # host (PartOfDomain false, Error null).
+              $cs = Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
+              if ($cs.PartOfDomain) {
+                # $env:COMPUTERNAME is spliced into single-quoted PowerShell string literals below, so
+                # PowerShell never re-interprets a '$' (or any other char) in its value; only the LDAP
+                # filter syntax needs sanitizing. A domain-joined host always has this variable set, but
+                # guard the empty case so it surfaces a clear error instead of a meaningless '(cn=)' filter.
                 $name = $env:COMPUTERNAME
-                $name = $name.Replace($bs, $bs + '5c').Replace('(', $bs + '28').Replace(')', $bs + '29').Replace('*', $bs + '2a')
+                if ([string]::IsNullOrEmpty($name)) { throw 'COMPUTERNAME is empty; cannot resolve the AD computer object' }
+                # Escape the RFC 4515 filter metacharacters (backslash, open/close paren, asterisk, NUL).
+                # $bs (above) is a single-character backslash STRING (built from [char]92 so no literal
+                # backslash appears in this double-quoted MQL string); using string operands keeps every
+                # .Replace() bound to the (string, string) overload. Backslash is replaced first so the
+                # escapes introduced below are not themselves re-escaped.
+                $name = $name.Replace($bs, $bs + '5c').Replace('(', $bs + '28').Replace(')', $bs + '29').Replace('*', $bs + '2a').Replace([string][char]0, $bs + '00')
                 $s = [ADSISearcher]('(&(objectCategory=computer)(|(cn=' + $name + ')(sAMAccountName=' + $name + '$)))')
                 $r = $s.FindOne()
-                if ($r) { $dn = [string]$r.Properties['distinguishedname'][0] }
-              } catch {
-                $err = $_.Exception.Message
+                # FindOne() returns $null (not an exception) when the directory has no matching object;
+                # record that as an error so the documented 'non-null Error == genuine failure' contract holds.
+                if ($r) { $dn = [string]$r.Properties['distinguishedname'][0] } else { $err = 'computer object not found in directory' }
               }
+            } catch {
+              $err = $_.Exception.Message
             }
             $ous = @()
-            if ($dn) { $ous = @([regex]::Matches($dn, 'OU=([^,]+)') | ForEach-Object { $_.Groups[1].Value }) }
+            # AD returns the DN in RFC 4514 form, where a comma inside an OU name is escaped with a leading
+            # backslash. Match OU values honoring that escaping (the regex is built from $bs so no literal
+            # backslash appears in this MQL string), then strip the escaping backslash for a readable name.
+            if ($dn) { $ous = @([regex]::Matches($dn, 'OU=((?:[^,' + $bs + $bs + ']|' + $bs + $bs + '.)+)') | ForEach-Object { $_.Groups[1].Value -replace ($bs + $bs + '(.)'), '$1' }) }
             [pscustomobject]@{
               DistinguishedName = $dn
               OrganizationalUnit = $(if ($ous.Count -gt 0) { $ous[0] } else { $null })
