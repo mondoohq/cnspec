@@ -4,7 +4,7 @@
 packs:
   - uid: mondoo-windows-asset-inventory
     name: Windows Asset Inventory Pack
-    version: 1.7.0
+    version: 1.8.0
     license: BUSL-1.1
     require:
       - provider: os
@@ -102,13 +102,132 @@ packs:
       - uid: mondoo-windows-interface-configuration
         title: Network interfaces
         docs:
-          desc: Returns detailed network interface configuration for all interfaces.
-        mql: network.interfaces{*}
+          desc: Returns detailed network interface configuration for all interfaces, including MAC address and per-address CIDR and subnet.
+        mql: network.interfaces { name mac vendor mtu flags active virtual ips { ip cidr subnet broadcast gateway } }
+      - uid: mondoo-windows-etc-hosts
+        title: Static host entries
+        docs:
+          desc: Returns the static hostname-to-IP mappings from the Windows hosts file.
+        mql: |
+          if (file("C:\\Windows\\System32\\drivers\\etc\\hosts").exists) { file("C:\\Windows\\System32\\drivers\\etc\\hosts").content }
+      - uid: mondoo-windows-cloud-instance
+        title: Cloud instance metadata
+        docs:
+          desc: Returns cloud provider instance identity (public and private IPs, hostnames, and the raw instance metadata dict carrying account/subscription, region, and instance type) from the instance metadata service. On non-cloud hosts the provider resolves to "Unknown" and the instance fields are unavailable (the instance lookup reports an error).
+        mql: cloud { provider instance { publicHostname privateHostname publicIpv4 { ip } privateIpv4 { ip } metadata } }
+      - uid: mondoo-windows-network-neighbors
+        title: ARP/NDP neighbor cache
+        docs:
+          desc: Lists ARP (IPv4) and NDP (IPv6) neighbor cache entries with their IP, MAC address, interface, and cache state.
+        filters: mondoo.capabilities.contains("run-command")
+        mql: network.neighbors { ip mac interface state }
+      - uid: mondoo-windows-smb-shares
+        title: SMB shares
+        docs:
+          desc: Lists SMB shares published by the host with their local path, scope, and share type.
+        filters: mondoo.capabilities.contains("run-command")
+        mql: windows.smb.shares { name path description scopeName shareType }
+      - uid: mondoo-windows-smb-sessions
+        title: SMB sessions
+        docs:
+          desc: Lists active inbound SMB sessions with the client computer, user, negotiated dialect, and open-file count. Requires administrative privileges; returns data only on hosts serving SMB.
+        filters: mondoo.capabilities.contains("run-command")
+        mql: windows.smb.sessions { clientComputerName clientUserName dialect numOpens }
+      - uid: mondoo-windows-smb-connections
+        title: SMB connections
+        docs:
+          desc: Lists outbound SMB connections from this host with the server name, share, user, and negotiated dialect.
+        filters: mondoo.capabilities.contains("run-command")
+        mql: windows.smb.connections { serverName shareName userName dialect }
       - uid: mondoo-windows-computer-info
         title: Windows Computer/ System information
         docs:
           desc: Returns comprehensive Windows computer and OS information.
         mql: windows.computerInfo
+      - uid: mondoo-windows-ad-distinguished-name
+        title: Active Directory distinguished name (OU path)
+        docs:
+          desc: |
+            Returns the computer object's Active Directory distinguished name (DN) as cached by the
+            Group Policy client under
+            HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Group Policy\State\Machine. The DN encodes
+            the system's full Organizational Unit path, e.g.
+            "CN=HOST01,OU=Servers,OU=Production,DC=corp,DC=example,DC=com" — so the OU a system lives
+            in can be read straight from it. Returns nothing on workgroup / non-domain-joined hosts, and
+            also on domain-joined hosts that have not yet completed a machine Group Policy refresh (the
+            Group Policy client populates this value), e.g. right after a domain join — use the
+            mondoo-windows-organizational-unit live lookup as the authoritative source.
+            No command execution required (registry read), so it works over WinRM and agent scans.
+        mql: |
+          if (registrykey.property( path: 'HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Group Policy\State\Machine', name: 'Distinguished-Name' ).exists) {
+            registrykey.property( path: 'HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Group Policy\State\Machine', name: 'Distinguished-Name' ).data
+          }
+      - uid: mondoo-windows-organizational-unit
+        title: Active Directory Organizational Unit (OU)
+        docs:
+          desc: |
+            Resolves which Active Directory Organizational Unit the system lives in. On domain-joined
+            hosts it queries the directory for this computer object (via ADSI — no RSAT or AD module
+            required) and parses the OU path out of the returned distinguished name. The result is a
+            record with: DistinguishedName (full DN), OrganizationalUnit (the immediate / most-specific
+            OU the computer sits in), OUPath (the complete OU chain, leaf to root, joined with "/"),
+            Domain, PartOfDomain, and Error (the directory-lookup failure message, or null on success).
+            The directory lookup is skipped entirely on workgroup / non-domain-joined hosts: there
+            DistinguishedName, OrganizationalUnit, and OUPath are null, PartOfDomain is false, and Error
+            is null, while Domain still reports the host's workgroup name (e.g. "WORKGROUP") — so use
+            PartOfDomain, not a non-empty Domain, to tell domain members from standalone hosts. A non-null
+            Error on a domain-joined host flags a genuine lookup failure — an unreachable domain controller,
+            a query timeout, a WMI/CIM error, or the computer object simply not being found in the directory —
+            rather than letting it vanish silently. This is the authoritative live-directory lookup;
+            the registry-based DN query is the no-command fallback.
+        filters: mondoo.capabilities.contains("run-command")
+        mql: |
+          parse.json(content: powershell("
+            $dn = $null
+            $err = $null
+            $cs = $null
+            $bs = [string][char]92
+            try {
+              # -ErrorAction Stop routes a WMI/CIM failure into the catch (and thus into Error) instead
+              # of leaving $cs null, which would make a domain-joined host look like a healthy workgroup
+              # host (PartOfDomain false, Error null).
+              $cs = Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
+              if ($cs.PartOfDomain) {
+                # $env:COMPUTERNAME is spliced into single-quoted PowerShell string literals below, so
+                # PowerShell never re-interprets a '$' (or any other char) in its value; only the LDAP
+                # filter syntax needs sanitizing. A domain-joined host always has this variable set, but
+                # guard the empty case so it surfaces a clear error instead of a meaningless '(cn=)' filter.
+                $name = $env:COMPUTERNAME
+                if ([string]::IsNullOrEmpty($name)) { throw 'COMPUTERNAME is empty; cannot resolve the AD computer object' }
+                # Escape the RFC 4515 filter metacharacters (backslash, open/close paren, asterisk, NUL).
+                # $bs (above) is a single-character backslash STRING (built from [char]92 so no literal
+                # backslash appears in this double-quoted MQL string); using string operands keeps every
+                # .Replace() bound to the (string, string) overload. Backslash is replaced first so the
+                # escapes introduced below are not themselves re-escaped.
+                $name = $name.Replace($bs, $bs + '5c').Replace('(', $bs + '28').Replace(')', $bs + '29').Replace('*', $bs + '2a').Replace([string][char]0, $bs + '00')
+                $s = [ADSISearcher]('(&(objectCategory=computer)(|(cn=' + $name + ')(sAMAccountName=' + $name + '$)))')
+                $r = $s.FindOne()
+                # FindOne() returns $null (not an exception) when the directory has no matching object;
+                # record that as an error so the documented 'non-null Error == genuine failure' contract holds.
+                if ($r) { $dn = [string]$r.Properties['distinguishedname'][0] } else { $err = 'computer object not found in directory' }
+              }
+            } catch {
+              $err = $_.Exception.Message
+            }
+            $ous = @()
+            # AD returns the DN in RFC 4514 form, where a comma inside an OU name is escaped with a leading
+            # backslash. Match OU values honoring that escaping (the regex is built from $bs so no literal
+            # backslash appears in this MQL string), then strip the escaping backslash for a readable name.
+            if ($dn) { $ous = @([regex]::Matches($dn, 'OU=((?:[^,' + $bs + $bs + ']|' + $bs + $bs + '.)+)') | ForEach-Object { $_.Groups[1].Value -replace ($bs + $bs + '(.)'), '$1' }) }
+            [pscustomobject]@{
+              DistinguishedName = $dn
+              OrganizationalUnit = $(if ($ous.Count -gt 0) { $ous[0] } else { $null })
+              OUPath = $(if ($ous.Count -gt 0) { [string]::Join('/', $ous) } else { $null })
+              Domain = $cs.Domain
+              PartOfDomain = $cs.PartOfDomain
+              Error = $err
+            } | ConvertTo-Json -Compress
+          ").stdout).params
       - uid: mondoo-windows-security-products
         title: Installed Security Products
         docs:
