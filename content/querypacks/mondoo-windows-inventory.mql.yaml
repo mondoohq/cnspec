@@ -163,17 +163,20 @@ packs:
         title: Active Directory Organizational Unit (OU)
         docs:
           desc: |
-            Resolves which Active Directory Organizational Unit the system lives in. It queries the
-            directory for this computer object (via ADSI — no RSAT or AD module required) and parses
-            the OU path out of the returned distinguished name. The result is a record with:
-            DistinguishedName (full DN), OrganizationalUnit (the immediate / most-specific OU the
-            computer sits in), OUPath (the complete OU chain, leaf to root, joined with "/"),
-            Domain, and PartOfDomain. Fields are empty / false on non-domain-joined hosts. This is the
-            authoritative live-directory lookup; the registry-based DN query is the no-command
-            fallback.
+            Resolves which Active Directory Organizational Unit the system lives in. On domain-joined
+            hosts it queries the directory for this computer object (via ADSI — no RSAT or AD module
+            required) and parses the OU path out of the returned distinguished name. The result is a
+            record with: DistinguishedName (full DN), OrganizationalUnit (the immediate / most-specific
+            OU the computer sits in), OUPath (the complete OU chain, leaf to root, joined with "/"),
+            Domain, PartOfDomain, and Error (the directory-lookup failure message, or null on success).
+            The directory lookup is skipped entirely on workgroup / non-domain-joined hosts, so those
+            fields are empty / false and Error is null there. A non-null Error on a domain-joined host
+            flags a genuine lookup failure (e.g., an unreachable domain controller or query timeout)
+            rather than letting it vanish silently. This is the authoritative live-directory lookup;
+            the registry-based DN query is the no-command fallback.
         filters: mondoo.capabilities.contains("run-command")
         mql: |
-          parse.json(content: powershell("$cn=$env:COMPUTERNAME; $dn=$null; try { $s=[ADSISearcher]('(&(objectCategory=computer)(cn=' + $cn + '))'); $r=$s.FindOne(); if ($r) { $dn=[string]$r.Properties['distinguishedname'][0] } } catch {}; $ous=@(); if ($dn) { $ous=@([regex]::Matches($dn, 'OU=([^,]+)') | ForEach-Object { $_.Groups[1].Value }) }; $cs=Get-CimInstance Win32_ComputerSystem; [pscustomobject]@{ DistinguishedName=$dn; OrganizationalUnit=$(if ($ous.Count -gt 0) { $ous[0] } else { $null }); OUPath=$(if ($ous.Count -gt 0) { [string]::Join('/', $ous) } else { $null }); Domain=$cs.Domain; PartOfDomain=$cs.PartOfDomain } | ConvertTo-Json -Compress").stdout).params
+          parse.json(content: powershell("$cs=Get-CimInstance Win32_ComputerSystem; $dn=$null; $err=$null; if ($cs.PartOfDomain) { try { $s=[ADSISearcher]('(&(objectCategory=computer)(cn=' + $env:COMPUTERNAME + '))'); $r=$s.FindOne(); if ($r) { $dn=[string]$r.Properties['distinguishedname'][0] } } catch { $err=$_.Exception.Message } }; $ous=@(); if ($dn) { $ous=@([regex]::Matches($dn, 'OU=([^,]+)') | ForEach-Object { $_.Groups[1].Value }) }; [pscustomobject]@{ DistinguishedName=$dn; OrganizationalUnit=$(if ($ous.Count -gt 0) { $ous[0] } else { $null }); OUPath=$(if ($ous.Count -gt 0) { [string]::Join('/', $ous) } else { $null }); Domain=$cs.Domain; PartOfDomain=$cs.PartOfDomain; Error=$err } | ConvertTo-Json -Compress").stdout).params
       - uid: mondoo-windows-security-products
         title: Installed Security Products
         docs:
