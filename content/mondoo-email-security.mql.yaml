@@ -30,7 +30,7 @@ policies:
     groups:
       - title: DNS Configuration
         filters: |
-          asset.platform == "host"
+          asset.platform == "host" &&
           dns.mx != empty
         checks:
           - uid: mondoo-email-security-txt-record
@@ -38,7 +38,7 @@ policies:
           - uid: mondoo-email-security-reverse-ip-ptr-record-set
       - title: SPF (Sender Policy Framework)
         filters: |
-          asset.platform == "host"
+          asset.platform == "host" &&
           dns.mx != empty
         checks:
           - uid: mondoo-email-security-spf
@@ -50,13 +50,13 @@ policies:
           - uid: mondoo-email-security-spf-dns-record
       - title: DKIM (DomainKeys Identified Mail)
         filters: |
-          asset.platform == "host"
+          asset.platform == "host" &&
           dns.mx != empty
         checks:
           - uid: mondoo-email-security-dkim
       - title: DMARC (Domain-based Message Authentication)
         filters: |
-          asset.platform == "host"
+          asset.platform == "host" &&
           dns.mx != empty
         checks:
           - uid: mondoo-email-security-dmarc
@@ -110,17 +110,17 @@ queries:
         123.123.123.123.in-addr.arpa  name = mail.example.com.
         ```
       remediation: |
-        Set up valid reverse DNS (rDNS) records for the IP addresses of your outbound mail servers. Reverse DNS ensures that when a receiving mail server performs a lookup on the sending IP, it resolves to a fully qualified domain name (FQDN) associated with your organization's domain—this helps validate the authenticity of your emails and reduces the likelihood of your messages being marked as spam.
+        Set up valid reverse DNS records for the IP addresses of your outbound mail servers. Reverse DNS ensures that when a receiving mail server performs a lookup on the sending IP, it resolves to a fully qualified domain name associated with your organization's domain. This helps validate the authenticity of your emails and reduces the likelihood of your messages being marked as spam.
 
         For example, if mail.lunalectric.com sends email from the IP address 123.123.123.123, the reverse DNS for that IP should resolve to a name within your domain, such as mail.lunalectric.com.
 
-        Steps to configure rDNS:
+        Steps to configure reverse DNS:
           1.  Identify the public IP addresses of your mail servers.
-          2.  Contact your hosting provider or DNS host (whoever controls the IP range) to request that a PTR (Pointer) record be set for each IP.
-          3.  Ensure each PTR record resolves to a valid FQDN like mail.lunalectric.com.
-          4.  Confirm that the forward DNS for mail.lunalectric.com also resolves back to 123.123.123.123 to establish a valid forward-confirmed reverse DNS (FCrDNS) match.
+          2.  Contact your hosting provider or whoever controls the IP range to request that a PTR record be set for each IP.
+          3.  Ensure each PTR record resolves to a valid fully qualified domain name like mail.lunalectric.com.
+          4.  Confirm that the forward DNS for mail.lunalectric.com also resolves back to 123.123.123.123 to establish a valid forward-confirmed reverse DNS match.
 
-        You can verify the rDNS setup with `dig -x`, which queries the PTR record directly (the canonical way to look up reverse DNS):
+        You can verify the reverse DNS setup with `dig -x`, which queries the PTR record directly:
 
         ```bash
         dig -x 123.123.123.123 +short
@@ -183,7 +183,13 @@ queries:
 
         If one or more TXT records are returned, the check passes. If the output is empty, the check fails.
       remediation: |
-        Add a TXT record to your DNS zone file.
+        Add at least one TXT record to your DNS zone file. TXT records hold domain ownership verification tokens and email authentication policies. If your domain has no TXT records yet, publishing your SPF policy is the most useful first record:
+
+        ```dns
+        lunalectric.com. IN TXT "v=spf1 include:_spf.google.com ~all"
+        ```
+
+        Replace the include mechanism with the mail services your domain actually uses.
 
         You can verify that the TXT record was added correctly using the following command:
 
@@ -194,14 +200,15 @@ queries:
         Example output:
 
         ```text
-        "atlassian-domain-verification=12345"
-        "google-site-verification=678910"
+        "v=spf1 include:_spf.google.com ~all"
         ```
+
+        If the command returns no output, no TXT record is set.
     refs:
       - url: https://en.wikipedia.org/wiki/TXT_record
         title: TXT Record
   - uid: mondoo-email-security-a-record
-    title: Domain Apex should have an anchor (A) record
+    title: Domain Apex should have an address (A) record
     impact: 40
     tags:
       compliance/bsi-sys-1-5: false
@@ -220,7 +227,7 @@ queries:
     mql: dns.records.any(type == "A")
     docs:
       desc: |
-        This check ensures the existence of an anchor (A) record at the domain apex, which maps a domain name to an IPv4 address.
+        This check ensures the existence of an address (A) record at the domain apex, which maps a domain name to an IPv4 address.
 
         **Why this matters**
 
@@ -238,15 +245,19 @@ queries:
 
         If the command returns one or more IPv4 addresses, the check passes. If the output is empty or returns `NXDOMAIN`, the check fails.
       remediation: |
-        Add an A record to your DNS zone file. If you're not hosting a dedicated service on the root domain, consider pointing the A record to a web server that redirects visitors to your main corporate website.
+        Add an A record for the domain apex to your DNS zone file. If you're not hosting a dedicated service on the root domain, consider pointing the A record to a web server that redirects visitors to your main corporate website.
 
-        To verify that an A record exists for your domain (e.g., lunalectric.com), run the following command:
+        ```dns
+        lunalectric.com. IN A 203.0.113.10
+        ```
+
+        To verify that an A record exists for your domain, run the following command:
 
         ```bash
         dig +short A lunalectric.com
         ```
 
-        The output should show the IP address of the server that hosts your website. If you see an IP address, it means the A record is set up correctly. If you see "no answer" or "NXDOMAIN," it means the A record is not set up.
+        The output should show the IP address of the server that hosts your website. If the command returns no output, the A record is not set up.
     refs:
       - url: https://www.easyredir.com/blog/what-is-an-apex-domain/
         title: A Record
@@ -292,17 +303,18 @@ queries:
         Add a single TXT record to your DNS zone file listing every server allowed to send mail for the domain, ending with an `all` mechanism that tells receivers how to treat everyone else:
 
         ```dns
-        <domain> IN TXT "v=spf1 include:_spf.google.com -all"
+        lunalectric.com. IN TXT "v=spf1 ip4:203.0.113.10 include:_spf.google.com ~all"
         ```
 
-        Replace `include:_spf.google.com` with the include/`ip4`/`ip6`/`a`/`mx` mechanisms for your own senders. The trailing qualifier decides the outcome for unlisted servers: `-all` (hard fail) tells receivers to reject them and is the recommended end state, while `~all` (soft fail) only marks them suspicious. Roll out with `~all` first, confirm from your DMARC aggregate reports that all legitimate senders pass, then tighten to `-all`.
+        Replace the mechanisms with the `include`, `ip4`, `ip6`, `a`, or `mx` mechanisms for your own senders. Only list mechanisms for senders you actually use. Authorizing providers you don't use weakens the policy, and omitting providers you do use causes legitimate mail to fail SPF checks. The trailing qualifier decides the outcome for unlisted servers: `-all` (hard fail) tells receivers to reject them and is the recommended end state, while `~all` (soft fail) only marks them suspicious. Roll out with `~all` first, confirm from your DMARC aggregate reports that all legitimate senders pass, then tighten to `-all`.
 
         You can verify that the SPF record was added correctly using the following command:
 
         ```bash
         dig +short TXT lunalectric.com
         ```
-        The output should show the SPF record you added. If you see "no answer" or "NXDOMAIN," it means the SPF record is not set up.
+
+        The output should include the SPF record you added. If no record starting with `v=spf1` is returned, the SPF record is not set up.
     refs:
       - url: https://en.wikipedia.org/wiki/Sender_Policy_Framework
         title: SPF Record
@@ -344,15 +356,30 @@ queries:
 
         If zero or one record starting with `v=spf1` is returned, the check passes. If two or more such records are returned, the check fails.
       remediation: |
-        Remove all but one SPF record from your DNS zone file.
+        Merge all SPF records into a single TXT record, then delete the others. Receivers treat multiple records starting with `v=spf1` as a permanent error, but the mechanisms from every record must be combined into one before any record is removed.
 
-        You can verify that the SPF record was added correctly using the following command:
+        For example, replace these two records:
+
+        ```text
+        "v=spf1 include:_spf.google.com ~all"
+        "v=spf1 ip4:203.0.113.10 ~all"
+        ```
+
+        with this single record:
+
+        ```dns
+        lunalectric.com. IN TXT "v=spf1 ip4:203.0.113.10 include:_spf.google.com ~all"
+        ```
+
+        Do not simply delete the extra records. Removing a record without merging its mechanisms causes mail from those senders to fail SPF checks.
+
+        You can verify the result using the following command:
 
         ```bash
         dig +short TXT lunalectric.com
         ```
 
-        The output should show the single SPF record you retained. If you see "no answer" or "NXDOMAIN," it means the SPF record is not set up.
+        The output should show exactly one record starting with `v=spf1`.
     refs:
       - url: https://en.wikipedia.org/wiki/Sender_Policy_Framework
         title: SPF Record
@@ -394,13 +421,15 @@ queries:
 
         If the SPF record is 255 characters or fewer, the check passes. If it exceeds 255 characters, the check fails.
       remediation: |
-        SPF records have two limits to respect: the 255-character limit on a single DNS string this check measures, and a separate hard limit of 10 DNS lookups (each `include`, `a`, `mx`, `ptr`, and `exists` mechanism counts) that breaks SPF evaluation when exceeded. Don't just delete entries — that silently stops authorizing legitimate senders. Instead, consolidate: remove `include:` mechanisms for services you no longer use, merge providers where possible, and "flatten" includes (replace an `include:` with the `ip4:`/`ip6:` addresses it resolves to) to cut both the length and the lookup count.
+        SPF records have two limits to respect: the 255-character limit on a single DNS string this check measures, and a separate hard limit of 10 DNS lookups (each `include`, `a`, `mx`, `ptr`, and `exists` mechanism counts) that breaks SPF evaluation when exceeded. Don't just delete entries, since that silently stops authorizing legitimate senders. Instead, consolidate: remove `include:` mechanisms for services you no longer use, merge providers where possible, and "flatten" includes by replacing an `include:` with the `ip4:` and `ip6:` addresses it resolves to, which cuts both the length and the lookup count.
 
         You can verify the SPF record using the following command:
 
         ```bash
         dig +short TXT lunalectric.com
         ```
+
+        The record starting with `v=spf1` should be 255 characters or fewer.
     refs:
       - url: https://datatracker.ietf.org/doc/html/rfc7208#section-3.3
         title: Sender Policy Framework (SPF) for Authorizing Use of Domains in Email, Version 1
@@ -442,13 +471,25 @@ queries:
 
         If the SPF record contains no excess whitespace, the check passes. If it contains two or more consecutive spaces, the check fails.
       remediation: |
-        Remove all excess whitespace from your SPF record.
+        Edit your SPF record so its mechanisms are separated by single spaces, with no leading or trailing whitespace. For example, replace:
 
-        You can verify that the SPF record using the following command:
+        ```text
+        "v=spf1  include:_spf.google.com   ~all"
+        ```
+
+        with:
+
+        ```text
+        "v=spf1 include:_spf.google.com ~all"
+        ```
+
+        You can verify the SPF record using the following command:
 
         ```bash
         dig +short TXT lunalectric.com
         ```
+
+        The record starting with `v=spf1` should contain no consecutive spaces.
     refs:
       - url: https://en.wikipedia.org/wiki/Sender_Policy_Framework
         title: SPF Record
@@ -488,13 +529,24 @@ queries:
 
         If the SPF record ends with `-all` (hard fail) or `~all` (soft fail), the check passes. If it ends with any other mechanism or omits an `all` mechanism, the check fails.
       remediation: |
-        The SPF record should end with all.
+        End your SPF record with `-all` or `~all` so receivers know how to treat mail from servers you have not authorized. A bare `all` or `+all` permits every sender and must not be used.
 
-        You can verify that the SPF record using the following command:
+        - `~all` marks mail from unauthorized servers as a soft fail. Receivers typically accept the message but treat it with suspicion. This is the safer choice while you confirm that every legitimate sender is listed in the record.
+        - `-all` tells receivers to reject mail from unauthorized servers. Move to this once your DMARC reports show that all legitimate mail passes SPF.
+
+        Example:
+
+        ```dns
+        lunalectric.com. IN TXT "v=spf1 include:_spf.google.com ~all"
+        ```
+
+        You can verify the SPF record using the following command:
 
         ```bash
         dig +short TXT lunalectric.com
         ```
+
+        The record starting with `v=spf1` should end with `-all` or `~all`.
     refs:
       - url: https://www.m3aawg.org/sites/default/files/m3aawg-email-authentication-recommended-best-practices-09-2020.pdf
         title: M3AAWG Email Authentication Recommended Best Practices (2020)
@@ -550,15 +602,17 @@ queries:
         "v=spf1 include:_spf.google.com -all"
         ```
       remediation: |
-        Replace `+all` in your SPF record with `-all` (hard fail) or `~all` (soft fail).
+        Replace `+all` in your SPF record with `~all` or `-all`.
 
-        - `-all` (recommended): Instructs receivers to reject email from unauthorized servers.
         - `~all`: Instructs receivers to flag email from unauthorized servers as suspicious but still deliver it.
+        - `-all`: Instructs receivers to reject email from unauthorized servers.
+
+        Before publishing the change, make sure the record lists every service that legitimately sends email for your domain. A record such as `v=spf1 +all` authorizes everything, so tightening it without listing your real senders causes legitimate mail to fail SPF checks. Start with `~all`, monitor your DMARC aggregate reports for legitimate senders failing SPF, then move to `-all`.
 
         Example:
 
         ```dns
-        <domain> IN TXT "v=spf1 include:_spf.google.com -all"
+        lunalectric.com. IN TXT "v=spf1 include:_spf.google.com -all"
         ```
 
         You can verify the change using the following command:
@@ -611,13 +665,24 @@ queries:
 
         If the command returns no records, the check passes. If any `SPF`-type record is returned, the check fails.
       remediation: |
-        Remove the deprecated SPF DNS Record Type from your SPF record.
+        Publish your SPF policy as a TXT record, then delete any records of the deprecated SPF record type from your DNS zone. RFC 7208 obsoleted the dedicated SPF record type, and receivers only evaluate the TXT version.
 
-        You can verify that the SPF record using the following command:
+        1. Confirm a TXT record starting with `v=spf1` exists at the domain apex. If your SPF policy only exists in the SPF-type record, copy its content into a TXT record first. If both record types exist, compare them before deleting anything — the deprecated SPF-type record may have drifted from the TXT version, and the TXT record must carry the policy you intend to keep.
+        2. Remove the SPF-type record from your DNS zone.
+
+        You can verify that no SPF-type record remains using the following command:
+
+        ```bash
+        dig +short SPF lunalectric.com
+        ```
+
+        The command should return no output. Then confirm the TXT version is still in place:
 
         ```bash
         dig +short TXT lunalectric.com
         ```
+
+        The output should include your record starting with `v=spf1`.
     refs:
       - url: https://en.wikipedia.org/wiki/Sender_Policy_Framework#DNS_SPF_Records
         title: DNS SPF Records
@@ -663,11 +728,15 @@ queries:
         _dmarc.lunalectric.com.  300 IN TXT "v=DMARC1; p=reject; pct=100; rua=mailto:dmarc-aggregate@lunalectric.com; ruf=mailto:dmarc-forensic@lunalectric.com; fo=1;"
         ```
       remediation: |
-        Add a TXT record for the `_dmarc` subdomain to your DNS zone file with the following format:
+        Add a TXT record for the `_dmarc` subdomain to your DNS zone file. Start with a monitoring policy and a reporting address you control:
 
         ```dns
-        _dmarc.<domain> IN TXT "v=DMARC1; p=reject; pct=100; rua=mailto:dmarc-aggregate@lunalectric.com; ruf=mailto:dmarc-forensic@lunalectric.com; fo=1;"
+        _dmarc.lunalectric.com. IN TXT "v=DMARC1; p=none; rua=mailto:dmarc-aggregate@lunalectric.com;"
         ```
+
+        The `rua` tag must point to a mailbox, not a bare domain. Review the aggregate reports it receives, fix any legitimate senders that fail authentication, then raise the policy to `p=quarantine` and finally `p=reject`. Moving straight to `p=reject` before all legitimate mail passes SPF or DKIM causes that mail to be rejected.
+
+        Note that the separate DMARC policy enforcement check in this policy fails while `p=none` is in place; that is expected during the monitoring phase and resolves when you raise the policy to `p=quarantine` or `p=reject`.
 
         You can verify that the DMARC record was added correctly using the following command:
 
@@ -675,7 +744,7 @@ queries:
         dig +short TXT _dmarc.lunalectric.com
         ```
 
-        The output should show the DMARC record you added. If you see "no answer" or "NXDOMAIN," it means the DMARC record is not set up.
+        The output should show the DMARC record you added. If the command returns no output, the DMARC record is not set up.
     refs:
       - url: https://www.m3aawg.org/sites/default/files/m3aawg-email-authentication-recommended-best-practices-09-2020.pdf
         title: M3AAWG Email Authentication Recommended Best Practices (2020)
@@ -722,10 +791,10 @@ queries:
         _dmarc.lunalectric.com.  300 IN TXT "v=DMARC1; p=reject; pct=100; rua=mailto:dmarc-aggregate@lunalectric.com; ruf=mailto:dmarc-forensic@lunalectric.com; fo=1;"
         ```
       remediation: |
-        Add a TXT record to your DNS zone file with the following format:
+        Publish your DMARC record as a TXT record on the `_dmarc` subdomain and make sure it begins with the `v=DMARC1` version tag. The version tag must be the first tag in the record or receivers ignore the policy entirely. The example uses `p=quarantine` because this check assumes an established DMARC record; if you are setting up DMARC for the first time, start with `p=none` as described in the DMARC record check:
 
         ```dns
-        _dmarc.<domain> IN TXT "v=DMARC1; p=reject; pct=100; rua=mailto:dmarc-aggregate@lunalectric.com; ruf=mailto:dmarc-forensic@lunalectric.com; fo=1;"
+        _dmarc.lunalectric.com. IN TXT "v=DMARC1; p=quarantine; rua=mailto:dmarc-aggregate@lunalectric.com;"
         ```
 
         You can verify that the DMARC record was added correctly using the following command:
@@ -734,7 +803,7 @@ queries:
         dig +short TXT _dmarc.lunalectric.com
         ```
 
-        The output should show the DMARC record you added. If you see "no answer" or "NXDOMAIN," it means the DMARC record is not set up.
+        The output should start with `v=DMARC1`. If the command returns no output, the DMARC record is not set up.
     refs:
       - url: https://www.m3aawg.org/sites/default/files/m3aawg-email-authentication-recommended-best-practices-09-2020.pdf
         title: M3AAWG Email Authentication Recommended Best Practices (2020)
@@ -772,8 +841,8 @@ queries:
         - Spoofed emails will be delivered unimpeded, potentially harming recipients and damaging your domain's reputation.
 
         Examples:
-        - `p=reject;` — blocks unauthenticated messages outright.
-        - `p=quarantine;` — flags unauthenticated messages as suspicious and typically places them in the recipient's spam or junk folder. This is a safer starting point if you're still gathering data or fine-tuning your DMARC implementation.
+        - `p=reject;` blocks unauthenticated messages outright.
+        - `p=quarantine;` flags unauthenticated messages as suspicious and typically places them in the recipient's spam or junk folder. This is a safer starting point if you're still gathering data or fine-tuning your DMARC implementation.
       audit: |
         Run the `dig +short TXT _dmarc.<domain>` command and inspect the `p=` tag in the DMARC record.
 
@@ -781,18 +850,24 @@ queries:
       remediation: |
         Set the `p=` policy tag to `quarantine` or `reject` in your `_dmarc` TXT record. The policy tells receivers what to do with mail that fails authentication: `quarantine` sends it to spam, `reject` blocks it outright.
 
-        **Roll this out gradually.** Switching straight to `p=reject` before every legitimate sender passes SPF/DKIM will silently block real mail (newsletters, ticketing systems, and third-party senders are common casualties). Start at `p=none` with a `rua` reporting address, watch the aggregate reports until all your senders authenticate cleanly, move to `p=quarantine`, then finally to `p=reject`.
-
         ```dns
-        _dmarc.<domain> IN TXT "v=DMARC1; p=reject; pct=100; rua=mailto:dmarc-aggregate@lunalectric.com; ruf=mailto:dmarc-forensic@lunalectric.com; fo=1;"
+        _dmarc.lunalectric.com. IN TXT "v=DMARC1; p=quarantine; rua=mailto:dmarc-aggregate@lunalectric.com;"
         ```
 
-        You can verify that the DMARC record was added correctly using the following command:
+        Roll the policy out in stages to avoid losing legitimate mail:
+
+        1. Start with `p=none` and a `rua` reporting address, then review the aggregate reports.
+        2. Fix any legitimate senders that fail SPF or DKIM alignment.
+        3. Move to `p=quarantine`, optionally using the `pct` tag to apply it to a fraction of mail at first.
+        4. Move to `p=reject` once reports show all legitimate mail passes.
+
+        You can verify the record using the following command:
 
         ```bash
         dig +short TXT _dmarc.lunalectric.com
         ```
-        The output should show the DMARC record you added. If you see "no answer" or "NXDOMAIN," it means the DMARC record is not set up.
+
+        The output should show `p=quarantine` or `p=reject`.
     refs:
       - url: https://www.m3aawg.org/sites/default/files/m3aawg-email-authentication-recommended-best-practices-09-2020.pdf
         title: M3AAWG Email Authentication Recommended Best Practices (2020)
@@ -836,18 +911,21 @@ queries:
 
         If the record includes a `rua=mailto:` tag pointing to an aggregate report mailbox, the check passes. If the tag is absent, the check fails.
       remediation: |
-        Add a TXT record to your DNS zone file with the following format:
+        Add a `rua` tag to the DMARC record on the `_dmarc` subdomain. The tag takes a `mailto:` URI pointing to the mailbox that should receive aggregate reports:
 
         ```dns
-        _dmarc.<domain> IN TXT "v=DMARC1; p=reject; pct=100; rua=mailto:dmarc-aggregate@lunalectric.com; ruf=mailto:dmarc-forensic@lunalectric.com; fo=1;"
+        _dmarc.lunalectric.com. IN TXT "v=DMARC1; p=quarantine; rua=mailto:dmarc-aggregate@lunalectric.com;"
         ```
 
-        You can verify that the DMARC record was added correctly using the following command:
+        If the reporting mailbox is on a different domain than the one publishing the record, the receiving domain must publish a DMARC external reporting authorization record before mail providers will send your reports to it.
+
+        You can verify the record using the following command:
 
         ```bash
         dig +short TXT _dmarc.lunalectric.com
         ```
-        The output should show the DMARC record you added. If you see "no answer" or "NXDOMAIN," it means the DMARC record is not set up.
+
+        The output should include a `rua=mailto:` tag pointing to your reporting mailbox.
     refs:
       - url: https://www.m3aawg.org/sites/default/files/m3aawg-email-authentication-recommended-best-practices-09-2020.pdf
         title: M3AAWG Email Authentication Recommended Best Practices (2020)
@@ -891,19 +969,21 @@ queries:
 
         If the record includes a `ruf=mailto:` tag pointing to a failure report mailbox, the check passes. If the tag is absent, the check fails.
       remediation: |
-        Add a TXT record to your DNS zone file with the following format:
+        Add a `ruf` tag to the DMARC record on the `_dmarc` subdomain. The tag takes a `mailto:` URI pointing to the mailbox that should receive failure reports:
 
         ```dns
-        _dmarc.<domain> IN TXT "v=DMARC1; p=reject; pct=100; rua=mailto:dmarc-aggregate@lunalectric.com; ruf=mailto:dmarc-forensic@lunalectric.com; fo=1;"
+        _dmarc.lunalectric.com. IN TXT "v=DMARC1; p=quarantine; rua=mailto:dmarc-aggregate@lunalectric.com; ruf=mailto:dmarc-forensic@lunalectric.com; fo=1;"
         ```
 
-        You can verify that the DMARC record was added correctly using the following command:
+        Failure reports can include full message content, so route them to a restricted security mailbox and confirm this fits your privacy and compliance requirements. Many large mail providers no longer send failure reports, so receiving few or none is normal.
+
+        You can verify the record using the following command:
 
         ```bash
         dig +short TXT _dmarc.lunalectric.com
         ```
 
-        The output should show the DMARC record you added. If you see "no answer" or "NXDOMAIN," it means the DMARC record is not set up.
+        The output should include a `ruf=mailto:` tag pointing to your reporting mailbox.
     refs:
       - url: https://www.m3aawg.org/sites/default/files/m3aawg-email-authentication-recommended-best-practices-09-2020.pdf
         title: M3AAWG Email Authentication Recommended Best Practices (2020)
@@ -961,20 +1041,23 @@ queries:
 
         If the record returns a DKIM key containing `p=` (the public key) and `k=rsa`, the check passes. If no record is returned or the key material is missing, the check fails.
       remediation: |
-        DKIM keys are generated by your mail provider (Google Workspace, Microsoft 365, Mailjet, etc.), not hand-authored — enable DKIM in the provider's admin console and it gives you the exact TXT record to publish. The record names a key type (`k=rsa`) and the base64-encoded public key (`p=`); the matching private key stays with the provider and signs your outgoing mail. Use a 2048-bit key where the provider offers it.
+        DKIM keys are generated by your mail provider, such as Google Workspace, Microsoft 365, or Mailjet, not hand-authored. Enable DKIM in the provider's admin console and it gives you the exact TXT record to publish. The record names a key type in the `k=rsa` tag and the base64-encoded public key in the `p=` tag. The matching private key stays with the provider and signs your outgoing mail.
 
-        Publish the TXT record the provider gives you in your DNS zone file. It looks like this (the `p=` value is a long base64 string, truncated here):
+        Publish the TXT record the provider gives you in your DNS zone file. The `p=` value is a long base64 string, truncated here:
 
         ```dns
-        <selector>._domainkey.<domain> IN TXT "v=DKIM1; k=rsa; p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDExampleBase64PublicKeyMaterialThatYourProviderGeneratesGoesHere...IDAQAB"
+        google._domainkey.lunalectric.com. IN TXT "v=DKIM1; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA..."
         ```
+
+        Use an RSA key of at least 2048 bits. After publishing the record, enable DKIM signing in your mail provider's admin console so outgoing mail is actually signed. If your provider uses a selector other than the common defaults such as `google`, `selector1`, or `k1`, add it to the `mondooEmailSecurityDkimSelectors` property so the right selector is queried.
 
         You can verify that the DKIM record was added correctly using the following command:
 
         ```bash
-        dig +short TXT <selector>._domainkey.lunalectric.com
+        dig +short TXT google._domainkey.lunalectric.com
         ```
-        The output should show the DKIM record you added. If you see "no answer" or "NXDOMAIN," it means the DKIM record is not set up.
+
+        The output should show a record containing `k=rsa` and a `p=` tag holding the public key. If the command returns no output, the DKIM record is not set up.
     refs:
       - url: https://www.m3aawg.org/sites/default/files/m3aawg-email-authentication-recommended-best-practices-09-2020.pdf
         title: M3AAWG Email Authentication Recommended Best Practices (2020)
