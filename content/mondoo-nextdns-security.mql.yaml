@@ -1,0 +1,974 @@
+# Copyright Mondoo, Inc. 2024, 2026
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: mondoo-nextdns-security
+    name: Mondoo NextDNS Security
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: nextdns
+    require:
+      - provider: nextdns
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Secure NextDNS profiles by enforcing threat protection, filtering integrity, and query logging
+    docs:
+      desc: |
+        The Mondoo NextDNS Security policy verifies that each NextDNS profile is configured to deliver strong DNS-layer protection. NextDNS is only as effective as its per-profile configuration, so this policy checks that the threat-protection features are enabled, that users cannot circumvent filtering, and that query logging is available for visibility and investigation.
+
+        This policy provides security checks across key NextDNS profile areas:
+
+        - Threat protection (threat intelligence, AI detection, anti-malware heuristics)
+        - Filtering integrity and anti-circumvention
+        - Query logging and visibility
+
+        Each check evaluates an individual NextDNS profile, so when scanning a NextDNS account with asset discovery enabled every profile is assessed and scored independently.
+
+        Learn more about scanning NextDNS in the [cnspec documentation](https://mondoo.com/docs/cnspec/).
+
+        Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
+    groups:
+      - title: Threat Protection
+        filters: asset.platform == "nextdns-profile"
+        checks:
+          - uid: mondoo-nextdns-security-threat-intelligence-feeds-enabled
+          - uid: mondoo-nextdns-security-dns-rebinding-protection-enabled
+          - uid: mondoo-nextdns-security-ai-threat-detection-enabled
+          - uid: mondoo-nextdns-security-cryptojacking-protection-enabled
+          - uid: mondoo-nextdns-security-dga-protection-enabled
+          - uid: mondoo-nextdns-security-idn-homograph-protection-enabled
+          - uid: mondoo-nextdns-security-typosquatting-protection-enabled
+          - uid: mondoo-nextdns-security-nrd-blocking-enabled
+          - uid: mondoo-nextdns-security-csam-blocking-enabled
+          - uid: mondoo-nextdns-security-parked-domain-blocking-enabled
+      - title: Filtering Integrity
+        filters: asset.platform == "nextdns-profile"
+        checks:
+          - uid: mondoo-nextdns-security-block-bypass-methods-blocked
+          - uid: mondoo-nextdns-security-end-user-block-bypass-disabled
+      - title: Logging and Visibility
+        filters: asset.platform == "nextdns-profile"
+        checks:
+          - uid: mondoo-nextdns-security-query-logging-enabled
+    scoring_system: average
+queries:
+  # ==========================================
+  # Threat Protection
+  # ==========================================
+  - uid: mondoo-nextdns-security-threat-intelligence-feeds-enabled
+    title: Ensure NextDNS threat intelligence feeds are enabled
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-tvm-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-5-ii-b-security-awareness-training-and-tools-protection-from-malicious-software
+      compliance/iso-27001-2022: iso-27001-2022-a-8-7
+      compliance/nis-2: nis-2-21-1
+      compliance/nist-csf-1: nist-csf-1-de-cm-4
+      compliance/nist-csf-2: nist-csf-2-de-cm-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-2
+      compliance/pci-dss-4: pcidss-requirement-5-2-2
+      compliance/soc2-2017: soc2-control-cc6-8-4
+      compliance/vda-isa-5: vda-isa-5-5-2-3
+    mql: |
+      nextdns.profiles.all(security.threatIntelligenceFeeds == true)
+    docs:
+      desc: |
+        This check verifies that NextDNS threat intelligence feeds are enabled on the profile. The feeds block resolution of domains associated with malware, command-and-control infrastructure, and phishing, stopping threats at the DNS layer before a connection is ever made.
+
+        **Why this matters**
+
+        - **Malware blocking:** Threat intelligence feeds prevent clients from reaching domains known to host or distribute malware.
+        - **Command-and-control disruption:** Blocking known C2 domains severs the channel an infection uses to receive instructions or exfiltrate data.
+        - **Phishing defense:** Resolving fewer malicious domains reduces the chance a user lands on a credential-harvesting page.
+
+        **Risk mitigation**
+
+        - **First line of defense:** DNS-layer blocking stops threats before any TCP/TLS session is established, complementing endpoint and network controls.
+        - **Continuously updated:** The feeds are maintained by NextDNS, so coverage tracks emerging threats without manual list curation.
+      audit: |
+        To verify that threat intelligence feeds are enabled from the NextDNS dashboard:
+
+        1. Sign in to the [NextDNS dashboard](https://my.nextdns.io) and select the profile.
+        2. Open the **Security** tab.
+        3. Inspect the **Threat Intelligence Feeds** toggle.
+
+        If the toggle is on, the check passes. If it is off, the check fails.
+
+        To verify via the NextDNS API, retrieve the security settings and inspect `threatIntelligenceFeeds`:
+
+        ```bash
+        curl -s https://api.nextdns.io/profiles/<profile-id>/security \
+          -H "X-Api-Key: $NEXTDNS_API_KEY"
+        ```
+      remediation:
+        - id: console
+          desc: |
+            To enable threat intelligence feeds from the NextDNS dashboard:
+
+            1. Sign in to the [NextDNS dashboard](https://my.nextdns.io) and select the profile.
+            2. Open the **Security** tab.
+            3. Turn on **Threat Intelligence Feeds**.
+        - id: api
+          desc: |
+            To enable threat intelligence feeds using the NextDNS API:
+
+            ```bash
+            curl -X PATCH https://api.nextdns.io/profiles/<profile-id>/security \
+              -H "X-Api-Key: $NEXTDNS_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{"threatIntelligenceFeeds": true}'
+            ```
+    refs:
+      - url: https://nextdns.github.io/api/#security
+        title: NextDNS API — Security
+
+  - uid: mondoo-nextdns-security-dns-rebinding-protection-enabled
+    title: Ensure NextDNS DNS rebinding protection is enabled
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-09
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-1
+      compliance/nist-csf-1: nist-csf-1-pr-pt-4
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-21
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/pci-dss-4: pcidss-requirement-1-4-2
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    mql: |
+      nextdns.profiles.all(security.dnsRebinding == true)
+    docs:
+      desc: |
+        This check verifies that DNS rebinding protection is enabled on the profile. DNS rebinding protection blocks responses that resolve public hostnames to private or reserved IP ranges, defeating attacks that use a victim's browser to reach internal services.
+
+        **Why this matters**
+
+        - **Internal pivot prevention:** DNS rebinding lets a malicious web page bypass the same-origin policy and interact with devices on the local network, such as routers and IoT devices.
+        - **SSRF-style exposure:** Resolving external names to internal addresses can expose services that assume they are only reachable from the LAN.
+        - **Browser-based attacks:** The victim only needs to load a web page; no malware installation is required.
+
+        **Risk mitigation**
+
+        - **Address-range filtering:** Blocking answers that point to private ranges removes the core primitive a rebinding attack relies on.
+        - **Defense for unmanaged devices:** DNS-layer protection covers IoT and BYOD devices that cannot run host-based defenses.
+      audit: |
+        To verify that DNS rebinding protection is enabled from the NextDNS dashboard:
+
+        1. Sign in to the [NextDNS dashboard](https://my.nextdns.io) and select the profile.
+        2. Open the **Security** tab.
+        3. Inspect the **Block DNS Rebinding** toggle.
+
+        If the toggle is on, the check passes. If it is off, the check fails.
+
+        To verify via the NextDNS API, inspect `dnsRebinding`:
+
+        ```bash
+        curl -s https://api.nextdns.io/profiles/<profile-id>/security \
+          -H "X-Api-Key: $NEXTDNS_API_KEY"
+        ```
+      remediation:
+        - id: console
+          desc: |
+            To enable DNS rebinding protection from the NextDNS dashboard:
+
+            1. Sign in to the [NextDNS dashboard](https://my.nextdns.io) and select the profile.
+            2. Open the **Security** tab.
+            3. Turn on **Block DNS Rebinding**.
+        - id: api
+          desc: |
+            To enable DNS rebinding protection using the NextDNS API:
+
+            ```bash
+            curl -X PATCH https://api.nextdns.io/profiles/<profile-id>/security \
+              -H "X-Api-Key: $NEXTDNS_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{"dnsRebinding": true}'
+            ```
+    refs:
+      - url: https://nextdns.github.io/api/#security
+        title: NextDNS API — Security
+
+  - uid: mondoo-nextdns-security-ai-threat-detection-enabled
+    title: Ensure NextDNS AI-driven threat detection is enabled
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-tvm-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-5-ii-b-security-awareness-training-and-tools-protection-from-malicious-software
+      compliance/iso-27001-2022: iso-27001-2022-a-8-7
+      compliance/nis-2: nis-2-21-1
+      compliance/nist-csf-1: nist-csf-1-de-cm-4
+      compliance/nist-csf-2: nist-csf-2-de-cm-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-2
+      compliance/pci-dss-4: pcidss-requirement-5-2-2
+      compliance/soc2-2017: soc2-control-cc6-8-4
+      compliance/vda-isa-5: vda-isa-5-5-2-3
+    mql: |
+      nextdns.profiles.all(security.aiThreatDetection == true)
+    docs:
+      desc: |
+        This check verifies that AI-driven threat detection is enabled on the profile. This feature uses machine-learning models to identify malicious domains that are not yet present on static threat feeds, catching novel and short-lived threats.
+
+        **Why this matters**
+
+        - **Zero-day coverage:** AI detection flags newly observed malicious domains before they appear on curated blocklists.
+        - **Evasion resistance:** Attackers rotate domains rapidly; behavioral detection catches patterns that signature lists miss.
+        - **Layered heuristics:** It complements the static threat feeds rather than replacing them, widening overall coverage.
+
+        **Risk mitigation**
+
+        - **Faster reaction:** Detecting malicious domains heuristically shortens the window between a threat appearing and being blocked.
+        - **Reduced reliance on lists:** Coverage no longer depends solely on a domain having already been reported.
+      audit: |
+        To verify that AI-driven threat detection is enabled from the NextDNS dashboard:
+
+        1. Sign in to the [NextDNS dashboard](https://my.nextdns.io) and select the profile.
+        2. Open the **Security** tab.
+        3. Inspect the **AI-Driven Threat Detection** toggle.
+
+        If the toggle is on, the check passes. If it is off, the check fails.
+
+        To verify via the NextDNS API, inspect `aiThreatDetection`:
+
+        ```bash
+        curl -s https://api.nextdns.io/profiles/<profile-id>/security \
+          -H "X-Api-Key: $NEXTDNS_API_KEY"
+        ```
+      remediation:
+        - id: console
+          desc: |
+            To enable AI-driven threat detection from the NextDNS dashboard:
+
+            1. Sign in to the [NextDNS dashboard](https://my.nextdns.io) and select the profile.
+            2. Open the **Security** tab.
+            3. Turn on **AI-Driven Threat Detection**.
+        - id: api
+          desc: |
+            To enable AI-driven threat detection using the NextDNS API:
+
+            ```bash
+            curl -X PATCH https://api.nextdns.io/profiles/<profile-id>/security \
+              -H "X-Api-Key: $NEXTDNS_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{"aiThreatDetection": true}'
+            ```
+    refs:
+      - url: https://nextdns.github.io/api/#security
+        title: NextDNS API — Security
+
+  - uid: mondoo-nextdns-security-cryptojacking-protection-enabled
+    title: Ensure NextDNS cryptojacking protection is enabled
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-tvm-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-5-ii-b-security-awareness-training-and-tools-protection-from-malicious-software
+      compliance/iso-27001-2022: iso-27001-2022-a-8-7
+      compliance/nis-2: nis-2-21-1
+      compliance/nist-csf-1: nist-csf-1-de-cm-4
+      compliance/nist-csf-2: nist-csf-2-de-cm-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-2
+      compliance/pci-dss-4: pcidss-requirement-5-2-2
+      compliance/soc2-2017: soc2-control-cc6-8-4
+      compliance/vda-isa-5: vda-isa-5-5-2-3
+    mql: |
+      nextdns.profiles.all(security.cryptojacking == true)
+    docs:
+      desc: |
+        This check verifies that cryptojacking protection is enabled on the profile. Cryptojacking protection blocks domains that serve in-browser and host-based cryptocurrency miners, which consume resources and signal compromise.
+
+        **Why this matters**
+
+        - **Resource abuse:** Unauthorized miners degrade device performance, increase power consumption, and shorten hardware life.
+        - **Compromise indicator:** Cryptojacking scripts often arrive through malicious ads or compromised sites, indicating broader exposure.
+        - **Drive-by execution:** Browser-based miners run without any installation, affecting any user who loads an infected page.
+
+        **Risk mitigation**
+
+        - **Source blocking:** Preventing resolution of known mining-pool and miner-delivery domains stops the activity at the DNS layer.
+        - **Fleet-wide coverage:** DNS-level blocking protects every device using the profile, including those without endpoint agents.
+      audit: |
+        To verify that cryptojacking protection is enabled from the NextDNS dashboard:
+
+        1. Sign in to the [NextDNS dashboard](https://my.nextdns.io) and select the profile.
+        2. Open the **Security** tab.
+        3. Inspect the **Block Cryptojacking** toggle.
+
+        If the toggle is on, the check passes. If it is off, the check fails.
+
+        To verify via the NextDNS API, inspect `cryptojacking`:
+
+        ```bash
+        curl -s https://api.nextdns.io/profiles/<profile-id>/security \
+          -H "X-Api-Key: $NEXTDNS_API_KEY"
+        ```
+      remediation:
+        - id: console
+          desc: |
+            To enable cryptojacking protection from the NextDNS dashboard:
+
+            1. Sign in to the [NextDNS dashboard](https://my.nextdns.io) and select the profile.
+            2. Open the **Security** tab.
+            3. Turn on **Block Cryptojacking**.
+        - id: api
+          desc: |
+            To enable cryptojacking protection using the NextDNS API:
+
+            ```bash
+            curl -X PATCH https://api.nextdns.io/profiles/<profile-id>/security \
+              -H "X-Api-Key: $NEXTDNS_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{"cryptojacking": true}'
+            ```
+    refs:
+      - url: https://nextdns.github.io/api/#security
+        title: NextDNS API — Security
+
+  - uid: mondoo-nextdns-security-dga-protection-enabled
+    title: Ensure NextDNS domain generation algorithm protection is enabled
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-tvm-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-5-ii-b-security-awareness-training-and-tools-protection-from-malicious-software
+      compliance/iso-27001-2022: iso-27001-2022-a-8-7
+      compliance/nis-2: nis-2-21-1
+      compliance/nist-csf-1: nist-csf-1-de-cm-4
+      compliance/nist-csf-2: nist-csf-2-de-cm-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-2
+      compliance/pci-dss-4: pcidss-requirement-5-2-2
+      compliance/soc2-2017: soc2-control-cc6-8-4
+      compliance/vda-isa-5: vda-isa-5-5-2-3
+    mql: |
+      nextdns.profiles.all(security.dga == true)
+    docs:
+      desc: |
+        This check verifies that domain generation algorithm (DGA) protection is enabled on the profile. DGA protection detects and blocks the algorithmically generated domains that malware uses to locate its command-and-control servers.
+
+        **Why this matters**
+
+        - **C2 resilience defeat:** Malware families generate thousands of pseudo-random domains so defenders cannot pre-block them all; DGA detection identifies the pattern itself.
+        - **Infection containment:** Blocking DGA lookups prevents an already-infected host from reaching its operator.
+        - **Early signal:** Frequent DGA-style lookups are a strong indicator of an active infection on the network.
+
+        **Risk mitigation**
+
+        - **Pattern-based blocking:** Detecting the generation pattern blocks the whole family of rotating domains rather than chasing individual entries.
+        - **Breaks the kill chain:** Severing the C2 channel limits an attacker's ability to escalate or exfiltrate.
+      audit: |
+        To verify that DGA protection is enabled from the NextDNS dashboard:
+
+        1. Sign in to the [NextDNS dashboard](https://my.nextdns.io) and select the profile.
+        2. Open the **Security** tab.
+        3. Inspect the **Block Domain Generation Algorithms** toggle.
+
+        If the toggle is on, the check passes. If it is off, the check fails.
+
+        To verify via the NextDNS API, inspect `dga`:
+
+        ```bash
+        curl -s https://api.nextdns.io/profiles/<profile-id>/security \
+          -H "X-Api-Key: $NEXTDNS_API_KEY"
+        ```
+      remediation:
+        - id: console
+          desc: |
+            To enable DGA protection from the NextDNS dashboard:
+
+            1. Sign in to the [NextDNS dashboard](https://my.nextdns.io) and select the profile.
+            2. Open the **Security** tab.
+            3. Turn on **Block Domain Generation Algorithms**.
+        - id: api
+          desc: |
+            To enable DGA protection using the NextDNS API:
+
+            ```bash
+            curl -X PATCH https://api.nextdns.io/profiles/<profile-id>/security \
+              -H "X-Api-Key: $NEXTDNS_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{"dga": true}'
+            ```
+    refs:
+      - url: https://nextdns.github.io/api/#security
+        title: NextDNS API — Security
+
+  - uid: mondoo-nextdns-security-idn-homograph-protection-enabled
+    title: Ensure NextDNS IDN homograph protection is enabled
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-09
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-5-ii-b-security-awareness-training-and-tools-protection-from-malicious-software
+      compliance/iso-27001-2022: iso-27001-2022-a-8-23
+      compliance/nis-2: nis-2-21-1
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: nist-csf-2-de-cm-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-2
+      compliance/pci-dss-4: pcidss-requirement-5-4-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: false
+    mql: |
+      nextdns.profiles.all(security.idnHomographs == true)
+    docs:
+      desc: |
+        This check verifies that internationalized domain name (IDN) homograph protection is enabled on the profile. Homograph protection blocks domains that use look-alike Unicode characters to impersonate legitimate brands and sites.
+
+        **Why this matters**
+
+        - **Visual spoofing:** Characters from non-Latin scripts can render identically to Latin letters, so `аpple.com` (Cyrillic "а") looks like `apple.com`.
+        - **Phishing enabler:** Homograph domains are used to host convincing phishing pages that pass a casual visual inspection.
+        - **Hard to spot:** Even attentive users cannot reliably distinguish look-alike characters in a browser address bar.
+
+        **Risk mitigation**
+
+        - **Look-alike blocking:** Preventing resolution of homograph domains stops a common impersonation technique at the DNS layer.
+        - **Brand protection:** Users are shielded from spoofed versions of the sites and services they trust.
+      audit: |
+        To verify that IDN homograph protection is enabled from the NextDNS dashboard:
+
+        1. Sign in to the [NextDNS dashboard](https://my.nextdns.io) and select the profile.
+        2. Open the **Security** tab.
+        3. Inspect the **Block IDN Homograph Attacks** toggle.
+
+        If the toggle is on, the check passes. If it is off, the check fails.
+
+        To verify via the NextDNS API, inspect `idnHomographs`:
+
+        ```bash
+        curl -s https://api.nextdns.io/profiles/<profile-id>/security \
+          -H "X-Api-Key: $NEXTDNS_API_KEY"
+        ```
+      remediation:
+        - id: console
+          desc: |
+            To enable IDN homograph protection from the NextDNS dashboard:
+
+            1. Sign in to the [NextDNS dashboard](https://my.nextdns.io) and select the profile.
+            2. Open the **Security** tab.
+            3. Turn on **Block IDN Homograph Attacks**.
+        - id: api
+          desc: |
+            To enable IDN homograph protection using the NextDNS API:
+
+            ```bash
+            curl -X PATCH https://api.nextdns.io/profiles/<profile-id>/security \
+              -H "X-Api-Key: $NEXTDNS_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{"idnHomographs": true}'
+            ```
+    refs:
+      - url: https://nextdns.github.io/api/#security
+        title: NextDNS API — Security
+
+  - uid: mondoo-nextdns-security-typosquatting-protection-enabled
+    title: Ensure NextDNS typosquatting protection is enabled
+    impact: 65
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-09
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-5-ii-b-security-awareness-training-and-tools-protection-from-malicious-software
+      compliance/iso-27001-2022: iso-27001-2022-a-8-23
+      compliance/nis-2: nis-2-21-1
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: nist-csf-2-de-cm-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-2
+      compliance/pci-dss-4: pcidss-requirement-5-4-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: false
+    mql: |
+      nextdns.profiles.all(security.typosquatting == true)
+    docs:
+      desc: |
+        This check verifies that typosquatting protection is enabled on the profile. Typosquatting protection blocks domains that rely on common misspellings of popular names to catch users who mistype an address.
+
+        **Why this matters**
+
+        - **Typo interception:** Attackers register misspelled variants (such as `gogle.com`) to capture traffic intended for the real site.
+        - **Malware and phishing delivery:** Typosquatted domains commonly host phishing pages, scams, or drive-by malware.
+        - **Credential theft:** Users who do not notice the typo may enter credentials on the impostor site.
+
+        **Risk mitigation**
+
+        - **Misspelling blocking:** Preventing resolution of known typosquat domains removes the payoff for registering them.
+        - **Low-friction protection:** Users are protected from their own typos without changing how they browse.
+      audit: |
+        To verify that typosquatting protection is enabled from the NextDNS dashboard:
+
+        1. Sign in to the [NextDNS dashboard](https://my.nextdns.io) and select the profile.
+        2. Open the **Security** tab.
+        3. Inspect the **Block Typosquatting** toggle.
+
+        If the toggle is on, the check passes. If it is off, the check fails.
+
+        To verify via the NextDNS API, inspect `typosquatting`:
+
+        ```bash
+        curl -s https://api.nextdns.io/profiles/<profile-id>/security \
+          -H "X-Api-Key: $NEXTDNS_API_KEY"
+        ```
+      remediation:
+        - id: console
+          desc: |
+            To enable typosquatting protection from the NextDNS dashboard:
+
+            1. Sign in to the [NextDNS dashboard](https://my.nextdns.io) and select the profile.
+            2. Open the **Security** tab.
+            3. Turn on **Block Typosquatting**.
+        - id: api
+          desc: |
+            To enable typosquatting protection using the NextDNS API:
+
+            ```bash
+            curl -X PATCH https://api.nextdns.io/profiles/<profile-id>/security \
+              -H "X-Api-Key: $NEXTDNS_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{"typosquatting": true}'
+            ```
+    refs:
+      - url: https://nextdns.github.io/api/#security
+        title: NextDNS API — Security
+
+  - uid: mondoo-nextdns-security-nrd-blocking-enabled
+    title: Ensure NextDNS newly registered domain blocking is enabled
+    impact: 65
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-tvm-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-5-ii-b-security-awareness-training-and-tools-protection-from-malicious-software
+      compliance/iso-27001-2022: iso-27001-2022-a-8-7
+      compliance/nis-2: nis-2-21-1
+      compliance/nist-csf-1: nist-csf-1-de-cm-4
+      compliance/nist-csf-2: nist-csf-2-de-cm-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-2
+      compliance/pci-dss-4: pcidss-requirement-5-2-2
+      compliance/soc2-2017: soc2-control-cc6-8-4
+      compliance/vda-isa-5: vda-isa-5-5-2-3
+    mql: |
+      nextdns.profiles.all(security.nrd == true)
+    docs:
+      desc: |
+        This check verifies that newly registered domain (NRD) blocking is enabled on the profile. NRD blocking prevents resolution of domains registered within the last 30 days, a window in which a disproportionate share of malicious domains are active.
+
+        **Why this matters**
+
+        - **Attacker infrastructure:** Phishing and malware campaigns frequently use freshly registered domains that have no reputation history yet.
+        - **Reputation gap:** Newly registered domains have not been observed long enough to appear on most threat feeds.
+        - **Short-lived campaigns:** Many malicious domains are used and abandoned within days of registration.
+
+        **Risk mitigation**
+
+        - **Age-based filtering:** Blocking very new domains pre-empts threats before any feed has had time to classify them.
+        - **Broad coverage:** The control catches malicious domains regardless of the specific campaign or family behind them.
+      audit: |
+        To verify that newly registered domain blocking is enabled from the NextDNS dashboard:
+
+        1. Sign in to the [NextDNS dashboard](https://my.nextdns.io) and select the profile.
+        2. Open the **Security** tab.
+        3. Inspect the **Block Newly Registered Domains** toggle.
+
+        If the toggle is on, the check passes. If it is off, the check fails.
+
+        To verify via the NextDNS API, inspect `nrd`:
+
+        ```bash
+        curl -s https://api.nextdns.io/profiles/<profile-id>/security \
+          -H "X-Api-Key: $NEXTDNS_API_KEY"
+        ```
+      remediation:
+        - id: console
+          desc: |
+            To enable newly registered domain blocking from the NextDNS dashboard:
+
+            1. Sign in to the [NextDNS dashboard](https://my.nextdns.io) and select the profile.
+            2. Open the **Security** tab.
+            3. Turn on **Block Newly Registered Domains**.
+        - id: api
+          desc: |
+            To enable newly registered domain blocking using the NextDNS API:
+
+            ```bash
+            curl -X PATCH https://api.nextdns.io/profiles/<profile-id>/security \
+              -H "X-Api-Key: $NEXTDNS_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{"nrd": true}'
+            ```
+    refs:
+      - url: https://nextdns.github.io/api/#security
+        title: NextDNS API — Security
+
+  - uid: mondoo-nextdns-security-csam-blocking-enabled
+    title: Ensure NextDNS child sexual abuse material blocking is enabled
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-5-10
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-4
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    mql: |
+      nextdns.profiles.all(security.csam == true)
+    docs:
+      desc: |
+        This check verifies that child sexual abuse material (CSAM) blocking is enabled on the profile. This feature blocks domains identified as hosting or distributing CSAM, drawing on lists maintained by recognized protection organizations.
+
+        **Why this matters**
+
+        - **Legal exposure:** Inadvertent access to CSAM creates serious legal and reputational risk for an organization.
+        - **Duty of care:** Blocking this content supports an organization's obligation to provide a safe environment for its users.
+        - **Authoritative sourcing:** The blocklists are curated by dedicated child-protection bodies rather than general threat feeds.
+
+        **Risk mitigation**
+
+        - **Content blocking:** Preventing resolution of flagged domains removes a path to this material at the DNS layer.
+        - **Network-wide enforcement:** Every device using the profile is covered, including unmanaged and guest devices.
+      audit: |
+        To verify that CSAM blocking is enabled from the NextDNS dashboard:
+
+        1. Sign in to the [NextDNS dashboard](https://my.nextdns.io) and select the profile.
+        2. Open the **Security** tab.
+        3. Inspect the **Block Child Sexual Abuse Material** toggle.
+
+        If the toggle is on, the check passes. If it is off, the check fails.
+
+        To verify via the NextDNS API, inspect `csam`:
+
+        ```bash
+        curl -s https://api.nextdns.io/profiles/<profile-id>/security \
+          -H "X-Api-Key: $NEXTDNS_API_KEY"
+        ```
+      remediation:
+        - id: console
+          desc: |
+            To enable CSAM blocking from the NextDNS dashboard:
+
+            1. Sign in to the [NextDNS dashboard](https://my.nextdns.io) and select the profile.
+            2. Open the **Security** tab.
+            3. Turn on **Block Child Sexual Abuse Material**.
+        - id: api
+          desc: |
+            To enable CSAM blocking using the NextDNS API:
+
+            ```bash
+            curl -X PATCH https://api.nextdns.io/profiles/<profile-id>/security \
+              -H "X-Api-Key: $NEXTDNS_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{"csam": true}'
+            ```
+    refs:
+      - url: https://nextdns.github.io/api/#security
+        title: NextDNS API — Security
+
+  - uid: mondoo-nextdns-security-parked-domain-blocking-enabled
+    title: Ensure NextDNS parked domain blocking is enabled
+    impact: 50
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-tvm-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-5-ii-b-security-awareness-training-and-tools-protection-from-malicious-software
+      compliance/iso-27001-2022: iso-27001-2022-a-8-7
+      compliance/nis-2: nis-2-21-1
+      compliance/nist-csf-1: nist-csf-1-de-cm-4
+      compliance/nist-csf-2: nist-csf-2-de-cm-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-2
+      compliance/pci-dss-4: pcidss-requirement-5-2-2
+      compliance/soc2-2017: soc2-control-cc6-8-4
+      compliance/vda-isa-5: vda-isa-5-5-2-3
+    mql: |
+      nextdns.profiles.all(security.parking == true)
+    docs:
+      desc: |
+        This check verifies that parked domain blocking is enabled on the profile. Parked domains host no real content and typically serve ad-laden landing pages that are frequently abused to deliver scams and malicious redirects.
+
+        **Why this matters**
+
+        - **Malvertising surface:** Parking pages are saturated with low-quality ad networks that are a common malware and scam delivery vector.
+        - **Expired-domain risk:** Lapsed domains are often re-registered and parked by opportunistic actors who later weaponize them.
+        - **No legitimate value:** Parked domains provide no useful content, so blocking them rarely affects normal use.
+
+        **Risk mitigation**
+
+        - **Landing-page blocking:** Preventing resolution of parked domains removes exposure to the ad and redirect chains they host.
+        - **Reduced noise:** Blocking parked pages also cuts unwanted advertising and tracking.
+      audit: |
+        To verify that parked domain blocking is enabled from the NextDNS dashboard:
+
+        1. Sign in to the [NextDNS dashboard](https://my.nextdns.io) and select the profile.
+        2. Open the **Security** tab.
+        3. Inspect the **Block Parked Domains** toggle.
+
+        If the toggle is on, the check passes. If it is off, the check fails.
+
+        To verify via the NextDNS API, inspect `parking`:
+
+        ```bash
+        curl -s https://api.nextdns.io/profiles/<profile-id>/security \
+          -H "X-Api-Key: $NEXTDNS_API_KEY"
+        ```
+      remediation:
+        - id: console
+          desc: |
+            To enable parked domain blocking from the NextDNS dashboard:
+
+            1. Sign in to the [NextDNS dashboard](https://my.nextdns.io) and select the profile.
+            2. Open the **Security** tab.
+            3. Turn on **Block Parked Domains**.
+        - id: api
+          desc: |
+            To enable parked domain blocking using the NextDNS API:
+
+            ```bash
+            curl -X PATCH https://api.nextdns.io/profiles/<profile-id>/security \
+              -H "X-Api-Key: $NEXTDNS_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{"parking": true}'
+            ```
+    refs:
+      - url: https://nextdns.github.io/api/#security
+        title: NextDNS API — Security
+
+  # ==========================================
+  # Filtering Integrity
+  # ==========================================
+  - uid: mondoo-nextdns-security-block-bypass-methods-blocked
+    title: Ensure NextDNS blocks filtering bypass methods
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-09
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-23
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-pt-3
+      compliance/nist-csf-2: nist-csf-2-pr-ps-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-3
+    mql: |
+      nextdns.profiles.all(settings.blockBypassMethods == true)
+    docs:
+      desc: |
+        This check verifies that NextDNS blocks bypass methods on the profile. With this setting enabled, NextDNS blocks the VPNs, proxies, Tor nodes, and public DNS resolvers that users employ to circumvent DNS-layer filtering.
+
+        **Why this matters**
+
+        - **Policy enforcement:** Without bypass blocking, a user can switch to a public resolver or VPN and defeat every other protection in the profile.
+        - **Consistent coverage:** Bypass blocking keeps clients on the filtered resolver so threat and content controls actually apply.
+        - **Shadow IT containment:** Blocking circumvention tools reduces unsanctioned tunneling out of the managed network.
+
+        **Risk mitigation**
+
+        - **Closes the escape hatch:** Preventing use of alternate resolvers and tunnels ensures the rest of the profile's controls cannot be trivially sidestepped.
+        - **Uniform protection:** All clients remain subject to the same filtering regardless of user attempts to opt out.
+      audit: |
+        To verify that bypass-method blocking is enabled from the NextDNS dashboard:
+
+        1. Sign in to the [NextDNS dashboard](https://my.nextdns.io) and select the profile.
+        2. Open the **Security** tab.
+        3. Inspect the **Block Bypass Methods** toggle.
+
+        If the toggle is on, the check passes. If it is off, the check fails.
+
+        To verify via the NextDNS API, inspect `bav` under settings:
+
+        ```bash
+        curl -s https://api.nextdns.io/profiles/<profile-id>/settings \
+          -H "X-Api-Key: $NEXTDNS_API_KEY"
+        ```
+      remediation:
+        - id: console
+          desc: |
+            To block bypass methods from the NextDNS dashboard:
+
+            1. Sign in to the [NextDNS dashboard](https://my.nextdns.io) and select the profile.
+            2. Open the **Security** tab.
+            3. Turn on **Block Bypass Methods**.
+        - id: api
+          desc: |
+            To block bypass methods using the NextDNS API:
+
+            ```bash
+            curl -X PATCH https://api.nextdns.io/profiles/<profile-id>/settings \
+              -H "X-Api-Key: $NEXTDNS_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{"bav": true}'
+            ```
+    refs:
+      - url: https://nextdns.github.io/api/#settings
+        title: NextDNS API — Settings
+
+  - uid: mondoo-nextdns-security-end-user-block-bypass-disabled
+    title: Ensure NextDNS end-user block bypass is disabled
+    impact: 65
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-09
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-23
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-pt-3
+      compliance/nist-csf-2: nist-csf-2-pr-ps-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-3
+    mql: |
+      nextdns.profiles.all(parentalControl.blockBypass == false)
+    docs:
+      desc: |
+        This check verifies that end-user block bypass is disabled on the profile. When block bypass is allowed, users can dismiss the block page and proceed to a blocked destination, undermining the profile's parental-control and security blocks.
+
+        **Why this matters**
+
+        - **Override removal:** Allowing bypass turns every block into a suggestion that a user can click through.
+        - **Weakened enforcement:** A control that the end user can disable on demand provides little assurance.
+        - **Audit gaps:** Self-service bypass makes it harder to reason about what was actually blocked versus allowed.
+
+        **Risk mitigation**
+
+        - **Hard enforcement:** Disabling bypass ensures blocked destinations stay blocked for end users.
+        - **Predictable posture:** Administrators retain control over exceptions instead of delegating them to users.
+      audit: |
+        To verify that end-user block bypass is disabled from the NextDNS dashboard:
+
+        1. Sign in to the [NextDNS dashboard](https://my.nextdns.io) and select the profile.
+        2. Open the **Parental Control** tab.
+        3. Inspect the **Allow users to bypass blocked pages** option.
+
+        If the option is off, the check passes. If it is on, the check fails.
+
+        To verify via the NextDNS API, inspect `blockBypass` under parentalControl:
+
+        ```bash
+        curl -s https://api.nextdns.io/profiles/<profile-id>/parentalControl \
+          -H "X-Api-Key: $NEXTDNS_API_KEY"
+        ```
+      remediation:
+        - id: console
+          desc: |
+            To disable end-user block bypass from the NextDNS dashboard:
+
+            1. Sign in to the [NextDNS dashboard](https://my.nextdns.io) and select the profile.
+            2. Open the **Parental Control** tab.
+            3. Turn off **Allow users to bypass blocked pages**.
+        - id: api
+          desc: |
+            To disable end-user block bypass using the NextDNS API:
+
+            ```bash
+            curl -X PATCH https://api.nextdns.io/profiles/<profile-id>/parentalControl \
+              -H "X-Api-Key: $NEXTDNS_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{"blockBypass": false}'
+            ```
+    refs:
+      - url: https://nextdns.github.io/api/#parentalcontrol
+        title: NextDNS API — Parental Control
+
+  # ==========================================
+  # Logging and Visibility
+  # ==========================================
+  - uid: mondoo-nextdns-security-query-logging-enabled
+    title: Ensure NextDNS query logging is enabled
+    impact: 55
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-07
+      compliance/dora: dora-art-10
+      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
+      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-pr-pt-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-04
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-12
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/pci-dss-4: pcidss-requirement-10-2-1
+      compliance/soc2-2017: soc2-control-cc7-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-4
+    mql: |
+      nextdns.profiles.all(settings.logsEnabled == true)
+    docs:
+      desc: |
+        This check verifies that query logging is enabled on the profile. Logs provide the DNS query visibility needed to investigate incidents, confirm that blocks are working, and detect anomalous resolution behavior. Configure retention and IP/domain redaction to meet your privacy obligations.
+
+        **Why this matters**
+
+        - **Incident investigation:** DNS logs show which domains a device contacted, which is often the first evidence of compromise.
+        - **Detection:** Patterns such as repeated C2-style or DGA lookups are only visible when queries are logged.
+        - **Validation:** Logs confirm that security and content blocks are actually taking effect for clients.
+
+        **Risk mitigation**
+
+        - **Forensic readiness:** Retained query history shortens investigation time and supports root-cause analysis.
+        - **Tunable privacy:** NextDNS lets you set retention and drop client IPs or domains so visibility can be balanced against data-minimization requirements.
+      audit: |
+        To verify that query logging is enabled from the NextDNS dashboard:
+
+        1. Sign in to the [NextDNS dashboard](https://my.nextdns.io) and select the profile.
+        2. Open the **Settings** tab.
+        3. Inspect the **Logs** toggle.
+
+        If logging is on, the check passes. If it is off, the check fails.
+
+        To verify via the NextDNS API, inspect `logs.enabled` under settings:
+
+        ```bash
+        curl -s https://api.nextdns.io/profiles/<profile-id>/settings \
+          -H "X-Api-Key: $NEXTDNS_API_KEY"
+        ```
+      remediation:
+        - id: console
+          desc: |
+            To enable query logging from the NextDNS dashboard:
+
+            1. Sign in to the [NextDNS dashboard](https://my.nextdns.io) and select the profile.
+            2. Open the **Settings** tab.
+            3. Turn on **Logs** and set retention and redaction to match your privacy requirements.
+        - id: api
+          desc: |
+            To enable query logging using the NextDNS API:
+
+            ```bash
+            curl -X PATCH https://api.nextdns.io/profiles/<profile-id>/settings/logs \
+              -H "X-Api-Key: $NEXTDNS_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{"enabled": true}'
+            ```
+    refs:
+      - url: https://nextdns.github.io/api/#settings
+        title: NextDNS API — Settings
