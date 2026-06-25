@@ -54,16 +54,23 @@ func tfAsset(dir string) *inventory.Asset {
 }
 
 func k8sAsset(dir string) *inventory.Asset {
+	return k8sAssetWithTargets(dir, "pods")
+}
+
+func k8sAssetWithTargets(dir string, targets ...string) *inventory.Asset {
+	config := &inventory.Config{
+		Type: "k8s",
+		Options: map[string]string{
+			"path": dir,
+		},
+	}
+	if len(targets) > 0 {
+		config.Discover = &inventory.Discovery{
+			Targets: targets,
+		}
+	}
 	return &inventory.Asset{
-		Connections: []*inventory.Config{{
-			Type: "k8s",
-			Options: map[string]string{
-				"path": dir,
-			},
-			Discover: &inventory.Discovery{
-				Targets: []string{"pods"}, // ignore the manifest which does not return anything
-			},
-		}},
+		Connections: []*inventory.Config{config},
 	}
 }
 
@@ -117,6 +124,156 @@ func runBundle(policyBundlePath string, policyMrn string, asset *inventory.Asset
 	}
 
 	return nil, errors.New("no report found")
+}
+
+func TestKyvernoMappedKubernetesChecks(t *testing.T) {
+	loader := policy.DefaultBundleLoader()
+
+	securityBundle, err := loader.BundleFromPaths("./mondoo-kubernetes-security.mql.yaml")
+	require.NoError(t, err)
+	securityQueries := bundleQueriesByUID(t, securityBundle)
+
+	clusterAdmin := securityQueries["mondoo-kubernetes-security-rbac-no-cluster-admin-bindings"]
+	assert.Contains(t, clusterAdmin, `roleRef["kind"] == "ClusterRole" && roleRef["name"] == "cluster-admin"`)
+	assert.NotContains(t, clusterAdmin, `rolebindings.none(roleRef["name"] == "cluster-admin")`)
+
+	secretRead := securityQueries["mondoo-kubernetes-security-rbac-no-secret-read-verbs"]
+	assert.Contains(t, secretRead, `_["resources"].containsNone(["secrets", "*"])`)
+	assert.Contains(t, secretRead, `_["verbs"].containsNone(["get", "list", "watch", "*"])`)
+
+	escalation := securityQueries["mondoo-kubernetes-security-rbac-no-escalation-verbs"]
+	assert.Contains(t, escalation, `_["verbs"].containsNone(["bind", "escalate", "impersonate", "*"])`)
+	assert.NotContains(t, escalation, `_["apiGroups"].containsNone(["rbac.authorization.k8s.io", "*"])`)
+	assert.NotContains(t, escalation, `_["resources"].containsNone(["roles", "clusterroles", "*"])`)
+
+	nodesProxy := securityQueries["mondoo-kubernetes-security-rbac-no-nodes-proxy"]
+	assert.Contains(t, nodesProxy, `_["resources"].containsNone(["nodes/proxy", "*"])`)
+	assert.Contains(t, nodesProxy, `_["apiGroups"].containsNone(["", "*"])`)
+
+	kyvernoBundle, err := loader.BundleFromPaths("./mondoo-kubernetes-kyverno.mql.yaml")
+	require.NoError(t, err)
+	kyvernoQueries := bundleQueriesByUID(t, kyvernoBundle)
+
+	expired := kyvernoQueries["mondoo-kubernetes-kyverno-policyexceptions-not-expired"]
+	assert.Contains(t, expired, `statusReasons.any(_ == /^expired:/)`)
+
+	orphaned := kyvernoQueries["mondoo-kubernetes-kyverno-policyexceptions-not-orphaned"]
+	assert.Contains(t, orphaned, `statusReasons.any(_ == /^orphaned:/ || _ == /^invalid:/)`)
+
+	unmappedExceptions := kyvernoQueries["mondoo-kubernetes-kyverno-policyexceptions-mapped-to-mondoo"]
+	assert.Contains(t, unmappedExceptions, `statusReasons.any(_ == /^unmapped:/)`)
+
+	broad := kyvernoQueries["mondoo-kubernetes-kyverno-policyexceptions-not-broad"]
+	assert.Contains(t, broad, `statusReasons.any(_ == /^broad:/)`)
+
+	mappedResults := kyvernoQueries["mondoo-kubernetes-kyverno-policyreports-no-mapped-failing-results"]
+	assert.Contains(t, mappedResults, `result == "warn"`)
+
+	unmappedResults := kyvernoQueries["mondoo-kubernetes-kyverno-policyreports-no-unmapped-failing-results"]
+	assert.Contains(t, unmappedResults, `result == "warn"`)
+
+	bestPracticesBundle, err := loader.BundleFromPaths("./mondoo-kubernetes-best-practices.mql.yaml")
+	require.NoError(t, err)
+	bestPracticesQueries := bundleQueriesByUID(t, bestPracticesBundle)
+
+	servicePorts := bestPracticesQueries["mondoo-kubernetes-best-practices-service-ports-approved-range"]
+	assert.Contains(t, servicePorts, `k8s.service.type != "NodePort"`)
+	assert.Contains(t, servicePorts, `_['nodePort']`)
+	assert.NotContains(t, servicePorts, `_['port'] >= 32000`)
+
+	ingressClass := bestPracticesQueries["mondoo-kubernetes-best-practices-ingress-approved-class-annotation"]
+	assert.Contains(t, ingressClass, `k8s.ingress.annotations["kubernetes.io/ingress.class"]`)
+	assert.Contains(t, ingressClass, `if (k8s.ingress.ingressClassName != "")`)
+	assert.Contains(t, ingressClass, `k8s.ingress.ingressClassName.in(["HAProxy", "nginx"])`)
+	assert.Contains(t, ingressClass, `defaultIngressClasses = k8s.ingressClasses.where(annotations["ingressclass.kubernetes.io/is-default-class"] == "true")`)
+	assert.Contains(t, ingressClass, `defaultIngressClasses.length == 1`)
+}
+
+func TestKyvernoMappedKubernetesBundlesCompile(t *testing.T) {
+	loader := policy.DefaultBundleLoader()
+	ctx := context.Background()
+
+	runtime := providers.DefaultRuntime()
+	for _, path := range []string{
+		"./mondoo-kubernetes-kyverno.mql.yaml",
+		"./mondoo-kubernetes-security.mql.yaml",
+		"./mondoo-kubernetes-best-practices.mql.yaml",
+	} {
+		t.Run(path, func(t *testing.T) {
+			bundle, err := loader.BundleFromPaths(path)
+			require.NoError(t, err)
+
+			compiled, err := bundle.Compile(ctx, runtime.Schema(), nil)
+			require.NoError(t, err)
+			require.NotNil(t, compiled)
+		})
+	}
+}
+
+func bundleQueriesByUID(t *testing.T, bundle *policy.Bundle) map[string]string {
+	t.Helper()
+
+	queries := map[string]string{}
+	for _, query := range bundle.Queries {
+		queries[query.Uid] = query.Mql
+	}
+	return queries
+}
+
+func TestKubernetesBestPracticesIngressClassUsesEffectiveValue(t *testing.T) {
+	const (
+		policyMrn = "//policy.api.mondoo.app/policies/mondoo-kubernetes-best-practices"
+		checkUID  = "mondoo-kubernetes-best-practices-ingress-approved-class-annotation"
+	)
+
+	tests := []struct {
+		name      string
+		dir       string
+		targets   []string
+		wantScore uint32
+	}{
+		{
+			name:      "legacy annotation accepted when spec class is absent",
+			dir:       "./testdata/mondoo-kubernetes-best-practices-ingress-pass",
+			targets:   []string{"ingresses"},
+			wantScore: 100,
+		},
+		{
+			name:      "spec class wins over approved legacy annotation",
+			dir:       "./testdata/mondoo-kubernetes-best-practices-ingress-fail",
+			targets:   []string{"ingresses"},
+			wantScore: 70,
+		},
+	}
+
+	for i := range tests {
+		test := tests[i]
+		t.Run(test.name, func(t *testing.T) {
+			report, err := runBundle(
+				"./mondoo-kubernetes-best-practices.mql.yaml",
+				policyMrn,
+				k8sAssetWithTargets(test.dir, test.targets...),
+			)
+			require.NoError(t, err)
+
+			score := reportScoreByUID(t, report, checkUID)
+			assert.Equal(t, test.wantScore, score.Value)
+		})
+	}
+}
+
+func reportScoreByUID(t *testing.T, report *policy.Report, uid string) *policy.Score {
+	t.Helper()
+
+	for mrn, score := range report.Scores {
+		if strings.HasSuffix(mrn, "/queries/"+uid) {
+			require.NotNil(t, score)
+			return score
+		}
+	}
+
+	t.Fatalf("score for query %q not found", uid)
+	return nil
 }
 
 func TestBundles(t *testing.T) {
