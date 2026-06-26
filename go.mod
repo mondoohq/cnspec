@@ -1,6 +1,6 @@
 module go.mondoo.com/cnspec/v13
 
-go 1.26.3
+go 1.26.4
 
 // replace go.mondoo.com/mql/v13 => ../mql
 
@@ -48,8 +48,8 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/tliron/glsp v0.2.2
 	github.com/zclconf/go-cty v1.18.1
-	go.mondoo.com/mondoo-go v0.0.0-20260624002826-255868a855f8
-	go.mondoo.com/mql/v13 v13.24.1
+	go.mondoo.com/mondoo-go v0.0.0-20260625124450-d02b3d289fd3
+	go.mondoo.com/mql/v13 v13.24.2
 	go.mondoo.com/ranger-rpc v0.8.0
 	gocloud.dev v0.46.0
 	golang.org/x/sync v0.21.0
@@ -276,7 +276,7 @@ require (
 	github.com/pandatix/go-cvss v0.6.2 // indirect
 	github.com/patrickmn/go-cache v2.1.0+incompatible // indirect
 	github.com/pelletier/go-toml/v2 v2.4.2 // indirect
-	github.com/petermattis/goid v0.0.0-20260619124436-7ab4bde3d003 // indirect
+	github.com/petermattis/goid v0.0.0-20260625140558-4207c655779d // indirect
 	github.com/pganalyze/pg_query_go/v6 v6.1.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.27 // indirect
 	github.com/pingcap/errors v0.11.5-0.20240311024730-e056997136bb // indirect
