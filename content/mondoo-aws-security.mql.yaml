@@ -263,6 +263,10 @@ policies:
           - uid: mondoo-aws-security-ecs-cluster-fargate-encryption
           - uid: mondoo-aws-security-ecs-task-definition-no-plaintext-secrets
           - uid: mondoo-aws-security-ecs-init-process-enabled
+          - uid: mondoo-aws-security-ecs-container-no-public-ip
+          - uid: mondoo-aws-security-ecs-container-no-latest-tag
+          - uid: mondoo-aws-security-ecs-container-image-from-ecr
+          - uid: mondoo-aws-security-ecs-container-supported-fargate-version
       - title: Amazon EFS Filesystem
         checks:
           - uid: mondoo-aws-security-efs-encrypted-check
@@ -53001,6 +53005,496 @@ queries:
       terraform.state.resources.where(type == "aws_ecs_task_definition").all(
         values.container_definitions.all(_['linuxParameters']['initProcessEnabled'] == true)
       )
+  # No Terraform variants: this check evaluates the live `aws.ecs.container` runtime
+  # asset (a running task's resolved ENI), which has no Terraform/CloudFormation
+  # representation. Terraform remediation is still provided because the fix lives in
+  # the ECS service network configuration.
+  - uid: mondoo-aws-security-ecs-container-no-public-ip
+    title: Ensure ECS containers are not assigned public IP addresses
+    impact: 80
+    filters: asset.platform == "aws"
+    mql: |
+      aws.ecs.containers.all(publicIp == empty)
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-06
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-5
+      compliance/pci-dss-4: pcidss-requirement-1-4-2
+      compliance/soc2-2017: soc2-control-cc6-1-5
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    docs:
+      desc: |
+        This check ensures that running Amazon ECS containers are not reachable through a directly attached public IP address. When a task's `awsvpcConfiguration` sets `assignPublicIp` to `ENABLED`, the task's elastic network interface receives a public IP and becomes directly addressable from the internet, bypassing the protection of private subnets and NAT.
+
+        **Why this matters**
+
+        - **Direct internet exposure:** A public IP places the container's listening ports one security-group rule away from the entire internet, dramatically enlarging the attack surface.
+        - **Bypassed network controls:** Public-facing tasks sidestep the layered defenses (load balancers, WAF, private routing) that front-door traffic is normally forced through.
+        - **Data exfiltration path:** A compromised task with a public address can both receive inbound connections and establish outbound channels without traversing inspected egress points.
+
+        **Risk mitigation**
+
+        - **Network isolation:** Running tasks in private subnets keeps workloads unreachable from the internet except through controlled ingress points.
+        - **Controlled ingress:** Routing external traffic through a load balancer or API gateway centralizes TLS termination, authentication, and request filtering.
+        - **Reduced blast radius:** Removing public addressability limits an attacker's ability to reach a task directly and to pivot outward from it.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the AWS Management Console and navigate to **Amazon ECS**.
+        2. Select a cluster, then open the **Tasks** tab and select a running task.
+        3. In the **Configuration** section, review the **Network** details for the task's public IP.
+        4. Repeat for each running task in every cluster.
+
+        A passing task shows no public IP assigned. A failing task shows a public IPv4 address attached to its elastic network interface.
+
+        ### Audit via CLI
+
+        1. For each cluster, list running tasks and inspect the attachment details for a public IP:
+
+        ```bash
+        aws ecs list-tasks --cluster <cluster-name> --desired-status RUNNING \
+          --query "taskArns" --output text | tr '\t' '\n' | \
+          xargs -I {} aws ecs describe-tasks --cluster <cluster-name> --tasks {} \
+          --query "tasks[].attachments[].details[?name=='networkInterfaceId'].value"
+        ```
+
+        2. For each returned network interface ID, check whether a public IP is associated:
+
+        ```bash
+        aws ec2 describe-network-interfaces --network-interface-ids <eni-id> \
+          --query "NetworkInterfaces[].Association.PublicIp"
+        ```
+
+        A passing task returns no public IP. A failing task returns a public IPv4 address.
+
+      remediation:
+        - id: console
+          desc: |
+            To remove public IP assignment from ECS tasks using the AWS Console:
+
+            1. Navigate to the Amazon ECS Console and select the service running the affected tasks.
+            2. Choose **Update service**.
+            3. Under **Networking**, place the service in private subnets and set **Public IP** to **Turned off**.
+            4. Save the change and let ECS roll out new tasks without public IP addresses.
+        - id: cli
+          desc: |
+            To disable public IP assignment on an ECS service using the AWS CLI, update the service network configuration and force a new deployment:
+
+            ```bash
+            aws ecs update-service --cluster <cluster-name> --service <service-name> \
+              --network-configuration "awsvpcConfiguration={subnets=[subnet-private1,subnet-private2],securityGroups=[sg-xxxx],assignPublicIp=DISABLED}" \
+              --force-new-deployment
+            ```
+        - id: terraform
+          desc: |
+            To ensure ECS tasks are not assigned public IP addresses in Terraform, set `assign_public_ip` to `false` and use private subnets:
+
+            ```hcl
+            resource "aws_ecs_service" "example" {
+              name            = "example"
+              cluster         = aws_ecs_cluster.example.id
+              task_definition = aws_ecs_task_definition.example.arn
+
+              network_configuration {
+                subnets          = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+                security_groups  = [aws_security_group.example.id]
+                assign_public_ip = false
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To ensure ECS tasks are not assigned public IP addresses in CloudFormation, set `AssignPublicIp` to `DISABLED`:
+
+            ```yaml
+            Resources:
+              Service:
+                Type: "AWS::ECS::Service"
+                Properties:
+                  Cluster: !Ref Cluster
+                  TaskDefinition: !Ref TaskDefinition
+                  NetworkConfiguration:
+                    AwsvpcConfiguration:
+                      AssignPublicIp: "DISABLED"
+                      Subnets:
+                        - !Ref PrivateSubnetA
+                        - !Ref PrivateSubnetB
+                      SecurityGroups:
+                        - !Ref ServiceSecurityGroup
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AmazonECS/latest/developerguide/fargate-task-networking.html
+        title: AWS Documentation - Fargate task networking
+      - url: https://docs.aws.amazon.com/AmazonECS/latest/bestpracticesguide/networking-outbound.html
+        title: AWS Documentation - ECS networking best practices
+  # No Terraform variants: this check evaluates the image string resolved on the live
+  # `aws.ecs.container` runtime asset, which has no Terraform/CloudFormation representation.
+  # Terraform remediation is still provided because the fix lives in the task definition.
+  - uid: mondoo-aws-security-ecs-container-no-latest-tag
+    title: Ensure ECS containers do not run images with the mutable latest tag
+    impact: 60
+    filters: asset.platform == "aws"
+    mql: |
+      aws.ecs.containers.all(image != /:latest$/ && image == /[:@]/)
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ccc-06
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-32
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ip-3
+      compliance/nist-csf-2: nist-csf-2-pr-ps-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-3
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    docs:
+      desc: |
+        This check ensures that running Amazon ECS containers reference container images by an immutable tag or digest rather than the mutable `latest` tag. The `latest` tag is a moving pointer that can resolve to different image contents over time, so two tasks started from the same task definition can run entirely different code. An image reference with no tag or digest at all also resolves to `latest` at pull time and is flagged.
+
+        **Why this matters**
+
+        - **Non-reproducible deployments:** A `latest` reference makes it impossible to know which image build is actually running, undermining incident response and rollback.
+        - **Silent drift:** Re-launched or auto-scaled tasks may pull a newer, untested image without any change to the task definition.
+        - **Integrity gap:** A mutable tag can be overwritten in the registry, allowing a tampered or vulnerable image to be deployed under a trusted name.
+
+        **Risk mitigation**
+
+        - **Reproducibility:** Pinning to a version tag or `@sha256:` digest guarantees every task runs the exact image that was reviewed and tested.
+        - **Controlled change:** Immutable references force image updates to flow through an explicit task definition revision and change-control process.
+        - **Auditability:** A fixed tag or digest provides a precise record of what was deployed for compliance and forensic purposes.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the AWS Management Console and navigate to **Amazon ECS**.
+        2. Select a cluster, open the **Tasks** tab, and select a running task.
+        3. Under **Containers**, review the **Image** value for each container.
+        4. Repeat for each running task in every cluster.
+
+        A passing container references an explicit version tag or digest. A failing container references an image ending in `:latest` or an image with no tag or digest at all.
+
+        ### Audit via CLI
+
+        1. List running tasks for a cluster and inspect the image each container runs:
+
+        ```bash
+        aws ecs list-tasks --cluster <cluster-name> --desired-status RUNNING \
+          --query "taskArns" --output text | tr '\t' '\n' | \
+          xargs -I {} aws ecs describe-tasks --cluster <cluster-name> --tasks {} \
+          --query "tasks[].containers[].{Name:name,Image:image}"
+        ```
+
+        A passing container shows an image with an explicit tag or digest. A failing container shows an image ending in `:latest` or with no tag or digest at all.
+
+      remediation:
+        - id: console
+          desc: |
+            To pin ECS container images to an immutable reference using the AWS Console:
+
+            1. Navigate to the Amazon ECS Console and select **Task definitions**.
+            2. Select the task definition and choose **Create new revision**.
+            3. For each container, change the **Image** value from a `:latest` reference to a specific version tag or `@sha256:` digest.
+            4. Create the revision and update the service to use it.
+        - id: cli
+          desc: |
+            To pin ECS container images to an immutable reference using the AWS CLI, register a new task definition revision with a specific tag or digest, then redeploy:
+
+            ```bash
+            aws ecs register-task-definition --cli-input-json file://task-definition.json
+            aws ecs update-service --cluster <cluster-name> --service <service-name> \
+              --task-definition <family>:<revision> --force-new-deployment
+            ```
+
+            In the JSON file, set each container's `image` to a pinned reference such as `123456789012.dkr.ecr.us-east-1.amazonaws.com/app:1.4.2` or `app@sha256:<digest>`.
+        - id: terraform
+          desc: |
+            To pin ECS container images to an immutable reference in Terraform, set the `image` field to a specific tag or digest:
+
+            ```hcl
+            resource "aws_ecs_task_definition" "example" {
+              family = "example"
+
+              container_definitions = jsonencode([
+                {
+                  name      = "app"
+                  image     = "123456789012.dkr.ecr.us-east-1.amazonaws.com/app:1.4.2"  # Not ":latest"
+                  essential = true
+                }
+              ])
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To pin ECS container images to an immutable reference in CloudFormation, set the `Image` property to a specific tag or digest:
+
+            ```yaml
+            Resources:
+              TaskDefinition:
+                Type: "AWS::ECS::TaskDefinition"
+                Properties:
+                  Family: "example"
+                  ContainerDefinitions:
+                    - Name: "app"
+                      Image: "123456789012.dkr.ecr.us-east-1.amazonaws.com/app:1.4.2"
+                      Essential: true
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AmazonECR/latest/userguide/image-tag-mutability.html
+        title: AWS Documentation - Amazon ECR image tag mutability
+      - url: https://docs.aws.amazon.com/AmazonECS/latest/bestpracticesguide/security-tasks-containers.html
+        title: AWS Documentation - ECS task and container security best practices
+  # No Terraform variants: this check evaluates the image string resolved on the live
+  # `aws.ecs.container` runtime asset, which has no Terraform/CloudFormation representation.
+  # Terraform remediation is still provided because the fix lives in the task definition.
+  - uid: mondoo-aws-security-ecs-container-image-from-ecr
+    title: Ensure ECS containers pull images from Amazon ECR
+    impact: 60
+    filters: asset.platform == "aws"
+    mql: |
+      aws.ecs.containers.all(image == /\.dkr\.ecr(-fips)?\.[a-z0-9-]+\.amazonaws\.com\//)
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: false
+      compliance/nis-2: nis-2-21-2-d
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: nist-csf-2-id-ra-09
+      compliance/nist-sp-800-53-rev5: false
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    docs:
+      desc: |
+        This check ensures that running Amazon ECS containers pull their images from a private Amazon ECR registry (`<account-id>.dkr.ecr.<region>.amazonaws.com`) rather than from arbitrary public registries such as Docker Hub. Pulling from a registry you control keeps the provenance of deployed software within your security boundary. Public registries — including Amazon ECR Public (`public.ecr.aws`) — are intentionally treated as failing, because they are not access-controlled by your organization; mirror required public images into private ECR.
+
+        **Why this matters**
+
+        - **Supply-chain integrity:** Images in a private ECR registry are ones your organization has reviewed, scanned, and approved, rather than third-party content that can change or be removed upstream.
+        - **Availability and rate limits:** Public registries can throttle or remove images, causing failed deployments at the worst possible time; a private registry removes that external dependency.
+        - **Vulnerability visibility:** ECR integrates image scanning and lifecycle policies, giving continuous insight into vulnerabilities in the images you actually run.
+
+        **Risk mitigation**
+
+        - **Trusted source:** Restricting pulls to private ECR ensures every running image came from an approved, access-controlled location.
+        - **Scanning coverage:** Centralizing images in ECR lets enhanced scanning evaluate every image before and after deployment.
+        - **Reduced exposure:** Removing dependence on public registries cuts off a common vector for typosquatting and malicious-image attacks.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the AWS Management Console and navigate to **Amazon ECS**.
+        2. Select a cluster, open the **Tasks** tab, and select a running task.
+        3. Under **Containers**, review the **Image** value and confirm the registry host is an Amazon ECR endpoint (`<account-id>.dkr.ecr.<region>.amazonaws.com`).
+        4. Repeat for each running task in every cluster.
+
+        A passing container pulls from an `*.dkr.ecr.*.amazonaws.com` registry. A failing container pulls from a public or third-party registry.
+
+        ### Audit via CLI
+
+        1. List running tasks for a cluster and inspect the image registry for each container:
+
+        ```bash
+        aws ecs list-tasks --cluster <cluster-name> --desired-status RUNNING \
+          --query "taskArns" --output text | tr '\t' '\n' | \
+          xargs -I {} aws ecs describe-tasks --cluster <cluster-name> --tasks {} \
+          --query "tasks[].containers[].{Name:name,Image:image}"
+        ```
+
+        A passing container shows an image hosted on `*.dkr.ecr.*.amazonaws.com`. A failing container shows an image from a public registry such as `docker.io` or an unqualified Docker Hub name.
+
+      remediation:
+        - id: console
+          desc: |
+            To source ECS container images from Amazon ECR using the AWS Console:
+
+            1. Push the required image to a private repository in the Amazon ECR Console.
+            2. Navigate to **Amazon ECS** and select **Task definitions**, then create a new revision.
+            3. For each container, set the **Image** value to the ECR repository URI (`<account-id>.dkr.ecr.<region>.amazonaws.com/<repo>:<tag>`).
+            4. Create the revision and update the service to use it.
+        - id: cli
+          desc: |
+            To source ECS container images from Amazon ECR using the AWS CLI, create the repository, push the image, then register a task definition that references the ECR URI:
+
+            ```bash
+            aws ecr create-repository --repository-name app
+            aws ecs register-task-definition --cli-input-json file://task-definition.json
+            ```
+
+            In the JSON file, set each container's `image` to its ECR URI, for example `123456789012.dkr.ecr.us-east-1.amazonaws.com/app:1.4.2`.
+        - id: terraform
+          desc: |
+            To source ECS container images from Amazon ECR in Terraform, reference an ECR repository URL in the container `image` field:
+
+            ```hcl
+            resource "aws_ecr_repository" "app" {
+              name = "app"
+            }
+
+            resource "aws_ecs_task_definition" "example" {
+              family = "example"
+
+              container_definitions = jsonencode([
+                {
+                  name      = "app"
+                  image     = "${aws_ecr_repository.app.repository_url}:1.4.2"
+                  essential = true
+                }
+              ])
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To source ECS container images from Amazon ECR in CloudFormation, reference an ECR repository URI in the `Image` property:
+
+            ```yaml
+            Resources:
+              TaskDefinition:
+                Type: "AWS::ECS::TaskDefinition"
+                Properties:
+                  Family: "example"
+                  ContainerDefinitions:
+                    - Name: "app"
+                      Image: "123456789012.dkr.ecr.us-east-1.amazonaws.com/app:1.4.2"
+                      Essential: true
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AmazonECR/latest/userguide/what-is-ecr.html
+        title: AWS Documentation - What is Amazon ECR
+      - url: https://docs.aws.amazon.com/AmazonECR/latest/userguide/image-scanning.html
+        title: AWS Documentation - Amazon ECR image scanning
+  # No Terraform variants: this check evaluates the resolved Fargate platform version
+  # reported by the live `aws.ecs.container` runtime asset, which has no
+  # Terraform/CloudFormation representation. Terraform remediation is still provided
+  # because the fix lives in the ECS service platform_version setting.
+  - uid: mondoo-aws-security-ecs-container-supported-fargate-version
+    title: Ensure ECS Fargate containers run a supported platform version
+    impact: 70
+    filters: asset.platform == "aws"
+    mql: |
+      # Deny-list of retired Linux Fargate platform versions (1.3.0 was the last
+      # pre-1.4.0 version; LATEST currently resolves to 1.4.0). MQL string comparison is
+      # lexical, not semantic (e.g. "1.10.0" < "1.4.0"), so a `>= "1.4.0"` allow-list
+      # would be incorrect — keep this explicit list and extend it whenever AWS retires
+      # another version (including a future 1.4.0):
+      # https://docs.aws.amazon.com/AmazonECS/latest/developerguide/platform-linux-fargate.html
+      aws.ecs.containers.where(platformFamily == "Linux" && platformVersion != empty).all(
+        platformVersion != "1.0.0" &&
+        platformVersion != "1.1.0" &&
+        platformVersion != "1.2.0" &&
+        platformVersion != "1.3.0"
+      )
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-tvm-01
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-8
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ip-12
+      compliance/nist-csf-2: nist-csf-2-pr-ps-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sa-22
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-1
+      compliance/pci-dss-4: pcidss-requirement-6-3-3
+      compliance/soc2-2017: soc2-control-cc7-1-5
+      compliance/vda-isa-5: vda-isa-5-5-2-5
+    docs:
+      desc: |
+        This check ensures that running Amazon ECS Fargate tasks on the Linux platform are not using a retired Fargate platform version (1.0.0 through 1.3.0). AWS no longer maintains these versions, so tasks running them stop receiving the security patches and kernel updates delivered through newer platform versions.
+
+        **Why this matters**
+
+        - **Missing security patches:** Retired platform versions do not receive fixes for vulnerabilities in the underlying Fargate runtime and kernel.
+        - **Unsupported runtime:** AWS provides no support or guaranteed availability for deprecated platform versions, risking unexpected task failures.
+        - **Compliance drift:** Running end-of-life infrastructure conflicts with vulnerability-management and patching requirements in most frameworks.
+
+        **Risk mitigation**
+
+        - **Maintained runtime:** Using the current platform version (or `LATEST`) keeps tasks on a runtime that AWS actively patches.
+        - **Automatic updates:** Setting the service platform version to `LATEST` means new tasks pick up runtime fixes without manual intervention.
+        - **Reduced exposure:** Staying on a supported version closes known runtime vulnerabilities that retired versions leave open.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the AWS Management Console and navigate to **Amazon ECS**.
+        2. Select a cluster, open the **Tasks** tab, and select a running Fargate task.
+        3. In the **Configuration** section, review the **Platform version** value.
+        4. Repeat for each running Fargate task in every cluster.
+
+        A passing task runs platform version `1.4.0` or later. A failing task runs `1.0.0`, `1.1.0`, `1.2.0`, or `1.3.0`.
+
+        ### Audit via CLI
+
+        1. List running tasks for a cluster and inspect the platform version for each:
+
+        ```bash
+        aws ecs list-tasks --cluster <cluster-name> --desired-status RUNNING \
+          --query "taskArns" --output text | tr '\t' '\n' | \
+          xargs -I {} aws ecs describe-tasks --cluster <cluster-name> --tasks {} \
+          --query "tasks[].{Task:taskArn,Platform:platformVersion,Family:platformFamily}"
+        ```
+
+        A passing Linux Fargate task returns platform version `1.4.0` or later. A failing task returns a version between `1.0.0` and `1.3.0`.
+
+      remediation:
+        - id: console
+          desc: |
+            To move ECS Fargate tasks to a supported platform version using the AWS Console:
+
+            1. Navigate to the Amazon ECS Console and select the service running the affected tasks.
+            2. Choose **Update service**.
+            3. Set **Platform version** to **LATEST**.
+            4. Enable **Force new deployment** and save so ECS replaces tasks on the current platform version.
+        - id: cli
+          desc: |
+            To move an ECS Fargate service to a supported platform version using the AWS CLI, set the platform version to `LATEST` and force a new deployment:
+
+            ```bash
+            aws ecs update-service --cluster <cluster-name> --service <service-name> \
+              --platform-version LATEST --force-new-deployment
+            ```
+        - id: terraform
+          desc: |
+            To pin an ECS Fargate service to a supported platform version in Terraform, set `platform_version` to `LATEST`:
+
+            ```hcl
+            resource "aws_ecs_service" "example" {
+              name            = "example"
+              cluster         = aws_ecs_cluster.example.id
+              task_definition = aws_ecs_task_definition.example.arn
+              launch_type     = "FARGATE"
+              platform_version = "LATEST"
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To pin an ECS Fargate service to a supported platform version in CloudFormation, set the `PlatformVersion` property to `LATEST`:
+
+            ```yaml
+            Resources:
+              Service:
+                Type: "AWS::ECS::Service"
+                Properties:
+                  Cluster: !Ref Cluster
+                  TaskDefinition: !Ref TaskDefinition
+                  LaunchType: "FARGATE"
+                  PlatformVersion: "LATEST"
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AmazonECS/latest/developerguide/platform_versions.html
+        title: AWS Documentation - AWS Fargate platform versions
+      - url: https://docs.aws.amazon.com/AmazonECS/latest/developerguide/platform-linux-fargate.html
+        title: AWS Documentation - Fargate Linux platform versions
   - uid: mondoo-aws-security-lambda-in-vpc
     title: Ensure Lambda functions are deployed within a VPC
     impact: 70
