@@ -54,11 +54,13 @@ resolve_version() {
   # tag and closes the pipe, so gh short-circuits instead of fetching every
   # page (protobuf has 150+ releases). select(.prerelease | not) drops
   # release-candidate tags (e.g. v33.7-rc1) that would otherwise sort above
-  # the latest stable release and be matched first.
+  # the latest stable release and be matched first. The "|| true" swallows
+  # gh's SIGPIPE (exit 141, surfaced by pipefail) when grep closes the pipe
+  # early; the empty-tag check below still catches a genuine no-match.
   local tag
   tag="$(gh api --paginate repos/protocolbuffers/protobuf/releases \
     --jq '.[] | select(.prerelease | not) | .tag_name' \
-    | grep -m1 -E "^v${prefix//./\\.}")"
+    | grep -m1 -E "^v${prefix//./\\.}" || true)"
   if [[ -z "$tag" ]]; then
     echo "error: no protoc release matching ${spec}" >&2
     exit 1
