@@ -4,7 +4,7 @@
 packs:
   - uid: mondoo-windows-asset-inventory
     name: Windows Asset Inventory Pack
-    version: 1.8.0
+    version: 1.8.1
     license: BUSL-1.1
     require:
       - provider: os
@@ -145,89 +145,57 @@ packs:
           desc: Returns comprehensive Windows computer and OS information.
         mql: windows.computerInfo
       - uid: mondoo-windows-ad-distinguished-name
-        title: Active Directory distinguished name (OU path)
+        title: Active Directory distinguished name (DN)
         docs:
           desc: |
-            Returns the computer object's Active Directory distinguished name (DN) as cached by the
-            Group Policy client under
-            HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Group Policy\State\Machine. The DN encodes
-            the system's full Organizational Unit path, e.g.
-            "CN=HOST01,OU=Servers,OU=Production,DC=corp,DC=example,DC=com" — so the OU a system lives
-            in can be read straight from it. Returns nothing on workgroup / non-domain-joined hosts, and
-            also on domain-joined hosts that have not yet completed a machine Group Policy refresh (the
-            Group Policy client populates this value), e.g. right after a domain join — use the
-            mondoo-windows-organizational-unit live lookup as the authoritative source.
-            No command execution required (registry read), so it works over WinRM and agent scans.
+            The computer's full location in Active Directory (its distinguished name), for example
+            `CN=WEB01,OU=Servers,OU=Production,DC=corp,DC=example,DC=com`. Empty for computers that aren't
+            joined to a domain. Read from the registry, so no commands are run on the host.
         mql: |
-          if (registrykey.property( path: 'HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Group Policy\State\Machine', name: 'Distinguished-Name' ).exists) {
-            registrykey.property( path: 'HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Group Policy\State\Machine', name: 'Distinguished-Name' ).data
+          if (registrykey.property(path: 'HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Group Policy\State\Machine', name: 'Distinguished-Name').exists) {
+            registrykey.property(path: 'HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Group Policy\State\Machine', name: 'Distinguished-Name').data
           }
       - uid: mondoo-windows-organizational-unit
         title: Active Directory Organizational Unit (OU)
         docs:
           desc: |
-            Resolves which Active Directory Organizational Unit the system lives in. On domain-joined
-            hosts it queries the directory for this computer object (via ADSI — no RSAT or AD module
-            required) and parses the OU path out of the returned distinguished name. The result is a
-            record with: DistinguishedName (full DN), OrganizationalUnit (the immediate / most-specific
-            OU the computer sits in), OUPath (the complete OU chain, leaf to root, joined with "/"),
-            Domain, PartOfDomain, and Error (the directory-lookup failure message, or null on success).
-            The directory lookup is skipped entirely on workgroup / non-domain-joined hosts: there
-            DistinguishedName, OrganizationalUnit, and OUPath are null, PartOfDomain is false, and Error
-            is null, while Domain still reports the host's workgroup name (e.g. "WORKGROUP") — so use
-            PartOfDomain, not a non-empty Domain, to tell domain members from standalone hosts. A non-null
-            Error on a domain-joined host flags a genuine lookup failure — an unreachable domain controller,
-            a query timeout, a WMI/CIM error, or the computer object simply not being found in the directory —
-            rather than letting it vanish silently. This is the authoritative live-directory lookup;
-            the registry-based DN query is the no-command fallback.
-        filters: mondoo.capabilities.contains("run-command")
+            Shows where the computer sits in Active Directory, based on its location in the registry. No
+            commands are run on the host. It reports:
+
+            - **OrganizationalUnit** – the organizational unit (OU) the computer is in
+            - **OUPath** – the full path of OUs it sits under (e.g. `Servers/Production`)
+            - **Domain** – the Active Directory domain (e.g. `corp.example.com`)
+            - **DistinguishedName** – the computer's full Active Directory location
+            - **PartOfDomain** – whether the computer is joined to a domain
+
+            These are empty for computers that aren't joined to a domain, including cloud-only (Entra)
+            hosts. The value comes from Windows' own cached copy, so it can be slightly out of date — for
+            example just after a computer is moved to a different OU or first joined to the domain.
         mql: |
-          parse.json(content: powershell("
-            $dn = $null
-            $err = $null
-            $cs = $null
-            $bs = [string][char]92
-            try {
-              # -ErrorAction Stop routes a WMI/CIM failure into the catch (and thus into Error) instead
-              # of leaving $cs null, which would make a domain-joined host look like a healthy workgroup
-              # host (PartOfDomain false, Error null).
-              $cs = Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
-              if ($cs.PartOfDomain) {
-                # $env:COMPUTERNAME is spliced into single-quoted PowerShell string literals below, so
-                # PowerShell never re-interprets a '$' (or any other char) in its value; only the LDAP
-                # filter syntax needs sanitizing. A domain-joined host always has this variable set, but
-                # guard the empty case so it surfaces a clear error instead of a meaningless '(cn=)' filter.
-                $name = $env:COMPUTERNAME
-                if ([string]::IsNullOrEmpty($name)) { throw 'COMPUTERNAME is empty; cannot resolve the AD computer object' }
-                # Escape the RFC 4515 filter metacharacters (backslash, open/close paren, asterisk, NUL).
-                # $bs (above) is a single-character backslash STRING (built from [char]92 so no literal
-                # backslash appears in this double-quoted MQL string); using string operands keeps every
-                # .Replace() bound to the (string, string) overload. Backslash is replaced first so the
-                # escapes introduced below are not themselves re-escaped.
-                $name = $name.Replace($bs, $bs + '5c').Replace('(', $bs + '28').Replace(')', $bs + '29').Replace('*', $bs + '2a').Replace([string][char]0, $bs + '00')
-                $s = [ADSISearcher]('(&(objectCategory=computer)(|(cn=' + $name + ')(sAMAccountName=' + $name + '$)))')
-                $r = $s.FindOne()
-                # FindOne() returns $null (not an exception) when the directory has no matching object;
-                # record that as an error so the documented 'non-null Error == genuine failure' contract holds.
-                if ($r) { $dn = [string]$r.Properties['distinguishedname'][0] } else { $err = 'computer object not found in directory' }
-              }
-            } catch {
-              $err = $_.Exception.Message
-            }
-            $ous = @()
-            # AD returns the DN in RFC 4514 form, where a comma inside an OU name is escaped with a leading
-            # backslash. Match OU values honoring that escaping (the regex is built from $bs so no literal
-            # backslash appears in this MQL string), then strip the escaping backslash for a readable name.
-            if ($dn) { $ous = @([regex]::Matches($dn, 'OU=((?:[^,' + $bs + $bs + ']|' + $bs + $bs + '.)+)') | ForEach-Object { $_.Groups[1].Value -replace ($bs + $bs + '(.)'), '$1' }) }
-            [pscustomobject]@{
-              DistinguishedName = $dn
-              OrganizationalUnit = $(if ($ous.Count -gt 0) { $ous[0] } else { $null })
-              OUPath = $(if ($ous.Count -gt 0) { [string]::Join('/', $ous) } else { $null })
-              Domain = $cs.Domain
-              PartOfDomain = $cs.PartOfDomain
-              Error = $err
-            } | ConvertTo-Json -Compress
-          ").stdout).params
+          # The DN is parsed by splitting on raw ',' and '=' . AD escapes those characters inside an
+          # OU/CN name as '\,' and '\=' (RFC 4514); this parse does not unescape them, so the rare OU/DC
+          # name containing an escaped separator is split incorrectly. Accepted limitation of parsing the
+          # DN in MQL rather than shelling out to PowerShell, which is the whole point of this query.
+          #
+          # PartOfDomain is derived from the registry value being present, not from a live directory
+          # check, so it is an approximation: the Group Policy client populates this value and it can lag
+          # reality (absent right after a domain join, and able to persist on un-joined or cloned images).
+          #
+          # The fields are assigned with '=' (which only creates local bindings) and then listed again as
+          # bare references on their own lines; the bare references are what emit the values into the
+          # result record. Both halves are required.
+          registrykey.property(path: 'HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Group Policy\State\Machine', name: 'Distinguished-Name') {
+            PartOfDomain = exists
+            DistinguishedName = data
+            OrganizationalUnit = if (exists) { data.split(",").where(_.split("=")[0].downcase == "ou").map(_.split("=")[1]).first }
+            OUPath = if (exists && data.split(",").where(_.split("=")[0].downcase == "ou").length > 0) { data.split(",").where(_.split("=")[0].downcase == "ou").map(_.split("=")[1]).join("/") }
+            Domain = if (exists) { data.split(",").where(_.split("=")[0].downcase == "dc").map(_.split("=")[1]).join(".") }
+            PartOfDomain
+            DistinguishedName
+            OrganizationalUnit
+            OUPath
+            Domain
+          }
       - uid: mondoo-windows-security-products
         title: Installed Security Products
         docs:
