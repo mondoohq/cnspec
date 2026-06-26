@@ -4,6 +4,8 @@
 package reporter
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"sort"
 	"strings"
@@ -11,12 +13,20 @@ import (
 	"github.com/owenrumney/go-sarif/v2/sarif"
 	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/mql/v13/cli/printer"
+	"go.mondoo.com/mql/v13/llx"
 	"go.mondoo.com/mql/v13/mrn"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
 	"go.mondoo.com/mql/v13/utils/iox"
 )
 
 const sarifAssetErrorRuleID = "asset-error"
+
+// sarifFingerprintKey is the key under which cnspec stores its stable
+// per-finding fingerprint in SARIF partialFingerprints. It uses a URI-style
+// namespace we own so it can't collide with well-known keys used by other
+// tooling (e.g. GitHub code scanning's primaryLocationLineHash). The trailing
+// version lets us evolve the fingerprint algorithm without remapping old runs.
+const sarifFingerprintKey = "https://cnspec.io/fingerprint/v1"
 
 // ConvertToSarif converts a ReportCollection into a SARIF 2.1.0 report.
 // Each scanned asset is represented as a separate SARIF run.
@@ -130,6 +140,10 @@ func addAssetResults(run *sarif.Run, r *policy.ReportCollection, assetMrn string
 		return
 	}
 
+	// The asset is recorded as a logical location on every result so consumers
+	// can still tell which asset a finding belongs to.
+	logicalLoc := assetLogicalLocation(assetObj)
+
 	// Sort score IDs for deterministic output
 	scoreIDs := sortedKeys(report.Scores)
 	for _, id := range scoreIDs {
@@ -155,51 +169,112 @@ func addAssetResults(run *sarif.Run, r *policy.ReportCollection, assetMrn string
 			msg += ": " + score.MessageLine()
 		}
 
-		// Render the assessment (expected vs actual) for failed checks
-		assessmentText := renderAssessment(query, report, resolved)
-		if assessmentText != "" {
-			msg += "\n\n" + assessmentText
-		}
-
-		result := sarif.NewRuleResult(ruleID).
-			WithLevel(level).
-			WithMessage(sarif.NewTextMessage(msg))
-
-		// Add asset information as a logical location
-		logicalLoc := sarif.NewLogicalLocation().
-			WithName(assetObj.Name).
-			WithKind("asset")
-		if assetObj.Platform != nil {
-			platformName := getPlatformNameForAsset(assetObj)
-			if platformName != "" {
-				logicalLoc.WithFullyQualifiedName(assetObj.Name + " (" + platformName + ")")
+		// Build the assessment once and reuse it for both the human-readable
+		// detail and the structured source locations.
+		var assessment *llx.Assessment
+		var codeBundle *llx.CodeBundle
+		if resolved.ExecutionJob != nil {
+			codeBundle = resolved.GetCodeBundle(query)
+			if codeBundle != nil {
+				assessment = policy.Query2Assessment(codeBundle, report)
 			}
 		}
-		result.WithLocations([]*sarif.Location{
-			sarif.NewLocation().WithLogicalLocations([]*sarif.LogicalLocation{logicalLoc}),
-		})
 
-		run.AddResult(result)
+		// Source locations of the failing resources. This covers terraform and
+		// any resource that carries @context data; it is empty for scalar checks
+		// or resources without context.
+		var locations []llx.SourceContext
+		if assessment != nil && codeBundle != nil {
+			for _, sc := range codeBundle.FailingResourceContexts(assessment) {
+				if sc.Path != "" {
+					locations = append(locations, sc)
+				}
+			}
+		}
+
+		if len(locations) == 0 {
+			// No source context: anchor a single result to the asset and keep the
+			// full assessment detail (expected vs actual) in the message.
+			detail := msg
+			if assessment != nil {
+				if text := strings.TrimSpace(printer.PlainNoColorPrinter.Assessment(codeBundle, assessment)); text != "" {
+					detail += "\n\n" + text
+				}
+			}
+			result := sarif.NewRuleResult(ruleID).
+				WithLevel(level).
+				WithMessage(sarif.NewTextMessage(detail)).
+				WithLocations([]*sarif.Location{
+					sarif.NewLocation().WithLogicalLocations([]*sarif.LogicalLocation{logicalLoc}),
+				})
+			run.AddResult(result)
+			continue
+		}
+
+		// One result per failing resource, each pointing at its exact source.
+		// The code snippet travels in the region; the message stays concise.
+		for i := range locations {
+			loc := sarif.NewLocationWithPhysicalLocation(physicalLocationFromContext(locations[i])).
+				WithLogicalLocations([]*sarif.LogicalLocation{logicalLoc})
+			result := sarif.NewRuleResult(ruleID).
+				WithLevel(level).
+				WithMessage(sarif.NewTextMessage(msg)).
+				WithLocations([]*sarif.Location{loc}).
+				WithPartialFingerPrints(map[string]interface{}{
+					sarifFingerprintKey: sarifLocationFingerprint(ruleID, locations[i]),
+				})
+			run.AddResult(result)
+		}
 	}
 }
 
-// renderAssessment renders the assessment (expected vs actual values) for a query as plain text.
-func renderAssessment(query *policy.Mquery, report *policy.Report, resolved *policy.ResolvedPolicy) string {
-	if resolved.ExecutionJob == nil {
-		return ""
+// assetLogicalLocation builds the SARIF logical location that identifies an asset.
+func assetLogicalLocation(assetObj *inventory.Asset) *sarif.LogicalLocation {
+	logicalLoc := sarif.NewLogicalLocation().
+		WithName(assetObj.Name).
+		WithKind("asset")
+	if assetObj.Platform != nil {
+		platformName := getPlatformNameForAsset(assetObj)
+		if platformName != "" {
+			logicalLoc.WithFullyQualifiedName(assetObj.Name + " (" + platformName + ")")
+		}
 	}
+	return logicalLoc
+}
 
-	codeBundle := resolved.GetCodeBundle(query)
-	if codeBundle == nil {
-		return ""
+// physicalLocationFromContext maps an MQL source context (path + range + content)
+// to a SARIF physical location with a region and, when available, a code snippet.
+func physicalLocationFromContext(ctx llx.SourceContext) *sarif.PhysicalLocation {
+	pl := sarif.NewPhysicalLocation().
+		WithArtifactLocation(sarif.NewSimpleArtifactLocation(ctx.Path))
+
+	startLine, startCol, endLine, endCol, hasCols, ok := ctx.Range.Bounds()
+	var region *sarif.Region
+	if ok && startLine >= 1 {
+		region = sarif.NewRegion().
+			WithStartLine(int(startLine)).
+			WithEndLine(int(endLine))
+		if hasCols {
+			region.WithStartColumn(int(startCol)).WithEndColumn(int(endCol))
+		}
 	}
-
-	assessment := policy.Query2Assessment(codeBundle, report)
-	if assessment == nil {
-		return ""
+	if ctx.Content != "" {
+		if region == nil {
+			region = sarif.NewRegion()
+		}
+		region.WithSnippet(sarif.NewArtifactContent().WithText(ctx.Content))
 	}
+	if region != nil {
+		pl.WithRegion(region)
+	}
+	return pl
+}
 
-	return strings.TrimSpace(printer.PlainNoColorPrinter.Assessment(codeBundle, assessment))
+// sarifLocationFingerprint produces a stable fingerprint for a (rule, location)
+// pair so code-scanning consumers can dedup the same finding across runs.
+func sarifLocationFingerprint(ruleID string, ctx llx.SourceContext) string {
+	h := sha256.Sum256([]byte(ruleID + "\n" + ctx.Path + "#" + ctx.Range.String()))
+	return hex.EncodeToString(h[:])
 }
 
 // scoreToSarifLevel maps a cnspec Score to a SARIF level using cnspec's
