@@ -19,7 +19,9 @@ set -euo pipefail
 #
 # Inputs (env):
 #   PROTOC_VERSION  Version spec, e.g. "33.x" (latest 33.*) or "33.6" (exact).
-#                   Defaults to the value of protoc-version from .github/env.
+#                   Required; the workflow/composite action passes the
+#                   protoc-version from .github/env. The script hard-fails if
+#                   it is unset.
 #   PROTOC_HOME     Install prefix. Defaults to a per-run dir under
 #                   $RUNNER_TEMP so installs never touch /usr/local and don't
 #                   leak between runs on a reused self-hosted runner.
@@ -50,10 +52,12 @@ resolve_version() {
   local prefix="${spec%.x}." # e.g. "33."
   # gh paginates releases newest-first; grep -m1 stops at the first matching
   # tag and closes the pipe, so gh short-circuits instead of fetching every
-  # page (protobuf has 150+ releases).
+  # page (protobuf has 150+ releases). select(.prerelease | not) drops
+  # release-candidate tags (e.g. v33.7-rc1) that would otherwise sort above
+  # the latest stable release and be matched first.
   local tag
   tag="$(gh api --paginate repos/protocolbuffers/protobuf/releases \
-    --jq '.[].tag_name' \
+    --jq '.[] | select(.prerelease | not) | .tag_name' \
     | grep -m1 -E "^v${prefix//./\\.}")"
   if [[ -z "$tag" ]]; then
     echo "error: no protoc release matching ${spec}" >&2
@@ -108,8 +112,14 @@ fi
 
 detect_platform
 if [[ "$os" == "win" ]]; then
-  # protoc publishes a single combined win64/win32 asset, not "<os>-<arch>".
-  [[ "$arch" == "x86_64" ]] && asset="protoc-${version}-win64.zip" || asset="protoc-${version}-win32.zip"
+  # protoc ships a single combined win64 asset, not "<os>-<arch>", and
+  # publishes no Windows ARM build -- fail loudly rather than installing the
+  # 32-bit x86 win32 asset on an arm64 runner.
+  if [[ "$arch" != "x86_64" ]]; then
+    echo "error: protoc does not publish a Windows ${arch} asset" >&2
+    exit 1
+  fi
+  asset="protoc-${version}-win64.zip"
   protoc_bin="${PROTOC_HOME}/bin/protoc.exe"
 else
   asset="protoc-${version}-${os}-${arch}.zip"
