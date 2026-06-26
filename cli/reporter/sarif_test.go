@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/mql/v13/llx"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
 	"go.mondoo.com/mql/v13/utils/iox"
 )
@@ -46,6 +47,11 @@ func TestSarifConverter(t *testing.T) {
 
 	// Verify results contain asset name
 	assert.Contains(t, sarifReport, "X1")
+
+	// The sample collection carries no source context, so results fall back to
+	// asset logical locations and must not invent physical locations.
+	assert.NotContains(t, sarifReport, "physicalLocation")
+	assert.Contains(t, sarifReport, "logicalLocations")
 
 	// Verify results contain expected levels
 	// Score type 2 (Result) with value 100 -> "none" (pass)
@@ -226,6 +232,61 @@ func TestSarifQueryRuleID(t *testing.T) {
 			assert.Equal(t, tt.expected, queryRuleID(tt.query))
 		})
 	}
+}
+
+func TestPhysicalLocationFromContext(t *testing.T) {
+	t.Run("line and column range with content", func(t *testing.T) {
+		ctx := llx.SourceContext{
+			Path:    "main.tf",
+			Range:   llx.NewRange().AddLineColumnRange(12, 18, 3, 7),
+			Content: "resource \"aws_s3_bucket\" \"b\" {}",
+		}
+		pl := physicalLocationFromContext(ctx)
+		require.NotNil(t, pl.ArtifactLocation)
+		require.NotNil(t, pl.ArtifactLocation.URI)
+		assert.Equal(t, "main.tf", *pl.ArtifactLocation.URI)
+
+		require.NotNil(t, pl.Region)
+		require.NotNil(t, pl.Region.StartLine)
+		assert.Equal(t, 12, *pl.Region.StartLine)
+		assert.Equal(t, 18, *pl.Region.EndLine)
+		require.NotNil(t, pl.Region.StartColumn)
+		assert.Equal(t, 3, *pl.Region.StartColumn)
+		assert.Equal(t, 7, *pl.Region.EndColumn)
+
+		require.NotNil(t, pl.Region.Snippet)
+		require.NotNil(t, pl.Region.Snippet.Text)
+		assert.Equal(t, ctx.Content, *pl.Region.Snippet.Text)
+	})
+
+	t.Run("line-only range omits columns", func(t *testing.T) {
+		ctx := llx.SourceContext{Path: "x.tf", Range: llx.NewRange().AddLine(5)}
+		pl := physicalLocationFromContext(ctx)
+		require.NotNil(t, pl.Region)
+		assert.Equal(t, 5, *pl.Region.StartLine)
+		assert.Equal(t, 5, *pl.Region.EndLine)
+		assert.Nil(t, pl.Region.StartColumn)
+		assert.Nil(t, pl.Region.Snippet)
+	})
+
+	t.Run("empty range and no content yields no region", func(t *testing.T) {
+		ctx := llx.SourceContext{Path: "x.tf"}
+		pl := physicalLocationFromContext(ctx)
+		require.NotNil(t, pl.ArtifactLocation)
+		assert.Nil(t, pl.Region)
+	})
+}
+
+func TestSarifLocationFingerprint(t *testing.T) {
+	ctx := llx.SourceContext{Path: "main.tf", Range: llx.NewRange().AddLineRange(1, 4)}
+
+	// Stable across calls.
+	assert.Equal(t, sarifLocationFingerprint("rule-a", ctx), sarifLocationFingerprint("rule-a", ctx))
+
+	// Differs by rule, path, and range.
+	other := llx.SourceContext{Path: "other.tf", Range: ctx.Range}
+	assert.NotEqual(t, sarifLocationFingerprint("rule-a", ctx), sarifLocationFingerprint("rule-b", ctx))
+	assert.NotEqual(t, sarifLocationFingerprint("rule-a", ctx), sarifLocationFingerprint("rule-a", other))
 }
 
 func TestSarifScoreLevels(t *testing.T) {
