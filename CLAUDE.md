@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 cnspec is an open-source, cloud-native security and policy project that assesses infrastructure security and compliance. It finds vulnerabilities and misconfigurations across cloud environments, Kubernetes, containers, servers, SaaS products, and more.
 
-**cnspec is built on top of cnquery** (`go.mondoo.com/cnquery/v12`). cnquery provides the MQL query engine, provider system, and resource framework; cnspec adds policy evaluation, scoring, compliance frameworks, and security assessments.
+**cnspec is built on top of mql** (`go.mondoo.com/mql/v13`). mql provides the MQL query engine, provider system, and resource framework; cnspec adds policy evaluation, scoring, compliance frameworks, and security assessments.
 
 ## Where things live
 
@@ -33,8 +33,8 @@ Run after modifying `.proto` files, policy bundle structures, or reporter config
 
 ```bash
 make prep                # Install required tools (first time only)
-make prep/repos          # Clone/verify cnquery dependency (required for proto compilation)
-make prep/repos/update   # Update cnquery dependency
+make prep/repos          # Clone/verify mql dependency (required for proto compilation)
+make prep/repos/update   # Update mql dependency
 make cnspec/generate     # Regenerate all generated code (proto, policy, reporter)
 ```
 
@@ -72,7 +72,7 @@ cnspec policy lint ./content/mondoo-linux-security.mql.yaml     # Lint one polic
 ### Dependency management
 
 - **Forbidden packages**: do not use `github.com/pkg/errors` (use `github.com/cockroachdb/errors`) or `github.com/mitchellh/mapstructure` (use `github.com/go-viper/mapstructure/v2`).
-- When proto files reference cnquery types, ensure the cnquery repo is present via `make prep/repos`.
+- When proto files reference mql types, ensure the mql repo is present via `make prep/repos`.
 
 ### Error handling
 
@@ -100,5 +100,5 @@ Never edit these files manually. Regenerate with `make cnspec/generate`:
 - [MQL Documentation](https://mondoo.com/docs/mql/) · [Built-in Functions](https://mondoo.com/docs/mql/functions) · [Resources by Provider](https://mondoo.com/docs/mql/resources/)
 - [MQL operator precedence](https://github.com/mondoohq/mql/blob/main/mqlc/parser/operators.go#L11) — reference for operator precedence during policy reviews
 - [Policy Authoring Guide](https://mondoo.com/docs/cnspec/write-policies/write-intro/)
-- [cnquery Repository](https://github.com/mondoohq/cnquery)
+- [mql Repository](https://github.com/mondoohq/mql)
 - [Full Mondoo Docs (LLM-friendly text)](https://mondoo.com/docs/llms-full.txt)
