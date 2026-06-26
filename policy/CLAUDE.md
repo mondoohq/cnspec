@@ -4,16 +4,16 @@ Policy engine internals. Loaded automatically when working under `policy/`.
 
 For policy *content* authoring (writing `.mql.yaml` files), see `content/CLAUDE.md`.
 
-## cnspec vs cnquery
+## cnspec vs mql
 
-**cnspec is built on top of cnquery** — it's not just a dependency relationship:
+**cnspec is built on top of mql** — it's not just a dependency relationship:
 
-- **cnquery provides**: MQL query engine, provider system, resource framework, data gathering.
+- **mql provides**: MQL query engine, provider system, resource framework, data gathering.
 - **cnspec adds**: Policy evaluation, scoring, compliance frameworks, security assessments, risk factors.
 - **Shared runtime**: Both use the same provider system (`providers.Runtime`) for connecting to target systems.
-- **Import path**: cnspec imports `go.mondoo.com/cnquery/v12` extensively.
+- **Import path**: cnspec imports `go.mondoo.com/mql/v13` extensively.
 
-When working on cnspec, you may need to understand or modify cnquery components.
+When working on cnspec, you may need to understand or modify mql components.
 
 ## Policy engine flow
 
@@ -39,7 +39,7 @@ The policy execution pipeline has four main stages.
 ### 3. Execution
 
 - Orchestrated by `GraphExecutor` in [executor/graph.go](executor/graph.go).
-- Queries executed via cnquery's `llx.MQLExecutorV2`.
+- Queries executed via mql's `llx.MQLExecutorV2`.
 - Results collected through `BufferedCollector` pattern.
 - Handles: data points, scores, risk factors, upstream transmission.
 
@@ -81,7 +81,7 @@ Results → Reporters (console, SARIF, JUnit, etc.)
 
 ## Provider system
 
-The provider system (inherited from cnquery) enables scanning diverse targets.
+The provider system (inherited from mql) enables scanning diverse targets.
 
 **Connection flow**:
 
@@ -142,4 +142,4 @@ Never edit these files manually:
 - `*.vtproto.pb.go` — Optimized vtproto marshaling.
 - `*_gen.go` — Generated via `go generate`.
 
-Regenerate with `make cnspec/generate` after source changes. When proto files reference cnquery types, ensure the cnquery repo is present via `make prep/repos`.
+Regenerate with `make cnspec/generate` after source changes. When proto files reference mql types, ensure the mql repo is present via `make prep/repos`.

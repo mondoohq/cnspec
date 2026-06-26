@@ -42,7 +42,7 @@ prep: prep/tools
 # An alternative (especially for local development) is to soft-link a local copy of the repo
 # yourself. We don't pin submodules at this time, but we may want to check if they are up to date here.
 prep/repos:
-	test -x mql || git clone https://github.com/mondoohq/cnquery.git mql
+	test -x mql || git clone https://github.com/mondoohq/mql.git mql
 
 prep/repos/update: prep/repos
 	cd mql; git checkout main && git pull; cd -;
