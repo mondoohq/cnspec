@@ -370,6 +370,30 @@ resource "mondoo_integration_azure" "this" {
 `
 	assert.Equal(t, expected, code)
 }
+func TestGenerateAzureHCLWIF(t *testing.T) {
+	code, err := subject.GenerateAzureHCL(subject.AzureIntegration{
+		Name:    "x",
+		Space:   "s",
+		Primary: "sub",
+		UseWIF:  true,
+	})
+	assert.Nil(t, err)
+
+	// WIF mode MUST contain the federated credential resource, use_wif flag, the correct
+	// WIF audience, and references to the integration's computed wif_subject / wif_issuer_url.
+	assert.Contains(t, code, `resource "azuread_application_federated_identity_credential"`)
+	assert.Contains(t, code, "use_wif")
+	assert.Contains(t, code, "api://AzureADTokenExchange")
+	assert.Contains(t, code, "mondoo_integration_azure.this.wif_subject")
+	assert.Contains(t, code, "mondoo_integration_azure.this.wif_issuer_url")
+
+	// WIF mode MUST NOT contain cert-based resources or attributes.
+	assert.NotContains(t, code, "tls_self_signed_cert")
+	assert.NotContains(t, code, "tls_private_key")
+	assert.NotContains(t, code, "azuread_application_certificate")
+	assert.NotContains(t, code, "pem_file")
+}
+
 func TestGenerateAzureHCLScanVMsForAllSubscriptions(t *testing.T) {
 	code, err := subject.GenerateAzureHCL(subject.AzureIntegration{ScanVMs: true, Primary: "abc-123-xyz-456-1"})
 	assert.Nil(t, err)
