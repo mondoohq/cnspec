@@ -21,7 +21,7 @@ func TestGenerateMs365HCL_Basic(t *testing.T) {
   required_providers {
     mondoo = {
       source  = "mondoohq/mondoo"
-      version = "~> 0.19"
+      version = "~> 0.40"
     }
   }
 }
@@ -238,7 +238,7 @@ func TestGenerateMs365HCL_Minimal(t *testing.T) {
   required_providers {
     mondoo = {
       source  = "mondoohq/mondoo"
-      version = "~> 0.19"
+      version = "~> 0.40"
     }
   }
 }

@@ -19,7 +19,7 @@ func TestGenerateAzureHCL(t *testing.T) {
   required_providers {
     mondoo = {
       source  = "mondoohq/mondoo"
-      version = "~> 0.19"
+      version = "~> 0.40"
     }
   }
 }
@@ -126,7 +126,7 @@ func TestGenerateAzureHCLFull(t *testing.T) {
   required_providers {
     mondoo = {
       source  = "mondoohq/mondoo"
-      version = "~> 0.19"
+      version = "~> 0.40"
     }
   }
 }
@@ -267,7 +267,7 @@ func TestGenerateAzureHCLScanVMsForAllowedSubscriptions(t *testing.T) {
   required_providers {
     mondoo = {
       source  = "mondoohq/mondoo"
-      version = "~> 0.19"
+      version = "~> 0.40"
     }
   }
 }
@@ -432,7 +432,7 @@ func TestGenerateAzureHCLScanVMsForAllSubscriptions(t *testing.T) {
   required_providers {
     mondoo = {
       source  = "mondoohq/mondoo"
-      version = "~> 0.19"
+      version = "~> 0.40"
     }
   }
 }
