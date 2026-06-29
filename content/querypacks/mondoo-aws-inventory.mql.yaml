@@ -4,7 +4,7 @@
 packs:
   - uid: mondoo-asset-inventory-aws
     name: AWS Asset Inventory Pack
-    version: 1.1.0
+    version: 1.2.0
     license: BUSL-1.1
     require:
       - provider: aws
@@ -38,6 +38,7 @@ packs:
         filters: asset.runtime == "aws"
         queries:
           - uid: mondoo-asset-inventory-aws-vpcs
+          - uid: mondoo-asset-inventory-aws-vpc-subnets
       - uid: mondoo-asset-inventory-aws-ec2-group
         title: Amazon EC2
         filters: asset.runtime == "aws"
@@ -45,6 +46,13 @@ packs:
           - uid: mondoo-asset-inventory-aws-ec2-security-groups
           - uid: mondoo-asset-inventory-aws-ec2-volumes
           - uid: mondoo-asset-inventory-aws-ec2-retrieve-all-data
+          - uid: mondoo-asset-inventory-aws-ec2-instances-exposure
+          - uid: mondoo-asset-inventory-aws-eips
+      - uid: mondoo-asset-inventory-aws-elb-group
+        title: Elastic Load Balancing
+        filters: asset.runtime == "aws"
+        queries:
+          - uid: mondoo-asset-inventory-aws-elb-loadbalancers
       - uid: mondoo-asset-inventory-aws-rds-group
         title: Amazon RDS
         filters: asset.runtime == "aws"
@@ -81,6 +89,11 @@ packs:
         filters: asset.runtime == "aws"
         queries:
           - uid: mondoo-asset-inventory-aws-cloudtrail-trails
+      - uid: mondoo-asset-inventory-aws-waf-group
+        title: AWS WAF
+        filters: asset.runtime == "aws"
+        queries:
+          - uid: mondoo-asset-inventory-aws-waf-acls
 
 queries:
   - uid: mondoo-asset-inventory-aws-account-id
@@ -117,6 +130,45 @@ queries:
     filters: asset.platform == "aws-vpc"
     mql: |
       aws.vpc
+
+  - uid: mondoo-asset-inventory-aws-vpc-subnets
+    title: VPC subnets and route tables
+    docs:
+      desc: |
+        Lists VPC subnets with whether they auto-assign public IPs and their route
+        table routes (including internet-gateway routes), so public vs. private
+        subnet placement can be determined for internet-exposure analysis.
+    variants:
+      - uid: mondoo-asset-inventory-aws-vpc-subnets-all
+      - uid: mondoo-asset-inventory-aws-vpc-subnets-single
+  - uid: mondoo-asset-inventory-aws-vpc-subnets-all
+    filters: asset.platform == "aws"
+    mql: |
+      aws.vpcs {
+        id
+        subnets {
+          id
+          mapPublicIpOnLaunch
+          routeTable {
+            id
+            routeEntries { destinationCidrBlock gatewayId natGatewayId state }
+          }
+        }
+      }
+  - uid: mondoo-asset-inventory-aws-vpc-subnets-single
+    filters: asset.platform == "aws-vpc"
+    mql: |
+      aws.vpc {
+        id
+        subnets {
+          id
+          mapPublicIpOnLaunch
+          routeTable {
+            id
+            routeEntries { destinationCidrBlock gatewayId natGatewayId state }
+          }
+        }
+      }
 
   - uid: mondoo-asset-inventory-aws-iam-users
     title: IAM users
@@ -224,6 +276,138 @@ queries:
       - mql: aws.ec2.instance.state != "terminated"
     mql: |
       aws.ec2.instance
+
+  - uid: mondoo-asset-inventory-aws-ec2-instances-exposure
+    title: EC2 instance internet exposure
+    docs:
+      desc: |
+        For every non-terminated EC2 instance, returns its internet-exposure
+        analysis: whether it is reachable from the internet, whether it has a
+        public IP, whether it sits in a public subnet, the security-group ingress
+        rules that open it, and any internet-facing load balancers that front it.
+    variants:
+      - uid: mondoo-asset-inventory-aws-ec2-instances-exposure-all
+      - uid: mondoo-asset-inventory-aws-ec2-instances-exposure-single
+  - uid: mondoo-asset-inventory-aws-ec2-instances-exposure-all
+    filters: asset.platform == "aws"
+    mql: |
+      aws.ec2.instances.where(state != "terminated") {
+        instanceId
+        publicIp
+        privateIp
+        state
+        vpc { id }
+        subnet { id mapPublicIpOnLaunch }
+        securityGroups { id }
+        exposure {
+          internetReachable
+          hasPublicIp
+          inPublicSubnet
+          securityGroupAllowsIngress
+          networkAclAllowsIngress
+          openIngressRules { ipProtocol fromPort toPort ipRanges ipv6Ranges }
+          internetFacingLoadBalancers { arn name dnsName }
+        }
+      }
+  - uid: mondoo-asset-inventory-aws-ec2-instances-exposure-single
+    filters:
+      - mql: asset.platform == "aws-ec2-instance"
+      - mql: aws.ec2.instance.state != "terminated"
+    mql: |
+      aws.ec2.instance {
+        instanceId
+        publicIp
+        privateIp
+        state
+        vpc { id }
+        subnet { id mapPublicIpOnLaunch }
+        securityGroups { id }
+        exposure {
+          internetReachable
+          hasPublicIp
+          inPublicSubnet
+          securityGroupAllowsIngress
+          networkAclAllowsIngress
+          openIngressRules { ipProtocol fromPort toPort ipRanges ipv6Ranges }
+          internetFacingLoadBalancers { arn name dnsName }
+        }
+      }
+
+  - uid: mondoo-asset-inventory-aws-eips
+    title: Elastic IP addresses
+    docs:
+      desc: |
+        Lists Elastic IP addresses and the instance / network interface they are
+        associated with, mapping externally routable public IPs to resources.
+    variants:
+      - uid: mondoo-asset-inventory-aws-eips-all
+  - uid: mondoo-asset-inventory-aws-eips-all
+    filters: asset.platform == "aws"
+    mql: |
+      aws.ec2.eips {
+        publicIp
+        attached
+        privateIpAddress
+        networkInterfaceId
+        region
+        instance { instanceId }
+      }
+
+  - uid: mondoo-asset-inventory-aws-elb-loadbalancers
+    title: Load balancers (ALB/NLB/GWLB)
+    docs:
+      desc: |
+        Lists Elastic Load Balancers with their scheme (internet-facing vs.
+        internal), listeners, security groups, internet-exposure breakdown, and the
+        targets they route to (EC2 instances / Lambda functions, plus registered
+        instances for classic load balancers).
+    variants:
+      - uid: mondoo-asset-inventory-aws-elb-loadbalancers-all
+      - uid: mondoo-asset-inventory-aws-elb-loadbalancers-single
+  - uid: mondoo-asset-inventory-aws-elb-loadbalancers-all
+    filters: asset.platform == "aws"
+    mql: |
+      aws.elb.loadBalancers {
+        arn
+        name
+        scheme
+        elbType
+        dnsName
+        region
+        securityGroups { id }
+        listeners { port protocol }
+        targetGroups {
+          arn
+          targetType
+          port
+          ec2Targets { instanceId }
+          lambdaTargets { name }
+        }
+        instances { instanceId }
+        exposure { internetReachable publiclyAccessible securityGroupAllowsIngress }
+      }
+  - uid: mondoo-asset-inventory-aws-elb-loadbalancers-single
+    filters: asset.platform == "aws-elb-loadbalancer"
+    mql: |
+      aws.elb.loadbalancer {
+        arn
+        name
+        scheme
+        elbType
+        dnsName
+        region
+        securityGroups { id }
+        listeners { port protocol }
+        targetGroups {
+          arn
+          targetType
+          port
+          ec2Targets { instanceId }
+          lambdaTargets { name }
+        }
+        instances { instanceId }
+        exposure { internetReachable publiclyAccessible securityGroupAllowsIngress }
+      }
 
   - uid: mondoo-asset-inventory-aws-rds-dbclusters-all-data
     title: RDS database clusters configuration
@@ -340,3 +524,22 @@ queries:
     filters: asset.platform == "aws-cloudtrail-trail"
     mql: |
       aws.cloudtrail.trail
+
+  - uid: mondoo-asset-inventory-aws-waf-acls
+    title: WAF web ACLs
+    docs:
+      desc: |
+        Lists WAFv2 web ACLs and the ARNs of the resources (e.g. Application Load
+        Balancers) they protect, so internet-facing entry points can be checked for
+        an attached web application firewall.
+    variants:
+      - uid: mondoo-asset-inventory-aws-waf-acls-all
+  - uid: mondoo-asset-inventory-aws-waf-acls-all
+    filters: asset.platform == "aws"
+    mql: |
+      aws.waf.acls {
+        arn
+        name
+        scope
+        associatedResources
+      }
