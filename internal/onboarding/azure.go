@@ -24,6 +24,10 @@ type AzureIntegration struct {
 	Allow   []string
 	Deny    []string
 	ScanVMs bool
+	// UseWIF opts into Workload Identity Federation (keyless) instead of a certificate.
+	// When true, GenerateAzureHCL emits azuread_application_federated_identity_credential
+	// instead of tls_private_key / tls_self_signed_cert / azuread_application_certificate.
+	UseWIF bool
 }
 
 // GenerateAzureHCL generates automation code to create an Azure integration.
@@ -134,6 +138,44 @@ func GenerateAzureHCL(integration AzureIntegration) (string, error) {
 				"depends_on":          []any{resourceTimeSleep.TraverseRef()},
 			}),
 		)
+	)
+
+	// Build the integration attributes, dynamic objects list, and depends_on list differently
+	// depending on whether we are in WIF (keyless) mode or the default certificate mode.
+	var (
+		integrationAttributes tfgen.Attributes
+		dynamicObjects        []tfgen.Object
+		integrationDependsOn  []any
+	)
+
+	if integration.UseWIF {
+		// WIF (keyless) mode: omit TLS/cert resources; the mondoo integration itself is
+		// created first so that its computed wif_subject / wif_issuer_url are available to
+		// the azuread_application_federated_identity_credential that follows.
+		integrationAttributes = tfgen.Attributes{
+			"name":      integration.Name,
+			"tenant_id": dataADClientConfig.TraverseRef("tenant_id"),
+			"client_id": resourceAdApplication.TraverseRef("client_id"),
+			"scan_vms":  integration.ScanVMs,
+			"use_wif":   true,
+		}
+		dynamicObjects = []tfgen.Object{
+			providerMondoo,
+			providerAzureAD,
+			providerAzureRM,
+			dataADClientConfig,
+			resourceADServicePrincipal,
+			resourceAdApplication,
+			resourceADReadersDirectoryRole,
+			resourceADReadersRoleAssignment,
+			resourceTimeSleep,
+		}
+		integrationDependsOn = []any{
+			resourceADServicePrincipal.TraverseRef(),
+			resourceADReadersRoleAssignment.TraverseRef(),
+		}
+	} else {
+		// Certificate mode (default): existing behaviour — unchanged.
 		integrationAttributes = tfgen.Attributes{
 			"name":      integration.Name,
 			"tenant_id": dataADClientConfig.TraverseRef("tenant_id"),
@@ -145,26 +187,25 @@ func GenerateAzureHCL(integration AzureIntegration) (string, error) {
 				),
 			},
 		}
-	)
-
-	dynamicObjects := []tfgen.Object{
-		providerMondoo,
-		providerAzureAD,
-		providerAzureRM,
-		dataADClientConfig,
-		resourceTLSPrivateKey,
-		resourceTLSSelfSignedCert,
-		resourceADApplicationCertificate,
-		resourceADServicePrincipal,
-		resourceAdApplication,
-		resourceADReadersDirectoryRole,
-		resourceADReadersRoleAssignment,
-		resourceTimeSleep,
-	}
-	integrationDependsOn := []any{
-		resourceADServicePrincipal.TraverseRef(),
-		resourceADApplicationCertificate.TraverseRef(),
-		resourceADReadersRoleAssignment.TraverseRef(),
+		dynamicObjects = []tfgen.Object{
+			providerMondoo,
+			providerAzureAD,
+			providerAzureRM,
+			dataADClientConfig,
+			resourceTLSPrivateKey,
+			resourceTLSSelfSignedCert,
+			resourceADApplicationCertificate,
+			resourceADServicePrincipal,
+			resourceAdApplication,
+			resourceADReadersDirectoryRole,
+			resourceADReadersRoleAssignment,
+			resourceTimeSleep,
+		}
+		integrationDependsOn = []any{
+			resourceADServicePrincipal.TraverseRef(),
+			resourceADApplicationCertificate.TraverseRef(),
+			resourceADReadersRoleAssignment.TraverseRef(),
+		}
 	}
 
 	// Allow and Deny are mutually exclusive and can't be added together
@@ -199,6 +240,22 @@ func GenerateAzureHCL(integration AzureIntegration) (string, error) {
 		tfgen.HclResourceWithAttributes(integrationAttributes),
 	)
 	dynamicObjects = append(dynamicObjects, resourceMondooIntegration)
+
+	if integration.UseWIF {
+		// In WIF mode the federated identity credential must be created after the
+		// mondoo_integration_azure resource, because it references the computed
+		// wif_subject and wif_issuer_url attributes that the integration exports.
+		resourceADFederatedCredential := tfgen.NewResource("azuread_application_federated_identity_credential", "mondoo",
+			tfgen.HclResourceWithAttributes(tfgen.Attributes{
+				"application_id": resourceAdApplication.TraverseRef("id"),
+				"display_name":   "mondoo",
+				"issuer":         resourceMondooIntegration.TraverseRef("wif_issuer_url"),
+				"subject":        resourceMondooIntegration.TraverseRef("wif_subject"),
+				"audiences":      []string{"api://AzureADTokenExchange"},
+			}),
+		)
+		dynamicObjects = append(dynamicObjects, resourceADFederatedCredential)
+	}
 
 	blocks, err := tfgen.ObjectsToBlocks(dynamicObjects...)
 	if err != nil {

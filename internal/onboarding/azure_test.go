@@ -4,6 +4,7 @@
 package onboarding_test
 
 import (
+	"regexp"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -18,7 +19,7 @@ func TestGenerateAzureHCL(t *testing.T) {
   required_providers {
     mondoo = {
       source  = "mondoohq/mondoo"
-      version = "~> 0.19"
+      version = "~> 0.40"
     }
   }
 }
@@ -125,7 +126,7 @@ func TestGenerateAzureHCLFull(t *testing.T) {
   required_providers {
     mondoo = {
       source  = "mondoohq/mondoo"
-      version = "~> 0.19"
+      version = "~> 0.40"
     }
   }
 }
@@ -266,7 +267,7 @@ func TestGenerateAzureHCLScanVMsForAllowedSubscriptions(t *testing.T) {
   required_providers {
     mondoo = {
       source  = "mondoohq/mondoo"
-      version = "~> 0.19"
+      version = "~> 0.40"
     }
   }
 }
@@ -370,6 +371,60 @@ resource "mondoo_integration_azure" "this" {
 `
 	assert.Equal(t, expected, code)
 }
+
+func TestGenerateAzureHCLWIF(t *testing.T) {
+	code, err := subject.GenerateAzureHCL(subject.AzureIntegration{
+		Name:    "x",
+		Space:   "s",
+		Primary: "sub",
+		UseWIF:  true,
+	})
+	assert.Nil(t, err)
+
+	// WIF mode MUST contain the federated credential resource, use_wif flag, the correct
+	// WIF audience, and references to the integration's computed wif_subject / wif_issuer_url.
+	assert.Contains(t, code, `resource "azuread_application_federated_identity_credential"`)
+	assert.Regexp(t, regexp.MustCompile(`use_wif\s*=\s*true`), code)
+	assert.Contains(t, code, "api://AzureADTokenExchange")
+	assert.Contains(t, code, "mondoo_integration_azure.this.wif_subject")
+	assert.Contains(t, code, "mondoo_integration_azure.this.wif_issuer_url")
+
+	// WIF mode MUST NOT contain cert-based resources or attributes.
+	assert.NotContains(t, code, "tls_self_signed_cert")
+	assert.NotContains(t, code, "tls_private_key")
+	assert.NotContains(t, code, "azuread_application_certificate")
+	assert.NotContains(t, code, "pem_file")
+}
+
+// TestGenerateAzureHCLWIFCombination verifies that WIF mode combined with VM scanning and
+// a subscription allow-list produces all three feature groups correctly and still omits
+// every cert-based resource.
+func TestGenerateAzureHCLWIFCombination(t *testing.T) {
+	code, err := subject.GenerateAzureHCL(subject.AzureIntegration{
+		UseWIF:  true,
+		ScanVMs: true,
+		Allow:   []string{"sub-1"},
+		Primary: "sub-1",
+	})
+	assert.Nil(t, err)
+
+	// WIF credential resource and flag must be present.
+	assert.Contains(t, code, `resource "azuread_application_federated_identity_credential"`)
+	assert.Regexp(t, regexp.MustCompile(`use_wif\s*=\s*true`), code)
+
+	// VM scanning role definition must be present.
+	assert.Regexp(t, regexp.MustCompile(`scan_vms\s*=\s*true`), code)
+
+	// Subscription allow-list must be present.
+	assert.Contains(t, code, `subscription_allow_list`)
+
+	// Cert-based resources must be absent.
+	assert.NotContains(t, code, "tls_self_signed_cert")
+	assert.NotContains(t, code, "tls_private_key")
+	assert.NotContains(t, code, "azuread_application_certificate")
+	assert.NotContains(t, code, "pem_file")
+}
+
 func TestGenerateAzureHCLScanVMsForAllSubscriptions(t *testing.T) {
 	code, err := subject.GenerateAzureHCL(subject.AzureIntegration{ScanVMs: true, Primary: "abc-123-xyz-456-1"})
 	assert.Nil(t, err)
@@ -377,7 +432,7 @@ func TestGenerateAzureHCLScanVMsForAllSubscriptions(t *testing.T) {
   required_providers {
     mondoo = {
       source  = "mondoohq/mondoo"
-      version = "~> 0.19"
+      version = "~> 0.40"
     }
   }
 }

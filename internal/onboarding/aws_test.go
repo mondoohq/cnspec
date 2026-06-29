@@ -57,7 +57,7 @@ func TestGenerateAwsHCL_KeyBased(t *testing.T) {
   required_providers {
     mondoo = {
       source  = "mondoohq/mondoo"
-      version = "~> 0.19"
+      version = "~> 0.40"
     }
   }
 }

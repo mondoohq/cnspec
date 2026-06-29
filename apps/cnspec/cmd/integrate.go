@@ -43,6 +43,7 @@ func init() {
 	integrateAzureCmd.Flags().Bool("scan-vms", false, "Enable scanning Azure VMs using RunCommand")
 	integrateAzureCmd.Flags().StringSlice("allow", []string{}, "Set the Azure subscriptions to include in scanning")
 	integrateAzureCmd.Flags().StringSlice("deny", []string{}, "Set the Azure subscriptions to exclude from scanning")
+	integrateAzureCmd.Flags().Bool("use-wif", false, "Use Workload Identity Federation (keyless) instead of a certificate")
 	// providing both, --deny and --allow, is not allowed
 	integrateAzureCmd.MarkFlagsMutuallyExclusive("allow", "deny")
 
@@ -186,6 +187,7 @@ NOTE that --allow and --deny are mutually exclusive and can't be used together.`
 				viper.BindPFlag("allow", cmd.Flags().Lookup("allow")),
 				viper.BindPFlag("deny", cmd.Flags().Lookup("deny")),
 				viper.BindPFlag("scan-vms", cmd.Flags().Lookup("scan-vms")),
+				viper.BindPFlag("use-wif", cmd.Flags().Lookup("use-wif")),
 			}
 			return errors.Join(errs...)
 		},
@@ -198,6 +200,7 @@ NOTE that --allow and --deny are mutually exclusive and can't be used together.`
 				allow           = viper.GetStringSlice("allow")
 				deny            = viper.GetStringSlice("deny")
 				scanVMs         = viper.GetBool("scan-vms")
+				useWIF          = viper.GetBool("use-wif")
 			)
 
 			// Verify if space exists, which verifies we have access to the Mondoo Platform
@@ -275,6 +278,7 @@ NOTE that --allow and --deny are mutually exclusive and can't be used together.`
 				Allow:   allow,
 				Deny:    deny,
 				ScanVMs: scanVMs,
+				UseWIF:  useWIF,
 			})
 			if err != nil {
 				return errors.Wrap(err, "unable to generate automation code")
