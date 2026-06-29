@@ -1579,22 +1579,13 @@ queries:
   - uid: mondoo-aws-security-iam-password-policy-aws
     filters: asset.platform == "aws"
     mql: |
-      // Ensure properties do exist.
-      aws.iam.accountPasswordPolicy.RequireUppercaseCharacters != empty
-      aws.iam.accountPasswordPolicy.RequireLowercaseCharacters != empty
-      aws.iam.accountPasswordPolicy.RequireSymbols != empty
-      aws.iam.accountPasswordPolicy.RequireNumbers != empty
-      aws.iam.accountPasswordPolicy.MinimumPasswordLength != empty
-      aws.iam.accountPasswordPolicy.PasswordReusePrevention != empty
-      aws.iam.accountPasswordPolicy.MaxPasswordAge != empty
-      // Validate each policy setting against props
-      aws.iam.accountPasswordPolicy.where(RequireUppercaseCharacters != empty).all(RequireUppercaseCharacters == props.mondooAWSSecurityIamPasswordPolicyRequireUppercaseCharacters)
-      aws.iam.accountPasswordPolicy.where(RequireLowercaseCharacters != empty).all(RequireLowercaseCharacters == props.mondooAWSSecurityIamPasswordPolicyRequireLowercaseCharacters)
-      aws.iam.accountPasswordPolicy.where(RequireSymbols != empty).all(RequireSymbols == props.mondooAWSSecurityIamPasswordPolicyRequireSymbols)
-      aws.iam.accountPasswordPolicy.where(RequireNumbers != empty).all(RequireNumbers == props.mondooAWSSecurityIamPasswordPolicyRequireNumbers)
-      aws.iam.accountPasswordPolicy.where(MinimumPasswordLength != empty).all(MinimumPasswordLength >= props.mondooAWSSecurityIamPasswordPolicyMinimumPasswordLength)
-      aws.iam.accountPasswordPolicy.where(PasswordReusePrevention != empty).all(PasswordReusePrevention >= props.mondooAWSSecurityIamPasswordPolicyPasswordReusePrevention)
-      aws.iam.accountPasswordPolicy.where(MaxPasswordAge != empty).all(MaxPasswordAge <= props.mondooAWSSecurityIamPasswordPolicyMaxPasswordAge)
+      aws.iam.passwordPolicy.requireUppercaseCharacters == props.mondooAWSSecurityIamPasswordPolicyRequireUppercaseCharacters
+      aws.iam.passwordPolicy.requireLowercaseCharacters == props.mondooAWSSecurityIamPasswordPolicyRequireLowercaseCharacters
+      aws.iam.passwordPolicy.requireSymbols == props.mondooAWSSecurityIamPasswordPolicyRequireSymbols
+      aws.iam.passwordPolicy.requireNumbers == props.mondooAWSSecurityIamPasswordPolicyRequireNumbers
+      aws.iam.passwordPolicy.minimumPasswordLength >= props.mondooAWSSecurityIamPasswordPolicyMinimumPasswordLength
+      aws.iam.passwordPolicy.passwordReusePrevention >= props.mondooAWSSecurityIamPasswordPolicyPasswordReusePrevention
+      aws.iam.passwordPolicy.maxPasswordAge <= props.mondooAWSSecurityIamPasswordPolicyMaxPasswordAge
   - uid: mondoo-aws-security-iam-password-policy-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_iam_account_password_policy")
     mql: |
@@ -4644,29 +4635,7 @@ queries:
     filters: |
       asset.platform == "aws-lambda-function"
     mql: |
-      # Null covers functions without a resource policy; empty covers empty policy documents.
-      # MQL short-circuits before Statement access when the policy is absent.
-      aws.lambda.function.policy == null ||
-      aws.lambda.function.policy == empty ||
-      aws.lambda.function.policy.Statement == null ||
-      aws.lambda.function.policy.Statement == empty ||
-      aws.lambda.function.policy.Statement.where(Effect == "Allow").where(
-        # AWS principals can be encoded as a string or a list; contains(/^\*$/) covers list entries exactly equal to "*".
-        Principal == "*" ||
-        Principal['AWS'] == "*" ||
-        Principal['AWS'].contains(/^\*$/) ||
-        Principal['Service'] == "*" ||
-        Principal['Service'].contains(/^\*$/)
-      ).all(
-        # Require at least one recognized source condition without a bare wildcard value.
-        Condition != null &&
-        Condition.values.any(
-          _.where(key == /aws:(SourceArn|SourceAccount|PrincipalOrgID)/i) != empty &&
-          # values.contains catches scalar values; values.any catches list-valued condition values.
-          _.where(key == /aws:(SourceArn|SourceAccount|PrincipalOrgID)/i).values.contains(/^\*$/) == false &&
-          _.where(key == /aws:(SourceArn|SourceAccount|PrincipalOrgID)/i).values.any(_.contains(/^\*$/)) == false
-        )
-      )
+      aws.lambda.function.allowsPublicAccess == false
   - uid: mondoo-aws-security-lambda-function-public-access-prohibited-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_lambda_permission")
     mql: |
@@ -10043,7 +10012,7 @@ queries:
     mql: |
       aws.ec2.securitygroup.ipPermissions.where(
         fromPort <= 22 && toPort >= 22 && toPort != 0).none(
-          ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
+          includesPublicSource
           )
   - uid: mondoo-aws-security-secgroup-restricted-ssh-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains( nameLabel == "aws_security_group")
@@ -10219,7 +10188,7 @@ queries:
     mql: |
       aws.ec2.securitygroup.ipPermissions.where(
         fromPort <= 5900 && toPort >= 5903 && toPort != 0).none(
-          ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
+          includesPublicSource
         )
   - uid: mondoo-aws-security-secgroup-restricted-vnc-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_security_group")
@@ -10429,7 +10398,7 @@ queries:
     mql: |
       aws.ec2.securitygroup.ipPermissions.where(
         fromPort <= 3389 && toPort >= 3389 && toPort != 0).none(
-          ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
+          includesPublicSource
           )
   - uid: mondoo-aws-security-secgroup-restricted-rdp-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains( nameLabel == "aws_security_group")
@@ -10634,7 +10603,7 @@ queries:
     mql: |
       aws.ec2.securitygroup.ipPermissions.where(
         fromPort == -1 && toPort == -1).none(
-          ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
+          includesPublicSource
           )
   - uid: mondoo-aws-security-secgroup-restrict-traffic-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains( nameLabel == "aws_security_group")
@@ -24743,22 +24712,13 @@ queries:
     filters: asset.platform == "aws"
     mql: |
       aws.ec2.networkAcls.all(
-        entries.none(egress == false && ruleAction == "allow" && cidrBlock == "0.0.0.0/0" && protocol == "-1")
+        entries.none(egress == false && ruleAction == "allow" && isPublic && protocol == "-1")
       ) &&
       aws.ec2.networkAcls.all(
-        entries.none(egress == false && ruleAction == "allow" && ipv6CidrBlock == "::/0" && protocol == "-1")
+        entries.none(egress == false && ruleAction == "allow" && isPublic && portRange.from <= 22 && portRange.to >= 22)
       ) &&
       aws.ec2.networkAcls.all(
-        entries.none(egress == false && ruleAction == "allow" && portRange.from <= 22 && portRange.to >= 22 && cidrBlock == "0.0.0.0/0")
-      ) &&
-      aws.ec2.networkAcls.all(
-        entries.none(egress == false && ruleAction == "allow" && portRange.from <= 22 && portRange.to >= 22 && ipv6CidrBlock == "::/0")
-      ) &&
-      aws.ec2.networkAcls.all(
-        entries.none(egress == false && ruleAction == "allow" && portRange.from <= 3389 && portRange.to >= 3389 && cidrBlock == "0.0.0.0/0")
-      ) &&
-      aws.ec2.networkAcls.all(
-        entries.none(egress == false && ruleAction == "allow" && portRange.from <= 3389 && portRange.to >= 3389 && ipv6CidrBlock == "::/0")
+        entries.none(egress == false && ruleAction == "allow" && isPublic && portRange.from <= 3389 && portRange.to >= 3389)
       )
   - uid: mondoo-aws-security-nacl-no-unrestricted-ssh-rdp-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_network_acl_rule")
@@ -33647,7 +33607,7 @@ queries:
       aws.workspaces.instances.all(
         securityGroups.all(
           ipPermissions.all(
-            ipRanges.contains("0.0.0.0/0") == false && ipRanges.contains("::/0") == false
+            includesPublicSource == false
           )
         )
       )
@@ -39101,19 +39061,7 @@ queries:
   - uid: mondoo-aws-security-sagemaker-monitoring-job-network-config-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.sagemaker.dataQualityJobDefinitions.all(
-        networkConfig.enableNetworkIsolation == true &&
-        networkConfig.enableInterContainerTrafficEncryption == true
-      ) &&
-      aws.sagemaker.modelQualityJobDefinitions.all(
-        networkConfig.enableNetworkIsolation == true &&
-        networkConfig.enableInterContainerTrafficEncryption == true
-      ) &&
-      aws.sagemaker.modelBiasJobDefinitions.all(
-        networkConfig.enableNetworkIsolation == true &&
-        networkConfig.enableInterContainerTrafficEncryption == true
-      ) &&
-      aws.sagemaker.modelExplainabilityJobDefinitions.all(
+      aws.sagemaker.monitoringJobDefinitions.all(
         networkConfig.enableNetworkIsolation == true &&
         networkConfig.enableInterContainerTrafficEncryption == true
       )
@@ -41184,7 +41132,7 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check ensures that a CloudWatch log metric filter and alarm are configured to detect unauthorized API calls across your AWS environment. By default, CloudWatch does not ship alerting for access-denied events; creating this filter and alarm surfaces patterns such as `AccessDenied` and `UnauthorizedAccess` errors in near real time.
+        This check ensures that a CloudWatch log metric filter and alarm are configured to detect unauthorized API calls across your AWS environment. By default, CloudWatch does not ship alerting for access-denied events; creating this filter and alarm surfaces patterns such as `AccessDenied` and `UnauthorizedOperation` errors in near real time.
 
         **Why this matters**
 
@@ -41203,7 +41151,7 @@ queries:
 
         1. Open the **Amazon CloudWatch Console** and navigate to **Logs** > **Log groups**.
         2. Select the log group associated with your CloudTrail trail.
-        3. Choose **Metric filters** and look for a filter whose pattern contains `AccessDenied` or `UnauthorizedAccess`.
+        3. Choose **Metric filters** and look for a filter whose pattern contains `AccessDenied` or `UnauthorizedOperation`.
         4. Navigate to **Alarms** > **All alarms** and verify that an alarm is configured for the corresponding metric.
 
         A passing account has at least one metric filter matching unauthorized API call patterns with a corresponding alarm. A failing account has no such metric filter or has the filter but no associated alarm.
@@ -41214,7 +41162,7 @@ queries:
 
         ```bash
         aws logs describe-metric-filters \
-          --query "metricFilters[?contains(filterPattern, 'AccessDenied') || contains(filterPattern, 'UnauthorizedAccess')]"
+          --query "metricFilters[?contains(filterPattern, 'AccessDenied') || contains(filterPattern, 'UnauthorizedOperation')]"
         ```
 
         2. Verify that an alarm exists for the matching metric:
@@ -41225,7 +41173,7 @@ queries:
           --output table
         ```
 
-        A passing account returns at least one metric filter entry containing `AccessDenied` or `UnauthorizedAccess` in the `filterPattern`, and a corresponding alarm for that metric. A failing account returns an empty list for the filter query or no alarm for the matching metric.
+        A passing account returns at least one metric filter entry containing `AccessDenied` or `UnauthorizedOperation` in the `filterPattern`, and a corresponding alarm for that metric. A failing account returns an empty list for the filter query or no alarm for the matching metric.
       remediation:
         - id: console
           desc: |
@@ -41234,7 +41182,7 @@ queries:
             1. Navigate to **CloudWatch** and select **Log groups**.
             2. Select the log group associated with your CloudTrail trail.
             3. Choose **Actions** > **Create metric filter**.
-            4. Enter a filter pattern that includes `UnauthorizedAccess` or `AccessDenied`.
+            4. Enter a filter pattern that includes `UnauthorizedOperation` or `AccessDenied`.
             5. Assign a metric name and namespace, then choose **Create metric filter**.
             6. Navigate to **Alarms** > **Create alarm**, select the new metric, and configure SNS notification.
         - id: cli
@@ -41328,9 +41276,12 @@ queries:
   - uid: mondoo-aws-security-cloudwatch-unauthorized-api-alarm-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
-          filterPattern.contains("AccessDenied") || filterPattern.contains("UnauthorizedAccess")
+      aws.cloudtrail.trails.any(
+        capturesAllManagementEvents &&
+        logGroup != null &&
+        logGroup.metricsFilters.any(
+          filterPattern.contains(["AccessDenied", "UnauthorizedOperation"]) &&
+          hasActiveAlarm
         )
       )
   - uid: mondoo-aws-security-cloudwatch-unauthorized-api-alarm-terraform-hcl
@@ -41339,24 +41290,44 @@ queries:
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("UnauthorizedOperation") || arguments.pattern.contains("AccessDenied")
       )
+      terraform.resources("aws_cloudtrail").any(
+        blocks.where(type == "event_selector").length == 0 ||
+        blocks.where(type == "event_selector").any(arguments.include_management_events != false && arguments.read_write_type != "ReadOnly" && arguments.read_write_type != "WriteOnly")
+      )
+      terraform.resources("aws_cloudwatch_metric_alarm").any(arguments.alarm_actions != empty)
   - uid: mondoo-aws-security-cloudwatch-unauthorized-api-alarm-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_cloudwatch_log_metric_filter").any(
       change.after.pattern.contains("UnauthorizedOperation") || change.after.pattern.contains("AccessDenied")
       )
+      terraform.plan.resourceChanges.where(type == "aws_cloudtrail").any(
+        change.after["event_selector"] == null ||
+        change.after["event_selector"].any(_["include_management_events"] != false && _["read_write_type"] != "ReadOnly" && _["read_write_type"] != "WriteOnly")
+      )
+      terraform.plan.resourceChanges.where(type == "aws_cloudwatch_metric_alarm").any(change.after["alarm_actions"] != empty)
   - uid: mondoo-aws-security-cloudwatch-unauthorized-api-alarm-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.state.resources.where(type == "aws_cloudwatch_log_metric_filter").any(
       values.pattern.contains("UnauthorizedOperation") || values.pattern.contains("AccessDenied")
       )
+      terraform.state.resources.where(type == "aws_cloudtrail").any(
+        values["event_selector"] == null ||
+        values["event_selector"].any(_["include_management_events"] != false && _["read_write_type"] != "ReadOnly" && _["read_write_type"] != "WriteOnly")
+      )
+      terraform.state.resources.where(type == "aws_cloudwatch_metric_alarm").any(values["alarm_actions"] != empty)
   - uid: mondoo-aws-security-cloudwatch-unauthorized-api-alarm-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Logs::MetricFilter")
     mql: |
       cloudformation.template.resources.where(type == "AWS::Logs::MetricFilter").any(
       properties['FilterPattern'].string.contains("UnauthorizedOperation") || properties['FilterPattern'].string.contains("AccessDenied")
       )
+      cloudformation.template.resources.where(type == "AWS::CloudTrail::Trail").any(
+        properties['EventSelectors'] == null ||
+        properties['EventSelectors'].any(_['IncludeManagementEvents'] != false && _['ReadWriteType'] != "ReadOnly" && _['ReadWriteType'] != "WriteOnly")
+      )
+      cloudformation.template.resources.where(type == "AWS::CloudWatch::Alarm").any(properties['AlarmActions'] != empty)
   - uid: mondoo-aws-security-cloudwatch-no-mfa-login-alarm
     title: Ensure log metric filter exists for console sign-in without MFA
     impact: 30
@@ -41540,9 +41511,12 @@ queries:
   - uid: mondoo-aws-security-cloudwatch-no-mfa-login-alarm-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
-          filterPattern.contains("ConsoleLogin") && filterPattern.contains("MFAUsed")
+      aws.cloudtrail.trails.any(
+        capturesAllManagementEvents &&
+        logGroup != null &&
+        logGroup.metricsFilters.any(
+          filterPattern.contains("ConsoleLogin") && filterPattern.contains("MFAUsed") &&
+          hasActiveAlarm
         )
       )
   - uid: mondoo-aws-security-cloudwatch-no-mfa-login-alarm-terraform-hcl
@@ -41551,24 +41525,44 @@ queries:
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("ConsoleLogin") && arguments.pattern.contains("MFAUsed")
       )
+      terraform.resources("aws_cloudtrail").any(
+        blocks.where(type == "event_selector").length == 0 ||
+        blocks.where(type == "event_selector").any(arguments.include_management_events != false && arguments.read_write_type != "ReadOnly" && arguments.read_write_type != "WriteOnly")
+      )
+      terraform.resources("aws_cloudwatch_metric_alarm").any(arguments.alarm_actions != empty)
   - uid: mondoo-aws-security-cloudwatch-no-mfa-login-alarm-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_cloudwatch_log_metric_filter").any(
       change.after.pattern.contains("ConsoleLogin") && change.after.pattern.contains("MFAUsed")
       )
+      terraform.plan.resourceChanges.where(type == "aws_cloudtrail").any(
+        change.after["event_selector"] == null ||
+        change.after["event_selector"].any(_["include_management_events"] != false && _["read_write_type"] != "ReadOnly" && _["read_write_type"] != "WriteOnly")
+      )
+      terraform.plan.resourceChanges.where(type == "aws_cloudwatch_metric_alarm").any(change.after["alarm_actions"] != empty)
   - uid: mondoo-aws-security-cloudwatch-no-mfa-login-alarm-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.state.resources.where(type == "aws_cloudwatch_log_metric_filter").any(
       values.pattern.contains("ConsoleLogin") && values.pattern.contains("MFAUsed")
       )
+      terraform.state.resources.where(type == "aws_cloudtrail").any(
+        values["event_selector"] == null ||
+        values["event_selector"].any(_["include_management_events"] != false && _["read_write_type"] != "ReadOnly" && _["read_write_type"] != "WriteOnly")
+      )
+      terraform.state.resources.where(type == "aws_cloudwatch_metric_alarm").any(values["alarm_actions"] != empty)
   - uid: mondoo-aws-security-cloudwatch-no-mfa-login-alarm-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Logs::MetricFilter")
     mql: |
       cloudformation.template.resources.where(type == "AWS::Logs::MetricFilter").any(
       properties['FilterPattern'].string.contains("ConsoleLogin") && properties['FilterPattern'].string.contains("MFAUsed")
       )
+      cloudformation.template.resources.where(type == "AWS::CloudTrail::Trail").any(
+        properties['EventSelectors'] == null ||
+        properties['EventSelectors'].any(_['IncludeManagementEvents'] != false && _['ReadWriteType'] != "ReadOnly" && _['ReadWriteType'] != "WriteOnly")
+      )
+      cloudformation.template.resources.where(type == "AWS::CloudWatch::Alarm").any(properties['AlarmActions'] != empty)
   - uid: mondoo-aws-security-cloudwatch-root-usage-alarm
     title: Ensure log metric filter exists for root account usage
     impact: 30
@@ -41753,9 +41747,12 @@ queries:
   - uid: mondoo-aws-security-cloudwatch-root-usage-alarm-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
-          filterPattern.contains("Root") && filterPattern.contains("userIdentity")
+      aws.cloudtrail.trails.any(
+        capturesAllManagementEvents &&
+        logGroup != null &&
+        logGroup.metricsFilters.any(
+          filterPattern.contains("Root") && filterPattern.contains("userIdentity") &&
+          hasActiveAlarm
         )
       )
   - uid: mondoo-aws-security-cloudwatch-root-usage-alarm-terraform-hcl
@@ -41764,24 +41761,44 @@ queries:
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("Root") && arguments.pattern.contains("userIdentity")
       )
+      terraform.resources("aws_cloudtrail").any(
+        blocks.where(type == "event_selector").length == 0 ||
+        blocks.where(type == "event_selector").any(arguments.include_management_events != false && arguments.read_write_type != "ReadOnly" && arguments.read_write_type != "WriteOnly")
+      )
+      terraform.resources("aws_cloudwatch_metric_alarm").any(arguments.alarm_actions != empty)
   - uid: mondoo-aws-security-cloudwatch-root-usage-alarm-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_cloudwatch_log_metric_filter").any(
       change.after.pattern.contains("Root") && change.after.pattern.contains("userIdentity")
       )
+      terraform.plan.resourceChanges.where(type == "aws_cloudtrail").any(
+        change.after["event_selector"] == null ||
+        change.after["event_selector"].any(_["include_management_events"] != false && _["read_write_type"] != "ReadOnly" && _["read_write_type"] != "WriteOnly")
+      )
+      terraform.plan.resourceChanges.where(type == "aws_cloudwatch_metric_alarm").any(change.after["alarm_actions"] != empty)
   - uid: mondoo-aws-security-cloudwatch-root-usage-alarm-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.state.resources.where(type == "aws_cloudwatch_log_metric_filter").any(
       values.pattern.contains("Root") && values.pattern.contains("userIdentity")
       )
+      terraform.state.resources.where(type == "aws_cloudtrail").any(
+        values["event_selector"] == null ||
+        values["event_selector"].any(_["include_management_events"] != false && _["read_write_type"] != "ReadOnly" && _["read_write_type"] != "WriteOnly")
+      )
+      terraform.state.resources.where(type == "aws_cloudwatch_metric_alarm").any(values["alarm_actions"] != empty)
   - uid: mondoo-aws-security-cloudwatch-root-usage-alarm-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Logs::MetricFilter")
     mql: |
       cloudformation.template.resources.where(type == "AWS::Logs::MetricFilter").any(
       properties['FilterPattern'].string.contains("Root") && properties['FilterPattern'].string.contains("userIdentity")
       )
+      cloudformation.template.resources.where(type == "AWS::CloudTrail::Trail").any(
+        properties['EventSelectors'] == null ||
+        properties['EventSelectors'].any(_['IncludeManagementEvents'] != false && _['ReadWriteType'] != "ReadOnly" && _['ReadWriteType'] != "WriteOnly")
+      )
+      cloudformation.template.resources.where(type == "AWS::CloudWatch::Alarm").any(properties['AlarmActions'] != empty)
   - uid: mondoo-aws-security-cloudwatch-iam-policy-change-alarm
     title: Ensure log metric filter exists for IAM policy changes
     impact: 30
@@ -41967,9 +41984,12 @@ queries:
   - uid: mondoo-aws-security-cloudwatch-iam-policy-change-alarm-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
-          filterPattern.contains("CreatePolicy") || filterPattern.contains("DeletePolicy") || filterPattern.contains("AttachRolePolicy")
+      aws.cloudtrail.trails.any(
+        capturesAllManagementEvents &&
+        logGroup != null &&
+        logGroup.metricsFilters.any(
+          monitoredEventNames.contains(_ == "CreatePolicy" || _ == "DeletePolicy" || _ == "AttachRolePolicy") &&
+          hasActiveAlarm
         )
       )
   - uid: mondoo-aws-security-cloudwatch-iam-policy-change-alarm-terraform-hcl
@@ -41978,24 +41998,44 @@ queries:
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("CreatePolicy") || arguments.pattern.contains("DeletePolicy") || arguments.pattern.contains("AttachRolePolicy")
       )
+      terraform.resources("aws_cloudtrail").any(
+        blocks.where(type == "event_selector").length == 0 ||
+        blocks.where(type == "event_selector").any(arguments.include_management_events != false && arguments.read_write_type != "ReadOnly" && arguments.read_write_type != "WriteOnly")
+      )
+      terraform.resources("aws_cloudwatch_metric_alarm").any(arguments.alarm_actions != empty)
   - uid: mondoo-aws-security-cloudwatch-iam-policy-change-alarm-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_cloudwatch_log_metric_filter").any(
       change.after.pattern.contains("CreatePolicy") || change.after.pattern.contains("DeletePolicy") || change.after.pattern.contains("AttachRolePolicy")
       )
+      terraform.plan.resourceChanges.where(type == "aws_cloudtrail").any(
+        change.after["event_selector"] == null ||
+        change.after["event_selector"].any(_["include_management_events"] != false && _["read_write_type"] != "ReadOnly" && _["read_write_type"] != "WriteOnly")
+      )
+      terraform.plan.resourceChanges.where(type == "aws_cloudwatch_metric_alarm").any(change.after["alarm_actions"] != empty)
   - uid: mondoo-aws-security-cloudwatch-iam-policy-change-alarm-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.state.resources.where(type == "aws_cloudwatch_log_metric_filter").any(
       values.pattern.contains("CreatePolicy") || values.pattern.contains("DeletePolicy") || values.pattern.contains("AttachRolePolicy")
       )
+      terraform.state.resources.where(type == "aws_cloudtrail").any(
+        values["event_selector"] == null ||
+        values["event_selector"].any(_["include_management_events"] != false && _["read_write_type"] != "ReadOnly" && _["read_write_type"] != "WriteOnly")
+      )
+      terraform.state.resources.where(type == "aws_cloudwatch_metric_alarm").any(values["alarm_actions"] != empty)
   - uid: mondoo-aws-security-cloudwatch-iam-policy-change-alarm-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Logs::MetricFilter")
     mql: |
       cloudformation.template.resources.where(type == "AWS::Logs::MetricFilter").any(
       properties['FilterPattern'].string.contains("CreatePolicy") || properties['FilterPattern'].string.contains("DeletePolicy") || properties['FilterPattern'].string.contains("AttachRolePolicy")
       )
+      cloudformation.template.resources.where(type == "AWS::CloudTrail::Trail").any(
+        properties['EventSelectors'] == null ||
+        properties['EventSelectors'].any(_['IncludeManagementEvents'] != false && _['ReadWriteType'] != "ReadOnly" && _['ReadWriteType'] != "WriteOnly")
+      )
+      cloudformation.template.resources.where(type == "AWS::CloudWatch::Alarm").any(properties['AlarmActions'] != empty)
   - uid: mondoo-aws-security-cloudwatch-cloudtrail-config-alarm
     title: Ensure log metric filter exists for CloudTrail config changes
     impact: 30
@@ -42180,9 +42220,12 @@ queries:
   - uid: mondoo-aws-security-cloudwatch-cloudtrail-config-alarm-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
-          filterPattern.contains("CreateTrail") || filterPattern.contains("UpdateTrail") || filterPattern.contains("DeleteTrail") || filterPattern.contains("StartLogging") || filterPattern.contains("StopLogging")
+      aws.cloudtrail.trails.any(
+        capturesAllManagementEvents &&
+        logGroup != null &&
+        logGroup.metricsFilters.any(
+          monitoredEventNames.contains(_ == "CreateTrail" || _ == "UpdateTrail" || _ == "DeleteTrail" || _ == "StartLogging" || _ == "StopLogging") &&
+          hasActiveAlarm
         )
       )
   - uid: mondoo-aws-security-cloudwatch-cloudtrail-config-alarm-terraform-hcl
@@ -42191,24 +42234,44 @@ queries:
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("CreateTrail") || arguments.pattern.contains("UpdateTrail") || arguments.pattern.contains("DeleteTrail") || arguments.pattern.contains("StartLogging") || arguments.pattern.contains("StopLogging")
       )
+      terraform.resources("aws_cloudtrail").any(
+        blocks.where(type == "event_selector").length == 0 ||
+        blocks.where(type == "event_selector").any(arguments.include_management_events != false && arguments.read_write_type != "ReadOnly" && arguments.read_write_type != "WriteOnly")
+      )
+      terraform.resources("aws_cloudwatch_metric_alarm").any(arguments.alarm_actions != empty)
   - uid: mondoo-aws-security-cloudwatch-cloudtrail-config-alarm-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_cloudwatch_log_metric_filter").any(
       change.after.pattern.contains("CreateTrail") || change.after.pattern.contains("UpdateTrail") || change.after.pattern.contains("DeleteTrail") || change.after.pattern.contains("StartLogging") || change.after.pattern.contains("StopLogging")
       )
+      terraform.plan.resourceChanges.where(type == "aws_cloudtrail").any(
+        change.after["event_selector"] == null ||
+        change.after["event_selector"].any(_["include_management_events"] != false && _["read_write_type"] != "ReadOnly" && _["read_write_type"] != "WriteOnly")
+      )
+      terraform.plan.resourceChanges.where(type == "aws_cloudwatch_metric_alarm").any(change.after["alarm_actions"] != empty)
   - uid: mondoo-aws-security-cloudwatch-cloudtrail-config-alarm-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.state.resources.where(type == "aws_cloudwatch_log_metric_filter").any(
       values.pattern.contains("CreateTrail") || values.pattern.contains("UpdateTrail") || values.pattern.contains("DeleteTrail") || values.pattern.contains("StartLogging") || values.pattern.contains("StopLogging")
       )
+      terraform.state.resources.where(type == "aws_cloudtrail").any(
+        values["event_selector"] == null ||
+        values["event_selector"].any(_["include_management_events"] != false && _["read_write_type"] != "ReadOnly" && _["read_write_type"] != "WriteOnly")
+      )
+      terraform.state.resources.where(type == "aws_cloudwatch_metric_alarm").any(values["alarm_actions"] != empty)
   - uid: mondoo-aws-security-cloudwatch-cloudtrail-config-alarm-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Logs::MetricFilter")
     mql: |
       cloudformation.template.resources.where(type == "AWS::Logs::MetricFilter").any(
       properties['FilterPattern'].string.contains("CreateTrail") || properties['FilterPattern'].string.contains("UpdateTrail") || properties['FilterPattern'].string.contains("DeleteTrail") || properties['FilterPattern'].string.contains("StartLogging") || properties['FilterPattern'].string.contains("StopLogging")
       )
+      cloudformation.template.resources.where(type == "AWS::CloudTrail::Trail").any(
+        properties['EventSelectors'] == null ||
+        properties['EventSelectors'].any(_['IncludeManagementEvents'] != false && _['ReadWriteType'] != "ReadOnly" && _['ReadWriteType'] != "WriteOnly")
+      )
+      cloudformation.template.resources.where(type == "AWS::CloudWatch::Alarm").any(properties['AlarmActions'] != empty)
   - uid: mondoo-aws-security-cloudwatch-console-auth-failure-alarm
     title: Ensure log metric filter exists for console auth failures
     impact: 30
@@ -42393,9 +42456,12 @@ queries:
   - uid: mondoo-aws-security-cloudwatch-console-auth-failure-alarm-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
-          filterPattern.contains("ConsoleLogin") && filterPattern.contains(/Failed|Failure/)
+      aws.cloudtrail.trails.any(
+        capturesAllManagementEvents &&
+        logGroup != null &&
+        logGroup.metricsFilters.any(
+          filterPattern.contains("ConsoleLogin") && filterPattern.contains(/Failed|Failure/) &&
+          hasActiveAlarm
         )
       )
   - uid: mondoo-aws-security-cloudwatch-console-auth-failure-alarm-terraform-hcl
@@ -42404,24 +42470,44 @@ queries:
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("ConsoleLogin") && arguments.pattern.contains("Failed")
       )
+      terraform.resources("aws_cloudtrail").any(
+        blocks.where(type == "event_selector").length == 0 ||
+        blocks.where(type == "event_selector").any(arguments.include_management_events != false && arguments.read_write_type != "ReadOnly" && arguments.read_write_type != "WriteOnly")
+      )
+      terraform.resources("aws_cloudwatch_metric_alarm").any(arguments.alarm_actions != empty)
   - uid: mondoo-aws-security-cloudwatch-console-auth-failure-alarm-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_cloudwatch_log_metric_filter").any(
       change.after.pattern.contains("ConsoleLogin") && change.after.pattern.contains("Failed")
       )
+      terraform.plan.resourceChanges.where(type == "aws_cloudtrail").any(
+        change.after["event_selector"] == null ||
+        change.after["event_selector"].any(_["include_management_events"] != false && _["read_write_type"] != "ReadOnly" && _["read_write_type"] != "WriteOnly")
+      )
+      terraform.plan.resourceChanges.where(type == "aws_cloudwatch_metric_alarm").any(change.after["alarm_actions"] != empty)
   - uid: mondoo-aws-security-cloudwatch-console-auth-failure-alarm-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.state.resources.where(type == "aws_cloudwatch_log_metric_filter").any(
       values.pattern.contains("ConsoleLogin") && values.pattern.contains("Failed")
       )
+      terraform.state.resources.where(type == "aws_cloudtrail").any(
+        values["event_selector"] == null ||
+        values["event_selector"].any(_["include_management_events"] != false && _["read_write_type"] != "ReadOnly" && _["read_write_type"] != "WriteOnly")
+      )
+      terraform.state.resources.where(type == "aws_cloudwatch_metric_alarm").any(values["alarm_actions"] != empty)
   - uid: mondoo-aws-security-cloudwatch-console-auth-failure-alarm-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Logs::MetricFilter")
     mql: |
       cloudformation.template.resources.where(type == "AWS::Logs::MetricFilter").any(
       properties['FilterPattern'].string.contains("ConsoleLogin") && properties['FilterPattern'].string.contains("Failed")
       )
+      cloudformation.template.resources.where(type == "AWS::CloudTrail::Trail").any(
+        properties['EventSelectors'] == null ||
+        properties['EventSelectors'].any(_['IncludeManagementEvents'] != false && _['ReadWriteType'] != "ReadOnly" && _['ReadWriteType'] != "WriteOnly")
+      )
+      cloudformation.template.resources.where(type == "AWS::CloudWatch::Alarm").any(properties['AlarmActions'] != empty)
   - uid: mondoo-aws-security-cloudwatch-cmk-disable-delete-alarm
     title: Ensure log metric filter exists for CMK disable or deletion
     impact: 30
@@ -42606,9 +42692,12 @@ queries:
   - uid: mondoo-aws-security-cloudwatch-cmk-disable-delete-alarm-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
-          filterPattern.contains("DisableKey") || filterPattern.contains("ScheduleKeyDeletion")
+      aws.cloudtrail.trails.any(
+        capturesAllManagementEvents &&
+        logGroup != null &&
+        logGroup.metricsFilters.any(
+          monitoredEventNames.contains(_ == "DisableKey" || _ == "ScheduleKeyDeletion") &&
+          hasActiveAlarm
         )
       )
   - uid: mondoo-aws-security-cloudwatch-cmk-disable-delete-alarm-terraform-hcl
@@ -42617,24 +42706,44 @@ queries:
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("DisableKey") || arguments.pattern.contains("ScheduleKeyDeletion")
       )
+      terraform.resources("aws_cloudtrail").any(
+        blocks.where(type == "event_selector").length == 0 ||
+        blocks.where(type == "event_selector").any(arguments.include_management_events != false && arguments.read_write_type != "ReadOnly" && arguments.read_write_type != "WriteOnly")
+      )
+      terraform.resources("aws_cloudwatch_metric_alarm").any(arguments.alarm_actions != empty)
   - uid: mondoo-aws-security-cloudwatch-cmk-disable-delete-alarm-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_cloudwatch_log_metric_filter").any(
       change.after.pattern.contains("DisableKey") || change.after.pattern.contains("ScheduleKeyDeletion")
       )
+      terraform.plan.resourceChanges.where(type == "aws_cloudtrail").any(
+        change.after["event_selector"] == null ||
+        change.after["event_selector"].any(_["include_management_events"] != false && _["read_write_type"] != "ReadOnly" && _["read_write_type"] != "WriteOnly")
+      )
+      terraform.plan.resourceChanges.where(type == "aws_cloudwatch_metric_alarm").any(change.after["alarm_actions"] != empty)
   - uid: mondoo-aws-security-cloudwatch-cmk-disable-delete-alarm-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.state.resources.where(type == "aws_cloudwatch_log_metric_filter").any(
       values.pattern.contains("DisableKey") || values.pattern.contains("ScheduleKeyDeletion")
       )
+      terraform.state.resources.where(type == "aws_cloudtrail").any(
+        values["event_selector"] == null ||
+        values["event_selector"].any(_["include_management_events"] != false && _["read_write_type"] != "ReadOnly" && _["read_write_type"] != "WriteOnly")
+      )
+      terraform.state.resources.where(type == "aws_cloudwatch_metric_alarm").any(values["alarm_actions"] != empty)
   - uid: mondoo-aws-security-cloudwatch-cmk-disable-delete-alarm-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Logs::MetricFilter")
     mql: |
       cloudformation.template.resources.where(type == "AWS::Logs::MetricFilter").any(
       properties['FilterPattern'].string.contains("DisableKey") || properties['FilterPattern'].string.contains("ScheduleKeyDeletion")
       )
+      cloudformation.template.resources.where(type == "AWS::CloudTrail::Trail").any(
+        properties['EventSelectors'] == null ||
+        properties['EventSelectors'].any(_['IncludeManagementEvents'] != false && _['ReadWriteType'] != "ReadOnly" && _['ReadWriteType'] != "WriteOnly")
+      )
+      cloudformation.template.resources.where(type == "AWS::CloudWatch::Alarm").any(properties['AlarmActions'] != empty)
   - uid: mondoo-aws-security-cloudwatch-s3-policy-change-alarm
     title: Ensure log metric filter exists for S3 bucket policy changes
     impact: 30
@@ -42819,9 +42928,12 @@ queries:
   - uid: mondoo-aws-security-cloudwatch-s3-policy-change-alarm-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
-          filterPattern.contains("PutBucketAcl") || filterPattern.contains("PutBucketPolicy")
+      aws.cloudtrail.trails.any(
+        capturesAllManagementEvents &&
+        logGroup != null &&
+        logGroup.metricsFilters.any(
+          monitoredEventNames.contains(_ == "PutBucketAcl" || _ == "PutBucketPolicy") &&
+          hasActiveAlarm
         )
       )
   - uid: mondoo-aws-security-cloudwatch-s3-policy-change-alarm-terraform-hcl
@@ -42830,24 +42942,44 @@ queries:
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("PutBucketPolicy") || arguments.pattern.contains("DeleteBucketPolicy")
       )
+      terraform.resources("aws_cloudtrail").any(
+        blocks.where(type == "event_selector").length == 0 ||
+        blocks.where(type == "event_selector").any(arguments.include_management_events != false && arguments.read_write_type != "ReadOnly" && arguments.read_write_type != "WriteOnly")
+      )
+      terraform.resources("aws_cloudwatch_metric_alarm").any(arguments.alarm_actions != empty)
   - uid: mondoo-aws-security-cloudwatch-s3-policy-change-alarm-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_cloudwatch_log_metric_filter").any(
       change.after.pattern.contains("PutBucketPolicy") || change.after.pattern.contains("DeleteBucketPolicy")
       )
+      terraform.plan.resourceChanges.where(type == "aws_cloudtrail").any(
+        change.after["event_selector"] == null ||
+        change.after["event_selector"].any(_["include_management_events"] != false && _["read_write_type"] != "ReadOnly" && _["read_write_type"] != "WriteOnly")
+      )
+      terraform.plan.resourceChanges.where(type == "aws_cloudwatch_metric_alarm").any(change.after["alarm_actions"] != empty)
   - uid: mondoo-aws-security-cloudwatch-s3-policy-change-alarm-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.state.resources.where(type == "aws_cloudwatch_log_metric_filter").any(
       values.pattern.contains("PutBucketPolicy") || values.pattern.contains("DeleteBucketPolicy")
       )
+      terraform.state.resources.where(type == "aws_cloudtrail").any(
+        values["event_selector"] == null ||
+        values["event_selector"].any(_["include_management_events"] != false && _["read_write_type"] != "ReadOnly" && _["read_write_type"] != "WriteOnly")
+      )
+      terraform.state.resources.where(type == "aws_cloudwatch_metric_alarm").any(values["alarm_actions"] != empty)
   - uid: mondoo-aws-security-cloudwatch-s3-policy-change-alarm-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Logs::MetricFilter")
     mql: |
       cloudformation.template.resources.where(type == "AWS::Logs::MetricFilter").any(
       properties['FilterPattern'].string.contains("PutBucketPolicy") || properties['FilterPattern'].string.contains("DeleteBucketPolicy")
       )
+      cloudformation.template.resources.where(type == "AWS::CloudTrail::Trail").any(
+        properties['EventSelectors'] == null ||
+        properties['EventSelectors'].any(_['IncludeManagementEvents'] != false && _['ReadWriteType'] != "ReadOnly" && _['ReadWriteType'] != "WriteOnly")
+      )
+      cloudformation.template.resources.where(type == "AWS::CloudWatch::Alarm").any(properties['AlarmActions'] != empty)
   - uid: mondoo-aws-security-cloudwatch-config-change-alarm
     title: Ensure log metric filter exists for AWS Config changes
     impact: 30
@@ -43032,9 +43164,12 @@ queries:
   - uid: mondoo-aws-security-cloudwatch-config-change-alarm-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
-          filterPattern.contains("StopConfigurationRecorder") || filterPattern.contains("DeleteDeliveryChannel")
+      aws.cloudtrail.trails.any(
+        capturesAllManagementEvents &&
+        logGroup != null &&
+        logGroup.metricsFilters.any(
+          monitoredEventNames.contains(_ == "StopConfigurationRecorder" || _ == "DeleteDeliveryChannel") &&
+          hasActiveAlarm
         )
       )
   - uid: mondoo-aws-security-cloudwatch-config-change-alarm-terraform-hcl
@@ -43043,24 +43178,44 @@ queries:
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("StopConfigurationRecorder") || arguments.pattern.contains("DeleteDeliveryChannel")
       )
+      terraform.resources("aws_cloudtrail").any(
+        blocks.where(type == "event_selector").length == 0 ||
+        blocks.where(type == "event_selector").any(arguments.include_management_events != false && arguments.read_write_type != "ReadOnly" && arguments.read_write_type != "WriteOnly")
+      )
+      terraform.resources("aws_cloudwatch_metric_alarm").any(arguments.alarm_actions != empty)
   - uid: mondoo-aws-security-cloudwatch-config-change-alarm-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_cloudwatch_log_metric_filter").any(
       change.after.pattern.contains("StopConfigurationRecorder") || change.after.pattern.contains("DeleteDeliveryChannel")
       )
+      terraform.plan.resourceChanges.where(type == "aws_cloudtrail").any(
+        change.after["event_selector"] == null ||
+        change.after["event_selector"].any(_["include_management_events"] != false && _["read_write_type"] != "ReadOnly" && _["read_write_type"] != "WriteOnly")
+      )
+      terraform.plan.resourceChanges.where(type == "aws_cloudwatch_metric_alarm").any(change.after["alarm_actions"] != empty)
   - uid: mondoo-aws-security-cloudwatch-config-change-alarm-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.state.resources.where(type == "aws_cloudwatch_log_metric_filter").any(
       values.pattern.contains("StopConfigurationRecorder") || values.pattern.contains("DeleteDeliveryChannel")
       )
+      terraform.state.resources.where(type == "aws_cloudtrail").any(
+        values["event_selector"] == null ||
+        values["event_selector"].any(_["include_management_events"] != false && _["read_write_type"] != "ReadOnly" && _["read_write_type"] != "WriteOnly")
+      )
+      terraform.state.resources.where(type == "aws_cloudwatch_metric_alarm").any(values["alarm_actions"] != empty)
   - uid: mondoo-aws-security-cloudwatch-config-change-alarm-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Logs::MetricFilter")
     mql: |
       cloudformation.template.resources.where(type == "AWS::Logs::MetricFilter").any(
       properties['FilterPattern'].string.contains("StopConfigurationRecorder") || properties['FilterPattern'].string.contains("DeleteDeliveryChannel")
       )
+      cloudformation.template.resources.where(type == "AWS::CloudTrail::Trail").any(
+        properties['EventSelectors'] == null ||
+        properties['EventSelectors'].any(_['IncludeManagementEvents'] != false && _['ReadWriteType'] != "ReadOnly" && _['ReadWriteType'] != "WriteOnly")
+      )
+      cloudformation.template.resources.where(type == "AWS::CloudWatch::Alarm").any(properties['AlarmActions'] != empty)
   - uid: mondoo-aws-security-cloudwatch-security-group-change-alarm
     title: Ensure log metric filter exists for security group changes
     impact: 30
@@ -43245,9 +43400,12 @@ queries:
   - uid: mondoo-aws-security-cloudwatch-security-group-change-alarm-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
-          filterPattern.contains("AuthorizeSecurityGroupIngress") || filterPattern.contains("AuthorizeSecurityGroupEgress")
+      aws.cloudtrail.trails.any(
+        capturesAllManagementEvents &&
+        logGroup != null &&
+        logGroup.metricsFilters.any(
+          monitoredEventNames.contains(_ == "AuthorizeSecurityGroupIngress" || _ == "AuthorizeSecurityGroupEgress") &&
+          hasActiveAlarm
         )
       )
   - uid: mondoo-aws-security-cloudwatch-security-group-change-alarm-terraform-hcl
@@ -43256,24 +43414,44 @@ queries:
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("AuthorizeSecurityGroupIngress") || arguments.pattern.contains("RevokeSecurityGroupIngress")
       )
+      terraform.resources("aws_cloudtrail").any(
+        blocks.where(type == "event_selector").length == 0 ||
+        blocks.where(type == "event_selector").any(arguments.include_management_events != false && arguments.read_write_type != "ReadOnly" && arguments.read_write_type != "WriteOnly")
+      )
+      terraform.resources("aws_cloudwatch_metric_alarm").any(arguments.alarm_actions != empty)
   - uid: mondoo-aws-security-cloudwatch-security-group-change-alarm-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_cloudwatch_log_metric_filter").any(
       change.after.pattern.contains("AuthorizeSecurityGroupIngress") || change.after.pattern.contains("RevokeSecurityGroupIngress")
       )
+      terraform.plan.resourceChanges.where(type == "aws_cloudtrail").any(
+        change.after["event_selector"] == null ||
+        change.after["event_selector"].any(_["include_management_events"] != false && _["read_write_type"] != "ReadOnly" && _["read_write_type"] != "WriteOnly")
+      )
+      terraform.plan.resourceChanges.where(type == "aws_cloudwatch_metric_alarm").any(change.after["alarm_actions"] != empty)
   - uid: mondoo-aws-security-cloudwatch-security-group-change-alarm-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.state.resources.where(type == "aws_cloudwatch_log_metric_filter").any(
       values.pattern.contains("AuthorizeSecurityGroupIngress") || values.pattern.contains("RevokeSecurityGroupIngress")
       )
+      terraform.state.resources.where(type == "aws_cloudtrail").any(
+        values["event_selector"] == null ||
+        values["event_selector"].any(_["include_management_events"] != false && _["read_write_type"] != "ReadOnly" && _["read_write_type"] != "WriteOnly")
+      )
+      terraform.state.resources.where(type == "aws_cloudwatch_metric_alarm").any(values["alarm_actions"] != empty)
   - uid: mondoo-aws-security-cloudwatch-security-group-change-alarm-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Logs::MetricFilter")
     mql: |
       cloudformation.template.resources.where(type == "AWS::Logs::MetricFilter").any(
       properties['FilterPattern'].string.contains("AuthorizeSecurityGroupIngress") || properties['FilterPattern'].string.contains("RevokeSecurityGroupIngress")
       )
+      cloudformation.template.resources.where(type == "AWS::CloudTrail::Trail").any(
+        properties['EventSelectors'] == null ||
+        properties['EventSelectors'].any(_['IncludeManagementEvents'] != false && _['ReadWriteType'] != "ReadOnly" && _['ReadWriteType'] != "WriteOnly")
+      )
+      cloudformation.template.resources.where(type == "AWS::CloudWatch::Alarm").any(properties['AlarmActions'] != empty)
   - uid: mondoo-aws-security-cloudwatch-nacl-change-alarm
     title: Ensure log metric filter exists for NACL changes
     impact: 30
@@ -43458,9 +43636,12 @@ queries:
   - uid: mondoo-aws-security-cloudwatch-nacl-change-alarm-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
-          filterPattern.contains("CreateNetworkAcl") || filterPattern.contains("DeleteNetworkAcl")
+      aws.cloudtrail.trails.any(
+        capturesAllManagementEvents &&
+        logGroup != null &&
+        logGroup.metricsFilters.any(
+          monitoredEventNames.contains(_ == "CreateNetworkAcl" || _ == "DeleteNetworkAcl") &&
+          hasActiveAlarm
         )
       )
   - uid: mondoo-aws-security-cloudwatch-nacl-change-alarm-terraform-hcl
@@ -43469,24 +43650,44 @@ queries:
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("CreateNetworkAcl") || arguments.pattern.contains("DeleteNetworkAcl")
       )
+      terraform.resources("aws_cloudtrail").any(
+        blocks.where(type == "event_selector").length == 0 ||
+        blocks.where(type == "event_selector").any(arguments.include_management_events != false && arguments.read_write_type != "ReadOnly" && arguments.read_write_type != "WriteOnly")
+      )
+      terraform.resources("aws_cloudwatch_metric_alarm").any(arguments.alarm_actions != empty)
   - uid: mondoo-aws-security-cloudwatch-nacl-change-alarm-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_cloudwatch_log_metric_filter").any(
       change.after.pattern.contains("CreateNetworkAcl") || change.after.pattern.contains("DeleteNetworkAcl")
       )
+      terraform.plan.resourceChanges.where(type == "aws_cloudtrail").any(
+        change.after["event_selector"] == null ||
+        change.after["event_selector"].any(_["include_management_events"] != false && _["read_write_type"] != "ReadOnly" && _["read_write_type"] != "WriteOnly")
+      )
+      terraform.plan.resourceChanges.where(type == "aws_cloudwatch_metric_alarm").any(change.after["alarm_actions"] != empty)
   - uid: mondoo-aws-security-cloudwatch-nacl-change-alarm-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.state.resources.where(type == "aws_cloudwatch_log_metric_filter").any(
       values.pattern.contains("CreateNetworkAcl") || values.pattern.contains("DeleteNetworkAcl")
       )
+      terraform.state.resources.where(type == "aws_cloudtrail").any(
+        values["event_selector"] == null ||
+        values["event_selector"].any(_["include_management_events"] != false && _["read_write_type"] != "ReadOnly" && _["read_write_type"] != "WriteOnly")
+      )
+      terraform.state.resources.where(type == "aws_cloudwatch_metric_alarm").any(values["alarm_actions"] != empty)
   - uid: mondoo-aws-security-cloudwatch-nacl-change-alarm-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Logs::MetricFilter")
     mql: |
       cloudformation.template.resources.where(type == "AWS::Logs::MetricFilter").any(
       properties['FilterPattern'].string.contains("CreateNetworkAcl") || properties['FilterPattern'].string.contains("DeleteNetworkAcl")
       )
+      cloudformation.template.resources.where(type == "AWS::CloudTrail::Trail").any(
+        properties['EventSelectors'] == null ||
+        properties['EventSelectors'].any(_['IncludeManagementEvents'] != false && _['ReadWriteType'] != "ReadOnly" && _['ReadWriteType'] != "WriteOnly")
+      )
+      cloudformation.template.resources.where(type == "AWS::CloudWatch::Alarm").any(properties['AlarmActions'] != empty)
   - uid: mondoo-aws-security-cloudwatch-network-gw-change-alarm
     title: Ensure log metric filter exists for network gateway changes
     impact: 30
@@ -43671,9 +43872,12 @@ queries:
   - uid: mondoo-aws-security-cloudwatch-network-gw-change-alarm-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
-          filterPattern.contains("CreateCustomerGateway") || filterPattern.contains("AttachInternetGateway")
+      aws.cloudtrail.trails.any(
+        capturesAllManagementEvents &&
+        logGroup != null &&
+        logGroup.metricsFilters.any(
+          monitoredEventNames.contains(_ == "CreateCustomerGateway" || _ == "AttachInternetGateway") &&
+          hasActiveAlarm
         )
       )
   - uid: mondoo-aws-security-cloudwatch-network-gw-change-alarm-terraform-hcl
@@ -43682,24 +43886,44 @@ queries:
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("CreateCustomerGateway") || arguments.pattern.contains("AttachInternetGateway")
       )
+      terraform.resources("aws_cloudtrail").any(
+        blocks.where(type == "event_selector").length == 0 ||
+        blocks.where(type == "event_selector").any(arguments.include_management_events != false && arguments.read_write_type != "ReadOnly" && arguments.read_write_type != "WriteOnly")
+      )
+      terraform.resources("aws_cloudwatch_metric_alarm").any(arguments.alarm_actions != empty)
   - uid: mondoo-aws-security-cloudwatch-network-gw-change-alarm-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_cloudwatch_log_metric_filter").any(
       change.after.pattern.contains("CreateCustomerGateway") || change.after.pattern.contains("AttachInternetGateway")
       )
+      terraform.plan.resourceChanges.where(type == "aws_cloudtrail").any(
+        change.after["event_selector"] == null ||
+        change.after["event_selector"].any(_["include_management_events"] != false && _["read_write_type"] != "ReadOnly" && _["read_write_type"] != "WriteOnly")
+      )
+      terraform.plan.resourceChanges.where(type == "aws_cloudwatch_metric_alarm").any(change.after["alarm_actions"] != empty)
   - uid: mondoo-aws-security-cloudwatch-network-gw-change-alarm-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.state.resources.where(type == "aws_cloudwatch_log_metric_filter").any(
       values.pattern.contains("CreateCustomerGateway") || values.pattern.contains("AttachInternetGateway")
       )
+      terraform.state.resources.where(type == "aws_cloudtrail").any(
+        values["event_selector"] == null ||
+        values["event_selector"].any(_["include_management_events"] != false && _["read_write_type"] != "ReadOnly" && _["read_write_type"] != "WriteOnly")
+      )
+      terraform.state.resources.where(type == "aws_cloudwatch_metric_alarm").any(values["alarm_actions"] != empty)
   - uid: mondoo-aws-security-cloudwatch-network-gw-change-alarm-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Logs::MetricFilter")
     mql: |
       cloudformation.template.resources.where(type == "AWS::Logs::MetricFilter").any(
       properties['FilterPattern'].string.contains("CreateCustomerGateway") || properties['FilterPattern'].string.contains("AttachInternetGateway")
       )
+      cloudformation.template.resources.where(type == "AWS::CloudTrail::Trail").any(
+        properties['EventSelectors'] == null ||
+        properties['EventSelectors'].any(_['IncludeManagementEvents'] != false && _['ReadWriteType'] != "ReadOnly" && _['ReadWriteType'] != "WriteOnly")
+      )
+      cloudformation.template.resources.where(type == "AWS::CloudWatch::Alarm").any(properties['AlarmActions'] != empty)
   - uid: mondoo-aws-security-cloudwatch-route-table-change-alarm
     title: Ensure log metric filter exists for route table changes
     impact: 30
@@ -43884,9 +44108,12 @@ queries:
   - uid: mondoo-aws-security-cloudwatch-route-table-change-alarm-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
-          filterPattern.contains("CreateRoute") || filterPattern.contains("CreateRouteTable")
+      aws.cloudtrail.trails.any(
+        capturesAllManagementEvents &&
+        logGroup != null &&
+        logGroup.metricsFilters.any(
+          monitoredEventNames.contains(_ == "CreateRoute" || _ == "CreateRouteTable") &&
+          hasActiveAlarm
         )
       )
   - uid: mondoo-aws-security-cloudwatch-route-table-change-alarm-terraform-hcl
@@ -43895,24 +44122,44 @@ queries:
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("CreateRoute") || arguments.pattern.contains("DeleteRoute")
       )
+      terraform.resources("aws_cloudtrail").any(
+        blocks.where(type == "event_selector").length == 0 ||
+        blocks.where(type == "event_selector").any(arguments.include_management_events != false && arguments.read_write_type != "ReadOnly" && arguments.read_write_type != "WriteOnly")
+      )
+      terraform.resources("aws_cloudwatch_metric_alarm").any(arguments.alarm_actions != empty)
   - uid: mondoo-aws-security-cloudwatch-route-table-change-alarm-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_cloudwatch_log_metric_filter").any(
       change.after.pattern.contains("CreateRoute") || change.after.pattern.contains("DeleteRoute")
       )
+      terraform.plan.resourceChanges.where(type == "aws_cloudtrail").any(
+        change.after["event_selector"] == null ||
+        change.after["event_selector"].any(_["include_management_events"] != false && _["read_write_type"] != "ReadOnly" && _["read_write_type"] != "WriteOnly")
+      )
+      terraform.plan.resourceChanges.where(type == "aws_cloudwatch_metric_alarm").any(change.after["alarm_actions"] != empty)
   - uid: mondoo-aws-security-cloudwatch-route-table-change-alarm-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.state.resources.where(type == "aws_cloudwatch_log_metric_filter").any(
       values.pattern.contains("CreateRoute") || values.pattern.contains("DeleteRoute")
       )
+      terraform.state.resources.where(type == "aws_cloudtrail").any(
+        values["event_selector"] == null ||
+        values["event_selector"].any(_["include_management_events"] != false && _["read_write_type"] != "ReadOnly" && _["read_write_type"] != "WriteOnly")
+      )
+      terraform.state.resources.where(type == "aws_cloudwatch_metric_alarm").any(values["alarm_actions"] != empty)
   - uid: mondoo-aws-security-cloudwatch-route-table-change-alarm-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Logs::MetricFilter")
     mql: |
       cloudformation.template.resources.where(type == "AWS::Logs::MetricFilter").any(
       properties['FilterPattern'].string.contains("CreateRoute") || properties['FilterPattern'].string.contains("DeleteRoute")
       )
+      cloudformation.template.resources.where(type == "AWS::CloudTrail::Trail").any(
+        properties['EventSelectors'] == null ||
+        properties['EventSelectors'].any(_['IncludeManagementEvents'] != false && _['ReadWriteType'] != "ReadOnly" && _['ReadWriteType'] != "WriteOnly")
+      )
+      cloudformation.template.resources.where(type == "AWS::CloudWatch::Alarm").any(properties['AlarmActions'] != empty)
   - uid: mondoo-aws-security-cloudwatch-vpc-change-alarm
     title: Ensure log metric filter exists for VPC changes
     impact: 30
@@ -44097,9 +44344,12 @@ queries:
   - uid: mondoo-aws-security-cloudwatch-vpc-change-alarm-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
-          filterPattern.contains("CreateVpc") || filterPattern.contains("DeleteVpc")
+      aws.cloudtrail.trails.any(
+        capturesAllManagementEvents &&
+        logGroup != null &&
+        logGroup.metricsFilters.any(
+          monitoredEventNames.contains(_ == "CreateVpc" || _ == "DeleteVpc") &&
+          hasActiveAlarm
         )
       )
   - uid: mondoo-aws-security-cloudwatch-vpc-change-alarm-terraform-hcl
@@ -44108,24 +44358,44 @@ queries:
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("CreateVpc") || arguments.pattern.contains("DeleteVpc")
       )
+      terraform.resources("aws_cloudtrail").any(
+        blocks.where(type == "event_selector").length == 0 ||
+        blocks.where(type == "event_selector").any(arguments.include_management_events != false && arguments.read_write_type != "ReadOnly" && arguments.read_write_type != "WriteOnly")
+      )
+      terraform.resources("aws_cloudwatch_metric_alarm").any(arguments.alarm_actions != empty)
   - uid: mondoo-aws-security-cloudwatch-vpc-change-alarm-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_cloudwatch_log_metric_filter").any(
       change.after.pattern.contains("CreateVpc") || change.after.pattern.contains("DeleteVpc")
       )
+      terraform.plan.resourceChanges.where(type == "aws_cloudtrail").any(
+        change.after["event_selector"] == null ||
+        change.after["event_selector"].any(_["include_management_events"] != false && _["read_write_type"] != "ReadOnly" && _["read_write_type"] != "WriteOnly")
+      )
+      terraform.plan.resourceChanges.where(type == "aws_cloudwatch_metric_alarm").any(change.after["alarm_actions"] != empty)
   - uid: mondoo-aws-security-cloudwatch-vpc-change-alarm-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.state.resources.where(type == "aws_cloudwatch_log_metric_filter").any(
       values.pattern.contains("CreateVpc") || values.pattern.contains("DeleteVpc")
       )
+      terraform.state.resources.where(type == "aws_cloudtrail").any(
+        values["event_selector"] == null ||
+        values["event_selector"].any(_["include_management_events"] != false && _["read_write_type"] != "ReadOnly" && _["read_write_type"] != "WriteOnly")
+      )
+      terraform.state.resources.where(type == "aws_cloudwatch_metric_alarm").any(values["alarm_actions"] != empty)
   - uid: mondoo-aws-security-cloudwatch-vpc-change-alarm-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Logs::MetricFilter")
     mql: |
       cloudformation.template.resources.where(type == "AWS::Logs::MetricFilter").any(
       properties['FilterPattern'].string.contains("CreateVpc") || properties['FilterPattern'].string.contains("DeleteVpc")
       )
+      cloudformation.template.resources.where(type == "AWS::CloudTrail::Trail").any(
+        properties['EventSelectors'] == null ||
+        properties['EventSelectors'].any(_['IncludeManagementEvents'] != false && _['ReadWriteType'] != "ReadOnly" && _['ReadWriteType'] != "WriteOnly")
+      )
+      cloudformation.template.resources.where(type == "AWS::CloudWatch::Alarm").any(properties['AlarmActions'] != empty)
   - uid: mondoo-aws-security-cloudwatch-org-change-alarm
     title: Ensure log metric filter exists for organization changes
     impact: 30
@@ -44310,9 +44580,12 @@ queries:
   - uid: mondoo-aws-security-cloudwatch-org-change-alarm-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
-          filterPattern.contains("organizations.amazonaws.com")
+      aws.cloudtrail.trails.any(
+        capturesAllManagementEvents &&
+        logGroup != null &&
+        logGroup.metricsFilters.any(
+          monitoredEventSources.contains(_ == "organizations.amazonaws.com") &&
+          hasActiveAlarm
         )
       )
   - uid: mondoo-aws-security-cloudwatch-org-change-alarm-terraform-hcl
@@ -44321,24 +44594,44 @@ queries:
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("organizations.amazonaws.com")
       )
+      terraform.resources("aws_cloudtrail").any(
+        blocks.where(type == "event_selector").length == 0 ||
+        blocks.where(type == "event_selector").any(arguments.include_management_events != false && arguments.read_write_type != "ReadOnly" && arguments.read_write_type != "WriteOnly")
+      )
+      terraform.resources("aws_cloudwatch_metric_alarm").any(arguments.alarm_actions != empty)
   - uid: mondoo-aws-security-cloudwatch-org-change-alarm-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_cloudwatch_log_metric_filter").any(
       change.after.pattern.contains("organizations.amazonaws.com")
       )
+      terraform.plan.resourceChanges.where(type == "aws_cloudtrail").any(
+        change.after["event_selector"] == null ||
+        change.after["event_selector"].any(_["include_management_events"] != false && _["read_write_type"] != "ReadOnly" && _["read_write_type"] != "WriteOnly")
+      )
+      terraform.plan.resourceChanges.where(type == "aws_cloudwatch_metric_alarm").any(change.after["alarm_actions"] != empty)
   - uid: mondoo-aws-security-cloudwatch-org-change-alarm-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.state.resources.where(type == "aws_cloudwatch_log_metric_filter").any(
       values.pattern.contains("organizations.amazonaws.com")
       )
+      terraform.state.resources.where(type == "aws_cloudtrail").any(
+        values["event_selector"] == null ||
+        values["event_selector"].any(_["include_management_events"] != false && _["read_write_type"] != "ReadOnly" && _["read_write_type"] != "WriteOnly")
+      )
+      terraform.state.resources.where(type == "aws_cloudwatch_metric_alarm").any(values["alarm_actions"] != empty)
   - uid: mondoo-aws-security-cloudwatch-org-change-alarm-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Logs::MetricFilter")
     mql: |
       cloudformation.template.resources.where(type == "AWS::Logs::MetricFilter").any(
       properties['FilterPattern'].string.contains("organizations.amazonaws.com")
       )
+      cloudformation.template.resources.where(type == "AWS::CloudTrail::Trail").any(
+        properties['EventSelectors'] == null ||
+        properties['EventSelectors'].any(_['IncludeManagementEvents'] != false && _['ReadWriteType'] != "ReadOnly" && _['ReadWriteType'] != "WriteOnly")
+      )
+      cloudformation.template.resources.where(type == "AWS::CloudWatch::Alarm").any(properties['AlarmActions'] != empty)
   - uid: mondoo-aws-security-secgroup-no-unrestricted-egress
     title: Ensure security groups do not allow unrestricted egress
     impact: 80
@@ -45028,35 +45321,15 @@ queries:
   - uid: mondoo-aws-security-iam-unused-credentials-disabled-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.iam.credentialReport.where(
-        passwordEnabled == true &&
-        properties['user'] != "<root_account>" &&
-        passwordLastUsed == null
-      ).length == 0
-      aws.iam.credentialReport.where(
-        passwordEnabled == true &&
-        properties['user'] != "<root_account>" &&
-        passwordLastUsed != null &&
-        time.now - passwordLastUsed > props.mondooAWSSecurityCredentialInactivityThreshold * time.day
-      ).length == 0
-      aws.iam.credentialReport.where(
-        accessKey1Active == true &&
-        accessKey1LastUsedDate == null
-      ).length == 0
-      aws.iam.credentialReport.where(
-        accessKey1Active == true &&
-        accessKey1LastUsedDate != null &&
-        time.now - accessKey1LastUsedDate > props.mondooAWSSecurityCredentialInactivityThreshold * time.day
-      ).length == 0
-      aws.iam.credentialReport.where(
-        accessKey2Active == true &&
-        accessKey2LastUsedDate == null
-      ).length == 0
-      aws.iam.credentialReport.where(
-        accessKey2Active == true &&
-        accessKey2LastUsedDate != null &&
-        time.now - accessKey2LastUsedDate > props.mondooAWSSecurityCredentialInactivityThreshold * time.day
-      ).length == 0
+      aws.iam.credentialReport.where(passwordEnabled && isRoot == false).all(
+        passwordInactiveDays <= props.mondooAWSSecurityCredentialInactivityThreshold
+      )
+      aws.iam.credentialReport.where(accessKey1Active).all(
+        accessKey1InactiveDays <= props.mondooAWSSecurityCredentialInactivityThreshold
+      )
+      aws.iam.credentialReport.where(accessKey2Active).all(
+        accessKey2InactiveDays <= props.mondooAWSSecurityCredentialInactivityThreshold
+      )
   - uid: mondoo-aws-security-iam-instance-role-no-admin-access
     title: Ensure EC2 instance roles do not grant administrator access
     impact: 85
@@ -60863,7 +61136,7 @@ queries:
     mql: |
       aws.ec2.securitygroup.ipPermissions.where(
         fromPort <= 5432 && toPort >= 5432 && toPort != 0).none(
-          ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
+          includesPublicSource
           )
   - uid: mondoo-aws-security-secgroup-restricted-postgresql-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
@@ -61029,7 +61302,7 @@ queries:
     mql: |
       aws.ec2.securitygroup.ipPermissions.where(
         fromPort <= 3306 && toPort >= 3306 && toPort != 0).none(
-          ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
+          includesPublicSource
           )
   - uid: mondoo-aws-security-secgroup-restricted-mysql-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
@@ -61195,7 +61468,7 @@ queries:
     mql: |
       aws.ec2.securitygroup.ipPermissions.where(
         fromPort <= 1433 && toPort >= 1433 && toPort != 0).none(
-          ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
+          includesPublicSource
           )
   - uid: mondoo-aws-security-secgroup-restricted-mssql-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
@@ -61367,7 +61640,7 @@ queries:
     mql: |
       aws.ec2.securitygroup.ipPermissions.where(
         fromPort <= 1521 && toPort >= 1521 && toPort != 0).none(
-          ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
+          includesPublicSource
           )
   - uid: mondoo-aws-security-secgroup-restricted-oracle-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
@@ -61539,7 +61812,7 @@ queries:
     mql: |
       aws.ec2.securitygroup.ipPermissions.where(
         fromPort <= 27017 && toPort >= 27017 && toPort != 0).none(
-          ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
+          includesPublicSource
           )
   - uid: mondoo-aws-security-secgroup-restricted-mongodb-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
@@ -61711,7 +61984,7 @@ queries:
     mql: |
       aws.ec2.securitygroup.ipPermissions.where(
         fromPort <= 6379 && toPort >= 6379 && toPort != 0).none(
-          ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
+          includesPublicSource
           )
   - uid: mondoo-aws-security-secgroup-restricted-redis-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
@@ -61887,7 +62160,7 @@ queries:
     mql: |
       aws.ec2.securitygroup.ipPermissions.where(
         fromPort <= 11211 && toPort >= 11211 && toPort != 0).none(
-          ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
+          includesPublicSource
           )
   - uid: mondoo-aws-security-secgroup-restricted-memcached-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
@@ -62059,7 +62332,7 @@ queries:
     mql: |
       aws.ec2.securitygroup.ipPermissions.where(
         fromPort <= 9300 && toPort >= 9200 && toPort != 0).none(
-          ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
+          includesPublicSource
           )
   - uid: mondoo-aws-security-secgroup-restricted-elasticsearch-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
@@ -62231,7 +62504,7 @@ queries:
     mql: |
       aws.ec2.securitygroup.ipPermissions.where(
         fromPort <= 5986 && toPort >= 5985 && toPort != 0).none(
-          ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
+          includesPublicSource
           )
   - uid: mondoo-aws-security-secgroup-restricted-winrm-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
@@ -62405,7 +62678,7 @@ queries:
     mql: |
       aws.ec2.securitygroup.ipPermissions.where(
         fromPort <= 2376 && toPort >= 2375 && toPort != 0).none(
-          ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
+          includesPublicSource
           )
   - uid: mondoo-aws-security-secgroup-restricted-docker-daemon-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
@@ -62579,7 +62852,7 @@ queries:
     mql: |
       aws.ec2.securitygroup.ipPermissions.where(
         fromPort <= 6443 && toPort >= 6443 && toPort != 0).none(
-          ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
+          includesPublicSource
           )
   - uid: mondoo-aws-security-secgroup-restricted-kubernetes-api-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
@@ -62750,7 +63023,7 @@ queries:
     mql: |
       aws.ec2.securitygroup.ipPermissions.where(
         fromPort <= 10255 && toPort >= 10250 && toPort != 0).none(
-          ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
+          includesPublicSource
           )
   - uid: mondoo-aws-security-secgroup-restricted-kubelet-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
@@ -62920,7 +63193,7 @@ queries:
     mql: |
       aws.ec2.securitygroup.ipPermissions.where(
         fromPort <= 2380 && toPort >= 2379 && toPort != 0).none(
-          ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
+          includesPublicSource
           )
   - uid: mondoo-aws-security-secgroup-restricted-etcd-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
@@ -65046,13 +65319,7 @@ queries:
       aws.transfer.connectors.all(
         accessRole != null &&
         accessRole.inlinePolicies.length == 0 &&
-        accessRole.attachedPolicies.all(
-          defaultVersion.document['Statement'].all(
-            _['Effect'].upcase == "DENY" ||
-            [_['Resource']].flat.none(_ == "*") &&
-            [_['Action']].flat.none(_ == "*" || _ == "s3:*")
-          )
-        )
+        accessRole.attachedPolicies.none(hasWildcardAllow)
       )
   - uid: mondoo-aws-security-transfer-connector-logging-role
     title: Ensure Transfer Family connectors have a loggingRole configured
@@ -69878,6 +70145,10 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-11
       compliance/vda-isa-5: vda-isa-5-5-1-1
     variants:
+      - uid: mondoo-aws-security-kinesis-video-stream-cmk-encryption-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
       - uid: mondoo-aws-security-kinesis-video-stream-cmk-encryption-terraform-hcl
         tags:
           mondoo.com/filter-title: Terraform HCL
@@ -69977,6 +70248,12 @@ queries:
     refs:
       - url: https://docs.aws.amazon.com/kinesisvideostreams/latest/dg/how-data.html
         title: Kinesis Video Streams data protection
+  - uid: mondoo-aws-security-kinesis-video-stream-cmk-encryption-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.kinesis.videoStreams.all(
+        kmsKey != null && kmsKey.keyManager == "CUSTOMER"
+      )
   - uid: mondoo-aws-security-kinesis-video-stream-cmk-encryption-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_kinesis_video_stream")
     mql: |
