@@ -19,7 +19,7 @@ choco install cnspec
 # https://github.com/mondoohq/cnspec/releases
 ```
 
-For more installation options, see the [cnspec installation guide](https://mondoo.com/docs/cnspec/cnspec-adv-install/overview/).
+For more installation options, see the [cnspec installation guide](https://mondoo.com/docs/cnspec/install/overview).
 
 ### Verify installation
 
@@ -221,7 +221,7 @@ Policies use MQL to query system configurations, cloud resources, and applicatio
 - **Assertions**: Validate configurations meet security requirements
 - **Cross-Platform**: Same query syntax works across different operating systems and cloud providers
 
-For detailed MQL syntax and available resources, see the [MQL documentation](https://mondoo.com/docs/mql/).
+For detailed MQL syntax and available resources, see the [MQL documentation](https://mondoo.com/docs/mql).
 
 ### Example Policy Check
 

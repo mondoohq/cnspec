@@ -224,7 +224,7 @@ processes.list { name pid }
 files("/etc").where(name == /\.conf$/)
 ```
 
-For MQL resources available per provider, see [MQL resources documentation](https://mondoo.com/docs/mql/resources/).
+For MQL resources available per provider, see [MQL resources documentation](https://mondoo.com/docs/mql/resources).
 
 ## Linting and testing
 
@@ -310,7 +310,7 @@ python3 content/validation/dump_api_specs.py        # Tailscale + Atlassian API 
 
 ## Resources
 
-- [MQL Documentation](https://mondoo.com/docs/mql/)
+- [MQL Documentation](https://mondoo.com/docs/mql)
 - [MQL Built-in Functions](https://mondoo.com/docs/mql/functions)
-- [MQL Resources by Provider](https://mondoo.com/docs/mql/resources/) ([AWS](https://mondoo.com/docs/mql/resources/aws-pack/), [Azure](https://mondoo.com/docs/mql/resources/azure-pack/), [GCP](https://mondoo.com/docs/mql/resources/gcp-pack/), [Core](https://mondoo.com/docs/mql/resources/core-pack/))
-- [Policy Authoring Guide](https://mondoo.com/docs/cnspec/write-policies/write-intro/)
+- [MQL Resources by Provider](https://mondoo.com/docs/mql/resources) ([AWS](https://mondoo.com/docs/mql/resources/aws), [Azure](https://mondoo.com/docs/mql/resources/azure), [GCP](https://mondoo.com/docs/mql/resources/gcp), [Core](https://mondoo.com/docs/mql/resources/core))
+- [Policy Authoring Guide](https://mondoo.com/docs/cnspec/write-policies/write-intro)
