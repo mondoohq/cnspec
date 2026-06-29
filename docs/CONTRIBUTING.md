@@ -1,6 +1,6 @@
 # Contributing to cnspec Documentation
 
-This folder contains the user-facing documentation for cnspec. The content is synced to the [Mondoo docs site](https://mondoo.com/docs/cnspec/).
+This folder contains the user-facing documentation for cnspec. The content is synced to the [Mondoo docs site](https://mondoo.com/docs/cnspec).
 
 ## How the sync works
 

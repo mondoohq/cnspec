@@ -19,7 +19,7 @@ choco install cnspec
 # https://github.com/mondoohq/cnspec/releases
 ```
 
-For more installation options, see the [cnspec installation guide](https://mondoo.com/docs/cnspec/cnspec-adv-install/overview/).
+For more installation options, see the [cnspec installation guide](https://mondoo.com/docs/cnspec/install/overview).
 
 ### Verify installation
 
@@ -46,7 +46,7 @@ cnspec scan local -f mondoo-linux-inventory.mql.yaml
 
 After running a scan, cnspec displays the asset inventory.
 
-To learn more about querypacks, check out our [docs](https://mondoo.com/docs/cnquery/cnquery-run-pack).
+To learn more about querypacks, check out our [docs](https://mondoo.com/docs/cnspec/query-packs).
 
 ### Output Formats
 

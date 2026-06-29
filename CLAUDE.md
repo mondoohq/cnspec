@@ -101,7 +101,7 @@ This section is for any automated reviewer (mondoo-code-review, Claude, etc.) co
 ### Verify before you claim
 
 - **Resource & field existence** — Do not assume a resource or field is missing. Check what the provider actually exposes:
-  - [Resources by Provider](https://mondoo.com/docs/mql/resources/) — canonical list of resources and their fields, grouped by provider (aws-pack, azure-pack, gcp-pack, core-pack, …).
+  - [Resources by Provider](https://mondoo.com/docs/mql/resources) — canonical list of resources and their fields, grouped by provider (aws-pack, azure-pack, gcp-pack, core-pack, …).
   - [Built-in Functions](https://mondoo.com/docs/mql/functions) — `parse.json`, `parse.date`, `regex`, list ops (`all`, `any`, `where`, `contains`, `none`, `map`), etc.
   - [Full Mondoo Docs (LLM-friendly text)](https://mondoo.com/docs/llms-full.txt) — single raw-text dump of all docs; grep it when you need to confirm a field or function quickly.
   - Locally, the *installed* provider schema is authoritative for what lint resolves against: `~/.config/mondoo/providers/<name>/<name>.resources.json`. The source of truth in code is `providers/<name>/resources/<name>.lr` in the [mql repo](https://github.com/mondoohq/mql).
@@ -125,9 +125,9 @@ This section is for any automated reviewer (mondoo-code-review, Claude, etc.) co
 
 ## Resources
 
-- [cnspec Documentation](https://mondoo.com/docs/cnspec/)
-- [MQL Documentation](https://mondoo.com/docs/mql/) · [Built-in Functions](https://mondoo.com/docs/mql/functions) · [Resources by Provider](https://mondoo.com/docs/mql/resources/)
+- [cnspec Documentation](https://mondoo.com/docs/cnspec)
+- [MQL Documentation](https://mondoo.com/docs/mql) · [Built-in Functions](https://mondoo.com/docs/mql/functions) · [Resources by Provider](https://mondoo.com/docs/mql/resources)
 - [MQL operator precedence](https://github.com/mondoohq/mql/blob/main/mqlc/parser/operators.go#L11) — reference for operator precedence during policy reviews
-- [Policy Authoring Guide](https://mondoo.com/docs/cnspec/write-policies/write-intro/)
+- [Policy Authoring Guide](https://mondoo.com/docs/cnspec/write-policies/write-intro)
 - [mql Repository](https://github.com/mondoohq/mql)
 - [Full Mondoo Docs (LLM-friendly text)](https://mondoo.com/docs/llms-full.txt)
