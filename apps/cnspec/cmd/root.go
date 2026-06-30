@@ -63,8 +63,8 @@ var rootCmd = &cobra.Command{
 	Short: "cnspec CLI",
 	// NOTE: if we use theme.DefaultTheme.Landing go compiler uses the value before init updated it
 	Long: landing() + "\n\n" + rootCmdDesc,
-	PersistentPreRun: func(cmd *cobra.Command, args []string) {
-		initLogger(cmd)
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		return initLogger(cmd)
 	},
 }
 
@@ -199,25 +199,27 @@ func init() {
 	}
 }
 
-func initLogger(cmd *cobra.Command) {
+func initLogger(cmd *cobra.Command) error {
 	// A full logging configuration file takes precedence over the log-level
 	// flag. loggerconf.Configure also applies the DEBUG/TRACE env overrides.
+	// A bad --logging-config is a hard error: the user explicitly asked for a
+	// logging setup, so fail loudly instead of silently using the default.
 	if path := viper.GetString("logging-config"); path != "" {
 		opts, err := loggerconf.Load(path)
-		if err == nil {
-			err = loggerconf.Configure(opts)
-		}
 		if err != nil {
-			log.Error().Err(err).Msg("could not apply logging configuration")
+			return err
 		}
-		return
+		if err := loggerconf.Configure(opts); err != nil {
+			return err
+		}
+		return nil
 	}
 
 	// environment variables always over-write custom flags
 	envLevel, ok := logger.GetEnvLogLevel()
 	if ok {
 		logger.Set(envLevel)
-		return
+		return nil
 	}
 
 	// retrieve log-level from flags
@@ -226,6 +228,7 @@ func initLogger(cmd *cobra.Command) {
 		level = "debug"
 	}
 	logger.Set(level)
+	return nil
 }
 
 var reMdName = regexp.MustCompile(`/([^/]+)\.md$`)
