@@ -95,6 +95,8 @@ policies:
         checks:
           - uid: mondoo-stackit-security-ske-cluster-healthy
           - uid: mondoo-stackit-security-ske-cluster-auto-update
+          - uid: mondoo-stackit-security-ske-apiserver-acl-enabled
+          - uid: mondoo-stackit-security-ske-apiserver-acl-restricted
       - title: STACKIT Telemetry
         checks:
           - uid: mondoo-stackit-security-telemetry-token-expiry-set
@@ -1088,6 +1090,86 @@ queries:
 
               maintenance = {
                 enable_kubernetes_version_updates = true
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.stackit.cloud/products/runtime/kubernetes-engine/
+        title: STACKIT Documentation - Kubernetes Engine (SKE)
+  - uid: mondoo-stackit-security-ske-apiserver-acl-enabled
+    title: Ensure STACKIT SKE clusters restrict Kubernetes API server access
+    impact: 80
+    filters: asset.platform == "stackit-ske-cluster"
+    mql: |
+      stackit.ske.cluster.apiServerAclEnabled == true
+    docs:
+      desc: |
+        This check ensures that a STACKIT Kubernetes Engine (SKE) cluster has the API-server access-control list (ACL) enabled. With the ACL disabled, the cluster's Kubernetes API server is reachable from any source address, exposing the control plane to the entire internet.
+
+        **Why this matters**
+
+        - **Control-plane exposure:** An unrestricted API server is continuously scanned and is a primary target for credential and exploit attacks.
+        - **Defense in depth:** An IP allow-list ensures only known networks can even attempt to authenticate to the cluster.
+      remediation:
+        - id: console
+          desc: |
+            In the STACKIT Portal, open the SKE cluster settings and enable the API-server ACL, then add the CIDR ranges that should be allowed to reach the Kubernetes API.
+        - id: terraform
+          desc: |
+            Enable the API-server ACL and restrict it to known networks via the `extensions.acl` block on the `stackit_ske_cluster` resource:
+
+            ```hcl
+            resource "stackit_ske_cluster" "example" {
+              project_id = var.project_id
+              name       = "example"
+
+              # ... node_pools ...
+
+              extensions = {
+                acl = {
+                  enabled       = true
+                  allowed_cidrs = ["10.0.0.0/8"] # restrict to your admin/VPN networks
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.stackit.cloud/products/runtime/kubernetes-engine/
+        title: STACKIT Documentation - Kubernetes Engine (SKE)
+  - uid: mondoo-stackit-security-ske-apiserver-acl-restricted
+    title: Ensure STACKIT SKE API server ACL is not open to the internet
+    impact: 85
+    filters: asset.platform == "stackit-ske-cluster"
+    mql: |
+      stackit.ske.cluster.apiServerAclAllowedCidrs.none(_ == "0.0.0.0/0" || _ == "::/0")
+    docs:
+      desc: |
+        This check ensures that a STACKIT Kubernetes Engine (SKE) cluster's API-server access-control list does not allow `0.0.0.0/0` or `::/0`. An allow-list that includes the entire internet provides no protection — it is equivalent to disabling the ACL while appearing to be configured.
+
+        **Why this matters**
+
+        - **False sense of security:** A world-open entry in the allow-list defeats the purpose of the ACL.
+        - **Control-plane exposure:** Any host on the internet can reach the Kubernetes API server and attempt to authenticate.
+      remediation:
+        - id: console
+          desc: |
+            In the STACKIT Portal, edit the SKE cluster's API-server ACL and replace any `0.0.0.0/0` or `::/0` entry with the specific administrative or VPN CIDRs that require access.
+        - id: terraform
+          desc: |
+            Set `extensions.acl.allowed_cidrs` on the `stackit_ske_cluster` resource to specific networks, excluding `0.0.0.0/0` and `::/0`:
+
+            ```hcl
+            resource "stackit_ske_cluster" "example" {
+              project_id = var.project_id
+              name       = "example"
+
+              # ... node_pools ...
+
+              extensions = {
+                acl = {
+                  enabled       = true
+                  allowed_cidrs = ["10.0.0.0/8", "192.168.0.0/16"] # not 0.0.0.0/0
+                }
               }
             }
             ```
