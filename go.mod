@@ -49,7 +49,7 @@ require (
 	github.com/tliron/glsp v0.2.2
 	github.com/zclconf/go-cty v1.18.1
 	go.mondoo.com/mondoo-go v0.0.0-20260626123927-af2ab87cb7ae
-	go.mondoo.com/mql/v13 v13.25.0
+	go.mondoo.com/mql/v13 v13.25.1-0.20260630134140-57bf5d3a2580
 	go.mondoo.com/ranger-rpc v0.8.0
 	gocloud.dev v0.46.0
 	golang.org/x/sync v0.21.0
@@ -69,6 +69,7 @@ require (
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	cloud.google.com/go/iam v1.7.0 // indirect
 	cloud.google.com/go/kms v1.26.0 // indirect
+	cloud.google.com/go/logging v1.13.2 // indirect
 	cloud.google.com/go/longrunning v0.9.0 // indirect
 	cloud.google.com/go/monitoring v1.24.3 // indirect
 	cloud.google.com/go/secretmanager v1.16.0 // indirect
