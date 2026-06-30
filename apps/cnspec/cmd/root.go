@@ -24,6 +24,7 @@ import (
 	"go.mondoo.com/mql/v13/cli/theme"
 	"go.mondoo.com/mql/v13/cli/theme/colors"
 	"go.mondoo.com/mql/v13/logger"
+	"go.mondoo.com/mql/v13/logger/loggerconf"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/sysinfo"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream"
 	rangerUtils "go.mondoo.com/mql/v13/utils/ranger"
@@ -146,6 +147,7 @@ func init() {
 
 	rootCmd.PersistentFlags().BoolP("verbose", "v", false, "Enable verbose output")
 	rootCmd.PersistentFlags().String("log-level", "info", "Set the log level: error, warn, info, debug, trace")
+	rootCmd.PersistentFlags().String("logging-config", "", "Path to a logging configuration file (YAML or JSON) that selects the log writer, level, and writer-specific options")
 	rootCmd.PersistentFlags().String("api-proxy", "", "Set the proxy for communications with Mondoo Platform API")
 	rootCmd.PersistentFlags().Bool("auto-update", true, "Enable automatic provider installation and update")
 	// Set NoOptDefVal to allow space-separated bool values (--auto-update false)
@@ -153,6 +155,7 @@ func init() {
 	rootCmd.PersistentFlags().Lookup("auto-update").NoOptDefVal = "true"
 	_ = viper.BindPFlag("verbose", rootCmd.PersistentFlags().Lookup("verbose"))
 	_ = viper.BindPFlag("log-level", rootCmd.PersistentFlags().Lookup("log-level"))
+	_ = viper.BindPFlag("logging-config", rootCmd.PersistentFlags().Lookup("logging-config"))
 	_ = viper.BindPFlag("api_proxy", rootCmd.PersistentFlags().Lookup("api-proxy"))
 	_ = viper.BindPFlag("auto-update", rootCmd.PersistentFlags().Lookup("auto-update"))
 	_ = viper.BindEnv("features")
@@ -197,6 +200,22 @@ func init() {
 }
 
 func initLogger(cmd *cobra.Command) {
+	// A full logging configuration file takes precedence over the log-level
+	// flag. loggerconf.Configure also applies the DEBUG/TRACE env overrides.
+	// If it fails, log the error and carry on without it rather than aborting.
+	if path := viper.GetString("logging-config"); path != "" {
+		opts, err := loggerconf.Load(path)
+		if err == nil {
+			err = loggerconf.Configure(opts)
+		}
+		if err != nil {
+			log.Error().Err(err).Msg("could not apply logging configuration")
+		} else {
+			log.Info().Str("path", path).Msg("loaded logging configuration")
+		}
+		return
+	}
+
 	// environment variables always over-write custom flags
 	envLevel, ok := logger.GetEnvLogLevel()
 	if ok {
