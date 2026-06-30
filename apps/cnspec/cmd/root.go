@@ -210,6 +210,8 @@ func initLogger(cmd *cobra.Command) {
 		}
 		if err != nil {
 			log.Error().Err(err).Msg("could not apply logging configuration")
+		} else {
+			log.Info().Str("path", path).Msg("loaded logging configuration")
 		}
 		return
 	}
