@@ -134,6 +134,35 @@ queries:
         - id: console
           desc: |
             In the STACKIT Portal, open **Compute Engine** > **Servers**, select the server, and attach an appropriate security group under its network settings.
+        - id: terraform
+          desc: |
+            Attach a security group to the server's network interface so instance-level filtering applies. With the `stackit` Terraform provider, set `security_group_ids` on a `stackit_network_interface` and reference that interface from the server:
+
+            ```hcl
+            resource "stackit_security_group" "example" {
+              project_id = var.project_id
+              name       = "example-sg"
+              stateful   = true
+            }
+
+            resource "stackit_network_interface" "example" {
+              project_id         = var.project_id
+              network_id         = var.network_id
+              security_group_ids = [stackit_security_group.example.security_group_id]
+            }
+
+            resource "stackit_server" "example" {
+              project_id   = var.project_id
+              name         = "example-server"
+              machine_type = "g2i.1"
+              boot_volume = {
+                size        = 64
+                source_type = "image"
+                source_id   = var.image_id
+              }
+              network_interfaces = [stackit_network_interface.example.network_interface_id]
+            }
+            ```
     refs:
       - url: https://docs.stackit.cloud/products/network/network-security/
         title: STACKIT Documentation - Security Groups
@@ -155,6 +184,24 @@ queries:
         - id: console
           desc: |
             Volume encryption is configured at creation time. For an unencrypted volume, create a new encrypted volume and migrate the data, then detach and delete the unencrypted volume.
+        - id: terraform
+          desc: |
+            Create the volume with customer-managed encryption by supplying `encryption_parameters` (a STACKIT KMS key) on the `stackit_volume` resource. Encryption is set at creation, so migrate data from any unencrypted volume to a new encrypted one:
+
+            ```hcl
+            resource "stackit_volume" "example" {
+              project_id        = var.project_id
+              name              = "encrypted-volume"
+              size              = 64
+              availability_zone = "eu01-1"
+              encryption_parameters = {
+                kek_keyring_id  = var.kms_keyring_id
+                kek_key_id      = var.kms_key_id
+                kek_key_version = 1
+                service_account = var.kms_service_account
+              }
+            }
+            ```
     refs:
       - url: https://docs.stackit.cloud/products/storage/block-storage/
         title: STACKIT Documentation - Block Storage
@@ -177,6 +224,26 @@ queries:
         - id: console
           desc: |
             In the STACKIT Portal, edit the offending security group rule and restrict the SSH source CIDR to a bastion host, VPN range, or specific administrative network instead of `0.0.0.0/0`.
+        - id: terraform
+          desc: |
+            Define the SSH ingress rule with a restricted `ip_range` (a bastion or admin CIDR) instead of `0.0.0.0/0` on the `stackit_security_group_rule` resource:
+
+            ```hcl
+            resource "stackit_security_group_rule" "ssh_restricted" {
+              project_id        = var.project_id
+              security_group_id = var.security_group_id
+              direction         = "ingress"
+              ether_type        = "IPv4"
+              ip_range          = "10.0.0.0/8" # restrict to a bastion/admin range, not 0.0.0.0/0
+              protocol = {
+                name = "tcp"
+              }
+              port_range = {
+                min = 22
+                max = 22
+              }
+            }
+            ```
     refs:
       - url: https://docs.stackit.cloud/products/network/network-security/
         title: STACKIT Documentation - Security Groups
@@ -198,6 +265,26 @@ queries:
         - id: console
           desc: |
             In the STACKIT Portal, edit the offending security group rule and restrict the RDP source CIDR to a bastion host or VPN range instead of `0.0.0.0/0`.
+        - id: terraform
+          desc: |
+            Define the RDP ingress rule with a restricted `ip_range` (a bastion or admin CIDR) instead of `0.0.0.0/0` on the `stackit_security_group_rule` resource:
+
+            ```hcl
+            resource "stackit_security_group_rule" "rdp_restricted" {
+              project_id        = var.project_id
+              security_group_id = var.security_group_id
+              direction         = "ingress"
+              ether_type        = "IPv4"
+              ip_range          = "10.0.0.0/8" # restrict to a bastion/admin range, not 0.0.0.0/0
+              protocol = {
+                name = "tcp"
+              }
+              port_range = {
+                min = 3389
+                max = 3389
+              }
+            }
+            ```
     refs:
       - url: https://docs.stackit.cloud/products/network/network-security/
         title: STACKIT Documentation - Security Groups
@@ -219,6 +306,26 @@ queries:
         - id: console
           desc: |
             In the STACKIT Portal, replace the broad rule with specific rules that open only the required ports to the smallest necessary source CIDRs.
+        - id: terraform
+          desc: |
+            Replace any all-ports world-open rule with `stackit_security_group_rule` resources that scope each rule to a specific `port_range` and a restricted `ip_range`:
+
+            ```hcl
+            resource "stackit_security_group_rule" "https_restricted" {
+              project_id        = var.project_id
+              security_group_id = var.security_group_id
+              direction         = "ingress"
+              ether_type        = "IPv4"
+              ip_range          = "10.0.0.0/8" # restrict to the smallest necessary CIDR, not 0.0.0.0/0
+              protocol = {
+                name = "tcp"
+              }
+              port_range = {
+                min = 443 # open only the required port(s), not the full range
+                max = 443
+              }
+            }
+            ```
     refs:
       - url: https://docs.stackit.cloud/products/network/network-security/
         title: STACKIT Documentation - Security Groups
@@ -240,6 +347,22 @@ queries:
         - id: console
           desc: |
             In the STACKIT Portal, edit the application load balancer and re-enable target security group assignment, or manually ensure the targets are protected by an equivalent security group.
+        - id: terraform
+          desc: |
+            Keep automatic target security group assignment enabled by setting `disable_target_security_group_assignment = false` (the secure value) on the `stackit_application_load_balancer` resource:
+
+            ```hcl
+            resource "stackit_application_load_balancer" "example" {
+              project_id = var.project_id
+              region     = "eu01"
+              name       = "example-alb"
+              plan_id    = "p10"
+
+              # ... listeners, networks, and target_pools as required ...
+
+              disable_target_security_group_assignment = false
+            }
+            ```
     refs:
       - url: https://docs.stackit.cloud/products/network/load-balancing-and-content-delivery/application-load-balancer/
         title: STACKIT Documentation - Application Load Balancer
@@ -264,6 +387,17 @@ queries:
         - id: console
           desc: |
             Object Lock is set when a bucket is created. For an existing bucket without Object Lock, create a new bucket with Object Lock enabled and migrate the objects.
+        - id: terraform
+          desc: |
+            Create the bucket with `object_lock = true` on the `stackit_objectstorage_bucket` resource. Object Lock can only be set at creation, so migrate objects from any non-locked bucket:
+
+            ```hcl
+            resource "stackit_objectstorage_bucket" "example" {
+              project_id  = var.project_id
+              name        = "secure-bucket"
+              object_lock = true
+            }
+            ```
     refs:
       - url: https://docs.stackit.cloud/products/storage/object-storage/
         title: STACKIT Documentation - Object Storage
@@ -285,6 +419,7 @@ queries:
         - id: console
           desc: |
             In the STACKIT Portal, configure a default retention period (in days) and mode for the Object-Locked bucket so new objects inherit WORM protection.
+        # No Terraform remediation: the stackit Terraform provider exposes the bucket's retention only as the read-only `max_retention_days` attribute (on stackit_objectstorage_bucket / stackit_objectstorage_compliance_lock); there is no writable attribute to set a default retention period. Configure it via the console or API.
     refs:
       - url: https://docs.stackit.cloud/products/storage/object-storage/
         title: STACKIT Documentation - Object Storage
@@ -307,6 +442,23 @@ queries:
         - id: console
           desc: |
             In the STACKIT Portal, edit the SFS resource pool and restrict the IP allow-list to the specific subnets or hosts that must mount its shares.
+        - id: terraform
+          desc: |
+            Set `ip_acl` on the `stackit_sfs_resource_pool` resource to the specific subnets that must mount the pool's shares, excluding `0.0.0.0/0` and `::/0`:
+
+            ```hcl
+            resource "stackit_sfs_resource_pool" "example" {
+              project_id        = var.project_id
+              name              = "secure-resourcepool"
+              availability_zone = "eu01-m"
+              performance_class = "Standard"
+              size_gigabytes    = 512
+              ip_acl = [
+                "10.0.0.0/8",
+                "192.168.100.0/24",
+              ]
+            }
+            ```
     refs:
       - url: https://docs.stackit.cloud/products/storage/file-storage/
         title: STACKIT Documentation - File Storage (SFS)
@@ -328,6 +480,22 @@ queries:
         - id: console
           desc: |
             In the STACKIT Portal, edit the export policy and replace any `0.0.0.0/0` rule with specific client CIDRs that require access.
+        - id: terraform
+          desc: |
+            Scope each rule's `ip_acl` on the `stackit_sfs_export_policy` resource to specific client CIDRs, excluding `0.0.0.0/0` and `::/0`:
+
+            ```hcl
+            resource "stackit_sfs_export_policy" "example" {
+              project_id = var.project_id
+              name       = "secure-policy"
+              rules = [
+                {
+                  order  = 1
+                  ip_acl = ["10.0.0.0/8", "172.16.0.0/24"]
+                }
+              ]
+            }
+            ```
     refs:
       - url: https://docs.stackit.cloud/products/storage/file-storage/
         title: STACKIT Documentation - File Storage (SFS)
@@ -349,6 +517,23 @@ queries:
         - id: console
           desc: |
             In the STACKIT Portal, attach a snapshot policy to the SFS resource pool with a schedule and retention appropriate for the data's recovery requirements.
+        - id: terraform
+          desc: |
+            Attach a snapshot policy to the `stackit_sfs_resource_pool` resource by setting the `snapshot_policy` block with the policy `id`:
+
+            ```hcl
+            resource "stackit_sfs_resource_pool" "example" {
+              project_id        = var.project_id
+              name              = "resourcepool-with-snapshot"
+              availability_zone = "eu01-m"
+              performance_class = "Standard"
+              size_gigabytes    = 512
+              ip_acl            = ["10.0.0.0/8"]
+              snapshot_policy = {
+                id = var.snapshot_policy_id
+              }
+            }
+            ```
     refs:
       - url: https://docs.stackit.cloud/products/storage/file-storage/
         title: STACKIT Documentation - File Storage (SFS)
@@ -371,6 +556,26 @@ queries:
         - id: console
           desc: |
             In the STACKIT Portal, edit the PostgreSQL Flex instance ACL and restrict access to the specific application subnets or hosts that require connectivity.
+        - id: terraform
+          desc: |
+            Restrict the `acl` list on the `stackit_postgresflex_instance` resource to the application subnets that require connectivity, excluding `0.0.0.0/0` and `::/0`:
+
+            ```hcl
+            resource "stackit_postgresflex_instance" "example" {
+              project_id = var.project_id
+              name       = "example-instance"
+              acl        = ["10.0.0.0/8", "192.168.0.0/16"] # not 0.0.0.0/0
+              flavor = {
+                cpu = 2
+                ram = 4
+              }
+              storage = {
+                class = "premium-perf2-stackit"
+                size  = 5
+              }
+              version = 14
+            }
+            ```
     refs:
       - url: https://docs.stackit.cloud/products/databases/postgresql-flex/
         title: STACKIT Documentation - PostgreSQL Flex
@@ -392,6 +597,27 @@ queries:
         - id: console
           desc: |
             In the STACKIT Portal, configure a backup schedule for the PostgreSQL Flex instance with a frequency and retention that meet your recovery objectives.
+        - id: terraform
+          desc: |
+            Set a cron `backup_schedule` on the `stackit_postgresflex_instance` resource so automated backups run on a defined cadence:
+
+            ```hcl
+            resource "stackit_postgresflex_instance" "example" {
+              project_id      = var.project_id
+              name            = "example-instance"
+              acl             = ["10.0.0.0/8"]
+              backup_schedule = "00 02 * * *" # daily at 02:00
+              flavor = {
+                cpu = 2
+                ram = 4
+              }
+              storage = {
+                class = "premium-perf2-stackit"
+                size  = 5
+              }
+              version = 14
+            }
+            ```
     refs:
       - url: https://docs.stackit.cloud/products/databases/postgresql-flex/
         title: STACKIT Documentation - PostgreSQL Flex
@@ -413,6 +639,26 @@ queries:
         - id: console
           desc: |
             In the STACKIT Portal, edit the MongoDB Flex instance ACL and restrict access to the specific application subnets or hosts that require connectivity.
+        - id: terraform
+          desc: |
+            Restrict the `acl` list on the `stackit_mongodbflex_instance` resource to the application subnets that require connectivity, excluding `0.0.0.0/0` and `::/0`:
+
+            ```hcl
+            resource "stackit_mongodbflex_instance" "example" {
+              project_id = var.project_id
+              name       = "example-instance"
+              acl        = ["10.0.0.0/8", "192.168.0.0/16"] # not 0.0.0.0/0
+              flavor = {
+                cpu = 1
+                ram = 4
+              }
+              storage = {
+                class = "premium-perf2-mongodb"
+                size  = 10
+              }
+              version = "7.0"
+            }
+            ```
     refs:
       - url: https://docs.stackit.cloud/products/databases/mongodb-flex/
         title: STACKIT Documentation - MongoDB Flex
@@ -434,6 +680,27 @@ queries:
         - id: console
           desc: |
             In the STACKIT Portal, configure a backup schedule for the MongoDB Flex instance with a frequency and retention that meet your recovery objectives.
+        - id: terraform
+          desc: |
+            Set a cron `backup_schedule` on the `stackit_mongodbflex_instance` resource so automated backups run on a defined cadence:
+
+            ```hcl
+            resource "stackit_mongodbflex_instance" "example" {
+              project_id      = var.project_id
+              name            = "example-instance"
+              acl             = ["10.0.0.0/8"]
+              backup_schedule = "0 2 * * *" # daily at 02:00
+              flavor = {
+                cpu = 1
+                ram = 4
+              }
+              storage = {
+                class = "premium-perf2-mongodb"
+                size  = 10
+              }
+              version = "7.0"
+            }
+            ```
     refs:
       - url: https://docs.stackit.cloud/products/databases/mongodb-flex/
         title: STACKIT Documentation - MongoDB Flex
@@ -455,6 +722,26 @@ queries:
         - id: console
           desc: |
             In the STACKIT Portal, edit the SQLServer Flex instance ACL and restrict access to the specific application subnets or hosts that require connectivity.
+        - id: terraform
+          desc: |
+            Restrict the `acl` list on the `stackit_sqlserverflex_instance` resource to the application subnets that require connectivity, excluding `0.0.0.0/0` and `::/0`:
+
+            ```hcl
+            resource "stackit_sqlserverflex_instance" "example" {
+              project_id = var.project_id
+              name       = "example-instance"
+              acl        = ["10.0.0.0/8", "192.168.0.0/16"] # not 0.0.0.0/0
+              flavor = {
+                cpu = 4
+                ram = 16
+              }
+              storage = {
+                class = "premium-perf2-stackit"
+                size  = 5
+              }
+              version = 2022
+            }
+            ```
     refs:
       - url: https://docs.stackit.cloud/products/databases/sqlserver-flex/
         title: STACKIT Documentation - SQLServer Flex
@@ -476,6 +763,27 @@ queries:
         - id: console
           desc: |
             In the STACKIT Portal, configure a backup schedule for the SQLServer Flex instance with a frequency and retention that meet your recovery objectives.
+        - id: terraform
+          desc: |
+            Set a cron `backup_schedule` on the `stackit_sqlserverflex_instance` resource so automated backups run on a defined cadence:
+
+            ```hcl
+            resource "stackit_sqlserverflex_instance" "example" {
+              project_id      = var.project_id
+              name            = "example-instance"
+              acl             = ["10.0.0.0/8"]
+              backup_schedule = "00 02 * * *" # daily at 02:00
+              flavor = {
+                cpu = 4
+                ram = 16
+              }
+              storage = {
+                class = "premium-perf2-stackit"
+                size  = 5
+              }
+              version = 2022
+            }
+            ```
     refs:
       - url: https://docs.stackit.cloud/products/databases/sqlserver-flex/
         title: STACKIT Documentation - SQLServer Flex
@@ -499,6 +807,28 @@ queries:
         - id: console
           desc: |
             In the STACKIT Portal, scale the PostgreSQL Flex instance to two or more replicas for production workloads.
+        - id: terraform
+          desc: |
+            Set `replicas` to at least 2 (use 3 for a replicated, highly available setup) on the `stackit_postgresflex_instance` resource:
+
+            ```hcl
+            resource "stackit_postgresflex_instance" "example" {
+              project_id      = var.project_id
+              name            = "example-instance"
+              acl             = ["10.0.0.0/8"]
+              backup_schedule = "00 02 * * *"
+              replicas        = 3 # >= 2 for high availability
+              flavor = {
+                cpu = 2
+                ram = 4
+              }
+              storage = {
+                class = "premium-perf2-stackit"
+                size  = 5
+              }
+              version = 14
+            }
+            ```
     refs:
       - url: https://docs.stackit.cloud/products/databases/postgresql-flex/
         title: STACKIT Documentation - PostgreSQL Flex
@@ -522,6 +852,31 @@ queries:
         - id: console
           desc: |
             In the STACKIT Portal, scale the MongoDB Flex instance to two or more replicas for production workloads.
+        - id: terraform
+          desc: |
+            Set `replicas` to at least 2 (use 3 for a replica set) on the `stackit_mongodbflex_instance` resource:
+
+            ```hcl
+            resource "stackit_mongodbflex_instance" "example" {
+              project_id      = var.project_id
+              name            = "example-instance"
+              acl             = ["10.0.0.0/8"]
+              backup_schedule = "0 2 * * *"
+              replicas        = 3 # >= 2 for high availability
+              flavor = {
+                cpu = 1
+                ram = 4
+              }
+              storage = {
+                class = "premium-perf2-mongodb"
+                size  = 10
+              }
+              version = "7.0"
+              options = {
+                type = "Replica"
+              }
+            }
+            ```
     refs:
       - url: https://docs.stackit.cloud/products/databases/mongodb-flex/
         title: STACKIT Documentation - MongoDB Flex
@@ -545,6 +900,7 @@ queries:
         - id: console
           desc: |
             In the STACKIT Portal, scale the SQLServer Flex instance to two or more replicas for production workloads.
+        # No Terraform remediation: on stackit_sqlserverflex_instance the `replicas` attribute is read-only and cannot be set directly — high availability is derived from the instance edition/flavor. Select an HA-capable edition via the console or API.
     refs:
       - url: https://docs.stackit.cloud/products/databases/sqlserver-flex/
         title: STACKIT Documentation - SQLServer Flex
@@ -567,6 +923,17 @@ queries:
         - id: console
           desc: |
             In the STACKIT Portal, edit the Secrets Manager instance access control list and restrict it to the specific subnets or hosts that require access.
+        - id: terraform
+          desc: |
+            Restrict the `acls` set (note the plural attribute name) on the `stackit_secretsmanager_instance` resource to the specific subnets that require access, excluding `0.0.0.0/0` and `::/0`:
+
+            ```hcl
+            resource "stackit_secretsmanager_instance" "example" {
+              project_id = var.project_id
+              name       = "example-instance"
+              acls       = ["10.0.0.0/8", "192.168.0.0/16"] # not 0.0.0.0/0
+            }
+            ```
     refs:
       - url: https://docs.stackit.cloud/products/security/secrets-manager/
         title: STACKIT Documentation - Secrets Manager
@@ -589,6 +956,17 @@ queries:
         - id: console
           desc: |
             In the STACKIT Portal, reissue service account keys with a bounded validity period and remove any active keys that never expire.
+        - id: terraform
+          desc: |
+            Issue keys with a bounded lifetime by setting `ttl_days` on the `stackit_service_account_key` resource, and remove any non-expiring keys:
+
+            ```hcl
+            resource "stackit_service_account_key" "example" {
+              project_id            = var.project_id
+              service_account_email = var.service_account_email
+              ttl_days              = 90
+            }
+            ```
     refs:
       - url: https://docs.stackit.cloud/platform/access-and-identity/service-accounts/
         title: STACKIT Documentation - Service Accounts
@@ -610,6 +988,7 @@ queries:
         - id: console
           desc: |
             In the STACKIT Portal, reissue service account access tokens with a bounded validity period and remove any active tokens that never expire.
+        # No Terraform remediation: the stackit Terraform provider has no service-account access-token resource (stackit_service_account manages only the account). Access tokens are created with a bounded validity via the console or API.
     refs:
       - url: https://docs.stackit.cloud/platform/access-and-identity/service-accounts/
         title: STACKIT Documentation - Service Accounts
@@ -632,6 +1011,7 @@ queries:
         - id: console
           desc: |
             In the STACKIT Portal, review keys with a scheduled deletion. If the deletion is unintended, cancel it; otherwise confirm no active data depends on the key before it is removed.
+        # No Terraform remediation: scheduling or cancelling key deletion is an imperative KMS API action, not a configurable attribute on stackit_kms_key. Cancel an unintended deletion via the console or API.
     refs:
       - url: https://docs.stackit.cloud/products/security/kms/
         title: STACKIT Documentation - Key Management Service (KMS)
@@ -653,6 +1033,7 @@ queries:
         - id: console
           desc: |
             In the STACKIT Portal, investigate the key's reported state under Key Management Service and remediate the underlying issue, or rotate to a healthy key.
+        # No Terraform remediation: key health (errors_exist / not_available) is a runtime state of the key, not a configurable attribute on stackit_kms_key. Investigate and remediate via the console or API.
     refs:
       - url: https://docs.stackit.cloud/products/security/kms/
         title: STACKIT Documentation - Key Management Service (KMS)
@@ -675,6 +1056,7 @@ queries:
         - id: console
           desc: |
             In the STACKIT Portal, open the SKE cluster's status details, investigate the reported condition, and remediate the underlying issue (for example a failed maintenance or node-pool problem).
+        # No Terraform remediation: cluster health (STATE_UNHEALTHY) is a runtime status reported by the SKE service, not a configurable attribute on stackit_ske_cluster. Investigate and remediate via the console or API.
     refs:
       - url: https://docs.stackit.cloud/products/runtime/kubernetes-engine/
         title: STACKIT Documentation - Kubernetes Engine (SKE)
@@ -696,6 +1078,30 @@ queries:
         - id: console
           desc: |
             In the STACKIT Portal, edit the SKE cluster maintenance settings and enable automatic Kubernetes version updates, choosing an appropriate maintenance time window.
+        - id: terraform
+          desc: |
+            Enable automatic Kubernetes version updates by setting `maintenance.enable_kubernetes_version_updates = true` on the `stackit_ske_cluster` resource:
+
+            ```hcl
+            resource "stackit_ske_cluster" "example" {
+              project_id = var.project_id
+              name       = "example"
+
+              node_pools = [
+                {
+                  name               = "np-example"
+                  machine_type       = "m1.medium"
+                  minimum            = 2
+                  maximum            = 3
+                  availability_zones = ["eu01-3"]
+                }
+              ]
+
+              maintenance = {
+                enable_kubernetes_version_updates = true
+              }
+            }
+            ```
     refs:
       - url: https://docs.stackit.cloud/products/runtime/kubernetes-engine/
         title: STACKIT Documentation - Kubernetes Engine (SKE)
@@ -718,6 +1124,19 @@ queries:
         - id: console
           desc: |
             In the STACKIT Portal, reissue telemetry router access tokens with a bounded validity period and remove any non-expiring tokens.
+        - id: terraform
+          desc: |
+            Issue tokens with a bounded lifetime by setting `ttl` (in days) on the `stackit_telemetryrouter_access_token` resource:
+
+            ```hcl
+            resource "stackit_telemetryrouter_access_token" "example" {
+              project_id   = var.project_id
+              instance_id  = var.instance_id
+              region       = "eu01"
+              display_name = "telemetryrouter-access-token-example"
+              ttl          = 30
+            }
+            ```
     refs:
       - url: https://docs.stackit.cloud/products/logging-and-monitoring/telemetry-router/
         title: STACKIT Documentation - Telemetry Router
@@ -739,6 +1158,7 @@ queries:
         - id: console
           desc: |
             In the STACKIT Portal, delete expired telemetry router access tokens and reissue new ones where access is still required.
+        # No Terraform remediation: whether a token is expired is a runtime, time-based state; keeping tokens non-expired means rotating them (recreating with a fresh ttl), an operational action rather than a configurable attribute.
     refs:
       - url: https://docs.stackit.cloud/products/logging-and-monitoring/telemetry-router/
         title: STACKIT Documentation - Telemetry Router
@@ -761,6 +1181,17 @@ queries:
         - id: console
           desc: |
             In the STACKIT Portal, reissue Model Serving tokens with a bounded validity period and remove any non-expiring tokens.
+        - id: terraform
+          desc: |
+            Issue tokens with a bounded lifetime by setting `ttl_duration` on the `stackit_modelserving_token` resource (accepts Go-style durations such as `24h`, `5h30m`):
+
+            ```hcl
+            resource "stackit_modelserving_token" "example" {
+              project_id   = var.project_id
+              name         = "example-token"
+              ttl_duration = "24h"
+            }
+            ```
     refs:
       - url: https://docs.stackit.cloud/products/data-and-ai/ai-model-serving/
         title: STACKIT Documentation - Model Serving
@@ -782,6 +1213,7 @@ queries:
         - id: console
           desc: |
             In the STACKIT Portal, delete expired Model Serving tokens and reissue new ones where access is still required.
+        # No Terraform remediation: whether a token is expired is a runtime, time-based state; keeping tokens non-expired means rotating them (recreating with a fresh ttl_duration), an operational action rather than a configurable attribute.
     refs:
       - url: https://docs.stackit.cloud/products/data-and-ai/ai-model-serving/
         title: STACKIT Documentation - Model Serving
