@@ -347,6 +347,66 @@ func (s *LocalScanner) stampScanSource(job *Job) {
 	job.Inventory.ApplyLabels(map[string]string{LabelScanSource: s.scanSource})
 }
 
+// withServerFeatures layers the named server-activated mql features onto ctx.
+// Server features are layered on top of features already set by local config —
+// we never replace or disable what the user asked for. Unknown names are logged
+// and skipped. It is a no-op for an empty list.
+func withServerFeatures(ctx context.Context, featureNames []string) context.Context {
+	if len(featureNames) == 0 {
+		return ctx
+	}
+	log.Info().Strs("features", featureNames).Msg("server activated features")
+	for _, name := range featureNames {
+		f, ok := mql.FeaturesValue[name]
+		if !ok {
+			log.Warn().Str("feature", name).Msg("unknown server feature, ignoring")
+			continue
+		}
+		ctx = mql.WithFeature(ctx, f)
+	}
+	return ctx
+}
+
+// resolveServerScanParameters fetches server-controlled scan parameters and
+// layers any server-activated features onto ctx. It returns the enriched ctx
+// plus the resolved remote services and space MRN, which the scan pipeline
+// reuses.
+//
+// This MUST run before asset discovery. Connection-level features (e.g.
+// TerraformResolveVars, read at provider Connect time) only take effect if they
+// are present on the context when the provider connects, and discovery connects
+// the root asset. Fetching scan parameters after discovery — as this code used
+// to — left those features inactive on the root connection. For incognito or
+// credential-less scans it is a no-op that returns ctx unchanged with nil
+// services.
+func (s *LocalScanner) resolveServerScanParameters(ctx context.Context, upstreamConfig *upstream.UpstreamConfig) (context.Context, *policy.Services, string, error) {
+	if upstreamConfig == nil || upstreamConfig.ApiEndpoint == "" || upstreamConfig.Incognito {
+		return ctx, nil, "", nil
+	}
+
+	client, err := upstreamConfig.InitClient(ctx)
+	if err != nil {
+		return ctx, nil, "", err
+	}
+	spaceMrn := client.SpaceMrn
+
+	services, err := policy.NewRemoteServices(client.ApiEndpoint, client.Plugins, client.HttpClient)
+	if err != nil {
+		return ctx, nil, "", err
+	}
+
+	resp, err := services.GetScanParameters(ctx, &policy.GetScanParametersReq{ScopeMrn: spaceMrn})
+	if err != nil {
+		// A failed scan-parameters call must not abort the scan; proceed without
+		// server-activated features.
+		log.Warn().Err(err).Msg("could not get server scan parameters")
+		return ctx, services, spaceMrn, nil
+	}
+
+	ctx = withServerFeatures(ctx, resp.GetEnabledFeatures())
+	return ctx, services, spaceMrn, nil
+}
+
 func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *upstream.UpstreamConfig) (*ScanResult, error) {
 	// Stamp the scan source (interactive vs. service) onto every asset so it can
 	// be aggregated upstream. This is the single chokepoint for Run/RunIncognito
@@ -377,6 +437,14 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 			}
 			conf.Options[plugin.OptionStagedDiscovery] = ""
 		}
+	}
+
+	// Fetch server-controlled scan parameters and layer any server-activated
+	// features onto ctx BEFORE discovery, so connection-level features (e.g.
+	// TerraformResolveVars) are present when discovery connects the root asset.
+	ctx, services, spaceMrn, err := s.resolveServerScanParameters(ctx, upstream)
+	if err != nil {
+		return nil, err
 	}
 
 	log.Info().Msgf("discover related assets for %d asset(s)", len(job.Inventory.Spec.Assets))
@@ -418,39 +486,6 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	// Make sure the progress bar is closed when we exit early. Calling this multiple times
 	// is safe
 	defer multiprogress.Close()
-
-	spaceMrn := ""
-	var services *policy.Services
-	if upstream != nil && upstream.ApiEndpoint != "" && !upstream.Incognito {
-		client, err := upstream.InitClient(ctx)
-		if err != nil {
-			return nil, err
-		}
-		spaceMrn = client.SpaceMrn
-
-		services, err = policy.NewRemoteServices(client.ApiEndpoint, client.Plugins, client.HttpClient)
-		if err != nil {
-			return nil, err
-		}
-
-		// Fetch server-controlled scan parameters before scanning. Server-enabled
-		// features are layered on top of any features already set on the context
-		// by local config — we never replace or disable what the user asked for.
-		resp, err := services.GetScanParameters(ctx, &policy.GetScanParametersReq{ScopeMrn: spaceMrn})
-		if err != nil {
-			log.Warn().Err(err).Msg("could not get server scan parameters")
-		} else if len(resp.EnabledFeatures) > 0 {
-			log.Info().Strs("features", resp.EnabledFeatures).Msg("server activated features")
-			for _, name := range resp.EnabledFeatures {
-				f, ok := mql.FeaturesValue[name]
-				if !ok {
-					log.Warn().Str("feature", name).Msg("unknown server feature, ignoring")
-					continue
-				}
-				ctx = mql.WithFeature(ctx, f)
-			}
-		}
-	}
 
 	parallelism := int(job.Parallelism)
 	if parallelism < 1 {
