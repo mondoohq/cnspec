@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnspec/v13/cli/progress"
 	"go.mondoo.com/cnspec/v13/policy"
@@ -26,6 +27,63 @@ func isNilResult(res *llx.RawResult) bool {
 func hasRealData(res *llx.RawResult) bool {
 	return res != nil && res.Data != nil &&
 		(res.Data.Value != nil || res.Data.Error != nil)
+}
+
+// queryRunError marks a result that was broadcast for a query that could not
+// be executed at all (e.g. one of its properties errored). Such results are
+// placeholders: they exist so that datapoint consumers do not wait forever
+// for results that will never arrive. They are NOT produced by evaluating the
+// statement they are reported for. Datapoint checksums are content-addressed
+// and shared across queries, so a placeholder may land on a checksum that a
+// different, healthy query will still report a real result for. Consumers
+// therefore let any executed result (value, nil, or error) override a
+// placeholder, and never let a placeholder override anything.
+type queryRunError struct {
+	// originCodeID is the CodeV2.Id of the query that failed to run
+	originCodeID string
+	err          error
+}
+
+func (e *queryRunError) Error() string { return e.err.Error() }
+func (e *queryRunError) Unwrap() error { return e.err }
+
+// isPlaceholderResult returns true if the result is a broadcast placeholder
+// for a query that never ran (see queryRunError).
+func isPlaceholderResult(res *llx.RawResult) bool {
+	if res == nil || res.Data == nil || res.Data.Error == nil {
+		return false
+	}
+	var qre *queryRunError
+	return errors.As(res.Data.Error, &qre)
+}
+
+// placeholderOrigin returns the CodeID of the query whose failure produced
+// this placeholder result, or "" if the result is not a placeholder.
+func placeholderOrigin(res *llx.RawResult) string {
+	if res == nil || res.Data == nil || res.Data.Error == nil {
+		return ""
+	}
+	var qre *queryRunError
+	if errors.As(res.Data.Error, &qre) {
+		return qre.originCodeID
+	}
+	return ""
+}
+
+// resultUpgrades returns true if next should replace prev:
+//   - an executed result (real data, error, or evaluated nil) replaces a
+//     placeholder
+//   - real data replaces an evaluated nil (short-circuit case)
+//
+// A placeholder never replaces anything.
+func resultUpgrades(prev, next *llx.RawResult) bool {
+	if isPlaceholderResult(next) {
+		return false
+	}
+	if isPlaceholderResult(prev) {
+		return true
+	}
+	return isNilResult(prev) && hasRealData(next)
 }
 
 const (
@@ -85,6 +143,10 @@ type executionQueryProperty struct {
 	// nil may still be upgraded to real data later (see isNilResult /
 	// hasRealData on the datapoint consumers).
 	resolvedNil bool
+	// resolvedPlaceholder is true when the property resolved from a broadcast
+	// placeholder (queryRunError) of a query that never ran. An executed
+	// result may upgrade it.
+	resolvedPlaceholder bool
 }
 
 func (p *executionQueryProperty) IsResolved() bool {
@@ -93,6 +155,15 @@ func (p *executionQueryProperty) IsResolved() bool {
 
 // isNilResultProto returns true if the proto result carries a nil value and
 // no error. This is the proto counterpart of isNilResult.
+//
+// It relies on RawData.Result() normalizing nil values to types.Nil in the
+// proto representation: raw2primitive returns NilPrimitive for any nil value
+// regardless of the declared type (llx/data_conversions.go), so a typed nil
+// (e.g. RawData{Type: types.String, Value: nil}) arrives here with
+// Data.Type == types.Nil. Do NOT additionally test Data.Value == nil:
+// falsy real values encode as empty/zero byte slices (e.g. "" -> []byte{}),
+// which proto round-trips can deliver as nil slices — such a check would
+// misclassify real values as nil.
 func isNilResultProto(res *llx.Result) bool {
 	if res == nil || res.Error != "" {
 		return false
@@ -170,16 +241,23 @@ func (nodeData *ExecutionQueryNodeData) consume(from NodeID, data *envelope) {
 			p.value = data.res.Result()
 			p.resolved = true
 			p.resolvedNil = isNilResultProto(p.value)
+			p.resolvedPlaceholder = isPlaceholderResult(data.res)
 			if nodeData.runState != executedQueryRunState {
 				nodeData.invalidated = true
 			}
 			continue
 		}
 
-		// Already resolved: only allow a real result (value or error) to
-		// replace a previously-reported transient nil. This mirrors the
-		// nil-override semantics of DatapointNodeData/ReportingQueryNodeData.
-		if p.resolvedNil && hasRealData(data.res) {
+		// Already resolved: allow an executed result to replace a broadcast
+		// placeholder, and a real result to replace a transient nil. This
+		// mirrors the upgrade semantics of the datapoint consumers.
+		if p.resolvedPlaceholder && !isPlaceholderResult(data.res) {
+			p.value = data.res.Result()
+			p.resolvedPlaceholder = false
+			p.resolvedNil = isNilResultProto(p.value)
+			continue
+		}
+		if p.resolvedNil && hasRealData(data.res) && !isPlaceholderResult(data.res) {
 			p.value = data.res.Result()
 			p.resolvedNil = false
 		}
@@ -285,10 +363,11 @@ func (nodeData *DatapointNodeData) consume(from NodeID, data *envelope) {
 		return
 	}
 	if nodeData.isReported {
-		// Allow a real result to override a nil one. This handles the case
-		// where short-circuit evaluation (e.g. &&) reports nil for an
-		// unevaluated branch, and a later query reports the actual value.
-		if isNilResult(nodeData.res) && hasRealData(data.res) {
+		// Allow upgrades only:
+		// - an executed result overrides a broadcast placeholder from a query
+		//   that never ran (see queryRunError)
+		// - a real result overrides a nil one from short-circuit evaluation
+		if resultUpgrades(nodeData.res, data.res) {
 			nodeData.set(data.res)
 		}
 		return
@@ -350,8 +429,9 @@ func (nodeData *ReportingQueryNodeData) consume(from NodeID, data *envelope) {
 		return
 	}
 	if dr.resolved {
-		// Allow a real result to override a nil one (short-circuit case)
-		if isNilResult(dr.value) && hasRealData(data.res) {
+		// Allow upgrades only: executed results override broadcast
+		// placeholders, real results override short-circuit nils.
+		if resultUpgrades(dr.value, data.res) {
 			dr.value = data.res
 			nodeData.invalidated = true
 		}
@@ -390,7 +470,13 @@ func (nodeData *ReportingQueryNodeData) score() *policy.Score {
 	var scoreFound *llx.RawData
 	var scoreValue int
 
+	// Errors are aggregated in two buckets. Placeholder errors broadcast by
+	// OTHER queries that could not run (see queryRunError) land on shared
+	// datapoint checksums; their messages describe a different query's
+	// failure and must not leak into this query's message if this query has
+	// errors of its own.
 	var err multierr.Errors
+	var foreignErr multierr.Errors
 	for _, dr := range nodeData.results {
 		cur := dr.value
 		if cur == nil {
@@ -407,7 +493,11 @@ func (nodeData *ReportingQueryNodeData) score() *policy.Score {
 				foundError = true
 			}
 
-			err.Add(cur.Data.Error)
+			if origin := placeholderOrigin(cur); origin != "" && origin != nodeData.queryID {
+				foreignErr.Add(cur.Data.Error)
+			} else {
+				err.Add(cur.Data.Error)
+			}
 			continue
 		}
 
@@ -429,6 +519,13 @@ func (nodeData *ReportingQueryNodeData) score() *policy.Score {
 		if valid {
 			allSkipped = false
 		}
+	}
+
+	// Prefer this query's own errors for the message; fall back to foreign
+	// placeholder errors only when they are all we have (e.g. this query's
+	// shared statement was poisoned and nothing else errored).
+	if len(err.Errors) == 0 {
+		err = foreignErr
 	}
 
 	if allFound {
@@ -570,10 +667,19 @@ func (nodeData *ReportingJobNodeData) consume(from NodeID, data *envelope) {
 		if !ok {
 			panic("invalid datapoint report")
 		}
-		// If the previously-reported result was nil (from short-circuit) and
-		// we're now getting real data, reset completed so the score can be
-		// recalculated with the actual data.
-		if nodeData.completed && isNilResult(dp.res) && hasRealData(data.res) {
+		// A broadcast placeholder (queryRunError) never replaces an executed
+		// result, and any non-upgrade write (duplicate, downgrade) is
+		// dropped — mirroring DatapointNodeData/ReportingQueryNodeData.
+		// Upgrades (executed result over placeholder, real data over
+		// short-circuit nil) reopen a completed job so the score is
+		// recalculated with the better data.
+		if dp.res != nil && isPlaceholderResult(data.res) && !isPlaceholderResult(dp.res) {
+			return
+		}
+		if dp.res != nil && !resultUpgrades(dp.res, data.res) {
+			return
+		}
+		if nodeData.completed {
 			nodeData.completed = false
 		}
 		dp.res = data.res
