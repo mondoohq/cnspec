@@ -145,6 +145,13 @@ func TestWeightedScores(t *testing.T) {
 			},
 			out: &Score{ScoreCompletion: 100, DataCompletion: 100, DataTotal: 1, Type: ScoreType_Error},
 		},
+		{
+			// zero-weight result must not divide by zero
+			in: []*Score{
+				{Value: 50, ScoreCompletion: 100, DataCompletion: 100, DataTotal: 1, Weight: 0, Type: ScoreType_Result},
+			},
+			out: &Score{Value: 0, ScoreCompletion: 100, DataCompletion: 100, DataTotal: 1, Weight: 0, Type: ScoreType_Result},
+		},
 	})
 }
 
@@ -323,6 +330,16 @@ func TestDecayedScores(t *testing.T) {
 				{Action: Action_IGNORE},
 			},
 			out: &Score{Value: 61, ScoreCompletion: 100, DataCompletion: 66, Weight: 10, Type: ScoreType_Result},
+		},
+		{
+			// zero-weight result must not divide by zero
+			in: []*Score{
+				{Value: 50, ScoreCompletion: 100, DataCompletion: 100, DataTotal: 1, Weight: 0, Type: ScoreType_Result},
+			},
+			impacts: []*Impact{
+				{Value: &ImpactValue{Value: 100}},
+			},
+			out: &Score{Value: 0, ScoreCompletion: 100, DataCompletion: 100, DataTotal: 1, Weight: 0, Type: ScoreType_Result},
 		},
 	})
 }

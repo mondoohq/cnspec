@@ -314,7 +314,10 @@ func (c *weightedScoreCalculator) Calculate() *Score {
 		res.Type = ScoreType_Result
 		res.ScoreCompletion = c.scoreCompletion / c.scoreTotal
 		res.Weight = c.weight
-		res.Value = c.value / c.scoreCnt
+		// scoreCnt can be 0 when all contributors have zero weight; guard.
+		if c.scoreCnt != 0 {
+			res.Value = c.value / c.scoreCnt
+		}
 	} else if c.hasErrors {
 		res.Type = ScoreType_Error
 	}
@@ -746,9 +749,12 @@ func (c *decayedScoreCalculator) Calculate() *Score {
 	if c.hasResults {
 		res.Type = ScoreType_Result
 		relGravity := float64(c.weight) / gravity
-		xscaled := c.x / c.xmax * (relGravity)
-		floor := math.Exp(-relGravity)
-		res.Value = uint32(math.Floor(100 * (math.Exp(-xscaled) - floor) / (1 - floor)))
+		// xmax can be 0 when all contributors have zero weight; guard.
+		if c.xmax != 0 {
+			xscaled := c.x / c.xmax * (relGravity)
+			floor := math.Exp(-relGravity)
+			res.Value = uint32(math.Floor(100 * (math.Exp(-xscaled) - floor) / (1 - floor)))
+		}
 		res.ScoreCompletion = c.scoreCompletion / c.scoreTotal
 		res.Weight = c.weight
 	} else if c.hasErrors {
