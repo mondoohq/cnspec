@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-gcp-security
     name: Mondoo Google Cloud (GCP) Security
-    version: 9.3.4
+    version: 9.4.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -28,6 +28,7 @@ policies:
         - Artifact Registry
         - Audit Logging
         - Backup & DR
+        - Batch
         - BigQuery
         - Bigtable
         - Binary Authorization
@@ -39,12 +40,15 @@ policies:
         - Cloud DNS
         - Cloud Functions
         - Cloud Healthcare API
+        - Cloud IDS
         - Cloud Key Management Service (KMS)
         - Cloud Logging
         - Cloud NAT
         - Cloud Run
+        - Cloud Scheduler
         - Cloud SQL
         - Cloud Storage
+        - Cloud Tasks
         - Cloud VPN
         - Cloud Workstations
         - Compute Engine instances, disks, firewalls, networks, subnetworks, forwarding rules, images, and snapshots
@@ -68,6 +72,7 @@ policies:
         - SSL/TLS Policies
         - Vertex AI
         - VPC Service Controls
+        - Workflows
 
         Learn more about scanning Google Cloud in the [cnspec Google Cloud documentation](https://mondoo.com/docs/cnspec/cloud/gcp).
 
@@ -288,6 +293,7 @@ policies:
       - title: Cloud Run
         checks:
           - uid: mondoo-gcp-security-cloud-run-ingress-restricted
+          - uid: mondoo-gcp-security-cloud-run-no-public-invocation
           - uid: mondoo-gcp-security-cloud-run-cmek-encryption
           - uid: mondoo-gcp-security-cloud-run-no-default-service-account
           - uid: mondoo-gcp-security-cloud-run-vpc-access-configured
@@ -307,6 +313,8 @@ policies:
           - uid: mondoo-gcp-security-dataproc-cluster-internal-ip-only
           - uid: mondoo-gcp-security-dataproc-cluster-shielded-vms
           - uid: mondoo-gcp-security-dataproc-cluster-no-default-service-account
+          - uid: mondoo-gcp-security-dataproc-cluster-iam-no-public-principals
+          - uid: mondoo-gcp-security-dataproc-cluster-iam-no-primitive-roles
       - title: Artifact Registry
         checks:
           - uid: mondoo-gcp-security-artifact-registry-repository-cmek-encryption
@@ -391,6 +399,8 @@ policies:
       - title: Bigtable
         checks:
           - uid: mondoo-gcp-security-bigtable-cmek-encryption
+          - uid: mondoo-gcp-security-bigtable-iam-no-public-principals
+          - uid: mondoo-gcp-security-bigtable-iam-no-primitive-roles
       - title: AlloyDB
         checks:
           - uid: mondoo-gcp-security-alloydb-cmek-encryption
@@ -454,6 +464,25 @@ policies:
       - title: Eventarc
         checks:
           - uid: mondoo-gcp-security-eventarc-channel-cmek-encryption
+      - title: Cloud Tasks
+        checks:
+          - uid: mondoo-gcp-security-cloud-tasks-queue-not-publicly-accessible
+          - uid: mondoo-gcp-security-cloud-tasks-queue-iam-no-primitive-roles
+      - title: Cloud Scheduler
+        checks:
+          - uid: mondoo-gcp-security-cloud-scheduler-http-target-authentication
+          - uid: mondoo-gcp-security-cloud-scheduler-no-default-service-account
+      - title: Cloud Workflows
+        checks:
+          - uid: mondoo-gcp-security-workflows-no-default-service-account
+          - uid: mondoo-gcp-security-workflows-cmek-encryption
+          - uid: mondoo-gcp-security-workflows-call-logging-enabled
+      - title: Cloud IDS
+        checks:
+          - uid: mondoo-gcp-security-cloud-ids-endpoint-traffic-logs-enabled
+      - title: Batch
+        checks:
+          - uid: mondoo-gcp-security-batch-job-permissive-ssh-disabled
     scoring_system: highest impact
 queries:
   - uid: mondoo-gcp-security-instances-are-not-configured-use-default-service-account
@@ -39799,3 +39828,1908 @@ queries:
     refs:
       - url: https://cloud.google.com/vertex-ai/docs/training/monitor-training#enable_web_access
         title: Vertex AI - Enable web access for custom training
+  - uid: mondoo-gcp-security-cloud-tasks-queue-not-publicly-accessible
+    title: Ensure Cloud Tasks queues are not publicly accessible
+    impact: 100
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-5-15
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-gcp-security-cloud-tasks-queue-not-publicly-accessible-gcp
+        tags:
+          mondoo.com/filter-title: GCP Project
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-cloud-tasks-queue-not-publicly-accessible-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-cloud-tasks-queue-not-publicly-accessible-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-cloud-tasks-queue-not-publicly-accessible-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that no IAM binding on a Cloud Tasks queue grants access to `allUsers` or `allAuthenticatedUsers`. Either principal exposes the queue to anyone on the internet or anyone with a Google account, allowing them to enqueue, lease, or manage tasks and bypassing every other access control the organization relies on.
+
+        **Why this matters**
+
+        - **Task injection:** A public binding lets any caller create tasks on the queue, injecting arbitrary payloads that downstream handlers execute with the service's own privileges.
+        - **Queue draining:** Anyone able to lease or delete tasks can drain the queue, causing loss of pending work and denial of service for the workloads that depend on it.
+        - **Forced execution:** Public callers can trigger dispatch of tasks to their target handlers on demand, driving unwanted load and side effects across the systems those handlers reach.
+        - **Accidental misconfiguration:** Bindings to `allUsers` or `allAuthenticatedUsers` are almost always the result of a broad script or UI error, not an intentional decision, yet the impact is immediate and total.
+
+        **Risk mitigation**
+
+        - **Remove public principal bindings immediately:** Use `gcloud tasks queues remove-iam-policy-binding` to eliminate any binding that includes `allUsers` or `allAuthenticatedUsers`.
+        - **Replace with specific principals:** After removing the public binding, add the narrowest specific principal that satisfies the access need, using a service account, user, or group with an appropriate Cloud Tasks predefined role.
+        - **Enable organization-level constraints:** Apply the `constraints/iam.allowedPolicyMemberDomains` organization policy to prevent future bindings to public principals across all projects in the organization.
+      audit: |
+        ### Audit via Console
+
+        1. Open the [Google Cloud Console](https://console.cloud.google.com/) and navigate to **Cloud Tasks**.
+        2. Select a queue and open the **Permissions** panel.
+        3. Scan each binding for the principals `allUsers` or `allAuthenticatedUsers`.
+        4. Repeat for every queue in the project.
+
+        A passing queue shows no bindings with `allUsers` or `allAuthenticatedUsers` as a member. A failing queue shows at least one public-principal binding.
+
+        ### Audit via CLI
+
+        1. Check the IAM policy of each queue:
+
+        ```bash
+        gcloud tasks queues get-iam-policy QUEUE_ID \
+          --location=LOCATION \
+          --format="json(bindings)" \
+          | jq '.bindings[] | select(.members[] | test("^allUsers$|^allAuthenticatedUsers$"))'
+        ```
+
+        A passing queue returns no output from the `jq` filter. A failing queue returns one or more bindings that include `allUsers` or `allAuthenticatedUsers`.
+      remediation:
+        - id: terraform
+          desc: |
+            Manage Cloud Tasks queue IAM only via `google_cloud_tasks_queue_iam_member` resources with explicit principals — never with `allUsers` or `allAuthenticatedUsers`:
+
+            ```hcl
+            resource "google_cloud_tasks_queue_iam_member" "enqueuer" {
+              name     = google_cloud_tasks_queue.app.name
+              location = google_cloud_tasks_queue.app.location
+              role     = "roles/cloudtasks.enqueuer"
+              member   = "serviceAccount:dispatcher@my-project.iam.gserviceaccount.com" # never allUsers / allAuthenticatedUsers
+            }
+            ```
+
+            Audit existing bindings: import `google_cloud_tasks_queue_iam_policy` into state if the policy is managed elsewhere, then remove any public-principal members in the source HCL and re-apply.
+        - id: console
+          desc: |
+            Remove any public principal from the Cloud Tasks queue IAM policy:
+
+            1. Open **Cloud Tasks** → select the flagged queue.
+            2. Open the **Permissions** panel.
+            3. Locate any binding whose principal is `allUsers` or `allAuthenticatedUsers` and remove it.
+            4. Add specific principals (users, groups, service accounts) that need the access, using the narrowest appropriate role (for example `Cloud Tasks Enqueuer` for producers).
+            5. Save and verify the policy no longer lists the public principals.
+        - id: cli
+          desc: |
+            Remove the public bindings from the queue:
+
+            ```bash
+            gcloud tasks queues remove-iam-policy-binding QUEUE_ID \
+              --location=LOCATION \
+              --member=allUsers \
+              --role=ROLE_NAME
+
+            gcloud tasks queues remove-iam-policy-binding QUEUE_ID \
+              --location=LOCATION \
+              --member=allAuthenticatedUsers \
+              --role=ROLE_NAME
+            ```
+
+            Then grant the access to a specific principal with the narrowest role:
+
+            ```bash
+            gcloud tasks queues add-iam-policy-binding QUEUE_ID \
+              --location=LOCATION \
+              --member=serviceAccount:dispatcher@my-project.iam.gserviceaccount.com \
+              --role=roles/cloudtasks.enqueuer
+            ```
+    refs:
+      - url: https://cloud.google.com/tasks/docs/reference-access-control
+        title: Cloud Tasks - Access control with IAM
+      - url: https://cloud.google.com/iam/docs/overview#allusers
+        title: IAM - Public principals (allUsers, allAuthenticatedUsers)
+  - uid: mondoo-gcp-security-cloud-tasks-queue-not-publicly-accessible-gcp
+    filters: asset.platform == 'gcp-project'
+    mql: |
+      gcp.project.cloudTasksService.queues.all(
+        iamPolicy.all(members.none(_ == "allUsers" || _ == "allAuthenticatedUsers"))
+      )
+  - uid: mondoo-gcp-security-cloud-tasks-queue-not-publicly-accessible-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_cloud_tasks_queue_iam_member') ||
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_cloud_tasks_queue_iam_binding')
+    mql: |
+      terraform.resources('google_cloud_tasks_queue_iam_member').all(
+        arguments['member'] != "allUsers" &&
+        arguments['member'] != "allAuthenticatedUsers"
+      )
+      terraform.resources('google_cloud_tasks_queue_iam_binding').all(
+        arguments['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-cloud-tasks-queue-not-publicly-accessible-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_cloud_tasks_queue_iam_member') ||
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_cloud_tasks_queue_iam_binding')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_cloud_tasks_queue_iam_member').all(
+        change.after['member'] != "allUsers" &&
+        change.after['member'] != "allAuthenticatedUsers"
+      )
+      terraform.plan.resourceChanges.where(type == 'google_cloud_tasks_queue_iam_binding').all(
+        change.after['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-cloud-tasks-queue-not-publicly-accessible-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_cloud_tasks_queue_iam_member') ||
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_cloud_tasks_queue_iam_binding')
+    mql: |
+      terraform.state.resources.where(type == 'google_cloud_tasks_queue_iam_member').all(
+        values['member'] != "allUsers" &&
+        values['member'] != "allAuthenticatedUsers"
+      )
+      terraform.state.resources.where(type == 'google_cloud_tasks_queue_iam_binding').all(
+        values['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-cloud-tasks-queue-iam-no-primitive-roles
+    title: Ensure Cloud Tasks queue IAM grants no primitive roles
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-3-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-gcp-security-cloud-tasks-queue-iam-no-primitive-roles-gcp
+        tags:
+          mondoo.com/filter-title: GCP Project
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-cloud-tasks-queue-iam-no-primitive-roles-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-cloud-tasks-queue-iam-no-primitive-roles-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-cloud-tasks-queue-iam-no-primitive-roles-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that no IAM binding on a Cloud Tasks queue grants the primitive roles `roles/owner`, `roles/editor`, or `roles/viewer`. Cloud Tasks provides fine-grained predefined roles such as `roles/cloudtasks.enqueuer`, `roles/cloudtasks.taskRunner`, `roles/cloudtasks.viewer`, and `roles/cloudtasks.admin` that should replace any primitive grant.
+
+        **Why this matters**
+
+        - **Scope creep by design:** Primitive roles grant permissions across every resource type in the project, not just Cloud Tasks, so an `roles/editor` binding on a queue silently covers Cloud Storage, Compute, and dozens of other services.
+        - **Automatic privilege expansion:** Google adds new Cloud Tasks features to primitive roles over time; a principal bound to `roles/editor` today gains permissions to new Cloud Tasks capabilities tomorrow without any administrator action.
+        - **Owner risk:** `roles/owner` carries IAM-modification rights, meaning the holder can grant themselves or others any additional role on the queue.
+        - **Viewer oversharing:** `roles/viewer` exposes queue configuration and task metadata to principals that may only need to enqueue work.
+
+        **Risk mitigation**
+
+        - **Replace primitives with Cloud Tasks predefined roles:** Audit each binding and substitute the narrowest Cloud Tasks role that covers the principal's actual use case, such as `roles/cloudtasks.enqueuer` for producers.
+        - **Manage IAM via infrastructure-as-code:** Define queue IAM bindings in Terraform using `google_cloud_tasks_queue_iam_member` resources, which make role assignments explicit and reviewable in pull requests.
+        - **Conduct periodic access reviews:** Schedule quarterly reviews of Cloud Tasks IAM policies to identify and remove stale or overly broad bindings before they become a liability.
+      audit: |
+        ### Audit via Console
+
+        1. Open the [Google Cloud Console](https://console.cloud.google.com/) and navigate to **Cloud Tasks**.
+        2. Select a queue and open the **Permissions** panel.
+        3. Review each binding in the IAM policy. Confirm no principal is granted `Owner`, `Editor`, or `Viewer`.
+        4. Repeat for every queue in the project.
+
+        A passing queue shows no bindings to `roles/owner`, `roles/editor`, or `roles/viewer`. A failing queue shows at least one primitive-role binding.
+
+        ### Audit via CLI
+
+        1. Check the IAM policy of each queue:
+
+        ```bash
+        gcloud tasks queues get-iam-policy QUEUE_ID \
+          --location=LOCATION \
+          --format="json(bindings)" \
+          | jq '.bindings[] | select(.role == "roles/owner" or .role == "roles/editor" or .role == "roles/viewer")'
+        ```
+
+        A passing queue returns no output from the `jq` filter. A failing queue returns one or more bindings containing a primitive role.
+      remediation:
+        - id: terraform
+          desc: |
+            Manage Cloud Tasks queue IAM via the dedicated `google_cloud_tasks_queue_iam_*` resources, granting only the narrow Cloud Tasks roles — not `roles/owner`, `roles/editor`, or `roles/viewer`:
+
+            ```hcl
+            resource "google_cloud_tasks_queue_iam_member" "enqueuer" {
+              name     = google_cloud_tasks_queue.app.name
+              location = google_cloud_tasks_queue.app.location
+              role     = "roles/cloudtasks.enqueuer"
+              member   = "serviceAccount:dispatcher@my-project.iam.gserviceaccount.com"
+            }
+            ```
+        - id: console
+          desc: |
+            Replace each primitive-role binding with a fine-grained Cloud Tasks role:
+
+            1. Open **Cloud Tasks** → select the queue.
+            2. Open the **Permissions** panel.
+            3. For each principal bound to Owner / Editor / Viewer, remove the primitive grant and add the narrow role that matches the principal's actual use (for example `Cloud Tasks Enqueuer`, `Cloud Tasks Task Runner`, or `Cloud Tasks Viewer`).
+            4. Save. Confirm with the principal that their workflow still works.
+        - id: cli
+          desc: |
+            Remove a primitive role binding from a queue and grant the fine-grained equivalent:
+
+            ```bash
+            gcloud tasks queues remove-iam-policy-binding QUEUE_ID \
+              --location=LOCATION \
+              --member=user:alice@example.com \
+              --role=roles/editor
+
+            gcloud tasks queues add-iam-policy-binding QUEUE_ID \
+              --location=LOCATION \
+              --member=user:alice@example.com \
+              --role=roles/cloudtasks.enqueuer
+            ```
+    refs:
+      - url: https://cloud.google.com/tasks/docs/reference-access-control
+        title: Cloud Tasks - Access control with IAM
+      - url: https://cloud.google.com/iam/docs/understanding-roles#basic
+        title: IAM - Basic (primitive) roles
+  - uid: mondoo-gcp-security-cloud-tasks-queue-iam-no-primitive-roles-gcp
+    filters: asset.platform == 'gcp-project'
+    mql: |
+      gcp.project.cloudTasksService.queues.all(
+        iamPolicy.all(role != "roles/owner" && role != "roles/editor" && role != "roles/viewer")
+      )
+  - uid: mondoo-gcp-security-cloud-tasks-queue-iam-no-primitive-roles-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_cloud_tasks_queue_iam_member') ||
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_cloud_tasks_queue_iam_binding')
+    mql: |
+      terraform.resources('google_cloud_tasks_queue_iam_member').all(
+        arguments['role'] != "roles/owner" &&
+        arguments['role'] != "roles/editor" &&
+        arguments['role'] != "roles/viewer"
+      )
+      terraform.resources('google_cloud_tasks_queue_iam_binding').all(
+        arguments['role'] != "roles/owner" &&
+        arguments['role'] != "roles/editor" &&
+        arguments['role'] != "roles/viewer"
+      )
+  - uid: mondoo-gcp-security-cloud-tasks-queue-iam-no-primitive-roles-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_cloud_tasks_queue_iam_member') ||
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_cloud_tasks_queue_iam_binding')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_cloud_tasks_queue_iam_member').all(
+        change.after['role'] != "roles/owner" &&
+        change.after['role'] != "roles/editor" &&
+        change.after['role'] != "roles/viewer"
+      )
+      terraform.plan.resourceChanges.where(type == 'google_cloud_tasks_queue_iam_binding').all(
+        change.after['role'] != "roles/owner" &&
+        change.after['role'] != "roles/editor" &&
+        change.after['role'] != "roles/viewer"
+      )
+  - uid: mondoo-gcp-security-cloud-tasks-queue-iam-no-primitive-roles-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_cloud_tasks_queue_iam_member') ||
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_cloud_tasks_queue_iam_binding')
+    mql: |
+      terraform.state.resources.where(type == 'google_cloud_tasks_queue_iam_member').all(
+        values['role'] != "roles/owner" &&
+        values['role'] != "roles/editor" &&
+        values['role'] != "roles/viewer"
+      )
+      terraform.state.resources.where(type == 'google_cloud_tasks_queue_iam_binding').all(
+        values['role'] != "roles/owner" &&
+        values['role'] != "roles/editor" &&
+        values['role'] != "roles/viewer"
+      )
+  - uid: mondoo-gcp-security-bigtable-iam-no-public-principals
+    title: Ensure Bigtable IAM has no public or anonymous principals
+    impact: 100
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-5-15
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-gcp-security-bigtable-iam-no-public-principals-gcp
+        tags:
+          mondoo.com/filter-title: GCP Bigtable Instance
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-bigtable-iam-no-public-principals-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-bigtable-iam-no-public-principals-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-bigtable-iam-no-public-principals-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that no IAM binding on a Cloud Bigtable instance grants access to `allUsers` or `allAuthenticatedUsers`. Either principal effectively publishes the Bigtable instance to anyone on the internet or anyone with a Google account, bypassing every other access control the organization relies on.
+
+        **Why this matters**
+
+        - **Unrestricted data exposure:** A single binding to `allUsers` opens the instance to any caller on the internet without authentication, regardless of VPC-SC perimeters or organizational policies.
+        - **Wide-column data at risk:** Bigtable typically holds high-throughput operational and analytics data such as time-series metrics, user profiles, and event streams; public exposure of this data violates data protection obligations and erodes user trust.
+        - **Perimeter bypass:** Public principals override VPC Service Controls, Private Google Access configurations, and other perimeter controls that are otherwise effective.
+        - **Accidental misconfiguration:** Bindings to `allUsers` or `allAuthenticatedUsers` are almost always the result of a broad script or UI error, not an intentional decision, yet the impact is immediate and total.
+
+        **Risk mitigation**
+
+        - **Remove public principal bindings immediately:** Use `gcloud bigtable instances remove-iam-policy-binding` to eliminate any binding that includes `allUsers` or `allAuthenticatedUsers`.
+        - **Replace with specific principals:** After removing the public binding, add the narrowest specific principal that satisfies the access need, using a service account, user, or group with an appropriate Bigtable predefined role.
+        - **Enable organization-level constraints:** Apply the `constraints/iam.allowedPolicyMemberDomains` organization policy to prevent future bindings to public principals across all projects in the organization.
+      audit: |
+        ### Audit via Console
+
+        1. Open the [Google Cloud Console](https://console.cloud.google.com/) and navigate to **Bigtable**.
+        2. Select the instance and click **Permissions** in the left navigation.
+        3. Scan each binding for the principals `allUsers` or `allAuthenticatedUsers`.
+
+        A passing instance shows no bindings with `allUsers` or `allAuthenticatedUsers` as a member. A failing instance shows at least one public-principal binding.
+
+        ### Audit via CLI
+
+        1. Check the instance-level IAM policy:
+
+        ```bash
+        gcloud bigtable instances get-iam-policy INSTANCE_ID \
+          --format="json(bindings)" \
+          | jq '.bindings[] | select(.members[] | test("^allUsers$|^allAuthenticatedUsers$"))'
+        ```
+
+        A passing instance returns no output from the `jq` filter. A failing instance returns one or more bindings that include `allUsers` or `allAuthenticatedUsers`.
+      remediation:
+        - id: terraform
+          desc: |
+            Manage Bigtable IAM only via `google_bigtable_instance_iam_member` resources with explicit principals — never with `allUsers` or `allAuthenticatedUsers`:
+
+            ```hcl
+            resource "google_bigtable_instance_iam_member" "reader" {
+              instance = google_bigtable_instance.app.name
+              role     = "roles/bigtable.reader"
+              member   = "group:analytics@example.com" # never allUsers / allAuthenticatedUsers
+            }
+            ```
+
+            Audit existing bindings: import `google_bigtable_instance_iam_policy` into state if the policy is managed elsewhere, then remove any public-principal members in the source HCL and re-apply.
+        - id: console
+          desc: |
+            Remove any public principal from the Bigtable IAM policy:
+
+            1. Open **Bigtable** → select the instance.
+            2. Select **Permissions**.
+            3. Locate any binding whose principal is `allUsers` or `allAuthenticatedUsers` and remove it.
+            4. Add specific principals (users, groups, service accounts) that need the access, using the narrowest appropriate role (for example `Bigtable Reader` for read-only workloads).
+            5. Save and verify the policy no longer lists the public principals.
+        - id: cli
+          desc: |
+            Remove the public bindings from the instance:
+
+            ```bash
+            gcloud bigtable instances remove-iam-policy-binding INSTANCE_ID \
+              --member=allUsers \
+              --role=ROLE_NAME
+
+            gcloud bigtable instances remove-iam-policy-binding INSTANCE_ID \
+              --member=allAuthenticatedUsers \
+              --role=ROLE_NAME
+            ```
+
+            Then grant the access to a specific principal:
+
+            ```bash
+            gcloud bigtable instances add-iam-policy-binding INSTANCE_ID \
+              --member=group:analytics@example.com \
+              --role=roles/bigtable.reader
+            ```
+    refs:
+      - url: https://cloud.google.com/bigtable/docs/access-control
+        title: Cloud Bigtable - Access control with IAM
+      - url: https://cloud.google.com/iam/docs/overview#allusers
+        title: IAM - Public principals (allUsers, allAuthenticatedUsers)
+  - uid: mondoo-gcp-security-bigtable-iam-no-public-principals-gcp
+    filters: asset.platform == 'gcp-bigtable-instance'
+    mql: |
+      gcp.bigtable.instance.iamPolicy.all(
+        members.none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-bigtable-iam-no-public-principals-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_bigtable_instance_iam_member') ||
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_bigtable_instance_iam_binding')
+    mql: |
+      terraform.resources('google_bigtable_instance_iam_member').all(
+        arguments['member'] != "allUsers" &&
+        arguments['member'] != "allAuthenticatedUsers"
+      )
+      terraform.resources('google_bigtable_instance_iam_binding').all(
+        arguments['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-bigtable-iam-no-public-principals-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_bigtable_instance_iam_member') ||
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_bigtable_instance_iam_binding')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_bigtable_instance_iam_member').all(
+        change.after['member'] != "allUsers" &&
+        change.after['member'] != "allAuthenticatedUsers"
+      )
+      terraform.plan.resourceChanges.where(type == 'google_bigtable_instance_iam_binding').all(
+        change.after['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-bigtable-iam-no-public-principals-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_bigtable_instance_iam_member') ||
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_bigtable_instance_iam_binding')
+    mql: |
+      terraform.state.resources.where(type == 'google_bigtable_instance_iam_member').all(
+        values['member'] != "allUsers" &&
+        values['member'] != "allAuthenticatedUsers"
+      )
+      terraform.state.resources.where(type == 'google_bigtable_instance_iam_binding').all(
+        values['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-bigtable-iam-no-primitive-roles
+    title: Ensure Bigtable instance IAM grants no primitive roles
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-3-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-gcp-security-bigtable-iam-no-primitive-roles-gcp
+        tags:
+          mondoo.com/filter-title: GCP Bigtable Instance
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-bigtable-iam-no-primitive-roles-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-bigtable-iam-no-primitive-roles-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-bigtable-iam-no-primitive-roles-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that no IAM binding on a Cloud Bigtable instance grants the primitive roles `roles/owner`, `roles/editor`, or `roles/viewer`. Bigtable provides fine-grained predefined roles such as `roles/bigtable.admin`, `roles/bigtable.user`, and `roles/bigtable.reader` that should replace any primitive grant.
+
+        **Why this matters**
+
+        - **Scope creep by design:** Primitive roles grant permissions across every resource type in the project, not just Bigtable, so an `roles/editor` binding on a Bigtable instance silently covers Cloud Storage, Compute, and dozens of other services.
+        - **Automatic privilege expansion:** Google adds new Bigtable features to primitive roles over time; a principal bound to `roles/editor` today gains permissions to new Bigtable capabilities tomorrow without any administrator action.
+        - **Owner risk:** `roles/owner` carries IAM-modification rights, meaning the holder can grant themselves or others any additional role on the Bigtable resource.
+        - **Viewer oversharing:** `roles/viewer` exposes table schemas, row data, and instance metadata to principals that may only need to see aggregate summaries.
+
+        **Risk mitigation**
+
+        - **Replace primitives with Bigtable predefined roles:** Audit each binding and substitute the narrowest Bigtable role that covers the principal's actual use case, such as `roles/bigtable.reader` for read-only workloads.
+        - **Manage IAM via infrastructure-as-code:** Define Bigtable IAM bindings in Terraform using `google_bigtable_instance_iam_member` resources, which make role assignments explicit and reviewable in pull requests.
+        - **Conduct periodic access reviews:** Schedule quarterly reviews of Bigtable IAM policies to identify and remove stale or overly broad bindings before they become a liability.
+      audit: |
+        ### Audit via Console
+
+        1. Open the [Google Cloud Console](https://console.cloud.google.com/) and navigate to **Bigtable**.
+        2. Select the instance and click **Permissions** in the left navigation.
+        3. Review each binding in the IAM policy. Confirm no principal is granted `Owner`, `Editor`, or `Viewer`.
+
+        A passing instance shows no bindings to `roles/owner`, `roles/editor`, or `roles/viewer`. A failing instance shows at least one primitive-role binding.
+
+        ### Audit via CLI
+
+        1. Check the instance-level IAM policy:
+
+        ```bash
+        gcloud bigtable instances get-iam-policy INSTANCE_ID \
+          --format="json(bindings)" \
+          | jq '.bindings[] | select(.role == "roles/owner" or .role == "roles/editor" or .role == "roles/viewer")'
+        ```
+
+        A passing instance returns no output from the `jq` filter. A failing instance returns one or more bindings containing a primitive role.
+      remediation:
+        - id: terraform
+          desc: |
+            Manage Bigtable IAM via the dedicated `google_bigtable_instance_iam_*` resources, granting only the narrow Bigtable roles — not `roles/owner`, `roles/editor`, or `roles/viewer`:
+
+            ```hcl
+            resource "google_bigtable_instance_iam_member" "db_user" {
+              instance = google_bigtable_instance.app.name
+              role     = "roles/bigtable.user"
+              member   = "serviceAccount:app@my-project.iam.gserviceaccount.com"
+            }
+            ```
+        - id: console
+          desc: |
+            Replace each primitive-role binding with a fine-grained Bigtable role:
+
+            1. Open **Bigtable** → select the instance.
+            2. Select **Permissions**.
+            3. For each principal bound to Owner / Editor / Viewer, remove the primitive grant and add the narrow role that matches the principal's actual use (for example `Bigtable Administrator`, `Bigtable User`, or `Bigtable Reader`).
+            4. Save. Confirm with the principal that their workflow still works.
+        - id: cli
+          desc: |
+            Remove a primitive role binding from an instance and grant the fine-grained equivalent:
+
+            ```bash
+            gcloud bigtable instances remove-iam-policy-binding INSTANCE_ID \
+              --member=user:alice@example.com \
+              --role=roles/editor
+
+            gcloud bigtable instances add-iam-policy-binding INSTANCE_ID \
+              --member=user:alice@example.com \
+              --role=roles/bigtable.user
+            ```
+    refs:
+      - url: https://cloud.google.com/bigtable/docs/access-control
+        title: Cloud Bigtable - Access control with IAM
+      - url: https://cloud.google.com/iam/docs/understanding-roles#basic
+        title: IAM - Basic (primitive) roles
+  - uid: mondoo-gcp-security-bigtable-iam-no-primitive-roles-gcp
+    filters: asset.platform == 'gcp-bigtable-instance'
+    mql: |
+      gcp.bigtable.instance.iamPolicy.all(
+        role != "roles/owner" && role != "roles/editor" && role != "roles/viewer"
+      )
+  - uid: mondoo-gcp-security-bigtable-iam-no-primitive-roles-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_bigtable_instance_iam_member') ||
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_bigtable_instance_iam_binding')
+    mql: |
+      terraform.resources('google_bigtable_instance_iam_member').all(
+        arguments['role'] != "roles/owner" &&
+        arguments['role'] != "roles/editor" &&
+        arguments['role'] != "roles/viewer"
+      )
+      terraform.resources('google_bigtable_instance_iam_binding').all(
+        arguments['role'] != "roles/owner" &&
+        arguments['role'] != "roles/editor" &&
+        arguments['role'] != "roles/viewer"
+      )
+  - uid: mondoo-gcp-security-bigtable-iam-no-primitive-roles-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_bigtable_instance_iam_member') ||
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_bigtable_instance_iam_binding')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_bigtable_instance_iam_member').all(
+        change.after['role'] != "roles/owner" &&
+        change.after['role'] != "roles/editor" &&
+        change.after['role'] != "roles/viewer"
+      )
+      terraform.plan.resourceChanges.where(type == 'google_bigtable_instance_iam_binding').all(
+        change.after['role'] != "roles/owner" &&
+        change.after['role'] != "roles/editor" &&
+        change.after['role'] != "roles/viewer"
+      )
+  - uid: mondoo-gcp-security-bigtable-iam-no-primitive-roles-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_bigtable_instance_iam_member') ||
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_bigtable_instance_iam_binding')
+    mql: |
+      terraform.state.resources.where(type == 'google_bigtable_instance_iam_member').all(
+        values['role'] != "roles/owner" &&
+        values['role'] != "roles/editor" &&
+        values['role'] != "roles/viewer"
+      )
+      terraform.state.resources.where(type == 'google_bigtable_instance_iam_binding').all(
+        values['role'] != "roles/owner" &&
+        values['role'] != "roles/editor" &&
+        values['role'] != "roles/viewer"
+      )
+  - uid: mondoo-gcp-security-dataproc-cluster-iam-no-public-principals
+    title: Ensure Dataproc cluster IAM has no public principals
+    impact: 100
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-5-15
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-gcp-security-dataproc-cluster-iam-no-public-principals-gcp
+        tags:
+          mondoo.com/filter-title: GCP Dataproc Cluster
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-dataproc-cluster-iam-no-public-principals-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-dataproc-cluster-iam-no-public-principals-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-dataproc-cluster-iam-no-public-principals-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that no IAM binding on a Cloud Dataproc cluster grants access to `allUsers` or `allAuthenticatedUsers`. Either principal effectively publishes the cluster to anyone on the internet or anyone with a Google account, bypassing every other access control the organization relies on.
+
+        **Why this matters**
+
+        - **Unrestricted cluster access:** A single binding to `allUsers` opens the cluster to any caller on the internet without authentication, regardless of VPC-SC perimeters or organizational policies.
+        - **Data and job exposure:** Dataproc clusters run jobs that read and write source data, and their principals can submit arbitrary workloads; public exposure lets anyone read that data or run code on the cluster.
+        - **Service account abuse:** A Dataproc cluster runs with an attached service account, so a public principal that can submit jobs inherits whatever that service account is authorized to do across the project.
+        - **Accidental misconfiguration:** Bindings to `allUsers` or `allAuthenticatedUsers` are almost always the result of a broad script or UI error, not an intentional decision, yet the impact is immediate and total.
+
+        **Risk mitigation**
+
+        - **Remove public principal bindings immediately:** Export the cluster policy with `gcloud dataproc clusters get-iam-policy`, delete any binding that includes `allUsers` or `allAuthenticatedUsers`, and reapply it with `set-iam-policy`.
+        - **Replace with specific principals:** After removing the public binding, add the narrowest specific principal that satisfies the access need, using a service account, user, or group with an appropriate Dataproc predefined role.
+        - **Enable organization-level constraints:** Apply the `constraints/iam.allowedPolicyMemberDomains` organization policy to prevent future bindings to public principals across all projects in the organization.
+      audit: |
+        ### Audit via Console
+
+        1. Open the [Google Cloud Console](https://console.cloud.google.com/) and navigate to **Dataproc** → **Clusters**.
+        2. Select the cluster and open the **Permissions** panel.
+        3. Scan each binding for the principals `allUsers` or `allAuthenticatedUsers`.
+
+        A passing cluster shows no bindings with `allUsers` or `allAuthenticatedUsers` as a member. A failing cluster shows at least one public-principal binding.
+
+        ### Audit via CLI
+
+        1. Check the cluster-level IAM policy:
+
+        ```bash
+        gcloud dataproc clusters get-iam-policy CLUSTER_ID \
+          --region=REGION \
+          --format="json(bindings)" \
+          | jq '.bindings[] | select(.members[] | test("^allUsers$|^allAuthenticatedUsers$"))'
+        ```
+
+        A passing cluster returns no output from the `jq` filter. A failing cluster returns one or more bindings that include `allUsers` or `allAuthenticatedUsers`.
+      remediation:
+        - id: terraform
+          desc: |
+            Manage Dataproc IAM only via `google_dataproc_cluster_iam_member` resources with explicit principals — never with `allUsers` or `allAuthenticatedUsers`:
+
+            ```hcl
+            resource "google_dataproc_cluster_iam_member" "editor" {
+              cluster = google_dataproc_cluster.app.name
+              region  = "us-central1"
+              role    = "roles/dataproc.editor"
+              member  = "group:data-eng@example.com" # never allUsers / allAuthenticatedUsers
+            }
+            ```
+
+            Audit existing bindings: import `google_dataproc_cluster_iam_policy` into state if the policy is managed elsewhere, then remove any public-principal members in the source HCL and re-apply.
+        - id: console
+          desc: |
+            Remove any public principal from the Dataproc cluster IAM policy:
+
+            1. Open **Dataproc** → **Clusters** → select the cluster.
+            2. Open the **Permissions** panel.
+            3. Locate any binding whose principal is `allUsers` or `allAuthenticatedUsers` and remove it.
+            4. Add specific principals (users, groups, service accounts) that need the access, using the narrowest appropriate role (for example `Dataproc Viewer` for read-only workloads).
+            5. Save and verify the policy no longer lists the public principals.
+        - id: cli
+          desc: |
+            Dataproc clusters expose `get-iam-policy` and `set-iam-policy` (there is no per-binding add/remove command), so edit the policy document and reapply it. First export the current policy:
+
+            ```bash
+            gcloud dataproc clusters get-iam-policy CLUSTER_ID \
+              --region=REGION \
+              --format=json > policy.json
+            ```
+
+            Delete every binding whose `members` array contains `allUsers` or `allAuthenticatedUsers` from `policy.json`, then apply the corrected policy:
+
+            ```bash
+            gcloud dataproc clusters set-iam-policy CLUSTER_ID \
+              --region=REGION \
+              policy.json
+            ```
+    refs:
+      - url: https://cloud.google.com/dataproc/docs/concepts/iam/iam
+        title: Dataproc - Dataproc permissions and IAM roles
+      - url: https://cloud.google.com/iam/docs/overview#allusers
+        title: IAM - Public principals (allUsers, allAuthenticatedUsers)
+  - uid: mondoo-gcp-security-dataproc-cluster-iam-no-public-principals-gcp
+    filters: asset.platform == 'gcp-dataproc-cluster'
+    mql: |
+      gcp.project.dataprocService.cluster.iamPolicy.all(
+        members.none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-dataproc-cluster-iam-no-public-principals-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_dataproc_cluster_iam_member') ||
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_dataproc_cluster_iam_binding')
+    mql: |
+      terraform.resources('google_dataproc_cluster_iam_member').all(
+        arguments['member'] != "allUsers" &&
+        arguments['member'] != "allAuthenticatedUsers"
+      )
+      terraform.resources('google_dataproc_cluster_iam_binding').all(
+        arguments['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-dataproc-cluster-iam-no-public-principals-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_dataproc_cluster_iam_member') ||
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_dataproc_cluster_iam_binding')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_dataproc_cluster_iam_member').all(
+        change.after['member'] != "allUsers" &&
+        change.after['member'] != "allAuthenticatedUsers"
+      )
+      terraform.plan.resourceChanges.where(type == 'google_dataproc_cluster_iam_binding').all(
+        change.after['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-dataproc-cluster-iam-no-public-principals-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_dataproc_cluster_iam_member') ||
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_dataproc_cluster_iam_binding')
+    mql: |
+      terraform.state.resources.where(type == 'google_dataproc_cluster_iam_member').all(
+        values['member'] != "allUsers" &&
+        values['member'] != "allAuthenticatedUsers"
+      )
+      terraform.state.resources.where(type == 'google_dataproc_cluster_iam_binding').all(
+        values['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-dataproc-cluster-iam-no-primitive-roles
+    title: Ensure Dataproc cluster IAM grants no primitive roles
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-3-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-gcp-security-dataproc-cluster-iam-no-primitive-roles-gcp
+        tags:
+          mondoo.com/filter-title: GCP Dataproc Cluster
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-dataproc-cluster-iam-no-primitive-roles-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-dataproc-cluster-iam-no-primitive-roles-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-dataproc-cluster-iam-no-primitive-roles-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that no IAM binding on a Cloud Dataproc cluster grants the primitive roles `roles/owner`, `roles/editor`, or `roles/viewer`. Dataproc provides fine-grained predefined roles such as `roles/dataproc.admin`, `roles/dataproc.editor`, `roles/dataproc.viewer`, and `roles/dataproc.worker` that should replace any primitive grant.
+
+        **Why this matters**
+
+        - **Scope creep by design:** Primitive roles grant permissions across every resource type in the project, not just Dataproc, so an `roles/editor` binding on a Dataproc cluster silently covers Cloud Storage, Compute, and dozens of other services.
+        - **Automatic privilege expansion:** Google adds new Dataproc features to primitive roles over time; a principal bound to `roles/editor` today gains permissions to new Dataproc capabilities tomorrow without any administrator action.
+        - **Owner risk:** `roles/owner` carries IAM-modification rights, meaning the holder can grant themselves or others any additional role on the Dataproc resource.
+        - **Job submission oversharing:** `roles/editor` lets a principal submit jobs that run with the cluster's service account, turning a broad grant into arbitrary code execution against project data.
+
+        **Risk mitigation**
+
+        - **Replace primitives with Dataproc predefined roles:** Audit each binding and substitute the narrowest Dataproc role that covers the principal's actual use case, such as `roles/dataproc.viewer` for read-only workloads.
+        - **Manage IAM via infrastructure-as-code:** Define Dataproc IAM bindings in Terraform using `google_dataproc_cluster_iam_member` resources, which make role assignments explicit and reviewable in pull requests.
+        - **Conduct periodic access reviews:** Schedule quarterly reviews of Dataproc IAM policies to identify and remove stale or overly broad bindings before they become a liability.
+      audit: |
+        ### Audit via Console
+
+        1. Open the [Google Cloud Console](https://console.cloud.google.com/) and navigate to **Dataproc** → **Clusters**.
+        2. Select the cluster and open the **Permissions** panel.
+        3. Review each binding in the IAM policy. Confirm no principal is granted `Owner`, `Editor`, or `Viewer`.
+
+        A passing cluster shows no bindings to `roles/owner`, `roles/editor`, or `roles/viewer`. A failing cluster shows at least one primitive-role binding.
+
+        ### Audit via CLI
+
+        1. Check the cluster-level IAM policy:
+
+        ```bash
+        gcloud dataproc clusters get-iam-policy CLUSTER_ID \
+          --region=REGION \
+          --format="json(bindings)" \
+          | jq '.bindings[] | select(.role == "roles/owner" or .role == "roles/editor" or .role == "roles/viewer")'
+        ```
+
+        A passing cluster returns no output from the `jq` filter. A failing cluster returns one or more bindings containing a primitive role.
+      remediation:
+        - id: terraform
+          desc: |
+            Manage Dataproc IAM via the dedicated `google_dataproc_cluster_iam_*` resources, granting only the narrow Dataproc roles — not `roles/owner`, `roles/editor`, or `roles/viewer`:
+
+            ```hcl
+            resource "google_dataproc_cluster_iam_member" "worker" {
+              cluster = google_dataproc_cluster.app.name
+              region  = "us-central1"
+              role    = "roles/dataproc.worker"
+              member  = "serviceAccount:worker@my-project.iam.gserviceaccount.com"
+            }
+            ```
+        - id: console
+          desc: |
+            Replace each primitive-role binding with a fine-grained Dataproc role:
+
+            1. Open **Dataproc** → **Clusters** → select the cluster.
+            2. Open the **Permissions** panel.
+            3. For each principal bound to Owner / Editor / Viewer, remove the primitive grant and add the narrow role that matches the principal's actual use (for example `Dataproc Administrator`, `Dataproc Editor`, `Dataproc Viewer`, or `Dataproc Worker`).
+            4. Save. Confirm with the principal that their workflow still works.
+        - id: cli
+          desc: |
+            Dataproc clusters expose `get-iam-policy` and `set-iam-policy` (there is no per-binding add/remove command), so edit the policy document and reapply it. First export the current policy:
+
+            ```bash
+            gcloud dataproc clusters get-iam-policy CLUSTER_ID \
+              --region=REGION \
+              --format=json > policy.json
+            ```
+
+            In `policy.json`, replace every `roles/owner`, `roles/editor`, or `roles/viewer` binding with a fine-grained Dataproc role (for example `roles/dataproc.editor` or `roles/dataproc.viewer`), then apply the corrected policy:
+
+            ```bash
+            gcloud dataproc clusters set-iam-policy CLUSTER_ID \
+              --region=REGION \
+              policy.json
+            ```
+    refs:
+      - url: https://cloud.google.com/dataproc/docs/concepts/iam/iam
+        title: Dataproc - Dataproc permissions and IAM roles
+      - url: https://cloud.google.com/iam/docs/understanding-roles#basic
+        title: IAM - Basic (primitive) roles
+  - uid: mondoo-gcp-security-dataproc-cluster-iam-no-primitive-roles-gcp
+    filters: asset.platform == 'gcp-dataproc-cluster'
+    mql: |
+      gcp.project.dataprocService.cluster.iamPolicy.all(
+        role != "roles/owner" && role != "roles/editor" && role != "roles/viewer"
+      )
+  - uid: mondoo-gcp-security-dataproc-cluster-iam-no-primitive-roles-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_dataproc_cluster_iam_member') ||
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_dataproc_cluster_iam_binding')
+    mql: |
+      terraform.resources('google_dataproc_cluster_iam_member').all(
+        arguments['role'] != "roles/owner" &&
+        arguments['role'] != "roles/editor" &&
+        arguments['role'] != "roles/viewer"
+      )
+      terraform.resources('google_dataproc_cluster_iam_binding').all(
+        arguments['role'] != "roles/owner" &&
+        arguments['role'] != "roles/editor" &&
+        arguments['role'] != "roles/viewer"
+      )
+  - uid: mondoo-gcp-security-dataproc-cluster-iam-no-primitive-roles-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_dataproc_cluster_iam_member') ||
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_dataproc_cluster_iam_binding')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_dataproc_cluster_iam_member').all(
+        change.after['role'] != "roles/owner" &&
+        change.after['role'] != "roles/editor" &&
+        change.after['role'] != "roles/viewer"
+      )
+      terraform.plan.resourceChanges.where(type == 'google_dataproc_cluster_iam_binding').all(
+        change.after['role'] != "roles/owner" &&
+        change.after['role'] != "roles/editor" &&
+        change.after['role'] != "roles/viewer"
+      )
+  - uid: mondoo-gcp-security-dataproc-cluster-iam-no-primitive-roles-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_dataproc_cluster_iam_member') ||
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_dataproc_cluster_iam_binding')
+    mql: |
+      terraform.state.resources.where(type == 'google_dataproc_cluster_iam_member').all(
+        values['role'] != "roles/owner" &&
+        values['role'] != "roles/editor" &&
+        values['role'] != "roles/viewer"
+      )
+      terraform.state.resources.where(type == 'google_dataproc_cluster_iam_binding').all(
+        values['role'] != "roles/owner" &&
+        values['role'] != "roles/editor" &&
+        values['role'] != "roles/viewer"
+      )
+  - uid: mondoo-gcp-security-cloud-run-no-public-invocation
+    title: Ensure Cloud Run services are not publicly invocable
+    impact: 100
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-5-15
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-gcp-security-cloud-run-no-public-invocation-gcp
+        tags:
+          mondoo.com/filter-title: GCP Cloud Run Service
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-cloud-run-no-public-invocation-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-cloud-run-no-public-invocation-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-cloud-run-no-public-invocation-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that a Cloud Run service is not exposed to unauthenticated callers on the public internet. A service becomes publicly invocable when its ingress setting allows all traffic and its IAM policy grants `roles/run.invoker` to `allUsers` or `allAuthenticatedUsers`. Either principal effectively publishes the service endpoint to anyone on the internet or anyone with a Google account, bypassing every other access control the organization relies on.
+
+        **Why this matters**
+
+        - **Unauthenticated endpoint exposure:** A binding to `allUsers` combined with open ingress lets any caller on the internet invoke the service without proving identity, exposing application logic and any data it can reach.
+        - **Abuse and cost amplification:** A public endpoint can be scraped, fuzzed, or driven at high request volume, inflating compute costs and creating a denial-of-service surface.
+        - **Perimeter bypass:** Public principals override VPC Service Controls, ingress restrictions, and other perimeter controls that are otherwise effective at containing the service.
+        - **Accidental misconfiguration:** Bindings to `allUsers` or `allAuthenticatedUsers` are almost always the result of a broad script or UI convenience during testing, not an intentional decision, yet the impact is immediate and total.
+
+        **Risk mitigation**
+
+        - **Remove public principal bindings immediately:** Use `gcloud run services remove-iam-policy-binding` to eliminate any `roles/run.invoker` binding that includes `allUsers` or `allAuthenticatedUsers`.
+        - **Require authenticated invocation:** Grant `roles/run.invoker` only to the specific service accounts, users, or groups that must call the service, and route external callers through an authenticated front end such as an HTTPS load balancer with IAP.
+        - **Restrict ingress:** Set the service ingress to internal or internal-and-load-balancer so that only traffic from within the VPC or from a managed load balancer reaches the service.
+        - **Enable organization-level constraints:** Apply the `constraints/iam.allowedPolicyMemberDomains` organization policy to prevent future bindings to public principals across all projects in the organization.
+      audit: |
+        ### Audit via Console
+
+        1. Open the [Google Cloud Console](https://console.cloud.google.com/) and navigate to **Cloud Run**.
+        2. Select the service and open the **Security** tab (or the **Permissions** panel).
+        3. Confirm that neither `allUsers` nor `allAuthenticatedUsers` is granted the **Cloud Run Invoker** role.
+        4. Open the **Networking** settings and review the **Ingress** control.
+
+        A passing service grants `roles/run.invoker` only to specific principals and restricts ingress. A failing service grants the invoker role to `allUsers` or `allAuthenticatedUsers` with ingress open to all traffic.
+
+        ### Audit via CLI
+
+        1. Inspect the IAM policy for public invoker bindings:
+
+        ```bash
+        gcloud run services get-iam-policy SERVICE_NAME \
+          --region=REGION \
+          --format="json(bindings)" \
+          | jq '.bindings[] | select(.role == "roles/run.invoker") | select(.members[] | test("^allUsers$|^allAuthenticatedUsers$"))'
+        ```
+
+        2. Check the ingress setting:
+
+        ```bash
+        gcloud run services describe SERVICE_NAME \
+          --region=REGION \
+          --format="value(metadata.annotations['run.googleapis.com/ingress'])"
+        ```
+
+        A passing service returns no output from the `jq` filter and reports a restricted ingress value such as `internal` or `internal-and-cloud-load-balancing`. A failing service returns a `roles/run.invoker` binding that includes `allUsers` or `allAuthenticatedUsers`.
+      remediation:
+        - id: terraform
+          desc: |
+            Grant `roles/run.invoker` only to specific principals — never `allUsers` or `allAuthenticatedUsers`:
+
+            ```hcl
+            resource "google_cloud_run_v2_service_iam_member" "invoker" {
+              name     = google_cloud_run_v2_service.app.name
+              location = google_cloud_run_v2_service.app.location
+              role     = "roles/run.invoker"
+              member   = "serviceAccount:frontend@example-project.iam.gserviceaccount.com" # never allUsers / allAuthenticatedUsers
+            }
+            ```
+
+            Remove any existing member or binding resource that grants the invoker role to a public principal, and restrict ingress with `ingress = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"` on the service.
+        - id: console
+          desc: |
+            Remove any public principal from the Cloud Run IAM policy:
+
+            1. Open **Cloud Run** and select the service.
+            2. Open the **Security** tab (or **Permissions** panel).
+            3. Locate any **Cloud Run Invoker** binding whose principal is `allUsers` or `allAuthenticatedUsers` and remove it.
+            4. Add the specific service accounts, users, or groups that need to invoke the service.
+            5. Under **Networking**, set **Ingress** to **Internal** or **Internal and Cloud Load Balancing**.
+            6. Save and verify the policy no longer lists the public principals.
+        - id: cli
+          desc: |
+            Remove the public invoker bindings from the service:
+
+            ```bash
+            gcloud run services remove-iam-policy-binding SERVICE_NAME \
+              --region=REGION \
+              --member=allUsers \
+              --role=roles/run.invoker
+
+            gcloud run services remove-iam-policy-binding SERVICE_NAME \
+              --region=REGION \
+              --member=allAuthenticatedUsers \
+              --role=roles/run.invoker
+            ```
+    refs:
+      - url: https://cloud.google.com/run/docs/authenticating/public
+        title: Cloud Run - Allowing public (unauthenticated) access
+      - url: https://cloud.google.com/iam/docs/overview#allusers
+        title: IAM - Public principals (allUsers, allAuthenticatedUsers)
+  - uid: mondoo-gcp-security-cloud-run-no-public-invocation-gcp
+    filters: asset.platform == 'gcp-cloudrun-service'
+    mql: |
+      gcp.project.cloudRunService.service.publicInvocable == false
+  - uid: mondoo-gcp-security-cloud-run-no-public-invocation-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_cloud_run_service_iam_member') ||
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_cloud_run_v2_service_iam_member') ||
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_cloud_run_service_iam_binding') ||
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_cloud_run_v2_service_iam_binding')
+    mql: |
+      terraform.resources('google_cloud_run_service_iam_member').all(
+        arguments['member'] != "allUsers" && arguments['member'] != "allAuthenticatedUsers"
+      )
+      terraform.resources('google_cloud_run_v2_service_iam_member').all(
+        arguments['member'] != "allUsers" && arguments['member'] != "allAuthenticatedUsers"
+      )
+      terraform.resources('google_cloud_run_service_iam_binding').all(
+        arguments['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+      terraform.resources('google_cloud_run_v2_service_iam_binding').all(
+        arguments['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-cloud-run-no-public-invocation-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_cloud_run_service_iam_member') ||
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_cloud_run_v2_service_iam_member') ||
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_cloud_run_service_iam_binding') ||
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_cloud_run_v2_service_iam_binding')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_cloud_run_service_iam_member').all(
+        change.after['member'] != "allUsers" && change.after['member'] != "allAuthenticatedUsers"
+      )
+      terraform.plan.resourceChanges.where(type == 'google_cloud_run_v2_service_iam_member').all(
+        change.after['member'] != "allUsers" && change.after['member'] != "allAuthenticatedUsers"
+      )
+      terraform.plan.resourceChanges.where(type == 'google_cloud_run_service_iam_binding').all(
+        change.after['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+      terraform.plan.resourceChanges.where(type == 'google_cloud_run_v2_service_iam_binding').all(
+        change.after['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-cloud-run-no-public-invocation-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_cloud_run_service_iam_member') ||
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_cloud_run_v2_service_iam_member') ||
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_cloud_run_service_iam_binding') ||
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_cloud_run_v2_service_iam_binding')
+    mql: |
+      terraform.state.resources.where(type == 'google_cloud_run_service_iam_member').all(
+        values['member'] != "allUsers" && values['member'] != "allAuthenticatedUsers"
+      )
+      terraform.state.resources.where(type == 'google_cloud_run_v2_service_iam_member').all(
+        values['member'] != "allUsers" && values['member'] != "allAuthenticatedUsers"
+      )
+      terraform.state.resources.where(type == 'google_cloud_run_service_iam_binding').all(
+        values['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+      terraform.state.resources.where(type == 'google_cloud_run_v2_service_iam_binding').all(
+        values['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-workflows-no-default-service-account
+    title: Ensure Workflows do not use the default service account
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-9
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    variants:
+      - uid: mondoo-gcp-security-workflows-no-default-service-account-gcp
+        tags:
+          mondoo.com/filter-title: GCP Project
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-workflows-no-default-service-account-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-workflows-no-default-service-account-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-workflows-no-default-service-account-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that every Workflow runs as a dedicated, least-privilege service account rather than the default Compute Engine service account. When no service account is specified, a Workflow runs as `PROJECT_NUMBER-compute@developer.gserviceaccount.com`, which holds the broad Editor role on the project by default.
+
+        **Why this matters**
+
+        - **Excessive default permissions:** The default Compute Engine service account is granted the project Editor role, so a Workflow that uses it can read and modify almost every resource in the project regardless of what the workflow actually needs.
+        - **Broad blast radius:** If a workflow step is manipulated or its inputs are attacker-controlled, running as an over-privileged identity turns a single compromised step into project-wide access.
+        - **Shared identity ambiguity:** Many workloads default to the same Compute Engine service account, so audit logs cannot distinguish which workflow performed an action, undermining accountability and investigation.
+        - **Violates least privilege:** A dedicated service account scoped to only the APIs a workflow calls limits what any single automation can do and makes permission review tractable.
+
+        **Risk mitigation**
+
+        - **Assign a dedicated service account:** Create a purpose-built service account per workflow and set it explicitly so the workflow no longer inherits the default identity.
+        - **Grant only required roles:** Bind the workflow's service account to the minimal predefined or custom roles needed for the APIs it invokes, rather than project-level Editor.
+        - **Enforce with organization policy:** Apply `constraints/iam.automaticIamGrantsForDefaultServiceAccounts` to stop new default service accounts from receiving the Editor role automatically.
+      audit: |
+        ### Audit via Console
+
+        1. Open the [Google Cloud Console](https://console.cloud.google.com/) and navigate to **Workflows**.
+        2. Select each workflow and open the **Details** page.
+        3. Review the **Service account** field.
+
+        A passing workflow shows a dedicated service account. A failing workflow shows the default Compute Engine service account (`PROJECT_NUMBER-compute@developer.gserviceaccount.com`) or no explicit service account.
+
+        ### Audit via CLI
+
+        1. Inspect the service account bound to each workflow:
+
+        ```bash
+        gcloud workflows describe WORKFLOW_NAME \
+          --location=LOCATION \
+          --format="value(serviceAccount)"
+        ```
+
+        A passing workflow returns a dedicated service account address. A failing workflow returns the default Compute Engine service account (`PROJECT_NUMBER-compute@developer.gserviceaccount.com`).
+      remediation:
+        - id: terraform
+          desc: |
+            Set a dedicated service account on the `google_workflows_workflow` resource:
+
+            ```hcl
+            resource "google_workflows_workflow" "example" {
+              name            = "my-workflow"
+              region          = "us-central1"
+              service_account = google_service_account.workflow.email
+              source_contents = file("${path.module}/workflow.yaml")
+            }
+            ```
+        - id: console
+          desc: |
+            Assign a dedicated service account to the workflow:
+
+            1. Go to **Workflows** in the Google Cloud Console.
+            2. Select the workflow and choose **Edit**.
+            3. Under **Service account**, select a dedicated, least-privilege service account instead of the default Compute Engine service account.
+            4. Save and redeploy the workflow.
+        - id: cli
+          desc: |
+            Redeploy the workflow with a dedicated service account:
+
+            ```bash
+            gcloud workflows deploy WORKFLOW_NAME \
+              --location=LOCATION \
+              --service-account=WORKFLOW_SA@PROJECT_ID.iam.gserviceaccount.com \
+              --source=workflow.yaml
+            ```
+    refs:
+      - url: https://cloud.google.com/workflows/docs/authentication
+        title: Workflows - Manage workflow access and identity
+      - url: https://cloud.google.com/iam/docs/service-account-overview#default
+        title: IAM - Default service accounts
+  - uid: mondoo-gcp-security-workflows-no-default-service-account-gcp
+    filters: asset.platform == 'gcp-project'
+    mql: |
+      gcp.project.workflowsService.workflows.all(
+        serviceAccountEmail != "" &&
+        serviceAccountEmail != /^\d+-compute@developer\.gserviceaccount\.com$/
+      )
+  - uid: mondoo-gcp-security-workflows-no-default-service-account-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_workflows_workflow')
+    mql: |
+      terraform.resources('google_workflows_workflow').all(
+        arguments['service_account'] != null &&
+        arguments['service_account'] != empty &&
+        arguments['service_account'] != /^\d+-compute@developer\.gserviceaccount\.com$/
+      )
+  - uid: mondoo-gcp-security-workflows-no-default-service-account-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_workflows_workflow')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_workflows_workflow').all(
+        change.after['service_account'] != null &&
+        change.after['service_account'] != empty &&
+        change.after['service_account'] != /^\d+-compute@developer\.gserviceaccount\.com$/
+      )
+  - uid: mondoo-gcp-security-workflows-no-default-service-account-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_workflows_workflow')
+    mql: |
+      terraform.state.resources.where(type == 'google_workflows_workflow').all(
+        values['service_account'] != null &&
+        values['service_account'] != empty &&
+        values['service_account'] != /^\d+-compute@developer\.gserviceaccount\.com$/
+      )
+  - uid: mondoo-gcp-security-workflows-cmek-encryption
+    title: Ensure Workflows are encrypted with CMEK
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-10
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-gcp-security-workflows-cmek-encryption-gcp
+        tags:
+          mondoo.com/filter-title: GCP Project
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-workflows-cmek-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-workflows-cmek-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-workflows-cmek-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that every Workflow is encrypted with a customer-managed encryption key (CMEK) by setting `crypto_key_name` to a Cloud KMS key. Without a CMEK, workflow definitions and execution data are protected only by Google-managed keys, leaving key lifecycle, rotation, and revocation entirely outside the organization's control.
+
+        **Why this matters**
+
+        - **Key custody and control:** A CMEK keeps the encryption key in Cloud KMS under the organization's control, so it can rotate, disable, or destroy the key on its own schedule and policy.
+        - **Immediate revocation:** Disabling the CMEK renders workflow definitions and execution data cryptographically inaccessible, providing a hard kill switch that Google-managed encryption cannot offer.
+        - **Sensitive workflow content:** Workflow definitions and execution history can embed connection details, resource identifiers, and intermediate data that warrant a controlled key boundary.
+        - **Compliance requirements:** Regulatory frameworks such as PCI-DSS and HIPAA expect data at rest to be protected with keys the organization manages and can account for.
+
+        **Risk mitigation**
+
+        - **Assign a Cloud KMS key:** Set `crypto_key_name` to a key in the same location as the workflow so encryption is bound to a key under organizational control.
+        - **Enforce key rotation:** Configure automatic rotation on the Cloud KMS key to limit the amount of data protected by any single key version.
+        - **Restrict key access:** Grant the workflow service agent only the `roles/cloudkms.cryptoKeyEncrypterDecrypter` role on the key and audit key usage through Cloud KMS logs.
+      audit: |
+        ### Audit via Console
+
+        1. Open the [Google Cloud Console](https://console.cloud.google.com/) and navigate to **Workflows**.
+        2. Select each workflow and open the **Details** page.
+        3. Review the **Encryption** field.
+
+        A passing workflow shows a customer-managed key (Cloud KMS). A failing workflow shows Google-managed encryption.
+
+        ### Audit via CLI
+
+        1. Inspect the encryption key bound to each workflow:
+
+        ```bash
+        gcloud workflows describe WORKFLOW_NAME \
+          --location=LOCATION \
+          --format="value(cryptoKeyName)"
+        ```
+
+        A passing workflow returns a Cloud KMS key resource name. A failing workflow returns an empty value.
+      remediation:
+        - id: terraform
+          desc: |
+            Set a Cloud KMS key on the `google_workflows_workflow` resource:
+
+            ```hcl
+            resource "google_workflows_workflow" "example" {
+              name            = "my-workflow"
+              region          = "us-central1"
+              crypto_key_name = google_kms_crypto_key.workflow.id
+              source_contents = file("${path.module}/workflow.yaml")
+            }
+            ```
+        - id: console
+          desc: |
+            Encrypt the workflow with a customer-managed key:
+
+            1. Go to **Workflows** in the Google Cloud Console.
+            2. Select the workflow and choose **Edit**.
+            3. Under **Encryption**, select **Customer-managed encryption key (CMEK)** and choose a Cloud KMS key in the same region.
+            4. Save and redeploy the workflow.
+        # No CLI remediation: gcloud workflows deploy exposes no KMS key flag on any release
+        # track; the CMEK key is set only through Terraform (crypto_key_name), the console, or the REST API.
+    refs:
+      - url: https://cloud.google.com/workflows/docs/cmek
+        title: Workflows - Use customer-managed encryption keys
+      - url: https://cloud.google.com/kms/docs/cmek
+        title: Cloud KMS - Customer-managed encryption keys
+  - uid: mondoo-gcp-security-workflows-cmek-encryption-gcp
+    filters: asset.platform == 'gcp-project'
+    mql: |
+      gcp.project.workflowsService.workflows.all(cryptoKeyName != empty)
+  - uid: mondoo-gcp-security-workflows-cmek-encryption-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_workflows_workflow')
+    mql: |
+      terraform.resources('google_workflows_workflow').all(
+        arguments['crypto_key_name'] != null && arguments['crypto_key_name'] != empty
+      )
+  - uid: mondoo-gcp-security-workflows-cmek-encryption-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_workflows_workflow')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_workflows_workflow').all(
+        change.after['crypto_key_name'] != null && change.after['crypto_key_name'] != empty
+      )
+  - uid: mondoo-gcp-security-workflows-cmek-encryption-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_workflows_workflow')
+    mql: |
+      terraform.state.resources.where(type == 'google_workflows_workflow').all(
+        values['crypto_key_name'] != null && values['crypto_key_name'] != empty
+      )
+  - uid: mondoo-gcp-security-workflows-call-logging-enabled
+    title: Ensure Workflows have call logging enabled
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
+      compliance/dora: dora-art-10
+      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
+      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-de-cm-1
+      compliance/nist-csf-2: nist-csf-2-de-cm-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/pci-dss-4: pcidss-requirement-10-2-1
+      compliance/soc2-2017: soc2-control-cc7-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-4
+    variants:
+      - uid: mondoo-gcp-security-workflows-call-logging-enabled-gcp
+        tags:
+          mondoo.com/filter-title: GCP Project
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-workflows-call-logging-enabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-workflows-call-logging-enabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-workflows-call-logging-enabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that every Workflow emits call logs by setting `call_log_level` to `LOG_ALL_CALLS` or `LOG_ERRORS_ONLY`. When the log level is `LOG_NONE` or left unspecified, the calls a workflow makes to other services are not recorded, leaving a blind spot in the audit trail.
+
+        **Why this matters**
+
+        - **Audit trail completeness:** Call logs record which services a workflow invoked and the outcome of each call, providing the evidence needed to reconstruct what an automation did during an incident.
+        - **Detection and alerting:** Without call logs, failed or anomalous calls cannot be surfaced in Cloud Logging or fed into alerting and detection pipelines.
+        - **Forensic investigation:** After a security event, call logs are often the only record of the downstream actions a workflow performed on the caller's behalf.
+        - **Compliance requirements:** Regulatory frameworks such as PCI-DSS and SOC 2 require audit logging of access to and actions on in-scope systems.
+
+        **Risk mitigation**
+
+        - **Log all calls for sensitive workflows:** Set `call_log_level` to `LOG_ALL_CALLS` on workflows that touch regulated or high-value systems so every downstream call is captured.
+        - **Log errors at minimum:** Where full-call logging is too verbose, set `LOG_ERRORS_ONLY` so failed calls are still recorded for investigation.
+        - **Centralize and retain logs:** Route workflow call logs to a Cloud Logging sink with retention that satisfies the organization's audit and compliance requirements.
+      audit: |
+        ### Audit via Console
+
+        1. Open the [Google Cloud Console](https://console.cloud.google.com/) and navigate to **Workflows**.
+        2. Select each workflow and open the **Details** page.
+        3. Review the **Call logging** (log level) setting.
+
+        A passing workflow shows **Log all calls** or **Log errors only**. A failing workflow shows **No logs** or an unspecified log level.
+
+        ### Audit via CLI
+
+        1. Inspect the call log level of each workflow:
+
+        ```bash
+        gcloud workflows describe WORKFLOW_NAME \
+          --location=LOCATION \
+          --format="value(callLogLevel)"
+        ```
+
+        A passing workflow returns `LOG_ALL_CALLS` or `LOG_ERRORS_ONLY`. A failing workflow returns `LOG_NONE` or an empty value.
+      remediation:
+        - id: terraform
+          desc: |
+            Set the call log level on the `google_workflows_workflow` resource:
+
+            ```hcl
+            resource "google_workflows_workflow" "example" {
+              name            = "my-workflow"
+              region          = "us-central1"
+              call_log_level  = "LOG_ALL_CALLS"
+              source_contents = file("${path.module}/workflow.yaml")
+            }
+            ```
+        - id: console
+          desc: |
+            Enable call logging on the workflow:
+
+            1. Go to **Workflows** in the Google Cloud Console.
+            2. Select the workflow and choose **Edit**.
+            3. Under **Call logging**, select **Log all calls** (or **Log errors only**).
+            4. Save and redeploy the workflow.
+        - id: cli
+          desc: |
+            Redeploy the workflow with call logging enabled:
+
+            ```bash
+            gcloud workflows deploy WORKFLOW_NAME \
+              --location=LOCATION \
+              --call-log-level=log-all-calls \
+              --source=workflow.yaml
+            ```
+    refs:
+      - url: https://cloud.google.com/workflows/docs/log-workflow-calls
+        title: Workflows - Send logs to Cloud Logging
+      - url: https://cloud.google.com/workflows/docs/reference/rest/v1/projects.locations.workflows#calllevel
+        title: Workflows - Call log level reference
+  - uid: mondoo-gcp-security-workflows-call-logging-enabled-gcp
+    filters: asset.platform == 'gcp-project'
+    mql: |
+      gcp.project.workflowsService.workflows.all(
+        callLogLevel == "LOG_ALL_CALLS" || callLogLevel == "LOG_ERRORS_ONLY"
+      )
+  - uid: mondoo-gcp-security-workflows-call-logging-enabled-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_workflows_workflow')
+    mql: |
+      terraform.resources('google_workflows_workflow').all(
+        arguments['call_log_level'] == "LOG_ALL_CALLS" || arguments['call_log_level'] == "LOG_ERRORS_ONLY"
+      )
+  - uid: mondoo-gcp-security-workflows-call-logging-enabled-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_workflows_workflow')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_workflows_workflow').all(
+        change.after['call_log_level'] == "LOG_ALL_CALLS" || change.after['call_log_level'] == "LOG_ERRORS_ONLY"
+      )
+  - uid: mondoo-gcp-security-workflows-call-logging-enabled-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_workflows_workflow')
+    mql: |
+      terraform.state.resources.where(type == 'google_workflows_workflow').all(
+        values['call_log_level'] == "LOG_ALL_CALLS" || values['call_log_level'] == "LOG_ERRORS_ONLY"
+      )
+  # No Terraform variants: the enforced identity is resolved from the job's nested
+  # http_target oidc_token/oauth_token block, which the runtime evaluates as the effective
+  # authentication configuration; the HCL nested-block shape has no reliable, non-vacuous analog.
+  - uid: mondoo-gcp-security-cloud-scheduler-http-target-authentication
+    title: Ensure Cloud Scheduler HTTP target jobs enforce authentication
+    impact: 90
+    filters: asset.platform == 'gcp-project'
+    mql: |
+      gcp.project.cloudSchedulerService.jobs.where(targetType == "httpTarget").all(
+        oidcServiceAccountEmail != "" || oauthServiceAccountEmail != ""
+      )
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-14
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-1-2
+    docs:
+      desc: |
+        This check ensures that every Cloud Scheduler job with an HTTP target is configured to mint an authentication token — either an OIDC token or an OAuth token backed by a service account — when it calls its endpoint. A job that omits both sends an unauthenticated request, so the receiving endpoint cannot distinguish a legitimate scheduled invocation from any other caller that reaches the same URL.
+
+        **Why this matters**
+
+        - **Unauthenticated invocation:** An HTTP target without a token relies entirely on the endpoint's own network controls; if the endpoint is reachable, anyone who learns the URL can trigger the same action the scheduler performs.
+        - **Cross-service trust:** OIDC and OAuth tokens let the target (Cloud Run, Cloud Functions, an internal API, or a Google API) verify the caller's identity and apply IAM, closing the gap that an anonymous request leaves open.
+        - **Tamper-evident automation:** Authenticated calls appear in the target's access logs with a known service account identity, making it possible to attribute and audit scheduled actions.
+
+        **Risk mitigation**
+
+        - **Attach a dedicated service account:** Configure the job's HTTP target with an OIDC or OAuth token minted from a purpose-built service account that holds only the permission the target requires.
+        - **Require authentication at the target:** Pair the token with IAM on the target (for example `roles/run.invoker`) so the endpoint rejects any request that does not present a valid, authorized token.
+      audit: |
+        ### Audit via Console
+
+        1. Open the [Google Cloud Console](https://console.cloud.google.com/) and navigate to **Cloud Scheduler**.
+        2. Select each job whose target type is **HTTP** and open its configuration.
+        3. Confirm the **Auth header** is set to **Add OIDC token** or **Add OAuth token** with a service account, not **None**.
+
+        A passing job with an HTTP target specifies an OIDC or OAuth service account. A failing HTTP job has no auth header configured.
+
+        ### Audit via CLI
+
+        1. Inspect the authentication configuration of each job:
+
+        ```bash
+        gcloud scheduler jobs describe JOB_ID \
+          --location=LOCATION \
+          --format="value(httpTarget.oidcToken.serviceAccountEmail, httpTarget.oauthToken.serviceAccountEmail)"
+        ```
+
+        A passing HTTP job prints a service account email for its OIDC or OAuth token. A failing HTTP job prints an empty value for both.
+      remediation:
+        - id: console
+          desc: |
+            Add an authentication token to each unauthenticated HTTP job:
+
+            1. Open **Cloud Scheduler** and select the job.
+            2. Click **Edit** and expand the HTTP target's **Auth header** section.
+            3. Choose **Add OIDC token** (for most endpoints, including Cloud Run and Cloud Functions) or **Add OAuth token** (for `*.googleapis.com` targets) and select a dedicated service account.
+            4. Save the job and confirm the next run succeeds against the now-authenticated endpoint.
+        - id: cli
+          desc: |
+            Update the job to mint an OIDC token from a dedicated service account:
+
+            ```bash
+            gcloud scheduler jobs update http JOB_ID \
+              --location=LOCATION \
+              --oidc-service-account-email=scheduler-invoker@PROJECT_ID.iam.gserviceaccount.com \
+              --oidc-token-audience=https://TARGET_URL
+            ```
+
+            For a Google API target, use an OAuth token instead:
+
+            ```bash
+            gcloud scheduler jobs update http JOB_ID \
+              --location=LOCATION \
+              --oauth-service-account-email=scheduler-invoker@PROJECT_ID.iam.gserviceaccount.com
+            ```
+        # No Terraform remediation: the token identity lives in the job's nested http_target
+        # oidc_token/oauth_token block; the runtime asserts the effective authentication configuration.
+    refs:
+      - url: https://cloud.google.com/scheduler/docs/http-target-auth
+        title: Cloud Scheduler - Use authentication with HTTP targets
+      - url: https://cloud.google.com/scheduler/docs/configuring/cron-job-schedules
+        title: Cloud Scheduler - Configure job schedules
+  # No Terraform variants: the enforced identity is resolved from the job's nested
+  # http_target oidc_token/oauth_token block, which the runtime evaluates as the effective
+  # authentication configuration; the HCL nested-block shape has no reliable, non-vacuous analog.
+  - uid: mondoo-gcp-security-cloud-scheduler-no-default-service-account
+    title: Ensure Cloud Scheduler jobs do not use the default service account
+    impact: 80
+    filters: asset.platform == 'gcp-project'
+    mql: |
+      gcp.project.cloudSchedulerService.jobs.all(
+        oidcServiceAccountEmail != /^\d+-compute@developer\.gserviceaccount\.com$/ &&
+        oauthServiceAccountEmail != /^\d+-compute@developer\.gserviceaccount\.com$/
+      )
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-9
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    docs:
+      desc: |
+        This check ensures that Cloud Scheduler jobs authenticate to their HTTP targets with a dedicated, purpose-built service account rather than the default Compute Engine service account. The default Compute Engine service account is automatically granted the Editor role at the project level, so any job that mints its token from that identity presents a credential with broad read-write access to nearly every resource in the project.
+
+        **Why this matters**
+
+        - **Excessive blast radius:** If a scheduled target is compromised or misused, a token from the default account grants the attacker project-wide Editor access instead of the single permission the job actually needs.
+        - **Violates least privilege:** The default account's standing Editor grant cannot be narrowed without affecting every other workload that shares it, so it is never the right identity for a specific automated task.
+        - **Weak attribution:** Many jobs sharing the default identity make it impossible to tell from the target's logs which job performed a given action.
+
+        **Risk mitigation**
+
+        - **Create a per-job service account:** Provision a dedicated service account for each scheduler job and grant it only the role the target requires.
+        - **Bind narrow roles:** Give the job's service account exactly the permission needed on the target (for example `roles/run.invoker` on one Cloud Run service) and nothing else.
+      audit: |
+        ### Audit via Console
+
+        1. Open the [Google Cloud Console](https://console.cloud.google.com/) and navigate to **Cloud Scheduler**.
+        2. Select each job and open its configuration.
+        3. Confirm the OIDC or OAuth service account is a dedicated account, not one matching `PROJECT_NUMBER-compute@developer.gserviceaccount.com`.
+
+        A passing job uses a dedicated service account. A failing job uses the default Compute Engine service account.
+
+        ### Audit via CLI
+
+        1. Print the token service account for each job:
+
+        ```bash
+        gcloud scheduler jobs describe JOB_ID \
+          --location=LOCATION \
+          --format="value(httpTarget.oidcToken.serviceAccountEmail, httpTarget.oauthToken.serviceAccountEmail)"
+        ```
+
+        A passing job prints a dedicated service account email. A failing job prints an address ending in `-compute@developer.gserviceaccount.com`.
+      remediation:
+        - id: console
+          desc: |
+            Repoint each job at a dedicated service account:
+
+            1. Create a dedicated service account and grant it only the role the target needs.
+            2. Open **Cloud Scheduler**, select the job, and click **Edit**.
+            3. In the HTTP target's **Auth header** section, select the dedicated service account for the OIDC or OAuth token.
+            4. Save the job and verify the next run succeeds.
+        - id: cli
+          desc: |
+            Update the job to use a dedicated service account for its token:
+
+            ```bash
+            gcloud scheduler jobs update http JOB_ID \
+              --location=LOCATION \
+              --oidc-service-account-email=scheduler-invoker@PROJECT_ID.iam.gserviceaccount.com
+            ```
+        # No Terraform remediation: the token identity lives in the job's nested http_target
+        # oidc_token/oauth_token block; the runtime asserts the effective service account.
+    refs:
+      - url: https://cloud.google.com/scheduler/docs/http-target-auth
+        title: Cloud Scheduler - Use authentication with HTTP targets
+      - url: https://cloud.google.com/iam/docs/best-practices-service-accounts
+        title: IAM - Best practices for using service accounts
+  # No Terraform variants: the google_cloud_ids_endpoint Terraform resource does not expose a
+  # traffic-logging argument; whether traffic logs are enabled is only observable at runtime.
+  - uid: mondoo-gcp-security-cloud-ids-endpoint-traffic-logs-enabled
+    title: Ensure Cloud IDS endpoints have traffic logging enabled
+    impact: 70
+    filters: asset.platform == 'gcp-project'
+    mql: |
+      gcp.project.idsService.endpoints.all(trafficLogs == true)
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
+      compliance/dora: dora-art-10
+      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
+      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-de-cm-1
+      compliance/nist-csf-2: nist-csf-2-de-cm-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/pci-dss-4: pcidss-requirement-10-2-1
+      compliance/soc2-2017: soc2-control-cc7-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-4
+    docs:
+      desc: |
+        This check ensures that every Cloud IDS endpoint has traffic logging enabled so that the network traffic it inspects is recorded to Cloud Logging alongside the threat detections. Cloud IDS always reports threats, but without traffic logs the endpoint discards the surrounding flow records that responders need to scope an incident and confirm what an attacker reached.
+
+        **Why this matters**
+
+        - **Incident scoping:** Threat alerts alone show that something malicious occurred; the traffic logs show which hosts, ports, and volumes were involved, which is what turns an alert into an investigation.
+        - **Detection coverage gaps:** Traffic logs let analysts review benign-classified flows after the fact and catch slow or low-signature activity that did not trip a threat signature.
+        - **Forensic retention:** Recording flows to Cloud Logging preserves evidence in a durable, queryable store rather than leaving it only in the transient inspection path.
+
+        **Risk mitigation**
+
+        - **Enable traffic logs on every endpoint:** Turn on traffic logging when creating each Cloud IDS endpoint so flow records are captured from the moment inspection begins.
+        - **Route logs to long-term storage:** Export the IDS logs through a log sink to a retained bucket or SIEM so the flow history outlives Cloud Logging's default retention.
+      audit: |
+        ### Audit via Console
+
+        1. Open the [Google Cloud Console](https://console.cloud.google.com/) and navigate to **Network Security > Cloud IDS**.
+        2. Select each endpoint and open its details.
+        3. Confirm **Traffic logs** is enabled.
+
+        A passing endpoint shows traffic logs enabled. A failing endpoint shows them disabled.
+
+        ### Audit via CLI
+
+        1. Print the traffic-logs setting for each endpoint:
+
+        ```bash
+        gcloud ids endpoints describe ENDPOINT_ID \
+          --zone=ZONE \
+          --format="value(trafficLogs)"
+        ```
+
+        A passing endpoint prints `True`. A failing endpoint prints `False`.
+      remediation:
+        - id: console
+          desc: |
+            Enable traffic logging on each Cloud IDS endpoint. Traffic logging is set when the endpoint is created, so an endpoint without it must be recreated:
+
+            1. Open **Network Security > Cloud IDS** and note the network, zone, and severity of the endpoint that lacks traffic logs.
+            2. Create a replacement endpoint with the same settings and **Traffic logs** enabled.
+            3. Repoint the packet mirroring policy at the new endpoint and delete the old one once inspection is confirmed.
+        - id: cli
+          desc: |
+            Create the endpoint with traffic logging enabled (the flag is set at creation time):
+
+            ```bash
+            gcloud ids endpoints create ENDPOINT_ID \
+              --network=NETWORK \
+              --zone=ZONE \
+              --severity=INFORMATIONAL \
+              --enable-traffic-logs
+            ```
+
+            Then update the packet mirroring policy to forward to the new endpoint and remove the endpoint that lacked traffic logs.
+        # No Terraform remediation: the google_cloud_ids_endpoint resource does not expose a
+        # traffic-logging argument, so the setting cannot be asserted or fixed through Terraform.
+    refs:
+      - url: https://cloud.google.com/intrusion-detection-system/docs/configuring-ids
+        title: Cloud IDS - Configure an IDS endpoint
+      - url: https://cloud.google.com/intrusion-detection-system/docs/viewing-threat-details
+        title: Cloud IDS - View threats and traffic logs
+  # No Terraform variants: the google_batch_job Terraform resource does not expose the task
+  # group permissive-SSH setting; it is only observable on the submitted job at runtime.
+  - uid: mondoo-gcp-security-batch-job-permissive-ssh-disabled
+    title: Ensure Batch jobs disable permissive SSH between tasks
+    impact: 80
+    filters: asset.platform == 'gcp-project'
+    mql: |
+      gcp.project.batchService.jobs.all(
+        taskGroups.all(permissiveSsh == false)
+      )
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-c-1-integrity
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-pt-3
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-7
+      compliance/pci-dss-4: pcidss-requirement-2-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    docs:
+      desc: |
+        This check ensures that Batch job task groups do not enable permissive SSH. Permissive SSH opens password-less SSH access between the VMs that run a job's tasks, so any process on one task node can reach every other node in the job without authenticating. This convenience for tightly-coupled workloads (such as MPI) removes an authentication boundary that would otherwise contain a compromised task.
+
+        **Why this matters**
+
+        - **Lateral movement:** With permissive SSH enabled, code running in one task — including code introduced through a compromised dependency or malicious input — can pivot to every other node in the job unchallenged.
+        - **Removed authentication:** The setting deliberately drops the SSH authentication check between nodes, so there is no credential an attacker needs to move across the job's fleet.
+        - **Blast-radius expansion:** A single foothold becomes control of the entire task group, including any data or credentials those nodes hold.
+
+        **Risk mitigation**
+
+        - **Leave permissive SSH off:** Omit the permissive SSH setting so task nodes require normal authentication for any inter-node access.
+        - **Use scoped inter-node auth when required:** For workloads that genuinely need node-to-node communication, use an authenticated mechanism scoped to the job instead of password-less SSH.
+      audit: |
+        ### Audit via Console
+
+        1. Open the [Google Cloud Console](https://console.cloud.google.com/) and navigate to **Batch**.
+        2. Select each job and open its details, then inspect the task group configuration.
+        3. Confirm permissive SSH is not enabled for any task group.
+
+        A passing job has permissive SSH disabled on every task group. A failing job has it enabled on at least one task group.
+
+        ### Audit via CLI
+
+        1. Inspect the task groups of each job:
+
+        ```bash
+        gcloud batch jobs describe JOB_ID \
+          --location=LOCATION \
+          --format="json(taskGroups)" \
+          | jq '.taskGroups[] | select(.permissiveSsh == true)'
+        ```
+
+        A passing job returns no output from the `jq` filter. A failing job returns a task group with `permissiveSsh` set to true.
+      remediation:
+        - id: console
+          desc: |
+            A submitted Batch job's task group is immutable, so remove permissive SSH by resubmitting the job without it:
+
+            1. Open **Batch** and open the job definition (or its saved configuration).
+            2. Recreate the job, leaving the task group's permissive SSH option unset.
+            3. Submit the corrected job and delete the one that had permissive SSH enabled.
+        - id: cli
+          desc: |
+            Resubmit the job from a configuration that omits `permissiveSsh` (its default is disabled):
+
+            ```bash
+            gcloud batch jobs submit JOB_ID \
+              --location=LOCATION \
+              --config=job.json
+            ```
+
+            In `job.json`, ensure no task group sets `"permissiveSsh": true`.
+        # No Terraform remediation: the google_batch_job resource does not expose the task group
+        # permissive-SSH setting, so it cannot be asserted or fixed through Terraform.
+    refs:
+      - url: https://cloud.google.com/batch/docs/reference/rest/v1/projects.locations.jobs#taskgroup
+        title: Batch - TaskGroup reference (permissiveSsh)
+      - url: https://cloud.google.com/batch/docs/create-run-job
+        title: Batch - Create and run a job
