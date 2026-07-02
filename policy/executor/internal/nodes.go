@@ -5,6 +5,7 @@ package internal
 
 import (
 	"strings"
+	"sync"
 
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnspec/v13/cli/progress"
@@ -77,15 +78,30 @@ type executionQueryProperty struct {
 	checksum string
 	value    *llx.Result
 	resolved bool
-}
-
-func (p *executionQueryProperty) Resolve(value *llx.Result) {
-	p.value = value
-	p.resolved = true
+	// resolvedNil is true when the property resolved to a nil value with no
+	// error. Short-circuit evaluation (e.g. &&, ||) reports nil for
+	// unevaluated branches; a query sharing the property's checksum can
+	// therefore deliver a transient nil BEFORE the real value arrives. Such a
+	// nil may still be upgraded to real data later (see isNilResult /
+	// hasRealData on the datapoint consumers).
+	resolvedNil bool
 }
 
 func (p *executionQueryProperty) IsResolved() bool {
 	return p.resolved
+}
+
+// isNilResultProto returns true if the proto result carries a nil value and
+// no error. This is the proto counterpart of isNilResult.
+func isNilResultProto(res *llx.Result) bool {
+	if res == nil || res.Error != "" {
+		return false
+	}
+	data := res.Data
+	if data == nil {
+		return true
+	}
+	return types.Type(data.Type) == types.Nil
 }
 
 type DataResult struct {
@@ -107,7 +123,11 @@ type ExecutionQueryNodeData struct {
 	queryID    string
 	codeBundle *llx.CodeBundle
 
-	invalidated        bool
+	invalidated bool
+	// propsLock guards requiredProperties value/resolved state. Values are
+	// written by the graph loop and read by the execution manager goroutine
+	// when a queued query materializes its properties.
+	propsLock          sync.Mutex
 	requiredProperties map[string]*executionQueryProperty
 	runState           queryRunState
 	runQueue           chan<- runQueueItem
@@ -122,24 +142,46 @@ func (nodeData *ExecutionQueryNodeData) initialize() {
 
 // consume saves any received data that matches any the required properties
 func (nodeData *ExecutionQueryNodeData) consume(from NodeID, data *envelope) {
-	if nodeData.runState == executedQueryRunState {
-		// Nothing can change once the query has been marked as executed
+	if len(nodeData.requiredProperties) == 0 {
+		if nodeData.runState != executedQueryRunState {
+			nodeData.invalidated = true
+		}
 		return
 	}
 
-	if len(nodeData.requiredProperties) == 0 {
-		nodeData.invalidated = true
+	if data.res == nil {
+		return
 	}
 
-	if data.res != nil {
-		for _, p := range nodeData.requiredProperties {
-			// Find the property with the matching checksum
-			if p.checksum == data.res.CodeID {
-				// Save the value of the property
-				p.Resolve(data.res.Result())
-				// invalidate the node for recalculation
+	nodeData.propsLock.Lock()
+	defer nodeData.propsLock.Unlock()
+
+	for _, p := range nodeData.requiredProperties {
+		// Find the property with the matching checksum
+		if p.checksum != data.res.CodeID {
+			continue
+		}
+
+		if !p.resolved {
+			// First result for this property. A nil (no value, no error) may
+			// come from short-circuit evaluation and may be followed by the
+			// real value. Accept it so execution is not blocked (a property
+			// can legitimately be null), but remember that it may be upgraded.
+			p.value = data.res.Result()
+			p.resolved = true
+			p.resolvedNil = isNilResultProto(p.value)
+			if nodeData.runState != executedQueryRunState {
 				nodeData.invalidated = true
 			}
+			continue
+		}
+
+		// Already resolved: only allow a real result (value or error) to
+		// replace a previously-reported transient nil. This mirrors the
+		// nil-override semantics of DatapointNodeData/ReportingQueryNodeData.
+		if p.resolvedNil && hasRealData(data.res) {
+			p.value = data.res.Result()
+			p.resolvedNil = false
 		}
 	}
 }
@@ -174,27 +216,36 @@ func (nodeData *ExecutionQueryNodeData) recalculate() *envelope {
 // this should only be called when the query is runnable (
 // all properties needed are available)
 func (nodeData *ExecutionQueryNodeData) run() {
-	var props map[string]*llx.Result
-
-	if len(nodeData.requiredProperties) > 0 {
-		props = make(map[string]*llx.Result)
-		for _, p := range nodeData.requiredProperties {
-			props[p.name] = p.value
-		}
-	}
-
 	nodeData.runState = executedQueryRunState
 
 	nodeData.runQueue <- runQueueItem{
 		codeBundle: nodeData.codeBundle,
-		props:      props,
+		props:      nodeData.materializeProps,
 	}
+}
+
+// materializeProps snapshots the current property values. It is called by the
+// execution manager when the query is dequeued, NOT when it is queued: if a
+// transient nil property was upgraded to its real value while the query was
+// waiting in the run queue, the query executes with the real value.
+func (nodeData *ExecutionQueryNodeData) materializeProps() map[string]*llx.Result {
+	nodeData.propsLock.Lock()
+	defer nodeData.propsLock.Unlock()
+
+	if len(nodeData.requiredProperties) == 0 {
+		return nil
+	}
+	props := make(map[string]*llx.Result, len(nodeData.requiredProperties))
+	for _, p := range nodeData.requiredProperties {
+		props[p.name] = p.value
+	}
+	return props
 }
 
 // updateRunState sets the query to runnable if all the
 // required properties needed have been received
 func (d *ExecutionQueryNodeData) updateRunState() {
-	if d.runState == readyQueryRunState {
+	if d.runState == readyQueryRunState || d.runState == executedQueryRunState {
 		return
 	}
 

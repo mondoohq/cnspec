@@ -489,7 +489,7 @@ func TestExecutionQueryNode(t *testing.T) {
 			case item := <-q:
 				require.NotNil(t, item.codeBundle)
 				assert.Equal(t, "testqueryid", item.codeBundle.CodeV2.Id)
-				assert.Contains(t, item.props, "prop1")
+				assert.Contains(t, item.props(), "prop1")
 			default:
 				assert.Fail(t, "expected something to be executed")
 			}
