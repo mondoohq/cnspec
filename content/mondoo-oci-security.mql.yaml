@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-oci-security
     name: Mondoo Oracle Cloud Infrastructure (OCI) Security
-    version: 4.1.3
+    version: 4.2.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -36,6 +36,8 @@ policies:
         - Container Instances
         - API Gateway
         - Certificates
+        - Generative AI
+        - Data Science
 
         Learn more about scanning Oracle Cloud Infrastructure in the [cnspec Oracle Cloud Infrastructure documentation](https://mondoo.com/docs/cnspec/cloud/oci).
 
@@ -89,6 +91,7 @@ policies:
           - uid: mondoo-oci-security-compute-imds-v2-only
           - uid: mondoo-oci-security-compute-metadata-no-secrets
           - uid: mondoo-oci-security-compute-vnic-source-dest-check
+          - uid: mondoo-oci-security-compute-instance-not-internet-reachable
           - uid: mondoo-oci-security-block-volume-customer-managed-encryption
           - uid: mondoo-oci-security-boot-volume-customer-managed-encryption
       - title: Load Balancer
@@ -107,6 +110,8 @@ policies:
         checks:
           - uid: mondoo-oci-security-adb-mtls-or-restricted
           - uid: mondoo-oci-security-adb-no-public-management-urls
+          - uid: mondoo-oci-security-adb-not-internet-reachable
+          - uid: mondoo-oci-security-adb-standby-acl-not-open
           - uid: mondoo-oci-security-dbsystem-private-subnet
           - uid: mondoo-oci-security-dbsystem-subnet-no-internet-gateway
           - uid: mondoo-oci-security-database-backups-customer-managed-encryption
@@ -144,6 +149,7 @@ policies:
           - uid: mondoo-oci-security-apigateway-deployment-authentication-configured
           - uid: mondoo-oci-security-apigateway-deployment-mtls-verified
           - uid: mondoo-oci-security-apigateway-deployment-no-wildcard-cors
+          - uid: mondoo-oci-security-apigateway-gateway-public-restricted-by-nsg
       - title: Certificates
         checks:
           - uid: mondoo-oci-security-certificates-not-expired
@@ -151,6 +157,15 @@ policies:
           - uid: mondoo-oci-security-certificates-strong-signature-algorithms
           - uid: mondoo-oci-security-certificates-auto-renewal-enabled
           - uid: mondoo-oci-security-certificate-authorities-customer-managed-keys
+      - title: Generative AI
+        checks:
+          - uid: mondoo-oci-security-genai-endpoint-prompt-injection-detection
+          - uid: mondoo-oci-security-genai-endpoint-pii-detection
+          - uid: mondoo-oci-security-genai-endpoint-content-moderation
+          - uid: mondoo-oci-security-genai-endpoint-private-endpoint
+      - title: Data Science
+        checks:
+          - uid: mondoo-oci-security-datascience-notebook-private-endpoint
     scoring_system: highest impact
 queries:
   # No Terraform variants: MFA activation is operational telemetry exposed by the IAM API at runtime; the `oci_identity_user` Terraform resource has no field that toggles or evidences MFA enrollment.
@@ -11107,3 +11122,752 @@ queries:
       terraform.state.resources.where(type == 'oci_core_instance').all(
         values['create_vnic_details'][0]['skip_source_dest_check'] != true
       )
+  # No Terraform variants: internetReachable is a runtime exposure verdict computed by correlating an instance's VNIC public IP with the attached NSG ingress rules and the subnet's internet-ingress policy. No single Terraform resource expresses this cross-resource result; the underlying public-IP-plus-NSG configuration is covered by mondoo-oci-security-public-vnic-has-nsg, which ships Terraform variants.
+  - uid: mondoo-oci-security-compute-instance-not-internet-reachable
+    title: Ensure compute instances are not directly reachable from the internet
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: vda-isa-5-5-2-6
+    filters: asset.platform == "oci"
+    mql: |
+      oci.compute.instances.all(
+        exposure.internetReachable == false
+      )
+    docs:
+      desc: |
+        This check ensures that no OCI compute instance is directly reachable from the public internet. An instance is internet-reachable when it has a public IP address and the network path to it admits inbound traffic from any address, either through a permissive Network Security Group or a subnet that allows internet ingress. Placing workloads behind a load balancer, bastion, or NAT gateway keeps the instances themselves off the public internet.
+
+        **Why this matters**
+
+        - **Direct attack surface:** An internet-reachable instance exposes its operating system, SSH or RDP daemon, and any listening application ports to continuous scanning and exploitation from the entire internet.
+        - **Bypasses layered controls:** Traffic that reaches an instance directly skips the inspection, rate limiting, and TLS termination that a load balancer or WAF would otherwise apply.
+        - **Lateral movement foothold:** A compromised internet-facing instance becomes a pivot point into the private network, so removing direct reachability shrinks the blast radius of a single vulnerable host.
+
+        **Risk mitigation**
+
+        - **Front workloads with managed entry points:** Route inbound traffic through a load balancer or API gateway and keep the instances in private subnets.
+        - **Use a bastion for administrative access:** Reach instances over the OCI Bastion service or a jump host instead of assigning them public IPs.
+        - **Scope ingress to known sources:** Where a public IP is unavoidable, restrict NSG ingress to specific administrative CIDRs rather than any address.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console.
+        2. Navigate to **Compute > Instances** and select an instance.
+        3. Under **Attached VNICs**, open each VNIC and note whether a **Public IP address** is assigned.
+        4. For any VNIC with a public IP, review the attached NSGs and the subnet security lists for ingress rules that allow `0.0.0.0/0`.
+
+        A passing instance has no public IP, or its ingress is restricted to specific source CIDRs. A failing instance has a public IP and admits inbound traffic from any address.
+
+        ### Audit via CLI
+
+        1. List instances in a compartment, then inspect each instance's VNICs for a public IP:
+
+        ```bash
+        oci compute instance list-vnics --instance-id <instance-ocid> \
+          --query 'data[].{privateIp:"private-ip",publicIp:"public-ip",nsgIds:"nsg-ids"}'
+        ```
+
+        A passing instance returns `"publicIp": null`. A failing instance returns a non-null `publicIp` reachable through permissive ingress.
+      remediation:
+        - id: console
+          desc: |
+            Remove direct internet reachability from the instance:
+
+            1. Open **Compute > Instances** and select the instance.
+            2. Under **Attached VNICs**, edit the VNIC and remove the assigned public IP, or recreate the instance in a private subnet.
+            3. Front any required inbound access with a load balancer, API gateway, or the OCI Bastion service.
+        - id: cli
+          desc: |
+            Unassign the ephemeral public IP from the instance's VNIC by clearing its private IP association:
+
+            ```bash
+            oci network public-ip update --public-ip-id <public-ip-ocid> --private-ip-id ""
+            ```
+        # No Terraform remediation: the finding is a runtime exposure verdict with no single Terraform argument; the public-IP-plus-NSG configuration that produces it is remediated in Terraform by mondoo-oci-security-public-vnic-has-nsg.
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Network/Tasks/managingpublicIPs.htm
+        title: OCI - Public IP Addresses
+  - uid: mondoo-oci-security-adb-not-internet-reachable
+    title: Ensure Autonomous Databases are not reachable from the public internet
+    impact: 90
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: vda-isa-5-5-2-6
+    filters: asset.platform == "oci"
+    mql: |
+      oci.database.autonomousDatabases.all(
+        internetReachable == false
+      )
+    docs:
+      desc: |
+        This check ensures that no OCI Autonomous Database is reachable from the public internet. A database is internet-reachable when it has a public endpoint with no private endpoint and either access control is disabled or its allowlist admits any address. Even when mutual TLS is required to complete a connection, a reachable listener still exposes the database to network-level scanning and pre-authentication attacks.
+
+        **Why this matters**
+
+        - **Exposed database listener:** A publicly reachable SQL Net listener receives connection attempts from any address, subjecting it to brute-force, enumeration, and vulnerability scanning around the clock.
+        - **Pre-authentication exposure:** Listener and management interfaces have historically shipped pre-authentication vulnerabilities that an internet-connected attacker can reach without any credentials.
+        - **Allowlist fragility:** Access control lists drift over time as networks change and permissive entries accumulate, so a private endpoint is a more durable control than an allowlist on a public endpoint.
+
+        **Risk mitigation**
+
+        - **Provision with a private endpoint:** Place the database in a private subnet so it has no public endpoint at all.
+        - **Restrict the public listener:** Where a public endpoint is required, enable access control and scope the allowlist to specific known networks.
+        - **Combine with mutual TLS:** Require mTLS in addition to network restrictions so credential theft alone cannot open a session.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console.
+        2. Navigate to **Oracle Database > Autonomous Database** and select the database.
+        3. Review the **Network** section under **Database Details** for the access type and access control configuration.
+
+        A passing database uses private endpoint access, or has a public endpoint with an allowlist scoped to specific networks. A failing database has a public endpoint with access control disabled or an allowlist that admits any address.
+
+        ### Audit via CLI
+
+        1. Retrieve the database and inspect its network configuration:
+
+        ```bash
+        oci db autonomous-database get --autonomous-database-id <adb-ocid> \
+          --query 'data.{privateEndpointIp:"private-endpoint-ip",accessControlEnabled:"is-access-control-enabled",whitelistedIps:"whitelisted-ips"}'
+        ```
+
+        A passing database returns a non-null `privateEndpointIp`, or access control enabled with a scoped `whitelistedIps`. A failing database returns a null `privateEndpointIp` with access control disabled or an allowlist admitting any address.
+      remediation:
+        - id: console
+          desc: |
+            Remove public reachability from the Autonomous Database:
+
+            1. Open **Oracle Database > Autonomous Database** and select the database.
+            2. In the **Network** section, switch to **Private endpoint access only**, or enable **Access Control** and add only the specific networks that require access.
+            3. Save and update client connections to use the private endpoint or an allowed source.
+        - id: cli
+          desc: |
+            Scope the public listener to a known network by enabling an access control list:
+
+            ```bash
+            oci db autonomous-database update --autonomous-database-id <adb-ocid> \
+              --whitelisted-ips '["10.0.0.0/16"]'
+            ```
+        # No Terraform remediation: internetReachable is a runtime verdict derived from the private-endpoint, access-control, and allowlist state; the configuration that drives it is remediated in Terraform by mondoo-oci-security-adb-mtls-or-restricted.
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/autonomous-database-serverless/doc/network-access-types.html
+        title: OCI - Autonomous Database Network Access
+  # No Terraform variants: standbyWhitelistedIps is the effective access control list reported for the Data Guard standby at runtime, and reflects the resolution of are_primary_whitelisted_ips_used. A static Terraform argument cannot express the resolved standby allowlist, so this evaluates the runtime value only.
+  - uid: mondoo-oci-security-adb-standby-acl-not-open
+    title: Ensure Autonomous Database standby ACLs exclude any-address entries
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: vda-isa-5-5-2-6
+    filters: asset.platform == "oci"
+    mql: |
+      oci.database.autonomousDatabases.all(
+        standbyWhitelistedIps.none(_ == "0.0.0.0/0" || _ == "0.0.0.0" || _ == "::/0")
+      )
+    docs:
+      desc: |
+        This check ensures that the access control list applied to an Autonomous Database's Data Guard standby does not admit any address. The standby maintains its own allowlist, which can diverge from the primary's. When the standby allowlist contains an any-address entry such as `0.0.0.0/0`, the standby endpoint is reachable from networks the primary blocks, creating an exposure that a review of the primary alone would miss.
+
+        **Why this matters**
+
+        - **Divergent exposure:** A standby allowlist that admits any address exposes a fully readable copy of production data even when the primary is tightly restricted.
+        - **Disaster-recovery blind spot:** Audits often inspect only the primary endpoint, so an open standby allowlist can persist unnoticed until a role switch promotes the exposed standby.
+        - **Same data, weaker gate:** The standby holds the same records as the primary, so an any-address allowlist on it undermines the network controls placed on the primary.
+
+        **Risk mitigation**
+
+        - **Mirror the primary's restrictions:** Configure the standby to reuse the primary's allowlist or apply an equally scoped set of source networks.
+        - **Remove any-address entries:** Replace `0.0.0.0/0` and equivalent entries with the specific networks that require standby access.
+        - **Review both endpoints together:** Audit primary and standby allowlists as a pair whenever Data Guard is enabled.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console.
+        2. Navigate to **Oracle Database > Autonomous Database** and select a Data Guard enabled database.
+        3. Open the **Access Control List** configuration and review the entries applied to the standby.
+
+        A passing standby lists only specific source networks. A failing standby lists an any-address entry such as `0.0.0.0/0`.
+
+        ### Audit via CLI
+
+        1. Retrieve the database and inspect the standby allowlist:
+
+        ```bash
+        oci db autonomous-database get --autonomous-database-id <adb-ocid> \
+          --query 'data."standby-whitelisted-ips"'
+        ```
+
+        A passing database returns a list of specific networks or an empty list. A failing database returns a list containing `0.0.0.0/0`, `0.0.0.0`, or `::/0`.
+      remediation:
+        - id: console
+          desc: |
+            Restrict the standby allowlist:
+
+            1. Open **Oracle Database > Autonomous Database** and select the database.
+            2. Edit the **Access Control List** and remove any-address entries from the standby configuration, or set the standby to reuse the primary's allowlist.
+            3. Save the change.
+        - id: cli
+          desc: |
+            Configure the standby to reuse the primary's allowlist so it inherits the same restrictions:
+
+            ```bash
+            oci db autonomous-database update --autonomous-database-id <adb-ocid> \
+              --are-primary-whitelisted-ips-used true
+            ```
+        # No Terraform remediation: the check evaluates the resolved runtime standby allowlist, which reflects are_primary_whitelisted_ips_used at scan time and has no static Terraform representation.
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/autonomous-database-serverless/doc/autonomous-data-guard-enable.html
+        title: OCI - Autonomous Data Guard
+  # No Terraform variants: endpoint_type and network_security_group_ids on oci_apigateway_gateway are covered by the Terraform variants below.
+  - uid: mondoo-oci-security-apigateway-gateway-public-restricted-by-nsg
+    title: Ensure public API gateways restrict access with a network security group
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: vda-isa-5-5-2-6
+    variants:
+      - uid: mondoo-oci-security-apigateway-gateway-public-restricted-by-nsg-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-apigateway-gateway-public-restricted-by-nsg-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-apigateway-gateway-public-restricted-by-nsg-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-apigateway-gateway-public-restricted-by-nsg-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that every API gateway with a public endpoint has at least one Network Security Group attached. A public gateway with no NSG relies on the default-open posture, so its endpoint accepts inbound traffic from any address. Attaching an NSG lets the gateway restrict which sources can reach it at the network layer, in addition to the authentication policies enforced on individual deployments.
+
+        **Why this matters**
+
+        - **Unbounded ingress:** A public gateway with no NSG is reachable from the entire internet, exposing its endpoint to scanning and volumetric abuse before any request-level policy applies.
+        - **Defense in depth:** Network-layer restriction complements deployment authentication, so a misconfigured or newly added deployment is not immediately exposed to arbitrary sources.
+        - **Reduced abuse surface:** Limiting the reachable source ranges cuts the volume of unwanted traffic that reaches request routing and authentication.
+
+        **Risk mitigation**
+
+        - **Attach an NSG to every public gateway:** Bind the gateway to an NSG whose rules admit only the source ranges that need access.
+        - **Prefer a private gateway where possible:** When consumers are internal, use a private endpoint type so the gateway has no public IP at all.
+        - **Scope NSG rules tightly:** Restrict ingress to the specific CIDRs or load balancer ranges that front the gateway.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console.
+        2. Navigate to **Developer Services > API Management > Gateways** and select a gateway.
+        3. Review the **Endpoint type** and the attached **Network Security Groups**.
+
+        A passing gateway is private, or is public with at least one NSG attached. A failing gateway is public with no NSG.
+
+        ### Audit via CLI
+
+        1. List gateways in a compartment and inspect their endpoint type and NSGs:
+
+        ```bash
+        oci api-gateway gateway list --compartment-id <compartment-ocid> \
+          --query 'data.items[].{name:"display-name",endpointType:"endpoint-type",nsgIds:"network-security-group-ids"}'
+        ```
+
+        A passing gateway returns `"endpointType": "PRIVATE"`, or `"endpointType": "PUBLIC"` with a non-empty `nsgIds`. A failing gateway returns `"endpointType": "PUBLIC"` with an empty `nsgIds`.
+      remediation:
+        - id: console
+          desc: |
+            Attach a Network Security Group to the public gateway:
+
+            1. Open **Developer Services > API Management > Gateways** and select the gateway.
+            2. Edit the gateway and add one or more Network Security Groups whose rules admit only the required source ranges.
+            3. Save the change.
+        - id: cli
+          desc: |
+            Attach a Network Security Group to an existing gateway:
+
+            ```bash
+            oci api-gateway gateway update --gateway-id <gateway-ocid> \
+              --network-security-group-ids '["<nsg-ocid>"]'
+            ```
+        - id: terraform
+          desc: |
+            Attach a Network Security Group to any public API gateway:
+
+            ```hcl
+            resource "oci_apigateway_gateway" "app" {
+              compartment_id = var.compartment_ocid
+              endpoint_type  = "PUBLIC"
+              subnet_id      = oci_core_subnet.public.id
+
+              # Restrict the public endpoint at the network layer
+              network_security_group_ids = [oci_core_network_security_group.gateway.id]
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/APIGateway/Tasks/apigatewaycreatinggateway.htm
+        title: OCI - Creating an API Gateway
+  - uid: mondoo-oci-security-apigateway-gateway-public-restricted-by-nsg-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.apigateway.gateways.all(
+        endpointType != "PUBLIC" ||
+        networkSecurityGroups.length > 0
+      )
+  - uid: mondoo-oci-security-apigateway-gateway-public-restricted-by-nsg-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_apigateway_gateway')
+    mql: |
+      terraform.resources('oci_apigateway_gateway').all(
+        arguments['endpoint_type'] != 'PUBLIC' ||
+        arguments['network_security_group_ids'] != null && arguments['network_security_group_ids'].length > 0
+      )
+  - uid: mondoo-oci-security-apigateway-gateway-public-restricted-by-nsg-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_apigateway_gateway')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_apigateway_gateway').all(
+        change.after['endpoint_type'] != 'PUBLIC' ||
+        change.after['network_security_group_ids'] != null && change.after['network_security_group_ids'].length > 0
+      )
+  - uid: mondoo-oci-security-apigateway-gateway-public-restricted-by-nsg-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_apigateway_gateway')
+    mql: |
+      terraform.state.resources.where(type == 'oci_apigateway_gateway').all(
+        values['endpoint_type'] != 'PUBLIC' ||
+        values['network_security_group_ids'] != null && values['network_security_group_ids'].length > 0
+      )
+  # No Terraform variants: promptInjectionEnabled reflects the guardrail configuration applied to the running Generative AI endpoint. This check evaluates the endpoint's live guardrail state; the endpoint's prompt-injection configuration is managed through the service and is not represented by a verified Terraform resource argument.
+  - uid: mondoo-oci-security-genai-endpoint-prompt-injection-detection
+    title: Ensure Generative AI endpoints enable prompt injection detection
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-26
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-10
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    filters: asset.platform == "oci"
+    mql: |
+      oci.ai.generativeAi.endpoints.all(
+        promptInjectionEnabled == true
+      )
+    docs:
+      desc: |
+        This check ensures that every OCI Generative AI endpoint has prompt injection detection enabled. Prompt injection detection inspects incoming prompts for adversarial instructions that attempt to override the model's guardrails, exfiltrate system prompts, or coerce the model into unintended actions. Without it, an endpoint processes crafted prompts with no defense against instruction-hijacking attacks.
+
+        **Why this matters**
+
+        - **Instruction hijacking:** Attackers embed hidden directives in user input to make the model ignore its constraints, leak its system prompt, or perform actions outside its intended scope.
+        - **Downstream abuse:** An endpoint wired into tools or retrieval can be steered by injected prompts into invoking actions or surfacing data the user should not reach.
+        - **Content and data integrity:** Detecting injection at the endpoint reduces the chance that manipulated model output feeds untrusted instructions into connected systems.
+
+        **Risk mitigation**
+
+        - **Enable prompt injection detection on every endpoint:** Turn on detection so adversarial prompts are identified before the model acts on them.
+        - **Set the detection mode to block where feasible:** Blocking rejects flagged prompts outright rather than only recording them.
+        - **Review flagged prompts:** Feed detection results into monitoring so recurring injection attempts are investigated.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console.
+        2. Navigate to **Analytics & AI > Generative AI > Endpoints** and select an endpoint.
+        3. Review the **Guardrails** or **Content moderation** configuration for the prompt injection setting.
+
+        A passing endpoint shows prompt injection detection enabled. A failing endpoint shows it disabled.
+
+        ### Audit via CLI
+
+        1. List endpoints in a compartment and inspect their guardrail configuration:
+
+        ```bash
+        oci generative-ai endpoint-collection list-endpoints --compartment-id <compartment-ocid> \
+          --query 'data.items[].{name:"display-name",promptInjection:"prompt-injection-config"}'
+        ```
+
+        A passing endpoint reports a prompt injection configuration that is enabled. A failing endpoint reports it disabled or unset.
+      remediation:
+        - id: console
+          desc: |
+            Enable prompt injection detection on the endpoint:
+
+            1. Open **Analytics & AI > Generative AI > Endpoints** and select the endpoint.
+            2. Edit the guardrail configuration and enable prompt injection detection, choosing block mode where the application can tolerate it.
+            3. Save the change.
+        - id: cli
+          desc: |
+            Enable prompt injection detection on an existing endpoint:
+
+            ```bash
+            oci generative-ai endpoint update --endpoint-id <endpoint-ocid> \
+              --prompt-injection-config '{"mode": "BLOCK"}'
+            ```
+        # No Terraform remediation: the endpoint's prompt-injection guardrail is a service-side setting with no verified Terraform resource argument; manage it through the console or CLI.
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/generative-ai/home.htm
+        title: OCI - Generative AI
+  # No Terraform variants: piiDetectionEnabled reflects the guardrail configuration applied to the running Generative AI endpoint. This check evaluates the endpoint's live guardrail state; the endpoint's PII-detection configuration is managed through the service and is not represented by a verified Terraform resource argument.
+  - uid: mondoo-oci-security-genai-endpoint-pii-detection
+    title: Ensure Generative AI endpoints enable PII detection
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-12
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: false
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    filters: asset.platform == "oci"
+    mql: |
+      oci.ai.generativeAi.endpoints.all(
+        piiDetectionEnabled == true
+      )
+    docs:
+      desc: |
+        This check ensures that every OCI Generative AI endpoint has personally identifiable information detection enabled. PII detection inspects prompts and responses for sensitive personal data such as names, government identifiers, and financial details. Without it, an endpoint can echo or leak sensitive data supplied in prompts or produced by the model into logs and downstream systems.
+
+        **Why this matters**
+
+        - **Data leakage:** Without PII detection, sensitive personal data entered in prompts or generated in responses can flow unredacted into transcripts, logs, and connected applications.
+        - **Regulatory exposure:** Handling personal data without controls raises the risk of violating privacy regulations that require minimization and protection of such data.
+        - **Retention amplification:** PII captured in model interactions is often retained far longer than intended, widening the window for exposure if the store is breached.
+
+        **Risk mitigation**
+
+        - **Enable PII detection on every endpoint:** Turn on detection so sensitive data is identified in both prompts and responses.
+        - **Set the detection mode to block or redact where feasible:** Blocking or masking prevents sensitive data from being processed or returned in the clear.
+        - **Combine with retention controls:** Pair detection with short retention on interaction logs to limit exposure.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console.
+        2. Navigate to **Analytics & AI > Generative AI > Endpoints** and select an endpoint.
+        3. Review the **Guardrails** or **Content moderation** configuration for the PII detection setting.
+
+        A passing endpoint shows PII detection enabled. A failing endpoint shows it disabled.
+
+        ### Audit via CLI
+
+        1. List endpoints in a compartment and inspect their guardrail configuration:
+
+        ```bash
+        oci generative-ai endpoint-collection list-endpoints --compartment-id <compartment-ocid> \
+          --query 'data.items[].{name:"display-name",piiDetection:"pii-detection-config"}'
+        ```
+
+        A passing endpoint reports a PII detection configuration that is enabled. A failing endpoint reports it disabled or unset.
+      remediation:
+        - id: console
+          desc: |
+            Enable PII detection on the endpoint:
+
+            1. Open **Analytics & AI > Generative AI > Endpoints** and select the endpoint.
+            2. Edit the guardrail configuration and enable PII detection, choosing block or redact mode where the application can tolerate it.
+            3. Save the change.
+        - id: cli
+          desc: |
+            Enable PII detection on an existing endpoint:
+
+            ```bash
+            oci generative-ai endpoint update --endpoint-id <endpoint-ocid> \
+              --pii-detection-config '{"mode": "BLOCK"}'
+            ```
+        # No Terraform remediation: the endpoint's PII-detection guardrail is a service-side setting with no verified Terraform resource argument; manage it through the console or CLI.
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/generative-ai/home.htm
+        title: OCI - Generative AI
+  # No Terraform variants: contentModerationEnabled reflects the guardrail configuration applied to the running Generative AI endpoint. This check evaluates the endpoint's live guardrail state; the endpoint's content-moderation configuration is managed through the service and is not represented by a verified Terraform resource argument.
+  - uid: mondoo-oci-security-genai-endpoint-content-moderation
+    title: Ensure Generative AI endpoints enable content moderation
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: false
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: false
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    filters: asset.platform == "oci"
+    mql: |
+      oci.ai.generativeAi.endpoints.all(
+        contentModerationEnabled == true
+      )
+    docs:
+      desc: |
+        This check ensures that every OCI Generative AI endpoint has content moderation enabled. Content moderation screens prompts and responses for harmful, abusive, or policy-violating content. Without it, an endpoint can be driven to generate disallowed output or be abused to produce harmful material at scale.
+
+        **Why this matters**
+
+        - **Harmful output:** Without moderation, an endpoint can produce abusive, unsafe, or policy-violating content in response to crafted prompts.
+        - **Abuse at scale:** An unmoderated endpoint exposed to users can be turned into a generator of harmful material, creating reputational and legal risk.
+        - **Guardrail completeness:** Content moderation complements prompt injection and PII detection to form a full set of endpoint guardrails.
+
+        **Risk mitigation**
+
+        - **Enable content moderation on every endpoint:** Turn on moderation so harmful content is screened on input and output.
+        - **Set the moderation mode to block where feasible:** Blocking rejects flagged content rather than only recording it.
+        - **Monitor moderation events:** Route moderation results into monitoring to spot abuse patterns.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console.
+        2. Navigate to **Analytics & AI > Generative AI > Endpoints** and select an endpoint.
+        3. Review the **Content moderation** configuration.
+
+        A passing endpoint shows content moderation enabled. A failing endpoint shows it disabled.
+
+        ### Audit via CLI
+
+        1. List endpoints in a compartment and inspect their content moderation configuration:
+
+        ```bash
+        oci generative-ai endpoint-collection list-endpoints --compartment-id <compartment-ocid> \
+          --query 'data.items[].{name:"display-name",contentModeration:"content-moderation-config"}'
+        ```
+
+        A passing endpoint reports a content moderation configuration that is enabled. A failing endpoint reports it disabled or unset.
+      remediation:
+        - id: console
+          desc: |
+            Enable content moderation on the endpoint:
+
+            1. Open **Analytics & AI > Generative AI > Endpoints** and select the endpoint.
+            2. Edit the configuration and enable content moderation, choosing block mode where the application can tolerate it.
+            3. Save the change.
+        - id: cli
+          desc: |
+            Enable content moderation on an existing endpoint:
+
+            ```bash
+            oci generative-ai endpoint update --endpoint-id <endpoint-ocid> \
+              --content-moderation-config '{"mode": "BLOCK"}'
+            ```
+        # No Terraform remediation: the endpoint's content-moderation guardrail is a service-side setting with no verified Terraform resource argument; manage it through the console or CLI.
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/generative-ai/home.htm
+        title: OCI - Generative AI
+  # No Terraform variants: generativeAiPrivateEndpointID reflects the private endpoint bound to the running Generative AI endpoint. This check evaluates the endpoint's live association; the binding is managed through the service and is not represented by a verified Terraform resource argument.
+  - uid: mondoo-oci-security-genai-endpoint-private-endpoint
+    title: Ensure Generative AI endpoints use a private endpoint
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: vda-isa-5-5-2-6
+    filters: asset.platform == "oci"
+    mql: |
+      oci.ai.generativeAi.endpoints.all(
+        generativeAiPrivateEndpointID != empty
+      )
+    docs:
+      desc: |
+        This check ensures that every OCI Generative AI endpoint is reached through a Generative AI private endpoint. A private endpoint keeps inference traffic on the customer's private network rather than traversing the public internet. Without one, prompts and responses, which frequently contain sensitive business data, travel over public paths and the endpoint is reachable from outside the private network.
+
+        **Why this matters**
+
+        - **Data in transit exposure:** Prompts and responses often carry sensitive business or personal data, so keeping the traffic on a private network reduces the chance of interception.
+        - **Reduced reachability:** A private endpoint means the inference endpoint is not exposed on public network paths, shrinking its attack surface.
+        - **Network policy enforcement:** Traffic confined to the VCN can be governed by existing network security controls and monitoring.
+
+        **Risk mitigation**
+
+        - **Bind every endpoint to a private endpoint:** Provision a Generative AI private endpoint in the VCN and associate each inference endpoint with it.
+        - **Keep consumers on the private network:** Route application traffic to the endpoint over the VCN rather than public addresses.
+        - **Apply network controls to the subnet:** Govern the private endpoint's subnet with NSGs and monitoring.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console.
+        2. Navigate to **Analytics & AI > Generative AI > Endpoints** and select an endpoint.
+        3. Review whether a **Generative AI private endpoint** is associated with the endpoint.
+
+        A passing endpoint has a private endpoint associated. A failing endpoint has none.
+
+        ### Audit via CLI
+
+        1. List endpoints in a compartment and inspect the private endpoint association:
+
+        ```bash
+        oci generative-ai endpoint-collection list-endpoints --compartment-id <compartment-ocid> \
+          --query 'data.items[].{name:"display-name",privateEndpointId:"generative-ai-private-endpoint-id"}'
+        ```
+
+        A passing endpoint returns a non-null `privateEndpointId`. A failing endpoint returns null.
+      remediation:
+        - id: console
+          desc: |
+            Associate the endpoint with a Generative AI private endpoint:
+
+            1. Provision a Generative AI private endpoint in the target VCN under **Analytics & AI > Generative AI**.
+            2. Open the endpoint and edit it to associate the private endpoint.
+            3. Save the change and route consumers over the private network.
+        - id: cli
+          desc: |
+            Associate an existing endpoint with a Generative AI private endpoint:
+
+            ```bash
+            oci generative-ai endpoint update --endpoint-id <endpoint-ocid> \
+              --generative-ai-private-endpoint-id <private-endpoint-ocid>
+            ```
+        # No Terraform remediation: the private endpoint binding is a service-side association with no verified Terraform resource argument; manage it through the console or CLI.
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/generative-ai/home.htm
+        title: OCI - Generative AI
+  # No Terraform variants: privateEndpointID reflects the Data Science private endpoint bound to the running notebook session. This check evaluates the session's live association; the binding is set at session creation and is not verified against a Terraform resource argument here.
+  - uid: mondoo-oci-security-datascience-notebook-private-endpoint
+    title: Ensure Data Science notebook sessions use a private endpoint
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: vda-isa-5-5-2-6
+    filters: asset.platform == "oci"
+    mql: |
+      oci.ai.dataScience.notebookSessions.all(
+        privateEndpointID != empty
+      )
+    docs:
+      desc: |
+        This check ensures that every OCI Data Science notebook session is isolated behind a Data Science private endpoint. A notebook session runs interactive code with access to data, credentials, and network resources. A private endpoint confines the session's network access to the customer's VCN. Without one, the session's connectivity is not bounded to the private network, widening what a compromised or misused notebook can reach.
+
+        **Why this matters**
+
+        - **Sensitive workload:** Notebook sessions routinely hold data sets, model artifacts, and credentials, making their network reach a meaningful part of the attack surface.
+        - **Contained connectivity:** A private endpoint keeps the session's traffic on the VCN so it can be governed by existing network controls rather than reaching resources over public paths.
+        - **Blast-radius reduction:** Confining a session to a private endpoint limits what a compromised notebook can connect to or exfiltrate data through.
+
+        **Risk mitigation**
+
+        - **Provision a Data Science private endpoint:** Create a private endpoint in the target VCN for notebook sessions to use.
+        - **Bind sessions to the private endpoint at creation:** Assign the private endpoint when creating each notebook session.
+        - **Govern the subnet:** Apply NSGs and monitoring to the subnet backing the private endpoint.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console.
+        2. Navigate to **Analytics & AI > Data Science**, open a project, and select a notebook session.
+        3. Review the **Networking** configuration for an associated private endpoint.
+
+        A passing notebook session has a private endpoint associated. A failing session has none.
+
+        ### Audit via CLI
+
+        1. List notebook sessions in a compartment and inspect the private endpoint association:
+
+        ```bash
+        oci data-science notebook-session list --compartment-id <compartment-ocid> \
+          --query 'data[].{name:"display-name",privateEndpointId:"notebook-session-config-details"."private-endpoint-id"}'
+        ```
+
+        A passing session returns a non-null private endpoint id. A failing session returns null.
+      remediation:
+        - id: console
+          desc: |
+            Place notebook sessions behind a Data Science private endpoint:
+
+            1. Under **Analytics & AI > Data Science**, create a Data Science private endpoint in the target VCN.
+            2. Create notebook sessions with the private endpoint selected under **Networking**, since the association is set at creation.
+            3. Recreate existing sessions that lack a private endpoint.
+        - id: cli
+          desc: |
+            Create a notebook session bound to a Data Science private endpoint by supplying it in the configuration details:
+
+            ```bash
+            oci data-science notebook-session create --project-id <project-ocid> \
+              --compartment-id <compartment-ocid> \
+              --config-details '{"privateEndpointId": "<private-endpoint-ocid>", "shape": "VM.Standard2.1", "blockStorageSizeInGBs": 50, "subnetId": "<subnet-ocid>"}'
+            ```
+        # No Terraform remediation: the notebook session's private endpoint is set at creation and is not verified against a Terraform resource argument here; manage it through the console or CLI.
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/data-science/using/pe-concepts.htm
+        title: OCI - Data Science Private Endpoints
