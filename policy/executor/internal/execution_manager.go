@@ -4,12 +4,12 @@
 package internal
 
 import (
-	"errors"
 	"os"
 	goruntime "runtime"
 	"sync"
 	"time"
 
+	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnspec/v13"
 	"go.mondoo.com/mql/v13/llx"
@@ -174,14 +174,20 @@ func (em *executionManager) executeCodeBundle(codeBundle *llx.CodeBundle, props 
 			// is not guaranteed to happen in a single thread
 			wg.Add(checksum)
 			if errMsg != "" {
-				// TODO: this is not entirely correct when looking at things as a whole.
-				// Its possible that another query executing will produce a non error.
-				// However, datapoint nodes take the first data that was reported. This
-				// issue exists in general for any query that errors
+				// The query cannot run; broadcast a typed placeholder for
+				// every codepoint so downstream consumers don't wait forever.
+				// Datapoint checksums are content-addressed and shared across
+				// queries, so a healthy query may still report a real result
+				// for the same checksum. Consumers let executed results
+				// override these placeholders and never let a placeholder
+				// override an executed result (see queryRunError).
 				sendResult(&llx.RawResult{
 					CodeID: checksum,
 					Data: &llx.RawData{
-						Error: errors.New(errMsg),
+						Error: &queryRunError{
+							originCodeID: codeBundle.CodeV2.GetId(),
+							err:          errors.New(errMsg),
+						},
 					},
 				})
 			}
