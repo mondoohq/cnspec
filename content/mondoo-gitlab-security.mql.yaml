@@ -2495,6 +2495,11 @@ queries:
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "gitlab_project_push_rules")
     mql: |
       terraform.state.resources.where(type == "gitlab_project_push_rules").all(values.member_check == true)
+  # No Terraform variants: secret push protection is a GitLab Ultimate-only setting, gated at
+  # runtime on gitlab.namespace.plan == "ultimate". A gitlab_project Terraform resource carries no
+  # subscription-tier information, so an HCL/plan/state variant would assert the Ultimate-only
+  # pre_receive_secret_detection_enabled attribute on every gitlab_project and raise false positives
+  # for Free and Premium namespaces where the feature does not apply.
   - uid: mondoo-gitlab-security-secret-push-protection
     title: Ensure secret push protection is enabled
     impact: 85
@@ -2512,23 +2517,9 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-8-6-2
       compliance/soc2-2017: false
       compliance/vda-isa-5: false
-    variants:
-      - uid: mondoo-gitlab-security-secret-push-protection-gitlab
-        tags:
-          mondoo.com/filter-title: GitLab Project
-          mondoo.com/filter-icon: gitlab
-      - uid: mondoo-gitlab-security-secret-push-protection-terraform-hcl
-        tags:
-          mondoo.com/filter-title: Terraform HCL
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-gitlab-security-secret-push-protection-terraform-plan
-        tags:
-          mondoo.com/filter-title: Terraform Plan
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-gitlab-security-secret-push-protection-terraform-state
-        tags:
-          mondoo.com/filter-title: Terraform State
-          mondoo.com/filter-icon: terraform
+    filters: asset.platform == "gitlab-project" && gitlab.namespace.plan == "ultimate"
+    mql: |
+      gitlab.project.preReceiveSecretDetectionEnabled == true
     docs:
       desc: |
         This check ensures that secret push protection is enabled for the project. Secret push protection scans the contents of each push in real time and blocks the push when a secret is detected, before it reaches the repository. This feature requires a GitLab Ultimate subscription.
@@ -2607,22 +2598,6 @@ queries:
         title: GitLab Secret Push Protection
       - url: https://docs.gitlab.com/user/application_security/secret_detection/
         title: GitLab Secret Detection
-  - uid: mondoo-gitlab-security-secret-push-protection-gitlab
-    filters: asset.platform == "gitlab-project" && gitlab.namespace.plan == "ultimate"
-    mql: |
-      gitlab.project.preReceiveSecretDetectionEnabled == true
-  - uid: mondoo-gitlab-security-secret-push-protection-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "gitlab_project")
-    mql: |
-      terraform.resources("gitlab_project").all(arguments["pre_receive_secret_detection_enabled"] == true)
-  - uid: mondoo-gitlab-security-secret-push-protection-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "gitlab_project")
-    mql: |
-      terraform.plan.resourceChanges.where(type == "gitlab_project").all(change.after.pre_receive_secret_detection_enabled == true)
-  - uid: mondoo-gitlab-security-secret-push-protection-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "gitlab_project")
-    mql: |
-      terraform.state.resources.where(type == "gitlab_project").all(values.pre_receive_secret_detection_enabled == true)
   - uid: mondoo-gitlab-security-ci-variables-masked
     title: Ensure CI/CD variables are masked in job logs
     impact: 80
@@ -3241,6 +3216,9 @@ queries:
     filters: asset.platform == "gitlab-project"
     mql: |
       gitlab.project.allowMergeOnSkippedPipeline == false
+  # allow_merge_on_skipped_pipeline defaults to false (secure) in GitLab, so an omitted attribute
+  # is compliant. Assert != true (not == false) so an absent/null value passes; only an explicit
+  # true fails. The plan/state variants use the same operator for consistency.
   - uid: mondoo-gitlab-security-no-merge-on-skipped-pipeline-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "gitlab_project")
     mql: |
@@ -3489,6 +3467,10 @@ queries:
     filters: asset.platform == "gitlab-project"
     mql: |
       gitlab.project.publicJobs == false
+  # public_jobs defaults to true (insecure) in GitLab, so an omitted attribute is non-compliant.
+  # Assert == false so an absent/null value fails (null == false is false) rather than passing
+  # vacuously; only an explicit false passes. This mirrors GitLab's insecure default, unlike the
+  # allow_merge_on_skipped_pipeline check above whose default is already secure.
   - uid: mondoo-gitlab-security-no-public-jobs-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "gitlab_project")
     mql: |
