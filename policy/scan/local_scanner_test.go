@@ -82,6 +82,52 @@ func TestDefaultConfig(t *testing.T) {
 	})
 }
 
+func TestWithServerFeatures(t *testing.T) {
+	t.Run("activates known server features on the context", func(t *testing.T) {
+		ctx := mql.SetFeatures(context.Background(), mql.DefaultFeatures)
+		ctx = withServerFeatures(ctx, []string{"TerraformResolveVars"})
+		require.True(t, mql.GetFeatures(ctx).IsActive(mql.TerraformResolveVars))
+	})
+
+	t.Run("skips unknown features but keeps known ones", func(t *testing.T) {
+		ctx := mql.SetFeatures(context.Background(), mql.DefaultFeatures)
+		ctx = withServerFeatures(ctx, []string{"NotARealFeature", "TerraformResolveVars"})
+		require.True(t, mql.GetFeatures(ctx).IsActive(mql.TerraformResolveVars))
+	})
+
+	t.Run("empty list returns the context unchanged", func(t *testing.T) {
+		base := mql.SetFeatures(context.Background(), mql.DefaultFeatures)
+		require.Equal(t, base, withServerFeatures(base, nil))
+	})
+}
+
+// TestResolveServerScanParameters_NoUpstream verifies the pre-discovery hook is
+// a no-op (context unchanged, nil services) for incognito / credential-less
+// scans, so it can be safely called before asset discovery in every scan.
+func TestResolveServerScanParameters_NoUpstream(t *testing.T) {
+	s := NewLocalScanner()
+	base := mql.SetFeatures(context.Background(), mql.DefaultFeatures)
+
+	t.Run("nil upstream", func(t *testing.T) {
+		ctx, services, spaceMrn, err := s.resolveServerScanParameters(base, nil)
+		require.NoError(t, err)
+		require.Equal(t, base, ctx)
+		require.Nil(t, services)
+		require.Empty(t, spaceMrn)
+	})
+
+	t.Run("incognito upstream", func(t *testing.T) {
+		ctx, services, spaceMrn, err := s.resolveServerScanParameters(base, &upstream.UpstreamConfig{
+			ApiEndpoint: "https://example.com",
+			Incognito:   true,
+		})
+		require.NoError(t, err)
+		require.Equal(t, base, ctx)
+		require.Nil(t, services)
+		require.Empty(t, spaceMrn)
+	})
+}
+
 type LocalScannerSuite struct {
 	suite.Suite
 	ctx  context.Context
