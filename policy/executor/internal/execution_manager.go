@@ -47,7 +47,11 @@ type executionManager struct {
 
 type runQueueItem struct {
 	codeBundle *llx.CodeBundle
-	props      map[string]*llx.Result
+	// props returns the query's property values. It is invoked when the item
+	// is dequeued (not when it is queued), so a transient nil property that
+	// was upgraded to its real value while waiting in the queue is picked up.
+	// It may be nil for queries without properties.
+	props func() map[string]*llx.Result
 }
 
 func newExecutionManager(runtime llx.Runtime, runQueue chan runQueueItem,
@@ -84,7 +88,11 @@ func (em *executionManager) Start() {
 				}
 				props := make(map[string]*llx.Primitive)
 				errMsg := ""
-				for k, r := range item.props {
+				var itemProps map[string]*llx.Result
+				if item.props != nil {
+					itemProps = item.props()
+				}
+				for k, r := range itemProps {
 					if r.Error != "" {
 						// This case is tricky to handle. If we cannot run the query at
 						// all, it's unclear what to report for the datapoint. If we
