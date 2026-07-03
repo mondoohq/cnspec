@@ -16557,6 +16557,8 @@ queries:
       bicep.resources.where(type == "Microsoft.DocumentDB/databaseAccounts").all(
         properties["ipRules"] != empty
       )
+  # No Terraform variant: Cosmos DB private-endpoint correlation across resources is not expressible cleanly
+  # No Terraform remediation: same reason
   - uid: mondoo-azure-security-cosmosdb-private-endpoints
     title: Ensure Cosmos DB accounts have private endpoints configured
     impact: 70
@@ -16579,10 +16581,6 @@ queries:
         tags:
           mondoo.com/filter-title: Azure Cosmos DB Account
           mondoo.com/filter-icon: azure
-      - uid: mondoo-azure-security-cosmosdb-private-endpoints-terraform-hcl
-        tags:
-          mondoo.com/filter-title: Terraform HCL
-          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that Azure Cosmos DB accounts have at least one private endpoint connection configured, providing a dedicated private path for application access that does not traverse the public internet. Without private endpoints, all Cosmos DB traffic must use the public endpoint even when public network access is restricted via firewall rules.
@@ -16671,14 +16669,6 @@ queries:
       asset.platform == "azure-cosmosdb"
     mql: |
       azure.subscription.cosmosDbService.account.properties["privateEndpointConnections"].length > 0
-  - uid: mondoo-azure-security-cosmosdb-private-endpoints-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_private_endpoint")
-    mql: |
-      terraform.resources("azurerm_private_endpoint").any(
-        blocks.where(type == "private_service_connection").any(
-          arguments['subresource_names'].any(_ == /^(Sql|MongoDB|Cassandra|Gremlin|Table)$/)
-        )
-      )
   - uid: mondoo-azure-security-cosmosdb-cors-no-wildcard
     title: Ensure Azure Cosmos DB accounts do not allow wildcard CORS origins
     impact: 50
@@ -43213,10 +43203,6 @@ queries:
         tags:
           mondoo.com/filter-title: Azure IoT Hub
           mondoo.com/filter-icon: azure
-      - uid: mondoo-azure-security-iot-hub-diagnostic-settings-enabled-terraform-hcl
-        tags:
-          mondoo.com/filter-title: Terraform HCL
-          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that at least one diagnostic setting is configured for every Azure IoT Hub, forwarding hub logs and metrics to a durable destination such as a Log Analytics workspace, Storage account, or Event Hub. By default an IoT Hub emits no diagnostic data to any of these destinations, so connection events, device telemetry routing failures, and control-plane operations are never preserved for investigation.
@@ -43331,17 +43317,11 @@ queries:
       asset.platform == "azure"
     mql: |
       azure.subscription.iot.iotHubs.all(diagnosticSettings != empty)
-  # HCL: anchored regex on the flattened reference string. cnquery's HCL parser turns a
-  # reference like azurerm_iothub.example.id into the dotted string
-  # "azurerm_iothub.example.id" (or "data.azurerm_iothub.example.id" for data-source
-  # references), so we require a diagnostic setting whose target_resource_id points at an
-  # IoT hub.
-  - uid: mondoo-azure-security-iot-hub-diagnostic-settings-enabled-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_iothub")
-    mql: |
-      terraform.resources("azurerm_monitor_diagnostic_setting").any(
-        arguments['target_resource_id'] == /^(data\.)?azurerm_iothub\./
-      )
+  # No Terraform variant: the Azure check requires every IoT hub to have a diagnostic
+  # setting (iotHubs.all(diagnosticSettings != empty)). In HCL a diagnostic setting is a
+  # separate azurerm_monitor_diagnostic_setting resource linked to a hub only by an opaque
+  # target_resource_id reference, so per-hub correlation cannot be expressed — a global
+  # .any() would pass as long as a single hub is covered, which does not match the sibling.
   - uid: mondoo-azure-security-vm-secure-boot-enabled
     title: Ensure Secure Boot is enabled on Azure virtual machines (Trusted Launch)
     impact: 75
