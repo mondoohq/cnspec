@@ -25,9 +25,15 @@ func init() {
 	logger.Set("info")
 }
 
+// extraProviders lists providers that only the build-tagged IaC-variant suites
+// need. It is empty in the default (main cnspec app) test build and is extended
+// via an init() in iac_variants_test.go under the `iac_variants` build tag, so
+// the default test run does not download IaC-only providers such as bicep.
+var extraProviders []string
+
 func TestMain(m *testing.M) {
 	// ensure providers are loaded
-	providerList := []string{"terraform", "k8s", "aws", "azure", "gcp", "cloudformation"}
+	providerList := append([]string{"terraform", "k8s", "aws", "azure", "gcp", "cloudformation"}, extraProviders...)
 	for _, p := range providerList {
 		_, err := providers.EnsureProvider(providers.ProviderLookup{ProviderName: p}, true, nil)
 		if err != nil {

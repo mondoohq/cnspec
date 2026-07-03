@@ -1,0 +1,4 @@
+FROM fedora:40
+RUN dnf install -y httpd && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf
