@@ -16557,7 +16557,7 @@ queries:
       bicep.resources.where(type == "Microsoft.DocumentDB/databaseAccounts").all(
         properties["ipRules"] != empty
       )
-  # No Terraform variants: Cosmos DB private-endpoint correlation across resources is not expressible cleanly
+  # No Terraform variant: Cosmos DB private-endpoint correlation across resources is not expressible cleanly
   # No Terraform remediation: same reason
   - uid: mondoo-azure-security-cosmosdb-private-endpoints
     title: Ensure Cosmos DB accounts have private endpoints configured
@@ -27232,6 +27232,10 @@ queries:
         tags:
           mondoo.com/filter-title: Azure Cache for Redis
           mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-redis-cmk-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that Azure Cache for Redis uses customer-managed keys for encryption, providing key lifecycle control for cached data at rest.
@@ -27342,6 +27346,15 @@ queries:
       asset.platform == "azure-cache-redis-instance"
     mql: |
       azure.subscription.cacheService.redisInstance.encryptionKey != empty
+  # Customer-managed key encryption is only available on the Enterprise/Managed Redis
+  # tier, which Terraform models as azurerm_managed_redis with a customer_managed_key
+  # block. The classic azurerm_redis_cache resource has no CMK argument.
+  - uid: mondoo-azure-security-redis-cmk-encryption-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_managed_redis")
+    mql: |
+      terraform.resources("azurerm_managed_redis").all(
+        blocks.where(type == "customer_managed_key") != empty
+      )
   - uid: mondoo-azure-security-appgw-min-tls-version
     title: Ensure Application Gateway enforces TLS 1.2+
     impact: 80
@@ -38339,6 +38352,10 @@ queries:
         tags:
           mondoo.com/filter-title: Azure Subscription
           mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-frontdoor-origin-https-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that Azure Front Door origin servers are configured to serve traffic only over HTTPS, preventing unencrypted HTTP connections between Front Door and the origin. By default, Front Door allows origins to accept both HTTP and HTTPS, which means the client-facing TLS connection is terminated at the Front Door edge while the hop to the origin can be unencrypted.
@@ -38415,6 +38432,12 @@ queries:
       // configurable; encrypted traffic to origins is enforced on the route.
       azure.subscription.frontDoor.profiles.all(
         endpoints.all(routes.all(forwardingProtocol == "HttpsOnly"))
+      )
+  - uid: mondoo-azure-security-frontdoor-origin-https-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_cdn_frontdoor_route")
+    mql: |
+      terraform.resources("azurerm_cdn_frontdoor_route").all(
+        arguments['forwarding_protocol'] == "HttpsOnly"
       )
   - uid: mondoo-azure-security-sql-server-audit-destination-configured
     title: Ensure Azure SQL Server auditing has a log destination configured
@@ -43294,6 +43317,11 @@ queries:
       asset.platform == "azure"
     mql: |
       azure.subscription.iot.iotHubs.all(diagnosticSettings != empty)
+  # No Terraform variant: the Azure check requires every IoT hub to have a diagnostic
+  # setting (iotHubs.all(diagnosticSettings != empty)). In HCL a diagnostic setting is a
+  # separate azurerm_monitor_diagnostic_setting resource linked to a hub only by an opaque
+  # target_resource_id reference, so per-hub correlation cannot be expressed — a global
+  # .any() would pass as long as a single hub is covered, which does not match the sibling.
   - uid: mondoo-azure-security-vm-secure-boot-enabled
     title: Ensure Secure Boot is enabled on Azure virtual machines (Trusted Launch)
     impact: 75
