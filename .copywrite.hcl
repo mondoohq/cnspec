@@ -11,6 +11,7 @@ project {
   header_ignore = [
     "**/*.tf",
     "**/testdata/**",
+    "**/iac-variant-testdata/**",
     "**/*.pb.go",
     "**/*_string.go",
     "apps/cnspec/cmd/policy-example.mql.yaml",
