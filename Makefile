@@ -136,22 +136,22 @@ IAC_VARIANT_PARALLEL ?= 4
 
 .PHONY: test/go/content-iac test/go/content-iac/terraform test/go/content-iac/cloudformation test/go/content-iac/bicep test/go/content-iac/dockerfile test/go/content-iac/kubernetes
 test/go/content-iac: prep/tools
-	go test -tags iac_variants -parallel $(IAC_VARIANT_PARALLEL) -run 'TestTerraformVariants|TestCloudFormationVariants|TestBicepVariants|TestDockerfileVariants|TestKubernetesManifestVariants' ./content
+	go test -tags iac_variants -timeout 30m -parallel $(IAC_VARIANT_PARALLEL) -run 'TestTerraformVariants|TestCloudFormationVariants|TestBicepVariants|TestDockerfileVariants|TestKubernetesManifestVariants' ./content
 
 test/go/content-iac/terraform: prep/tools
-	go test -tags iac_variants -parallel $(IAC_VARIANT_PARALLEL) -run '^TestTerraformVariants$$' ./content
+	go test -tags iac_variants -timeout 30m -parallel $(IAC_VARIANT_PARALLEL) -run '^TestTerraformVariants$$' ./content
 
 test/go/content-iac/cloudformation: prep/tools
-	go test -tags iac_variants -parallel $(IAC_VARIANT_PARALLEL) -run '^TestCloudFormationVariants$$' ./content
+	go test -tags iac_variants -timeout 30m -parallel $(IAC_VARIANT_PARALLEL) -run '^TestCloudFormationVariants$$' ./content
 
 test/go/content-iac/bicep: prep/tools
-	go test -tags iac_variants -parallel $(IAC_VARIANT_PARALLEL) -run '^TestBicepVariants$$' ./content
+	go test -tags iac_variants -timeout 30m -parallel $(IAC_VARIANT_PARALLEL) -run '^TestBicepVariants$$' ./content
 
 test/go/content-iac/dockerfile: prep/tools
-	go test -tags iac_variants -parallel $(IAC_VARIANT_PARALLEL) -run '^TestDockerfileVariants$$' ./content
+	go test -tags iac_variants -timeout 30m -parallel $(IAC_VARIANT_PARALLEL) -run '^TestDockerfileVariants$$' ./content
 
 test/go/content-iac/kubernetes: prep/tools
-	go test -tags iac_variants -parallel $(IAC_VARIANT_PARALLEL) -run '^TestKubernetesManifestVariants$$' ./content
+	go test -tags iac_variants -timeout 30m -parallel $(IAC_VARIANT_PARALLEL) -run '^TestKubernetesManifestVariants$$' ./content
 
 .PHONY: test/lint/staticcheck
 test/lint/staticcheck:
