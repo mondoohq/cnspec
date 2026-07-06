@@ -4,8 +4,10 @@
 package internal
 
 import (
+	"fmt"
 	"os"
 	goruntime "runtime"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -73,17 +75,31 @@ func (em *executionManager) Start() {
 	go func() {
 		defer em.wg.Done()
 		// current is the code bundle being executed; the deferred panic
-		// reporter snapshots it at crash time so the report carries WHICH
+		// handler snapshots it at crash time so the report carries WHICH
 		// query was running, not just where the engine died. The recover
-		// stays at the goroutine top — recovering closer to the query and
-		// re-panicking would truncate the stacktrace.
+		// stays at the goroutine top so the stacktrace points at the
+		// panic site. Instead of crashing the process, the panic is
+		// reported upstream and surfaced as an unrecoverable execution
+		// error, mirroring the executeCodeBundle error path below.
 		var current *llx.CodeBundle
-		defer health.ReportPanicWithTags("cnspec", cnspec.Version, cnspec.Build, func() map[string]string {
-			if current == nil {
-				return nil
+		defer func() {
+			r := recover()
+			if r == nil {
+				return
 			}
-			return health.QueryPanicTags(current.CodeV2.GetId(), current.Source)
-		})
+			var tags map[string]string
+			if current != nil {
+				tags = health.QueryPanicTags(current.CodeV2.GetId(), current.Source)
+			}
+			health.ReportRecoveredPanic("cnspec", cnspec.Version, cnspec.Build, r, tags)
+			log.Error().
+				Str("stacktrace", string(debug.Stack())).
+				Msgf("recovered from panic during query execution: %v", r)
+			select {
+			case em.errChan <- fmt.Errorf("panic during query execution: %v", r):
+			default:
+			}
+		}()
 		for {
 			// Prioritize stopChan
 			select {
