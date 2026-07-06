@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-azure-security
     name: Mondoo Microsoft Azure Security
-    version: 9.3.1
+    version: 9.4.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -175,6 +175,7 @@ policies:
           - uid: mondoo-azure-security-network-interface-ip-forwarding-disabled
           - uid: mondoo-azure-security-nsg-sensitive-ports-restricted
           - uid: mondoo-azure-security-network-manager-security-admin-deny-rule
+          - uid: mondoo-azure-security-network-security-perimeter-enforced
       - title: Azure Subscription
         checks:
           - uid: mondoo-azure-security-diagnostic-settings-essential-categories
@@ -187,6 +188,7 @@ policies:
           - uid: mondoo-azure-security-security-contact-enabled
           - uid: mondoo-azure-security-rbac-custom-roles-least-privilege
           - uid: mondoo-azure-security-rbac-no-custom-role-creation
+          - uid: mondoo-azure-security-pim-active-assignments-time-bound
       - title: Microsoft Defender for Cloud
         checks:
           - uid: mondoo-azure-security-defender-for-servers-enabled
@@ -203,6 +205,8 @@ policies:
           - uid: mondoo-azure-security-defender-for-sql-on-machines-enabled
           - uid: mondoo-azure-security-defender-for-endpoint-enabled
           - uid: mondoo-azure-security-defender-for-apis-enabled
+          - uid: mondoo-azure-security-defender-jit-network-access-enabled
+          - uid: mondoo-azure-security-defender-no-permanent-alert-suppression
       - title: Azure Kubernetes Service (AKS)
         checks:
           - uid: mondoo-azure-security-aks-rbac-enabled
@@ -47243,3 +47247,540 @@ queries:
     refs:
       - url: https://learn.microsoft.com/en-us/azure/virtual-network-manager/concept-security-admins
         title: Microsoft Learn - Security admin rules in Azure Virtual Network Manager
+  # No Terraform variants: the azurerm provider has no just-in-time network access policy resource (Microsoft.Security/locations/jitNetworkAccessPolicies is not exposed); Bicep/ARM is the only IaC analog.
+  - uid: mondoo-azure-security-defender-jit-network-access-enabled
+    title: Ensure just-in-time VM network access is enabled
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    variants:
+      - uid: mondoo-azure-security-defender-jit-network-access-enabled-azure
+        tags:
+          mondoo.com/filter-title: Azure Subscription
+          mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-defender-jit-network-access-enabled-bicep
+        tags:
+          mondoo.com/filter-title: Bicep
+          mondoo.com/filter-icon: bicep
+    docs:
+      desc: |
+        This check ensures that just-in-time (JIT) VM network access is configured through Microsoft Defender for Cloud. JIT access keeps management ports such as RDP (3389) and SSH (22) closed by default and opens them only on an approved, time-limited request from a specific source, instead of leaving them permanently reachable.
+
+        **Why this matters**
+
+        - **Reduced attack surface:** Permanently open management ports are continuously scanned and brute-forced from the internet; JIT closes them until access is explicitly needed.
+        - **Time-bound exposure:** Access is granted for a limited window and then automatically revoked, so a forgotten open rule does not become a standing entry point.
+        - **Auditable access:** Every JIT request records who requested access, from which source, and for how long, producing an access trail that always-open rules do not.
+
+        **Risk mitigation**
+
+        - **Brute-force resistance:** Attackers cannot reach RDP or SSH endpoints during the long periods when no legitimate access is active.
+        - **Least-privilege networking:** Access is scoped to a requesting IP and a bounded time window rather than left open to the world.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the Azure portal and open **Microsoft Defender for Cloud**.
+        2. Select **Workload protections**, then **Just-in-time VM access**.
+        3. Review the **Configured** tab and confirm that VMs exposing management ports are protected by a JIT policy.
+        4. Confirm that no production VM with a public IP appears on the **Not configured** tab.
+
+        A passing environment shows management-port VMs under **Configured**. A failing environment shows such VMs under **Not configured**.
+
+        ### Audit via CLI
+
+        1. List the just-in-time network access policies in the subscription:
+
+        ```bash
+        az security jit-policy list
+        ```
+
+        A passing subscription returns one or more policies whose `virtualMachines` array is populated. A failing subscription returns an empty list.
+      remediation:
+        - id: portal
+          desc: |
+            To enable just-in-time VM access using the Azure portal:
+
+            1. Open **Microsoft Defender for Cloud**.
+            2. Select **Workload protections**, then **Just-in-time VM access**.
+            3. On the **Not configured** tab, select the VMs to protect.
+            4. Choose **Enable JIT on VMs**, review the ports (for example 22 and 3389) and time window, and select **Save**.
+        - id: cli
+          desc: |
+            To create a just-in-time network access policy using the Azure CLI, submit the policy definition to the Defender for Cloud REST API with `az rest` (the `az security jit-policy` command supports only read operations):
+
+            ```bash
+            az rest --method put \
+              --url "https://management.azure.com/subscriptions/<subscription-id>/resourceGroups/<resource-group>/providers/Microsoft.Security/locations/<location>/jitNetworkAccessPolicies/default?api-version=2020-01-01" \
+              --body @jit-policy.json
+            ```
+        - id: bicep
+          desc: |
+            To configure just-in-time VM access using Bicep:
+
+            ```bicep
+            resource jitPolicy 'Microsoft.Security/locations/jitNetworkAccessPolicies@2020-01-01' = {
+              name: 'default'
+              properties: {
+                virtualMachines: [
+                  {
+                    id: vm.id
+                    ports: [
+                      {
+                        number: 22
+                        protocol: '*'
+                        allowedSourceAddressPrefix: '<trusted-cidr>'
+                        maxRequestAccessDuration: 'PT3H'
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+            ```
+        # No Terraform remediation: the azurerm provider has no just-in-time network access policy resource; JIT is managed via the portal, REST API, or Bicep/ARM only.
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/defender-for-cloud/just-in-time-access-usage
+        title: Microsoft Learn - Just-in-time machine access
+  - uid: mondoo-azure-security-defender-jit-network-access-enabled-azure
+    filters: asset.platform == "azure"
+    mql: |
+      azure.subscription.cloudDefender.jitNetworkAccessPolicies.any(virtualMachines.length > 0)
+  - uid: mondoo-azure-security-defender-jit-network-access-enabled-bicep
+    filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.Security/locations/jitNetworkAccessPolicies")
+    mql: |
+      bicep.resources.where(type == "Microsoft.Security/locations/jitNetworkAccessPolicies").all(
+        properties['virtualMachines'] != empty
+      )
+  # No Terraform variants: the azurerm provider has no Defender for Cloud alert suppression rule resource (Microsoft.Security/alertsSuppressionRules is not exposed); Bicep/ARM is the only IaC analog.
+  - uid: mondoo-azure-security-defender-no-permanent-alert-suppression
+    title: Ensure Defender alert suppression rules are time-bound
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-03
+      compliance/dora: dora-art-10
+      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
+      compliance/iso-27001-2022: iso-27001-2022-a-8-16
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-de-cm-1
+      compliance/nist-csf-2: nist-csf-2-de-cm-09
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-4
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-6
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc7-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-4
+    variants:
+      - uid: mondoo-azure-security-defender-no-permanent-alert-suppression-azure
+        tags:
+          mondoo.com/filter-title: Azure Subscription
+          mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-defender-no-permanent-alert-suppression-bicep
+        tags:
+          mondoo.com/filter-title: Bicep
+          mondoo.com/filter-icon: bicep
+    docs:
+      desc: |
+        This check ensures that enabled Microsoft Defender for Cloud alert suppression rules carry an expiration date. Suppression rules automatically dismiss matching security alerts; an enabled rule with no expiration silences a class of alerts indefinitely and becomes a permanent detection blind spot.
+
+        **Why this matters**
+
+        - **Detection integrity:** A permanent suppression rule can hide the exact alerts that indicate an active intrusion, defeating the purpose of Defender for Cloud.
+        - **Stale exceptions:** Suppression rules created to quiet a known false positive are frequently forgotten; an expiration forces periodic re-justification.
+        - **Abuse resistance:** An attacker who gains sufficient privileges can create a broad suppression rule to hide their activity; requiring expirations limits how long such a rule stays effective and surfaces it for review.
+
+        **Risk mitigation**
+
+        - **Bounded blind spots:** Any suppression automatically lapses, so a mistaken or malicious rule cannot silence alerts forever.
+        - **Regular review:** Expiring rules must be consciously renewed, keeping the set of suppressed alert types small and intentional.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the Azure portal and open **Microsoft Defender for Cloud**.
+        2. Select **Environment settings**, choose the subscription, and open **Suppression rules**.
+        3. For each enabled rule, confirm that an **Expiration date** is set.
+
+        A passing subscription has every enabled suppression rule showing an expiration date. A failing subscription has at least one enabled rule with no expiration.
+
+        ### Audit via CLI
+
+        1. List the alert suppression rules in the subscription:
+
+        ```bash
+        az security alerts-suppression-rule list
+        ```
+
+        A passing subscription returns only rules where `state` is `Disabled` or where an `expirationDateUtc` is present. A failing subscription returns an enabled rule with an empty `expirationDateUtc`.
+      remediation:
+        - id: portal
+          desc: |
+            To make Defender alert suppression rules time-bound using the Azure portal:
+
+            1. Open **Microsoft Defender for Cloud**, then **Environment settings**.
+            2. Select the subscription and open **Suppression rules**.
+            3. Edit each enabled rule without an expiration and set an **Expiration date**, or delete the rule if it is no longer needed.
+            4. Select **Apply**.
+        - id: cli
+          desc: |
+            To set an expiration on an alert suppression rule using the Azure CLI:
+
+            ```bash
+            az security alerts-suppression-rule update \
+              --rule-name <rule-name> \
+              --alert-type <alert-type> \
+              --reason "<justification>" \
+              --state Enabled \
+              --expiration-date-utc "2026-12-31T00:00:00Z"
+            ```
+        - id: bicep
+          desc: |
+            To define a time-bound alert suppression rule using Bicep:
+
+            ```bicep
+            resource suppression 'Microsoft.Security/alertsSuppressionRules@2019-01-01-preview' = {
+              name: '<rule-name>'
+              properties: {
+                alertType: '<alert-type>'
+                reason: '<justification>'
+                state: 'Enabled'
+                expirationDateUtc: '2026-12-31T00:00:00Z'
+              }
+            }
+            ```
+        # No Terraform remediation: the azurerm provider has no Defender for Cloud alert suppression rule resource; suppression rules are managed via the portal, CLI, or Bicep/ARM only.
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/defender-for-cloud/alerts-suppression-rules
+        title: Microsoft Learn - Suppress alerts from Defender for Cloud
+  - uid: mondoo-azure-security-defender-no-permanent-alert-suppression-azure
+    filters: asset.platform == "azure"
+    mql: |
+      azure.subscription.cloudDefender.alertSuppressionRules.where(state == "Enabled").all(expirationDate != empty)
+  - uid: mondoo-azure-security-defender-no-permanent-alert-suppression-bicep
+    filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.Security/alertsSuppressionRules")
+    mql: |
+      bicep.resources.where(type == "Microsoft.Security/alertsSuppressionRules").where(properties['state'] == "Enabled").all(
+        properties['expirationDateUtc'] != empty
+      )
+  - uid: mondoo-azure-security-pim-active-assignments-time-bound
+    title: Ensure active Azure role assignments are time-bound
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-3-1
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-azure-security-pim-active-assignments-time-bound-azure
+        tags:
+          mondoo.com/filter-title: Azure Subscription
+          mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-pim-active-assignments-time-bound-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-pim-active-assignments-time-bound-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-pim-active-assignments-time-bound-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-pim-active-assignments-time-bound-bicep
+        tags:
+          mondoo.com/filter-title: Bicep
+          mondoo.com/filter-icon: bicep
+    docs:
+      desc: |
+        This check ensures that active (standing) Azure RBAC role assignments granted through Privileged Identity Management carry an expiration rather than being permanent. Privileged Identity Management distinguishes *eligible* assignments, which a user must activate on demand for a bounded time, from *active* assignments, which grant the role continuously; permanent active assignments keep privilege standing at all times.
+
+        **Why this matters**
+
+        - **Least standing privilege:** A permanent active assignment means the identity holds the role around the clock, so a compromised account or token yields those permissions immediately and indefinitely.
+        - **Time-bound access:** Expiring assignments force privilege to lapse and be re-justified, shrinking the window in which stolen credentials are useful.
+        - **Clear separation of duties:** Preferring eligible or time-bound active assignments keeps the set of always-privileged identities small and reviewable.
+
+        **Risk mitigation**
+
+        - **Smaller blast radius:** Fewer identities hold standing privilege, so the impact of any single compromise is contained.
+        - **Automatic expiry:** Access ends on its own, preventing the slow accumulation of forgotten permanent grants.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the Azure portal and open **Microsoft Entra Privileged Identity Management**.
+        2. Select **Azure resources** (or **Microsoft Entra roles**), then **Assignments**, and open the **Active** tab.
+        3. For each active assignment, confirm that the **End time** column shows a date rather than **Permanent**.
+
+        A passing environment shows every active assignment with an end time. A failing environment shows one or more active assignments marked **Permanent**.
+
+        ### Audit via CLI
+
+        1. Retrieve active role assignment schedules and inspect their end dates:
+
+        ```bash
+        az rest --method get \
+          --url "https://management.azure.com/subscriptions/<subscription-id>/providers/Microsoft.Authorization/roleAssignmentSchedules?api-version=2020-10-01&\$filter=assignmentType%20eq%20'Assigned'"
+        ```
+
+        A passing subscription returns assignments whose `properties.endDateTime` is set. A failing subscription returns an `Assigned` schedule with a null `endDateTime`.
+      remediation:
+        - id: portal
+          desc: |
+            To make active role assignments time-bound using the Azure portal:
+
+            1. Open **Microsoft Entra Privileged Identity Management**.
+            2. Select **Azure resources** or **Microsoft Entra roles**, then **Assignments**, and open the **Active** tab.
+            3. For each permanent active assignment, either remove it and re-create the principal as **Eligible**, or update the active assignment to set an **End time**.
+            4. Under **Settings** for each privileged role, disable **Allow permanent active assignment** so future assignments must be time-bound.
+        - id: cli
+          desc: |
+            To create a time-bound active role assignment using the Azure CLI, submit a role assignment schedule request with an expiration via `az rest`:
+
+            ```bash
+            az rest --method put \
+              --url "https://management.azure.com/subscriptions/<subscription-id>/providers/Microsoft.Authorization/roleAssignmentScheduleRequests/<guid>?api-version=2020-10-01" \
+              --body @schedule-request.json
+            ```
+        - id: terraform
+          desc: |
+            To create a time-bound active role assignment using Terraform, include a `schedule` block with an `expiration`:
+
+            ```hcl
+            resource "azurerm_pim_active_role_assignment" "example" {
+              scope              = data.azurerm_subscription.primary.id
+              role_definition_id = "${data.azurerm_subscription.primary.id}${data.azurerm_role_definition.contributor.id}"
+              principal_id       = data.azurerm_client_config.current.object_id
+
+              schedule {
+                expiration {
+                  duration_hours = 8
+                }
+              }
+            }
+            ```
+        - id: bicep
+          desc: |
+            To create a time-bound active role assignment using Bicep, set `scheduleInfo.expiration.type` to a value other than `NoExpiration`:
+
+            ```bicep
+            resource activeAssignment 'Microsoft.Authorization/roleAssignmentScheduleRequests@2020-10-01' = {
+              name: guid(subscription().id, principalId, roleDefinitionId)
+              properties: {
+                principalId: principalId
+                roleDefinitionId: roleDefinitionId
+                requestType: 'AdminAssign'
+                scheduleInfo: {
+                  startDateTime: utcNow()
+                  expiration: {
+                    type: 'AfterDuration'
+                    duration: 'PT8H'
+                  }
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/entra/id-governance/privileged-identity-management/pim-configure
+        title: Microsoft Learn - What is Privileged Identity Management?
+  - uid: mondoo-azure-security-pim-active-assignments-time-bound-azure
+    filters: asset.platform == "azure"
+    mql: |
+      azure.subscription.iam.roleAssignmentSchedules.where(assignmentType == "Assigned").all(endDateTime != empty)
+  - uid: mondoo-azure-security-pim-active-assignments-time-bound-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_pim_active_role_assignment")
+    mql: |
+      terraform.resources("azurerm_pim_active_role_assignment").all(
+        blocks.where(type == "schedule") != empty
+      )
+  - uid: mondoo-azure-security-pim-active-assignments-time-bound-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_pim_active_role_assignment")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_pim_active_role_assignment").all(
+        change.after['schedule'] != empty
+      )
+  - uid: mondoo-azure-security-pim-active-assignments-time-bound-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_pim_active_role_assignment")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_pim_active_role_assignment").all(
+        values['schedule'] != empty
+      )
+  - uid: mondoo-azure-security-pim-active-assignments-time-bound-bicep
+    filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.Authorization/roleAssignmentScheduleRequests")
+    mql: |
+      bicep.resources.where(type == "Microsoft.Authorization/roleAssignmentScheduleRequests").all(
+        properties['scheduleInfo']['expiration']['type'] != "NoExpiration"
+      )
+  - uid: mondoo-azure-security-network-security-perimeter-enforced
+    title: Ensure Network Security Perimeter associations are enforced
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    variants:
+      - uid: mondoo-azure-security-network-security-perimeter-enforced-azure
+        tags:
+          mondoo.com/filter-title: Azure Network
+          mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-network-security-perimeter-enforced-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-network-security-perimeter-enforced-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-network-security-perimeter-enforced-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-network-security-perimeter-enforced-bicep
+        tags:
+          mondoo.com/filter-title: Bicep
+          mondoo.com/filter-icon: bicep
+    docs:
+      desc: |
+        This check ensures that resource associations on a Network Security Perimeter are set to `Enforced` rather than left in `Learning` mode. A Network Security Perimeter creates an isolation boundary around PaaS resources (such as storage accounts and key vaults) so that traffic leaving or entering the perimeter is governed by perimeter access rules; in `Learning` mode the perimeter only logs what it would block, while `Enforced` mode actually applies the rules.
+
+        **Why this matters**
+
+        - **Boundary actually applied:** In `Learning` mode the perimeter does not block anything, so an association left there provides monitoring but no protection.
+        - **Data exfiltration control:** Enforced perimeters stop associated PaaS resources from communicating with untrusted networks or resources outside the perimeter.
+        - **Consistent segmentation:** Enforcing every association guarantees the whole set of perimeter resources is governed by one coherent policy rather than a mix of enforced and permissive members.
+
+        **Risk mitigation**
+
+        - **Prevents silent gaps:** An association stuck in `Learning` after roll-out is a resource that appears protected but is not; enforcing it closes that gap.
+        - **Contained blast radius:** Enforced perimeters limit lateral movement to and from associated PaaS resources.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the Azure portal and open **Network Security Perimeters**.
+        2. Select a perimeter and open **Associated resources**.
+        3. For each associated resource, confirm the **Access mode** is **Enforced**.
+        4. Repeat for every perimeter.
+
+        A passing perimeter shows every association in **Enforced** mode. A failing perimeter shows one or more associations in **Learning** or **Audit** mode.
+
+        ### Audit via CLI
+
+        1. List the associations for a perimeter and inspect their access mode:
+
+        ```bash
+        az network perimeter association list \
+          --perimeter-name <perimeter-name> \
+          --resource-group <resource-group> \
+          --query '[].{Name:name,AccessMode:properties.accessMode}' \
+          --output table
+        ```
+
+        A passing perimeter returns `Enforced` for every association. A failing perimeter returns `Learning` or `Audit`.
+      remediation:
+        - id: portal
+          desc: |
+            To enforce Network Security Perimeter associations using the Azure portal:
+
+            1. Open **Network Security Perimeters** and select the perimeter.
+            2. Open **Associated resources** and select the association to update.
+            3. Change **Access mode** to **Enforced** and select **Save**.
+        - id: cli
+          desc: |
+            To set a Network Security Perimeter association to enforced mode using the Azure CLI, submit the association with `accessMode` set to `Enforced` via `az rest`:
+
+            ```bash
+            az rest --method put \
+              --url "https://management.azure.com/subscriptions/<subscription-id>/resourceGroups/<resource-group>/providers/Microsoft.Network/networkSecurityPerimeters/<perimeter-name>/resourceAssociations/<association-name>?api-version=2023-08-01-preview" \
+              --body '{"properties":{"accessMode":"Enforced","privateLinkResource":{"id":"<resource-id>"},"profile":{"id":"<profile-id>"}}}'
+            ```
+        - id: terraform
+          desc: |
+            To enforce a Network Security Perimeter association using Terraform:
+
+            ```hcl
+            resource "azurerm_network_security_perimeter_association" "example" {
+              name                             = "example-association"
+              network_security_perimeter_profile_id = azurerm_network_security_perimeter_profile.example.id
+              resource_id                      = azurerm_storage_account.example.id
+              access_mode                      = "Enforced"
+            }
+            ```
+        - id: bicep
+          desc: |
+            To enforce a Network Security Perimeter association using Bicep:
+
+            ```bicep
+            resource association 'Microsoft.Network/networkSecurityPerimeters/resourceAssociations@2023-08-01-preview' = {
+              parent: perimeter
+              name: 'example-association'
+              properties: {
+                accessMode: 'Enforced'
+                privateLinkResource: {
+                  id: storageAccount.id
+                }
+                profile: {
+                  id: profile.id
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/private-link/network-security-perimeter-concepts
+        title: Microsoft Learn - Network Security Perimeter concepts
+  - uid: mondoo-azure-security-network-security-perimeter-enforced-azure
+    filters: asset.platform == "azure"
+    mql: |
+      azure.subscription.network.securityPerimeters.all(associations.all(accessMode == "Enforced"))
+  - uid: mondoo-azure-security-network-security-perimeter-enforced-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_network_security_perimeter_association")
+    mql: |
+      terraform.resources("azurerm_network_security_perimeter_association").all(
+        arguments.access_mode == "Enforced"
+      )
+  - uid: mondoo-azure-security-network-security-perimeter-enforced-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_network_security_perimeter_association")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_network_security_perimeter_association").all(
+        change.after.access_mode == "Enforced"
+      )
+  - uid: mondoo-azure-security-network-security-perimeter-enforced-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_network_security_perimeter_association")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_network_security_perimeter_association").all(
+        values.access_mode == "Enforced"
+      )
+  - uid: mondoo-azure-security-network-security-perimeter-enforced-bicep
+    filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.Network/networkSecurityPerimeters/resourceAssociations")
+    mql: |
+      bicep.resources.where(type == "Microsoft.Network/networkSecurityPerimeters/resourceAssociations").all(
+        properties['accessMode'] == "Enforced"
+      )
