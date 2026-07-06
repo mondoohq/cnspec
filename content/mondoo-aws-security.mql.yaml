@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-aws-security
     name: Mondoo AWS Security
-    version: 12.3.0
+    version: 12.4.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -177,6 +177,7 @@ policies:
           - uid: mondoo-aws-security-vpc-flow-logs-iam-role
           - uid: mondoo-aws-security-client-vpn-security-groups
           - uid: mondoo-aws-security-prefix-list-no-broad-cidrs
+          - uid: mondoo-aws-security-vpc-encryption-in-transit-enforced
       - title: Amazon DynamoDB Table
         checks:
           - uid: mondoo-aws-security-dynamodb-table-encrypted-kms
@@ -74499,4 +74500,152 @@ queries:
     mql: |
       aws.bedrock.agentCore.runtimes.all(
         environmentVariables.keys.none(_ == /(?i)(password|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credential)/)
+      )
+  - uid: mondoo-aws-security-vpc-encryption-in-transit-enforced
+    title: Ensure VPC encryption in transit is enforced
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    variants:
+      - uid: mondoo-aws-security-vpc-encryption-in-transit-enforced-aws
+        tags:
+          mondoo.com/filter-title: AWS VPC
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-vpc-encryption-in-transit-enforced-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-vpc-encryption-in-transit-enforced-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-vpc-encryption-in-transit-enforced-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-vpc-encryption-in-transit-enforced-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
+    docs:
+      desc: |
+        This check ensures that VPC encryption in transit is set to `enforce` rather than `monitor` or left unconfigured. VPC encryption in transit is an AWS control that transparently encrypts traffic between resources inside a VPC; in `monitor` mode AWS only reports which traffic would be affected, while `enforce` mode blocks any flow that cannot be encrypted.
+
+        **Why this matters**
+
+        - **Defense in depth for internal traffic:** Application-layer TLS is often terminated at load balancers or omitted between internal services; VPC-level encryption guarantees confidentiality for traffic that would otherwise cross the network in cleartext.
+        - **Protection against network interception:** Traffic between instances, containers, and managed services traverses shared AWS network infrastructure; enforcing encryption removes the assumption that the underlying network is trusted.
+        - **Consistent policy across workloads:** A single VPC-level control applies uniformly to every resource in the VPC, closing gaps left by per-application encryption settings that drift over time.
+
+        **Risk mitigation**
+
+        - **Fail-closed behavior:** In `enforce` mode, flows that cannot be encrypted are dropped rather than silently sent in cleartext, so a misconfiguration surfaces as a connectivity failure instead of a silent exposure.
+        - **Reduced blast radius:** An attacker who gains a foothold on the network path cannot passively read intra-VPC traffic once encryption is enforced.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the AWS Management Console and open the **VPC** console.
+        2. In the navigation pane, select **Your VPCs**.
+        3. Select a VPC and open the **Encryption controls** tab.
+        4. Verify that the encryption mode is set to **Enforce**.
+        5. Repeat for each VPC in every active region.
+
+        A passing VPC shows the encryption control mode as `enforce`. A failing VPC shows `monitor`, no configuration, or one or more traffic-type exclusions.
+
+        ### Audit via CLI
+
+        1. Retrieve the encryption control configuration for the VPCs in a region:
+
+        ```bash
+        aws ec2 describe-vpc-encryption-controls \
+          --query 'VpcEncryptionControls[*].{Vpc:VpcId,Mode:Mode,State:State}' \
+          --output table
+        ```
+
+        A passing VPC returns `enforce` in the `Mode` column. A failing VPC returns `monitor`, an empty value, or a VPC ID absent from the output entirely.
+      remediation:
+        - id: console
+          desc: |
+            To enforce VPC encryption in transit using the AWS Console:
+
+            1. Open the **VPC** console.
+            2. Select **Your VPCs** and choose the VPC to update.
+            3. On the **Encryption controls** tab, choose **Manage**.
+            4. Set the mode to **Enforce** and remove any traffic-type exclusions that are not strictly required.
+            5. Choose **Save**.
+        - id: cli
+          desc: |
+            To enforce VPC encryption in transit using the AWS CLI:
+
+            ```bash
+            aws ec2 modify-vpc-encryption-control \
+              --vpc-encryption-control-id <vpc-encryption-control-id> \
+              --mode enforce
+            ```
+
+            Obtain the `<vpc-encryption-control-id>` for a VPC with `aws ec2 describe-vpc-encryption-controls`.
+        - id: terraform
+          desc: |
+            To enforce VPC encryption in transit using Terraform:
+
+            ```hcl
+            resource "aws_vpc_encryption_control" "example" {
+              vpc_id = aws_vpc.example.id
+              mode   = "enforce"
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To enforce VPC encryption in transit using CloudFormation:
+
+            ```yaml
+            Resources:
+              VpcEncryptionControl:
+                Type: AWS::EC2::VPCEncryptionControl
+                Properties:
+                  VpcId: !Ref Vpc
+                  Mode: enforce
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/vpc/latest/userguide/encryption-in-transit.html
+        title: AWS Documentation - Encryption in transit for your VPC
+  - uid: mondoo-aws-security-vpc-encryption-in-transit-enforced-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.vpcs.all(encryptionControl != empty && encryptionControl.mode == "enforce")
+  - uid: mondoo-aws-security-vpc-encryption-in-transit-enforced-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_vpc_encryption_control")
+    mql: |
+      terraform.resources("aws_vpc_encryption_control").all(
+        arguments.mode == "enforce"
+      )
+  - uid: mondoo-aws-security-vpc-encryption-in-transit-enforced-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_vpc_encryption_control")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_vpc_encryption_control").all(
+        change.after.mode == "enforce"
+      )
+  - uid: mondoo-aws-security-vpc-encryption-in-transit-enforced-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_vpc_encryption_control")
+    mql: |
+      terraform.state.resources.where(type == "aws_vpc_encryption_control").all(
+        values.mode == "enforce"
+      )
+  - uid: mondoo-aws-security-vpc-encryption-in-transit-enforced-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::VPCEncryptionControl")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::EC2::VPCEncryptionControl").all(
+        properties['Mode'] == "enforce"
       )
