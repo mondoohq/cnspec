@@ -81,6 +81,10 @@ func (em *executionManager) Start() {
 		// panic site. Instead of crashing the process, the panic is
 		// reported upstream and surfaced as an unrecoverable execution
 		// error, mirroring the executeCodeBundle error path below.
+		// Like that path, the goroutine deliberately exits and takes the
+		// whole pipeline for this scan with it: after a panic the runtime
+		// state can't be trusted, so we don't keep executing the remaining
+		// queries.
 		var current *llx.CodeBundle
 		defer func() {
 			r := recover()
