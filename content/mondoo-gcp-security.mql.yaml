@@ -834,7 +834,7 @@ queries:
         blocks.where(type == 'service_account') != empty &&
         blocks.where(
           type == 'service_account' &&
-          arguments.email.contains(/^(default|\d{12}-compute@developer\.gserviceaccount\.com)$/)
+          arguments.email == /^(default|\d{12}-compute@developer\.gserviceaccount\.com)$/
         ).all(
           arguments.scopes.none(
             _ == /(https?:\/\/www\.googleapis\.com\/auth\/)?cloud-platform/
@@ -6283,8 +6283,12 @@ queries:
       asset.platform == 'terraform-hcl' &&
         terraform.resources('google_kms_crypto_key') != empty
     mql: |
+      // destroy_scheduled_duration is a GCP API duration ("<seconds>s", with up to nine
+      // fractional digits), so stripping the trailing "s" and any fractional part yields an
+      // integer for a numeric comparison against 86400 (matching destroyScheduledDuration.seconds).
       terraform.resources('google_kms_crypto_key').all(
-        arguments['destroy_scheduled_duration'] == empty || arguments['destroy_scheduled_duration'] >= "86400s"
+        arguments['destroy_scheduled_duration'] == empty ||
+        int(arguments['destroy_scheduled_duration'].split('s').first.split('.').first) >= 86400
       )
   - uid: mondoo-gcp-security-cloud-kms-keys-destroy-scheduled-duration-terraform-plan
     filters: |
@@ -6292,7 +6296,8 @@ queries:
       terraform.plan.resourceChanges.contains(type == 'google_kms_crypto_key')
     mql: |
       terraform.plan.resourceChanges.where(type == 'google_kms_crypto_key').all(
-        change.after['destroy_scheduled_duration'] == empty || change.after['destroy_scheduled_duration'] >= "86400s"
+        change.after['destroy_scheduled_duration'] == empty ||
+        int(change.after['destroy_scheduled_duration'].split('s').first.split('.').first) >= 86400
       )
   - uid: mondoo-gcp-security-cloud-kms-keys-destroy-scheduled-duration-terraform-state
     filters: |
@@ -6300,7 +6305,8 @@ queries:
       terraform.state.resources.contains(type == 'google_kms_crypto_key')
     mql: |
       terraform.state.resources.where(type == 'google_kms_crypto_key').all(
-        values['destroy_scheduled_duration'] == empty || values['destroy_scheduled_duration'] >= "86400s"
+        values['destroy_scheduled_duration'] == empty ||
+        int(values['destroy_scheduled_duration'].split('s').first.split('.').first) >= 86400
       )
   - uid: mondoo-gcp-security-cloud-kms-keyring-not-global-location
     title: Ensure KMS keyrings are not in the global location
@@ -12291,22 +12297,32 @@ queries:
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_cloudfunctions_function' || nameLabel == 'google_cloudfunctions2_function')
     mql: |
-      terraform.resources.where(nameLabel == 'google_cloudfunctions_function' || nameLabel == 'google_cloudfunctions2_function').all(
+      terraform.resources("google_cloudfunctions_function").all(
         arguments.ingress_settings != "ALLOW_ALL" && arguments.ingress_settings != empty
+      )
+      terraform.resources("google_cloudfunctions2_function").all(
+        blocks.where(type == 'service_config') != empty &&
+        blocks.where(type == 'service_config').all(arguments.ingress_settings != "ALLOW_ALL" && arguments.ingress_settings != empty)
       )
   - uid: mondoo-gcp-security-cloud-functions-ingress-restricted-terraform-plan
     filters: |
       asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_cloudfunctions_function' || type == 'google_cloudfunctions2_function')
     mql: |
-      terraform.plan.resourceChanges.where(type == 'google_cloudfunctions_function' || type == 'google_cloudfunctions2_function').all(
+      terraform.plan.resourceChanges.where(type == 'google_cloudfunctions_function').all(
         change.after.ingress_settings != "ALLOW_ALL"
+      )
+      terraform.plan.resourceChanges.where(type == 'google_cloudfunctions2_function').all(
+        change.after['service_config'] != empty && change.after['service_config'].all(_['ingress_settings'] != "ALLOW_ALL")
       )
   - uid: mondoo-gcp-security-cloud-functions-ingress-restricted-terraform-state
     filters: |
       asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_cloudfunctions_function' || type == 'google_cloudfunctions2_function')
     mql: |
-      terraform.state.resources.where(type == 'google_cloudfunctions_function' || type == 'google_cloudfunctions2_function').all(
+      terraform.state.resources.where(type == 'google_cloudfunctions_function').all(
         values.ingress_settings != "ALLOW_ALL"
+      )
+      terraform.state.resources.where(type == 'google_cloudfunctions2_function').all(
+        values['service_config'] != empty && values['service_config'].all(_['ingress_settings'] != "ALLOW_ALL")
       )
   - uid: mondoo-gcp-security-cloud-functions-no-default-service-account
     title: Ensure Cloud Functions do not use the default service account
@@ -12434,27 +12450,48 @@ queries:
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_cloudfunctions_function' || nameLabel == 'google_cloudfunctions2_function')
     mql: |
-      terraform.resources.where(nameLabel == 'google_cloudfunctions_function' || nameLabel == 'google_cloudfunctions2_function').all(
+      terraform.resources("google_cloudfunctions_function").all(
         arguments.service_account_email != empty &&
         arguments.service_account_email != /^\d+-compute@developer\.gserviceaccount\.com$/ &&
         arguments.service_account_email != /^[a-z0-9\-]+@appspot\.gserviceaccount\.com$/
+      )
+      terraform.resources("google_cloudfunctions2_function").all(
+        blocks.where(type == 'service_config') != empty &&
+        blocks.where(type == 'service_config').all(
+          arguments.service_account_email != empty &&
+          arguments.service_account_email != /^\d+-compute@developer\.gserviceaccount\.com$/ &&
+          arguments.service_account_email != /^[a-z0-9\-]+@appspot\.gserviceaccount\.com$/
+        )
       )
   - uid: mondoo-gcp-security-cloud-functions-no-default-service-account-terraform-plan
     filters: |
       asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_cloudfunctions_function' || type == 'google_cloudfunctions2_function')
     mql: |
-      terraform.plan.resourceChanges.where(type == 'google_cloudfunctions_function' || type == 'google_cloudfunctions2_function').all(
+      terraform.plan.resourceChanges.where(type == 'google_cloudfunctions_function').all(
         change.after.service_account_email != empty &&
         change.after.service_account_email != /^\d+-compute@developer\.gserviceaccount\.com$/ &&
         change.after.service_account_email != /^[a-z0-9\-]+@appspot\.gserviceaccount\.com$/
+      )
+      terraform.plan.resourceChanges.where(type == 'google_cloudfunctions2_function').all(
+        change.after['service_config'] != empty && change.after['service_config'].all(
+          _['service_account_email'] != empty &&
+          _['service_account_email'] != /^\d+-compute@developer\.gserviceaccount\.com$/ &&
+          _['service_account_email'] != /^[a-z0-9\-]+@appspot\.gserviceaccount\.com$/
+        )
       )
   - uid: mondoo-gcp-security-cloud-functions-no-default-service-account-terraform-state
     filters: |
       asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_cloudfunctions_function' || type == 'google_cloudfunctions2_function')
     mql: |
-      terraform.state.resources.where(type == 'google_cloudfunctions_function' || type == 'google_cloudfunctions2_function').all(
+      terraform.state.resources.where(type == 'google_cloudfunctions_function').all(
         values.service_account_email != /^\d+-compute@developer\.gserviceaccount\.com$/ &&
         values.service_account_email != /^[a-z0-9\-]+@appspot\.gserviceaccount\.com$/
+      )
+      terraform.state.resources.where(type == 'google_cloudfunctions2_function').all(
+        values['service_config'] != empty && values['service_config'].all(
+          _['service_account_email'] != /^\d+-compute@developer\.gserviceaccount\.com$/ &&
+          _['service_account_email'] != /^[a-z0-9\-]+@appspot\.gserviceaccount\.com$/
+        )
       )
   - uid: mondoo-gcp-security-cloud-functions-vpc-connector-configured
     title: Ensure Cloud Functions have a VPC connector configured
@@ -12585,22 +12622,32 @@ queries:
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_cloudfunctions_function' || nameLabel == 'google_cloudfunctions2_function')
     mql: |
-      terraform.resources.where(nameLabel == 'google_cloudfunctions_function' || nameLabel == 'google_cloudfunctions2_function').all(
+      terraform.resources("google_cloudfunctions_function").all(
         arguments.vpc_connector != empty
+      )
+      terraform.resources("google_cloudfunctions2_function").all(
+        blocks.where(type == 'service_config') != empty &&
+        blocks.where(type == 'service_config').all(arguments.vpc_connector != empty)
       )
   - uid: mondoo-gcp-security-cloud-functions-vpc-connector-configured-terraform-plan
     filters: |
       asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_cloudfunctions_function' || type == 'google_cloudfunctions2_function')
     mql: |
-      terraform.plan.resourceChanges.where(type == 'google_cloudfunctions_function' || type == 'google_cloudfunctions2_function').all(
+      terraform.plan.resourceChanges.where(type == 'google_cloudfunctions_function').all(
         change.after.vpc_connector != empty
+      )
+      terraform.plan.resourceChanges.where(type == 'google_cloudfunctions2_function').all(
+        change.after['service_config'] != empty && change.after['service_config'].all(_['vpc_connector'] != empty)
       )
   - uid: mondoo-gcp-security-cloud-functions-vpc-connector-configured-terraform-state
     filters: |
       asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_cloudfunctions_function' || type == 'google_cloudfunctions2_function')
     mql: |
-      terraform.state.resources.where(type == 'google_cloudfunctions_function' || type == 'google_cloudfunctions2_function').all(
+      terraform.state.resources.where(type == 'google_cloudfunctions_function').all(
         values.vpc_connector != empty
+      )
+      terraform.state.resources.where(type == 'google_cloudfunctions2_function').all(
+        values['service_config'] != empty && values['service_config'].all(_['vpc_connector'] != empty)
       )
   - uid: mondoo-gcp-security-cloud-functions-cmek-encryption
     title: Ensure Cloud Functions use customer-managed encryption keys (CMEK)
