@@ -48,8 +48,8 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/tliron/glsp v0.2.2
 	github.com/zclconf/go-cty v1.18.1
-	go.mondoo.com/mondoo-go v0.0.0-20260701003351-dac3d802a80f
-	go.mondoo.com/mql/v13 v13.27.5-0.20260706105452-a03e1a2a88ee
+	go.mondoo.com/mondoo-go v0.0.0-20260704002725-308ec14bcd3d
+	go.mondoo.com/mql/v13 v13.27.5-0.20260707035057-b51f3ed82017
 	go.mondoo.com/ranger-rpc v0.8.0
 	gocloud.dev v0.46.0
 	golang.org/x/sync v0.21.0
@@ -108,19 +108,19 @@ require (
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.30 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.30 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.31 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ec2 v1.310.0 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ec2instanceconnect v1.33.3 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ecr v1.58.5 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ecrpublic v1.39.7 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ec2 v1.311.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ec2instanceconnect v1.33.4 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ecr v1.58.6 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ecrpublic v1.39.8 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.13 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.23 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.30 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.31 // indirect
-	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.42.4 // indirect
+	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.42.5 // indirect
 	github.com/aws/aws-sdk-go-v2/service/signin v1.2.2 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sns v1.39.14 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.42.24 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ssm v1.69.4 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ssm v1.69.5 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.31.5 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.36.8 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.43.5 // indirect
@@ -145,7 +145,6 @@ require (
 	github.com/cockroachdb/redact v1.1.8 // indirect
 	github.com/containerd/errdefs v1.0.0 // indirect
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect
-	github.com/containerd/stargz-snapshotter/estargz v0.18.2 // indirect
 	github.com/containerd/typeurl/v2 v2.3.0 // indirect
 	github.com/coreos/go-systemd v0.0.0-20191104093116-d3cd4ed1dbcf // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.7 // indirect
@@ -155,8 +154,6 @@ require (
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/docker/cli v29.6.1+incompatible // indirect
-	github.com/docker/distribution v2.8.3+incompatible // indirect
-	github.com/docker/docker v28.5.2+incompatible // indirect
 	github.com/docker/docker-credential-helpers v0.9.8 // indirect
 	github.com/docker/go-connections v0.7.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
@@ -193,7 +190,7 @@ require (
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/google/cel-go v0.26.1 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
-	github.com/google/go-containerregistry v0.20.7 // indirect
+	github.com/google/go-containerregistry v0.21.7 // indirect
 	github.com/google/pprof v0.0.0-20260115054156-294ebfa9ad83 // indirect
 	github.com/google/renameio v1.0.1 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
@@ -276,8 +273,8 @@ require (
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/pandatix/go-cvss v0.6.2 // indirect
 	github.com/patrickmn/go-cache v2.1.0+incompatible // indirect
-	github.com/pelletier/go-toml/v2 v2.4.2 // indirect
-	github.com/petermattis/goid v0.0.0-20260630075939-701373a0dd43 // indirect
+	github.com/pelletier/go-toml/v2 v2.4.3 // indirect
+	github.com/petermattis/goid v0.0.0-20260701081913-4f67fd55d3b4 // indirect
 	github.com/pganalyze/pg_query_go/v6 v6.1.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.27 // indirect
 	github.com/pingcap/errors v0.11.5-0.20240311024730-e056997136bb // indirect
@@ -322,7 +319,6 @@ require (
 	github.com/tonistiigi/go-csvvalue v0.0.0-20240814133006-030d3b2625d0 // indirect
 	github.com/toravir/csd v0.0.0-20200911003203-13ae77ad849c // indirect
 	github.com/ulikunitz/xz v0.5.15 // indirect
-	github.com/vbatts/tar-split v0.12.3 // indirect
 	github.com/wasilibs/go-pgquery v0.0.0-20250409022910-10ac41983c07 // indirect
 	github.com/wasilibs/wazero-helpers v0.0.0-20240620070341-3dff1577cd52 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
