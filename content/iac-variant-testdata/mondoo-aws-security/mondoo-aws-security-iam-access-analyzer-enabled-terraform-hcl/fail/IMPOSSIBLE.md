@@ -1,0 +1,1 @@
+The mql asserts `terraform.resources("aws_accessanalyzer_analyzer").length > 0`, which is exactly what the filter requires. Any fixture matching the filter has at least one analyzer, so the check always passes; a failing input would simply omit the resource and skip the check.
