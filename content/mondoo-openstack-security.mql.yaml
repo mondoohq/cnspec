@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-openstack-security
     name: Mondoo OpenStack Security
-    version: 1.4.0
+    version: 1.5.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -42,6 +42,8 @@ policies:
           - uid: mondoo-openstack-security-trust-impersonation-expiry
           - uid: mondoo-openstack-security-user-mfa-enabled
           - uid: mondoo-openstack-security-user-lockout-not-bypassed
+          - uid: mondoo-openstack-security-app-credential-no-admin
+          - uid: mondoo-openstack-security-endpoints-use-https
       - title: Compute (Nova)
         checks:
           - uid: mondoo-openstack-security-server-uses-keypair
@@ -56,6 +58,7 @@ policies:
           - uid: mondoo-openstack-security-no-unrestricted-mgmt-ports
           - uid: mondoo-openstack-security-no-all-ports-open
           - uid: mondoo-openstack-security-port-security-enabled
+          - uid: mondoo-openstack-security-port-no-wide-address-pairs
           - uid: mondoo-openstack-security-firewall-policy-audited
       - title: Block Storage (Cinder)
         checks:
@@ -67,11 +70,16 @@ policies:
       - title: Object Storage (Swift)
         checks:
           - uid: mondoo-openstack-security-container-not-public
+          - uid: mondoo-openstack-security-container-no-wildcard-write
       - title: Load Balancers (Octavia)
         checks:
           - uid: mondoo-openstack-security-listener-modern-tls
           - uid: mondoo-openstack-security-listener-no-plaintext-internet
           - uid: mondoo-openstack-security-listener-restricts-source-cidrs
+      - title: VPN (VPNaaS)
+        checks:
+          - uid: mondoo-openstack-security-ipsec-policy-encrypts
+          - uid: mondoo-openstack-security-vpn-no-weak-encryption
       - title: Shared File Systems (Manila)
         checks:
           - uid: mondoo-openstack-security-share-not-public
@@ -3712,3 +3720,644 @@ queries:
     refs:
       - url: https://docs.openstack.org/trove/latest/user/index.html
         title: OpenStack Trove database instances
+
+  - uid: mondoo-openstack-security-container-no-wildcard-write
+    title: Ensure object storage containers do not grant wildcard write access
+    impact: 85
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-16
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-c-1-integrity
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-openstack-security-container-no-wildcard-write-openstack
+        tags:
+          mondoo.com/filter-title: OpenStack Project
+          mondoo.com/filter-icon: openstack
+      - uid: mondoo-openstack-security-container-no-wildcard-write-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-openstack-security-container-no-wildcard-write-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-openstack-security-container-no-wildcard-write-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that no Swift object storage container grants write access through a wildcard ACL entry such as `*` or `*:*`. Unlike public read (which uses `.r:*`), a wildcard in the container write ACL grants write to every authenticated user in the deployment, which allows arbitrary data to be uploaded, overwritten, or deleted.
+
+        **Why this matters**
+
+        - **Data tampering:** Any user who can write to the container can overwrite legitimate objects or delete them, corrupting backups and application data.
+        - **Malware staging:** Writable containers are used to stage malicious payloads that are then served to other systems or users.
+        - **Integrity loss:** A wildcard write grant removes accountability — changes cannot be attributed to a specific, authorized principal.
+
+        **Risk mitigation**
+
+        - **Unauthorized modification:** Scoping the write ACL to named accounts or users ensures only intended principals can change container contents.
+        - **Blast radius:** Removing wildcard grants keeps a single compromised account from being able to tamper with shared storage.
+
+        Scope the container write ACL to the specific `account` or `account:user` principals that need it, and never use `*` or `*:*`.
+      audit: |
+        ### Audit via Console
+
+        1. Log in to the OpenStack Horizon dashboard.
+        2. Navigate to **Project** > **Object Store** > **Containers** and open each container.
+        3. Review the container's access/metadata for the write ACL.
+
+        A passing container scopes write access to specific principals. A failing container has a `*` or `*:*` entry in its write ACL.
+
+        ### Audit via CLI
+
+        1. Show each container's write ACL:
+
+        ```bash
+        swift stat <container>
+        ```
+
+        A passing container shows a `Write ACL` restricted to named principals. A failing container shows `*` or `*:*` in the `Write ACL`.
+      remediation:
+        - id: console
+          desc: |
+            In the OpenStack Horizon dashboard, open the container and edit its access settings so the write ACL lists only the specific project principals that need write access, removing any `*` / `*:*` entry.
+        - id: cli
+          desc: |
+            Replace a wildcard write ACL with a scoped one using the `swift` client:
+
+            ```bash
+            # Clear the write ACL entirely
+            swift post <container> -w ""
+            # Or restrict write to the project's authenticated users only
+            swift post <container> -w "<project-id>:*"
+            ```
+        - id: terraform
+          desc: |
+            Never set `container_write = "*"` (or `"*:*"`) on `openstack_objectstorage_container_v1`. Scope it to specific principals, or omit it to keep the container non-writable by others:
+
+            ```hcl
+            resource "openstack_objectstorage_container_v1" "backups" {
+              name            = "backups"
+              container_write = "${var.project_id}:automation"
+            }
+            ```
+    refs:
+      - url: https://docs.openstack.org/swift/latest/overview_acl.html
+        title: OpenStack Swift container ACLs
+  - uid: mondoo-openstack-security-container-no-wildcard-write-openstack
+    filters: asset.platform == "openstack-project"
+    mql: |
+      openstack.objectStorageContainers.all(writeACL.all(_.contains("*") == false))
+  - uid: mondoo-openstack-security-container-no-wildcard-write-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "openstack_objectstorage_container_v1")
+    mql: |
+      terraform.resources("openstack_objectstorage_container_v1").all(
+        arguments['container_write'] == null || arguments['container_write'].contains("*") == false
+      )
+  - uid: mondoo-openstack-security-container-no-wildcard-write-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "openstack_objectstorage_container_v1")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "openstack_objectstorage_container_v1").all(
+        change.after.container_write == null || change.after.container_write.contains("*") == false
+      )
+  - uid: mondoo-openstack-security-container-no-wildcard-write-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "openstack_objectstorage_container_v1")
+    mql: |
+      terraform.state.resources.where(type == "openstack_objectstorage_container_v1").all(
+        values.container_write == null || values.container_write.contains("*") == false
+      )
+
+  # No Terraform variants: Keystone service-catalog endpoints are cloud-operator
+  # infrastructure surfaced by the running deployment; tenant Terraform does not
+  # define the service catalog, so endpoint URLs are only observable at runtime.
+  - uid: mondoo-openstack-security-endpoints-use-https
+    title: Ensure Keystone service catalog endpoints use HTTPS
+    impact: 80
+    filters: asset.platform == "openstack-project"
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    mql: |
+      openstack.identityEndpoints.all(url == /^https:/)
+    docs:
+      desc: |
+        This check ensures that every endpoint registered in the Keystone service catalog uses an `https://` URL. Clients read the service catalog to locate every OpenStack API; an `http://` endpoint causes tokens, credentials, and API payloads for that service to traverse the network in cleartext.
+
+        **Why this matters**
+
+        - **Token interception:** Keystone tokens sent to an `http://` endpoint can be captured on the wire and replayed to impersonate the user.
+        - **Control-plane exposure:** The catalog drives all API traffic, so a single plaintext endpoint exposes an entire service's requests and responses.
+        - **Man-in-the-middle:** Without TLS there is no server authentication, so a network attacker can transparently proxy and modify API calls.
+
+        **Risk mitigation**
+
+        - **Confidentiality in transit:** HTTPS encrypts API traffic so credentials and data cannot be read off the network.
+        - **Server authentication:** TLS lets clients verify they are talking to the genuine service rather than an impostor.
+
+        Register all catalog endpoints (public, internal, and admin interfaces) with `https://` URLs backed by trusted certificates.
+      audit: |
+        ### Audit via CLI
+
+        1. List the service catalog endpoints and review each URL:
+
+        ```bash
+        openstack endpoint list --long
+        ```
+
+        A passing endpoint's URL begins with `https://`. A failing endpoint's URL begins with `http://`.
+      remediation:
+        - id: console
+          desc: |
+            In the OpenStack Horizon admin dashboard, open **Admin** > **System** > **System Information** > **Services** and update each service's endpoints so their URLs use `https://` backed by a trusted certificate. Endpoint management is an operator task.
+        - id: cli
+          desc: |
+            Update each catalog endpoint to an HTTPS URL with the `openstack` client:
+
+            ```bash
+            openstack endpoint set --url https://service.example.com:9292 <endpoint-id>
+            ```
+
+            Repeat for the public, internal, and admin interfaces of each service.
+        # No Terraform remediation: the Keystone service catalog is operator
+        # infrastructure with no tenant-facing Terraform resource; endpoints are
+        # managed through the openstack client or Horizon admin dashboard.
+    refs:
+      - url: https://docs.openstack.org/keystone/latest/admin/manage-services.html
+        title: Manage services and endpoints in Keystone
+
+  - uid: mondoo-openstack-security-app-credential-no-admin
+    title: Ensure application credentials do not grant the admin role
+    impact: 85
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/pci-dss-4: pcidss-requirement-7-2-2
+      compliance/soc2-2017: soc2-control-cc6-3-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-openstack-security-app-credential-no-admin-openstack
+        tags:
+          mondoo.com/filter-title: OpenStack Project
+          mondoo.com/filter-icon: openstack
+      - uid: mondoo-openstack-security-app-credential-no-admin-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-openstack-security-app-credential-no-admin-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-openstack-security-app-credential-no-admin-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that no Keystone application credential is granted the `admin` role. Application credentials are long-lived secrets used by automation and services; one that carries `admin` becomes a full-project (and often full-cloud) takeover path the moment it leaks.
+
+        **Why this matters**
+
+        - **Blast radius:** An `admin` application credential can perform every administrative action its project scope allows, so a single leaked secret compromises far more than a task-scoped credential.
+        - **Long-lived secret:** Application credentials live in CI systems, config files, and scripts where they are more exposed than interactive logins, and they bypass interactive MFA.
+        - **Least privilege:** Automation almost never needs full administrative rights; granting `admin` violates least privilege by default.
+
+        **Risk mitigation**
+
+        - **Credential compromise:** Scoping application credentials to the specific non-admin roles a workload needs limits what an attacker gains from stealing one.
+        - **Separation of duties:** Keeping administrative actions off automation credentials preserves the boundary between human administrators and machine identities.
+
+        Create application credentials with only the specific roles the workload requires, and never with `admin`.
+      audit: |
+        ### Audit via CLI
+
+        1. List application credentials for each user and review their roles:
+
+        ```bash
+        openstack application credential list --long
+        ```
+
+        A passing credential lists only non-admin roles. A failing credential includes `admin` in its roles.
+      remediation:
+        - id: console
+          desc: |
+            Application credential roles cannot be changed after creation. In Horizon, delete the credential that carries `admin` and create a replacement scoped to only the non-admin roles the workload needs, then update the consumer with the new secret.
+        - id: cli
+          desc: |
+            Recreate the credential with only the required non-admin roles using the `openstack` client:
+
+            ```bash
+            openstack application credential delete <name>
+            openstack application credential create <name> --role <non-admin-role>
+            ```
+
+            Update the automation that consumes the credential with the new secret.
+        - id: terraform
+          desc: |
+            Set `roles` explicitly on `openstack_identity_application_credential_v3` to the required non-admin roles, and never include `admin`. Omitting `roles` inherits all of the owning user's roles, which may include `admin`:
+
+            ```hcl
+            resource "openstack_identity_application_credential_v3" "automation" {
+              name  = "automation"
+              roles = ["member"]
+            }
+            ```
+    refs:
+      - url: https://docs.openstack.org/keystone/latest/user/application_credentials.html
+        title: OpenStack Keystone application credentials
+  - uid: mondoo-openstack-security-app-credential-no-admin-openstack
+    filters: asset.platform == "openstack-project"
+    mql: |
+      openstack.users.all(applicationCredentials.all(roleNames.none(_ == "admin")))
+  - uid: mondoo-openstack-security-app-credential-no-admin-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "openstack_identity_application_credential_v3")
+    mql: |
+      terraform.resources("openstack_identity_application_credential_v3").all(
+        arguments['roles'] == null || arguments['roles'].contains("admin") == false
+      )
+  - uid: mondoo-openstack-security-app-credential-no-admin-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "openstack_identity_application_credential_v3")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "openstack_identity_application_credential_v3").all(
+        change.after.roles == null || change.after.roles.contains("admin") == false
+      )
+  - uid: mondoo-openstack-security-app-credential-no-admin-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "openstack_identity_application_credential_v3")
+    mql: |
+      terraform.state.resources.where(type == "openstack_identity_application_credential_v3").all(
+        values.roles == null || values.roles.contains("admin") == false
+      )
+
+  - uid: mondoo-openstack-security-ipsec-policy-encrypts
+    title: Ensure IPsec policies encrypt traffic and do not use bare AH
+    impact: 85
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    variants:
+      - uid: mondoo-openstack-security-ipsec-policy-encrypts-openstack
+        tags:
+          mondoo.com/filter-title: OpenStack Project
+          mondoo.com/filter-icon: openstack
+      - uid: mondoo-openstack-security-ipsec-policy-encrypts-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-openstack-security-ipsec-policy-encrypts-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-openstack-security-ipsec-policy-encrypts-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that no IPsec policy uses the bare `ah` transform protocol. The Authentication Header (AH) protocol provides integrity and authentication but performs no encryption, so an IPsec tunnel built on bare `ah` carries its payload in cleartext. Encapsulating Security Payload (`esp`) or `ah-esp` must be used to encrypt tunnel traffic.
+
+        **Why this matters**
+
+        - **Cleartext tunnel:** A site-to-site VPN configured with `ah` transmits payloads without encryption, defeating the primary reason for building the tunnel.
+        - **False assurance:** The connection appears as an established IPsec VPN while providing no confidentiality, so sensitive traffic is exposed without any warning.
+        - **Interception:** Anyone able to observe the path between the endpoints can read the traffic that the VPN was meant to protect.
+
+        **Risk mitigation**
+
+        - **Confidentiality in transit:** Using `esp` (or `ah-esp`) ensures tunnel payloads are encrypted end to end.
+        - **Defense in depth:** Encrypting VPN traffic protects data even when it crosses untrusted intermediate networks.
+
+        Set the IPsec policy transform protocol to `esp` (or `ah-esp` where integrity headers are also required).
+      audit: |
+        ### Audit via CLI
+
+        1. List the IPsec policies and review the transform protocol of each:
+
+        ```bash
+        openstack vpn ipsec policy list --long
+        ```
+
+        A passing policy uses `esp` or `ah-esp`. A failing policy uses bare `ah`.
+      remediation:
+        - id: console
+          desc: |
+            In the OpenStack Horizon dashboard, open **Project** > **Network** > **VPN** > **IPsec Policies**, edit the policy, and set the transform protocol to `esp` (or `ah-esp`), then re-establish affected connections.
+        - id: cli
+          desc: |
+            Set the transform protocol to `esp` with the `openstack` client:
+
+            ```bash
+            openstack vpn ipsec policy set --transform-protocol esp <ipsec-policy>
+            ```
+        - id: terraform
+          desc: |
+            Set `transform_protocol = "esp"` on `openstack_vpnaas_ipsec_policy_v2` (this is also the default; never set it to `ah`):
+
+            ```hcl
+            resource "openstack_vpnaas_ipsec_policy_v2" "policy" {
+              name               = "ipsec-policy"
+              transform_protocol = "esp"
+            }
+            ```
+    refs:
+      - url: https://docs.openstack.org/neutron/latest/admin/vpnaas-scenario.html
+        title: OpenStack Neutron VPNaaS
+  - uid: mondoo-openstack-security-ipsec-policy-encrypts-openstack
+    filters: asset.platform == "openstack-project"
+    mql: |
+      openstack.vpnIpsecPolicies.all(transformProtocol != "ah")
+  - uid: mondoo-openstack-security-ipsec-policy-encrypts-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "openstack_vpnaas_ipsec_policy_v2")
+    mql: |
+      terraform.resources("openstack_vpnaas_ipsec_policy_v2").all(
+        arguments['transform_protocol'] == null || arguments['transform_protocol'] != "ah"
+      )
+  - uid: mondoo-openstack-security-ipsec-policy-encrypts-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "openstack_vpnaas_ipsec_policy_v2")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "openstack_vpnaas_ipsec_policy_v2").all(
+        change.after.transform_protocol == null || change.after.transform_protocol != "ah"
+      )
+  - uid: mondoo-openstack-security-ipsec-policy-encrypts-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "openstack_vpnaas_ipsec_policy_v2")
+    mql: |
+      terraform.state.resources.where(type == "openstack_vpnaas_ipsec_policy_v2").all(
+        values.transform_protocol == null || values.transform_protocol != "ah"
+      )
+
+  - uid: mondoo-openstack-security-vpn-no-weak-encryption
+    title: Ensure IKE and IPsec policies do not use DES or 3DES encryption
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    variants:
+      - uid: mondoo-openstack-security-vpn-no-weak-encryption-openstack
+        tags:
+          mondoo.com/filter-title: OpenStack Project
+          mondoo.com/filter-icon: openstack
+      - uid: mondoo-openstack-security-vpn-no-weak-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-openstack-security-vpn-no-weak-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-openstack-security-vpn-no-weak-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that no IKE or IPsec policy uses the DES or 3DES encryption algorithms. DES is trivially brute-forced and 3DES is deprecated (NIST disallowed it after 2023) and vulnerable to birthday attacks such as Sweet32, so a VPN tunnel relying on either provides weak confidentiality.
+
+        **Why this matters**
+
+        - **Broken cipher:** DES uses a 56-bit key that can be exhausted with modest resources; traffic encrypted with it can be recovered.
+        - **Deprecated cipher:** 3DES has a small 64-bit block that makes long-lived tunnels vulnerable to Sweet32 collision attacks, and it is disallowed by NIST and PCI DSS.
+        - **Site-to-site exposure:** A weak cipher on a VPN tunnel exposes all traffic between the connected networks, not a single session.
+
+        **Risk mitigation**
+
+        - **Confidentiality in transit:** Requiring AES (for example `aes-256`) ensures recorded tunnel traffic cannot be feasibly decrypted.
+        - **Standards alignment:** Removing DES/3DES keeps VPN cryptography within current NIST and PCI DSS requirements.
+
+        Set the IKE and IPsec policy encryption algorithms to a strong cipher such as `aes-256`.
+      audit: |
+        ### Audit via CLI
+
+        1. List the IKE and IPsec policies and review the encryption algorithm of each:
+
+        ```bash
+        openstack vpn ike policy list --long
+        openstack vpn ipsec policy list --long
+        ```
+
+        A passing policy uses an AES algorithm. A failing policy uses `des` or `3des`.
+      remediation:
+        - id: console
+          desc: |
+            In the OpenStack Horizon dashboard, open **Project** > **Network** > **VPN**, edit each IKE and IPsec policy, set the encryption algorithm to a strong AES cipher such as `aes-256`, then re-establish affected connections.
+        - id: cli
+          desc: |
+            Set a strong encryption algorithm on the IKE and IPsec policies with the `openstack` client:
+
+            ```bash
+            openstack vpn ike policy set --encryption-algorithm aes-256 <ike-policy>
+            openstack vpn ipsec policy set --encryption-algorithm aes-256 <ipsec-policy>
+            ```
+        - id: terraform
+          desc: |
+            Set `encryption_algorithm` to a strong cipher on both `openstack_vpnaas_ike_policy_v2` and `openstack_vpnaas_ipsec_policy_v2`; never use `des` or `3des`:
+
+            ```hcl
+            resource "openstack_vpnaas_ike_policy_v2" "ike" {
+              name                 = "ike-policy"
+              encryption_algorithm = "aes-256"
+            }
+
+            resource "openstack_vpnaas_ipsec_policy_v2" "ipsec" {
+              name                 = "ipsec-policy"
+              encryption_algorithm = "aes-256"
+            }
+            ```
+    refs:
+      - url: https://docs.openstack.org/neutron/latest/admin/vpnaas-scenario.html
+        title: OpenStack Neutron VPNaaS
+  - uid: mondoo-openstack-security-vpn-no-weak-encryption-openstack
+    filters: asset.platform == "openstack-project"
+    mql: |
+      openstack.vpnIkePolicies.all(encryptionAlgorithm != "des" && encryptionAlgorithm != "3des")
+      openstack.vpnIpsecPolicies.all(encryptionAlgorithm != "des" && encryptionAlgorithm != "3des")
+  - uid: mondoo-openstack-security-vpn-no-weak-encryption-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == /openstack_vpnaas_i.*_policy_v2/)
+    mql: |
+      terraform.resources("openstack_vpnaas_ike_policy_v2").all(
+        arguments['encryption_algorithm'] == null || arguments['encryption_algorithm'] != "des" && arguments['encryption_algorithm'] != "3des"
+      )
+      terraform.resources("openstack_vpnaas_ipsec_policy_v2").all(
+        arguments['encryption_algorithm'] == null || arguments['encryption_algorithm'] != "des" && arguments['encryption_algorithm'] != "3des"
+      )
+  - uid: mondoo-openstack-security-vpn-no-weak-encryption-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == /openstack_vpnaas_i.*_policy_v2/)
+    mql: |
+      terraform.plan.resourceChanges.where(type == "openstack_vpnaas_ike_policy_v2").all(
+        change.after.encryption_algorithm == null || change.after.encryption_algorithm != "des" && change.after.encryption_algorithm != "3des"
+      )
+      terraform.plan.resourceChanges.where(type == "openstack_vpnaas_ipsec_policy_v2").all(
+        change.after.encryption_algorithm == null || change.after.encryption_algorithm != "des" && change.after.encryption_algorithm != "3des"
+      )
+  - uid: mondoo-openstack-security-vpn-no-weak-encryption-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == /openstack_vpnaas_i.*_policy_v2/)
+    mql: |
+      terraform.state.resources.where(type == "openstack_vpnaas_ike_policy_v2").all(
+        values.encryption_algorithm == null || values.encryption_algorithm != "des" && values.encryption_algorithm != "3des"
+      )
+      terraform.state.resources.where(type == "openstack_vpnaas_ipsec_policy_v2").all(
+        values.encryption_algorithm == null || values.encryption_algorithm != "des" && values.encryption_algorithm != "3des"
+      )
+
+  - uid: mondoo-openstack-security-port-no-wide-address-pairs
+    title: Ensure ports have no allowed address pair open to all addresses
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    variants:
+      - uid: mondoo-openstack-security-port-no-wide-address-pairs-openstack
+        tags:
+          mondoo.com/filter-title: OpenStack Project
+          mondoo.com/filter-icon: openstack
+      - uid: mondoo-openstack-security-port-no-wide-address-pairs-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-openstack-security-port-no-wide-address-pairs-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-openstack-security-port-no-wide-address-pairs-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that no Neutron port defines an allowed address pair with a `/0` mask that covers the entire address space. Allowed address pairs are an exception to Neutron's anti-spoofing enforcement: traffic whose source IP/MAC matches a pair is permitted even though it differs from the port's fixed address. An entry such as `0.0.0.0/0` disables anti-spoofing for every address.
+
+        **Why this matters**
+
+        - **Anti-spoofing bypass:** A `/0` allowed address pair lets the attached instance send and receive traffic for any IP or MAC, defeating the protection that keeps instances from impersonating each other.
+        - **Lateral movement:** An instance that can spoof arbitrary addresses can intercept traffic destined for other instances or masquerade as gateways and services.
+        - **Silent scope:** Allowed address pairs are easy to over-broaden (for example while setting up a VIP or VRRP) and then leave wider than intended.
+
+        **Risk mitigation**
+
+        - **Address integrity:** Scoping allowed address pairs to the specific addresses a workload legitimately needs preserves Neutron's anti-spoofing guarantees.
+        - **Segmentation:** Preventing arbitrary spoofing keeps a single compromised instance from impersonating others on the network.
+
+        Restrict each allowed address pair to the specific IP or narrow CIDR the workload requires — for example a VIP or a small failover range — never `0.0.0.0/0` or `::/0`.
+      audit: |
+        ### Audit via CLI
+
+        1. List the ports and inspect the allowed address pairs of each:
+
+        ```bash
+        openstack port list --long
+        openstack port show <port>
+        ```
+
+        A passing port has no allowed address pairs, or only specific addresses/narrow CIDRs. A failing port has an allowed address pair with a `/0` mask such as `0.0.0.0/0` or `::/0`.
+      remediation:
+        - id: console
+          desc: |
+            In the OpenStack Horizon dashboard, open **Project** > **Network** > **Networks** > (network) > **Ports**, edit the port, and replace any `0.0.0.0/0` / `::/0` allowed address pair with the specific address or narrow CIDR the workload needs.
+        - id: cli
+          desc: |
+            Remove the wide allowed address pair and add a scoped one with the `openstack` client:
+
+            ```bash
+            openstack port unset --allowed-address ip-address=0.0.0.0/0 <port>
+            openstack port set --allowed-address ip-address=192.0.2.10 <port>
+            ```
+        - id: terraform
+          desc: |
+            Scope each `allowed_address_pairs` block on `openstack_networking_port_v2` to a specific address; never use a `/0` CIDR:
+
+            ```hcl
+            resource "openstack_networking_port_v2" "port" {
+              name       = "app-port"
+              network_id = openstack_networking_network_v2.net.id
+
+              allowed_address_pairs {
+                ip_address = "192.0.2.10"
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.openstack.org/neutron/latest/admin/config-ml2.html
+        title: OpenStack Neutron port security and allowed address pairs
+  - uid: mondoo-openstack-security-port-no-wide-address-pairs-openstack
+    filters: asset.platform == "openstack-project"
+    mql: |
+      openstack.ports.all(allowedAddressPairs == empty || allowedAddressPairs.all(_['ip_address'].contains("/0") == false))
+  - uid: mondoo-openstack-security-port-no-wide-address-pairs-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "openstack_networking_port_v2")
+    mql: |
+      terraform.resources("openstack_networking_port_v2").all(
+        arguments['allowed_address_pairs'] == empty || arguments['allowed_address_pairs'].all(_['ip_address'].contains("/0") == false)
+      )
+  - uid: mondoo-openstack-security-port-no-wide-address-pairs-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "openstack_networking_port_v2")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "openstack_networking_port_v2").all(
+        change.after.allowed_address_pairs == empty || change.after.allowed_address_pairs.all(_['ip_address'].contains("/0") == false)
+      )
+  - uid: mondoo-openstack-security-port-no-wide-address-pairs-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "openstack_networking_port_v2")
+    mql: |
+      terraform.state.resources.where(type == "openstack_networking_port_v2").all(
+        values.allowed_address_pairs == empty || values.allowed_address_pairs.all(_['ip_address'].contains("/0") == false)
+      )
