@@ -917,7 +917,7 @@ queries:
             ```
     refs:
       - url: https://docs.kernel.org/admin-guide/sysctl/kernel.html#randomize-va-space
-        title: 'Linux Kernel Documentation: kernel.randomize_va_space'
+        title: "Linux Kernel Documentation: kernel.randomize_va_space"
   - uid: mondoo-linux-security-restrict-kernel-address-access
     title: Restrict access to kernel addresses
     impact: 70
@@ -1025,9 +1025,9 @@ queries:
             ```
     refs:
       - url: https://access.redhat.com/articles/7133962
-        title: 'Red Hat Customer Portal: Implications of enabling kptr_restrict=2'
+        title: "Red Hat Customer Portal: Implications of enabling kptr_restrict=2"
       - url: https://docs.kernel.org/admin-guide/sysctl/kernel.html#kptr-restrict
-        title: 'Linux Kernel Documentation: kernel.kptr_restrict'
+        title: "Linux Kernel Documentation: kernel.kptr_restrict"
   - uid: mondoo-linux-security-prevent-mapping-low-memory-addresses
     title: Prevent mapping of low memory addresses
     impact: 70
@@ -1141,9 +1141,9 @@ queries:
             ```
     refs:
       - url: https://wiki.debian.org/mmap_min_addr
-        title: 'Debian Wiki: mmap_min_addr'
+        title: "Debian Wiki: mmap_min_addr"
       - url: https://docs.kernel.org/admin-guide/sysctl/vm.html#mmap-min-addr
-        title: 'Linux Kernel Documentation: vm.mmap_min_addr'
+        title: "Linux Kernel Documentation: vm.mmap_min_addr"
   - uid: mondoo-linux-security-restrict-dmesg-access
     title: Ensure dmesg access is restricted
     impact: 40
@@ -1255,7 +1255,7 @@ queries:
             ```
     refs:
       - url: https://docs.kernel.org/admin-guide/sysctl/kernel.html#dmesg-restrict
-        title: 'Linux Kernel Documentation: kernel.dmesg_restrict'
+        title: "Linux Kernel Documentation: kernel.dmesg_restrict"
   - uid: mondoo-linux-security-prevent-nonprivileged-ebpf-access
     title: Prevent non-privileged eBPF access
     impact: 60
@@ -1371,7 +1371,7 @@ queries:
             ```
     refs:
       - url: https://docs.kernel.org/admin-guide/sysctl/kernel.html#unprivileged-bpf-disabled
-        title: 'Linux Kernel Documentation: kernel.unprivileged_bpf_disabled'
+        title: "Linux Kernel Documentation: kernel.unprivileged_bpf_disabled"
   - uid: mondoo-linux-security-prevent-nonprivileged-ptrace-access
     title: Restrict non-privileged access to ptrace
     impact: 60
@@ -1489,7 +1489,7 @@ queries:
             ```
     refs:
       - url: https://www.kernel.org/doc/Documentation/security/Yama.txt
-        title: 'Linux Kernel Documentation: Yama'
+        title: "Linux Kernel Documentation: Yama"
   - uid: mondoo-linux-security-disable-loading-of-atm-module
     title: Ensure loading of the ATM module is disabled
     impact: 50
@@ -14534,10 +14534,12 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-3
       compliance/vda-isa-5: false
     mql: |
-      groups.where(name == "root").all(members == empty || members.all(name == 'root'))
+      groups.where(name == "root").all(members.all(uid < 1000))
     docs:
       desc: |
-        This check ensures that the `root` group, which allows system programs or defined users the ability to read and write configurations and files on the system, is properly secured by ensuring no users other than the `root` user are assigned to it.
+        This check ensures that the `root` group, which allows system programs or defined users the ability to read and write configurations and files on the system, is properly secured by ensuring no interactive user accounts (UID 1000 and above) are assigned to it, either as their primary group (the GID field in `/etc/passwd`) or as a supplementary group (in `/etc/group`).
+
+        Distribution-provided system accounts (UID below 1000, such as `sync`, `shutdown`, `halt`, and `operator`) ship with `root` as their primary group by design on some distributions. These accounts are non-interactive and are **not** flagged by this check; they should not be removed or reassigned.
 
         **Why this matters**
 
@@ -14547,27 +14549,37 @@ queries:
         - Malicious actors could exploit this access to compromise system security or escalate privileges.
         - System integrity and compliance with security policies could be jeopardized.
 
-        By ensuring that only the `root` user is assigned to the `root` group, organizations can maintain a secure and well-functioning system configuration.
+        By ensuring that no interactive user account is assigned to the `root` group, organizations can maintain a secure and well-functioning system configuration.
       audit: |
-        Run this command to inspect the membership of the root group:
+        `getent group root` only shows *supplementary* members. A user's *primary* group (the GID field in `/etc/passwd`) does not appear there, so you must inspect both sources.
+
+        List supplementary members of the root group:
 
         ```bash
         getent group root
         ```
 
-        A passing result shows no members other than `root` in the final field. A failing result lists additional accounts.
+        List every account whose *primary* group is root (GID 0):
+
+        ```bash
+        awk -F: '$4 == 0 {print $1}' /etc/passwd
+        ```
+
+        A passing result shows only `root` and distribution-provided system accounts (UID below 1000, e.g. `sync`, `shutdown`, `halt`, `operator`). A failing result lists an interactive user account (UID 1000 or above) — that is the account you need to remediate. System accounts with root as their primary group are expected and should be left in place.
       remediation:
         - id: cli
           desc: |
             **Using the CLI**
 
-            1. To remove all users from the `root` group, you can run the following command:
+            This check only flags **interactive** user accounts (UID 1000 and above). Distribution-provided system accounts (UID below 1000, such as `sync`, `shutdown`, `halt`, and `operator`) are expected to have `root` as their primary group and must **not** be changed — reassigning them can break the system.
+
+            1. To remove an interactive user from the `root` group (supplementary membership), run:
 
                 ```bash
                 gpasswd -d <user> root
                 ```
 
-            2. To change the primary group of any users with `root` as their primary group, except the `root` user, you can run:
+            2. If an interactive user has `root` as their *primary* group, reassign it to an appropriate group:
 
                 ```bash
                 usermod -g <new_group> <user>
@@ -14578,22 +14590,23 @@ queries:
           desc: |
             **Using a Bash Script**
 
-            **Warning: review the affected accounts before running.** This script reassigns the primary group of every non-root user whose primary group is `root` (GID 0) to `users`, which can break service accounts that depend on their current primary group. List the affected users first with `awk -F: '$4==0 && $1!="root"{print $1}' /etc/passwd`, confirm each is safe to change, and choose the correct replacement group rather than assuming `users`. To ensure that the `root` group is empty, you can run the following bash script:
+            **Warning: review the affected accounts before running.** This script only touches **interactive** accounts (UID 1000 and above); it deliberately leaves distribution-provided system accounts (UID below 1000) alone, since those are expected to belong to the `root` group. It reassigns the primary group of any interactive user whose primary group is `root` (GID 0) to `users` — confirm that is the correct replacement group for your environment first. List the affected users with `awk -F: '$4==0 && $3>=1000 {print $1}' /etc/passwd` before running.
 
             ```bash
             #!/bin/bash
             set -e
 
-            echo "Removing users from root group"
+            echo "Removing interactive users from root group"
             for user in $(getent group root | cut -d: -f4 | tr ',' ' '); do
-              if [ "$user" != "root" ]; then
+              uid=$(id -u "$user" 2>/dev/null || echo 0)
+              if [ "$user" != "root" ] && [ "$uid" -ge 1000 ]; then
                 echo "Removing $user from root group"
                 gpasswd -d "$user" root || true
               fi
             done
 
-            echo "Changing primary group for users whose primary group is root"
-            for user in $(getent passwd | awk -F: '$4 == 0 {print $1}'); do
+            echo "Changing primary group for interactive users whose primary group is root"
+            for user in $(awk -F: '$4 == 0 && $3 >= 1000 {print $1}' /etc/passwd); do
               if [ "$user" != "root" ]; then
                 # Replace users with the desired primary group before running this loop
                 usermod -g users "$user"
