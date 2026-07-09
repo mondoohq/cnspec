@@ -14541,6 +14541,8 @@ queries:
 
         Distribution-provided system accounts (UID below 1000, such as `sync`, `shutdown`, `halt`, and `operator`) ship with `root` as their primary group by design on some distributions. These accounts are non-interactive and are **not** flagged by this check; they should not be removed or reassigned.
 
+        This check identifies members by UID rather than by an allowlist of account names, which keeps it robust across distributions (system account names differ between Debian, RHEL, SUSE, Alpine, and others). The tradeoff is that a system account (UID below 1000) manually added to the `root` group is tolerated. This is a deliberate, low-risk accepted gap: the `SYS_UID_MAX` boundary in `/etc/login.defs` reserves UIDs below 1000 for non-interactive system accounts at creation time, so the only accounts in that range are ones the distribution or an administrator has intentionally provisioned as system accounts.
+
         **Why this matters**
 
         The `root` group provides elevated privileges that can impact the security and stability of the system. If unauthorized users are assigned to the `root` group:
@@ -14598,7 +14600,9 @@ queries:
 
             echo "Removing interactive users from root group"
             for user in $(getent group root | cut -d: -f4 | tr ',' ' '); do
-              uid=$(id -u "$user" 2>/dev/null || echo 0)
+              # Default to a high UID so stale entries (in /etc/group but not /etc/passwd)
+              # are treated as interactive and removed, rather than silently skipped.
+              uid=$(id -u "$user" 2>/dev/null || echo 65534)
               if [ "$user" != "root" ] && [ "$uid" -ge 1000 ]; then
                 echo "Removing $user from root group"
                 gpasswd -d "$user" root || true
