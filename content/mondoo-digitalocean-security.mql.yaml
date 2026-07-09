@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-digitalocean-security
     name: Mondoo DigitalOcean Security
-    version: 2.2.0
+    version: 2.3.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -13,7 +13,7 @@ policies:
     authors:
       - name: Mondoo, Inc.
         email: hello@mondoo.com
-    summary: Secure DigitalOcean Droplets, Databases, Load Balancers, DOKS, Spaces, and App Platform
+    summary: Secure DigitalOcean Droplets, Databases, Load Balancers, DOKS, Spaces, Functions, GenAI, and App Platform
     docs:
       desc: |
         The Mondoo DigitalOcean Security policy identifies critical misconfigurations that could leave your DigitalOcean cloud infrastructure vulnerable to attackers. This policy focuses on security-relevant controls and helps organizations harden against unauthorized access, data exposure, weak cryptography, credential misuse, and exposure to known CVEs through end-of-life software.
@@ -21,15 +21,20 @@ policies:
         This policy provides security checks across key DigitalOcean services, uncovering misconfigurations that could put critical resources at risk:
 
         - Account identity
+        - SSH keys
         - Droplets (virtual machines)
+        - Custom images and snapshots
         - Cloud Firewalls
         - Managed Databases
         - Load Balancers
         - Kubernetes (DOKS)
         - TLS Certificates
         - Content Delivery Network (CDN)
-        - Spaces (object storage) access keys
+        - Spaces (object storage) buckets and access keys
         - App Platform
+        - Functions (serverless)
+        - Security scanning
+        - GenAI (GradientAI) agents and knowledge bases
 
         Learn more about scanning DigitalOcean in the [cnspec DigitalOcean documentation](https://mondoo.com/docs/cnspec/cloud/digitalocean).
 
@@ -38,11 +43,17 @@ policies:
       - title: Account
         checks:
           - uid: mondoo-digitalocean-security-account-email-verified
+      - title: SSH Keys
+        checks:
+          - uid: mondoo-digitalocean-security-ssh-key-no-dsa
       - title: Droplets
         checks:
           - uid: mondoo-digitalocean-security-droplet-in-vpc
           - uid: mondoo-digitalocean-security-droplet-firewall-coverage
           - uid: mondoo-digitalocean-security-droplet-not-internet-reachable
+      - title: Images
+        checks:
+          - uid: mondoo-digitalocean-security-image-not-public
       - title: Cloud Firewalls
         checks:
           - uid: mondoo-digitalocean-security-firewall-no-unrestricted-ssh
@@ -61,6 +72,7 @@ policies:
           - uid: mondoo-digitalocean-security-lb-http-redirected-to-https
           - uid: mondoo-digitalocean-security-lb-strong-tls-cipher-policy
           - uid: mondoo-digitalocean-security-lb-in-vpc
+          - uid: mondoo-digitalocean-security-lb-firewall-allowlist-not-open
       - title: Kubernetes (DOKS)
         checks:
           - uid: mondoo-digitalocean-security-doks-auto-upgrade-enabled
@@ -91,6 +103,10 @@ policies:
       - title: App Platform
         checks:
           - uid: mondoo-digitalocean-security-app-platform-https
+      - title: Functions
+        checks:
+          - uid: mondoo-digitalocean-security-function-requires-api-key
+          - uid: mondoo-digitalocean-security-function-access-key-not-stale
       - title: Security Scanning
         checks:
           - uid: mondoo-digitalocean-security-scan-no-critical-findings
@@ -4162,3 +4178,433 @@ queries:
     refs:
       - url: https://docs.digitalocean.com/products/gradientai-platform/
         title: DigitalOcean GradientAI platform
+
+  # No Terraform variants: DigitalOcean Functions are deployed imperatively via
+  # `doctl serverless deploy` and a project.yml manifest; there is no digitalocean
+  # Terraform resource for a serverless function, so the web-export and API-key
+  # annotations cannot be evaluated from Terraform HCL, plan, or state.
+  - uid: mondoo-digitalocean-security-function-requires-api-key
+    title: Ensure web-accessible Functions require an API key
+    impact: 85
+    filters: asset.platform == "digitalocean"
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-14
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-2
+      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/soc2-2017: soc2-control-cc6-1-4
+      compliance/vda-isa-5: vda-isa-5-4-1-2
+    mql: |
+      digitalocean.functionNamespaces.all(functions.where(webExported == true).all(requiresApiKey == true))
+    docs:
+      desc: |
+        This check ensures that every DigitalOcean Function published as a web-accessible HTTP endpoint requires an API key. A function marked web-accessible is reachable over the internet at its namespace URL; unless it also requires an API key, anyone who learns or guesses the URL can invoke it without credentials.
+
+        **Why this matters**
+
+        - **Unauthenticated invocation:** A web-accessible function without an API key runs its code for any anonymous caller, exposing whatever data access, downstream services, and secrets the function holds.
+        - **Abuse and cost:** Open endpoints are targets for automated abuse — scraping, data injection, and invocation floods that run up compute charges.
+        - **Bypassed access controls:** Functions frequently sit in front of databases, object storage, or third-party APIs. An unauthenticated function becomes an open proxy to those backends.
+
+        **Risk mitigation**
+
+        - **Anonymous access:** Requiring an API key ensures only callers presenting a valid credential can execute the function.
+        - **Attack surface:** Endpoints that reject unauthenticated requests are not usable by opportunistic internet scanners probing for open functions.
+
+        Functions that are intentionally public, such as a health check that returns no sensitive data, should be reviewed and documented as exceptions rather than left unauthenticated by default.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+        2. Navigate to **Functions** and open each namespace.
+        3. For each function, review whether it is web-accessible and whether it requires authentication.
+
+        A passing function is either not web-accessible or requires an API key. A failing function is web-accessible and allows unauthenticated access.
+
+        ### Audit via CLI
+
+        1. List the functions in the namespace and inspect each function's metadata:
+
+        ```bash
+        doctl serverless functions list
+        doctl serverless functions get <function-name>
+        ```
+
+        A passing web-accessible function shows that an API key (secured web access) is required. A failing function shows web access enabled with no authentication requirement.
+      remediation:
+        - id: console
+          desc: |
+            To require authentication on a web-accessible function in the DigitalOcean Cloud Control Panel:
+
+            1. Navigate to **Functions** and open the affected function.
+            2. Under the function's web settings, enable the option that requires an API key for web invocation (secured web access), or disable web invocation entirely if the function does not need to be reachable over HTTP.
+            3. Save the change and confirm that legitimate callers now present the API key.
+        - id: cli
+          desc: |
+            DigitalOcean Functions are deployed from a `project.yml` manifest. Mark the function as requiring authenticated web access and redeploy it with the `doctl` CLI.
+
+            In `project.yml`, secure the function's web access:
+
+            ```yaml
+            packages:
+              - name: default
+                functions:
+                  - name: my-function
+                    web: true
+                    webSecure: true
+            ```
+
+            Then redeploy the project:
+
+            ```bash
+            doctl serverless deploy <project-directory>
+            ```
+
+            Setting `webSecure: true` requires callers to present the function's API key. Set `web: false` instead if the function does not need to be reachable over HTTP.
+        # No Terraform remediation: DigitalOcean Functions have no digitalocean
+        # Terraform resource; they are managed only through project.yml and doctl.
+    refs:
+      - url: https://docs.digitalocean.com/products/functions/how-to/create-functions/
+        title: DigitalOcean Functions overview
+      - url: https://docs.digitalocean.com/products/functions/reference/project-configuration/
+        title: Functions project configuration reference
+
+  # No Terraform variants: the key algorithm is parsed from the SSH public-key
+  # material. In Terraform, digitalocean_ssh_key.public_key is almost always a
+  # file() or variable reference rather than a literal, so the algorithm cannot be
+  # read from the source, and a weak key is remediated by generating a new key
+  # pair — not by changing a Terraform argument.
+  - uid: mondoo-digitalocean-security-ssh-key-no-dsa
+    title: Ensure SSH keys do not use the deprecated DSA algorithm
+    impact: 70
+    filters: asset.platform == "digitalocean"
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-10
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-10
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc6-1-11
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    mql: |
+      digitalocean.sshKeys.none(publicKey.split(" ")[0] == "ssh-dss")
+    docs:
+      desc: |
+        This check ensures that no SSH key registered on the DigitalOcean account uses the DSA (`ssh-dss`) algorithm. DSA keys are capped at 1024 bits, rely on a signing scheme that is fragile to poor random-number generation, and have been disabled by default in OpenSSH since version 7.0.
+
+        **Why this matters**
+
+        - **Weak by construction:** DSA SSH keys are limited to 1024-bit strength, which is below the cryptographic strength recommended for authentication credentials.
+        - **Fragile signing:** DSA signatures can leak the private key if the per-signature nonce is ever reused or predictable, a failure mode that has compromised real keys.
+        - **Deprecated everywhere:** Modern SSH clients and servers reject `ssh-dss` by default, so a DSA key is both insecure and increasingly unusable.
+
+        **Risk mitigation**
+
+        - **Credential compromise:** Replacing DSA keys with Ed25519 or RSA (2048-bit or larger) keys removes a class of key that is realistically forgeable.
+        - **Access continuity:** Migrating off deprecated algorithms avoids sudden lockout when a client or server drops `ssh-dss` support.
+
+        Replace any DSA key with an Ed25519 key (preferred) or an RSA key of at least 2048 bits.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+        2. Navigate to **Settings** > **Security** and review the **SSH keys** list.
+        3. Inspect each stored public key.
+
+        A passing key begins with `ssh-ed25519`, `ssh-rsa`, or `ecdsa-sha2-*`. A failing key begins with `ssh-dss`.
+
+        ### Audit via CLI
+
+        1. List the SSH keys on the account and inspect each key's public-key material:
+
+        ```bash
+        doctl compute ssh-key list
+        ```
+
+        A passing key's public key begins with `ssh-ed25519`, `ssh-rsa`, or `ecdsa-sha2-*`. A failing key's public key begins with `ssh-dss`.
+      remediation:
+        - id: console
+          desc: |
+            To replace a DSA SSH key in the DigitalOcean Cloud Control Panel:
+
+            1. Generate a new key locally, for example `ssh-keygen -t ed25519 -C "you@example.com"`.
+            2. Navigate to **Settings** > **Security** > **SSH keys** and add the new public key.
+            3. Update your Droplets and automation to trust the new key, then delete the `ssh-dss` key.
+        - id: cli
+          desc: |
+            To replace a DSA SSH key using the `doctl` CLI:
+
+            ```bash
+            ssh-keygen -t ed25519 -f ~/.ssh/do_ed25519 -C "you@example.com"
+            doctl compute ssh-key import my-ed25519-key --public-key-file ~/.ssh/do_ed25519.pub
+            doctl compute ssh-key delete <dsa-key-id>
+            ```
+
+            Import the new key before deleting the old one so you do not lose access to Droplets that reference it.
+        # No Terraform remediation: the key algorithm is a property of the key
+        # material generated with ssh-keygen, not a digitalocean_ssh_key argument;
+        # the fix is to generate and register a new key pair.
+    refs:
+      - url: https://docs.digitalocean.com/products/droplets/how-to/add-ssh-keys/
+        title: Add SSH keys to DigitalOcean
+
+  # No Terraform variants: DigitalOcean Functions have no digitalocean Terraform
+  # resource, and lastUsedAt/createdAt are runtime observations of credential
+  # activity that no Terraform source expresses.
+  - uid: mondoo-digitalocean-security-function-access-key-not-stale
+    title: Ensure Functions namespace access keys are not stale
+    impact: 70
+    filters: asset.platform == "digitalocean"
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-07
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-5-ii-d-security-awareness-training-and-tools-password-management
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-6
+      compliance/pci-dss-4: pcidss-requirement-8-6-3
+      compliance/soc2-2017: soc2-control-cc6-2-2
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    mql: |
+      digitalocean.functionNamespaces.all(accessKeys.all(lastUsedAt != empty && lastUsedAt > time.now - 90 * time.day || lastUsedAt == empty && createdAt > time.now - 90 * time.day))
+    docs:
+      desc: |
+        This check ensures that every Functions namespace API access key has been used within the last 90 days (keys created within the window are exempt while they wait to be used first). An access key that has sat unused for months is almost always a forgotten credential — still valid, still able to deploy and invoke functions, but no longer watched by anyone.
+
+        **Why this matters**
+
+        - **Forgotten standing credentials:** A key nobody uses is a key nobody notices being abused. Dormant credentials are a favorite foothold because their misuse blends into the absence of legitimate activity.
+        - **Larger credential inventory:** Every live key is an independent secret that can leak from a laptop, CI system, or backup. Retiring unused keys shrinks the set of secrets that must be protected and rotated.
+        - **No expiration by default:** Namespace keys do not expire on their own, so without periodic cleanup they accumulate indefinitely.
+
+        **Risk mitigation**
+
+        - **Credential leakage:** Removing keys that are no longer in active use eliminates secrets whose compromise would otherwise go undetected.
+        - **Least standing access:** Pruning dormant keys keeps the namespace's authorized credentials aligned with what is actually in use.
+
+        Delete keys that are no longer needed, and rotate the keys that remain on a regular schedule.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+        2. Navigate to **Functions** and open each namespace's settings.
+        3. Review the access keys and their last-used dates.
+
+        A passing key has been used within the last 90 days or was created recently. A failing key has gone unused for more than 90 days.
+
+        ### Audit via CLI
+
+        1. Connect to the namespace and list its API access keys:
+
+        ```bash
+        doctl serverless connect
+        doctl serverless namespaces list
+        ```
+
+        Review each key's last-used timestamp. A passing key was used within the last 90 days; a failing key has been idle longer.
+      remediation:
+        - id: console
+          desc: |
+            To remove stale Functions namespace access keys in the DigitalOcean Cloud Control Panel:
+
+            1. Navigate to **Functions** and open the namespace's settings.
+            2. Identify access keys that have not been used in over 90 days and confirm they are no longer needed.
+            3. Delete the unused keys, and rotate the keys that remain.
+        - id: cli
+          desc: |
+            Manage a namespace's access keys with the `doctl serverless` command group. After confirming a key is unused, delete it:
+
+            ```bash
+            doctl serverless connect
+            doctl serverless namespaces list
+            ```
+
+            Remove the stale key through the namespace's key management, then rotate the remaining keys on a regular schedule.
+        # No Terraform remediation: Functions namespace access keys have no
+        # digitalocean Terraform resource; they are managed only through doctl and
+        # the control panel.
+    refs:
+      - url: https://docs.digitalocean.com/products/functions/how-to/manage-namespaces/
+        title: Manage Functions namespaces
+
+  # No Terraform variants: image visibility is not an argument on
+  # digitalocean_custom_image; publishing or unpublishing an image is a separate
+  # imperative action, so the public flag cannot be evaluated from Terraform.
+  - uid: mondoo-digitalocean-security-image-not-public
+    title: Ensure custom images are not publicly shared
+    impact: 80
+    filters: asset.platform == "digitalocean"
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    mql: |
+      digitalocean.images.all(public == false)
+    docs:
+      desc: |
+        This check ensures that no custom image, snapshot, or backup owned by the account is publicly shared. A public image can be listed and used by any DigitalOcean user, and disk images frequently carry embedded secrets, credentials, application source, and configuration baked in at build time.
+
+        **Why this matters**
+
+        - **Embedded secrets:** Golden images and snapshots routinely contain SSH keys, API tokens, database credentials, and application code that were present on the source system when the image was captured.
+        - **Intellectual property exposure:** A public custom image exposes proprietary software, configuration, and architecture to anyone who launches it.
+        - **Unintended distribution:** Once an image is public it can be copied by others, so the exposure persists even after the image is later made private.
+
+        **Risk mitigation**
+
+        - **Data leakage:** Keeping images private ensures their contents are reachable only by the account and the team members it authorizes.
+        - **Supply-chain integrity:** Private images cannot be enumerated and used as an untrusted base by unrelated parties.
+
+        Keep custom images private and share them explicitly with named accounts only when required. Rebuild any image that was public to rotate secrets it may have exposed.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+        2. Navigate to **Images** and review the **Custom Images** and **Snapshots** tabs.
+        3. Check the visibility of each image.
+
+        A passing image is private to the account. A failing image is marked public.
+
+        ### Audit via CLI
+
+        1. List the images owned by the account and review the **Public** column:
+
+        ```bash
+        doctl compute image list-user --format ID,Name,Public
+        ```
+
+        A passing image shows `Public` as `false`. A failing image shows `Public` as `true`.
+      remediation:
+        - id: console
+          desc: |
+            To stop sharing a custom image publicly in the DigitalOcean Cloud Control Panel:
+
+            1. Navigate to **Images** and locate the public custom image or snapshot.
+            2. Remove its public sharing so it is private to the account.
+            3. If the image was public, rebuild it and rotate any secrets it may have contained, then delete the exposed image.
+        - id: cli
+          desc: |
+            Custom image visibility cannot be toggled from the CLI. Review the account's images and delete an exposed image once a private replacement exists:
+
+            ```bash
+            doctl compute image list-user --format ID,Name,Public
+            doctl compute image delete <image-id>
+            ```
+
+            Rebuild the image as private and rotate any secrets it may have exposed before deleting the public copy.
+        # No Terraform remediation: image visibility is not a digitalocean_custom_image
+        # argument; publishing and unpublishing are imperative actions outside Terraform.
+    refs:
+      - url: https://docs.digitalocean.com/products/images/custom-images/
+        title: DigitalOcean custom images
+
+  # No Terraform variants: the load balancer firewall is a nested block whose
+  # allow entries are encoded with cidr:/ip: prefixes; the runtime check inspects
+  # the normalized source list, and expressing the any-address refinement across
+  # terraform-hcl/plan/state adds fragility for a narrow refinement.
+  - uid: mondoo-digitalocean-security-lb-firewall-allowlist-not-open
+    title: Ensure load balancer firewall allowlists are not open to all
+    impact: 70
+    filters: asset.platform == "digitalocean-loadbalancer"
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    mql: |
+      digitalocean.loadBalancer.firewallAllow == empty || digitalocean.loadBalancer.firewallAllow.all(_.contains("/0") == false)
+    docs:
+      desc: |
+        This check ensures that when a DigitalOcean load balancer defines a source-IP firewall allowlist, that allowlist does not include an any-address entry with a `/0` mask such as `0.0.0.0/0` or `::/0`. A load balancer firewall allowlist is meant to restrict which source addresses can reach the balancer; an any-address entry defeats that purpose while giving the false impression that access is controlled.
+
+        **Why this matters**
+
+        - **False sense of restriction:** An allowlist containing `0.0.0.0/0` looks like a control in the console and in code review, but admits every host on the internet just as if no allowlist existed.
+        - **Silent scope creep:** A specific allowlist that later has an any-address entry added — often as a temporary troubleshooting step — quietly reopens the load balancer to the world.
+        - **Bypassed segmentation:** Load balancers front application backends; an unrestricted allowlist exposes those backends to internet-wide scanning and attack.
+
+        **Risk mitigation**
+
+        - **Attack surface:** Restricting the allowlist to the specific source ranges that need access removes the load balancer from opportunistic internet scanning.
+        - **Auditable intent:** An allowlist without an any-address entry accurately reflects who is permitted to reach the balancer.
+
+        Replace any-address entries with the specific administrative, client, or CDN source ranges that legitimately need to reach the load balancer. A load balancer that is intentionally public simply omits the allowlist rather than allowlisting `0.0.0.0/0`.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+        2. Navigate to **Networking** > **Load Balancers** and open each load balancer.
+        3. On the **Settings** tab, review the firewall (allow/deny) rules.
+
+        A passing load balancer either has no allow rules or lists only specific source ranges. A failing load balancer has an allow rule of `0.0.0.0/0` or `::/0`.
+
+        ### Audit via CLI
+
+        1. List the load balancers and inspect each one's firewall rules:
+
+        ```bash
+        doctl compute load-balancer list --format ID,Name,IP
+        doctl compute load-balancer get <load-balancer-id>
+        ```
+
+        A passing load balancer's allow list is empty or contains only specific ranges. A failing load balancer's allow list contains `cidr:0.0.0.0/0` or `cidr:::/0`.
+      remediation:
+        - id: console
+          desc: |
+            To tighten a load balancer firewall allowlist in the DigitalOcean Cloud Control Panel:
+
+            1. Navigate to **Networking** > **Load Balancers** and open the affected load balancer.
+            2. On the **Settings** tab, edit the firewall rules and remove the `0.0.0.0/0` / `::/0` allow entry.
+            3. Add the specific source ranges that need access, or remove the allowlist entirely if the load balancer is meant to be public.
+        - id: cli
+          desc: |
+            To replace an any-address allowlist with specific source ranges using the `doctl` CLI:
+
+            ```bash
+            doctl compute load-balancer update <load-balancer-id> \
+              --allow-list cidr:203.0.113.0/24,ip:198.51.100.10
+            ```
+
+            Provide the trusted source ranges that need access. Omit the allowlist entirely if the load balancer is intentionally public.
+        # No Terraform remediation: the load balancer firewall is a nested block on
+        # digitalocean_loadbalancer using cidr:/ip: encoded entries; fix it by editing
+        # the firewall.allow list in that block to remove any-address entries.
+    refs:
+      - url: https://docs.digitalocean.com/products/networking/load-balancers/how-to/manage/
+        title: Manage DigitalOcean load balancers
