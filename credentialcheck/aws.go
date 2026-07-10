@@ -64,10 +64,17 @@ func realSTSIdentityCheck(ctx context.Context, cfg aws.Config) error {
 	return err
 }
 
+// stsIdentityCheck is the STS identity check used by validateAWS. It is a
+// package variable, rather than a direct call, purely so tests can swap it
+// out to exercise the full Validate dispatch (including the AWS branch) end
+// to end without making a real network call; production code never
+// reassigns it.
+var stsIdentityCheck stsIdentityFunc = realSTSIdentityCheck
+
 // validateAWS builds an aws.Config from conf and confirms its credentials
 // authenticate by calling STS GetCallerIdentity.
 func validateAWS(ctx context.Context, conf *inventory.Config) Result {
-	return validateAWSWith(ctx, conf, realSTSIdentityCheck)
+	return validateAWSWith(ctx, conf, stsIdentityCheck)
 }
 
 // validateAWSWith is the test seam for validateAWS: it performs the identity
