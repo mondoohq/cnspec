@@ -1,8 +1,9 @@
 // Copyright Mondoo, Inc. 2024, 2026
 // SPDX-License-Identifier: BUSL-1.1
 
-// Package credentialcheck validates an integration's stored credentials by making
-// one cheap authenticated provider call (no scan, no plugin, no resource enumeration).
+// Package credentialcheck validates the credentials in a provider inventory
+// configuration by making one cheap authenticated provider call (no scan, no
+// plugin, no resource enumeration).
 package credentialcheck
 
 import (
