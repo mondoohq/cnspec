@@ -9,6 +9,7 @@ policies:
   - uid: example-policy
     name: Example Policy
     version: 1.0.0
+    summary: Secure the example service configuration and access controls
     groups:
       - title: Security Checks
         filters: asset.platform == "linux"
@@ -25,6 +26,7 @@ policies:
 **Key concepts**:
 
 - **uid**: Unique identifier for policies, checks, queries.
+- **summary**: Required one-line policy description (≤130 chars). See Formatting requirements.
 - **filters**: MQL expressions that determine applicability.
 - **impact**: Risk score 0-100 for prioritization.
 - **checks**: Scoring queries (pass/fail).
@@ -33,6 +35,7 @@ policies:
 
 ## Formatting requirements
 
+- Every policy must have a `summary:` field — the one-line description shown in policy listings and the marketplace. It is **required** and must be **130 characters or fewer**. Write it verb-first (`Secure`, `Enforce`, `Validate`, `Detect`, `Harden`) followed by the concrete scope, matching the existing policies. Do **not** use em-dashes (`—`, `–`) or `--` in the summary; restructure the sentence instead.
 - All `desc` and `remediation` fields must be valid Markdown (rendered in the UI). Use proper headings, lists, code blocks, links.
 - Check `title` fields must be 75 characters or fewer.
 - Check `title` must match the action enforced by the `mql` query and described in `desc`. If the title says "Ensure X is enabled" the query must assert X is enabled and the description must explain X — don't let titles drift from what the check actually does (e.g., a title about "encryption at rest" paired with a query that inspects TLS settings).
