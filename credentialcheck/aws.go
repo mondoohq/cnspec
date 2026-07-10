@@ -14,7 +14,9 @@ import (
 	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
 )
 
-// defaultAWSRegion is used when no region option is set on the connection.
+// defaultAWSRegion is the last-resort region used when neither a "region"
+// option nor an ambient region (env var, shared config profile, etc.) can be
+// resolved.
 const defaultAWSRegion = "us-east-1"
 
 // awsConfigFromConfig builds an aws.Config from an inventory connection's
@@ -25,38 +27,46 @@ const defaultAWSRegion = "us-east-1"
 //   - assume-role, from a "role" (role ARN) option and an optional
 //     "external-id" option
 //
-// The region defaults to "us-east-1" when no "region" option is set.
+// Region resolution mirrors the AWS connection provider: an explicit
+// "region" option always wins; otherwise the ambient region resolved by
+// config.LoadDefaultConfig (env vars, shared config profile, etc.) is used,
+// and only if that is also empty do we fall back to defaultAWSRegion.
 func awsConfigFromConfig(ctx context.Context, conf *inventory.Config) (aws.Config, error) {
 	options := conf.GetOptions()
 
-	region := options["region"]
-	if region == "" {
-		region = defaultAWSRegion
+	var loadOpts []func(*config.LoadOptions) error
+	if region := options["region"]; region != "" {
+		loadOpts = append(loadOpts, config.WithRegion(region))
 	}
 
-	loadOpts := []func(*config.LoadOptions) error{config.WithRegion(region)}
+	cfg, err := config.LoadDefaultConfig(ctx, loadOpts...)
+	if err != nil {
+		return aws.Config{}, err
+	}
+	if cfg.Region == "" {
+		// No region option and no ambient region could be resolved; fall
+		// back to the same default used by the AWS connection provider.
+		cfg.Region = defaultAWSRegion
+	}
 
+	// Role-based and static credentials are mutually exclusive in the
+	// inventories this package validates, so this precedence is academic in
+	// practice. If both were somehow set, the assume-role provider takes
+	// precedence.
 	if roleArn := options["role"]; roleArn != "" {
 		externalID := options["external-id"]
-		base, err := config.LoadDefaultConfig(ctx, config.WithRegion(region))
-		if err != nil {
-			return aws.Config{}, err
-		}
-		stsClient := sts.NewFromConfig(base)
-		provider := aws.NewCredentialsCache(stscreds.NewAssumeRoleProvider(stsClient, roleArn, func(o *stscreds.AssumeRoleOptions) {
+		stsClient := sts.NewFromConfig(cfg)
+		cfg.Credentials = aws.NewCredentialsCache(stscreds.NewAssumeRoleProvider(stsClient, roleArn, func(o *stscreds.AssumeRoleOptions) {
 			if externalID != "" {
 				o.ExternalID = &externalID
 			}
 		}))
-		loadOpts = append(loadOpts, config.WithCredentialsProvider(provider))
 	} else if creds := conf.GetCredentials(); len(creds) > 0 {
 		accessKeyID := options["access-key-id"]
 		secretAccessKey := string(creds[0].GetSecret())
 		sessionToken := options["session-token"]
-		loadOpts = append(loadOpts, config.WithCredentialsProvider(
-			credentials.NewStaticCredentialsProvider(accessKeyID, secretAccessKey, sessionToken),
-		))
+		cfg.Credentials = credentials.NewStaticCredentialsProvider(accessKeyID, secretAccessKey, sessionToken)
 	}
 
-	return config.LoadDefaultConfig(ctx, loadOpts...)
+	return cfg, nil
 }

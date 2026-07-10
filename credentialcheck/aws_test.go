@@ -5,12 +5,39 @@ package credentialcheck
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/vault"
 )
+
+// clearAmbientAWSConfig resets every AWS SDK input that could resolve an
+// ambient region or credentials (env vars, shared config/credentials files,
+// EC2 instance metadata) so that tests exercising the "no region option"
+// fallback path get a deterministic, empty ambient configuration instead of
+// depending on whatever the local environment happens to contain.
+func clearAmbientAWSConfig(t *testing.T) {
+	t.Helper()
+	nonExistent := filepath.Join(t.TempDir(), "does-not-exist")
+	for _, key := range []string{
+		"AWS_REGION",
+		"AWS_DEFAULT_REGION",
+		"AWS_PROFILE",
+		"AWS_DEFAULT_PROFILE",
+		"AWS_ACCESS_KEY_ID",
+		"AWS_SECRET_ACCESS_KEY",
+		"AWS_SESSION_TOKEN",
+	} {
+		t.Setenv(key, "")
+	}
+	t.Setenv("AWS_CONFIG_FILE", nonExistent)
+	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", nonExistent)
+	t.Setenv("AWS_EC2_METADATA_DISABLED", "true")
+}
 
 func TestAwsConfigFromConfig_StaticCreds(t *testing.T) {
 	conf := &inventory.Config{
@@ -55,6 +82,8 @@ func TestAwsConfigFromConfig_StaticCredsWithSessionToken(t *testing.T) {
 }
 
 func TestAwsConfigFromConfig_DefaultRegion(t *testing.T) {
+	// No "region" option and no ambient region: falls back to the default.
+	clearAmbientAWSConfig(t)
 	conf := &inventory.Config{
 		Type: "aws",
 		Credentials: []*vault.Credential{{
@@ -65,6 +94,19 @@ func TestAwsConfigFromConfig_DefaultRegion(t *testing.T) {
 	cfg, err := awsConfigFromConfig(context.Background(), conf)
 	require.NoError(t, err)
 	require.Equal(t, "us-east-1", cfg.Region)
+}
+
+func TestAwsConfigFromConfig_RegionOptionWinsOverAmbient(t *testing.T) {
+	// An explicit "region" option must win even when an ambient region is
+	// also present, e.g. via AWS_REGION.
+	t.Setenv("AWS_REGION", "ap-southeast-2")
+	conf := &inventory.Config{
+		Type:    "aws",
+		Options: map[string]string{"region": "eu-central-1"},
+	}
+	cfg, err := awsConfigFromConfig(context.Background(), conf)
+	require.NoError(t, err)
+	require.Equal(t, "eu-central-1", cfg.Region)
 }
 
 func TestAwsConfigFromConfig_AssumeRole(t *testing.T) {
@@ -85,8 +127,40 @@ func TestAwsConfigFromConfig_AssumeRole(t *testing.T) {
 }
 
 func TestAwsConfigFromConfig_NoCredentials(t *testing.T) {
+	clearAmbientAWSConfig(t)
 	conf := &inventory.Config{Type: "aws"}
 	cfg, err := awsConfigFromConfig(context.Background(), conf)
 	require.NoError(t, err)
 	require.Equal(t, "us-east-1", cfg.Region)
+}
+
+func TestAwsConfigFromConfig_RoleWinsOverStaticCreds(t *testing.T) {
+	// When both an assume-role option and static credentials are present,
+	// the assume-role provider must be selected deterministically. Role and
+	// static credentials are mutually exclusive in the inventories this
+	// package validates, but this documents the intentional precedence.
+	conf := &inventory.Config{
+		Type: "aws",
+		Options: map[string]string{
+			"region":        "eu-central-1",
+			"role":          "arn:aws:iam::123456789012:role/example-role",
+			"access-key-id": "AKIAEXAMPLE",
+		},
+		Credentials: []*vault.Credential{{
+			Type:   vault.CredentialType_password,
+			Secret: []byte("secret-key"),
+		}},
+	}
+	cfg, err := awsConfigFromConfig(context.Background(), conf)
+	require.NoError(t, err)
+
+	// The assume-role provider is wrapped in an *aws.CredentialsCache; the
+	// static provider is set directly, so the wrapper type alone
+	// distinguishes which path was taken without ever calling Retrieve (and
+	// thus without making an STS network call).
+	_, isCache := cfg.Credentials.(*aws.CredentialsCache)
+	require.True(t, isCache, "expected assume-role credentials provider to be selected")
+
+	_, isStatic := cfg.Credentials.(credentials.StaticCredentialsProvider)
+	require.False(t, isStatic, "static credentials provider must not be selected when a role is also set")
 }
