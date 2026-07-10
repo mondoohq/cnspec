@@ -60,10 +60,3 @@ func Validate(ctx context.Context, conf *inventory.Config) (Result, error) {
 		}, nil
 	}
 }
-
-// validateAWS is a temporary placeholder. It will be replaced by a real
-// implementation that builds an aws.Config from conf and calls STS
-// GetCallerIdentity to confirm the credential authenticates.
-func validateAWS(ctx context.Context, conf *inventory.Config) Result {
-	return Result{State: StateUnknown}
-}

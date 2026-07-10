@@ -5,11 +5,13 @@ package credentialcheck
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/smithy-go"
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/vault"
@@ -163,4 +165,75 @@ func TestAwsConfigFromConfig_RoleWinsOverStaticCreds(t *testing.T) {
 
 	_, isStatic := cfg.Credentials.(credentials.StaticCredentialsProvider)
 	require.False(t, isStatic, "static credentials provider must not be selected when a role is also set")
+}
+
+func TestClassifyAWSError(t *testing.T) {
+	require.Equal(t, StateOK, classifyAWSError(nil))
+	require.Equal(t, StateAuthError, classifyAWSError(&smithy.GenericAPIError{Code: "InvalidClientTokenId"}))
+	require.Equal(t, StateAuthError, classifyAWSError(&smithy.GenericAPIError{Code: "SignatureDoesNotMatch"}))
+	require.Equal(t, StateAuthError, classifyAWSError(&smithy.GenericAPIError{Code: "UnrecognizedClientException"}))
+	require.Equal(t, StateAuthError, classifyAWSError(&smithy.GenericAPIError{Code: "AccessDenied"}))
+	require.Equal(t, StateAuthError, classifyAWSError(&smithy.GenericAPIError{Code: "AccessDeniedException"}))
+	require.Equal(t, StateAuthError, classifyAWSError(&smithy.GenericAPIError{Code: "ExpiredToken"}))
+	require.Equal(t, StateAuthError, classifyAWSError(&smithy.GenericAPIError{Code: "ExpiredTokenException"}))
+	require.Equal(t, StateUnknown, classifyAWSError(&smithy.GenericAPIError{Code: "ThrottlingException"}))
+	require.Equal(t, StateUnknown, classifyAWSError(errors.New("dial tcp: i/o timeout")))
+}
+
+func TestValidateAWS_OK_AuthError_Unknown(t *testing.T) {
+	conf := &inventory.Config{Type: "aws", Options: map[string]string{"region": "eu-central-1", "access-key-id": "AKIA"}, Credentials: []*vault.Credential{{
+		Type: vault.CredentialType_password, Secret: []byte("s"),
+	}}}
+
+	res := validateAWSWith(context.Background(), conf, func(context.Context, aws.Config) error { return nil })
+	require.Equal(t, StateOK, res.State)
+	require.NotEmpty(t, res.Message)
+	require.Nil(t, res.ExpiresAt)
+
+	res = validateAWSWith(context.Background(), conf, func(context.Context, aws.Config) error {
+		return &smithy.GenericAPIError{Code: "InvalidClientTokenId"}
+	})
+	require.Equal(t, StateAuthError, res.State)
+	require.NotEmpty(t, res.Message)
+	require.Nil(t, res.ExpiresAt)
+
+	res = validateAWSWith(context.Background(), conf, func(context.Context, aws.Config) error {
+		return errors.New("network down")
+	})
+	require.Equal(t, StateUnknown, res.State)
+	require.NotEmpty(t, res.Message)
+	require.Nil(t, res.ExpiresAt)
+}
+
+func TestValidateAWS_RetriesWithGovCloudRegionOnFailure(t *testing.T) {
+	conf := &inventory.Config{Type: "aws", Options: map[string]string{"region": "eu-central-1", "access-key-id": "AKIA"}, Credentials: []*vault.Credential{{
+		Type: vault.CredentialType_password, Secret: []byte("s"),
+	}}}
+
+	var regionsSeen []string
+	res := validateAWSWith(context.Background(), conf, func(_ context.Context, cfg aws.Config) error {
+		regionsSeen = append(regionsSeen, cfg.Region)
+		if cfg.Region == "us-gov-west-1" {
+			return nil
+		}
+		return errors.New("network down")
+	})
+	require.Equal(t, StateOK, res.State)
+	require.Equal(t, []string{"eu-central-1", "us-gov-west-1"}, regionsSeen)
+}
+
+func TestValidateAWS_ReturnsFirstErrorWhenGovCloudFallbackAlsoFails(t *testing.T) {
+	conf := &inventory.Config{Type: "aws", Options: map[string]string{"region": "eu-central-1", "access-key-id": "AKIA"}, Credentials: []*vault.Credential{{
+		Type: vault.CredentialType_password, Secret: []byte("s"),
+	}}}
+
+	res := validateAWSWith(context.Background(), conf, func(_ context.Context, cfg aws.Config) error {
+		if cfg.Region == "eu-central-1" {
+			return &smithy.GenericAPIError{Code: "InvalidClientTokenId"}
+		}
+		return errors.New("gov cloud also down")
+	})
+	// classification must be based on the *original* error, mirroring Verify's
+	// GovCloud fallback behavior in the AWS connection provider.
+	require.Equal(t, StateAuthError, res.State)
 }
