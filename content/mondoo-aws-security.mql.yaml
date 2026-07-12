@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-aws-security
     name: Mondoo AWS Security
-    version: 12.4.0
+    version: 12.5.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -123,6 +123,7 @@ policies:
           - uid: mondoo-aws-security-lambda-xray-tracing
           - uid: mondoo-aws-security-lambda-source-arn
           - uid: mondoo-aws-security-lambda-in-vpc
+          - uid: mondoo-aws-security-lambda-no-deprecated-runtime
       - title: Amazon S3 Bucket
         checks:
           - uid: mondoo-aws-security-s3-bucket-level-public-access-prohibited
@@ -274,6 +275,7 @@ policies:
           - uid: mondoo-aws-security-efs-encrypted-check
           - uid: mondoo-aws-security-efs-backup-enabled
           - uid: mondoo-aws-security-efs-filesystem-no-public-access
+          - uid: mondoo-aws-security-efs-enforce-transit-encryption
       - title: AWS CloudWatch
         checks:
           - uid: mondoo-aws-security-cloudwatch-log-group-encrypted
@@ -715,6 +717,20 @@ policies:
       - title: AWS CodeArtifact
         checks:
           - uid: mondoo-aws-security-codeartifact-domain-cmk-encryption
+      - title: Amazon Security Lake
+        checks:
+          - uid: mondoo-aws-security-securitylake-data-lake-cmk-encryption
+      - title: AWS Network Firewall
+        checks:
+          - uid: mondoo-aws-security-networkfirewall-logging-enabled
+          - uid: mondoo-aws-security-networkfirewall-change-protection-enabled
+          - uid: mondoo-aws-security-networkfirewall-cmk-encryption
+      - title: Amazon SES
+        checks:
+          - uid: mondoo-aws-security-ses-configuration-set-require-tls
+      - title: Amazon AppFlow
+        checks:
+          - uid: mondoo-aws-security-appflow-flow-cmk-encryption
     scoring_system: highest impact
 queries:
   - uid: mondoo-aws-security-eks-cluster-cmks-in-kms
@@ -911,6 +927,1327 @@ queries:
       properties['EncryptionConfig'].all(
       _['Provider'] != empty &&
       _['Provider'].all( _['KeyArn'] != empty )
+      )
+      )
+  - uid: mondoo-aws-security-securitylake-data-lake-cmk-encryption
+    title: Ensure Security Lake data lakes use a customer-managed KMS key
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-11
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-aws-security-securitylake-data-lake-cmk-encryption-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-securitylake-data-lake-cmk-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-securitylake-data-lake-cmk-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-securitylake-data-lake-cmk-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-securitylake-data-lake-cmk-encryption-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
+    docs:
+      desc: |
+        This check ensures that each Amazon Security Lake data lake encrypts its stored objects with a customer-managed KMS key. By default Security Lake can use S3-managed encryption, but a customer-managed key gives the account owner direct control over key access, rotation, and revocation for the aggregated security-log data.
+
+        **Why this matters**
+
+        - **Customer control over key lifecycle:** A customer-managed key can be rotated, disabled, or scheduled for deletion independently of the data lake, allowing immediate response to a suspected compromise.
+        - **Separation of duties:** The KMS key policy restricts which principals can decrypt the security data, enforcing access controls beyond the S3 bucket policy.
+        - **Audit trail:** Every use of the key is recorded in AWS CloudTrail, providing a cryptographically linked record of when the data lake contents were decrypted.
+
+        **Risk mitigation**
+
+        - **Data exposure prevention:** Encrypting the data lake with a customer key ensures that raw S3 objects and backups cannot be read without key access.
+        - **Regulatory alignment:** Many frameworks require sensitive data at rest to be encrypted under keys the customer controls, which S3-managed encryption does not satisfy.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the AWS Management Console and open the Security Lake console at https://console.aws.amazon.com/securitylake/.
+        2. In the left navigation pane, choose **Settings**.
+        3. Review the **Encryption** setting for each Region where Security Lake is enabled.
+
+        A passing data lake shows a customer-managed KMS key. A failing data lake shows S3-managed encryption.
+
+        ### Audit via CLI
+
+        1. List the data lakes and their encryption configuration:
+
+        ```bash
+        aws securitylake list-data-lakes --query "dataLakes[].{Region:region,Encryption:encryptionConfiguration}"
+        ```
+
+        A passing data lake returns an `encryptionConfiguration` with a `kmsKeyId` set to a customer-managed key ARN. A failing data lake returns no `kmsKeyId` or a value of `S3_MANAGED_KEY`.
+      remediation:
+        - id: console
+          desc: |
+            To encrypt a Security Lake data lake with a customer-managed KMS key using the AWS Console:
+
+            1. Open the Security Lake console.
+            2. Choose **Settings**.
+            3. For the Region you want to configure, edit the encryption setting.
+            4. Select a customer-managed KMS key.
+            5. Save the configuration.
+        - id: cli
+          desc: |
+            To encrypt a Security Lake data lake with a customer-managed KMS key using the AWS CLI, update the data lake configuration:
+
+            ```bash
+            aws securitylake update-data-lake \
+              --configurations '[{"region":"us-east-1","encryptionConfiguration":{"kmsKeyId":"<kms-key-arn>"}}]'
+            ```
+        - id: terraform
+          desc: |
+            To encrypt a Security Lake data lake with a customer-managed KMS key in Terraform, set the encryption configuration:
+
+            ```hcl
+            resource "aws_securitylake_data_lake" "example" {
+              meta_store_manager_role_arn = aws_iam_role.meta_store_manager.arn
+
+              configuration {
+                region = "us-east-1"
+
+                encryption_configuration {
+                  kms_key_id = aws_kms_key.example.id
+                }
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To encrypt a Security Lake data lake with a customer-managed KMS key in CloudFormation, set the encryption configuration:
+
+            ```yaml
+            Resources:
+              SecurityLakeEnablement:
+                Type: AWS::SecurityLake::DataLake
+                Properties:
+                  MetaStoreManagerRoleArn: !GetAtt MetaStoreManagerRole.Arn
+                  EncryptionConfiguration:
+                    KmsKeyId: !Ref KmsKey
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/security-lake/latest/userguide/data-protection.html
+        title: Data protection in Amazon Security Lake
+      - url: https://docs.aws.amazon.com/kms/latest/developerguide/best-practices.html
+        title: AWS KMS Best Practices
+  - uid: mondoo-aws-security-securitylake-data-lake-cmk-encryption-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.securitylake.dataLakes.all(encryptionKmsKey != null)
+  - uid: mondoo-aws-security-securitylake-data-lake-cmk-encryption-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_securitylake_data_lake")
+    mql: |
+      terraform.resources("aws_securitylake_data_lake").all(
+        blocks.where( type == "configuration" ) != empty &&
+        blocks.where( type == "configuration" ).all(
+          blocks.where( type == "encryption_configuration" ) != empty &&
+          blocks.where( type == "encryption_configuration" ).all(
+            arguments.kms_key_id != empty && arguments.kms_key_id != "S3_MANAGED_KEY"
+          )
+        )
+      )
+  - uid: mondoo-aws-security-securitylake-data-lake-cmk-encryption-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_securitylake_data_lake")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_securitylake_data_lake").all(
+        change.after.configuration != empty &&
+        change.after.configuration.all(
+          _['encryption_configuration'] != empty &&
+          _['encryption_configuration'].all( _['kms_key_id'] != empty && _['kms_key_id'] != "S3_MANAGED_KEY" )
+        )
+      )
+  - uid: mondoo-aws-security-securitylake-data-lake-cmk-encryption-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_securitylake_data_lake")
+    mql: |
+      terraform.state.resources.where(type == "aws_securitylake_data_lake").all(
+        values.configuration != empty &&
+        values.configuration.all(
+          _['encryption_configuration'] != empty &&
+          _['encryption_configuration'].all( _['kms_key_id'] != empty && _['kms_key_id'] != "S3_MANAGED_KEY" )
+        )
+      )
+  - uid: mondoo-aws-security-securitylake-data-lake-cmk-encryption-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::SecurityLake::DataLake")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::SecurityLake::DataLake").all(
+      properties['EncryptionConfiguration'] != empty &&
+      properties['EncryptionConfiguration']['KmsKeyId'] != empty
+      )
+  - uid: mondoo-aws-security-networkfirewall-logging-enabled
+    title: Ensure Network Firewall firewalls have logging enabled
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
+      compliance/dora: dora-art-10
+      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
+      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-pr-pt-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-04
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/pci-dss-4: pcidss-requirement-10-2-1
+      compliance/soc2-2017: soc2-control-cc7-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-4
+    variants:
+      - uid: mondoo-aws-security-networkfirewall-logging-enabled-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-networkfirewall-logging-enabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-networkfirewall-logging-enabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-networkfirewall-logging-enabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-networkfirewall-logging-enabled-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
+    docs:
+      desc: |
+        This check ensures that each AWS Network Firewall firewall sends flow, alert, or TLS logs to a logging destination. By default a firewall has no logging configuration, so the traffic it inspects and the actions it takes are not recorded anywhere.
+
+        **Why this matters**
+
+        - **Incident investigation:** Firewall logs record which flows were allowed or dropped, giving responders the evidence needed to reconstruct an intrusion.
+        - **Threat detection:** Alert logs surface stateful rule matches, feeding detection pipelines and alarms that would otherwise never see the traffic.
+        - **Operational visibility:** Flow logs show what the firewall is inspecting, helping operators validate that rules behave as intended.
+
+        **Risk mitigation**
+
+        - **Blind-spot elimination:** Without logging, malicious traffic that reaches or is blocked by the firewall leaves no trace, delaying or preventing detection.
+        - **Compliance evidence:** Many frameworks require network security controls to produce auditable log records of their activity.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the AWS Management Console and open the VPC console at https://console.aws.amazon.com/vpc/.
+        2. In the left navigation pane, under **Network Firewall**, choose **Firewalls**.
+        3. Select a firewall and choose the **Firewall details** tab.
+        4. Review the **Logging** section.
+
+        A passing firewall lists at least one log destination. A failing firewall shows no logging configured.
+
+        ### Audit via CLI
+
+        1. For each firewall, describe its logging configuration:
+
+        ```bash
+        aws network-firewall describe-logging-configuration --firewall-name <firewall-name>
+        ```
+
+        A passing firewall returns a `LoggingConfiguration` with a non-empty `LogDestinationConfigs` array. A failing firewall returns no logging configuration.
+      remediation:
+        - id: console
+          desc: |
+            To enable logging on a Network Firewall firewall using the AWS Console:
+
+            1. Open the VPC console and choose **Firewalls** under **Network Firewall**.
+            2. Select the firewall.
+            3. On the **Firewall details** tab, edit the **Logging** section.
+            4. Add a log destination for the FLOW, ALERT, or TLS log type.
+            5. Save the configuration.
+        - id: cli
+          desc: |
+            To enable logging on a Network Firewall firewall using the AWS CLI, set a logging configuration:
+
+            ```bash
+            aws network-firewall update-logging-configuration \
+              --firewall-name <firewall-name> \
+              --logging-configuration '{"LogDestinationConfigs":[{"LogType":"FLOW","LogDestinationType":"S3","LogDestination":{"bucketName":"<bucket-name>"}}]}'
+            ```
+        - id: terraform
+          desc: |
+            To enable logging on a Network Firewall firewall in Terraform, define a logging configuration resource:
+
+            ```hcl
+            resource "aws_networkfirewall_logging_configuration" "example" {
+              firewall_arn = aws_networkfirewall_firewall.example.arn
+
+              logging_configuration {
+                log_destination_config {
+                  log_destination = {
+                    bucketName = aws_s3_bucket.logs.bucket
+                  }
+                  log_destination_type = "S3"
+                  log_type             = "FLOW"
+                }
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To enable logging on a Network Firewall firewall in CloudFormation, define a logging configuration resource:
+
+            ```yaml
+            Resources:
+              FirewallLogging:
+                Type: AWS::NetworkFirewall::LoggingConfiguration
+                Properties:
+                  FirewallArn: !Ref MyFirewallArn
+                  LoggingConfiguration:
+                    LogDestinationConfigs:
+                      - LogType: FLOW
+                        LogDestinationType: S3
+                        LogDestination:
+                          bucketName: my-log-bucket
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/network-firewall/latest/developerguide/firewall-logging.html
+        title: Logging network traffic from AWS Network Firewall
+  - uid: mondoo-aws-security-networkfirewall-logging-enabled-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.networkfirewall.firewalls.all(loggingDestinations != empty)
+  - uid: mondoo-aws-security-networkfirewall-logging-enabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_networkfirewall_logging_configuration")
+    mql: |
+      terraform.resources("aws_networkfirewall_logging_configuration").all(
+        blocks.where( type == "logging_configuration" ) != empty &&
+        blocks.where( type == "logging_configuration" ).all(
+          blocks.where( type == "log_destination_config" ) != empty
+        )
+      )
+  - uid: mondoo-aws-security-networkfirewall-logging-enabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_networkfirewall_logging_configuration")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_networkfirewall_logging_configuration").all(
+        change.after.logging_configuration != empty &&
+        change.after.logging_configuration.all( _['log_destination_config'] != empty )
+      )
+  - uid: mondoo-aws-security-networkfirewall-logging-enabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_networkfirewall_logging_configuration")
+    mql: |
+      terraform.state.resources.where(type == "aws_networkfirewall_logging_configuration").all(
+        values.logging_configuration != empty &&
+        values.logging_configuration.all( _['log_destination_config'] != empty )
+      )
+  - uid: mondoo-aws-security-networkfirewall-logging-enabled-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::NetworkFirewall::LoggingConfiguration")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::NetworkFirewall::LoggingConfiguration").all(
+      properties['LoggingConfiguration'] != empty &&
+      properties['LoggingConfiguration']['LogDestinationConfigs'] != empty
+      )
+  - uid: mondoo-aws-security-networkfirewall-change-protection-enabled
+    title: Ensure Network Firewall firewalls enable delete and change protection
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ccc-04
+      compliance/dora: dora-art-12
+      compliance/hipaa: hipaa-security-ss164-308-a-7-ii-a-contingency-plan-data-backup-plan
+      compliance/iso-27001-2022: iso-27001-2022-a-8-14
+      compliance/nis-2: nis-2-21-2-c
+      compliance/nist-csf-1: nist-csf-1-pr-ip-4
+      compliance/nist-csf-2: nist-csf-2-pr-ds-11
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cp-9
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc9-1-1
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-aws-security-networkfirewall-change-protection-enabled-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-networkfirewall-change-protection-enabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-networkfirewall-change-protection-enabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-networkfirewall-change-protection-enabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-networkfirewall-change-protection-enabled-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
+    docs:
+      desc: |
+        This check ensures that each AWS Network Firewall firewall has delete protection, firewall policy change protection, and subnet change protection enabled. These flags guard the firewall against accidental deletion and against changes to the firewall policy association or subnet mappings that would silently weaken inspection.
+
+        **Why this matters**
+
+        - **Availability of the control:** Delete protection prevents a firewall that guards production traffic from being removed by mistake, keeping the inspection boundary in place.
+        - **Change integrity:** Policy and subnet change protection block unreviewed modifications that could route traffic around the firewall or disable rules.
+        - **Operational safety:** The flags force an explicit two-step process before high-impact changes, reducing the chance of a fat-finger outage.
+
+        **Risk mitigation**
+
+        - **Accidental exposure prevention:** Protecting the policy association stops an operator from swapping in a permissive policy without a deliberate override.
+        - **Continuity of protection:** Keeping the firewall and its subnet mappings intact ensures traffic continues to pass through inspection during routine changes.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the AWS Management Console and open the VPC console at https://console.aws.amazon.com/vpc/.
+        2. In the left navigation pane, under **Network Firewall**, choose **Firewalls**.
+        3. Select a firewall and review the **Firewall details** tab.
+        4. Confirm that delete protection, firewall policy change protection, and subnet change protection are all enabled.
+
+        A passing firewall shows all three protections enabled. A failing firewall shows any of them disabled.
+
+        ### Audit via CLI
+
+        1. For each firewall, describe the protection flags:
+
+        ```bash
+        aws network-firewall describe-firewall --firewall-name <firewall-name> \
+          --query "Firewall.{Delete:DeleteProtection,Policy:FirewallPolicyChangeProtection,Subnet:SubnetChangeProtection}"
+        ```
+
+        A passing firewall returns `true` for all three flags. A failing firewall returns `false` for any of them.
+      remediation:
+        - id: console
+          desc: |
+            To enable delete and change protection on a Network Firewall firewall using the AWS Console:
+
+            1. Open the VPC console and choose **Firewalls** under **Network Firewall**.
+            2. Select the firewall.
+            3. On the **Firewall details** tab, edit the protection settings.
+            4. Enable delete protection, firewall policy change protection, and subnet change protection.
+            5. Save the changes.
+        - id: cli
+          desc: |
+            To enable delete and change protection on a Network Firewall firewall using the AWS CLI, set each flag:
+
+            ```bash
+            aws network-firewall update-firewall-delete-protection \
+              --firewall-name <firewall-name> --delete-protection
+
+            aws network-firewall update-firewall-policy-change-protection \
+              --firewall-name <firewall-name> --firewall-policy-change-protection
+
+            aws network-firewall update-subnet-change-protection \
+              --firewall-name <firewall-name> --subnet-change-protection
+            ```
+        - id: terraform
+          desc: |
+            To enable delete and change protection on a Network Firewall firewall in Terraform, set the protection arguments:
+
+            ```hcl
+            resource "aws_networkfirewall_firewall" "example" {
+              name                = "example"
+              firewall_policy_arn = aws_networkfirewall_firewall_policy.example.arn
+              vpc_id              = aws_vpc.example.id
+
+              subnet_mapping {
+                subnet_id = aws_subnet.example.id
+              }
+
+              delete_protection                = true
+              firewall_policy_change_protection = true
+              subnet_change_protection          = true
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To enable delete and change protection on a Network Firewall firewall in CloudFormation, set the protection properties:
+
+            ```yaml
+            Resources:
+              MyFirewall:
+                Type: AWS::NetworkFirewall::Firewall
+                Properties:
+                  FirewallName: example
+                  FirewallPolicyArn: !Ref MyFirewallPolicy
+                  VpcId: !Ref MyVPC
+                  SubnetMappings:
+                    - SubnetId: !Ref MySubnet
+                  DeleteProtection: true
+                  FirewallPolicyChangeProtection: true
+                  SubnetChangeProtection: true
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/network-firewall/latest/developerguide/firewall-updating.html
+        title: Updating a firewall in AWS Network Firewall
+  - uid: mondoo-aws-security-networkfirewall-change-protection-enabled-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.networkfirewall.firewalls.all(deleteProtection == true)
+      aws.networkfirewall.firewalls.all(firewallPolicyChangeProtection == true)
+      aws.networkfirewall.firewalls.all(subnetChangeProtection == true)
+  - uid: mondoo-aws-security-networkfirewall-change-protection-enabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_networkfirewall_firewall")
+    mql: |
+      terraform.resources("aws_networkfirewall_firewall").all(arguments.delete_protection == true)
+      terraform.resources("aws_networkfirewall_firewall").all(arguments.firewall_policy_change_protection == true)
+      terraform.resources("aws_networkfirewall_firewall").all(arguments.subnet_change_protection == true)
+  - uid: mondoo-aws-security-networkfirewall-change-protection-enabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_networkfirewall_firewall")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_networkfirewall_firewall").all(change.after.delete_protection == true)
+      terraform.plan.resourceChanges.where(type == "aws_networkfirewall_firewall").all(change.after.firewall_policy_change_protection == true)
+      terraform.plan.resourceChanges.where(type == "aws_networkfirewall_firewall").all(change.after.subnet_change_protection == true)
+  - uid: mondoo-aws-security-networkfirewall-change-protection-enabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_networkfirewall_firewall")
+    mql: |
+      terraform.state.resources.where(type == "aws_networkfirewall_firewall").all(values.delete_protection == true)
+      terraform.state.resources.where(type == "aws_networkfirewall_firewall").all(values.firewall_policy_change_protection == true)
+      terraform.state.resources.where(type == "aws_networkfirewall_firewall").all(values.subnet_change_protection == true)
+  - uid: mondoo-aws-security-networkfirewall-change-protection-enabled-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::NetworkFirewall::Firewall")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::NetworkFirewall::Firewall").all(properties['DeleteProtection'] == true)
+      cloudformation.template.resources.where(type == "AWS::NetworkFirewall::Firewall").all(properties['FirewallPolicyChangeProtection'] == true)
+      cloudformation.template.resources.where(type == "AWS::NetworkFirewall::Firewall").all(properties['SubnetChangeProtection'] == true)
+  # No CloudFormation variant: AWS::NetworkFirewall::Firewall does not expose an encryption configuration property, so the customer-managed KMS setting cannot be expressed or verified in a CloudFormation template.
+  - uid: mondoo-aws-security-networkfirewall-cmk-encryption
+    title: Ensure Network Firewall firewalls use customer-managed KMS encryption
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-11
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-aws-security-networkfirewall-cmk-encryption-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-networkfirewall-cmk-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-networkfirewall-cmk-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-networkfirewall-cmk-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that each AWS Network Firewall firewall encrypts its resources with a customer-managed KMS key rather than an AWS-owned key. A customer-managed key gives the account owner direct control over key access, rotation, and revocation for the firewall configuration data.
+
+        **Why this matters**
+
+        - **Customer control over key lifecycle:** A customer-managed key can be rotated, disabled, or scheduled for deletion independently of the firewall, allowing immediate response to a suspected compromise.
+        - **Separation of duties:** The KMS key policy restricts which principals can use the key, enforcing access controls over the encrypted firewall resources.
+        - **Audit trail:** Every use of the key is recorded in AWS CloudTrail, providing an auditable record of key usage.
+
+        **Risk mitigation**
+
+        - **Data exposure prevention:** Encrypting firewall resources with a customer key ensures the configuration data cannot be read without key access.
+        - **Regulatory alignment:** Many frameworks require sensitive data at rest to be encrypted under keys the customer controls, which the AWS-owned key does not satisfy.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the AWS Management Console and open the VPC console at https://console.aws.amazon.com/vpc/.
+        2. In the left navigation pane, under **Network Firewall**, choose **Firewalls**.
+        3. Select a firewall and review the **Firewall details** tab.
+        4. Review the **Encryption** setting.
+
+        A passing firewall shows a customer-managed KMS key. A failing firewall shows the AWS-owned key.
+
+        ### Audit via CLI
+
+        1. For each firewall, describe the encryption configuration:
+
+        ```bash
+        aws network-firewall describe-firewall --firewall-name <firewall-name> \
+          --query "Firewall.EncryptionConfiguration"
+        ```
+
+        A passing firewall returns a `Type` of `CUSTOMER_KMS` with a `KeyId`. A failing firewall returns a `Type` of `AWS_OWNED_KMS_KEY`.
+      remediation:
+        - id: console
+          desc: |
+            To use customer-managed KMS encryption on a Network Firewall firewall using the AWS Console:
+
+            1. Open the VPC console and choose **Firewalls** under **Network Firewall**.
+            2. Select the firewall.
+            3. On the **Firewall details** tab, edit the encryption settings.
+            4. Choose **Customer managed key** and select a KMS key.
+            5. Save the changes.
+        - id: cli
+          desc: |
+            To use customer-managed KMS encryption on a Network Firewall firewall using the AWS CLI, update the encryption configuration:
+
+            ```bash
+            aws network-firewall update-firewall-encryption-configuration \
+              --firewall-name <firewall-name> \
+              --encryption-configuration Type=CUSTOMER_KMS,KeyId=<kms-key-arn>
+            ```
+        - id: terraform
+          desc: |
+            To use customer-managed KMS encryption on a Network Firewall firewall in Terraform, set the encryption configuration block:
+
+            ```hcl
+            resource "aws_networkfirewall_firewall" "example" {
+              name                = "example"
+              firewall_policy_arn = aws_networkfirewall_firewall_policy.example.arn
+              vpc_id              = aws_vpc.example.id
+
+              subnet_mapping {
+                subnet_id = aws_subnet.example.id
+              }
+
+              encryption_configuration {
+                type   = "CUSTOMER_KMS"
+                key_id = aws_kms_key.example.arn
+              }
+            }
+            ```
+        # No CloudFormation remediation: AWS::NetworkFirewall::Firewall does not expose an encryption configuration property, so the customer-managed KMS setting cannot be expressed in a CloudFormation template.
+    refs:
+      - url: https://docs.aws.amazon.com/network-firewall/latest/developerguide/encryption-at-rest.html
+        title: Encryption at rest for AWS Network Firewall
+      - url: https://docs.aws.amazon.com/kms/latest/developerguide/best-practices.html
+        title: AWS KMS Best Practices
+  - uid: mondoo-aws-security-networkfirewall-cmk-encryption-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.networkfirewall.firewalls.all(encryptionType == "CUSTOMER_KMS")
+  - uid: mondoo-aws-security-networkfirewall-cmk-encryption-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_networkfirewall_firewall")
+    mql: |
+      terraform.resources("aws_networkfirewall_firewall").all(
+        blocks.where( type == "encryption_configuration" ) != empty &&
+        blocks.where( type == "encryption_configuration" ).all(
+          arguments.type == "CUSTOMER_KMS" && arguments.key_id != empty
+        )
+      )
+  - uid: mondoo-aws-security-networkfirewall-cmk-encryption-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_networkfirewall_firewall")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_networkfirewall_firewall").all(
+        change.after.encryption_configuration != empty &&
+        change.after.encryption_configuration.all( _['type'] == "CUSTOMER_KMS" && _['key_id'] != empty )
+      )
+  - uid: mondoo-aws-security-networkfirewall-cmk-encryption-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_networkfirewall_firewall")
+    mql: |
+      terraform.state.resources.where(type == "aws_networkfirewall_firewall").all(
+        values.encryption_configuration != empty &&
+        values.encryption_configuration.all( _['type'] == "CUSTOMER_KMS" && _['key_id'] != empty )
+      )
+  - uid: mondoo-aws-security-ses-configuration-set-require-tls
+    title: Ensure SES configuration sets require TLS for message delivery
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    variants:
+      - uid: mondoo-aws-security-ses-configuration-set-require-tls-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-ses-configuration-set-require-tls-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-ses-configuration-set-require-tls-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-ses-configuration-set-require-tls-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-ses-configuration-set-require-tls-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
+    docs:
+      desc: |
+        This check ensures that each Amazon SES configuration set sets its TLS policy to REQUIRE, so messages sent with the configuration set are delivered only over an encrypted connection. The default policy is OPTIONAL, which lets SES fall back to an unencrypted connection when the receiving server does not offer TLS.
+
+        **Why this matters**
+
+        - **Confidentiality in transit:** Requiring TLS ensures message contents and recipient addresses are encrypted between SES and the receiving mail server.
+        - **Downgrade resistance:** A REQUIRE policy refuses delivery rather than silently falling back to cleartext when TLS is unavailable.
+        - **Consistent posture:** Applying the policy at the configuration set level enforces encryption for every message that uses it.
+
+        **Risk mitigation**
+
+        - **Interception prevention:** Encrypted delivery stops on-path attackers from reading or altering messages between mail servers.
+        - **Regulatory alignment:** Many frameworks require sensitive data to be encrypted in transit, which the OPTIONAL policy does not guarantee.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the AWS Management Console and open the Amazon SES console at https://console.aws.amazon.com/ses/.
+        2. In the left navigation pane, choose **Configuration sets**.
+        3. Select a configuration set and review its **General details**.
+        4. Review the **Delivery options** and confirm the TLS setting.
+
+        A passing configuration set requires TLS. A failing configuration set uses the optional TLS policy.
+
+        ### Audit via CLI
+
+        1. For each configuration set, read its delivery options:
+
+        ```bash
+        aws sesv2 get-configuration-set --configuration-set-name <name> \
+          --query "DeliveryOptions.TlsPolicy"
+        ```
+
+        A passing configuration set returns `REQUIRE`. A failing configuration set returns `OPTIONAL`.
+      remediation:
+        - id: console
+          desc: |
+            To require TLS for an SES configuration set using the AWS Console:
+
+            1. Open the Amazon SES console and choose **Configuration sets**.
+            2. Select the configuration set.
+            3. Edit the **Delivery options**.
+            4. Set the TLS policy to **Required**.
+            5. Save the changes.
+        - id: cli
+          desc: |
+            To require TLS for an SES configuration set using the AWS CLI, set the delivery options:
+
+            ```bash
+            aws sesv2 put-configuration-set-delivery-options \
+              --configuration-set-name <name> \
+              --tls-policy REQUIRE
+            ```
+        - id: terraform
+          desc: |
+            To require TLS for an SES configuration set in Terraform, set the delivery options block:
+
+            ```hcl
+            resource "aws_sesv2_configuration_set" "example" {
+              configuration_set_name = "example"
+
+              delivery_options {
+                tls_policy = "REQUIRE"
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To require TLS for an SES configuration set in CloudFormation, set the delivery options:
+
+            ```yaml
+            Resources:
+              ConfigSet:
+                Type: AWS::SES::ConfigurationSet
+                Properties:
+                  Name: example
+                  DeliveryOptions:
+                    TlsPolicy: REQUIRE
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/ses/latest/dg/configuring-tls-required.html
+        title: Requiring TLS for email sent with Amazon SES
+  - uid: mondoo-aws-security-ses-configuration-set-require-tls-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.ses.configurationSets.all(tlsPolicy == "REQUIRE")
+  - uid: mondoo-aws-security-ses-configuration-set-require-tls-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_sesv2_configuration_set")
+    mql: |
+      terraform.resources("aws_sesv2_configuration_set").all(
+        blocks.where( type == "delivery_options" ) != empty &&
+        blocks.where( type == "delivery_options" ).all( arguments.tls_policy == "REQUIRE" )
+      )
+  - uid: mondoo-aws-security-ses-configuration-set-require-tls-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_sesv2_configuration_set")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_sesv2_configuration_set").all(
+        change.after.delivery_options != empty &&
+        change.after.delivery_options.all( _['tls_policy'] == "REQUIRE" )
+      )
+  - uid: mondoo-aws-security-ses-configuration-set-require-tls-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_sesv2_configuration_set")
+    mql: |
+      terraform.state.resources.where(type == "aws_sesv2_configuration_set").all(
+        values.delivery_options != empty &&
+        values.delivery_options.all( _['tls_policy'] == "REQUIRE" )
+      )
+  - uid: mondoo-aws-security-ses-configuration-set-require-tls-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::SES::ConfigurationSet")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::SES::ConfigurationSet").all(
+      properties['DeliveryOptions'] != empty &&
+      properties['DeliveryOptions']['TlsPolicy'] == "REQUIRE"
+      )
+  - uid: mondoo-aws-security-appflow-flow-cmk-encryption
+    title: Ensure AppFlow flows use a customer-managed KMS key
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-11
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-aws-security-appflow-flow-cmk-encryption-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-appflow-flow-cmk-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-appflow-flow-cmk-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-appflow-flow-cmk-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-appflow-flow-cmk-encryption-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
+    docs:
+      desc: |
+        This check ensures that each Amazon AppFlow flow encrypts the data it transfers with a customer-managed KMS key. When no key is provided AppFlow uses its own managed key; a customer-managed key gives the account owner direct control over key access, rotation, and revocation for the transferred data.
+
+        **Why this matters**
+
+        - **Customer control over key lifecycle:** A customer-managed key can be rotated, disabled, or scheduled for deletion independently of the flow, allowing immediate response to a suspected compromise.
+        - **Separation of duties:** The KMS key policy restricts which principals can decrypt the flow data, enforcing access controls over the transferred records.
+        - **Audit trail:** Every use of the key is recorded in AWS CloudTrail, providing an auditable record of when flow data was decrypted.
+
+        **Risk mitigation**
+
+        - **Data exposure prevention:** Encrypting flow data with a customer key ensures the transferred records cannot be read without key access.
+        - **Regulatory alignment:** Many frameworks require sensitive data at rest to be encrypted under keys the customer controls, which the AppFlow-managed key does not satisfy.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the AWS Management Console and open the Amazon AppFlow console at https://console.aws.amazon.com/appflow/.
+        2. Choose a flow and open its details.
+        3. Review the **Data encryption** setting.
+
+        A passing flow shows a customer-managed KMS key. A failing flow shows the AppFlow-managed key.
+
+        ### Audit via CLI
+
+        1. For each flow, describe its encryption key:
+
+        ```bash
+        aws appflow describe-flow --flow-name <flow-name> --query "kmsArn"
+        ```
+
+        A passing flow returns a customer-managed KMS key ARN. A failing flow returns an AppFlow-managed key ARN or no value.
+      remediation:
+        - id: console
+          desc: |
+            To use a customer-managed KMS key for an AppFlow flow using the AWS Console:
+
+            1. Open the Amazon AppFlow console.
+            2. Create the flow, or note that the encryption key cannot be changed after creation.
+            3. In the **Data encryption** step, choose **Customize encryption settings** and select a customer-managed KMS key.
+            4. Complete the flow configuration and create the flow.
+        - id: cli
+          desc: |
+            To use a customer-managed KMS key for an AppFlow flow using the AWS CLI, set the key when creating the flow:
+
+            ```bash
+            aws appflow create-flow \
+              --flow-name <flow-name> \
+              --kms-arn <kms-key-arn> \
+              --trigger-config '{"triggerType":"OnDemand"}' \
+              --source-flow-config file://source.json \
+              --destination-flow-config-list file://destinations.json \
+              --tasks file://tasks.json
+            ```
+        - id: terraform
+          desc: |
+            To use a customer-managed KMS key for an AppFlow flow in Terraform, set the kms_arn argument:
+
+            ```hcl
+            resource "aws_appflow_flow" "example" {
+              name    = "example"
+              kms_arn = aws_kms_key.example.arn
+
+              source_flow_config {
+                connector_type = "S3"
+                source_connector_properties {
+                  s3 {
+                    bucket_name = aws_s3_bucket.source.bucket
+                  }
+                }
+              }
+
+              destination_flow_config {
+                connector_type = "S3"
+                destination_connector_properties {
+                  s3 {
+                    bucket_name = aws_s3_bucket.destination.bucket
+                  }
+                }
+              }
+
+              task {
+                source_fields     = ["id"]
+                task_type         = "Map"
+                destination_field = "id"
+                connector_operator {
+                  s3 = "NO_OP"
+                }
+              }
+
+              trigger_config {
+                trigger_type = "OnDemand"
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To use a customer-managed KMS key for an AppFlow flow in CloudFormation, set the KMSArn property:
+
+            ```yaml
+            Resources:
+              MyFlow:
+                Type: AWS::AppFlow::Flow
+                Properties:
+                  FlowName: example
+                  KMSArn: !GetAtt MyKmsKey.Arn
+                  TriggerConfig:
+                    TriggerType: OnDemand
+                  SourceFlowConfig:
+                    ConnectorType: S3
+                    SourceConnectorProperties:
+                      S3:
+                        BucketName: my-source-bucket
+                  DestinationFlowConfigList:
+                    - ConnectorType: S3
+                      DestinationConnectorProperties:
+                        S3:
+                          BucketName: my-destination-bucket
+                  Tasks:
+                    - TaskType: Map
+                      SourceFields:
+                        - id
+                      DestinationField: id
+                      ConnectorOperator:
+                        S3: NO_OP
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/appflow/latest/userguide/data-protection.html
+        title: Data protection in Amazon AppFlow
+      - url: https://docs.aws.amazon.com/kms/latest/developerguide/best-practices.html
+        title: AWS KMS Best Practices
+  - uid: mondoo-aws-security-appflow-flow-cmk-encryption-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.appflow.flows.all(kmsKey != null)
+  - uid: mondoo-aws-security-appflow-flow-cmk-encryption-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_appflow_flow")
+    mql: |
+      terraform.resources("aws_appflow_flow").all(arguments.kms_arn != empty)
+  - uid: mondoo-aws-security-appflow-flow-cmk-encryption-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_appflow_flow")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_appflow_flow").all(
+        change.after.kms_arn != empty
+      )
+  - uid: mondoo-aws-security-appflow-flow-cmk-encryption-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_appflow_flow")
+    mql: |
+      terraform.state.resources.where(type == "aws_appflow_flow").all(
+        values.kms_arn != empty
+      )
+  - uid: mondoo-aws-security-appflow-flow-cmk-encryption-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::AppFlow::Flow")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::AppFlow::Flow").all(
+      properties['KMSArn'] != empty
+      )
+  - uid: mondoo-aws-security-lambda-no-deprecated-runtime
+    title: Ensure Lambda functions do not use a deprecated runtime
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-tvm-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-8
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ip-12
+      compliance/nist-csf-2: nist-csf-2-pr-ps-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-1
+      compliance/pci-dss-4: pcidss-requirement-6-3-3
+      compliance/soc2-2017: soc2-control-cc7-1-1
+      compliance/vda-isa-5: vda-isa-5-5-2-5
+    variants:
+      - uid: mondoo-aws-security-lambda-no-deprecated-runtime-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-lambda-no-deprecated-runtime-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-lambda-no-deprecated-runtime-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-lambda-no-deprecated-runtime-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-lambda-no-deprecated-runtime-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
+    docs:
+      desc: |
+        This check ensures that each AWS Lambda function runs on a currently supported managed runtime rather than a deprecated one. AWS stops applying security patches to a runtime once it reaches end of support, and eventually blocks updates and invocations, so a function left on a deprecated runtime accumulates unpatched vulnerabilities. Functions packaged as container images set no managed runtime and are treated as compliant.
+
+        **Why this matters**
+
+        - **Security patching:** A supported runtime continues to receive operating system and language security updates from AWS.
+        - **Continued operability:** AWS eventually blocks create and update operations, and then invocations, for functions on deprecated runtimes.
+        - **Vulnerability reduction:** Staying on a maintained runtime keeps the language and dependency base free of publicly known, unpatched flaws.
+
+        **Risk mitigation**
+
+        - **Exploit prevention:** Running only maintained runtimes closes known vulnerabilities before they can be exploited against function code.
+        - **Availability protection:** Migrating off deprecated runtimes avoids the forced blocking of updates and invocations that AWS applies after end of support.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the AWS Management Console and open the Lambda console at https://console.aws.amazon.com/lambda/.
+        2. In the left navigation pane, choose **Functions**.
+        3. Review the **Runtime** column for each function.
+        4. Compare each runtime against the list of supported runtimes in the AWS Lambda documentation.
+
+        A passing function uses a supported runtime or is packaged as a container image. A failing function uses a runtime marked as deprecated.
+
+        ### Audit via CLI
+
+        1. List all functions and their runtimes:
+
+        ```bash
+        aws lambda list-functions --query "Functions[].{Name:FunctionName,Runtime:Runtime}"
+        ```
+
+        A passing function reports a supported runtime or no runtime for container-image functions. A failing function reports a deprecated runtime such as `python3.8` or `nodejs16.x`.
+      remediation:
+        - id: console
+          desc: |
+            To move a Lambda function to a supported runtime using the AWS Console:
+
+            1. Open the Lambda console and choose **Functions**.
+            2. Select the function on a deprecated runtime.
+            3. Test the function against a supported runtime version.
+            4. Under **Runtime settings**, choose **Edit** and select a supported runtime.
+            5. Save and deploy the updated function.
+        - id: cli
+          desc: |
+            To move a Lambda function to a supported runtime using the AWS CLI, update the function configuration:
+
+            ```bash
+            aws lambda update-function-configuration \
+              --function-name <function-name> \
+              --runtime python3.13
+            ```
+        - id: terraform
+          desc: |
+            To keep a Lambda function on a supported runtime in Terraform, set the runtime argument to a supported value:
+
+            ```hcl
+            resource "aws_lambda_function" "example" {
+              function_name = "example"
+              role          = aws_iam_role.lambda.arn
+              handler       = "index.handler"
+              runtime       = "python3.13"
+              filename      = "function.zip"
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To keep a Lambda function on a supported runtime in CloudFormation, set the Runtime property to a supported value:
+
+            ```yaml
+            Resources:
+              MyFunction:
+                Type: AWS::Lambda::Function
+                Properties:
+                  FunctionName: example
+                  Role: !GetAtt LambdaRole.Arn
+                  Handler: index.handler
+                  Runtime: python3.13
+                  Code:
+                    S3Bucket: my-bucket
+                    S3Key: function.zip
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/lambda/latest/dg/lambda-runtimes.html
+        title: Lambda runtimes
+      - url: https://docs.aws.amazon.com/lambda/latest/dg/runtime-support-policy.html
+        title: Runtime support policy for AWS Lambda
+  - uid: mondoo-aws-security-lambda-no-deprecated-runtime-aws
+    filters: asset.platform == "aws-lambda-function"
+    mql: |
+      aws.lambda.function.runtime == empty || aws.lambda.function.runtime == /^(nodejs(18|20|22)\.x|python3\.1[0-3]|java(17|21)|dotnet8|ruby3\.[2-9]|provided\.al2023|provided\.al2)$/
+  - uid: mondoo-aws-security-lambda-no-deprecated-runtime-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_lambda_function")
+    mql: |
+      terraform.resources("aws_lambda_function").all(
+        arguments.runtime == empty || arguments.runtime == /^(nodejs(18|20|22)\.x|python3\.1[0-3]|java(17|21)|dotnet8|ruby3\.[2-9]|provided\.al2023|provided\.al2)$/
+      )
+  - uid: mondoo-aws-security-lambda-no-deprecated-runtime-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_lambda_function")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_lambda_function").all(
+        change.after.runtime == empty || change.after.runtime == /^(nodejs(18|20|22)\.x|python3\.1[0-3]|java(17|21)|dotnet8|ruby3\.[2-9]|provided\.al2023|provided\.al2)$/
+      )
+  - uid: mondoo-aws-security-lambda-no-deprecated-runtime-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_lambda_function")
+    mql: |
+      terraform.state.resources.where(type == "aws_lambda_function").all(
+        values.runtime == empty || values.runtime == /^(nodejs(18|20|22)\.x|python3\.1[0-3]|java(17|21)|dotnet8|ruby3\.[2-9]|provided\.al2023|provided\.al2)$/
+      )
+  - uid: mondoo-aws-security-lambda-no-deprecated-runtime-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Lambda::Function")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::Lambda::Function").all(
+      properties['Runtime'] == empty || properties['Runtime'] == /^(nodejs(18|20|22)\.x|python3\.1[0-3]|java(17|21)|dotnet8|ruby3\.[2-9]|provided\.al2023|provided\.al2)$/
+      )
+  - uid: mondoo-aws-security-efs-enforce-transit-encryption
+    title: Ensure EFS file systems enforce encryption in transit via policy
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    variants:
+      - uid: mondoo-aws-security-efs-enforce-transit-encryption-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-efs-enforce-transit-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-efs-enforce-transit-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-efs-enforce-transit-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-efs-enforce-transit-encryption-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
+    docs:
+      desc: |
+        This check ensures that each Amazon EFS file system attaches a resource policy that denies access when the connection does not use TLS. Without such a policy an NFS client can mount the file system over an unencrypted connection, and the passing policy uses a Deny statement conditioned on `aws:SecureTransport` being false to block those clients.
+
+        **Why this matters**
+
+        - **Confidentiality in transit:** Denying non-TLS access ensures file data moving between clients and the file system is always encrypted.
+        - **Policy-enforced guarantee:** A resource policy applies to every mount regardless of client configuration, unlike a per-client mount option that can be omitted.
+        - **Downgrade resistance:** The condition rejects any connection that does not negotiate TLS rather than silently allowing cleartext.
+
+        **Risk mitigation**
+
+        - **Interception prevention:** Encrypted mounts stop on-path attackers from reading or altering file data as it crosses the network.
+        - **Regulatory alignment:** Many frameworks require sensitive data to be encrypted in transit, which an unrestricted file system policy does not guarantee.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the AWS Management Console and open the Amazon EFS console at https://console.aws.amazon.com/efs/.
+        2. Choose a file system and open the **File system policy** tab.
+        3. Review the policy for a `Deny` statement with a condition on `aws:SecureTransport` equal to `false`.
+
+        A passing file system has a policy that denies access when `aws:SecureTransport` is false. A failing file system has no policy or no such Deny statement.
+
+        ### Audit via CLI
+
+        1. Retrieve the file system policy:
+
+        ```bash
+        aws efs describe-file-system-policy --file-system-id <fs-id> \
+          --query "Policy"
+        ```
+
+        A passing file system returns a policy with a `Deny` statement conditioned on `aws:SecureTransport` being `false`. A failing file system returns no policy or a policy without that statement.
+      remediation:
+        - id: console
+          desc: |
+            To enforce encryption in transit on an EFS file system using the AWS Console:
+
+            1. Open the Amazon EFS console and choose the file system.
+            2. Choose the **File system policy** tab and choose **Edit**.
+            3. Select the option to enforce in-transit encryption for all clients, or add a Deny statement conditioned on `aws:SecureTransport` being false.
+            4. Save the policy.
+        - id: cli
+          desc: |
+            To enforce encryption in transit on an EFS file system using the AWS CLI, attach a policy that denies non-TLS access:
+
+            ```bash
+            aws efs put-file-system-policy \
+              --file-system-id <fs-id> \
+              --policy file://enforce-tls-policy.json
+            ```
+
+            The policy file should contain a `Deny` statement with a `Bool` condition on `aws:SecureTransport` set to `false`.
+        - id: terraform
+          desc: |
+            To enforce encryption in transit on an EFS file system in Terraform, attach a file system policy that denies non-TLS access:
+
+            ```hcl
+            data "aws_iam_policy_document" "efs_tls" {
+              statement {
+                effect    = "Deny"
+                actions   = ["*"]
+                resources = [aws_efs_file_system.example.arn]
+
+                principals {
+                  type        = "AWS"
+                  identifiers = ["*"]
+                }
+
+                condition {
+                  test     = "Bool"
+                  variable = "aws:SecureTransport"
+                  values   = ["false"]
+                }
+              }
+            }
+
+            resource "aws_efs_file_system_policy" "example" {
+              file_system_id = aws_efs_file_system.example.id
+              policy         = data.aws_iam_policy_document.efs_tls.json
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To enforce encryption in transit on an EFS file system in CloudFormation, embed a file system policy that denies non-TLS access:
+
+            ```yaml
+            Resources:
+              MyFileSystem:
+                Type: AWS::EFS::FileSystem
+                Properties:
+                  FileSystemPolicy:
+                    Version: "2012-10-17"
+                    Statement:
+                      - Effect: Deny
+                        Principal:
+                          AWS: "*"
+                        Action: "*"
+                        Condition:
+                          Bool:
+                            aws:SecureTransport: "false"
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/efs/latest/ug/encryption-in-transit.html
+        title: Encrypting data in transit for Amazon EFS
+      - url: https://docs.aws.amazon.com/efs/latest/ug/using-fs-policies.html
+        title: Using file system policies with Amazon EFS
+  - uid: mondoo-aws-security-efs-enforce-transit-encryption-aws
+    filters: asset.platform == "aws-efs-filesystem"
+    mql: |
+      aws.efs.filesystem.fileSystemPolicy != empty
+      aws.efs.filesystem.policyStatements.where(effect == "Deny").any(
+        conditions["Bool"]["aws:SecureTransport"] != empty
+      )
+  - uid: mondoo-aws-security-efs-enforce-transit-encryption-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_efs_file_system_policy")
+    mql: |
+      terraform.resources("aws_efs_file_system_policy").all(
+        arguments.policy.first["Statement"].where(_["Effect"] == "Deny").any(
+          _["Condition"]["Bool"]["aws:SecureTransport"] != empty
+        )
+      )
+  - uid: mondoo-aws-security-efs-enforce-transit-encryption-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_efs_file_system_policy")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_efs_file_system_policy").all(
+        change.after["policy"]["Statement"].where(_["Effect"] == "Deny").any(
+          _["Condition"]["Bool"]["aws:SecureTransport"] != empty
+        )
+      )
+  - uid: mondoo-aws-security-efs-enforce-transit-encryption-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_efs_file_system_policy")
+    mql: |
+      terraform.state.resources.where(type == "aws_efs_file_system_policy").all(
+        values["policy"]["Statement"].where(_["Effect"] == "Deny").any(
+          _["Condition"]["Bool"]["aws:SecureTransport"] != empty
+        )
+      )
+  - uid: mondoo-aws-security-efs-enforce-transit-encryption-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EFS::FileSystem")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::EFS::FileSystem").all(
+      properties['FileSystemPolicy'] != empty &&
+      properties['FileSystemPolicy']['Statement'].where(_['Effect'] == "Deny").any(
+      _['Condition']['Bool']['aws:SecureTransport'] != empty
       )
       )
   - uid: mondoo-aws-security-eks-cluster-private-controlplane
