@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-digitalocean-security
     name: Mondoo DigitalOcean Security
-    version: 2.4.0
+    version: 2.5.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -67,6 +67,7 @@ policies:
           - uid: mondoo-digitalocean-security-db-not-internet-reachable
           - uid: mondoo-digitalocean-security-db-engine-supported-version
           - uid: mondoo-digitalocean-security-db-ca-certificate-not-expired
+          - uid: mondoo-digitalocean-security-db-connection-ssl-enabled
       - title: Load Balancers
         checks:
           - uid: mondoo-digitalocean-security-lb-http-redirected-to-https
@@ -100,6 +101,7 @@ policies:
           - uid: mondoo-digitalocean-security-spaces-bucket-versioning-enabled
           - uid: mondoo-digitalocean-security-spaces-bucket-mfa-delete-enabled
           - uid: mondoo-digitalocean-security-spaces-bucket-cors-no-wildcard-origin
+          - uid: mondoo-digitalocean-security-spaces-bucket-public-access-blocked
       - title: App Platform
         checks:
           - uid: mondoo-digitalocean-security-app-platform-https
@@ -1616,6 +1618,87 @@ queries:
 
             Replace the certificate file in every client trust store, restart services, and confirm new connections succeed.
         # No Terraform remediation: the CA certificate is provisioned and rotated by DigitalOcean, not declared in digitalocean_database_cluster HCL. Terraform-managed clusters still pull the active CA via the runtime API; remediation is to refresh the trust store on consumers, which is a deployment-time concern outside Terraform.
+    refs:
+      - url: https://docs.digitalocean.com/products/databases/postgresql/how-to/secure-cluster/
+        title: Secure a managed database cluster with TLS
+
+  # No Terraform variants: connectionSslEnabled reflects the SSL flag on the live
+  # connection object returned by the DigitalOcean API, which the platform sets on
+  # every managed cluster. digitalocean_database_cluster exposes no argument to enable
+  # or disable TLS, so there is nothing to assert in HCL, plan, or state.
+  - uid: mondoo-digitalocean-security-db-connection-ssl-enabled
+    filters: asset.platform == "digitalocean-database"
+    title: Ensure managed database connections enforce TLS/SSL
+    impact: 85
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    mql: |
+      digitalocean.database.connectionSslEnabled
+    docs:
+      desc: |
+        This check ensures that every managed database cluster advertises a connection endpoint with TLS/SSL enabled, so that credentials and query data are encrypted in transit between clients and the cluster. A cluster whose connection object reports SSL disabled would accept plaintext connections that expose authentication and payload data to anyone on the network path.
+
+        **Why this matters**
+
+        - **Credential protection:** Database connections carry authentication material on every session; without TLS, usernames and passwords traverse the network in cleartext and can be captured by any host on the path.
+        - **Payload confidentiality:** Query results and writes often contain the most sensitive data an organization holds, so an unencrypted connection exposes that data to passive interception.
+        - **Man-in-the-middle resistance:** TLS binds the connection to the cluster's certificate, so an attacker cannot transparently proxy or tamper with traffic between the application and the database.
+        - **Regulatory expectation:** Frameworks that govern regulated data require encryption of sensitive information whenever it crosses a network boundary, and database traffic is a primary carrier of that data.
+
+        **Risk mitigation**
+
+        - **Interception prevention:** An encrypted connection ensures that a network observer captures only ciphertext, keeping credentials and records confidential end to end.
+        - **Integrity assurance:** TLS detects tampering in flight, so an attacker cannot silently modify queries or responses between the client and the cluster.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+        2. Navigate to **Databases** and open each cluster.
+        3. On the **Overview** tab, inspect the **Connection Details** panel and confirm the connection string uses `sslmode=require` (PostgreSQL), `ssl-mode=REQUIRED` (MySQL), or the engine's equivalent TLS parameter.
+
+        A passing cluster presents a TLS-enabled connection string. A failing cluster presents a connection string with SSL disabled.
+
+        ### Audit via CLI
+
+        1. List clusters, then inspect each cluster's connection details:
+
+        ```bash
+        doctl databases list --format ID,Name,Engine
+        doctl databases connection <database-id> --format Host,Port,SSL
+        ```
+
+        A passing cluster reports `SSL` as `true`. A failing cluster reports `SSL` as `false`.
+      remediation:
+        - id: console
+          desc: |
+            DigitalOcean enables TLS/SSL on managed database connection endpoints by default and does not expose a toggle to disable it in the Cloud Control Panel. If a client is connecting without TLS, the fix is on the client side:
+
+            1. In the Cloud Control Panel, open the cluster's **Overview** tab and copy the **Connection Details**.
+            2. Update every application connection string to request TLS, for example `sslmode=require` for PostgreSQL or `ssl-mode=REQUIRED` for MySQL.
+            3. Download the cluster's CA certificate and configure clients to verify against it for full certificate validation.
+            4. Restart connecting services so the TLS-enabled configuration takes effect.
+        - id: cli
+          desc: |
+            Retrieve the TLS-enabled connection details and roll them out to every client. The connection command returns the host, port, user, and SSL flag for the cluster:
+
+            ```bash
+            doctl databases connection <database-id> --format Host,Port,User,SSL
+            ```
+
+            Update each application's connection string to require TLS, such as appending `?sslmode=require` for PostgreSQL, then restart the connecting services and confirm sessions negotiate TLS.
+        # No Terraform remediation: TLS on managed database connections is enforced by the DigitalOcean platform and is not a declarable argument on digitalocean_database_cluster. Requiring TLS is a client-side connection-string concern that lives outside the cluster's Terraform definition.
     refs:
       - url: https://docs.digitalocean.com/products/databases/postgresql/how-to/secure-cluster/
         title: Secure a managed database cluster with TLS
@@ -3260,6 +3343,97 @@ queries:
                 --endpoint-url https://<region>.digitaloceanspaces.com
             ```
         # No Terraform remediation: the digitalocean_spaces_bucket resource has no server_side_encryption_configuration argument; Spaces SSE must be applied at runtime via the S3-compatible PutBucketEncryption call.
+    refs:
+      - url: https://docs.digitalocean.com/products/spaces/reference/s3-compatibility/
+        title: Spaces S3 compatibility reference
+
+  # No Terraform variants: the DigitalOcean Terraform provider's digitalocean_spaces_bucket
+  # resource exposes only the acl argument ("private"/"public-read") and models no
+  # public-access-block configuration. The block-public-acls/block-public-policy/
+  # ignore-public-acls/restrict-public-buckets settings are applied through the runtime
+  # S3-compatible PutPublicAccessBlock call, so there is no HCL surface to inspect.
+  - uid: mondoo-digitalocean-security-spaces-bucket-public-access-blocked
+    filters: asset.platform == "digitalocean-spaces-bucket"
+    title: Ensure Spaces buckets enable the Public Access Block
+    impact: 95
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    mql: |
+      digitalocean.spacesBucket.publicAccessBlocked
+    docs:
+      desc: |
+        This check ensures that every Spaces bucket has the Public Access Block fully enabled, so that no ACL or bucket policy can grant public access regardless of how it is written. The Public Access Block is a bucket-level guardrail that blocks public ACLs, blocks public bucket policies, ignores any public ACLs already present, and restricts public bucket policies. By default a bucket has no Public Access Block, so a single misconfigured ACL or policy can expose its contents to the entire internet.
+
+        **Why this matters**
+
+        - **Defense against accidental exposure:** The Public Access Block overrides any public grant, so a developer mistake in an ACL or policy cannot silently make objects world-readable or world-writable.
+        - **Single enforceable guardrail:** Rather than auditing every ACL and policy for public principals, one bucket-level control makes public access structurally impossible.
+        - **Protection from policy drift:** Automation, third-party tools, or console changes can reintroduce a public grant over time; the Public Access Block neutralizes them all until it is explicitly removed.
+        - **Data breach prevention:** Publicly readable object storage is one of the most common sources of large-scale data leaks, and a writable bucket lets attackers stage malware or ransom the contents.
+
+        **Risk mitigation**
+
+        - **Exposure containment:** With the Public Access Block enabled, an errant public ACL or policy has no effect, so the bucket's contents remain private even under misconfiguration.
+        - **Reduced audit burden:** A single passing guardrail replaces per-object and per-policy review, shrinking the surface an auditor must continuously verify.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+        2. Open the affected bucket under **Spaces Object Storage** and review the **Settings** tab for any public access indicators on the ACL and policy sections.
+        3. Because the Cloud Control Panel does not surface the Public Access Block state directly, confirm the configuration with the S3-compatible API in the CLI step below.
+
+        A passing bucket has all four block settings enabled. A failing bucket has one or more of them disabled or no configuration at all.
+
+        ### Audit via CLI
+
+        1. Spaces is S3-compatible, so use the AWS CLI pointed at the Spaces endpoint to read the bucket's Public Access Block:
+
+        ```bash
+        AWS_ACCESS_KEY_ID=<spaces-key> AWS_SECRET_ACCESS_KEY=<spaces-secret> \
+          aws s3api get-public-access-block --bucket <bucket> \
+            --endpoint-url https://<region>.digitaloceanspaces.com
+        ```
+
+        A passing bucket returns a `PublicAccessBlockConfiguration` with `BlockPublicAcls`, `BlockPublicPolicy`, `IgnorePublicAcls`, and `RestrictPublicBuckets` all `true`. A failing bucket returns `NoSuchPublicAccessBlockConfiguration` or a configuration with any of these set to `false`.
+      remediation:
+        - id: console
+          desc: |
+            The Cloud Control Panel does not expose the Public Access Block for every region. Apply the configuration with the CLI or S3-compatible API instead; see the CLI remediation below.
+        - id: cli
+          desc: |
+            Spaces is S3-compatible, so use the AWS CLI pointed at the Spaces endpoint. The `<spaces-key>` and `<spaces-secret>` come from the **Spaces Keys** page in the API section of the control panel, not the DigitalOcean API token, and `<region>` is the Spaces region slug such as `nyc3`.
+
+            Enable all four Public Access Block settings on the bucket:
+
+            ```bash
+            AWS_ACCESS_KEY_ID=<spaces-key> AWS_SECRET_ACCESS_KEY=<spaces-secret> \
+              aws s3api put-public-access-block \
+                --bucket <bucket> \
+                --endpoint-url https://<region>.digitaloceanspaces.com \
+                --public-access-block-configuration \
+                  BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+            ```
+
+            Confirm the guardrail is in place:
+
+            ```bash
+            AWS_ACCESS_KEY_ID=<spaces-key> AWS_SECRET_ACCESS_KEY=<spaces-secret> \
+              aws s3api get-public-access-block --bucket <bucket> \
+                --endpoint-url https://<region>.digitaloceanspaces.com
+            ```
+        # No Terraform remediation: the digitalocean_spaces_bucket resource has no public-access-block argument; the block-public-acls/block-public-policy/ignore-public-acls/restrict-public-buckets guardrail must be applied at runtime via the S3-compatible PutPublicAccessBlock call.
     refs:
       - url: https://docs.digitalocean.com/products/spaces/reference/s3-compatibility/
         title: Spaces S3 compatibility reference
