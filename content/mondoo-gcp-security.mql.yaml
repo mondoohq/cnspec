@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-gcp-security
     name: Mondoo Google Cloud (GCP) Security
-    version: 9.4.0
+    version: 9.5.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -256,6 +256,9 @@ policies:
           - uid: mondoo-gcp-security-iam-no-disabled-service-account-keys
           - uid: mondoo-gcp-security-iam-service-account-not-impersonatable
           - uid: mondoo-gcp-security-iam-no-stale-service-accounts
+          - uid: mondoo-gcp-security-iam-project-no-public-members
+          - uid: mondoo-gcp-security-iam-project-no-service-account-impersonation
+          - uid: mondoo-gcp-security-iam-custom-roles-no-service-account-impersonation
       - title: Cloud Logging
         checks:
           - uid: mondoo-gcp-security-logging-bucket-retention-30-days
@@ -483,6 +486,10 @@ policies:
       - title: Batch
         checks:
           - uid: mondoo-gcp-security-batch-job-permissive-ssh-disabled
+      - title: Cloud Domains
+        checks:
+          - uid: mondoo-gcp-security-cloud-domains-registration-transfer-lock-enabled
+          - uid: mondoo-gcp-security-cloud-domains-registration-dnssec-published
     scoring_system: highest impact
 queries:
   - uid: mondoo-gcp-security-instances-are-not-configured-use-default-service-account
@@ -41796,3 +41803,689 @@ queries:
         title: Batch - TaskGroup reference (permissiveSsh)
       - url: https://cloud.google.com/batch/docs/create-run-job
         title: Batch - Create and run a job
+  - uid: mondoo-gcp-security-iam-project-no-public-members
+    title: Ensure the project IAM policy grants no roles to public members
+    impact: 95
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-16
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-5-15
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/pci-dss-4: pcidss-requirement-7-3-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-gcp-security-iam-project-no-public-members-gcp
+        tags:
+          mondoo.com/filter-title: GCP Project
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-iam-project-no-public-members-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-iam-project-no-public-members-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-iam-project-no-public-members-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that the project-level IAM policy grants no role to the public principals `allUsers` (anyone on the internet) or `allAuthenticatedUsers` (any Google account holder). When a project IAM binding names either principal, everyone in that scope inherits the bound role across every resource in the project.
+
+        **Why this matters**
+
+        - **Internet-wide access:** A binding to `allUsers` exposes the granted role to unauthenticated callers anywhere on the internet, turning a single misconfiguration into a full project-wide exposure.
+        - **Broad authenticated access:** `allAuthenticatedUsers` includes every Google account in existence, not just your organization, so it grants access far beyond any intended audience.
+        - **Inheritance amplifies blast radius:** Project-level bindings flow down to all child resources, so a public grant at the project scope reaches services that would otherwise be private.
+        - **No attribution:** Public principals cannot be tied to a specific identity, so audit logs cannot distinguish legitimate use from abuse.
+
+        **Risk mitigation**
+
+        - **Grant to concrete principals:** Bind roles only to named users, groups, or service accounts that require the access.
+        - **Enforce with organization policy:** Apply the `iam.allowedPolicyMemberDomains` domain-restriction constraint to block `allUsers` and `allAuthenticatedUsers` from being added.
+        - **Review inherited bindings:** Audit project IAM bindings regularly and remove any public members introduced by defaults or ad hoc changes.
+      audit: |
+        ### Audit via Console
+
+        1. Open the [Google Cloud Console](https://console.cloud.google.com/) and navigate to **IAM & Admin > IAM**.
+        2. Select the project.
+        3. Check the **Include Google-provided role grants** box and review the principal list.
+
+        A passing project shows no `allUsers` or `allAuthenticatedUsers` principal. A failing project lists either principal against one or more roles.
+
+        ### Audit via CLI
+
+        1. List any public members in the project IAM policy:
+
+        ```bash
+        gcloud projects get-iam-policy PROJECT_ID \
+          --flatten="bindings[].members" \
+          --filter="bindings.members:allUsers OR bindings.members:allAuthenticatedUsers" \
+          --format="table(bindings.role,bindings.members)"
+        ```
+
+        A passing project returns no rows. A failing project lists the roles bound to `allUsers` or `allAuthenticatedUsers`.
+      remediation:
+        - id: console
+          desc: |
+            To remove public members from the project IAM policy using the Google Cloud Console:
+
+            1. Go to **IAM & Admin > IAM** in the Google Cloud Console.
+            2. Locate any row whose principal is **allUsers** or **allAuthenticatedUsers**.
+            3. Click the edit (pencil) icon, then delete the role, or remove the principal entirely.
+            4. Click **Save**.
+        - id: cli
+          desc: |
+            Remove each public binding from the project IAM policy:
+
+            ```bash
+            gcloud projects remove-iam-policy-binding PROJECT_ID \
+              --member=allUsers \
+              --role=ROLE
+
+            gcloud projects remove-iam-policy-binding PROJECT_ID \
+              --member=allAuthenticatedUsers \
+              --role=ROLE
+            ```
+        - id: terraform
+          desc: |
+            Bind roles only to concrete principals; never include `allUsers` or `allAuthenticatedUsers`:
+
+            ```hcl
+            resource "google_project_iam_member" "viewer" {
+              project = "my-project"
+              role    = "roles/viewer"
+              member  = "user:alice@example.com"
+            }
+            ```
+    refs:
+      - url: https://cloud.google.com/iam/docs/overview
+        title: IAM overview
+      - url: https://cloud.google.com/resource-manager/docs/organization-policy/restricting-domains
+        title: Restricting identities by domain
+  - uid: mondoo-gcp-security-iam-project-no-public-members-gcp
+    filters: asset.platform == 'gcp-project'
+    mql: |
+      gcp.project.hasPublicIamBinding == false
+  - uid: mondoo-gcp-security-iam-project-no-public-members-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_project_iam_member') || asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_project_iam_binding')
+    mql: |
+      terraform.resources('google_project_iam_member').all(
+        arguments['member'] != 'allUsers' &&
+        arguments['member'] != 'allAuthenticatedUsers'
+      )
+      terraform.resources('google_project_iam_binding').all(
+        arguments['members'] == empty ||
+        arguments['members'].none(_ == 'allUsers' || _ == 'allAuthenticatedUsers')
+      )
+  - uid: mondoo-gcp-security-iam-project-no-public-members-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_project_iam_member') || asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_project_iam_binding')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_project_iam_member').all(
+        change.after['member'] != 'allUsers' &&
+        change.after['member'] != 'allAuthenticatedUsers'
+      )
+      terraform.plan.resourceChanges.where(type == 'google_project_iam_binding').all(
+        change.after['members'] == empty ||
+        change.after['members'].none(_ == 'allUsers' || _ == 'allAuthenticatedUsers')
+      )
+  - uid: mondoo-gcp-security-iam-project-no-public-members-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_project_iam_member') || asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_project_iam_binding')
+    mql: |
+      terraform.state.resources.where(type == 'google_project_iam_member').all(
+        values['member'] != 'allUsers' &&
+        values['member'] != 'allAuthenticatedUsers'
+      )
+      terraform.state.resources.where(type == 'google_project_iam_binding').all(
+        values['members'] == empty ||
+        values['members'].none(_ == 'allUsers' || _ == 'allAuthenticatedUsers')
+      )
+  - uid: mondoo-gcp-security-iam-project-no-service-account-impersonation
+    title: Ensure the project IAM policy grants no service-account impersonation roles
+    impact: 85
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/pci-dss-4: pcidss-requirement-7-2-2
+      compliance/soc2-2017: soc2-control-cc6-3-1
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-gcp-security-iam-project-no-service-account-impersonation-gcp
+        tags:
+          mondoo.com/filter-title: GCP Project
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-iam-project-no-service-account-impersonation-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-iam-project-no-service-account-impersonation-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-iam-project-no-service-account-impersonation-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that no project-level IAM binding grants a service-account impersonation role: `roles/iam.serviceAccountTokenCreator`, `roles/iam.serviceAccountUser`, `roles/iam.workloadIdentityUser`, or `roles/iam.serviceAccountKeyAdmin`. These roles let a principal act as a service account and inherit its privileges.
+
+        **Why this matters**
+
+        - **Privilege escalation:** A principal that can impersonate a more privileged service account effectively holds that account's permissions, bypassing the intent of its own limited role.
+        - **Lateral movement:** Token creation and `actAs` grants let an attacker who compromises a low-privilege identity pivot to service accounts with broad project access.
+        - **Weakened attribution:** Actions taken through impersonation are attributed to the service account, obscuring which human or workload initiated them.
+        - **Broad project scope:** Granted at the project level, these roles apply to every service account in the project unless scoped by an IAM condition.
+
+        **Risk mitigation**
+
+        - **Scope impersonation narrowly:** Grant impersonation on the specific service account resource rather than at the project level, and only to principals that require it.
+        - **Prefer Workload Identity Federation:** Use short-lived federated credentials instead of standing impersonation grants where possible.
+        - **Audit token-creator grants:** Review bindings for these roles regularly and remove any that are not actively required.
+      audit: |
+        ### Audit via Console
+
+        1. Open the [Google Cloud Console](https://console.cloud.google.com/) and navigate to **IAM & Admin > IAM**.
+        2. Select the project.
+        3. Review the roles column for **Service Account Token Creator**, **Service Account User**, **Workload Identity User**, or **Service Account Key Admin**.
+
+        A passing project grants none of these roles at the project level. A failing project shows one or more principals holding them.
+
+        ### Audit via CLI
+
+        1. List any project bindings that grant an impersonation role:
+
+        ```bash
+        gcloud projects get-iam-policy PROJECT_ID \
+          --flatten="bindings[].members" \
+          --filter="bindings.role:(roles/iam.serviceAccountTokenCreator OR roles/iam.serviceAccountUser OR roles/iam.workloadIdentityUser OR roles/iam.serviceAccountKeyAdmin)" \
+          --format="table(bindings.role,bindings.members)"
+        ```
+
+        A passing project returns no rows. A failing project lists the principals bound to an impersonation role.
+      remediation:
+        - id: console
+          desc: |
+            To remove service-account impersonation grants from the project IAM policy using the Google Cloud Console:
+
+            1. Go to **IAM & Admin > IAM** in the Google Cloud Console.
+            2. Locate each principal holding **Service Account Token Creator**, **Service Account User**, **Workload Identity User**, or **Service Account Key Admin**.
+            3. Click the edit (pencil) icon and remove the impersonation role, or grant it on the specific service account resource instead.
+            4. Click **Save**.
+        - id: cli
+          desc: |
+            Remove each project-level impersonation binding:
+
+            ```bash
+            gcloud projects remove-iam-policy-binding PROJECT_ID \
+              --member=user:alice@example.com \
+              --role=roles/iam.serviceAccountTokenCreator
+            ```
+        - id: terraform
+          desc: |
+            Grant impersonation on the specific service account resource rather than at the project level:
+
+            ```hcl
+            resource "google_service_account_iam_member" "token_creator" {
+              service_account_id = google_service_account.worker.name
+              role               = "roles/iam.serviceAccountTokenCreator"
+              member             = "serviceAccount:caller@my-project.iam.gserviceaccount.com"
+            }
+            ```
+    refs:
+      - url: https://cloud.google.com/iam/docs/service-account-impersonation
+        title: Service account impersonation
+      - url: https://cloud.google.com/iam/docs/workload-identity-federation
+        title: Workload Identity Federation
+  - uid: mondoo-gcp-security-iam-project-no-service-account-impersonation-gcp
+    filters: asset.platform == 'gcp-project'
+    mql: |
+      gcp.project.iamPolicy.all(grantsImpersonation == false)
+  - uid: mondoo-gcp-security-iam-project-no-service-account-impersonation-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_project_iam_member') || asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_project_iam_binding')
+    mql: |
+      terraform.resources('google_project_iam_member').all(
+        arguments['role'] != 'roles/iam.serviceAccountTokenCreator' &&
+        arguments['role'] != 'roles/iam.serviceAccountUser' &&
+        arguments['role'] != 'roles/iam.workloadIdentityUser' &&
+        arguments['role'] != 'roles/iam.serviceAccountKeyAdmin'
+      )
+      terraform.resources('google_project_iam_binding').all(
+        arguments['role'] != 'roles/iam.serviceAccountTokenCreator' &&
+        arguments['role'] != 'roles/iam.serviceAccountUser' &&
+        arguments['role'] != 'roles/iam.workloadIdentityUser' &&
+        arguments['role'] != 'roles/iam.serviceAccountKeyAdmin'
+      )
+  - uid: mondoo-gcp-security-iam-project-no-service-account-impersonation-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_project_iam_member') || asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_project_iam_binding')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_project_iam_member').all(
+        change.after['role'] != 'roles/iam.serviceAccountTokenCreator' &&
+        change.after['role'] != 'roles/iam.serviceAccountUser' &&
+        change.after['role'] != 'roles/iam.workloadIdentityUser' &&
+        change.after['role'] != 'roles/iam.serviceAccountKeyAdmin'
+      )
+      terraform.plan.resourceChanges.where(type == 'google_project_iam_binding').all(
+        change.after['role'] != 'roles/iam.serviceAccountTokenCreator' &&
+        change.after['role'] != 'roles/iam.serviceAccountUser' &&
+        change.after['role'] != 'roles/iam.workloadIdentityUser' &&
+        change.after['role'] != 'roles/iam.serviceAccountKeyAdmin'
+      )
+  - uid: mondoo-gcp-security-iam-project-no-service-account-impersonation-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_project_iam_member') || asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_project_iam_binding')
+    mql: |
+      terraform.state.resources.where(type == 'google_project_iam_member').all(
+        values['role'] != 'roles/iam.serviceAccountTokenCreator' &&
+        values['role'] != 'roles/iam.serviceAccountUser' &&
+        values['role'] != 'roles/iam.workloadIdentityUser' &&
+        values['role'] != 'roles/iam.serviceAccountKeyAdmin'
+      )
+      terraform.state.resources.where(type == 'google_project_iam_binding').all(
+        values['role'] != 'roles/iam.serviceAccountTokenCreator' &&
+        values['role'] != 'roles/iam.serviceAccountUser' &&
+        values['role'] != 'roles/iam.workloadIdentityUser' &&
+        values['role'] != 'roles/iam.serviceAccountKeyAdmin'
+      )
+  - uid: mondoo-gcp-security-iam-custom-roles-no-service-account-impersonation
+    title: Ensure custom IAM roles grant no service-account impersonation permissions
+    impact: 85
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/pci-dss-4: pcidss-requirement-7-2-2
+      compliance/soc2-2017: soc2-control-cc6-3-1
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-gcp-security-iam-custom-roles-no-service-account-impersonation-gcp
+        tags:
+          mondoo.com/filter-title: GCP Project
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-iam-custom-roles-no-service-account-impersonation-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-iam-custom-roles-no-service-account-impersonation-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-iam-custom-roles-no-service-account-impersonation-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that custom IAM roles defined in the project include none of the service-account impersonation permissions: `iam.serviceAccounts.actAs`, `iam.serviceAccounts.getAccessToken`, `iam.serviceAccounts.getOpenIdToken`, `iam.serviceAccounts.implicitDelegation`, `iam.serviceAccounts.signBlob`, and `iam.serviceAccounts.signJwt`. A custom role that bundles any of these lets every principal holding the role act as a service account.
+
+        **Why this matters**
+
+        - **Hidden escalation paths:** Impersonation permissions buried inside a custom role are easy to overlook, yet they grant the same act-as capability as the predefined impersonation roles.
+        - **Privilege escalation:** A principal that can mint tokens or call `actAs` for a service account inherits that account's privileges, escalating beyond its intended access.
+        - **Wide reuse:** A custom role is typically bound to many principals, so a single over-broad permission set multiplies the impersonation exposure across the project.
+        - **Weakened attribution:** Actions performed through impersonation are logged as the service account, hiding the originating identity.
+
+        **Risk mitigation**
+
+        - **Split the permissions out:** Remove impersonation permissions from general-purpose custom roles and grant them separately, scoped to the specific service account, only where needed.
+        - **Prefer predefined roles:** Use narrowly scoped predefined roles instead of accumulating sensitive permissions in custom roles.
+        - **Review role definitions:** Audit custom role permission sets regularly for impersonation and other privilege-escalation permissions.
+      audit: |
+        ### Audit via Console
+
+        1. Open the [Google Cloud Console](https://console.cloud.google.com/) and navigate to **IAM & Admin > Roles**.
+        2. Filter to custom roles in the project.
+        3. Open each custom role and review its assigned permissions.
+
+        A passing role includes none of the `iam.serviceAccounts.actAs`, `getAccessToken`, `getOpenIdToken`, `implicitDelegation`, `signBlob`, or `signJwt` permissions. A failing role lists one or more of them.
+
+        ### Audit via CLI
+
+        1. List the custom roles in the project:
+
+        ```bash
+        gcloud iam roles list --project=PROJECT_ID --format="value(name)"
+        ```
+
+        2. Inspect each role's permissions:
+
+        ```bash
+        gcloud iam roles describe ROLE_ID --project=PROJECT_ID \
+          --format="value(includedPermissions)"
+        ```
+
+        A passing role returns no impersonation permissions. A failing role includes at least one `iam.serviceAccounts.*` impersonation permission.
+      remediation:
+        - id: console
+          desc: |
+            To remove impersonation permissions from a custom role using the Google Cloud Console:
+
+            1. Go to **IAM & Admin > Roles** in the Google Cloud Console.
+            2. Select the custom role.
+            3. Click **Edit**, then remove each `iam.serviceAccounts.actAs`, `getAccessToken`, `getOpenIdToken`, `implicitDelegation`, `signBlob`, and `signJwt` permission.
+            4. Click **Update**.
+        - id: cli
+          desc: |
+            Remove the impersonation permissions from the custom role:
+
+            ```bash
+            gcloud iam roles update ROLE_ID --project=PROJECT_ID \
+              --remove-permissions=iam.serviceAccounts.actAs,iam.serviceAccounts.getAccessToken,iam.serviceAccounts.getOpenIdToken,iam.serviceAccounts.implicitDelegation,iam.serviceAccounts.signBlob,iam.serviceAccounts.signJwt
+            ```
+        - id: terraform
+          desc: |
+            Define custom roles without impersonation permissions:
+
+            ```hcl
+            resource "google_project_iam_custom_role" "app" {
+              role_id     = "appReader"
+              title       = "App Reader"
+              permissions = [
+                "storage.objects.get",
+                "storage.objects.list",
+              ]
+            }
+            ```
+    refs:
+      - url: https://cloud.google.com/iam/docs/creating-custom-roles
+        title: Creating and managing custom roles
+      - url: https://cloud.google.com/iam/docs/service-account-permissions
+        title: Service account permissions
+  - uid: mondoo-gcp-security-iam-custom-roles-no-service-account-impersonation-gcp
+    filters: asset.platform == 'gcp-project'
+    mql: |
+      gcp.project.iam.roles.all(grantsServiceAccountImpersonation == false)
+  - uid: mondoo-gcp-security-iam-custom-roles-no-service-account-impersonation-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_project_iam_custom_role')
+    mql: |
+      terraform.resources('google_project_iam_custom_role').all(
+        arguments['permissions'] == empty ||
+        arguments['permissions'].none(
+          _ == 'iam.serviceAccounts.actAs' ||
+          _ == 'iam.serviceAccounts.getAccessToken' ||
+          _ == 'iam.serviceAccounts.getOpenIdToken' ||
+          _ == 'iam.serviceAccounts.implicitDelegation' ||
+          _ == 'iam.serviceAccounts.signBlob' ||
+          _ == 'iam.serviceAccounts.signJwt'
+        )
+      )
+  - uid: mondoo-gcp-security-iam-custom-roles-no-service-account-impersonation-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_project_iam_custom_role')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_project_iam_custom_role').all(
+        change.after['permissions'] == empty ||
+        change.after['permissions'].none(
+          _ == 'iam.serviceAccounts.actAs' ||
+          _ == 'iam.serviceAccounts.getAccessToken' ||
+          _ == 'iam.serviceAccounts.getOpenIdToken' ||
+          _ == 'iam.serviceAccounts.implicitDelegation' ||
+          _ == 'iam.serviceAccounts.signBlob' ||
+          _ == 'iam.serviceAccounts.signJwt'
+        )
+      )
+  - uid: mondoo-gcp-security-iam-custom-roles-no-service-account-impersonation-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_project_iam_custom_role')
+    mql: |
+      terraform.state.resources.where(type == 'google_project_iam_custom_role').all(
+        values['permissions'] == empty ||
+        values['permissions'].none(
+          _ == 'iam.serviceAccounts.actAs' ||
+          _ == 'iam.serviceAccounts.getAccessToken' ||
+          _ == 'iam.serviceAccounts.getOpenIdToken' ||
+          _ == 'iam.serviceAccounts.implicitDelegation' ||
+          _ == 'iam.serviceAccounts.signBlob' ||
+          _ == 'iam.serviceAccounts.signJwt'
+        )
+      )
+  - uid: mondoo-gcp-security-cloud-domains-registration-transfer-lock-enabled
+    title: Ensure Cloud Domains registrations enable the transfer lock
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ccc-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ip-3
+      compliance/nist-csf-2: nist-csf-2-pr-ps-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-2
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc7-1-1
+      compliance/vda-isa-5: vda-isa-5-5-2-1
+    variants:
+      - uid: mondoo-gcp-security-cloud-domains-registration-transfer-lock-enabled-gcp
+        tags:
+          mondoo.com/filter-title: GCP Project
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-cloud-domains-registration-transfer-lock-enabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-cloud-domains-registration-transfer-lock-enabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-cloud-domains-registration-transfer-lock-enabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that every Cloud Domains registration has its transfer lock set to `LOCKED`. The transfer lock prevents the domain from being transferred to another registrar without first being unlocked, which is a primary defense against domain hijacking.
+
+        **Why this matters**
+
+        - **Domain hijacking:** Without a transfer lock, an attacker who obtains a transfer authorization code or compromises the registrant account can move the domain to a registrar they control.
+        - **Loss of critical infrastructure:** A hijacked domain lets an attacker redirect email, web traffic, and certificate issuance, enabling phishing and interception at scale.
+        - **Slow, costly recovery:** Recovering a transferred domain is a manual, cross-registrar dispute process that can take days or weeks while services remain compromised.
+        - **Low-friction protection:** The transfer lock imposes no operational cost yet blocks the most common unauthorized-transfer path.
+
+        **Risk mitigation**
+
+        - **Lock every production domain:** Set the transfer lock to `LOCKED` on all registrations and unlock only for the brief window of an intended transfer.
+        - **Restrict registrant access:** Combine the lock with tight IAM on the project and strong authentication on the registrant account.
+        - **Monitor for changes:** Alert on any change to a registration's transfer-lock state.
+      audit: |
+        ### Audit via Console
+
+        1. Open the [Google Cloud Console](https://console.cloud.google.com/) and navigate to **Network Services > Cloud Domains**.
+        2. Select each registration.
+        3. Review the **Registration settings** and locate the transfer-lock state.
+
+        A passing registration shows the transfer lock as **On** (`LOCKED`). A failing registration shows it as **Off** (`UNLOCKED`).
+
+        ### Audit via CLI
+
+        1. List each registration and its transfer-lock state:
+
+        ```bash
+        gcloud domains registrations list \
+          --format="table(domainName,managementSettings.transferLockState)"
+        ```
+
+        A passing registration returns `LOCKED`. A failing registration returns `UNLOCKED` or `TRANSFER_LOCK_STATE_UNSPECIFIED`.
+      remediation:
+        - id: console
+          desc: |
+            To enable the transfer lock using the Google Cloud Console:
+
+            1. Go to **Network Services > Cloud Domains** in the Google Cloud Console.
+            2. Select the registration.
+            3. Open **Registration settings** and set the transfer lock to **On**.
+            4. Save the change.
+        - id: cli
+          desc: |
+            Enable the transfer lock on the registration:
+
+            ```bash
+            gcloud domains registrations configure management REGISTRATION \
+              --transfer-lock-state=locked
+            ```
+        - id: terraform
+          desc: |
+            Set `transfer_lock_state` to `LOCKED` in the registration's `management_settings` block:
+
+            ```hcl
+            resource "google_clouddomains_registration" "example" {
+              name        = "example-com"
+              location    = "global"
+              domain_name = "example.com"
+
+              management_settings {
+                transfer_lock_state = "LOCKED"
+              }
+
+              yearly_price {
+                currency_code = "USD"
+                units         = 12
+              }
+            }
+            ```
+    refs:
+      - url: https://cloud.google.com/domains/docs/lock-unlock-domain
+        title: Lock and unlock a domain
+  - uid: mondoo-gcp-security-cloud-domains-registration-transfer-lock-enabled-gcp
+    filters: asset.platform == 'gcp-project'
+    mql: |
+      gcp.project.cloudDomains.registrations.all(transferLockState == "LOCKED")
+  - uid: mondoo-gcp-security-cloud-domains-registration-transfer-lock-enabled-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_clouddomains_registration')
+    mql: |
+      terraform.resources('google_clouddomains_registration').all(
+        blocks.where(type == 'management_settings') != empty &&
+        blocks.where(type == 'management_settings').all(arguments['transfer_lock_state'] == 'LOCKED')
+      )
+  - uid: mondoo-gcp-security-cloud-domains-registration-transfer-lock-enabled-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_clouddomains_registration')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_clouddomains_registration').all(
+        change.after['management_settings'] != empty &&
+        change.after['management_settings'].all(_['transfer_lock_state'] == 'LOCKED')
+      )
+  - uid: mondoo-gcp-security-cloud-domains-registration-transfer-lock-enabled-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_clouddomains_registration')
+    mql: |
+      terraform.state.resources.where(type == 'google_clouddomains_registration').all(
+        values['management_settings'] != empty &&
+        values['management_settings'].all(_['transfer_lock_state'] == 'LOCKED')
+      )
+  # No Terraform variants: dnssecState is a computed registry-observed state (DS_RECORDS_PUBLISHED). The
+  # google_clouddomains_registration resource only expresses DNSSEC as ds_records configuration under
+  # dns_settings, not the published-state enum this check asserts, so a Terraform variant would inspect a
+  # different feature. Revisit if the provider exposes an observable DNSSEC state attribute.
+  - uid: mondoo-gcp-security-cloud-domains-registration-dnssec-published
+    title: Ensure Cloud Domains registrations publish DNSSEC
+    impact: 75
+    filters: asset.platform == 'gcp-project'
+    mql: |
+      gcp.project.cloudDomains.registrations.all(dnssecState == "DS_RECORDS_PUBLISHED")
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-2-i-transmission-security-integrity-controls
+      compliance/iso-27001-2022: iso-27001-2022-a-8-21
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-6
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-20
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: vda-isa-5-5-3-2
+    docs:
+      desc: |
+        This check ensures that every Cloud Domains registration publishes DNSSEC, indicated by a `dnssecState` of `DS_RECORDS_PUBLISHED`. When DNSSEC is published, the parent zone holds delegation-signer records that let resolvers cryptographically validate the domain's DNS responses.
+
+        **Why this matters**
+
+        - **DNS spoofing and cache poisoning:** Without published DNSSEC, forged DNS responses can redirect users to attacker-controlled hosts, and resolvers have no way to detect the tampering.
+        - **Traffic interception:** Spoofed records can divert web, email, and API traffic, enabling phishing, credential theft, and man-in-the-middle attacks.
+        - **Chain of trust:** Publishing DS records at the registry establishes the cryptographic chain from the root zone down to the domain, so validating resolvers reject unsigned or altered answers.
+        - **Complements zone signing:** DNSSEC is only effective end to end when the DS records are published at the registrar, not merely enabled on the authoritative zone.
+
+        **Risk mitigation**
+
+        - **Publish DS records:** Enable DNSSEC on the authoritative zone and ensure Cloud Domains publishes the matching DS records at the registry.
+        - **Use signed managed DNS:** Serve the domain from a DNSSEC-signed Cloud DNS zone so the DS records stay consistent with the active signing keys.
+        - **Monitor DNSSEC state:** Alert on any registration whose DNSSEC state leaves `DS_RECORDS_PUBLISHED`.
+      audit: |
+        ### Audit via Console
+
+        1. Open the [Google Cloud Console](https://console.cloud.google.com/) and navigate to **Network Services > Cloud Domains**.
+        2. Select each registration.
+        3. Open the **DNS** settings and review the DNSSEC status.
+
+        A passing registration shows DNSSEC as active with DS records published. A failing registration shows DNSSEC disabled or DS records unpublished.
+
+        ### Audit via CLI
+
+        1. Inspect each registration's DNSSEC state:
+
+        ```bash
+        gcloud domains registrations describe REGISTRATION \
+          --format="value(dnsSettings.googleDomainsDns.dsState)"
+        ```
+
+        A passing registration reports DS records published. A failing registration reports DNSSEC unpublished or disabled.
+      remediation:
+        - id: console
+          desc: |
+            To publish DNSSEC using the Google Cloud Console:
+
+            1. Go to **Network Services > Cloud Domains** in the Google Cloud Console.
+            2. Select the registration and open its **DNS** settings.
+            3. Ensure the domain is served by a DNSSEC-signed zone, then enable DNSSEC so the DS records are published at the registry.
+            4. Save the change and allow time for the registry to publish the DS records.
+        - id: cli
+          desc: |
+            Configure the registration to use a DNSSEC-signed Cloud DNS zone with DNSSEC enabled:
+
+            ```bash
+            gcloud domains registrations configure dns REGISTRATION \
+              --cloud-dns-zone=projects/PROJECT_ID/managedZones/ZONE \
+              --no-disable-dnssec
+            ```
+        # No Terraform remediation: DNSSEC publication (DS_RECORDS_PUBLISHED) is a computed registry state, and
+        # the google_clouddomains_registration resource only expresses DNSSEC as ds_records configuration under
+        # dns_settings, not the published state this check asserts.
+    refs:
+      - url: https://cloud.google.com/domains/docs/dnssec-advanced
+        title: DNSSEC configuration in Cloud Domains
