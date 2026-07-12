@@ -456,6 +456,8 @@ policies:
           - uid: mondoo-aws-security-codebuild-no-plaintext-credentials
           - uid: mondoo-aws-security-codebuild-source-ssl-verification
           - uid: mondoo-aws-security-codebuild-encryption-key-configured
+          - uid: mondoo-aws-security-codebuild-artifacts-encryption-not-disabled
+          - uid: mondoo-aws-security-codebuild-s3-logs-encryption-not-disabled
           - uid: mondoo-aws-security-codebuild-not-public
       - title: AWS App Runner
         checks:
@@ -610,6 +612,7 @@ policies:
           - uid: mondoo-aws-security-appstream-fleet-no-default-internet-access
           - uid: mondoo-aws-security-appstream-fleet-max-session-duration
           - uid: mondoo-aws-security-appstream-fleet-idle-disconnect
+          - uid: mondoo-aws-security-appstream-fleet-imdsv2
           - uid: mondoo-aws-security-appstream-image-builder-no-default-internet-access
           - uid: mondoo-aws-security-appstream-stack-url-redirection-disabled
           - uid: mondoo-aws-security-appstream-image-no-public-visibility
@@ -28631,6 +28634,354 @@ queries:
       cloudformation.template.resources.where(type == "AWS::CodeBuild::Project").all(
       properties['EncryptionKey'] != empty
       )
+  - uid: mondoo-aws-security-codebuild-artifacts-encryption-not-disabled
+    title: Ensure CodeBuild project artifact encryption is not disabled
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-10
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-aws-security-codebuild-artifacts-encryption-not-disabled-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-codebuild-artifacts-encryption-not-disabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-codebuild-artifacts-encryption-not-disabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-codebuild-artifacts-encryption-not-disabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-codebuild-artifacts-encryption-not-disabled-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
+    docs:
+      desc: |
+        This check ensures that AWS CodeBuild projects do not disable encryption of their output artifacts. CodeBuild encrypts build output artifacts by default, but setting `encryptionDisabled` to `true` turns that protection off, writing artifacts to Amazon S3 without CodeBuild-managed encryption.
+
+        **Why this matters**
+
+        - Build artifacts frequently contain compiled binaries, deployment packages, and embedded configuration that an attacker can analyze or tamper with if stored unencrypted.
+        - Disabling artifact encryption removes a defense-in-depth control and can leave sensitive build output readable to anyone who gains access to the artifact bucket.
+        - Encryption at rest is a baseline requirement in most compliance frameworks; explicitly disabling it creates audit findings and weakens the integrity guarantees of the build pipeline.
+
+        **Risk mitigation**
+
+        - **Confidentiality:** Keeps build output protected at rest so exposure of the underlying storage does not disclose artifact contents.
+        - **Integrity:** Preserves CodeBuild's encryption controls over artifacts produced by the pipeline.
+        - **Compliance:** Maintains encryption-at-rest guarantees expected by security and regulatory standards.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the AWS Management Console and navigate to **AWS CodeBuild**.
+        2. Select **Build projects** from the left panel.
+        3. Open each project, choose **Edit**, then **Artifacts**.
+        4. Review the artifact encryption setting.
+
+        A passing project has artifact encryption enabled. A failing project has **Disable artifacts encryption** selected.
+
+        ### Audit via CLI
+
+        1. List all CodeBuild projects:
+
+        ```bash
+        aws codebuild list-projects --query 'projects' --output text
+        ```
+
+        2. Check the artifact encryption setting for each project:
+
+        ```bash
+        aws codebuild batch-get-projects --names <project-name> \
+          --query "projects[*].{Name:name,EncryptionDisabled:artifacts.encryptionDisabled}"
+        ```
+
+        A passing project returns `"EncryptionDisabled": false` or `null`. A failing project returns `"EncryptionDisabled": true`.
+      remediation:
+        - id: console
+          desc: |
+            To ensure CodeBuild project artifact encryption is not disabled using the AWS Console:
+
+            1. Navigate to the AWS CodeBuild Console.
+            2. Select the build project to modify.
+            3. Select Edit > Artifacts.
+            4. Ensure the option to disable artifacts encryption is not selected.
+            5. Optionally, select a KMS customer managed key to encrypt the artifacts.
+            6. Select Update artifacts to apply the changes.
+        - id: cli
+          desc: |
+            To ensure CodeBuild project artifact encryption is not disabled using the AWS CLI, update the project so `encryptionDisabled` is `false`:
+
+            ```bash
+            aws codebuild update-project \
+              --name <project-name> \
+              --artifacts "type=S3,location=<bucket-name>,encryptionDisabled=false"
+            ```
+
+            Note: The `--artifacts` parameter replaces the entire artifacts configuration. Retrieve the current configuration with `aws codebuild batch-get-projects --names <project-name>` and include all existing artifact settings in the updated value.
+        - id: terraform
+          desc: |
+            To ensure CodeBuild project artifact encryption is not disabled in Terraform, ensure `encryption_disabled` is set to `false` (or omitted, as `false` is the default):
+
+            ```hcl
+            resource "aws_codebuild_project" "example" {
+              name         = "example-project"
+              service_role = aws_iam_role.codebuild_role.arn
+
+              artifacts {
+                type                = "S3"
+                location            = aws_s3_bucket.artifacts.bucket
+                encryption_disabled = false
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To ensure CodeBuild project artifact encryption is not disabled in CloudFormation, set `EncryptionDisabled` to `false`:
+
+            ```yaml
+            Resources:
+              CodeBuildProject:
+                Type: AWS::CodeBuild::Project
+                Properties:
+                  Name: example-project
+                  Artifacts:
+                    Type: S3
+                    Location: example-artifacts-bucket
+                    EncryptionDisabled: false
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/codebuild/latest/userguide/security-encryption.html
+        title: AWS Documentation - Data encryption in AWS CodeBuild
+      - url: https://docs.aws.amazon.com/codebuild/latest/APIReference/API_ProjectArtifacts.html
+        title: AWS Documentation - ProjectArtifacts API reference
+  - uid: mondoo-aws-security-codebuild-artifacts-encryption-not-disabled-aws
+    filters: asset.platform == "aws-codebuild-project"
+    mql: aws.codebuild.project.artifactsEncryptionDisabled != true
+  - uid: mondoo-aws-security-codebuild-artifacts-encryption-not-disabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_codebuild_project")
+    mql: |
+      terraform.resources("aws_codebuild_project").all(
+        blocks.where(type == "artifacts").all(
+          arguments.encryption_disabled != true
+        )
+      )
+  - uid: mondoo-aws-security-codebuild-artifacts-encryption-not-disabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_codebuild_project")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_codebuild_project").all(
+        change.after.artifacts[0].encryption_disabled != true
+      )
+  - uid: mondoo-aws-security-codebuild-artifacts-encryption-not-disabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_codebuild_project")
+    mql: |
+      terraform.state.resources.where(type == "aws_codebuild_project").all(
+        values.artifacts[0].encryption_disabled != true
+      )
+  - uid: mondoo-aws-security-codebuild-artifacts-encryption-not-disabled-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::CodeBuild::Project")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::CodeBuild::Project").all(
+      properties['Artifacts'] == empty || properties['Artifacts']['EncryptionDisabled'] != true
+      )
+  - uid: mondoo-aws-security-codebuild-s3-logs-encryption-not-disabled
+    title: Ensure CodeBuild S3 build log encryption is not disabled
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-10
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-aws-security-codebuild-s3-logs-encryption-not-disabled-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-codebuild-s3-logs-encryption-not-disabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-codebuild-s3-logs-encryption-not-disabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-codebuild-s3-logs-encryption-not-disabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-codebuild-s3-logs-encryption-not-disabled-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
+    docs:
+      desc: |
+        This check ensures that AWS CodeBuild projects which stream build logs to Amazon S3 do not disable encryption of those logs. When S3 logging is enabled with `encryptionDisabled` set to `true`, build logs are written to the bucket in plaintext.
+
+        **Why this matters**
+
+        - Build logs routinely capture environment details, resource identifiers, dependency sources, and occasionally secrets echoed by build steps, all of which are valuable to an attacker.
+        - Storing logs unencrypted in S3 exposes that content to anyone who can read the bucket, widening the impact of a bucket misconfiguration or credential leak.
+        - Encryption at rest for logs is a baseline expectation of most compliance frameworks; disabling it explicitly creates audit findings.
+
+        **Risk mitigation**
+
+        - **Confidentiality:** Keeps build log content protected at rest so storage exposure does not disclose pipeline details.
+        - **Incident forensics:** Preserves the integrity and protection of the log trail used during investigations.
+        - **Compliance:** Maintains encryption-at-rest guarantees expected by security and regulatory standards.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the AWS Management Console and navigate to **AWS CodeBuild**.
+        2. Select **Build projects** from the left panel.
+        3. Open each project, choose **Edit**, then **Logs**.
+        4. If **S3 logs** is enabled, review its encryption setting.
+
+        A passing project either has S3 logs disabled or has S3 logs enabled with encryption enabled. A failing project has S3 logs enabled with encryption disabled.
+
+        ### Audit via CLI
+
+        1. List all CodeBuild projects:
+
+        ```bash
+        aws codebuild list-projects --query 'projects' --output text
+        ```
+
+        2. Check the S3 logs configuration for each project:
+
+        ```bash
+        aws codebuild batch-get-projects --names <project-name> \
+          --query "projects[*].{Name:name,S3Logs:logsConfig.s3Logs}"
+        ```
+
+        A passing project returns `s3Logs` with `"status": "DISABLED"`, or with `"status": "ENABLED"` and `"encryptionDisabled": false`. A failing project returns `"status": "ENABLED"` with `"encryptionDisabled": true`.
+      remediation:
+        - id: console
+          desc: |
+            To ensure CodeBuild S3 build log encryption is not disabled using the AWS Console:
+
+            1. Navigate to the AWS CodeBuild Console.
+            2. Select the build project to modify.
+            3. Select Edit > Logs.
+            4. If S3 logs are enabled, ensure the option to disable S3 log encryption is not selected.
+            5. Optionally, select a KMS customer managed key to encrypt the logs.
+            6. Select Update to apply the changes.
+        - id: cli
+          desc: |
+            To ensure CodeBuild S3 build log encryption is not disabled using the AWS CLI, update the project so the S3 logs `encryptionDisabled` is `false`:
+
+            ```bash
+            aws codebuild update-project \
+              --name <project-name> \
+              --logs-config "s3Logs={status=ENABLED,location=<bucket-name>/<path>,encryptionDisabled=false}"
+            ```
+
+            Note: The `--logs-config` parameter replaces the entire logs configuration. Retrieve the current configuration with `aws codebuild batch-get-projects --names <project-name>` and include all existing CloudWatch and S3 log settings in the updated value.
+        - id: terraform
+          desc: |
+            To ensure CodeBuild S3 build log encryption is not disabled in Terraform, ensure `encryption_disabled` is set to `false` (or omitted, as `false` is the default) in the `s3_logs` block:
+
+            ```hcl
+            resource "aws_codebuild_project" "example" {
+              name         = "example-project"
+              service_role = aws_iam_role.codebuild_role.arn
+
+              logs_config {
+                s3_logs {
+                  status              = "ENABLED"
+                  location            = "${aws_s3_bucket.logs.id}/build-logs"
+                  encryption_disabled = false
+                }
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To ensure CodeBuild S3 build log encryption is not disabled in CloudFormation, set `EncryptionDisabled` to `false` in the `S3Logs` configuration:
+
+            ```yaml
+            Resources:
+              CodeBuildProject:
+                Type: AWS::CodeBuild::Project
+                Properties:
+                  Name: example-project
+                  LogsConfig:
+                    S3Logs:
+                      Status: ENABLED
+                      Location: example-logs-bucket/build-logs
+                      EncryptionDisabled: false
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/codebuild/latest/userguide/security-encryption.html
+        title: AWS Documentation - Data encryption in AWS CodeBuild
+      - url: https://docs.aws.amazon.com/codebuild/latest/APIReference/API_S3LogsConfig.html
+        title: AWS Documentation - S3LogsConfig API reference
+  - uid: mondoo-aws-security-codebuild-s3-logs-encryption-not-disabled-aws
+    filters: asset.platform == "aws-codebuild-project"
+    mql: |
+      aws.codebuild.project.logsS3Enabled == false ||
+      aws.codebuild.project.logsS3EncryptionDisabled != true
+  - uid: mondoo-aws-security-codebuild-s3-logs-encryption-not-disabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_codebuild_project")
+    mql: |
+      terraform.resources("aws_codebuild_project").all(
+        blocks.where(type == "logs_config").all(
+          blocks.where(type == "s3_logs").where(arguments.status == "ENABLED").all(
+            arguments.encryption_disabled != true
+          )
+        )
+      )
+  - uid: mondoo-aws-security-codebuild-s3-logs-encryption-not-disabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_codebuild_project")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_codebuild_project").all(
+        change.after.logs_config == empty ||
+        change.after.logs_config[0].s3_logs == empty ||
+        change.after.logs_config[0].s3_logs[0].status != "ENABLED" ||
+        change.after.logs_config[0].s3_logs[0].encryption_disabled != true
+      )
+  - uid: mondoo-aws-security-codebuild-s3-logs-encryption-not-disabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_codebuild_project")
+    mql: |
+      terraform.state.resources.where(type == "aws_codebuild_project").all(
+        values.logs_config == empty ||
+        values.logs_config[0].s3_logs == empty ||
+        values.logs_config[0].s3_logs[0].status != "ENABLED" ||
+        values.logs_config[0].s3_logs[0].encryption_disabled != true
+      )
+  - uid: mondoo-aws-security-codebuild-s3-logs-encryption-not-disabled-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::CodeBuild::Project")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::CodeBuild::Project").all(
+      properties['LogsConfig'] == empty ||
+      properties['LogsConfig']['S3Logs'] == empty ||
+      properties['LogsConfig']['S3Logs']['Status'] != "ENABLED" ||
+      properties['LogsConfig']['S3Logs']['EncryptionDisabled'] != true
+      )
   - uid: mondoo-aws-security-neptune-cluster-snapshot-encrypted
     title: Ensure Neptune DB cluster snapshots are encrypted at rest
     impact: 80
@@ -30494,6 +30845,117 @@ queries:
     mql: |
       cloudformation.template.resources.where(type == "AWS::AppStream::Fleet").all(
       properties['IdleDisconnectTimeoutInSeconds'] != empty && properties['IdleDisconnectTimeoutInSeconds'] > 0 && properties['IdleDisconnectTimeoutInSeconds'] <= 900
+      )
+  # No Terraform variants: the aws_appstream_fleet resource exposes no IMDS/instance-metadata argument; only CloudFormation's AWS::AppStream::Fleet has DisableIMDSV1. Revisit if the AWS Terraform provider adds an IMDS argument.
+  - uid: mondoo-aws-security-appstream-fleet-imdsv2
+    title: Ensure AppStream 2.0 fleets disable IMDSv1 and require IMDSv2
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-14
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-1
+      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/soc2-2017: soc2-control-cc6-1-8
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    variants:
+      - uid: mondoo-aws-security-appstream-fleet-imdsv2-aws
+        tags:
+          mondoo.com/filter-title: "AWS Account"
+          mondoo.com/filter-icon: "aws"
+      - uid: mondoo-aws-security-appstream-fleet-imdsv2-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
+    docs:
+      desc: |
+        This check ensures that Amazon AppStream 2.0 fleets disable Instance Metadata Service Version 1 (IMDSv1) so that streaming instances accept only session-authenticated IMDSv2 requests. When IMDSv1 is enabled, the instance metadata endpoint answers unauthenticated requests, exposing the fleet's IAM role credentials to theft.
+
+        **Why this matters**
+
+        - AppStream fleet instances assume an IAM role, and the temporary credentials for that role are retrievable from the instance metadata service at `169.254.169.254`.
+        - With IMDSv1, any process or user session on the instance, or a server-side request forgery (SSRF) flaw in a streamed application, can read those credentials with a single unauthenticated request.
+        - IMDSv2 requires a session token obtained through a `PUT` request that IMDSv1-style SSRF payloads cannot make, and it enforces a hop limit that stops credentials from being relayed off the instance.
+        - Stolen fleet-role credentials let an attacker act with the fleet's AWS permissions from anywhere, turning a single application flaw into an account-level compromise.
+
+        **Risk mitigation**
+
+        - **Credential theft prevention:** Blocks unauthenticated retrieval of the fleet role's temporary credentials.
+        - **SSRF containment:** Neutralizes SSRF payloads that rely on simple `GET` requests to the metadata endpoint.
+        - **Blast radius reduction:** Prevents a compromised streaming session from pivoting to the fleet's IAM permissions.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the AWS Management Console and navigate to the **Amazon AppStream 2.0** service.
+        2. In the left navigation pane, select **Fleets**.
+        3. Select a fleet and review its details.
+        4. Confirm that IMDSv1 is disabled for the fleet.
+
+        A passing fleet has IMDSv1 disabled (IMDSv2 required). A failing fleet has IMDSv1 enabled.
+
+        ### Audit via CLI
+
+        1. List all AppStream fleets and their IMDSv1 setting:
+
+        ```bash
+        aws appstream describe-fleets \
+          --query "Fleets[*].{Name:Name,DisableIMDSV1:DisableIMDSV1}" \
+          --output table
+        ```
+
+        A passing fleet returns `DisableIMDSV1` as `true`. A failing fleet returns `false` or `null`.
+      remediation:
+        - id: console
+          desc: |
+            To disable IMDSv1 on an AppStream 2.0 fleet using the AWS Console:
+
+            1. Navigate to the **AppStream 2.0 Console** and select **Fleets**.
+            2. Select the fleet and choose **Edit**. The fleet must be in a stopped state to modify this setting.
+            3. Disable IMDSv1 so that the fleet requires IMDSv2.
+            4. Save the changes.
+        - id: cli
+          desc: |
+            To disable IMDSv1 on an AppStream 2.0 fleet using the AWS CLI, stop the fleet and update it to require IMDSv2:
+
+            ```bash
+            aws appstream update-fleet \
+              --name <fleet-name> \
+              --disable-imdsv1
+            ```
+        - id: cloudformation
+          desc: |
+            To require IMDSv2 on an AppStream 2.0 fleet in CloudFormation, set `DisableIMDSV1` to `true`:
+
+            ```yaml
+            Resources:
+              Fleet:
+                Type: AWS::AppStream::Fleet
+                Properties:
+                  Name: example-fleet
+                  InstanceType: stream.standard.medium
+                  DisableIMDSV1: true
+            ```
+        # No Terraform remediation: the aws_appstream_fleet resource has no IMDS/instance-metadata argument to set. Revisit if the AWS Terraform provider adds one.
+    refs:
+      - url: https://docs.aws.amazon.com/appstream2/latest/developerguide/appstream2-instance-metadata-service.html
+        title: Amazon AppStream 2.0 instance metadata service
+      - url: https://docs.aws.amazon.com/appstream2/latest/APIReference/API_CreateFleet.html
+        title: Amazon AppStream 2.0 CreateFleet API reference
+  - uid: mondoo-aws-security-appstream-fleet-imdsv2-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.appstream.fleets.all(disableIMDSV1 == true)
+  - uid: mondoo-aws-security-appstream-fleet-imdsv2-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::AppStream::Fleet")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::AppStream::Fleet").all(
+      properties['DisableIMDSV1'] == true
       )
   - uid: mondoo-aws-security-appstream-image-builder-no-default-internet-access
     title: Ensure AppStream 2.0 image builders disable default internet access
