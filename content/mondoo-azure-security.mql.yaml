@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-azure-security
     name: Mondoo Microsoft Azure Security
-    version: 9.5.0
+    version: 9.6.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -128,6 +128,9 @@ policies:
           - uid: mondoo-azure-security-sql-database-audit-on
           - uid: mondoo-azure-security-sql-server-devops-auditing-enabled
           - uid: mondoo-azure-security-mysql-flexible-geo-backup-cmk
+          - uid: mondoo-azure-security-sql-managed-instance-public-data-endpoint-disabled
+          - uid: mondoo-azure-security-sql-managed-instance-min-tls-1-2
+          - uid: mondoo-azure-security-sql-managed-instance-tde-cmk-encryption
       - title: Azure Key Vault
         checks:
           - uid: mondoo-azure-security-ensure-the-expiration-date-is-set-for-all-keys-and-secrets-in-kv
@@ -260,6 +263,7 @@ policies:
           - uid: mondoo-azure-security-redis-latest-version
           - uid: mondoo-azure-security-redis-auth-required
           - uid: mondoo-azure-security-redis-cmk-encryption
+          - uid: mondoo-azure-security-redis-no-unrestricted-firewall-rule
       - title: Azure Cosmos DB
         checks:
           - uid: mondoo-azure-security-cosmosdb-public-access-disabled
@@ -374,6 +378,8 @@ policies:
         checks:
           - uid: mondoo-azure-security-api-management-internal-vnet-mode
           - uid: mondoo-azure-security-api-management-gateway-min-tls-1-2
+          - uid: mondoo-azure-security-api-management-weak-protocols-disabled
+          - uid: mondoo-azure-security-api-management-public-network-access-disabled
       - title: Azure App Configuration
         checks:
           - uid: mondoo-azure-security-appconfiguration-public-network-access-disabled
@@ -384,6 +390,7 @@ policies:
           - uid: mondoo-azure-security-cognitive-services-local-auth-disabled
           - uid: mondoo-azure-security-cognitive-services-network-acl-default-deny
           - uid: mondoo-azure-security-cognitive-services-managed-identity
+          - uid: mondoo-azure-security-cognitive-services-cmk-encryption
       - title: Azure Machine Learning
         checks:
           - uid: mondoo-azure-security-ml-workspace-public-network-access-disabled
@@ -408,6 +415,7 @@ policies:
         checks:
           - uid: mondoo-azure-security-kusto-cluster-public-network-access-disabled
           - uid: mondoo-azure-security-kusto-cluster-disk-encryption-enabled
+          - uid: mondoo-azure-security-kusto-cluster-cmk-encryption
       - title: Azure Automation
         checks:
           - uid: mondoo-azure-security-automation-account-variables-encrypted
@@ -47753,4 +47761,1216 @@ queries:
     mql: |
       bicep.resources.where(type == "Microsoft.Network/networkSecurityPerimeters/resourceAssociations").all(
         properties['accessMode'] == "Enforced"
+      )
+  - uid: mondoo-azure-security-sql-managed-instance-public-data-endpoint-disabled
+    title: Ensure SQL Managed Instance disables the public data endpoint
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    variants:
+      - uid: mondoo-azure-security-sql-managed-instance-public-data-endpoint-disabled-azure
+        tags:
+          mondoo.com/filter-title: Azure SQL Managed Instance
+          mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-sql-managed-instance-public-data-endpoint-disabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-sql-managed-instance-public-data-endpoint-disabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-sql-managed-instance-public-data-endpoint-disabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-sql-managed-instance-public-data-endpoint-disabled-bicep
+        tags:
+          mondoo.com/filter-title: Bicep
+          mondoo.com/filter-icon: bicep
+    docs:
+      desc: |
+        This check ensures that Azure SQL Managed Instance does not expose its public data endpoint. By default the public endpoint is disabled and clients connect over the instance's virtual network, but enabling it publishes the database on a public IP address reachable from the internet on port 3342.
+
+        **Why this matters**
+
+        - **Reduced attack surface:** Keeping the public endpoint off means the managed instance is only reachable from inside its virtual network and peered or private-linked networks, removing it as a target for internet-based scanning and brute-force attempts.
+        - **Defense in depth:** Private connectivity complements authentication and firewall rules; even a leaked credential is far less useful when the endpoint cannot be reached from the public internet.
+        - **Data protection:** The database holds sensitive application data, so limiting where connections can originate reduces the paths an attacker can use to reach it.
+
+        **Risk mitigation**
+
+        - **Internet exposure:** With the public endpoint disabled, an attacker who discovers the instance name cannot open a connection from outside the private network.
+        - **Credential-stuffing and brute force:** Attackers cannot mount online password attacks against an endpoint that does not accept public traffic.
+      audit: |
+        ### Audit via Azure CLI
+
+        1. List managed instances and their public-endpoint state:
+
+        ```bash
+        az sql mi list --query "[].{Name:name, ResourceGroup:resourceGroup, PublicEndpoint:publicDataEndpointEnabled}" -o table
+        ```
+
+        2. A passing instance reports `PublicEndpoint` as `false`; a failing instance reports `true`.
+
+        ### Audit via Azure Portal
+
+        1. Navigate to **SQL managed instances** and select an instance.
+        2. Open **Networking** under Security.
+        3. Confirm **Public endpoint (data)** is set to **Disable**.
+      remediation:
+        - id: portal
+          desc: |
+            To disable the public data endpoint on a SQL Managed Instance using the Azure Portal:
+
+            1. Navigate to **SQL managed instances** and select the instance.
+            2. Open **Networking** under Security.
+            3. Set **Public endpoint (data)** to **Disable**.
+            4. Save the changes.
+        - id: cli
+          desc: |
+            To disable the public data endpoint on a SQL Managed Instance using the Azure CLI:
+
+            ```bash
+            az sql mi update --resource-group-name <ResourceGroupName> --managed-instance-name <ManagedInstanceName> --public-data-endpoint-enabled false
+            ```
+        - id: terraform
+          desc: |
+            To disable the public data endpoint on a SQL Managed Instance in Terraform, set `public_data_endpoint_enabled` to `false` (or omit it, as it defaults to disabled):
+
+            ```hcl
+            resource "azurerm_mssql_managed_instance" "example" {
+              name                = "example-mi"
+              resource_group_name = azurerm_resource_group.example.name
+              location            = azurerm_resource_group.example.location
+
+              public_data_endpoint_enabled = false
+
+              # ...
+            }
+            ```
+        - id: bicep
+          desc: |
+            To disable the public data endpoint on a SQL Managed Instance in Bicep:
+
+            ```bicep
+            resource managedInstance 'Microsoft.Sql/managedInstances@2023-08-01-preview' = {
+              name: 'example-mi'
+              location: resourceGroup().location
+              properties: {
+                publicDataEndpointEnabled: false
+                // ...
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/azure-sql/managed-instance/public-endpoint-configure
+        title: Configure public endpoint in Azure SQL Managed Instance
+  - uid: mondoo-azure-security-sql-managed-instance-public-data-endpoint-disabled-azure
+    filters: |
+      asset.platform == "azure"
+    mql: |
+      azure.subscription.sql.managedInstances.all(
+        publicDataEndpointEnabled != true
+      )
+  - uid: mondoo-azure-security-sql-managed-instance-public-data-endpoint-disabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_mssql_managed_instance")
+    mql: |
+      terraform.resources("azurerm_mssql_managed_instance").all(
+        arguments['public_data_endpoint_enabled'] != true
+      )
+  - uid: mondoo-azure-security-sql-managed-instance-public-data-endpoint-disabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_mssql_managed_instance")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_mssql_managed_instance").all(
+        change.after['public_data_endpoint_enabled'] != true
+      )
+  - uid: mondoo-azure-security-sql-managed-instance-public-data-endpoint-disabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_mssql_managed_instance")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_mssql_managed_instance").all(
+        values['public_data_endpoint_enabled'] != true
+      )
+  - uid: mondoo-azure-security-sql-managed-instance-public-data-endpoint-disabled-bicep
+    filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.Sql/managedInstances")
+    mql: |
+      bicep.resources.where(type == "Microsoft.Sql/managedInstances").all(
+        properties["publicDataEndpointEnabled"] != true
+      )
+  - uid: mondoo-azure-security-sql-managed-instance-min-tls-1-2
+    title: Ensure SQL Managed Instance enforces TLS 1.2
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    variants:
+      - uid: mondoo-azure-security-sql-managed-instance-min-tls-1-2-azure
+        tags:
+          mondoo.com/filter-title: Azure SQL Managed Instance
+          mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-sql-managed-instance-min-tls-1-2-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-sql-managed-instance-min-tls-1-2-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-sql-managed-instance-min-tls-1-2-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-sql-managed-instance-min-tls-1-2-bicep
+        tags:
+          mondoo.com/filter-title: Bicep
+          mondoo.com/filter-icon: bicep
+    docs:
+      desc: |
+        This check ensures that Azure SQL Managed Instance requires a minimum TLS version of 1.2 for client connections. Older TLS versions (1.0 and 1.1) contain known cryptographic weaknesses, and allowing them lets clients negotiate a downgraded, less secure channel.
+
+        **Why this matters**
+
+        - **Data-in-transit protection:** TLS 1.2 uses modern cipher suites that protect query traffic and result sets from interception and tampering as they cross the network.
+        - **Downgrade resistance:** Setting a floor of 1.2 prevents an attacker from forcing a client and server to negotiate a weaker, breakable protocol version.
+        - **Compliance alignment:** Regulatory frameworks require deprecating TLS 1.0 and 1.1 for systems that handle sensitive or regulated data.
+
+        **Risk mitigation**
+
+        - **Protocol downgrade attacks:** Rejecting connections below TLS 1.2 closes off attacks that exploit weaknesses in earlier protocol versions.
+        - **Traffic interception:** Strong transport encryption keeps credentials and query data unreadable to anyone observing the network path.
+      audit: |
+        ### Audit via Azure CLI
+
+        1. List managed instances and their minimum TLS version:
+
+        ```bash
+        az sql mi list --query "[].{Name:name, ResourceGroup:resourceGroup, MinimalTlsVersion:minimalTlsVersion}" -o table
+        ```
+
+        2. A passing instance reports `MinimalTlsVersion` as `1.2`; any lower value fails.
+
+        ### Audit via Azure Portal
+
+        1. Navigate to **SQL managed instances** and select an instance.
+        2. Open **Networking** under Security.
+        3. Confirm **Minimum TLS version** is set to **1.2**.
+      remediation:
+        - id: portal
+          desc: |
+            To enforce TLS 1.2 on a SQL Managed Instance using the Azure Portal:
+
+            1. Navigate to **SQL managed instances** and select the instance.
+            2. Open **Networking** under Security.
+            3. Set **Minimum TLS version** to **1.2**.
+            4. Save the changes.
+        - id: cli
+          desc: |
+            To enforce TLS 1.2 on a SQL Managed Instance using the Azure CLI:
+
+            ```bash
+            az sql mi update --resource-group-name <ResourceGroupName> --managed-instance-name <ManagedInstanceName> --minimal-tls-version 1.2
+            ```
+        - id: terraform
+          desc: |
+            To enforce TLS 1.2 on a SQL Managed Instance in Terraform, set `minimum_tls_version` to `1.2`:
+
+            ```hcl
+            resource "azurerm_mssql_managed_instance" "example" {
+              name                = "example-mi"
+              resource_group_name = azurerm_resource_group.example.name
+              location            = azurerm_resource_group.example.location
+
+              minimum_tls_version = "1.2"
+
+              # ...
+            }
+            ```
+        - id: bicep
+          desc: |
+            To enforce TLS 1.2 on a SQL Managed Instance in Bicep:
+
+            ```bicep
+            resource managedInstance 'Microsoft.Sql/managedInstances@2023-08-01-preview' = {
+              name: 'example-mi'
+              location: resourceGroup().location
+              properties: {
+                minimalTlsVersion: '1.2'
+                // ...
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/azure-sql/database/connectivity-settings
+        title: TLS considerations for Azure SQL connectivity
+  - uid: mondoo-azure-security-sql-managed-instance-min-tls-1-2-azure
+    filters: |
+      asset.platform == "azure"
+    mql: |
+      azure.subscription.sql.managedInstances.all(
+        minimalTlsVersion == "1.2"
+      )
+  - uid: mondoo-azure-security-sql-managed-instance-min-tls-1-2-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_mssql_managed_instance")
+    mql: |
+      terraform.resources("azurerm_mssql_managed_instance").all(
+        arguments['minimum_tls_version'] == "1.2"
+      )
+  - uid: mondoo-azure-security-sql-managed-instance-min-tls-1-2-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_mssql_managed_instance")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_mssql_managed_instance").all(
+        change.after['minimum_tls_version'] == "1.2"
+      )
+  - uid: mondoo-azure-security-sql-managed-instance-min-tls-1-2-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_mssql_managed_instance")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_mssql_managed_instance").all(
+        values['minimum_tls_version'] == "1.2"
+      )
+  - uid: mondoo-azure-security-sql-managed-instance-min-tls-1-2-bicep
+    filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.Sql/managedInstances")
+    mql: |
+      bicep.resources.where(type == "Microsoft.Sql/managedInstances").all(
+        properties["minimalTlsVersion"] == "1.2"
+      )
+  - uid: mondoo-azure-security-sql-managed-instance-tde-cmk-encryption
+    title: Ensure SQL Managed Instance uses a customer-managed key for TDE
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-10
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-azure-security-sql-managed-instance-tde-cmk-encryption-azure
+        tags:
+          mondoo.com/filter-title: Azure SQL Managed Instance
+          mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-sql-managed-instance-tde-cmk-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-sql-managed-instance-tde-cmk-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-sql-managed-instance-tde-cmk-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-sql-managed-instance-tde-cmk-encryption-bicep
+        tags:
+          mondoo.com/filter-title: Bicep
+          mondoo.com/filter-icon: bicep
+    docs:
+      desc: |
+        This check ensures that Azure SQL Managed Instance encrypts data at rest with transparent data encryption (TDE) backed by a customer-managed key (CMK) in Azure Key Vault. By default TDE uses a service-managed key, but a customer-managed key gives the organization direct control over the key lifecycle, including rotation and revocation.
+
+        **Why this matters**
+
+        - **Key ownership:** A customer-managed key lets the organization revoke access to encrypted data instantly by disabling or deleting the key in Key Vault, a control that service-managed keys do not provide.
+        - **Separation of duties:** Holding the key in Key Vault separates control of the encryption material from control of the database, so no single operator can both administer the instance and unlock its data.
+        - **Auditable key access:** Key Vault logs every use of the key, giving auditors a record of when and by whom the TDE protector was accessed.
+
+        **Risk mitigation**
+
+        - **Storage and backup theft:** Data files and backups produced by the instance remain unreadable without access to the customer-managed key in Key Vault.
+        - **Fast revocation:** If a compromise is suspected, disabling the key immediately renders the encrypted data inaccessible without waiting for a platform key rotation.
+      audit: |
+        ### Audit via Azure CLI
+
+        1. Show the TDE protector configured for a managed instance:
+
+        ```bash
+        az sql mi tde-key show --resource-group-name <ResourceGroupName> --managed-instance-name <ManagedInstanceName>
+        ```
+
+        2. A passing instance reports a `serverKeyType` of `AzureKeyVault` with a Key Vault URI; an instance using `ServiceManaged` fails.
+
+        ### Audit via Azure Portal
+
+        1. Navigate to **SQL managed instances** and select an instance.
+        2. Open **Transparent data encryption** under Security.
+        3. Confirm **Customer-managed key** is selected and points to a Key Vault key.
+      remediation:
+        - id: portal
+          desc: |
+            To configure a customer-managed TDE key on a SQL Managed Instance using the Azure Portal:
+
+            1. Navigate to **SQL managed instances** and select the instance.
+            2. Open **Transparent data encryption** under Security.
+            3. Select **Customer-managed key** and choose the Key Vault and key.
+            4. Save the changes.
+        - id: cli
+          desc: |
+            To configure a customer-managed TDE key on a SQL Managed Instance using the Azure CLI, add the key and set it as the TDE protector:
+
+            ```bash
+            az sql mi key create --resource-group-name <ResourceGroupName> --managed-instance-name <ManagedInstanceName> --kid <KeyVaultKeyId>
+            az sql mi tde-key set --resource-group-name <ResourceGroupName> --managed-instance-name <ManagedInstanceName> --server-key-type AzureKeyVault --kid <KeyVaultKeyId>
+            ```
+        - id: terraform
+          desc: |
+            To configure a customer-managed TDE key on a SQL Managed Instance in Terraform, use the dedicated encryption resource:
+
+            ```hcl
+            resource "azurerm_mssql_managed_instance_transparent_data_encryption" "example" {
+              managed_instance_id = azurerm_mssql_managed_instance.example.id
+              key_vault_key_id    = azurerm_key_vault_key.example.id
+            }
+            ```
+        - id: bicep
+          desc: |
+            To configure a customer-managed TDE key on a SQL Managed Instance in Bicep, set the encryption protector to the Key Vault key:
+
+            ```bicep
+            resource tdeProtector 'Microsoft.Sql/managedInstances/encryptionProtector@2023-08-01-preview' = {
+              name: '${managedInstance.name}/current'
+              properties: {
+                serverKeyType: 'AzureKeyVault'
+                serverKeyName: keyVaultKeyName
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/azure-sql/database/transparent-data-encryption-byok-overview
+        title: Transparent data encryption with customer-managed keys
+  - uid: mondoo-azure-security-sql-managed-instance-tde-cmk-encryption-azure
+    filters: |
+      asset.platform == "azure"
+    mql: |
+      azure.subscription.sql.managedInstances.all(
+        encryptionKey != empty
+      )
+  - uid: mondoo-azure-security-sql-managed-instance-tde-cmk-encryption-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_mssql_managed_instance_transparent_data_encryption")
+    mql: |
+      terraform.resources("azurerm_mssql_managed_instance_transparent_data_encryption").all(
+        arguments['key_vault_key_id'] != empty
+      )
+  - uid: mondoo-azure-security-sql-managed-instance-tde-cmk-encryption-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_mssql_managed_instance_transparent_data_encryption")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_mssql_managed_instance_transparent_data_encryption").all(
+        change.after['key_vault_key_id'] != empty
+      )
+  - uid: mondoo-azure-security-sql-managed-instance-tde-cmk-encryption-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_mssql_managed_instance_transparent_data_encryption")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_mssql_managed_instance_transparent_data_encryption").all(
+        values['key_vault_key_id'] != empty
+      )
+  - uid: mondoo-azure-security-sql-managed-instance-tde-cmk-encryption-bicep
+    filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.Sql/managedInstances/encryptionProtector")
+    mql: |
+      bicep.resources.where(type == "Microsoft.Sql/managedInstances/encryptionProtector").all(
+        properties["serverKeyType"] == "AzureKeyVault"
+      )
+  - uid: mondoo-azure-security-cognitive-services-cmk-encryption
+    title: Ensure Cognitive Services account uses a customer-managed key
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-10
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-azure-security-cognitive-services-cmk-encryption-azure
+        tags:
+          mondoo.com/filter-title: Azure Cognitive Services
+          mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-cognitive-services-cmk-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-cognitive-services-cmk-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-cognitive-services-cmk-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-cognitive-services-cmk-encryption-bicep
+        tags:
+          mondoo.com/filter-title: Bicep
+          mondoo.com/filter-icon: bicep
+    docs:
+      desc: |
+        This check ensures that an Azure Cognitive Services (Azure AI Services) account encrypts data at rest with a customer-managed key (CMK) stored in Azure Key Vault. By default these accounts use Microsoft-managed keys, but a customer-managed key gives the organization control over the key lifecycle, including rotation and revocation.
+
+        **Why this matters**
+
+        - **Key ownership:** A customer-managed key lets the organization revoke access to stored data instantly by disabling or deleting the key in Key Vault, a control that Microsoft-managed keys do not provide.
+        - **Sensitive content protection:** Cognitive Services accounts can hold uploaded documents, training data, and inference inputs; encrypting them with a controlled key limits who can ultimately decrypt that content.
+        - **Auditable key access:** Key Vault logs every use of the key, giving auditors a record of access to the encryption material.
+
+        **Risk mitigation**
+
+        - **Data recovery from storage:** Content held by the account remains unreadable without access to the customer-managed key in Key Vault.
+        - **Fast revocation:** If a compromise is suspected, disabling the key renders the account's stored data inaccessible.
+      audit: |
+        ### Audit via Azure CLI
+
+        1. Show the encryption configuration for an account:
+
+        ```bash
+        az cognitiveservices account show --resource-group-name <ResourceGroupName> --account-name <AccountName> --query "properties.encryption"
+        ```
+
+        2. A passing account reports `keySource` as `Microsoft.KeyVault` with Key Vault properties; an account reporting `Microsoft.CognitiveServices` uses platform-managed keys and fails.
+
+        ### Audit via Azure Portal
+
+        1. Navigate to **Azure AI services** and select an account.
+        2. Open **Encryption** under Resource Management.
+        3. Confirm **Customer Managed Keys** is selected and points to a Key Vault key.
+      remediation:
+        - id: portal
+          desc: |
+            To configure a customer-managed key on a Cognitive Services account using the Azure Portal:
+
+            1. Navigate to **Azure AI services** and select the account.
+            2. Open **Encryption** under Resource Management.
+            3. Select **Customer Managed Keys** and choose the Key Vault and key.
+            4. Save the changes.
+        - id: cli
+          desc: |
+            To configure a customer-managed key on a Cognitive Services account using the Azure CLI, pass the Key Vault encryption settings:
+
+            ```bash
+            az cognitiveservices account update --resource-group-name <ResourceGroupName> --account-name <AccountName> --encryption "{\"keySource\":\"Microsoft.KeyVault\",\"keyVaultProperties\":{\"keyName\":\"<KeyName>\",\"keyVaultUri\":\"<KeyVaultUri>\"}}"
+            ```
+        - id: terraform
+          desc: |
+            To configure a customer-managed key on a Cognitive Services account in Terraform, add a `customer_managed_key` block:
+
+            ```hcl
+            resource "azurerm_cognitive_account" "example" {
+              name                = "example-account"
+              resource_group_name = azurerm_resource_group.example.name
+              location            = azurerm_resource_group.example.location
+              kind                = "CognitiveServices"
+              sku_name            = "S0"
+
+              customer_managed_key {
+                key_vault_key_id = azurerm_key_vault_key.example.id
+              }
+            }
+            ```
+        - id: bicep
+          desc: |
+            To configure a customer-managed key on a Cognitive Services account in Bicep:
+
+            ```bicep
+            resource account 'Microsoft.CognitiveServices/accounts@2024-10-01' = {
+              name: 'example-account'
+              location: resourceGroup().location
+              properties: {
+                encryption: {
+                  keySource: 'Microsoft.KeyVault'
+                  keyVaultProperties: {
+                    keyName: keyVaultKeyName
+                    keyVaultUri: keyVault.properties.vaultUri
+                  }
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/ai-services/encryption/cognitive-services-encryption-keys-portal
+        title: Customer-managed keys for Azure AI services
+  - uid: mondoo-azure-security-cognitive-services-cmk-encryption-azure
+    filters: |
+      asset.platform == "azure"
+    mql: |
+      azure.subscription.cognitiveServices.accounts.all(
+        cmkKeySource == "Microsoft.KeyVault"
+      )
+  - uid: mondoo-azure-security-cognitive-services-cmk-encryption-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_cognitive_account")
+    mql: |
+      terraform.resources("azurerm_cognitive_account").all(
+        blocks.where(type == "customer_managed_key") != empty
+      )
+  - uid: mondoo-azure-security-cognitive-services-cmk-encryption-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_cognitive_account")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_cognitive_account").all(
+        change.after['customer_managed_key'] != empty
+      )
+  - uid: mondoo-azure-security-cognitive-services-cmk-encryption-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_cognitive_account")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_cognitive_account").all(
+        values['customer_managed_key'] != empty
+      )
+  - uid: mondoo-azure-security-cognitive-services-cmk-encryption-bicep
+    filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.CognitiveServices/accounts")
+    mql: |
+      bicep.resources.where(type == "Microsoft.CognitiveServices/accounts").all(
+        properties["encryption"]["keySource"] == "Microsoft.KeyVault"
+      )
+  - uid: mondoo-azure-security-kusto-cluster-cmk-encryption
+    title: Ensure Azure Data Explorer cluster uses a customer-managed key
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-10
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-azure-security-kusto-cluster-cmk-encryption-azure
+        tags:
+          mondoo.com/filter-title: Azure Data Explorer
+          mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-kusto-cluster-cmk-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-kusto-cluster-cmk-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-kusto-cluster-cmk-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-kusto-cluster-cmk-encryption-bicep
+        tags:
+          mondoo.com/filter-title: Bicep
+          mondoo.com/filter-icon: bicep
+    docs:
+      desc: |
+        This check ensures that an Azure Data Explorer (Kusto) cluster encrypts data at rest with a customer-managed key (CMK) held in Azure Key Vault. By default the cluster uses a Microsoft-managed key, but a customer-managed key gives the organization control over the key lifecycle, including rotation and revocation.
+
+        **Why this matters**
+
+        - **Key ownership:** A customer-managed key lets the organization revoke access to cluster data instantly by disabling or deleting the key in Key Vault, a control that Microsoft-managed keys do not provide.
+        - **Analytics data protection:** Data Explorer clusters ingest and retain large volumes of telemetry and log data; encrypting it with a controlled key limits who can ultimately decrypt that content.
+        - **Auditable key access:** Key Vault logs every use of the key, giving auditors a record of access to the encryption material.
+
+        **Risk mitigation**
+
+        - **Data recovery from storage:** The cluster's persisted data remains unreadable without access to the customer-managed key in Key Vault.
+        - **Fast revocation:** If a compromise is suspected, disabling the key renders the cluster's data inaccessible.
+      audit: |
+        ### Audit via Azure CLI
+
+        1. Show the Key Vault properties for a cluster:
+
+        ```bash
+        az kusto cluster show --resource-group-name <ResourceGroupName> --cluster-name <ClusterName> --query "keyVaultProperties"
+        ```
+
+        2. A passing cluster reports a `keyName` and `keyVaultUri`; a cluster with empty Key Vault properties uses platform-managed keys and fails.
+
+        ### Audit via Azure Portal
+
+        1. Navigate to **Azure Data Explorer Clusters** and select a cluster.
+        2. Open **Security** under Settings.
+        3. Confirm **Customer managed key** is enabled and points to a Key Vault key.
+      remediation:
+        - id: portal
+          desc: |
+            To configure a customer-managed key on an Azure Data Explorer cluster using the Azure Portal:
+
+            1. Navigate to **Azure Data Explorer Clusters** and select the cluster.
+            2. Open **Security** under Settings.
+            3. Enable **Customer managed key** and choose the Key Vault and key.
+            4. Save the changes.
+        - id: cli
+          desc: |
+            To configure a customer-managed key on an Azure Data Explorer cluster using the Azure CLI:
+
+            ```bash
+            az kusto cluster update --resource-group-name <ResourceGroupName> --cluster-name <ClusterName> --key-vault-properties key-name=<KeyName> key-vault-uri=<KeyVaultUri>
+            ```
+        - id: terraform
+          desc: |
+            To configure a customer-managed key on an Azure Data Explorer cluster in Terraform, use the dedicated customer-managed-key resource:
+
+            ```hcl
+            resource "azurerm_kusto_cluster_customer_managed_key" "example" {
+              cluster_id   = azurerm_kusto_cluster.example.id
+              key_vault_id = azurerm_key_vault.example.id
+              key_name     = azurerm_key_vault_key.example.name
+              key_version  = azurerm_key_vault_key.example.version
+            }
+            ```
+        - id: bicep
+          desc: |
+            To configure a customer-managed key on an Azure Data Explorer cluster in Bicep:
+
+            ```bicep
+            resource cluster 'Microsoft.Kusto/clusters@2023-08-15' = {
+              name: 'examplecluster'
+              location: resourceGroup().location
+              properties: {
+                keyVaultProperties: {
+                  keyName: keyVaultKeyName
+                  keyVaultUri: keyVault.properties.vaultUri
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/data-explorer/customer-managed-keys-portal
+        title: Configure customer-managed keys for Azure Data Explorer
+  - uid: mondoo-azure-security-kusto-cluster-cmk-encryption-azure
+    filters: |
+      asset.platform == "azure"
+    mql: |
+      azure.subscription.kusto.clusters.all(
+        cmkKeyName != empty
+      )
+  - uid: mondoo-azure-security-kusto-cluster-cmk-encryption-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_kusto_cluster_customer_managed_key")
+    mql: |
+      terraform.resources("azurerm_kusto_cluster_customer_managed_key").all(
+        arguments['key_name'] != empty
+      )
+  - uid: mondoo-azure-security-kusto-cluster-cmk-encryption-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_kusto_cluster_customer_managed_key")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_kusto_cluster_customer_managed_key").all(
+        change.after['key_name'] != empty
+      )
+  - uid: mondoo-azure-security-kusto-cluster-cmk-encryption-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_kusto_cluster_customer_managed_key")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_kusto_cluster_customer_managed_key").all(
+        values['key_name'] != empty
+      )
+  - uid: mondoo-azure-security-kusto-cluster-cmk-encryption-bicep
+    filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.Kusto/clusters")
+    mql: |
+      bicep.resources.where(type == "Microsoft.Kusto/clusters").all(
+        properties["keyVaultProperties"]["keyName"] != empty
+      )
+  - uid: mondoo-azure-security-api-management-weak-protocols-disabled
+    title: Ensure API Management disables SSL 3.0 and 3DES
+    impact: 85
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    variants:
+      - uid: mondoo-azure-security-api-management-weak-protocols-disabled-azure
+        tags:
+          mondoo.com/filter-title: Azure API Management
+          mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-api-management-weak-protocols-disabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-api-management-weak-protocols-disabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-api-management-weak-protocols-disabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-api-management-weak-protocols-disabled-bicep
+        tags:
+          mondoo.com/filter-title: Bicep
+          mondoo.com/filter-icon: bicep
+    docs:
+      desc: |
+        This check ensures that an Azure API Management service disables the SSL 3.0 protocol (for both client and backend connections) and the 3DES cipher on its gateway. SSL 3.0 is a broken protocol vulnerable to the POODLE attack, and 3DES is a weak cipher subject to the Sweet32 birthday attack; both must be turned off so clients cannot negotiate an insecure channel.
+
+        **Why this matters**
+
+        - **Downgrade resistance:** Disabling SSL 3.0 and 3DES prevents a client and the gateway from negotiating a protocol or cipher with known, exploitable weaknesses.
+        - **Data-in-transit protection:** Removing weak crypto keeps API request and response traffic, including tokens and payloads, protected by modern algorithms.
+        - **Backend integrity:** Disabling SSL 3.0 for backend connections ensures the gateway does not talk to upstream services over a broken protocol.
+
+        **Risk mitigation**
+
+        - **POODLE and Sweet32 attacks:** Turning off SSL 3.0 and 3DES closes off attacks that recover plaintext from sessions using these weak primitives.
+        - **Man-in-the-middle downgrade:** An attacker cannot force the gateway onto a weak protocol that is not enabled.
+      audit: |
+        ### Audit via Azure CLI
+
+        1. Show the gateway protocol and cipher custom properties for a service:
+
+        ```bash
+        az apim show --resource-group-name <ResourceGroupName> --name <ServiceName> --query "customProperties"
+        ```
+
+        2. A passing service reports the SSL 3.0 protocol keys and the 3DES cipher key as `False` (or absent); a value of `True` for any of them fails.
+
+        ### Audit via Azure Portal
+
+        1. Navigate to **API Management services** and select a service.
+        2. Open **Protocols + ciphers** under Security.
+        3. Confirm **SSL 3.0** (client and backend) and the **3DES** cipher are disabled.
+      remediation:
+        - id: portal
+          desc: |
+            To disable SSL 3.0 and 3DES on an API Management service using the Azure Portal:
+
+            1. Navigate to **API Management services** and select the service.
+            2. Open **Protocols + ciphers** under Security.
+            3. Turn off **SSL 3.0** for client and backend connections and turn off the **3DES** cipher.
+            4. Save the changes.
+        - id: cli
+          desc: |
+            To disable SSL 3.0 and 3DES on an API Management service using the Azure CLI, set the relevant gateway custom properties to `false`:
+
+            ```bash
+            az apim update --resource-group <ResourceGroupName> --name <ServiceName> --set "customProperties.\"Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Ssl30\"=false"
+            az apim update --resource-group <ResourceGroupName> --name <ServiceName> --set "customProperties.\"Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Backend.Protocols.Ssl30\"=false"
+            az apim update --resource-group <ResourceGroupName> --name <ServiceName> --set "customProperties.\"Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Ciphers.TripleDes168\"=false"
+            ```
+        - id: terraform
+          desc: |
+            To disable SSL 3.0 and 3DES on an API Management service in Terraform, use the `security` block:
+
+            ```hcl
+            resource "azurerm_api_management" "example" {
+              name                = "example-apim"
+              resource_group_name = azurerm_resource_group.example.name
+              location            = azurerm_resource_group.example.location
+              publisher_name      = "Example"
+              publisher_email     = "admin@example.com"
+              sku_name            = "Developer_1"
+
+              security {
+                frontend_ssl30_enabled     = false
+                backend_ssl30_enabled      = false
+                triple_des_ciphers_enabled = false
+              }
+            }
+            ```
+        - id: bicep
+          desc: |
+            To disable SSL 3.0 and 3DES on an API Management service in Bicep, set the gateway custom properties:
+
+            ```bicep
+            resource apim 'Microsoft.ApiManagement/service@2023-05-01-preview' = {
+              name: 'example-apim'
+              location: resourceGroup().location
+              sku: {
+                name: 'Developer'
+                capacity: 1
+              }
+              properties: {
+                publisherEmail: 'admin@example.com'
+                publisherName: 'Example'
+                customProperties: {
+                  'Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Ssl30': 'False'
+                  'Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Backend.Protocols.Ssl30': 'False'
+                  'Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Ciphers.TripleDes168': 'False'
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/api-management/api-management-howto-manage-protocols-ciphers
+        title: Manage protocols and ciphers in Azure API Management
+  - uid: mondoo-azure-security-api-management-weak-protocols-disabled-azure
+    filters: |
+      asset.platform == "azure"
+    mql: |
+      azure.subscription.apiManagement.services.all(
+        ssl30Enabled != true &&
+        backendSsl30Enabled != true &&
+        tripleDesEnabled != true
+      )
+  - uid: mondoo-azure-security-api-management-weak-protocols-disabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_api_management")
+    mql: |
+      terraform.resources("azurerm_api_management").all(
+        blocks.where(type == "security").all(
+          arguments['frontend_ssl30_enabled'] != true &&
+          arguments['backend_ssl30_enabled'] != true &&
+          arguments['triple_des_ciphers_enabled'] != true
+        )
+      )
+  - uid: mondoo-azure-security-api-management-weak-protocols-disabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_api_management")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_api_management").all(
+        change.after['security'] == empty || change.after['security'].all(
+          _['frontend_ssl30_enabled'] != true &&
+          _['backend_ssl30_enabled'] != true &&
+          _['triple_des_ciphers_enabled'] != true
+        )
+      )
+  - uid: mondoo-azure-security-api-management-weak-protocols-disabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_api_management")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_api_management").all(
+        values['security'] == empty || values['security'].all(
+          _['frontend_ssl30_enabled'] != true &&
+          _['backend_ssl30_enabled'] != true &&
+          _['triple_des_ciphers_enabled'] != true
+        )
+      )
+  - uid: mondoo-azure-security-api-management-weak-protocols-disabled-bicep
+    filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.ApiManagement/service")
+    mql: |
+      bicep.resources.where(type == "Microsoft.ApiManagement/service").all(
+        properties["customProperties"]["Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Ssl30"] != "True" &&
+        properties["customProperties"]["Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Backend.Protocols.Ssl30"] != "True" &&
+        properties["customProperties"]["Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Ciphers.TripleDes168"] != "True"
+      )
+  - uid: mondoo-azure-security-api-management-public-network-access-disabled
+    title: Ensure API Management disables public network access
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    variants:
+      - uid: mondoo-azure-security-api-management-public-network-access-disabled-azure
+        tags:
+          mondoo.com/filter-title: Azure API Management
+          mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-api-management-public-network-access-disabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-api-management-public-network-access-disabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-api-management-public-network-access-disabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-api-management-public-network-access-disabled-bicep
+        tags:
+          mondoo.com/filter-title: Bicep
+          mondoo.com/filter-icon: bicep
+    docs:
+      desc: |
+        This check ensures that an Azure API Management service disables public network access so the gateway is reachable only over private endpoints. By default a service is exposed on a public IP address; disabling public access restricts inbound traffic to the private network.
+
+        **Why this matters**
+
+        - **Reduced attack surface:** With public access disabled, the API gateway is only reachable through private endpoints, removing it as a target for internet-based scanning and attacks.
+        - **Private connectivity:** Forcing traffic through private endpoints keeps API calls on the Microsoft backbone and the customer's virtual network rather than the public internet.
+        - **Defense in depth:** Network isolation complements authentication and subscription-key controls, limiting the paths an attacker can use to reach published APIs.
+
+        **Risk mitigation**
+
+        - **Internet exposure:** An attacker who discovers the gateway hostname cannot reach it from outside the private network.
+        - **Unauthenticated probing:** Reconnaissance and exploit attempts against the gateway are blocked at the network boundary.
+      audit: |
+        ### Audit via Azure CLI
+
+        1. Show the public network access state for a service:
+
+        ```bash
+        az apim show --resource-group-name <ResourceGroupName> --name <ServiceName> --query "publicNetworkAccess"
+        ```
+
+        2. A passing service reports `Disabled`; a service reporting `Enabled` fails.
+
+        ### Audit via Azure Portal
+
+        1. Navigate to **API Management services** and select a service.
+        2. Open **Network** under Deployment + infrastructure.
+        3. Confirm **Public network access** is set to **Disabled**.
+      remediation:
+        - id: portal
+          desc: |
+            To disable public network access on an API Management service using the Azure Portal:
+
+            1. Navigate to **API Management services** and select the service.
+            2. Open **Network** under Deployment + infrastructure.
+            3. Set **Public network access** to **Disabled** and configure a private endpoint.
+            4. Save the changes.
+        - id: cli
+          desc: |
+            To disable public network access on an API Management service using the Azure CLI:
+
+            ```bash
+            az apim update --resource-group <ResourceGroupName> --name <ServiceName> --public-network-access false
+            ```
+        - id: terraform
+          desc: |
+            To disable public network access on an API Management service in Terraform, set `public_network_access_enabled` to `false`:
+
+            ```hcl
+            resource "azurerm_api_management" "example" {
+              name                = "example-apim"
+              resource_group_name = azurerm_resource_group.example.name
+              location            = azurerm_resource_group.example.location
+              publisher_name      = "Example"
+              publisher_email     = "admin@example.com"
+              sku_name            = "Premium_1"
+
+              public_network_access_enabled = false
+            }
+            ```
+        - id: bicep
+          desc: |
+            To disable public network access on an API Management service in Bicep:
+
+            ```bicep
+            resource apim 'Microsoft.ApiManagement/service@2023-05-01-preview' = {
+              name: 'example-apim'
+              location: resourceGroup().location
+              sku: {
+                name: 'Premium'
+                capacity: 1
+              }
+              properties: {
+                publisherEmail: 'admin@example.com'
+                publisherName: 'Example'
+                publicNetworkAccess: 'Disabled'
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/api-management/private-endpoint
+        title: Connect privately to API Management using a private endpoint
+  - uid: mondoo-azure-security-api-management-public-network-access-disabled-azure
+    filters: |
+      asset.platform == "azure"
+    mql: |
+      azure.subscription.apiManagement.services.all(
+        publicNetworkAccess == "Disabled"
+      )
+  - uid: mondoo-azure-security-api-management-public-network-access-disabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_api_management")
+    mql: |
+      terraform.resources("azurerm_api_management").all(
+        arguments['public_network_access_enabled'] == false
+      )
+  - uid: mondoo-azure-security-api-management-public-network-access-disabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_api_management")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_api_management").all(
+        change.after['public_network_access_enabled'] == false
+      )
+  - uid: mondoo-azure-security-api-management-public-network-access-disabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_api_management")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_api_management").all(
+        values['public_network_access_enabled'] == false
+      )
+  - uid: mondoo-azure-security-api-management-public-network-access-disabled-bicep
+    filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.ApiManagement/service")
+    mql: |
+      bicep.resources.where(type == "Microsoft.ApiManagement/service").all(
+        properties["publicNetworkAccess"] == "Disabled"
+      )
+  - uid: mondoo-azure-security-redis-no-unrestricted-firewall-rule
+    title: Ensure Azure Cache for Redis has no unrestricted firewall rule
+    impact: 85
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    variants:
+      - uid: mondoo-azure-security-redis-no-unrestricted-firewall-rule-azure
+        tags:
+          mondoo.com/filter-title: Azure Cache for Redis
+          mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-redis-no-unrestricted-firewall-rule-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-redis-no-unrestricted-firewall-rule-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-redis-no-unrestricted-firewall-rule-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-redis-no-unrestricted-firewall-rule-bicep
+        tags:
+          mondoo.com/filter-title: Bicep
+          mondoo.com/filter-icon: bicep
+    docs:
+      desc: |
+        This check ensures that no Azure Cache for Redis firewall rule spans the entire IPv4 address range (0.0.0.0 to 255.255.255.255). A rule that broad allows connections from any source address, defeating the purpose of the cache firewall and exposing the cache to the whole internet when public access is enabled.
+
+        **Why this matters**
+
+        - **Reduced attack surface:** Scoping firewall rules to known client ranges means only expected sources can attempt to connect to the cache.
+        - **Layered network control:** The IP firewall works alongside private endpoints and the public-access toggle; an all-addresses rule silently nullifies that layer.
+        - **Data protection:** Redis caches frequently hold session tokens and application data, so limiting where connections can originate reduces the paths an attacker can use to reach it.
+
+        **Risk mitigation**
+
+        - **Internet-wide exposure:** Removing the all-addresses rule ensures an attacker cannot connect from an arbitrary source IP.
+        - **Brute-force and probing:** Attackers outside the approved ranges cannot reach the cache to attempt authentication or exploit attacks.
+      audit: |
+        ### Audit via Azure CLI
+
+        1. List the firewall rules for a cache and inspect their ranges:
+
+        ```bash
+        az redis firewall-rules list --cache-name <CacheName> --resource-group-name <ResourceGroupName> --query "[].{Name:name, StartIP:startIP, EndIP:endIP}" -o table
+        ```
+
+        2. A passing cache has no rule with `StartIP` of `0.0.0.0` and `EndIP` of `255.255.255.255`; such a rule fails.
+
+        ### Audit via Azure Portal
+
+        1. Navigate to **Azure Cache for Redis** and select a cache.
+        2. Open **Firewall** under Settings.
+        3. Confirm no rule covers the full `0.0.0.0` to `255.255.255.255` range.
+      remediation:
+        - id: portal
+          desc: |
+            To remove an unrestricted firewall rule on an Azure Cache for Redis instance using the Azure Portal:
+
+            1. Navigate to **Azure Cache for Redis** and select the cache.
+            2. Open **Firewall** under Settings.
+            3. Delete or narrow any rule spanning `0.0.0.0` to `255.255.255.255` to the specific client ranges that need access.
+            4. Save the changes.
+        - id: cli
+          desc: |
+            To remove an unrestricted firewall rule on an Azure Cache for Redis instance using the Azure CLI:
+
+            ```bash
+            az redis firewall-rules delete --cache-name <CacheName> --resource-group-name <ResourceGroupName> --rule-name <RuleName>
+            ```
+        - id: terraform
+          desc: |
+            To scope an Azure Cache for Redis firewall rule in Terraform, set `start_ip` and `end_ip` to the specific client range rather than the full IPv4 space:
+
+            ```hcl
+            resource "azurerm_redis_firewall_rule" "example" {
+              name                = "office"
+              redis_cache_name    = azurerm_redis_cache.example.name
+              resource_group_name = azurerm_resource_group.example.name
+              start_ip            = "203.0.113.0"
+              end_ip              = "203.0.113.255"
+            }
+            ```
+        - id: bicep
+          desc: |
+            To scope an Azure Cache for Redis firewall rule in Bicep, set `startIP` and `endIP` to the specific client range:
+
+            ```bicep
+            resource firewallRule 'Microsoft.Cache/redis/firewallRules@2024-03-01' = {
+              name: '${redisCache.name}/office'
+              properties: {
+                startIP: '203.0.113.0'
+                endIP: '203.0.113.255'
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/azure-cache-for-redis/cache-configure#firewall
+        title: Configure the Azure Cache for Redis firewall
+  - uid: mondoo-azure-security-redis-no-unrestricted-firewall-rule-azure
+    filters: |
+      asset.platform == "azure-cache-redis-instance"
+    mql: |
+      azure.subscription.cacheService.redisInstance.firewallRules.none(
+        startIpAddress == "0.0.0.0" && endIpAddress == "255.255.255.255"
+      )
+  - uid: mondoo-azure-security-redis-no-unrestricted-firewall-rule-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_redis_firewall_rule")
+    mql: |
+      terraform.resources("azurerm_redis_firewall_rule").none(
+        arguments['start_ip'] == "0.0.0.0" && arguments['end_ip'] == "255.255.255.255"
+      )
+  - uid: mondoo-azure-security-redis-no-unrestricted-firewall-rule-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_redis_firewall_rule")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_redis_firewall_rule").none(
+        change.after['start_ip'] == "0.0.0.0" && change.after['end_ip'] == "255.255.255.255"
+      )
+  - uid: mondoo-azure-security-redis-no-unrestricted-firewall-rule-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_redis_firewall_rule")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_redis_firewall_rule").none(
+        values['start_ip'] == "0.0.0.0" && values['end_ip'] == "255.255.255.255"
+      )
+  - uid: mondoo-azure-security-redis-no-unrestricted-firewall-rule-bicep
+    filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.Cache/redis/firewallRules")
+    mql: |
+      bicep.resources.where(type == "Microsoft.Cache/redis/firewallRules").none(
+        properties["startIP"] == "0.0.0.0" && properties["endIP"] == "255.255.255.255"
       )
