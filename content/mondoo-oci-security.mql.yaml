@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-oci-security
     name: Mondoo Oracle Cloud Infrastructure (OCI) Security
-    version: 4.3.0
+    version: 4.4.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -85,6 +85,7 @@ policies:
           - uid: mondoo-oci-security-nsg-no-unrestricted-admin-ports
           - uid: mondoo-oci-security-public-vnic-has-nsg
           - uid: mondoo-oci-security-vcn-flow-logs-enabled
+          - uid: mondoo-oci-security-ipsec-tunnel-ikev2
       - title: Compute
         checks:
           - uid: mondoo-oci-security-compute-instance-tagging
@@ -106,6 +107,7 @@ policies:
           - uid: mondoo-oci-security-oke-image-policy-enabled
           - uid: mondoo-oci-security-oke-node-pool-private-subnets
           - uid: mondoo-oci-security-oke-node-pool-nsgs-attached
+          - uid: mondoo-oci-security-oke-secrets-customer-managed-encryption
       - title: Database
         checks:
           - uid: mondoo-oci-security-adb-mtls-or-restricted
@@ -4955,6 +4957,129 @@ queries:
         values['node_config_details'].all(
           _['nsg_ids'] != null && _['nsg_ids'].length > 0
         )
+      )
+  - uid: mondoo-oci-security-oke-secrets-customer-managed-encryption
+    title: Ensure OKE clusters encrypt Kubernetes secrets with customer-managed keys
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-12
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-10
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-oci-security-oke-secrets-customer-managed-encryption-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-oke-secrets-customer-managed-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-oke-secrets-customer-managed-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-oke-secrets-customer-managed-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that OCI Kubernetes Engine (OKE) clusters encrypt Kubernetes secrets in etcd using a customer-managed key stored in OCI Vault rather than relying on the default Oracle-managed encryption. By default OKE encrypts etcd with an Oracle-managed key, so the risk here is not the absence of encryption but the absence of customer control over the key that protects application secrets, service-account tokens, and other sensitive objects.
+
+        **Why this matters**
+
+        - **Key revocation capability:** A customer-managed key lets you revoke access to every Kubernetes secret in the cluster by disabling or deleting the key in OCI Vault.
+        - **Separation of duties:** Holding the key in a customer-controlled vault separates key management from cluster administration, enabling independent access controls and audit trails.
+        - **Regulatory key-control requirements:** Frameworks such as HIPAA and PCI DSS require demonstrable control over the keys protecting regulated data, including secrets held in a Kubernetes control plane.
+
+        **Risk mitigation**
+
+        - **Assign a Vault key at cluster creation:** Reference a master encryption key when creating the cluster; the secrets-encryption key cannot be changed after the cluster exists.
+        - **Rotate and monitor keys:** Configure rotation on the key and review OCI Audit logs for key operations that touch cluster secrets.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console and navigate to **Developer Services > Kubernetes Clusters (OKE)**.
+        2. Open each cluster and review the **Cluster details**.
+        3. Locate the **Kubernetes Secrets Encryption** (KMS key) field.
+
+        A passing cluster shows a customer-managed KMS key OCID. A failing cluster shows no KMS key, indicating the default Oracle-managed encryption.
+
+        ### Audit via CLI
+
+        1. Retrieve the KMS key assignment for a cluster:
+
+        ```bash
+        oci ce cluster get --cluster-id <cluster-ocid> --query 'data.{name:name,kmsKeyId:"kms-key-id"}'
+        ```
+
+        A passing cluster returns a non-empty OCID in `kmsKeyId`. A failing cluster returns `null`.
+      remediation:
+        - id: console
+          desc: |
+            To encrypt Kubernetes secrets with a customer-managed key using the OCI Console:
+
+            1. Navigate to **Developer Services > Kubernetes Clusters (OKE)** and select **Create cluster**.
+            2. In the cluster configuration, expand **Advanced options**.
+            3. Enable **Encrypt Kubernetes secrets using a KMS key** and select the vault and master encryption key.
+            4. Create the cluster and migrate workloads from any cluster that uses the default Oracle-managed key, because the secrets-encryption key cannot be added to an existing cluster.
+        - id: cli
+          desc: |
+            To create an OKE cluster that encrypts Kubernetes secrets with a customer-managed key using the OCI CLI:
+
+            ```bash
+            oci ce cluster create --compartment-id <compartment-ocid> --name secure-cluster --vcn-id <vcn-ocid> --kubernetes-version <version> --kms-key-id <key-ocid>
+            ```
+        - id: terraform
+          desc: |
+            To encrypt Kubernetes secrets with a customer-managed key in Terraform, set `kms_key_id` on the cluster resource:
+
+            ```hcl
+            resource "oci_containerengine_cluster" "example" {
+              compartment_id     = var.compartment_ocid
+              name               = "secure-cluster"
+              vcn_id             = oci_core_vcn.example.id
+              kubernetes_version = "v1.29.1"
+              kms_key_id         = oci_kms_key.example.id
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/ContEng/Tasks/contengencryptingkubernetessecretsatrest.htm
+        title: OCI - Encrypting Kubernetes Secrets at Rest in Etcd
+  - uid: mondoo-oci-security-oke-secrets-customer-managed-encryption-oci
+    filters: asset.platform == "oci-oke-cluster"
+    mql: |
+      oci.oke.cluster.kmsKey != null
+  - uid: mondoo-oci-security-oke-secrets-customer-managed-encryption-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_containerengine_cluster')
+    mql: |
+      terraform.resources('oci_containerengine_cluster').all(
+        arguments['kms_key_id'] != null && arguments['kms_key_id'] != ""
+      )
+  - uid: mondoo-oci-security-oke-secrets-customer-managed-encryption-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_containerengine_cluster')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_containerengine_cluster').all(
+        change.after['kms_key_id'] != null && change.after['kms_key_id'] != ""
+      )
+  - uid: mondoo-oci-security-oke-secrets-customer-managed-encryption-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_containerengine_cluster')
+    mql: |
+      terraform.state.resources.where(type == 'oci_containerengine_cluster').all(
+        values['kms_key_id'] != null && values['kms_key_id'] != ""
       )
   - uid: mondoo-oci-security-adb-mtls-or-restricted
     title: Ensure Autonomous Databases require mTLS or restrict access via ACL / NSG
@@ -10984,6 +11109,129 @@ queries:
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Network/Concepts/vcnflowlogs.htm
         title: OCI VCN flow logs documentation
+  - uid: mondoo-oci-security-ipsec-tunnel-ikev2
+    title: Ensure IPSec VPN tunnels negotiate IKEv2
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    variants:
+      - uid: mondoo-oci-security-ipsec-tunnel-ikev2-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-ipsec-tunnel-ikev2-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-ipsec-tunnel-ikev2-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-ipsec-tunnel-ikev2-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that each tunnel in an OCI site-to-site VPN IPSec connection negotiates Internet Key Exchange version 2 (IKEv2) rather than the legacy IKEv1. OCI lets you select the IKE version per tunnel, and connections created against older customer-premises equipment may still default to IKEv1, which uses a weaker key-exchange design.
+
+        **Why this matters**
+
+        - **Stronger key exchange:** IKEv2 uses a more robust key-agreement and rekeying design than IKEv1, reducing exposure to key-recovery and downgrade attacks against the tunnel.
+        - **Resilient session handling:** IKEv2 built-in liveness checks and MOBIKE support re-establish tunnels faster after a network interruption, shrinking the window where traffic could fail open or be rerouted.
+        - **Modern cryptographic baselines:** Security frameworks that mandate strong cryptography for data in transit expect IKEv2; IKEv1 is widely deprecated.
+
+        **Risk mitigation**
+
+        - **Set IKEv2 on every tunnel:** Configure both tunnels of each IPSec connection to use IKEv2 and confirm the customer-premises equipment supports it.
+        - **Retire IKEv1 endpoints:** Replace or upgrade on-premises VPN devices that cannot negotiate IKEv2.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console and navigate to **Networking > Customer connectivity > Site-to-Site VPN**.
+        2. Open each IPSec connection and review its **Tunnels**.
+        3. For each tunnel, open **Edit** and check the **IKE version** field.
+
+        A passing tunnel shows **IKEv2**. A failing tunnel shows **IKEv1**.
+
+        ### Audit via CLI
+
+        1. List the tunnels for an IPSec connection and inspect `ike-version`:
+
+        ```bash
+        oci network ip-sec-tunnel list --ipsc-id <ipsec-connection-ocid> --query 'data[].{id:id,ikeVersion:"ike-version"}'
+        ```
+
+        A passing tunnel returns `"ikeVersion": "V2"`. A failing tunnel returns `"ikeVersion": "V1"`.
+      remediation:
+        - id: console
+          desc: |
+            To set an IPSec tunnel to IKEv2 using the OCI Console:
+
+            1. Navigate to **Networking > Customer connectivity > Site-to-Site VPN** and open the IPSec connection.
+            2. Select the tunnel, then select **Edit**.
+            3. Set **IKE version** to **IKEv2**.
+            4. Select **Save changes** and confirm the customer-premises equipment is configured for IKEv2.
+        - id: cli
+          desc: |
+            To set an IPSec tunnel to IKEv2 using the OCI CLI:
+
+            ```bash
+            oci network ip-sec-tunnel update --ipsc-id <ipsec-connection-ocid> --tunnel-id <tunnel-ocid> --ike-version V2
+            ```
+        - id: terraform
+          desc: |
+            To set an IPSec tunnel to IKEv2 in Terraform, set `ike_version` on the tunnel management resource:
+
+            ```hcl
+            resource "oci_core_ipsec_connection_tunnel_management" "example" {
+              ipsec_id    = oci_core_ipsec.example.id
+              tunnel_id   = data.oci_core_ipsec_connection_tunnels.example.ip_sec_connection_tunnels[0].id
+              ike_version = "V2"
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Network/Tasks/settingupIPsec.htm
+        title: OCI Site-to-Site VPN documentation
+  - uid: mondoo-oci-security-ipsec-tunnel-ikev2-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.network.ipsecConnections.all(
+        tunnels.all(ikeVersion == "V2")
+      )
+  - uid: mondoo-oci-security-ipsec-tunnel-ikev2-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_core_ipsec_connection_tunnel_management')
+    mql: |
+      terraform.resources('oci_core_ipsec_connection_tunnel_management').all(
+        arguments['ike_version'] == "V2"
+      )
+  - uid: mondoo-oci-security-ipsec-tunnel-ikev2-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_core_ipsec_connection_tunnel_management')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_core_ipsec_connection_tunnel_management').all(
+        change.after['ike_version'] == "V2"
+      )
+  - uid: mondoo-oci-security-ipsec-tunnel-ikev2-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_core_ipsec_connection_tunnel_management')
+    mql: |
+      terraform.state.resources.where(type == 'oci_core_ipsec_connection_tunnel_management').all(
+        values['ike_version'] == "V2"
+      )
   - uid: mondoo-oci-security-compute-vnic-source-dest-check
     title: Ensure compute instance VNICs enforce source/destination check
     impact: 60
