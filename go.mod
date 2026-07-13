@@ -50,7 +50,7 @@ require (
 	github.com/zclconf/go-cty v1.19.0
 	go.mondoo.com/mondoo-go v0.0.0-20260707124621-90a1d09b965e
 	go.mondoo.com/mql/v13 v13.28.1
-	go.mondoo.com/ranger-rpc v0.8.0
+	go.mondoo.com/ranger-rpc v0.8.1
 	gocloud.dev v0.46.0
 	golang.org/x/sync v0.22.0
 	golang.org/x/sys v0.47.0
