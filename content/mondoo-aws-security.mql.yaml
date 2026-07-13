@@ -4141,7 +4141,8 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_default_security_group")
     mql: |
       terraform.resources("aws_default_security_group").all(
-        arguments.ingress == empty && arguments.egress == empty
+        arguments.ingress == empty && arguments.egress == empty &&
+        blocks.where(type == "ingress") == empty && blocks.where(type == "egress") == empty
       )
   - uid: mondoo-aws-security-vpc-default-security-group-closed-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_default_security_group")
@@ -14208,7 +14209,7 @@ queries:
     mql: |
       aws.s3.bucket.website == empty
   - uid: mondoo-aws-security-s3-bucket-static-website-hosting-disabled-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_s3_bucket_website_configuration")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_s3_bucket")
     mql: |
       terraform.resources("aws_s3_bucket_website_configuration").length == 0
   - uid: mondoo-aws-security-s3-bucket-static-website-hosting-disabled-terraform-plan
@@ -18405,6 +18406,7 @@ queries:
       )
       cloudformation.template.resources.where(type == "AWS::CodeBuild::Project").all(
       properties['Environment'] == empty ||
+      properties['Environment']['EnvironmentVariables'] == empty ||
       properties['Environment']['EnvironmentVariables'].where(_['Type'] == "PLAINTEXT").none(
       _['Name'] == /(?i)(PASSWORD|SECRET|KEY|TOKEN|CREDENTIAL)/
       )
@@ -49078,25 +49080,42 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_sqs_queue_policy")
     mql: |
       terraform.resources("aws_sqs_queue_policy").all(
-      arguments.policy == empty || arguments.policy != /"Principal"\s*:\s*"\*"/
+        arguments.policy.first != null &&
+        arguments.policy.first["Statement"].where(_["Effect"] == "Allow").none(
+          _["Principal"] == "*" ||
+          _["Principal"]["AWS"] == "*" ||
+          _["Principal"]["AWS"] != null && _["Principal"]["AWS"].contains("*")
+        ) ||
+        arguments.policy.first == null &&
+        arguments.policy != /"Principal"\s*:\s*"\*"/ &&
+        arguments.policy != /"AWS"\s*:\s*\[?\s*"\*"/
       )
   - uid: mondoo-aws-security-sqs-no-wildcard-policy-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_sqs_queue_policy")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_sqs_queue_policy").all(
-      change.after.policy == empty || change.after.policy != /"Principal"\s*:\s*"\*"/
+        change.after.policy == empty ||
+        change.after.policy != /"Principal"\s*:\s*"\*"/ &&
+        change.after.policy != /"AWS"\s*:\s*\[?\s*"\*"/
       )
   - uid: mondoo-aws-security-sqs-no-wildcard-policy-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_sqs_queue_policy")
     mql: |
       terraform.state.resources.where(type == "aws_sqs_queue_policy").all(
-      values.policy == empty || values.policy != /"Principal"\s*:\s*"\*"/
+        values.policy == empty ||
+        values.policy != /"Principal"\s*:\s*"\*"/ &&
+        values.policy != /"AWS"\s*:\s*\[?\s*"\*"/
       )
   - uid: mondoo-aws-security-sqs-no-wildcard-policy-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::SQS::QueuePolicy")
     mql: |
       cloudformation.template.resources.where(type == "AWS::SQS::QueuePolicy").all(
-      properties['PolicyDocument'].string != /"Principal"\s*:\s*"\*"/
+        properties['PolicyDocument'] == null ||
+        properties['PolicyDocument']['Statement'] == null ||
+        properties['PolicyDocument']['Statement'].where(_['Effect'] == "Allow").none(
+          _['Principal'] == "*" ||
+          _['Principal']['AWS'] != null && _['Principal']['AWS'].contains("*")
+        )
       )
   # No Terraform variants: `aws_ecs_task_definition.container_definitions` is a JSON-encoded string in HCL — extracting and pattern-matching environment-variable names/values would require a JSON-walking variant pass that is not currently supported in the same shape as the runtime check.
   - uid: mondoo-aws-security-ecs-task-definition-no-plaintext-secrets
@@ -66477,7 +66496,7 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_workspacesweb_ip_access_settings")
     mql: |
       terraform.resources("aws_workspacesweb_ip_access_settings").all(
-        blocks.where(type == "ip_rules").all(
+        blocks.where(type == "ip_rule").all(
           arguments["ip_range"] != "0.0.0.0/0" && arguments["ip_range"] != "::/0"
         )
       )
@@ -66485,15 +66504,15 @@ queries:
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_workspacesweb_ip_access_settings")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_workspacesweb_ip_access_settings").all(
-        change.after["ip_rules"] == null ||
-        change.after["ip_rules"].all(_["ip_range"] != "0.0.0.0/0" && _["ip_range"] != "::/0")
+        change.after["ip_rule"] == null ||
+        change.after["ip_rule"].all(_["ip_range"] != "0.0.0.0/0" && _["ip_range"] != "::/0")
       )
   - uid: mondoo-aws-security-workspaces-web-ip-access-no-public-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_workspacesweb_ip_access_settings")
     mql: |
       terraform.state.resources.where(type == "aws_workspacesweb_ip_access_settings").all(
-        values["ip_rules"] == null ||
-        values["ip_rules"].all(_["ip_range"] != "0.0.0.0/0" && _["ip_range"] != "::/0")
+        values["ip_rule"] == null ||
+        values["ip_rule"].all(_["ip_range"] != "0.0.0.0/0" && _["ip_range"] != "::/0")
       )
   # No Terraform variants: certificate expiry is operational telemetry on the ACM certificate behind the origin mTLS reference, not a configuration argument on `aws_cloudfront_distribution`.
   - uid: mondoo-aws-security-cloudfront-origin-mtls-cert-not-expired
