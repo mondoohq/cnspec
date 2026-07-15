@@ -23,6 +23,9 @@ type PrintConfig struct {
 	printData            bool
 	printRisks           bool
 	printVulnerabilities bool
+	// detailed enables rich per-check output (description, query, assessment,
+	// remediation, references). Currently consumed by the JUnit reporter.
+	detailed bool
 }
 
 func defaultPrintConfig() *PrintConfig {
@@ -43,6 +46,7 @@ const (
 	OptionPrintData     = "data"
 	OptionPrintRisks    = "risks"
 	OptionPrintVulns    = "vulns"
+	OptionDetailed      = "detailed"
 )
 
 func ParseConfig[T string | Format](raw T) (*PrintConfig, error) {
@@ -83,6 +87,10 @@ func ParseConfig[T string | Format](raw T) (*PrintConfig, error) {
 			res.printRisks = false
 		case "no" + OptionPrintVulns, "novuln":
 			res.printVulnerabilities = false
+		case OptionDetailed:
+			res.detailed = true
+		case "no" + OptionDetailed:
+			res.detailed = false
 		default:
 			unknown = append(unknown, cur)
 		}
@@ -177,7 +185,8 @@ func AllOptions() string {
 		"[no]" + OptionPrintControls + ", " +
 		"[no]" + OptionPrintData + ", " +
 		"[no]" + OptionPrintRisks + ", " +
-		"[no]" + OptionPrintVulns
+		"[no]" + OptionPrintVulns + ", " +
+		"[no]" + OptionDetailed + " (junit)"
 }
 
 func (r *Reporter) scoreColored(rating policy.ScoreRating, s string) string {

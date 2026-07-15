@@ -161,7 +161,7 @@ func (r *Reporter) WriteReport(ctx context.Context, data *policy.ReportCollectio
 		return err
 	case FormatJUnit:
 		writer := iox.IOWriter{Writer: r.out}
-		return ConvertToJunit(data, &writer)
+		return ConvertToJunit(data, &writer, r.Conf.detailed)
 	case FormatSarif:
 		writer := iox.IOWriter{Writer: r.out}
 		return ConvertToSarif(data, &writer)
