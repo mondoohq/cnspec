@@ -274,7 +274,10 @@ func detailedCheckBody(resolved *policy.ResolvedPolicy, report *policy.Report, q
 	// The assessment (expected vs actual) is only available for assertion checks
 	// that executed. Guard exactly like the SARIF reporter: GetCodeBundle panics
 	// when ExecutionJob is nil, and returns nil when the query has no code bundle.
-	if resolved != nil && resolved.ExecutionJob != nil {
+	// report is guaranteed non-nil by the caller (assetPolicyTests ranges over
+	// report.Scores) but is guarded here too, since Query2Assessment dereferences
+	// it via report.Scores / report.Data.
+	if report != nil && resolved != nil && resolved.ExecutionJob != nil {
 		if cb := resolved.GetCodeBundle(query); cb != nil {
 			if assessment := policy.Query2Assessment(cb, report); assessment != nil {
 				if text := strings.TrimSpace(printer.PlainNoColorPrinter.Assessment(cb, assessment)); text != "" {
