@@ -178,6 +178,14 @@ type scenario struct {
 	name string       // subtest name, e.g. "pass/aes256"
 	dir  string       // directory of .tf files to scan
 	want checkOutcome // outcomePassed for pass scenarios, outcomeFailed for fail
+	// knownBug marks a scenario that documents a known, still-open bug (an mql
+	// provider limitation, an unfixed policy check, or a check not yet present in
+	// this bundle). Such a scenario is expected NOT to assert correctly yet: it is
+	// kept as a live regression fixture. The harness passes it as long as the
+	// correct outcome is still unreachable, and fails only once it starts asserting
+	// correctly, signalling that the marker should be removed. Set by a KNOWN_BUG.md
+	// file in the scenario directory whose body explains why.
+	knownBug bool
 }
 
 // scenariosFor returns every pass and fail scenario for a variant, located under
@@ -207,9 +215,10 @@ func scenariosFor(policyDir, uid string) []scenario {
 				dir := filepath.Join(base, e.Name())
 				if dirHasFixture(dir) {
 					subScenarios = append(subScenarios, scenario{
-						name: kind.name + "/" + e.Name(),
-						dir:  dir,
-						want: kind.want,
+						name:     kind.name + "/" + e.Name(),
+						dir:      dir,
+						want:     kind.want,
+						knownBug: hasKnownBug(dir),
 					})
 				}
 			} else if isFixtureFile(e.Name()) {
@@ -221,7 +230,7 @@ func scenariosFor(policyDir, uid string) []scenario {
 		case len(subScenarios) > 0:
 			out = append(out, subScenarios...)
 		case baseHasFixture:
-			out = append(out, scenario{name: kind.name, dir: base, want: kind.want})
+			out = append(out, scenario{name: kind.name, dir: base, want: kind.want, knownBug: hasKnownBug(base)})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].name < out[j].name })
@@ -314,6 +323,26 @@ func runFixtureSuite(
 				t.Run(policyDir+"/"+uid+"/"+sc.name, func(t *testing.T) {
 					t.Parallel()
 					reports, err := runBundleReports(pol.bundleFile, pol.policyMrn, assetFor(uid, sc.dir))
+
+					if sc.knownBug {
+						// This scenario documents a still-open bug and is kept as a
+						// regression fixture. It is expected NOT to assert correctly:
+						// a scan error (e.g. the check is not yet in this bundle), a
+						// skipped check, or the wrong outcome all satisfy the marker.
+						// Only the correct outcome means the bug is fixed, at which
+						// point the marker must be removed.
+						if err != nil {
+							return
+						}
+						if outcome, _ := checkResultAcross(reports, mrn); outcome == sc.want {
+							t.Fatalf("known-bug scenario now asserts correctly (%s)\n"+
+								"the underlying bug appears fixed; remove the KNOWN_BUG.md marker in %s\n"+
+								"reason on file: %s\ncheck: %s",
+								outcome, sc.dir, knownBugReason(sc.dir), uid)
+						}
+						return
+					}
+
 					require.NoError(t, err)
 
 					outcome, value := checkResultAcross(reports, mrn)
@@ -553,6 +582,29 @@ func TestTerraformVariantCoverage(t *testing.T) {
 func failIsImpossible(policyDir, uid string) bool {
 	_, err := os.Stat(filepath.Join(tfVariantsRoot, policyDir, uid, "fail", "IMPOSSIBLE.md"))
 	return err == nil
+}
+
+// hasKnownBug reports whether a scenario directory carries a KNOWN_BUG.md marker,
+// which records a still-open bug that keeps the scenario from asserting correctly.
+func hasKnownBug(scenarioDir string) bool {
+	_, err := os.Stat(filepath.Join(scenarioDir, "KNOWN_BUG.md"))
+	return err == nil
+}
+
+// knownBugReason returns the first non-empty line of a scenario's KNOWN_BUG.md,
+// used to explain the marker when a scenario unexpectedly starts asserting
+// correctly.
+func knownBugReason(scenarioDir string) string {
+	data, err := os.ReadFile(filepath.Join(scenarioDir, "KNOWN_BUG.md"))
+	if err != nil {
+		return "(no KNOWN_BUG.md found)"
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if s := strings.TrimSpace(strings.TrimLeft(line, "#")); s != "" {
+			return s
+		}
+	}
+	return "(KNOWN_BUG.md is empty)"
 }
 
 // isFixtureFile reports whether name is an IaC fixture file the harness scans:
