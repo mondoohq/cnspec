@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-aws-security
     name: Mondoo AWS Security
-    version: 12.5.0
+    version: 12.6.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -106,6 +106,8 @@ policies:
           - uid: mondoo-aws-security-iam-root-access-key-check
           - uid: mondoo-aws-security-iam-users-only-one-access-key
           - uid: mondoo-aws-security-iam-group-has-users-check
+          - uid: mondoo-aws-security-iam-group-no-admin-policy
+          - uid: mondoo-aws-security-iam-group-empty-no-policies
           - uid: mondoo-aws-security-iam-user-no-inline-policies-check
           - uid: mondoo-aws-security-iam-no-wildcards-policies
           - uid: mondoo-aws-security-iam-root-hardware-mfa
@@ -279,6 +281,7 @@ policies:
       - title: AWS CloudWatch
         checks:
           - uid: mondoo-aws-security-cloudwatch-log-group-encrypted
+          - uid: mondoo-aws-security-cloudwatch-log-group-data-protection-enabled
           - uid: mondoo-aws-security-cloudwatch-log-group-retention-set
           - uid: mondoo-aws-security-cloudwatch-unauthorized-api-alarm
           - uid: mondoo-aws-security-cloudwatch-no-mfa-login-alarm
@@ -341,6 +344,8 @@ policies:
           - uid: mondoo-aws-security-sagemaker-training-job-vpc-configured
           - uid: mondoo-aws-security-sagemaker-training-hyperparameters-no-secrets
           - uid: mondoo-aws-security-sagemaker-processing-job-network-isolation
+          - uid: mondoo-aws-security-sagemaker-processing-job-role-no-wildcards
+          - uid: mondoo-aws-security-sagemaker-processing-job-no-plaintext-secrets-env
           - uid: mondoo-aws-security-sagemaker-processing-job-encryption
           - uid: mondoo-aws-security-sagemaker-processing-job-vpc-configured
           - uid: mondoo-aws-security-sagemaker-domain-kms-encryption
@@ -524,6 +529,7 @@ policies:
         checks:
           - uid: mondoo-aws-security-route53-dnssec-enabled
           - uid: mondoo-aws-security-route53-query-logging-enabled
+          - uid: mondoo-aws-security-route53-private-zone-vpc-associated
           - uid: mondoo-aws-security-route53-health-check-not-disabled
           - uid: mondoo-aws-security-route53-health-check-https
           - uid: mondoo-aws-security-route53-resolver-query-logging-enabled
@@ -642,12 +648,17 @@ policies:
       - title: Amazon MQ
         checks:
           - uid: mondoo-aws-security-mq-audit-logging
+          - uid: mondoo-aws-security-mq-broker-cmk-encryption
+          - uid: mondoo-aws-security-mq-broker-auto-minor-version-upgrade
           - uid: mondoo-aws-security-mq-general-logging
           - uid: mondoo-aws-security-mq-no-public-access
       - title: Amazon MSK
         checks:
           - uid: mondoo-aws-security-msk-encryption-at-rest
           - uid: mondoo-aws-security-msk-encryption-in-transit
+          - uid: mondoo-aws-security-msk-public-access-disabled
+          - uid: mondoo-aws-security-msk-unauthenticated-access-disabled
+          - uid: mondoo-aws-security-msk-in-cluster-encryption-enabled
           - uid: mondoo-aws-security-msk-logging-enabled
           - uid: mondoo-aws-security-msk-replicator-external-kafka-tls
       - title: Amazon Keyspaces
@@ -697,6 +708,9 @@ policies:
       - title: AWS Batch
         checks:
           - uid: mondoo-aws-security-batch-no-privileged-containers
+          - uid: mondoo-aws-security-batch-readonly-root-filesystem
+          - uid: mondoo-aws-security-batch-no-plaintext-secrets-in-env
+          - uid: mondoo-aws-security-batch-fargate-execution-role
           - uid: mondoo-aws-security-batch-approved-image-registry
           - uid: mondoo-aws-security-batch-compute-env-private-subnets
           - uid: mondoo-aws-security-batch-job-role-no-wildcards
@@ -711,6 +725,7 @@ policies:
       - title: Amazon API Gateway v2
         checks:
           - uid: mondoo-aws-security-apigatewayv2-routes-require-authorizer
+          - uid: mondoo-aws-security-apigatewayv2-disable-default-endpoint
           - uid: mondoo-aws-security-apigatewayv2-domain-tls-1-2
           - uid: mondoo-aws-security-apigatewayv2-websocket-route-auth-required
           - uid: mondoo-aws-security-apigatewayv2-websocket-tls-1-2-minimum
@@ -76439,3 +76454,1651 @@ queries:
       cloudformation.template.resources.where(type == "AWS::EC2::VPCEncryptionControl").all(
         properties['Mode'] == "enforce"
       )
+
+  # No Terraform variants: verifying the identity of an attached managed policy in Terraform requires resolving policy_arn values that are frequently variable or data-source references, which cannot be evaluated statically.
+  # No CloudFormation variant: AdministratorAccess attachment is expressed via cross-resource ARN references that are not statically resolvable in a template.
+  - uid: mondoo-aws-security-iam-group-no-admin-policy
+    title: Ensure IAM groups do not attach the AdministratorAccess policy
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-3-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-aws-security-iam-group-no-admin-policy-aws
+        tags:
+          mondoo.com/filter-title: AWS IAM Group
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that no AWS IAM group has the AWS-managed `AdministratorAccess` policy attached. `AdministratorAccess` grants full control over every service and resource in the account, so attaching it to a group extends unrestricted privilege to every current and future member of that group in a single step.
+
+        **Why this matters**
+
+        - **Blast radius concentration:** A group with `AdministratorAccess` turns ordinary group membership into full account takeover, so any compromise of a single member credential becomes a complete account compromise.
+        - **Silent privilege inheritance:** New users added to the group inherit administrator rights automatically, with no per-user review of whether that level of access is warranted.
+        - **Least privilege violation:** Broad administrator access rarely matches the actual tasks a group performs, leaving standing privilege far in excess of operational need.
+
+        **Risk mitigation**
+
+        - **Scoped permissions:** Replacing `AdministratorAccess` with policies scoped to the group's real responsibilities limits what an attacker can do after compromising a member.
+        - **Reviewable access:** Purpose-built policies make it clear which actions each group can perform, so access reviews can confirm that group permissions still match need.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the AWS Management Console and open the IAM console at https://console.aws.amazon.com/iam/.
+        2. In the left navigation pane, choose **User groups**.
+        3. For each group, select the group name and choose the **Permissions** tab.
+        4. Review the attached policies for any policy named **AdministratorAccess**.
+
+        A passing group has no policy named `AdministratorAccess` attached. A failing group lists `AdministratorAccess` among its attached policies.
+
+        ### Audit via CLI
+
+        1. List all IAM groups:
+
+        ```bash
+        aws iam list-groups --query "Groups[*].GroupName" --output text
+        ```
+
+        2. For each group, list the attached managed policies:
+
+        ```bash
+        aws iam list-attached-group-policies --group-name <group-name> --query "AttachedPolicies[*].PolicyName"
+        ```
+
+        A passing group returns a list that does not include `AdministratorAccess`. A failing group returns a list that includes `AdministratorAccess`.
+      remediation:
+        - id: console
+          desc: |
+            To ensure IAM groups do not attach the AdministratorAccess policy using the AWS Console:
+
+            1.  Navigate to the AWS IAM Console.
+            2.  Select User groups in the left panel.
+            3.  Select the group and go to the Permissions tab.
+            4.  If AdministratorAccess is attached:
+              - Select the policy and choose Detach.
+              - Attach a policy scoped to the specific actions the group requires instead.
+        - id: cli
+          desc: |
+            To ensure IAM groups do not attach the AdministratorAccess policy using the AWS CLI, list the attached policies for a group:
+
+            ```bash
+            aws iam list-attached-group-policies --group-name <group-name> --query "AttachedPolicies[*].PolicyName"
+            ```
+
+            If `AdministratorAccess` is attached, detach it and attach a scoped policy in its place:
+
+            ```bash
+            aws iam detach-group-policy --group-name <group-name> --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+            aws iam attach-group-policy --group-name <group-name> --policy-arn <scoped-policy-arn>
+            ```
+        # No Terraform remediation: verifying the identity of an attached managed policy in Terraform requires resolving policy_arn values that are frequently variable or data-source references, which cannot be evaluated statically.
+        # No CloudFormation remediation: AdministratorAccess attachment is expressed via cross-resource ARN references that are not statically resolvable in a template.
+    refs:
+      - url: https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html
+        title: AWS Documentation - Security best practices in IAM
+  # No Terraform variants: group membership is expressed across separate aws_iam_group_membership / aws_iam_user_group_membership resources, so asserting that an empty group carries no policies requires cross-resource correlation not representable structurally.
+  # No CloudFormation variant: the same cross-resource correlation between AWS::IAM::Group and its membership/policy resources is required and cannot be expressed structurally.
+  - uid: mondoo-aws-security-iam-group-empty-no-policies
+    title: Ensure empty IAM groups carry no attached or inline policies
+    impact: 40
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-3-2
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-aws-security-iam-group-empty-no-policies-aws
+        tags:
+          mondoo.com/filter-title: AWS IAM Group
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that any AWS IAM group with no members carries no attached managed policies and no inline policies. An empty group that still grants permissions is a dangling privilege container: it holds a pre-staged permission set that anyone with `iam:AddUserToGroup` can activate simply by joining the group, without creating any new policy that a review would notice.
+
+        **Why this matters**
+
+        - **Pre-staged escalation path:** An empty group with policies converts a single `iam:AddUserToGroup` call into an instant privilege grant, giving an attacker or insider a low-visibility escalation route.
+        - **Audit blind spot:** Groups with no members are easy to overlook in access reviews, so the permissions they carry can persist unnoticed long after the group's original purpose has ended.
+        - **Stale privilege accumulation:** Groups left over from completed projects or former roles often retain broad permissions that no longer map to any active workload.
+
+        **Risk mitigation**
+
+        - **Attack surface reduction:** Removing the policies from unused groups, or deleting the groups entirely, eliminates pre-staged permission sets and the escalation paths they enable.
+        - **Review accuracy:** Ensuring that only groups with active members carry permissions keeps access reviews focused on the permissions that are actually in use.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the AWS Management Console and open the IAM console at https://console.aws.amazon.com/iam/.
+        2. In the left navigation pane, choose **User groups**.
+        3. Identify any group whose **Users** count is 0.
+        4. For each empty group, select the group name and choose the **Permissions** tab, then review both attached policies and inline policies.
+
+        A passing empty group has no attached policies and no inline policies (a group with members passes regardless of its policies). A failing empty group lists one or more attached or inline policies.
+
+        ### Audit via CLI
+
+        1. List all IAM groups:
+
+        ```bash
+        aws iam list-groups --query "Groups[*].GroupName" --output text
+        ```
+
+        2. For each group, check whether it has any members:
+
+        ```bash
+        aws iam get-group --group-name <group-name> --query "Users[*].UserName"
+        ```
+
+        3. For each group with no members, check for attached and inline policies:
+
+        ```bash
+        aws iam list-attached-group-policies --group-name <group-name> --query "AttachedPolicies[*].PolicyName"
+        aws iam list-group-policies --group-name <group-name> --query "PolicyNames"
+        ```
+
+        A passing empty group returns empty arrays for both policy commands. A failing empty group returns one or more policy names in either command.
+      remediation:
+        - id: console
+          desc: |
+            To ensure empty IAM groups carry no attached or inline policies using the AWS Console:
+
+            1.  Navigate to the AWS IAM Console.
+            2.  Select User groups in the left panel.
+            3.  Identify groups with a Users count of 0.
+            4.  For each empty group with permissions, either:
+              - Add the intended users so the permission grant is actually used, or
+              - Detach all managed policies and delete all inline policies, and delete the group if it is no longer needed.
+        - id: cli
+          desc: |
+            To ensure empty IAM groups carry no attached or inline policies using the AWS CLI, confirm the group has no members:
+
+            ```bash
+            aws iam get-group --group-name <group-name> --query "Users[*].UserName"
+            ```
+
+            If the group is empty, detach its managed policies and delete its inline policies:
+
+            ```bash
+            aws iam detach-group-policy --group-name <group-name> --policy-arn <policy-arn>
+            aws iam delete-group-policy --group-name <group-name> --policy-name <inline-policy-name>
+            ```
+
+            If the group is no longer needed, delete it once it carries no policies:
+
+            ```bash
+            aws iam delete-group --group-name <group-name>
+            ```
+        # No Terraform remediation: group membership is expressed across separate aws_iam_group_membership / aws_iam_user_group_membership resources, so asserting that an empty group carries no policies requires cross-resource correlation not representable structurally.
+        # No CloudFormation remediation: the same cross-resource correlation between AWS::IAM::Group and its membership/policy resources is required and cannot be expressed structurally.
+    refs:
+      - url: https://docs.aws.amazon.com/IAM/latest/UserGuide/id_groups_manage.html
+        title: AWS Documentation - IAM user groups
+  - uid: mondoo-aws-security-iam-group-no-admin-policy-aws
+    filters: asset.platform == "aws-iam-group"
+    mql: |
+      aws.iam.group.attachedPolicies.all(name != "AdministratorAccess")
+  - uid: mondoo-aws-security-iam-group-empty-no-policies-aws
+    filters: asset.platform == "aws-iam-group"
+    mql: |
+      aws.iam.group.usernames != empty || aws.iam.group.attachedPolicies == empty && aws.iam.group.inlinePolicies == empty
+
+# No Terraform variants: data protection policies are a separate aws_cloudwatch_log_data_protection_policy resource, so asserting every log group has one requires cross-resource correlation this check does not model.
+# No CloudFormation variant: AWS::Logs::LogGroup and the data protection policy are separate template resources, so the same cross-resource correlation would be required.
+  - uid: mondoo-aws-security-cloudwatch-log-group-data-protection-enabled
+    title: Ensure CloudWatch log groups have a data protection policy enabled
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-dsp-07
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-privacy-ss164-514-b-amp-ss164-514-c-requirements-for-de-identification-of-phi-amp-re-identification-of-phi
+      compliance/iso-27001-2022: iso-27001-2022-a-8-11
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ds-5
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-19
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: pcidss-requirement-3-4-1
+      compliance/soc2-2017: soc2-control-cc6-1-12
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-aws-security-cloudwatch-log-group-data-protection-enabled-aws
+        tags:
+          mondoo.com/filter-title: AWS CloudWatch Log Group
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that Amazon CloudWatch log groups have an active data protection policy that detects and masks sensitive data such as personally identifiable information (PII) and credentials in log events. By default a log group has no data protection policy, so any sensitive value written to a log stream is stored and displayed in clear text to every principal who can read the group.
+
+        **Why this matters**
+
+        - **Sensitive data in logs:** Applications routinely emit request bodies, headers, and stack traces that contain email addresses, national identifiers, access keys, and session tokens, all of which land in CloudWatch Logs verbatim.
+        - **Automatic detection and masking:** A data protection policy uses managed and custom data identifiers to find sensitive values as events are ingested and masks them so readers see only redacted content.
+        - **Least-privilege exposure:** Only principals granted the dedicated unmask permission can view the raw sensitive values, keeping ordinary log readers from seeing them.
+        - **Audit findings:** Data protection policies can emit audit findings that record where sensitive data was detected, giving security teams visibility into leakage patterns without exposing the data itself.
+
+        **Risk mitigation**
+
+        - **Credential and PII leakage:** Without a data protection policy, secrets and personal data captured in logs are readable by anyone with log access and are retained for the life of the log group.
+        - **Over-broad access to sensitive content:** Masking narrows the set of principals who can see raw sensitive data to those explicitly granted unmask rights, enforcing separation of duties between log readers and privileged reviewers.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the AWS Management Console and open the CloudWatch console at https://console.aws.amazon.com/cloudwatch/.
+        2. In the left navigation pane, choose **Log groups**.
+        3. Select a log group and open the **Data protection** tab.
+        4. Confirm that a data protection policy is present and its status is active.
+
+        A passing log group shows an active data protection policy on the Data protection tab. A failing log group shows no data protection policy.
+
+        ### Audit via CLI
+
+        1. List all CloudWatch log groups:
+
+        ```bash
+        aws logs describe-log-groups --query "logGroups[*].logGroupName" --output text
+        ```
+
+        2. For each log group, retrieve its data protection policy:
+
+        ```bash
+        aws logs get-data-protection-policy --log-group-identifier <log-group-name>
+        ```
+
+        A passing log group returns a populated `policyDocument` with a recent `lastUpdatedTime`. A failing log group returns a `ResourceNotFoundException`, indicating no data protection policy is configured.
+      remediation:
+        - id: console
+          desc: |
+            To enable a data protection policy on a CloudWatch log group using the AWS Console:
+
+            1. Navigate to the AWS CloudWatch Console.
+            2. Select **Log groups** from the left panel and choose the target log group.
+            3. Open the **Data protection** tab and choose **Create data protection policy** (or **Edit**).
+            4. Select the managed and custom data identifiers to detect (for example, credentials, email addresses, and national identifiers), configure the audit and masking operations, and save the policy.
+        - id: cli
+          desc: |
+            To create a data protection policy on a CloudWatch log group using the AWS CLI, attach a policy document that audits and masks the sensitive data identifiers you want to protect:
+
+            ```bash
+            aws logs put-data-protection-policy \
+              --log-group-identifier <log-group-name> \
+              --policy-document '{
+                "Name": "data-protection-policy",
+                "Version": "2021-06-01",
+                "Statement": [
+                  {
+                    "Sid": "audit",
+                    "DataIdentifier": ["arn:aws:dataprotection::aws:data-identifier/EmailAddress"],
+                    "Operation": {
+                      "Audit": {
+                        "FindingsDestination": {}
+                      }
+                    }
+                  },
+                  {
+                    "Sid": "mask",
+                    "DataIdentifier": ["arn:aws:dataprotection::aws:data-identifier/EmailAddress"],
+                    "Operation": {
+                      "Deidentify": {
+                        "MaskConfig": {}
+                      }
+                    }
+                  }
+                ]
+              }'
+            ```
+        # No Terraform remediation: the data protection policy is a separate aws_cloudwatch_log_data_protection_policy resource, so this check's per-log-group assertion has no single-resource Terraform analog.
+        # No CloudFormation remediation: the data protection policy is a separate template resource from AWS::Logs::LogGroup, so the fix requires cross-resource correlation this check does not model.
+    refs:
+      - url: https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/mask-sensitive-log-data.html
+        title: Help protect sensitive log data with masking
+      - url: https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/mask-sensitive-log-data-start.html
+        title: Enable data protection for a log group
+  - uid: mondoo-aws-security-cloudwatch-log-group-data-protection-enabled-aws
+    filters: asset.platform == "aws-cloudwatch-loggroup"
+    mql: |
+      aws.cloudwatch.loggroup.dataProtectionStatus == "ACTIVATED"
+
+  # No Terraform variants: a zone's private status in Terraform is defined by the presence of a vpc block on aws_route53_zone, so the assertion is tautological in HCL (a zone with no vpc block is public, not a finding).
+  # No CloudFormation variant: AWS::Route53::HostedZone privateness is determined by the presence of VPCs in the template, making the check tautological.
+  - uid: mondoo-aws-security-route53-private-zone-vpc-associated
+    title: Ensure private Route 53 hosted zones are associated with a VPC
+    impact: 40
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ip-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-2
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-aws-security-route53-private-zone-vpc-associated-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that every Amazon Route 53 private hosted zone is associated with at least one VPC. A private hosted zone only answers DNS queries from the VPCs it is associated with, so a private zone that has no VPC association is orphaned: it resolves for no one and serves no purpose. Public hosted zones are out of scope and always pass.
+
+        **Why this matters**
+
+        - A private hosted zone with no VPC association is a broken configuration that silently fails to resolve records, which can cause application outages that are hard to diagnose.
+        - Orphaned private zones accumulate as untracked, unowned resources that clutter the account and obscure which zones are actually in use.
+        - Reviewing VPC associations confirms that internal DNS is scoped to the intended networks and has not drifted from its expected configuration.
+
+        **Risk mitigation**
+
+        - **Configuration correctness:** Guarantees that private DNS records are reachable by the workloads that depend on them.
+        - **Resource hygiene:** Surfaces abandoned zones so they can be associated with a VPC or removed.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the AWS Management Console and navigate to the **Route 53** service.
+        2. In the left navigation pane, select **Hosted zones**.
+        3. Select a hosted zone whose **Type** is **Private hosted zone**.
+        4. Review the **Hosted zone details**, specifically the associated VPCs.
+
+        A passing private hosted zone lists at least one associated VPC. A failing private hosted zone shows no associated VPCs.
+
+        ### Audit via CLI
+
+        1. List all private hosted zones:
+
+        ```bash
+        aws route53 list-hosted-zones \
+          --query "HostedZones[?Config.PrivateZone==\`true\`].{Id:Id,Name:Name}" \
+          --output table
+        ```
+
+        2. For each private hosted zone, list its associated VPCs:
+
+        ```bash
+        aws route53 get-hosted-zone --id <zone-id> \
+          --query "VPCs"
+        ```
+
+        A passing private hosted zone returns at least one VPC entry. A failing private hosted zone returns an empty list `[]`.
+
+      remediation:
+        - id: console
+          desc: |
+            To associate a VPC with a private Route 53 hosted zone using the AWS Console:
+
+            1. Navigate to the **Route 53 Console** and select **Hosted zones**.
+            2. Select the private hosted zone that has no associated VPC.
+            3. Because the console requires at least one VPC for every private hosted zone, recreate the zone with a VPC: choose **Create hosted zone**.
+            4. Enter the domain name, set **Type** to **Private hosted zone**, and under **VPCs to associate with the hosted zone** choose the Region and VPC.
+            5. Choose **Create hosted zone**, then recreate the DNS records in the new zone.
+        - id: cli
+          desc: |
+            To associate a VPC with an existing private Route 53 hosted zone using the AWS CLI:
+
+            ```bash
+            aws route53 associate-vpc-with-hosted-zone \
+              --hosted-zone-id <zone-id> \
+              --vpc VPCRegion=us-east-1,VPCId=vpc-1a2b3c4d
+            ```
+        # No Terraform remediation: a zone's private status in Terraform is defined by the presence of a vpc block on aws_route53_zone, so an orphaned private zone cannot be expressed in HCL.
+        # No CloudFormation remediation: AWS::Route53::HostedZone privateness is determined by the presence of VPCs in the template, so an orphaned private zone cannot be expressed in CloudFormation.
+    refs:
+      - url: https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/hosted-zones-private.html
+        title: Working with private hosted zones in Amazon Route 53
+  - uid: mondoo-aws-security-route53-private-zone-vpc-associated-aws
+    filters: |
+      asset.platform == "aws-route53-hostedzone"
+    mql: |
+      aws.route53.hostedZone.isPrivate == false || aws.route53.hostedZone.vpcs != empty
+
+  - uid: mondoo-aws-security-apigatewayv2-disable-default-endpoint
+    title: Ensure API Gateway v2 APIs disable the default execute-api endpoint
+    impact: 50
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    variants:
+      - uid: mondoo-aws-security-apigatewayv2-disable-default-endpoint-aws
+        tags:
+          mondoo.com/filter-title: AWS API Gateway v2 API
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-apigatewayv2-disable-default-endpoint-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-apigatewayv2-disable-default-endpoint-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-apigatewayv2-disable-default-endpoint-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-apigatewayv2-disable-default-endpoint-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
+    docs:
+      desc: |
+        This check ensures that API Gateway v2 APIs disable the default `https://{api-id}.execute-api.{region}.amazonaws.com` endpoint so that all traffic must flow through a custom domain name. By default AWS leaves this endpoint enabled (`disable_execute_api_endpoint = false`), which exposes a second, publicly reachable entry point that bypasses the custom domain and any controls bound to it.
+
+        **Why this matters**
+
+        - **Reduced attack surface:** The auto-generated execute-api URL is a fixed, guessable, internet-facing entry point that remains reachable even after clients are pointed at a custom domain.
+        - **Bypasses edge controls:** Web ACLs, custom TLS policies, and DNS-based routing are attached to the custom domain, so requests to the default endpoint skip the WAF and TLS controls you configured.
+        - **Consistent ingress:** Forcing every request through a single custom domain gives you one place to enforce, monitor, and log access to the API.
+
+        **Risk mitigation**
+
+        - **Close the alternate path:** Disabling the default endpoint removes the parallel public URL, so callers cannot reach the API without going through the controlled custom domain.
+        - **Enforce protective controls:** With the default endpoint disabled, WAF rules and the domain's TLS security policy apply to all traffic rather than being trivially bypassed.
+      audit: |
+        ### Audit via Console
+
+        1. Open the **API Gateway Console** and select each v2 HTTP or WebSocket API.
+        2. In the left navigation pane, choose **API settings**.
+        3. Under **Default endpoint**, confirm it is set to **Disabled**.
+
+        A passing API shows the default endpoint as **Disabled**. A failing API shows it as **Enabled**.
+
+        ### Audit via CLI
+
+        1. List all API Gateway v2 APIs:
+
+        ```bash
+        aws apigatewayv2 get-apis \
+          --query 'Items[*].{Name:Name,ApiId:ApiId,DisableExecuteApiEndpoint:DisableExecuteApiEndpoint}' \
+          --output table
+        ```
+
+        2. For any API in question, inspect the setting directly:
+
+        ```bash
+        aws apigatewayv2 get-api \
+          --api-id <api-id> \
+          --query 'DisableExecuteApiEndpoint'
+        ```
+
+        A passing API returns `DisableExecuteApiEndpoint` set to `true`. A failing API returns `false` (the default).
+      remediation:
+        - id: console
+          desc: |
+            To disable the default execute-api endpoint using the AWS Console:
+
+            1. Open the **API Gateway Console** and select the v2 HTTP or WebSocket API.
+            2. In the left pane, choose **API settings**.
+            3. Under **Default endpoint**, choose **Disabled**.
+            4. Save the change and confirm clients reach the API through the custom domain.
+        - id: cli
+          desc: |
+            To disable the default execute-api endpoint using the AWS CLI:
+
+            ```bash
+            aws apigatewayv2 update-api \
+              --api-id <api-id> \
+              --disable-execute-api-endpoint
+            ```
+        - id: terraform
+          desc: |
+            To disable the default execute-api endpoint in Terraform, set `disable_execute_api_endpoint` to `true` on the `aws_apigatewayv2_api` resource:
+
+            ```hcl
+            resource "aws_apigatewayv2_api" "example" {
+              name                         = "example-http-api"
+              protocol_type                = "HTTP"
+              disable_execute_api_endpoint = true
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To disable the default execute-api endpoint in CloudFormation, set `DisableExecuteApiEndpoint` to `true` on the `AWS::ApiGatewayV2::Api` resource:
+
+            ```yaml
+            Resources:
+              ExampleApi:
+                Type: AWS::ApiGatewayV2::Api
+                Properties:
+                  Name: example-http-api
+                  ProtocolType: HTTP
+                  DisableExecuteApiEndpoint: true
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/apigateway/latest/developerguide/rest-api-disable-default-endpoint.html
+        title: Disabling the default endpoint for an API Gateway API
+  - uid: mondoo-aws-security-apigatewayv2-disable-default-endpoint-aws
+    filters: asset.platform == "aws-apigatewayv2-api"
+    mql: |
+      aws.apigatewayv2.api.disableExecuteApiEndpoint == true
+  - uid: mondoo-aws-security-apigatewayv2-disable-default-endpoint-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_apigatewayv2_api")
+    mql: |
+      terraform.resources("aws_apigatewayv2_api").all(arguments['disable_execute_api_endpoint'] == true)
+  - uid: mondoo-aws-security-apigatewayv2-disable-default-endpoint-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_apigatewayv2_api")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_apigatewayv2_api").all(change.after['disable_execute_api_endpoint'] == true)
+  - uid: mondoo-aws-security-apigatewayv2-disable-default-endpoint-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_apigatewayv2_api")
+    mql: |
+      terraform.state.resources.where(type == "aws_apigatewayv2_api").all(values['disable_execute_api_endpoint'] == true)
+  - uid: mondoo-aws-security-apigatewayv2-disable-default-endpoint-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::ApiGatewayV2::Api")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::ApiGatewayV2::Api").all(properties['DisableExecuteApiEndpoint'] == true)
+
+  # No Terraform variants: aws_batch_job_definition supplies container settings as a `jsonencode()` string blob in `container_properties`, so the `readonlyRootFilesystem` field cannot be reliably extracted from the opaque JSON.
+  # No CloudFormation variants: the AWS::Batch::JobDefinition ContainerProperties are a free-form nested structure that is not reliably assertable structurally.
+  - uid: mondoo-aws-security-batch-readonly-root-filesystem
+    title: Ensure Batch job definition containers use a read-only root filesystem
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-c-1-integrity
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ds-6
+      compliance/nist-csf-2: nist-csf-2-pr-ps-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-2
+      compliance/pci-dss-4: pcidss-requirement-2-2-6
+      compliance/soc2-2017: soc2-control-cc6-8-1
+      compliance/vda-isa-5: vda-isa-5-5-2-3
+    variants:
+      - uid: mondoo-aws-security-batch-readonly-root-filesystem-aws
+        tags:
+          mondoo.com/filter-title: AWS Batch Job Definition
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that active AWS Batch job definition containers run with a read-only root filesystem. By default the container root filesystem is writable, which lets a workload or an attacker who gains code execution modify binaries, drop tools, or persist changes inside the running container.
+
+        **Why this matters**
+
+        - **Tamper resistance:** A read-only root filesystem blocks in-place modification of executables and libraries, so a code-execution flaw cannot rewrite the application or install a backdoor at runtime.
+        - **Malware persistence prevention:** Attackers frequently stage payloads by writing to the filesystem; a read-only root removes that foothold and forces any writes into explicitly mounted, scoped volumes.
+        - **Configuration discipline:** Requiring writable data to live in declared volumes makes a job's real storage needs explicit and auditable rather than scattered across the image.
+
+        **Risk mitigation**
+
+        - **Reduced blast radius:** Even if the workload is compromised, the immutable root filesystem limits what the attacker can change on the container.
+        - **Integrity assurance:** The container's shipped binaries remain exactly as built, supporting reliable forensic comparison and reducing drift between the image and the running job.
+      audit: |
+        ### Audit via Console
+
+        1. Open the **AWS Batch Console** and select **Job definitions**.
+        2. Filter by **Status: Active** and select each job definition.
+        3. Under **Container properties**, review the **Read-only root filesystem** setting. For multi-node job definitions, inspect each node range.
+
+        A passing job definition shows **Read-only root filesystem: true**. A failing job definition shows the setting disabled or absent.
+
+        ### Audit via CLI
+
+        1. List active job definitions and inspect the `readonlyRootFilesystem` flag on their container properties:
+
+        ```bash
+        aws batch describe-job-definitions \
+          --status ACTIVE \
+          --query 'jobDefinitions[*].{Name:jobDefinitionName,Revision:revision,ReadonlyRootFilesystem:containerProperties.readonlyRootFilesystem}' \
+          --output table
+        ```
+
+        A passing job definition returns `true` for `ReadonlyRootFilesystem`. A failing job definition returns `false` or `null`.
+      remediation:
+        - id: console
+          desc: |
+            Job definitions are immutable, so a read-only root filesystem is enabled by registering a new revision:
+
+            1. Open the **AWS Batch Console** and select **Job definitions**.
+            2. Select the offending job definition and choose **Create new revision**.
+            3. Under **Container properties**, enable **Read-only root filesystem**, and add a mounted volume for any path the workload must write to.
+            4. Save the new revision and update the queue or workflow to use it.
+            5. Deregister the previous revision so it is no longer active.
+        - id: cli
+          desc: |
+            To register a revision with a read-only root filesystem using the AWS CLI:
+
+            ```bash
+            aws batch register-job-definition \
+              --job-definition-name <name> \
+              --type container \
+              --container-properties '{"image":"<image>","readonlyRootFilesystem":true,"jobRoleArn":"<role-arn>","resourceRequirements":[{"type":"VCPU","value":"1"},{"type":"MEMORY","value":"2048"}]}'
+            ```
+
+            Then deregister the writable revision so it is no longer active:
+
+            ```bash
+            aws batch deregister-job-definition \
+              --job-definition <name>:<old-revision>
+            ```
+        # No Terraform remediation: aws_batch_job_definition supplies container settings as a `jsonencode()` string blob in `container_properties`, so the `readonlyRootFilesystem` field cannot be reliably extracted from the opaque JSON.
+        # No CloudFormation remediation: the AWS::Batch::JobDefinition ContainerProperties are a free-form nested structure that is not reliably assertable structurally.
+    refs:
+      - url: https://docs.aws.amazon.com/batch/latest/userguide/job_definition_parameters.html
+        title: Batch job definition parameters
+  - uid: mondoo-aws-security-batch-readonly-root-filesystem-aws
+    filters: asset.platform == "aws-batch-jobdefinition"
+    mql: |
+      aws.batch.jobDefinition.status != "ACTIVE" || aws.batch.jobDefinition.container == null || aws.batch.jobDefinition.container.readonlyRootFilesystem == true
+  # No Terraform variants: aws_batch_job_definition supplies container settings as a `jsonencode()` string blob in `container_properties`, so environment-variable names cannot be reliably extracted from the opaque JSON.
+  # No CloudFormation variants: the AWS::Batch::JobDefinition ContainerProperties are a free-form nested structure that is not reliably assertable structurally.
+  - uid: mondoo-aws-security-batch-no-plaintext-secrets-in-env
+    title: Ensure Batch job definitions do not pass secrets in plaintext env vars
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-15
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-5-ii-d-security-awareness-training-and-tools-password-management
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-10
+      compliance/pci-dss-4: pcidss-requirement-8-6-2
+      compliance/soc2-2017: soc2-control-cc6-1-11
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    variants:
+      - uid: mondoo-aws-security-batch-no-plaintext-secrets-in-env-aws
+        tags:
+          mondoo.com/filter-title: AWS Batch Job Definition
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that active AWS Batch job definitions do not carry secret material in plaintext container environment variables. Environment variable names that look like credentials, such as `PASSWORD`, `SECRET`, `TOKEN`, `API_KEY`, `ACCESS_KEY`, or `PRIVATE_KEY`, indicate that a secret is being injected as a literal value rather than resolved from a secrets store.
+
+        **Why this matters**
+
+        - **Plaintext exposure in the API:** Container environment variables are returned verbatim by the `DescribeJobDefinitions` API and shown in the console, so anyone with read access to Batch can retrieve the secret.
+        - **Leakage into logs:** Environment values are commonly echoed into application logs, crash dumps, and process listings, spreading the secret to log stores that were never scoped for credentials.
+        - **No rotation path:** A secret baked into a job definition revision cannot be rotated without registering a new revision, encouraging long-lived static credentials.
+
+        **Risk mitigation**
+
+        - **Managed secret retrieval:** Injecting secrets through the `secrets` field backed by AWS Secrets Manager or SSM Parameter Store keeps the value out of the job definition and delivers it only to the running container.
+        - **Centralized rotation and audit:** Secrets stores provide rotation, versioning, and access logging, so credentials can be rotated and their use audited without editing job definitions.
+      audit: |
+        ### Audit via Console
+
+        1. Open the **AWS Batch Console** and select **Job definitions**.
+        2. Filter by **Status: Active** and select each job definition.
+        3. Under **Container properties**, review the **Environment variables** list. For multi-node job definitions, inspect each node range.
+
+        A passing job definition has no environment variable whose name suggests a secret (for example `PASSWORD`, `SECRET`, `TOKEN`, `CREDENTIAL`, `API_KEY`, `ACCESS_KEY`, or `PRIVATE_KEY`); such values are supplied through the **Secrets** list instead. A failing job definition exposes a secret-like name in the environment variables.
+
+        ### Audit via CLI
+
+        1. List active job definitions and inspect their environment variable names:
+
+        ```bash
+        aws batch describe-job-definitions \
+          --status ACTIVE \
+          --query 'jobDefinitions[*].{Name:jobDefinitionName,Revision:revision,EnvNames:containerProperties.environment[*].name}' \
+          --output json
+        ```
+
+        A passing job definition returns only non-sensitive environment variable names. A failing job definition returns a name matching `password`, `secret`, `token`, `credential`, `apikey`, `access_key`, or `private_key`.
+      remediation:
+        - id: console
+          desc: |
+            Job definitions are immutable, so plaintext secrets are removed by registering a new revision that references a secrets store:
+
+            1. Store the secret in **AWS Secrets Manager** or **SSM Parameter Store**.
+            2. Open the **AWS Batch Console** and select **Job definitions**.
+            3. Select the offending job definition and choose **Create new revision**.
+            4. Under **Container properties**, delete the secret-bearing environment variable and add an entry under **Secrets** that references the Secrets Manager or Parameter Store ARN.
+            5. Save the new revision, update the queue or workflow to use it, and deregister the previous revision.
+        - id: cli
+          desc: |
+            To register a revision that injects the secret from AWS Secrets Manager instead of a plaintext environment variable using the AWS CLI:
+
+            ```bash
+            aws batch register-job-definition \
+              --job-definition-name <name> \
+              --type container \
+              --container-properties '{"image":"<image>","secrets":[{"name":"DB_PASSWORD","valueFrom":"arn:aws:secretsmanager:<region>:<account-id>:secret:<secret-name>"}],"jobRoleArn":"<role-arn>","resourceRequirements":[{"type":"VCPU","value":"1"},{"type":"MEMORY","value":"2048"}]}'
+            ```
+
+            Then deregister the revision that carried the plaintext secret:
+
+            ```bash
+            aws batch deregister-job-definition \
+              --job-definition <name>:<old-revision>
+            ```
+        # No Terraform remediation: aws_batch_job_definition supplies container settings as a `jsonencode()` string blob in `container_properties`, so environment-variable names cannot be reliably extracted from the opaque JSON.
+        # No CloudFormation remediation: the AWS::Batch::JobDefinition ContainerProperties are a free-form nested structure that is not reliably assertable structurally.
+    refs:
+      - url: https://docs.aws.amazon.com/batch/latest/userguide/specifying-sensitive-data.html
+        title: Specifying sensitive data in Batch jobs
+  - uid: mondoo-aws-security-batch-no-plaintext-secrets-in-env-aws
+    filters: asset.platform == "aws-batch-jobdefinition"
+    mql: |
+      aws.batch.jobDefinition.status != "ACTIVE" || aws.batch.jobDefinition.container == null || aws.batch.jobDefinition.container.environmentVariables.keys.none(_ == /(?i)(password|secret|token|credential|apikey|api_key|access_key|private_key)/)
+  # No Terraform variants: aws_batch_job_definition supplies container settings as a `jsonencode()` string blob in `container_properties`, so the execution role cannot be reliably extracted from the opaque JSON.
+  # No CloudFormation variants: the AWS::Batch::JobDefinition ContainerProperties are a free-form nested structure that is not reliably assertable structurally.
+  - uid: mondoo-aws-security-batch-fargate-execution-role
+    title: Ensure Fargate Batch job definitions define an execution role
+    impact: 40
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: TAG3_CSA
+      compliance/dora: TAG3_DORA
+      compliance/hipaa: TAG3_HIPAA
+      compliance/iso-27001-2022: TAG3_ISO
+      compliance/nis-2: TAG3_NIS2
+      compliance/nist-csf-1: TAG3_CSF1
+      compliance/nist-csf-2: TAG3_CSF2
+      compliance/nist-sp-800-53-rev5: TAG3_80053
+      compliance/nist-sp-800-171: TAG3_800171
+      compliance/pci-dss-4: TAG3_PCI
+      compliance/soc2-2017: TAG3_SOC2
+      compliance/vda-isa-5: TAG3_VDA
+    variants:
+      - uid: mondoo-aws-security-batch-fargate-execution-role-aws
+        tags:
+          mondoo.com/filter-title: AWS Batch Job Definition
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that active AWS Batch job definitions using the Fargate platform define an execution role. On Fargate, the execution role is the IAM identity the platform assumes to pull the container image from a private registry and to send container logs to CloudWatch Logs. EC2 job definitions do not require this role and are out of scope.
+
+        **Why this matters**
+
+        - **Scoped platform permissions:** A dedicated execution role grants only the image-pull and log-delivery permissions Fargate needs, keeping those platform actions separate from the job's own task permissions.
+        - **Predictable image pull and logging:** Without a defined execution role, private-registry pulls and log delivery fall back to broad or undefined defaults, producing inconsistent behavior and harder-to-audit permissions.
+        - **Least privilege for the platform:** Explicitly assigning the role lets you attach a minimal policy rather than relying on whatever permissions happen to be available.
+
+        **Risk mitigation**
+
+        - **Reduced over-permissioning:** A purpose-built execution role avoids reusing an overly broad role for platform actions, shrinking the permissions an attacker could abuse.
+        - **Auditable access:** A named execution role makes the identity used for image pulls and log writes explicit and reviewable in IAM.
+      audit: |
+        ### Audit via Console
+
+        1. Open the **AWS Batch Console** and select **Job definitions**.
+        2. Filter by **Status: Active** and select each job definition whose **Platform capabilities** include **Fargate**.
+        3. Under **Container properties**, review the **Execution role** field.
+
+        A passing Fargate job definition shows an IAM execution role ARN. A failing Fargate job definition shows no execution role. EC2 job definitions are not evaluated.
+
+        ### Audit via CLI
+
+        1. List active Fargate job definitions and inspect their execution role:
+
+        ```bash
+        aws batch describe-job-definitions \
+          --status ACTIVE \
+          --query 'jobDefinitions[?contains(platformCapabilities, `FARGATE`)].{Name:jobDefinitionName,Revision:revision,ExecutionRole:containerProperties.executionRoleArn}' \
+          --output table
+        ```
+
+        A passing Fargate job definition returns an execution role ARN. A failing Fargate job definition returns `null` for `ExecutionRole`.
+      remediation:
+        - id: console
+          desc: |
+            Job definitions are immutable, so an execution role is added by registering a new revision:
+
+            1. Create or select an IAM role with a trust policy for `ecs-tasks.amazonaws.com` and the managed policy `AmazonECSTaskExecutionRolePolicy` (or a least-privilege equivalent).
+            2. Open the **AWS Batch Console** and select **Job definitions**.
+            3. Select the offending Fargate job definition and choose **Create new revision**.
+            4. Under **Container properties**, set the **Execution role** to the role from step 1.
+            5. Save the new revision, update the queue or workflow to use it, and deregister the previous revision.
+        - id: cli
+          desc: |
+            To register a Fargate revision with an execution role using the AWS CLI:
+
+            ```bash
+            aws batch register-job-definition \
+              --job-definition-name <name> \
+              --type container \
+              --platform-capabilities FARGATE \
+              --container-properties '{"image":"<image>","executionRoleArn":"<execution-role-arn>","jobRoleArn":"<role-arn>","fargatePlatformConfiguration":{"platformVersion":"LATEST"},"resourceRequirements":[{"type":"VCPU","value":"1"},{"type":"MEMORY","value":"2048"}]}'
+            ```
+
+            Then deregister the revision that lacked an execution role:
+
+            ```bash
+            aws batch deregister-job-definition \
+              --job-definition <name>:<old-revision>
+            ```
+        # No Terraform remediation: aws_batch_job_definition supplies container settings as a `jsonencode()` string blob in `container_properties`, so the execution role cannot be reliably extracted from the opaque JSON.
+        # No CloudFormation remediation: the AWS::Batch::JobDefinition ContainerProperties are a free-form nested structure that is not reliably assertable structurally.
+    refs:
+      - url: https://docs.aws.amazon.com/batch/latest/userguide/execution-IAM-role.html
+        title: Batch execution IAM role
+  - uid: mondoo-aws-security-batch-fargate-execution-role-aws
+    filters: asset.platform == "aws-batch-jobdefinition"
+    mql: |
+      aws.batch.jobDefinition.status != "ACTIVE" || aws.batch.jobDefinition.platformCapabilities.none(_ == "FARGATE") || aws.batch.jobDefinition.container == null || aws.batch.jobDefinition.container.executionRole != null
+
+  # No Terraform variants: public access is set in an optional nested broker_node_group_info.connectivity_info.public_access block whose omission is the secure default (DISABLED), so a structural HCL/plan/state assertion is prone to false positives on the common default-secure case.
+  # No CloudFormation variant: same optional nested ConnectivityInfo.PublicAccess structure; omission is the secure default.
+  - uid: mondoo-aws-security-msk-public-access-disabled
+    title: Ensure MSK clusters do not have public access enabled
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/pci-dss-4: pcidss-requirement-1-4-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    variants:
+      - uid: mondoo-aws-security-msk-public-access-disabled-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that Amazon MSK clusters do not expose their brokers to the public internet. By default, MSK brokers are reachable only from within their VPC; turning on public access assigns public endpoints to the brokers, so any host on the internet can attempt to connect to the Kafka listener.
+
+        **Why this matters**
+
+        - Publicly reachable brokers are exposed to the entire internet, including automated scanners and opportunistic attackers, rather than only to hosts inside your network.
+        - Public access removes the VPC network boundary that normally restricts which clients can even attempt to open a connection to the cluster.
+        - An internet-reachable broker can be probed and attacked directly, without an adversary first having to gain a foothold inside the VPC.
+
+        **Risk mitigation**
+
+        - **Attack surface reduction:** Keeping brokers private confines connectivity to the VPC and the networks you explicitly peer or route to it.
+        - **Defense in depth:** A private network boundary complements authentication and encryption, so a single misconfiguration does not directly expose the cluster.
+      audit: |
+        ### Audit via Console
+
+        1. Open the **Amazon MSK Console** and select **Clusters** in the left pane.
+        2. Select each cluster.
+        3. On the **Properties** tab, expand **Networking settings** and locate **Public access**.
+        4. Verify that **Public access** is **Off**.
+
+        A passing cluster shows **Public access: Off**. A failing cluster shows **Public access: On**.
+
+        ### Audit via CLI
+
+        1. List all MSK clusters and check the public access setting on each:
+
+        ```bash
+        aws kafka list-clusters \
+          --query "ClusterInfoList[*].ClusterArn" \
+          --output text | tr '\t' '\n' | while read arn; do
+            aws kafka describe-cluster --cluster-arn "$arn" \
+              --query "{Name:ClusterInfo.ClusterName,PublicAccess:ClusterInfo.BrokerNodeGroupInfo.ConnectivityInfo.PublicAccess.Type}"
+        done
+        ```
+
+        A passing cluster returns `"PublicAccess": "DISABLED"` (or no `PublicAccess` value). A failing cluster returns `"PublicAccess": "SERVICE_PROVIDED_EIPS"`.
+      remediation:
+        - id: console
+          desc: |
+            To turn off public access for an MSK cluster using the AWS Console:
+
+            1. Navigate to the **Amazon MSK Console** and select your cluster.
+            2. On the **Properties** tab, in the **Networking settings** section, choose **Edit public access**.
+            3. Set **Public access** to **Off**.
+            4. Save the change. MSK removes the public endpoints from the brokers.
+        - id: cli
+          desc: |
+            To turn off public access for an MSK cluster using the AWS CLI, update the cluster's connectivity configuration. Retrieve the current version first, because the update requires it:
+
+            ```bash
+            aws kafka update-connectivity \
+              --cluster-arn <cluster-arn> \
+              --current-version <cluster-version> \
+              --connectivity-info '{"PublicAccess":{"Type":"DISABLED"}}'
+            ```
+
+            Verify the public access setting:
+
+            ```bash
+            aws kafka describe-cluster --cluster-arn <cluster-arn> \
+              --query "ClusterInfo.BrokerNodeGroupInfo.ConnectivityInfo.PublicAccess.Type"
+            ```
+        # No Terraform remediation: public access lives in an optional nested broker_node_group_info.connectivity_info.public_access block whose omission is the secure default (DISABLED), so a structural assertion is prone to false positives on the default-secure case.
+        # No CloudFormation remediation: same optional nested ConnectivityInfo.PublicAccess structure; omission is the secure default.
+    refs:
+      - url: https://docs.aws.amazon.com/msk/latest/developerguide/public-access.html
+        title: Amazon MSK - Public access
+  - uid: mondoo-aws-security-msk-public-access-disabled-aws
+    filters: asset.platform == "aws-msk-cluster"
+    mql: |
+      aws.msk.cluster.publicAccess == false
+  # No Terraform variants: unauthenticated access is set in an optional nested client_authentication.unauthenticated block whose omission is the secure default, so a structural HCL/plan/state assertion is prone to false positives.
+  # No CloudFormation variant: same optional nested ClientAuthentication.Unauthenticated structure.
+  - uid: mondoo-aws-security-msk-unauthenticated-access-disabled
+    title: Ensure MSK clusters do not allow unauthenticated client access
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-14
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-2
+      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/soc2-2017: soc2-control-cc6-1-4
+      compliance/vda-isa-5: vda-isa-5-4-1-2
+    variants:
+      - uid: mondoo-aws-security-msk-unauthenticated-access-disabled-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that Amazon MSK clusters require clients to authenticate before connecting. MSK supports IAM access control, TLS mutual authentication, and SASL/SCRAM; it can also be configured to allow unauthenticated (anonymous) access. When unauthenticated access is enabled, any client that can reach the brokers can connect without presenting credentials.
+
+        **Why this matters**
+
+        - Unauthenticated access lets any network-reachable client produce to or consume from topics without proving its identity.
+        - Without authentication there is no per-client principal to authorize, audit, or revoke, so access-control policies have nothing to attach to.
+        - Anonymous access weakens every other control, because activity on the cluster cannot be tied back to a known identity.
+
+        **Risk mitigation**
+
+        - **Access control:** Requiring IAM, TLS mutual authentication, or SASL/SCRAM ensures only known, credentialed clients can connect.
+        - **Accountability:** Authenticated connections tie cluster activity to an identity that can be authorized and audited.
+      audit: |
+        ### Audit via Console
+
+        1. Open the **Amazon MSK Console** and select **Clusters** in the left pane.
+        2. Select each cluster.
+        3. On the **Properties** tab, expand **Security settings** and locate **Access control methods**.
+        4. Verify that **Unauthenticated access** is **Off** and at least one authentication method (IAM, TLS, or SASL/SCRAM) is enabled.
+
+        A passing cluster shows **Unauthenticated access: Off**. A failing cluster shows **Unauthenticated access: On**.
+
+        ### Audit via CLI
+
+        1. List all MSK clusters and check the unauthenticated access setting on each:
+
+        ```bash
+        aws kafka list-clusters \
+          --query "ClusterInfoList[*].ClusterArn" \
+          --output text | tr '\t' '\n' | while read arn; do
+            aws kafka describe-cluster --cluster-arn "$arn" \
+              --query "{Name:ClusterInfo.ClusterName,Unauthenticated:ClusterInfo.ClientAuthentication.Unauthenticated.Enabled}"
+        done
+        ```
+
+        A passing cluster returns `"Unauthenticated": false` (or no `Unauthenticated` value). A failing cluster returns `"Unauthenticated": true`.
+      remediation:
+        - id: console
+          desc: |
+            To disable unauthenticated access for an MSK cluster using the AWS Console:
+
+            1. Navigate to the **Amazon MSK Console** and select your cluster.
+            2. On the **Properties** tab, in the **Security settings** section, choose **Edit**.
+            3. Turn **Unauthenticated access** **Off** and enable at least one authentication method (IAM role-based authentication, TLS client authentication, or SASL/SCRAM).
+            4. Save the change. Confirm all clients are configured to authenticate before applying, because clients relying on anonymous access lose connectivity.
+        - id: cli
+          desc: |
+            To disable unauthenticated access for an MSK cluster using the AWS CLI, update the cluster's client authentication settings. Ensure at least one authentication method stays enabled and that all clients are configured to authenticate first, because the update triggers a rolling broker restart:
+
+            ```bash
+            aws kafka update-security \
+              --cluster-arn <cluster-arn> \
+              --current-version <cluster-version> \
+              --client-authentication '{"Unauthenticated":{"Enabled":false},"Sasl":{"Iam":{"Enabled":true}}}'
+            ```
+
+            Verify the client authentication settings:
+
+            ```bash
+            aws kafka describe-cluster --cluster-arn <cluster-arn> \
+              --query "ClusterInfo.ClientAuthentication"
+            ```
+        # No Terraform remediation: unauthenticated access lives in an optional nested client_authentication.unauthenticated block whose omission is the secure default, so a structural assertion is prone to false positives.
+        # No CloudFormation remediation: same optional nested ClientAuthentication.Unauthenticated structure.
+    refs:
+      - url: https://docs.aws.amazon.com/msk/latest/developerguide/kafka_apis_iam.html
+        title: Amazon MSK - Authentication and authorization
+  - uid: mondoo-aws-security-msk-unauthenticated-access-disabled-aws
+    filters: asset.platform == "aws-msk-cluster"
+    mql: |
+      aws.msk.cluster.unauthenticatedEnabled == false
+  # No Terraform variants: in-cluster encryption defaults to enabled and its Terraform analog (encryption_info.encryption_in_transit.in_cluster) is an optional nested attribute whose omission is the secure default, so a structural HCL/plan/state assertion is prone to false positives on the default-secure case.
+  # No CloudFormation variant: same — EncryptionInfo.EncryptionInTransit.InCluster is optional and defaults to enabled.
+  - uid: mondoo-aws-security-msk-in-cluster-encryption-enabled
+    title: Ensure MSK clusters encrypt data in transit between broker nodes
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    variants:
+      - uid: mondoo-aws-security-msk-in-cluster-encryption-enabled-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that Amazon MSK clusters encrypt data in transit between broker nodes. MSK encrypts this broker-to-broker (in-cluster) traffic with TLS by default, but the setting can be turned off when a provisioned cluster is created. Serverless clusters always encrypt in-cluster traffic and do not expose the setting. In-cluster encryption is distinct from client-broker encryption: a cluster can encrypt client connections yet still replicate data between brokers in plaintext.
+
+        **Why this matters**
+
+        - Broker-to-broker replication carries full copies of topic data across the cluster, so without in-cluster TLS that traffic crosses the network unencrypted.
+        - Disabling in-cluster encryption exposes replicated message payloads to interception anywhere along the internal network path between brokers.
+        - Because it is configured separately from client-broker encryption, in-cluster encryption can be left off even on a cluster that encrypts client traffic.
+
+        **Risk mitigation**
+
+        - **Confidentiality:** TLS on broker-to-broker traffic protects replicated data from eavesdropping on the internal network.
+        - **Integrity:** TLS protects replicated messages from tampering as they move between broker nodes.
+      audit: |
+        ### Audit via Console
+
+        1. Open the **Amazon MSK Console** and select **Clusters** in the left pane.
+        2. Select each cluster.
+        3. On the **Properties** tab, expand **Security** and locate **Encryption in transit**.
+        4. Verify that **Within the cluster** encryption is **Enabled**.
+
+        A passing cluster shows in-cluster encryption **Enabled**. A failing cluster shows it **Disabled**.
+
+        ### Audit via CLI
+
+        1. List all MSK clusters and check the in-cluster encryption in transit setting on each:
+
+        ```bash
+        aws kafka list-clusters \
+          --query "ClusterInfoList[*].ClusterArn" \
+          --output text | tr '\t' '\n' | while read arn; do
+            aws kafka describe-cluster --cluster-arn "$arn" \
+              --query "{Name:ClusterInfo.ClusterName,InCluster:ClusterInfo.EncryptionInfo.EncryptionInTransit.InCluster}"
+        done
+        ```
+
+        A passing cluster returns `"InCluster": true`. A failing cluster returns `"InCluster": false`. Serverless clusters always encrypt in-cluster traffic.
+      remediation:
+        - id: console
+          desc: |
+            To encrypt in-cluster traffic for an MSK cluster using the AWS Console:
+
+            1. In-cluster encryption is set when the cluster is created and cannot be changed on an existing cluster.
+            2. Navigate to the **Amazon MSK Console** and choose **Create cluster**.
+            3. In the **Security settings** section, under **Encryption**, ensure **Within the cluster** is enabled (this is the default).
+            4. Create the new cluster, migrate producers and consumers to it, then delete the cluster that had in-cluster encryption disabled.
+        - id: cli
+          desc: |
+            To encrypt in-cluster traffic for an MSK cluster using the AWS CLI, create a replacement cluster with in-cluster encryption enabled, because the setting cannot be modified after creation. In-cluster encryption is enabled by default when `InCluster` is set to `true`:
+
+            ```bash
+            aws kafka create-cluster \
+              --cluster-name <cluster-name> \
+              --kafka-version <kafka-version> \
+              --number-of-broker-nodes <count> \
+              --broker-node-group-info file://broker-node-group-info.json \
+              --encryption-info '{"EncryptionInTransit":{"ClientBroker":"TLS","InCluster":true}}'
+            ```
+
+            Migrate producers and consumers to the new cluster, then delete the old one:
+
+            ```bash
+            aws kafka delete-cluster --cluster-arn <old-cluster-arn>
+            ```
+        # No Terraform remediation: in-cluster encryption defaults to enabled and its Terraform analog (encryption_info.encryption_in_transit.in_cluster) is an optional nested attribute whose omission is the secure default, so a structural assertion is prone to false positives on the default-secure case.
+        # No CloudFormation remediation: same — EncryptionInfo.EncryptionInTransit.InCluster is optional and defaults to enabled.
+    refs:
+      - url: https://docs.aws.amazon.com/msk/latest/developerguide/msk-encryption.html
+        title: Amazon MSK - Encryption in Transit
+  - uid: mondoo-aws-security-msk-in-cluster-encryption-enabled-aws
+    filters: asset.platform == "aws-msk-cluster"
+    mql: |
+      aws.msk.cluster.clusterType == "SERVERLESS" || aws.msk.cluster.encryptionInTransitInCluster == true
+
+  # No Terraform variants: the KMS key selection lives in an optional nested encryption_options block whose omission is the AWS default (use_aws_owned_key = true), making a structural HCL/plan/state assertion prone to false positives.
+  # No CloudFormation variant: same optional nested EncryptionOptions structure, where omission implies the AWS-owned key default.
+  - uid: mondoo-aws-security-mq-broker-cmk-encryption
+    title: Ensure MQ brokers encrypt data at rest with a customer-managed KMS key
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-11
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-aws-security-mq-broker-cmk-encryption-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that Amazon MQ brokers encrypt data at rest with a customer-managed KMS key rather than the AWS-owned default key. When no key is specified at broker creation, Amazon MQ encrypts data with an AWS-owned key that customers cannot inspect, rotate, or revoke. Selecting a customer-managed KMS key gives your organization direct control over key rotation, access policy, and revocation.
+
+        **Why this matters**
+
+        - **Key control:** A customer-managed key lets you define who can use the key through a KMS key policy, independent of the Amazon MQ service.
+        - **Rotation and revocation:** You can rotate or disable a customer-managed key on your own schedule, immediately cutting off access to the encrypted data if a key is compromised.
+        - **Auditability:** Usage of a customer-managed key is recorded in AWS CloudTrail, giving you a verifiable record of every encrypt and decrypt operation against the broker's data.
+
+        **Risk mitigation**
+
+        - **Blast radius:** Revoking or disabling the key renders the broker's data at rest unreadable, containing exposure if credentials or the account are compromised.
+        - **Compliance:** Many frameworks require encryption keys to be managed and controlled by the data owner, which the AWS-owned default key cannot satisfy.
+      audit: |
+        ### Audit via Console
+
+        1. Open the **Amazon MQ Console** and select **Brokers** in the left pane.
+        2. Select each broker.
+        3. On the broker details page, review the **Encryption** section and confirm that a customer-managed **KMS key** is listed rather than the default AWS-owned key.
+
+        A passing broker shows a customer-managed KMS key ARN. A failing broker shows that encryption uses the AWS-owned key.
+
+        ### Audit via CLI
+
+        1. List all brokers and check the encryption configuration for each:
+
+        ```bash
+        aws mq list-brokers \
+          --query "BrokerSummaries[*].BrokerId" \
+          --output text | tr '\t' '\n' | while read bid; do
+            aws mq describe-broker --broker-id "$bid" \
+              --query "{Id:BrokerId,UseAwsOwnedKey:EncryptionOptions.UseAwsOwnedKey,KmsKeyId:EncryptionOptions.KmsKeyId}"
+        done
+        ```
+
+        A passing broker returns `"UseAwsOwnedKey": false` together with a `KmsKeyId`. A failing broker returns `"UseAwsOwnedKey": true`.
+      remediation:
+        - id: console
+          desc: |
+            To ensure an Amazon MQ broker encrypts data at rest with a customer-managed KMS key using the AWS Console:
+
+            The encryption key is chosen when the broker is created and cannot be changed afterward. To adopt a customer-managed key, create a replacement broker and migrate to it:
+
+            1. Navigate to the **Amazon MQ Console** and choose **Create broker**.
+            2. Select the broker engine and deployment options that match the existing broker.
+            3. Under **Additional settings** expand **Encryption** and select **Use a customer-managed key stored in AWS KMS**, then choose your KMS key.
+            4. Complete broker creation, migrate your workloads to the new broker, and delete the old broker once migration is verified.
+        - id: cli
+          desc: |
+            To ensure an Amazon MQ broker encrypts data at rest with a customer-managed KMS key using the AWS CLI:
+
+            Encryption options are immutable after creation, so create a replacement broker that specifies a customer-managed key and migrate to it:
+
+            ```bash
+            aws mq create-broker \
+              --broker-name example-broker \
+              --engine-type ActiveMQ \
+              --engine-version 5.18 \
+              --host-instance-type mq.m5.large \
+              --deployment-mode SINGLE_INSTANCE \
+              --no-publicly-accessible \
+              --encryption-options KmsKeyId=<kms-key-arn>,UseAwsOwnedKey=false \
+              --users Username=admin,Password=<password>
+            ```
+
+            Verify the encryption configuration on the new broker:
+
+            ```bash
+            aws mq describe-broker --broker-id <broker-id> \
+              --query "EncryptionOptions"
+            ```
+        # No Terraform remediation: the KMS key selection lives in an optional nested encryption_options block whose omission is the AWS-owned key default, so a structural assertion would be prone to false positives.
+        # No CloudFormation remediation: same optional nested EncryptionOptions structure, where omission implies the AWS-owned key default.
+    refs:
+      - url: https://docs.aws.amazon.com/amazon-mq/latest/developer-guide/data-protection.html
+        title: Amazon MQ - Data Protection and Encryption
+  - uid: mondoo-aws-security-mq-broker-cmk-encryption-aws
+    filters: |
+      asset.platform == "aws-mq-broker"
+    mql: |
+      aws.mq.broker.useAwsOwnedKey == false
+  - uid: mondoo-aws-security-mq-broker-auto-minor-version-upgrade
+    title: Ensure MQ brokers enable automatic minor version upgrades
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-tvm-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-8
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ip-12
+      compliance/nist-csf-2: nist-csf-2-pr-ps-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-1
+      compliance/pci-dss-4: pcidss-requirement-6-3-3
+      compliance/soc2-2017: soc2-control-cc7-1-1
+      compliance/vda-isa-5: vda-isa-5-5-2-5
+    variants:
+      - uid: mondoo-aws-security-mq-broker-auto-minor-version-upgrade-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-mq-broker-auto-minor-version-upgrade-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-mq-broker-auto-minor-version-upgrade-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-mq-broker-auto-minor-version-upgrade-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-mq-broker-auto-minor-version-upgrade-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
+    docs:
+      desc: |
+        This check ensures that Amazon MQ brokers have automatic minor version upgrades enabled. When enabled, Amazon MQ automatically applies new minor engine versions during the broker's maintenance window as they are released and supported. The AWS default for this setting is disabled, which leaves brokers running older engine builds that may contain known, unpatched vulnerabilities.
+
+        **Why this matters**
+
+        - **Timely patching:** Minor engine releases frequently include fixes for published CVEs in ActiveMQ or RabbitMQ, and automatic upgrades apply those fixes without manual intervention.
+        - **Reduced operational burden:** Automatic upgrades remove the need to track and manually schedule every minor engine release across a fleet of brokers.
+        - **Consistency:** Brokers stay on a supported, current engine build, avoiding drift that complicates troubleshooting and support.
+
+        **Risk mitigation**
+
+        - **Attack surface:** Applying minor patches promptly closes the window during which brokers are exposed to known vulnerabilities.
+        - **Controlled timing:** Upgrades are applied only during the configured maintenance window, so patching happens without unplanned disruption.
+      audit: |
+        ### Audit via Console
+
+        1. Open the **Amazon MQ Console** and select **Brokers** in the left pane.
+        2. Select each broker.
+        3. On the broker details page, confirm that **Automatic minor version upgrades** is set to **Enabled**.
+
+        A passing broker shows automatic minor version upgrades enabled. A failing broker shows the setting disabled.
+
+        ### Audit via CLI
+
+        1. List all brokers and check the setting for each:
+
+        ```bash
+        aws mq list-brokers \
+          --query "BrokerSummaries[*].BrokerId" \
+          --output text | tr '\t' '\n' | while read bid; do
+            aws mq describe-broker --broker-id "$bid" \
+              --query "{Id:BrokerId,AutoUpgrade:AutoMinorVersionUpgrade}"
+        done
+        ```
+
+        A passing broker returns `"AutoUpgrade": true`. A failing broker returns `"AutoUpgrade": false`.
+      remediation:
+        - id: console
+          desc: |
+            To ensure an Amazon MQ broker enables automatic minor version upgrades using the AWS Console:
+
+            1. Navigate to the **Amazon MQ Console** and select **Brokers**.
+            2. Select the broker you want to configure.
+            3. Choose **Edit**.
+            4. Under the engine settings, enable **Automatic minor version upgrades**.
+            5. Choose **Save** to apply the changes.
+        - id: cli
+          desc: |
+            To ensure an Amazon MQ broker enables automatic minor version upgrades using the AWS CLI:
+
+            ```bash
+            aws mq update-broker \
+              --broker-id <broker-id> \
+              --auto-minor-version-upgrade
+            ```
+
+            Verify the setting:
+
+            ```bash
+            aws mq describe-broker --broker-id <broker-id> \
+              --query "AutoMinorVersionUpgrade"
+            ```
+        - id: terraform
+          desc: |
+            To ensure an Amazon MQ broker enables automatic minor version upgrades in Terraform, set `auto_minor_version_upgrade = true` on the broker:
+
+            ```hcl
+            resource "aws_mq_broker" "example" {
+              broker_name = "example-broker"
+              engine_type = "ActiveMQ"
+
+              auto_minor_version_upgrade = true
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To ensure an Amazon MQ broker enables automatic minor version upgrades in CloudFormation, set `AutoMinorVersionUpgrade` to `true`:
+
+            ```yaml
+            Resources:
+              MQBroker:
+                Type: AWS::AmazonMQ::Broker
+                Properties:
+                  BrokerName: example-broker
+                  EngineType: ActiveMQ
+                  AutoMinorVersionUpgrade: true
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/amazon-mq/latest/developer-guide/upgrading-brokers.html
+        title: Amazon MQ - Upgrading a broker engine version
+  - uid: mondoo-aws-security-mq-broker-auto-minor-version-upgrade-aws
+    filters: asset.platform == "aws-mq-broker"
+    mql: |
+      aws.mq.broker.autoMinorVersionUpgrade == true
+  - uid: mondoo-aws-security-mq-broker-auto-minor-version-upgrade-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_mq_broker")
+    mql: |
+      terraform.resources("aws_mq_broker").all(arguments['auto_minor_version_upgrade'] == true)
+  - uid: mondoo-aws-security-mq-broker-auto-minor-version-upgrade-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_mq_broker")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_mq_broker").all(change.after['auto_minor_version_upgrade'] == true)
+  - uid: mondoo-aws-security-mq-broker-auto-minor-version-upgrade-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_mq_broker")
+    mql: |
+      terraform.state.resources.where(type == "aws_mq_broker").all(values['auto_minor_version_upgrade'] == true)
+  - uid: mondoo-aws-security-mq-broker-auto-minor-version-upgrade-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::AmazonMQ::Broker")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::AmazonMQ::Broker").all(properties['AutoMinorVersionUpgrade'] == true)
+
+  # No Terraform variants: this check follows the processing job's execution role into its attached managed-policy documents; that cross-resource IAM correlation cannot be replicated structurally, and processing jobs have no Terraform resource (imperative CreateProcessingJob API call).
+  # No CloudFormation variant: no AWS::SageMaker processing-job resource exists and the same cross-resource IAM correlation is required.
+  - uid: mondoo-aws-security-sagemaker-processing-job-role-no-wildcards
+    title: Ensure SageMaker processing job execution roles avoid wildcard permissions
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/pci-dss-4: pcidss-requirement-7-2-2
+      compliance/soc2-2017: soc2-control-cc6-3-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-aws-security-sagemaker-processing-job-role-no-wildcards-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that the IAM execution role assumed by an Amazon SageMaker processing job does not contain `Allow` statements with wildcard `Action` (`"*"`) or wildcard `Resource` (`"*"`), and carries no inline policies whose permissions cannot be evaluated by this check. Processing job containers run under the execution role, so over-permissive policies grant the workload broad access to AWS services every time a job runs.
+
+        **Why this matters**
+
+        - **Privilege escalation vector:** An execution role with `iam:PassRole` and `Resource: "*"` can pass itself or any other role to an AWS service, escalating from the processing job to account-wide access.
+        - **Untrusted code and data risk:** Processing jobs frequently execute third-party libraries or custom scripts against raw datasets; a wildcard role means any code-execution flaw in the job can pivot into full account control.
+        - **Inline policy opacity:** Inline policies are not surfaced through the managed-policy API in a structured form, making them invisible to many audit and governance tools; their presence is flagged so they can be converted to auditable managed policies.
+
+        **Risk mitigation**
+
+        - **Least-privilege enforcement:** Scoping execution-role permissions to the specific actions and resource ARNs the job needs limits the blast radius of a compromised or misbehaving processing job.
+        - **Governance pipeline compatibility:** Managed policies with explicit resource ARNs can be reviewed in change control and validated by automated permission-analysis tools before deployment.
+      audit: |
+        ### Audit via Console
+
+        1. Open the **Amazon SageMaker Console**. In the left navigation pane, under **Processing**, select **Processing jobs**.
+        2. Select each processing job and note the execution role ARN under **Job settings** (**IAM role**).
+        3. Open the **IAM Console**, navigate to **Roles**, and select the execution role.
+        4. Under **Permissions**, review each attached managed policy. Open each policy version and look for any `Allow` statement where `Action` or `Resource` is `"*"`.
+        5. Under **Inline policies**, confirm there are none present.
+
+        A passing execution role shows no `Allow` statements with wildcard `Action` or `Resource` and has no inline policies. A failing execution role shows at least one `Allow` statement with `"Action": "*"` or `"Resource": "*"`, or has one or more inline policies attached.
+
+        ### Audit via CLI
+
+        1. List the execution role for each processing job:
+
+        ```bash
+        aws sagemaker list-processing-jobs \
+          --query 'ProcessingJobSummaries[*].ProcessingJobName' \
+          --output text | tr '\t' '\n' | while read job; do
+          aws sagemaker describe-processing-job \
+            --processing-job-name "$job" \
+            --query '{Name:ProcessingJobName,Role:RoleArn}'
+        done
+        ```
+
+        2. For each role, check for inline policies:
+
+        ```bash
+        aws iam list-role-policies --role-name <role-name> --query 'PolicyNames'
+        ```
+
+        3. Check attached managed policies for wildcard statements:
+
+        ```bash
+        aws iam list-attached-role-policies --role-name <role-name> --query 'AttachedPolicies[*].PolicyArn' --output text | \
+          tr '\t' '\n' | \
+          while read arn; do
+            version=$(aws iam get-policy --policy-arn "$arn" --query 'Policy.DefaultVersionId' --output text)
+            aws iam get-policy-version --policy-arn "$arn" --version-id "$version" \
+              --query 'PolicyVersion.Document.Statement[?Effect==`Allow`].{Action:Action,Resource:Resource}'
+          done
+        ```
+
+        A passing execution role returns an empty list for inline policies and shows no `Allow` statement where `Action` or `Resource` contains `"*"`. A failing execution role returns a non-empty inline policy list, or an attached policy document contains `"Action": "*"` or `"Resource": "*"` in an `Allow` statement.
+      remediation:
+        - id: console
+          desc: |
+            To remove wildcard permissions from a SageMaker processing job execution role using the AWS Console:
+
+            1. Open the **IAM Console** and select **Roles**.
+            2. Select the role used as the processing job execution role and review each attached managed policy and inline policy.
+            3. Replace any statement whose `Action` or `Resource` is `"*"` with the explicit list of actions and resource ARNs the workload actually needs.
+            4. Convert each inline policy to a managed policy, attach the managed policy, and delete the inline policy so the execution role carries only the least-privilege managed policies your governance pipeline produces.
+        - id: cli
+          desc: |
+            To list policies on a processing job execution role using the AWS CLI:
+
+            ```bash
+            aws iam list-attached-role-policies --role-name <role-name>
+            aws iam list-role-policies --role-name <role-name>
+            ```
+
+            Then create a least-privilege policy and attach it in place of the wildcard policy:
+
+            ```bash
+            aws iam create-policy --policy-name <name> --policy-document file://policy.json
+            aws iam attach-role-policy --role-name <role-name> --policy-arn <new-policy-arn>
+            aws iam detach-role-policy --role-name <role-name> --policy-arn <old-wildcard-policy-arn>
+            ```
+
+            Delete each inline policy so the role carries only managed policies:
+
+            ```bash
+            aws iam delete-role-policy --role-name <role-name> --policy-name <inline-policy-name>
+            ```
+
+            New processing jobs then reference the least-privilege role at creation time:
+
+            ```bash
+            aws sagemaker create-processing-job \
+              --processing-job-name "least-privilege-processing-job" \
+              --app-specification ImageUri=<image-uri> \
+              --role-arn "arn:aws:iam::<account-id>:role/<least-privilege-role>" \
+              --processing-resources '{"ClusterConfig":{"InstanceType":"ml.m5.large","InstanceCount":1,"VolumeSizeInGB":50}}'
+            ```
+        # No Terraform remediation: this check follows the processing job's execution role into its attached managed-policy documents; that cross-resource IAM correlation has no structural Terraform analog and processing jobs have no Terraform resource (imperative CreateProcessingJob API call).
+        # No CloudFormation remediation: no AWS::SageMaker processing-job resource exists and the same cross-resource IAM correlation is required.
+    refs:
+      - url: https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html
+        title: IAM security best practices
+      - url: https://docs.aws.amazon.com/sagemaker/latest/dg/sagemaker-roles.html
+        title: Amazon SageMaker - Roles
+  # No Terraform variants: SageMaker processing jobs are imperative CreateProcessingJob API calls with no Terraform resource analog.
+  # No CloudFormation variant: no AWS::SageMaker processing-job resource exists.
+  - uid: mondoo-aws-security-sagemaker-processing-job-no-plaintext-secrets-env
+    title: Ensure SageMaker processing jobs pass no secrets in plaintext env vars
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-15
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-10
+      compliance/pci-dss-4: pcidss-requirement-8-6-2
+      compliance/soc2-2017: soc2-control-cc6-1-9
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-aws-security-sagemaker-processing-job-no-plaintext-secrets-env-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that Amazon SageMaker processing jobs do not carry environment variables whose names suggest they hold secrets, such as passwords, tokens, API keys, or private keys. The processing-job environment map is stored with the job definition and returned verbatim by the DescribeProcessingJob API, so any secret passed this way is visible to every principal that can read the job. Secrets belong in AWS Secrets Manager or Systems Manager Parameter Store, fetched by the container at runtime rather than embedded in plaintext configuration.
+
+        **Why this matters**
+
+        - **Plaintext exposure:** Values placed in job environment variables are stored and displayed in clear text through the console, CLI, and API, with no masking or encryption at the job level.
+        - **Broad read access:** Any identity with `sagemaker:DescribeProcessingJob` can retrieve the environment map, widening the audience for a credential far beyond those who need it.
+        - **Credential sprawl:** Hard-coded secrets are rarely rotated and often copied between jobs, multiplying the number of places a leaked credential must be revoked.
+
+        **Risk mitigation**
+
+        - **Centralized secret storage:** Referencing AWS Secrets Manager or Parameter Store keeps the secret encrypted at rest and access-controlled through IAM and resource policies.
+        - **Auditability and rotation:** A managed secret store records every retrieval and supports automatic rotation, neither of which is possible for a value baked into a job definition.
+      audit: |
+        ### Audit via Console
+
+        1. Open the **Amazon SageMaker Console**. In the left navigation pane, under **Processing**, select **Processing jobs**.
+        2. Select each processing job to open its detail page.
+        3. Under **Environment**, review the environment variable names defined for the job.
+
+        A passing processing job has no environment variable whose name matches a secret-like pattern (for example, `PASSWORD`, `SECRET`, `TOKEN`, `CREDENTIAL`, `API_KEY`, `ACCESS_KEY`, or `PRIVATE_KEY`). A failing processing job defines at least one such variable in plaintext.
+
+        ### Audit via CLI
+
+        1. List all processing jobs and inspect the `Environment` map returned for each:
+
+        ```bash
+        aws sagemaker list-processing-jobs \
+          --query 'ProcessingJobSummaries[*].ProcessingJobName' \
+          --output text | tr '\t' '\n' | while read job; do
+          aws sagemaker describe-processing-job \
+            --processing-job-name "$job" \
+            --query '{Name:ProcessingJobName,Environment:Environment}'
+        done
+        ```
+
+        A passing processing job returns an `Environment` map with no secret-like variable names. A failing processing job returns environment variable names such as `PASSWORD`, `API_KEY`, or `SECRET_TOKEN` holding plaintext values.
+      remediation:
+        - id: console
+          desc: |
+            To remove plaintext secrets from SageMaker processing job environment variables using the AWS Console:
+
+            1. Store the secret in **AWS Secrets Manager** or **Systems Manager Parameter Store**.
+            2. Grant the processing job execution role permission to read that specific secret (for example, `secretsmanager:GetSecretValue` scoped to the secret ARN).
+            3. Recreate the processing job without the plaintext environment variable, and have the container fetch the secret at runtime using the AWS SDK.
+        - id: cli
+          desc: |
+            To move a secret out of a plaintext environment variable using the AWS CLI, first store it in Secrets Manager:
+
+            ```bash
+            aws secretsmanager create-secret \
+              --name "sagemaker/processing/db-password" \
+              --secret-string "<secret-value>"
+            ```
+
+            Then create the processing job without the secret in its environment, letting the container retrieve it at runtime through the execution role:
+
+            ```bash
+            aws sagemaker create-processing-job \
+              --processing-job-name "no-plaintext-secrets-job" \
+              --app-specification ImageUri=<image-uri> \
+              --role-arn "arn:aws:iam::<account-id>:role/SageMakerRole" \
+              --processing-resources '{"ClusterConfig":{"InstanceType":"ml.m5.large","InstanceCount":1,"VolumeSizeInGB":50}}' \
+              --environment '{"SECRET_ARN":"arn:aws:secretsmanager:<region>:<account-id>:secret:sagemaker/processing/db-password"}'
+            ```
+        # No Terraform remediation: SageMaker processing jobs are imperative CreateProcessingJob API calls with no Terraform resource analog.
+        # No CloudFormation remediation: no AWS::SageMaker processing-job resource exists.
+    refs:
+      - url: https://docs.aws.amazon.com/sagemaker/latest/APIReference/API_CreateProcessingJob.html
+        title: Amazon SageMaker - CreateProcessingJob API Reference
+      - url: https://docs.aws.amazon.com/secretsmanager/latest/userguide/intro.html
+        title: AWS Secrets Manager - User Guide
+  - uid: mondoo-aws-security-sagemaker-processing-job-role-no-wildcards-aws
+    filters: asset.platform == "aws-sagemaker-processingjob"
+    mql: |
+      aws.sagemaker.processingjob.iamRole == null ||
+      aws.sagemaker.processingjob.iamRole.inlinePolicies.length == 0 &&
+      aws.sagemaker.processingjob.iamRole.attachedPolicies.all(
+        defaultVersion.document['Statement'].all(
+          _['Effect'].upcase == "DENY" ||
+          [_['Resource']].flat.none(_ == "*") &&
+          [_['Action']].flat.none(_ == "*")
+        )
+      )
+  - uid: mondoo-aws-security-sagemaker-processing-job-no-plaintext-secrets-env-aws
+    filters: asset.platform == "aws-sagemaker-processingjob"
+    mql: |
+      aws.sagemaker.processingjob.environment == empty || aws.sagemaker.processingjob.environment.keys.none(_ == /(?i)(password|secret|token|credential|apikey|api_key|access_key|private_key)/)
