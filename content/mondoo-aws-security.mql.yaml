@@ -896,9 +896,10 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_eks_cluster")
     mql: |
       terraform.resources("aws_eks_cluster").all(
-        blocks.where( type == "encryption_config" ) != empty &&
+        blocks.where( type == "encryption_config" || type == "dynamic" && labels.contains("encryption_config") ) != empty
+      )
+      terraform.resources("aws_eks_cluster").all(
         blocks.where( type == "encryption_config" ).all(
-          blocks.where( type == "provider" ) != empty &&
           blocks.where( type == "provider" ).all( arguments.key_arn != empty )
         )
       )
@@ -2221,28 +2222,33 @@ queries:
         conditions["Bool"]["aws:SecureTransport"] != empty
       )
   - uid: mondoo-aws-security-efs-enforce-transit-encryption-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_efs_file_system_policy")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_efs_file_system")
     mql: |
-      terraform.resources("aws_efs_file_system_policy").all(
-        arguments.policy.first["Statement"].where(_["Effect"] == "Deny").any(
+      goodPolicies = terraform.resources("aws_efs_file_system_policy").where(
+        arguments["policy"].first["Statement"].where(_["Effect"] == "Deny").any(
           _["Condition"]["Bool"]["aws:SecureTransport"] != empty
         )
+      ).map(arguments["file_system_id"]).join(",")
+      terraform.resources("aws_efs_file_system").all(
+        goodPolicies.contains("." + labels[1] + ".")
       )
   - uid: mondoo-aws-security-efs-enforce-transit-encryption-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_efs_file_system_policy")
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_efs_file_system")
     mql: |
+      terraform.plan.resourceChanges.where(type == "aws_efs_file_system_policy").length > 0
       terraform.plan.resourceChanges.where(type == "aws_efs_file_system_policy").all(
-        change.after["policy"]["Statement"].where(_["Effect"] == "Deny").any(
-          _["Condition"]["Bool"]["aws:SecureTransport"] != empty
-        )
+        change.after["policy"] == /"Effect":\s*"Deny"/ &&
+        change.after["policy"] == /aws:SecureTransport/
       )
   - uid: mondoo-aws-security-efs-enforce-transit-encryption-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_efs_file_system_policy")
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_efs_file_system")
     mql: |
-      terraform.state.resources.where(type == "aws_efs_file_system_policy").all(
-        values["policy"]["Statement"].where(_["Effect"] == "Deny").any(
-          _["Condition"]["Bool"]["aws:SecureTransport"] != empty
-        )
+      goodPolicies = terraform.state.resources.where(type == "aws_efs_file_system_policy").where(
+        values["policy"] == /"Effect":\s*"Deny"/ &&
+        values["policy"] == /aws:SecureTransport/
+      ).map(values["file_system_id"]).join(",")
+      terraform.state.resources.where(type == "aws_efs_file_system").all(
+        goodPolicies.contains(values["id"])
       )
   - uid: mondoo-aws-security-efs-enforce-transit-encryption-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EFS::FileSystem")
@@ -2409,8 +2415,12 @@ queries:
       terraform.resources("aws_eks_cluster").all(
         blocks.where( type == "vpc_config" ) != empty &&
         blocks.where( type == "vpc_config" ).all(
-          arguments.endpoint_private_access == true &&
-          arguments.endpoint_public_access == false
+          arguments.endpoint_private_access == true ||
+          arguments.endpoint_private_access == /^(var|local|module|each|data)\./
+        ) &&
+        blocks.where( type == "vpc_config" ).all(
+          arguments.endpoint_public_access == false ||
+          arguments.endpoint_public_access == /^(var|local|module|each|data)\./
         )
       )
   - uid: mondoo-aws-security-eks-cluster-private-controlplane-terraform-plan
@@ -2606,6 +2616,7 @@ queries:
       policyState = terraform.state.resources.where(type == "aws_iam_policy").map(values.policy).first
       policyState.contains('Action') && policyState.contains('iam:CreateAccessKey')
       policyState.contains('Effect') && policyState.contains('Deny')
+  # No Terraform variants: Root-user MFA enrollment is a console-only runtime operation; no Terraform resource can enable or represent MFA on the root account, and IAM policies never bind the root principal, so any aws_iam_policy proxy is unrelated to this control.
   - uid: mondoo-aws-security-root-account-mfa-enabled
     title: Ensure MFA is enabled for the "root user" account
     impact: 90
@@ -2628,18 +2639,6 @@ queries:
         tags:
           mondoo.com/filter-title: AWS Account
           mondoo.com/filter-icon: aws
-      - uid: mondoo-aws-security-root-account-mfa-enabled-terraform-hcl
-        tags:
-          mondoo.com/filter-title: Terraform HCL
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-aws-security-root-account-mfa-enabled-terraform-plan
-        tags:
-          mondoo.com/filter-title: Terraform Plan
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-aws-security-root-account-mfa-enabled-terraform-state
-        tags:
-          mondoo.com/filter-title: Terraform State
-          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that Multi-Factor Authentication is enabled for the AWS root user account. The root user has full administrative control over every resource and service in the AWS account; by default MFA is not configured and the account is protected only by a password, which can be phished or leaked.
@@ -2716,32 +2715,6 @@ queries:
               --authentication-code1 123456 \
               --authentication-code2 654321
             ```
-        - id: terraform
-          desc: |
-            To ensure MFA is enabled for the "root user" account in Terraform, AWS does not allow managing root MFA directly through Terraform. However, you can enforce a security policy that blocks root logins unless MFA is enabled:
-
-            ```hcl
-            resource "aws_iam_policy" "require_root_mfa" {
-              name        = "RequireRootMFA"
-              description = "Blocks root logins without MFA"
-
-              policy = jsonencode({
-                Version = "2012-10-17"
-                Statement = [
-                  {
-                    Effect   = "Deny"
-                    Action   = "sts:AssumeRole"
-                    Resource = "*"
-                    Condition = {
-                      BoolIfExists = {
-                        "aws:MultiFactorAuthPresent": "false"
-                      }
-                    }
-                  }
-                ]
-              })
-            }
-            ```
         - id: cloudformation
           desc: |
             To ensure MFA is enabled for the "root user" account in CloudFormation:
@@ -2763,32 +2736,13 @@ queries:
                           BoolIfExists:
                             "aws:MultiFactorAuthPresent": "false"
             ```
+        # No Terraform remediation: root MFA can only be enrolled interactively with root credentials (console or root-credential API calls); no Terraform resource manages root-user MFA. Revisit if the AWS provider ever adds one.
     refs:
       - url: https://docs.aws.amazon.com/IAM/latest/UserGuide/enable-virt-mfa-for-root.html
         title: Enable a virtual MFA device for the root user (console)
   - uid: mondoo-aws-security-root-account-mfa-enabled-aws
     filters: asset.platform == "aws"
     mql: aws.iam.credentialReport.where(properties.user == "<root_account>").all(mfaActive == true)
-  - uid: mondoo-aws-security-root-account-mfa-enabled-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.providers.any(nameLabel == "aws")
-    mql: |
-      terraform.resources("aws_iam_policy").where(arguments["policy"].first["Statement"] != null).any(arguments["policy"].first["Statement"].any(_["Effect"] == "Deny" && _["Condition"].toString().contains("MultiFactorAuthPresent")))
-  - uid: mondoo-aws-security-root-account-mfa-enabled-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains( type == "aws_iam_policy" )
-    mql: |
-      policyPlan = terraform.plan.resourceChanges.where(type == "aws_iam_policy").map(change.after.policy).first
-      policyPlan.contains('Action') && policyPlan.contains('sts:AssumeRole')
-      policyPlan.contains('Effect') && policyPlan.contains('Deny')
-      policyPlan.contains('Resource') && policyPlan.contains('"*"')
-      policyPlan.contains('aws:MultiFactorAuthPresent') && policyPlan.contains('false')
-  - uid: mondoo-aws-security-root-account-mfa-enabled-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains( type == "aws_iam_policy" )
-    mql: |
-      policyState = terraform.state.resources.where(type == "aws_iam_policy").map(values.policy).first
-      policyState.contains('Action') && policyState.contains('sts:AssumeRole')
-      policyState.contains('Effect') && policyState.contains('Deny')
-      policyState.contains('Resource') && policyState.contains('"*"')
-      policyState.contains('aws:MultiFactorAuthPresent') && policyState.contains('false')
   - uid: mondoo-aws-security-iam-password-policy
     title: Ensure strong account password policy requirements are used
     impact: 60
@@ -2981,8 +2935,9 @@ queries:
       aws.iam.accountPasswordPolicy.where(PasswordReusePrevention != empty).all(PasswordReusePrevention >= props.mondooAWSSecurityIamPasswordPolicyPasswordReusePrevention)
       aws.iam.accountPasswordPolicy.where(MaxPasswordAge != empty).all(MaxPasswordAge <= props.mondooAWSSecurityIamPasswordPolicyMaxPasswordAge)
   - uid: mondoo-aws-security-iam-password-policy-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_iam_account_password_policy")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_iam_account_password_policy" || nameLabel == "aws_organizations_organization")
     mql: |
+      terraform.resources.where(nameLabel == "aws_iam_account_password_policy").length > 0
       terraform.resources("aws_iam_account_password_policy").all(
         arguments.minimum_password_length >= props.mondooAWSSecurityIamPasswordPolicyMinimumPasswordLength &&
         arguments.require_uppercase_characters == true &&
@@ -3353,17 +3308,18 @@ queries:
     mql: |
       aws.iam.credentialReport.where(passwordEnabled == true).all(mfaActive == true)
   - uid: mondoo-aws-security-mfa-enabled-for-iam-console-access-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_iam_policy")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_iam_user_login_profile")
     mql: |
-      terraform.resources("aws_iam_policy").any(
-        arguments.policy.any(
-          _['Statement'].any(
-            _['Condition']['Bool']['aws:MultiFactorAuthPresent'] == false
-              && _['Effect'] == "Deny"
-              && _['Resource'] == "*"
-          )
-        )
+      mfaDenyPolicies = terraform.resources.where(nameLabel == "aws_iam_policy").where(arguments["policy"].where(_["Statement"] != null) != empty).where(
+        arguments["policy"].first["Statement"].where(_["Effect"] == "Deny").where(
+          _["Condition"]["Bool"]["aws:MultiFactorAuthPresent"] == "false" ||
+          _["Condition"]["Bool"]["aws:MultiFactorAuthPresent"] == false ||
+          _["Condition"]["BoolIfExists"]["aws:MultiFactorAuthPresent"] == "false" ||
+          _["Condition"]["BoolIfExists"]["aws:MultiFactorAuthPresent"] == false
+        ) != empty
       )
+      unresolvedPolicies = terraform.resources.where(nameLabel == "aws_iam_policy").where(arguments["policy"].where(_["Statement"] != null) == empty)
+      mfaDenyPolicies.length + unresolvedPolicies.length > 0
   - uid: mondoo-aws-security-mfa-enabled-for-iam-console-access-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == /^aws_/)
     mql: |
@@ -3733,17 +3689,9 @@ queries:
     mql: |
       aws.iam.user.accessKeyDetails.where(status == "Active").length <= 1
   - uid: mondoo-aws-security-iam-users-only-one-access-key-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_iam_policy")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_iam_access_key")
     mql: |
-      terraform.resources("aws_iam_policy").any(
-        arguments.policy.any(
-          _['Statement'].any(
-            _['Effect'] == "Deny" &&
-            _['Action'] == "iam:CreateAccessKey" &&
-            _['Condition']['NumericGreaterThan']['iam:AccessKeysCount'] >= 1
-          )
-        )
-      )
+      terraform.resources.where(nameLabel == "aws_iam_access_key").where(arguments["status"] != "Inactive").map(arguments["user"]).join(",").split(",").duplicates == empty
   - uid: mondoo-aws-security-iam-users-only-one-access-key-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_iam_policy")
     mql: |
@@ -4138,12 +4086,14 @@ queries:
       aws.ec2.securitygroup.ipPermissions == empty
       aws.ec2.securitygroup.ipPermissionsEgress == empty
   - uid: mondoo-aws-security-vpc-default-security-group-closed-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_default_security_group")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_vpc" || nameLabel == "aws_default_security_group") != empty
     mql: |
+      terraform.resources.where(nameLabel == "aws_default_security_group") != empty
       terraform.resources("aws_default_security_group").all(
         arguments.ingress == empty && arguments.egress == empty &&
         blocks.where(type == "ingress") == empty && blocks.where(type == "egress") == empty
       )
+      terraform.resources.where(nameLabel == "aws_default_security_group").length >= terraform.resources.where(nameLabel == "aws_vpc").length
   - uid: mondoo-aws-security-vpc-default-security-group-closed-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_default_security_group")
     mql: |
@@ -4297,10 +4247,11 @@ queries:
     filters: asset.platform == "aws"
     mql: aws.ec2.ebsEncryptionByDefault.values.all(_ == true)
   - uid: mondoo-aws-security-ec2-ebs-encryption-by-default-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_ebs_encryption_by_default")
+    filters: asset.platform == "terraform-hcl" && terraform.providers.contains(nameLabel == "aws")
     mql: |
-      terraform.resources("aws_ebs_encryption_by_default").all(
-        arguments.enabled == true
+      terraform.resources.where(nameLabel == "aws_ebs_encryption_by_default").length > 0
+      terraform.resources.where(nameLabel == "aws_ebs_encryption_by_default").where(arguments["enabled"] != /^(var|local|module|data|each)\./).all(
+        arguments["enabled"] == null || arguments["enabled"] == true
       )
   - uid: mondoo-aws-security-ec2-ebs-encryption-by-default-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_ebs_encryption_by_default")
@@ -4453,13 +4404,14 @@ queries:
       aws.s3control.accountPublicAccessBlock != empty &&
       aws.s3control.accountPublicAccessBlock.values.all(_ == true)
   - uid: mondoo-aws-security-s3-buckets-account-level-block-public-access-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_s3_account_public_access_block")
+    filters: asset.platform == "terraform-hcl" && terraform.providers.contains(nameLabel == "aws")
     mql: |
+      terraform.resources("aws_s3_account_public_access_block").length > 0
       terraform.resources("aws_s3_account_public_access_block").all(
-        arguments.block_public_acls == true &&
-        arguments.ignore_public_acls == true &&
-        arguments.block_public_policy == true &&
-        arguments.restrict_public_buckets == true
+        arguments["block_public_acls"] == true &&
+        arguments["ignore_public_acls"] == true &&
+        arguments["block_public_policy"] == true &&
+        arguments["restrict_public_buckets"] == true
       )
   - uid: mondoo-aws-security-s3-buckets-account-level-block-public-access-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_s3_account_public_access_block")
@@ -5254,8 +5206,9 @@ queries:
     filters: asset.platform == "aws-vpc"
     mql: aws.vpc.internetGatewayBlockMode != "off"
   - uid: mondoo-aws-security-vpc-bpa-enabled-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains( nameLabel == "aws_vpc_block_public_access_options")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_vpc" || nameLabel == "aws_vpc_block_public_access_options") != empty
     mql: |
+      terraform.resources.where(nameLabel == "aws_vpc_block_public_access_options") != empty
       terraform.resources("aws_vpc_block_public_access_options").all(
         arguments.internet_gateway_block_mode != "off"
       )
@@ -7997,12 +7950,20 @@ queries:
     mql: |
       aws.ec2.volume.attachments.all(DeleteOnTermination == true)
   - uid: mondoo-aws-security-ec2-volume-inuse-check-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_instance")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_instance") || asset.platform == "terraform-hcl" && terraform.blocks.contains(type == "module" && arguments["source"] != null && arguments["source"].contains("ec2-instance"))
     mql: |
-      terraform.resources("aws_instance").all(
+      terraform.resources.where(nameLabel == "aws_instance").all(
         blocks.none(type == "root_block_device" && arguments.delete_on_termination == false) &&
         blocks.none(type == "ebs_block_device" && arguments.delete_on_termination == false)
       )
+      terraform.blocks.where(type == "module").where(arguments["source"] != null && arguments["source"].contains("ec2-instance")).where(arguments["root_block_device"] != null).all(
+        arguments["root_block_device"]["delete_on_termination"] != false &&
+        arguments["root_block_device"]["volume_delete_on_termination"] != false
+      )
+      terraform.blocks.where(type == "module").where(arguments["source"] != null && arguments["source"].contains("ec2-instance")).all(
+        arguments["ebs_volumes"] == null
+      )
+      terraform.resources.none(nameLabel == "aws_volume_attachment")
   - uid: mondoo-aws-security-ec2-volume-inuse-check-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_instance")
     mql: |
@@ -8349,9 +8310,9 @@ queries:
     mql: |
       aws.ec2.snapshot.encrypted == true
   - uid: mondoo-aws-security-ebs-snapshot-encrypted-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_ebs_snapshot")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_ebs_volume")
     mql: |
-      terraform.resources("aws_ebs_volume").all(
+      terraform.resources("aws_ebs_volume").where(arguments['encrypted'] != /^(var|local|module|data|each)\./).all(
         arguments['encrypted'] == true
       )
   - uid: mondoo-aws-security-ebs-snapshot-encrypted-terraform-plan
@@ -8624,10 +8585,21 @@ queries:
       aws.ec2.volume.state != /deleting|deleted|error/
     mql: aws.ec2.volume.encrypted == true
   - uid: mondoo-aws-security-ec2-encrypted-volumes-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_ebs_volume")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == /^aws_(ebs_volume|instance|launch_template)$/)
     mql: |
-      terraform.resources("aws_ebs_volume").all(
+      terraform.resources.where(nameLabel == "aws_ebs_volume").where(arguments["encrypted"] != /^(var|local|module|data|each)\./).all(
         arguments.encrypted == true
+      )
+      terraform.resources.where(nameLabel == "aws_instance").all(
+        blocks.where(type == "root_block_device").length > 0
+      )
+      terraform.resources.where(nameLabel == "aws_instance").all(
+        blocks.where(type == "root_block_device").where(arguments["encrypted"] != /^(var|local|module|data|each)\./).all(arguments["encrypted"] == true)
+      )
+      terraform.resources.where(nameLabel == "aws_launch_template").all(
+        blocks.where(type == "block_device_mappings").all(
+          blocks.where(type == "ebs").where(arguments["encrypted"] != /^(var|local|module|data|each)\./).all(arguments["encrypted"] == true)
+        )
       )
   - uid: mondoo-aws-security-ec2-encrypted-volumes-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_ebs_volume")
@@ -8849,10 +8821,24 @@ queries:
       aws.ec2.volume.encrypted == true
     mql: aws.ec2.volume.sseType == "sse-kms"
   - uid: mondoo-aws-security-ec2-ebs-kms-encryption-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_ebs_volume")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == /^aws_(ebs_volume|instance|launch_template)$/)
     mql: |
-      terraform.resources("aws_ebs_volume").all(
+      terraform.resources.where(nameLabel == "aws_ebs_volume").where(arguments["encrypted"] != /^(var|local|module|data|each)\./).all(
       arguments.encrypted == true && arguments.kms_key_id != empty
+      )
+      terraform.resources.where(nameLabel == "aws_instance").all(
+        blocks.where(type == "root_block_device").where(arguments["encrypted"] != /^(var|local|module|data|each)\./).all(arguments["encrypted"] == true && arguments["kms_key_id"] != null) &&
+        blocks.where(type == "ebs_block_device").where(arguments["encrypted"] != /^(var|local|module|data|each)\./).all(arguments["encrypted"] == true && arguments["kms_key_id"] != null)
+      )
+      terraform.resources.where(nameLabel == "aws_launch_template").all(
+        blocks.where(type == "block_device_mappings").all(
+          blocks.where(type == "ebs").where(arguments["encrypted"] != /^(var|local|module|data|each)\./).all(arguments["encrypted"] == true || arguments["encrypted"] == "true")
+        )
+      )
+      terraform.resources.where(nameLabel == "aws_launch_template").all(
+        blocks.where(type == "block_device_mappings").all(
+          blocks.where(type == "ebs").all(arguments["kms_key_id"] != null)
+        )
       )
   - uid: mondoo-aws-security-ec2-ebs-kms-encryption-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_ebs_volume")
@@ -11635,7 +11621,7 @@ queries:
           ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-vnc-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule" || nameLabel == "aws_security_group_rule") != empty
     mql: |
       terraform.resources("aws_security_group").all(
         blocks.where(type == "ingress" && arguments.from_port <= 5900 && arguments.to_port >= 5903).none(
@@ -11650,6 +11636,9 @@ queries:
       ) &&
       terraform.resources("aws_vpc_security_group_ingress_rule").where(arguments.from_port <= 5900 && arguments.to_port >= 5903).all(
         arguments.cidr_ipv4 != "0.0.0.0/0" && arguments.cidr_ipv6 != "::/0"
+      ) &&
+      terraform.resources("aws_security_group_rule").where(arguments["type"] == "ingress").where(arguments["from_port"] != /^(var|local|module|data|each)\./ && arguments["to_port"] != /^(var|local|module|data|each)\./).where(arguments["from_port"] <= 5900 && arguments["to_port"] >= 5903).none(
+        arguments["cidr_blocks"].contains("0.0.0.0/0") || arguments["ipv6_cidr_blocks"].contains("::/0")
       )
   - uid: mondoo-aws-security-secgroup-restricted-vnc-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_security_group")
@@ -11852,7 +11841,7 @@ queries:
           ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
           )
   - uid: mondoo-aws-security-secgroup-restricted-rdp-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule" || nameLabel == "aws_security_group_rule") != empty
     mql: |
       terraform.resources("aws_security_group").all(
         blocks.where(type == "ingress" && arguments.from_port <= 3389 && arguments.to_port >= 3389).none(
@@ -11867,6 +11856,9 @@ queries:
       ) &&
       terraform.resources("aws_vpc_security_group_ingress_rule").where(arguments.from_port <= 3389 && arguments.to_port >= 3389).all(
         arguments.cidr_ipv4 != "0.0.0.0/0" && arguments.cidr_ipv6 != "::/0"
+      ) &&
+      terraform.resources("aws_security_group_rule").where(arguments["type"] == "ingress").where(arguments["from_port"] != /^(var|local|module|data|each)\./ && arguments["to_port"] != /^(var|local|module|data|each)\./).where(arguments["from_port"] <= 3389 && arguments["to_port"] >= 3389).none(
+        arguments["cidr_blocks"].contains("0.0.0.0/0") || arguments["ipv6_cidr_blocks"].contains("::/0")
       )
   - uid: mondoo-aws-security-secgroup-restricted-rdp-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains( type == "aws_security_group")
@@ -12071,8 +12063,19 @@ queries:
           ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
           )
   - uid: mondoo-aws-security-secgroup-restrict-traffic-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains( nameLabel == "aws_security_group")
-    mql: terraform.resources("aws_security_group").where(blocks.where( type == "ingress").contains( arguments.to_port == -1 )).none( blocks.where( type == "ingress" ) { arguments.cidr_blocks.contains("0.0.0.0/0") || arguments.cidr_blocks.contains("::/0") })
+    filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_security_group_rule" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
+    mql: |
+      terraform.resources("aws_security_group").all(
+        blocks.where(type == "ingress").where(arguments["protocol"] == "-1" || arguments["protocol"] == -1 || arguments["protocol"] == "all").none(
+          arguments.cidr_blocks.contains("0.0.0.0/0") || arguments.ipv6_cidr_blocks.contains("::/0")
+        )
+      ) &&
+      terraform.resources("aws_security_group_rule").where(arguments["type"] == "ingress").where(arguments["protocol"] == "-1" || arguments["protocol"] == -1 || arguments["protocol"] == "all").none(
+        arguments.cidr_blocks.contains("0.0.0.0/0") || arguments.ipv6_cidr_blocks.contains("::/0")
+      ) &&
+      terraform.resources("aws_vpc_security_group_ingress_rule").where(arguments["ip_protocol"] == "-1" || arguments["ip_protocol"] == -1 || arguments["ip_protocol"] == "all").none(
+        arguments.cidr_ipv4 == "0.0.0.0/0" || arguments.cidr_ipv6 == "::/0"
+      )
   - uid: mondoo-aws-security-secgroup-restrict-traffic-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains( type == "aws_security_group")
     mql: terraform.plan.resourceChanges.where( type == "aws_security_group" && change.after.ingress.contains( to_port == -1 )).none( change.after.ingress.where(to_port == -1).any(cidr_blocks.contains("0.0.0.0/0") || cidr_blocks.contains("::/0")))
@@ -13573,7 +13576,7 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_s3_bucket")
     mql: |
       goodVersioning = terraform.resources("aws_s3_bucket_versioning").where(blocks.where(type.downcase == "versioning_configuration").all(arguments["status"].downcase == "enabled")).map(arguments["bucket"]).join(",")
-      terraform.resources("aws_s3_bucket").all(goodVersioning.contains("." + labels[1] + "."))
+      terraform.resources("aws_s3_bucket").all(goodVersioning.contains("." + labels[1] + ".") || goodVersioning.contains("." + labels[1] + '"'))
   - uid: mondoo-aws-security-s3-bucket-versioning-enabled-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_s3_bucket_versioning")
     mql: |
@@ -14209,9 +14212,11 @@ queries:
     mql: |
       aws.s3.bucket.website == empty
   - uid: mondoo-aws-security-s3-bucket-static-website-hosting-disabled-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_s3_bucket")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_s3_bucket") || asset.platform == "terraform-hcl" && terraform.blocks.contains(type == "module" && arguments["website"] != null)
     mql: |
       terraform.resources("aws_s3_bucket_website_configuration").length == 0
+      terraform.blocks.where(type == "module").all(arguments["website"] == null)
+      terraform.resources("aws_s3_bucket").all(blocks.none(type == "website"))
   - uid: mondoo-aws-security-s3-bucket-static-website-hosting-disabled-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_s3_bucket_website_configuration")
     mql: |
@@ -14751,10 +14756,13 @@ queries:
       aws.eks.cluster.logging['clusterLogging'] != null
       aws.eks.cluster.logging['clusterLogging'].any(_['enabled'] == true)
   - uid: mondoo-aws-security-eks-cluster-logging-enabled-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_eks_cluster")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_eks_cluster") || asset.platform == "terraform-hcl" && terraform.blocks.contains(type == "module" && arguments["source"] != null && arguments["source"] == /terraform-aws-eks|terraform-aws-modules\/eks\/aws/)
     mql: |
-      terraform.resources("aws_eks_cluster").all(
+      terraform.resources.where(nameLabel == "aws_eks_cluster").all(
         arguments.enabled_cluster_log_types != empty
+      )
+      terraform.blocks.where(type == "module").where(arguments["source"] != null && arguments["source"] == /terraform-aws-eks|terraform-aws-modules\/eks\/aws/).all(
+        arguments["enabled_log_types"] != empty || arguments["cluster_enabled_log_types"] != empty
       )
   - uid: mondoo-aws-security-eks-cluster-logging-enabled-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_eks_cluster")
@@ -19003,7 +19011,7 @@ queries:
     filters: asset.platform == "aws"
     mql: aws.securityhub.hubs.length > 0
   - uid: mondoo-aws-security-securityhub-enabled-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_securityhub_account")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_securityhub_account" || nameLabel == "aws_organizations_organization")
     mql: terraform.resources("aws_securityhub_account").length > 0
   - uid: mondoo-aws-security-securityhub-enabled-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_securityhub_account")
@@ -19742,8 +19750,8 @@ queries:
     filters: asset.platform == "aws"
     mql: aws.iam.accessAnalyzer.analyzers.where(status == "ACTIVE").length > 0
   - uid: mondoo-aws-security-iam-access-analyzer-enabled-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_accessanalyzer_analyzer")
-    mql: terraform.resources("aws_accessanalyzer_analyzer").length > 0
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_accessanalyzer_analyzer" || nameLabel == "aws_organizations_organization")
+    mql: terraform.resources.where(nameLabel == "aws_accessanalyzer_analyzer").length > 0
   - uid: mondoo-aws-security-iam-access-analyzer-enabled-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_accessanalyzer_analyzer")
     mql: terraform.plan.resourceChanges.where(type == "aws_accessanalyzer_analyzer").length > 0
@@ -22852,9 +22860,8 @@ queries:
   - uid: mondoo-aws-security-cloudwatch-log-group-retention-set-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_group")
     mql: |
-      terraform.resources("aws_cloudwatch_log_group").all(
-        arguments.retention_in_days != empty && arguments.retention_in_days > 0
-      )
+      terraform.resources("aws_cloudwatch_log_group").all(arguments["retention_in_days"] != empty)
+      terraform.resources("aws_cloudwatch_log_group").none(arguments["retention_in_days"] == 0)
   - uid: mondoo-aws-security-cloudwatch-log-group-retention-set-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_cloudwatch_log_group")
     mql: |
@@ -23380,9 +23387,10 @@ queries:
         )
   # The aws_instance metadata_options default for http_put_response_hop_limit is 1, so an unset value is compliant — the aws variant checks the resolved value == 1, which the default satisfies. Enforcing IMDS v2 (http_tokens == "required") is a separate control, not this one.
   - uid: mondoo-aws-security-ec2-imds-hop-limit-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_instance")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == /^aws_(instance|launch_template)$/)
     mql: |
       terraform.resources("aws_instance").all(blocks.where(type == "metadata_options").all(arguments["http_put_response_hop_limit"] == null || arguments["http_put_response_hop_limit"] == 1))
+      terraform.resources.where(nameLabel == "aws_launch_template").all(blocks.where(type == "metadata_options").all(arguments["http_put_response_hop_limit"] == null || arguments["http_put_response_hop_limit"] == 1 || arguments["http_put_response_hop_limit"] == /^(var|local|module|data|each)\./))
   - uid: mondoo-aws-security-ec2-imds-hop-limit-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_instance")
     mql: |
@@ -24726,10 +24734,10 @@ queries:
     mql: |
       aws.inspector.coverages.where(resourceType == "AWS_EC2_INSTANCE" && statusCode == "ACTIVE").length > 0
   - uid: mondoo-aws-security-inspector-ec2-scanning-enabled-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_inspector2_enabler")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_inspector2_enabler" || nameLabel == "aws_guardduty_organization_configuration")
     mql: |
-      terraform.resources("aws_inspector2_enabler").all(
-      arguments.resource_types.contains("EC2")
+      terraform.resources("aws_inspector2_enabler").any(
+        arguments["resource_types"].any(_ == "EC2")
       )
   - uid: mondoo-aws-security-inspector-ec2-scanning-enabled-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_inspector2_enabler")
@@ -24849,10 +24857,10 @@ queries:
     mql: |
       aws.inspector.coverages.where(resourceType == "AWS_ECR_CONTAINER_IMAGE" && statusCode == "ACTIVE").length > 0
   - uid: mondoo-aws-security-inspector-ecr-scanning-enabled-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_inspector2_enabler")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_inspector2_enabler" || nameLabel == "aws_guardduty_organization_configuration")
     mql: |
-      terraform.resources("aws_inspector2_enabler").all(
-      arguments.resource_types.contains("ECR")
+      terraform.resources("aws_inspector2_enabler").any(
+        arguments["resource_types"].any(_ == "ECR")
       )
   - uid: mondoo-aws-security-inspector-ecr-scanning-enabled-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_inspector2_enabler")
@@ -24972,10 +24980,10 @@ queries:
     mql: |
       aws.inspector.coverages.where(resourceType == "AWS_LAMBDA_FUNCTION" && statusCode == "ACTIVE").length > 0
   - uid: mondoo-aws-security-inspector-lambda-scanning-enabled-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_inspector2_enabler")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_inspector2_enabler" || nameLabel == "aws_guardduty_organization_configuration")
     mql: |
-      terraform.resources("aws_inspector2_enabler").all(
-      arguments.resource_types.contains("LAMBDA")
+      terraform.resources("aws_inspector2_enabler").any(
+        arguments["resource_types"].any(_ == "LAMBDA")
       )
   - uid: mondoo-aws-security-inspector-lambda-scanning-enabled-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_inspector2_enabler")
@@ -25107,20 +25115,20 @@ queries:
   - uid: mondoo-aws-security-ssm-parameter-encryption-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_ssm_parameter")
     mql: |
-      terraform.resources("aws_ssm_parameter").all(
-      arguments.type == "SecureString" && arguments.key_id != empty
+      terraform.resources.where(nameLabel == "aws_ssm_parameter" && arguments["type"] == "SecureString").all(
+      arguments["key_id"] != null && arguments["key_id"] != ""
       )
   - uid: mondoo-aws-security-ssm-parameter-encryption-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_ssm_parameter")
     mql: |
-      terraform.plan.resourceChanges.where(type == "aws_ssm_parameter").all(
-      change.after.type == "SecureString" && change.after.key_id != empty
+      terraform.plan.resourceChanges.where(type == "aws_ssm_parameter" && change.after["type"] == "SecureString").all(
+      change.after["key_id"] != null && change.after["key_id"] != ""
       )
   - uid: mondoo-aws-security-ssm-parameter-encryption-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_ssm_parameter")
     mql: |
-      terraform.state.resources.where(type == "aws_ssm_parameter").all(
-      values.type == "SecureString" && values.key_id != empty
+      terraform.state.resources.where(type == "aws_ssm_parameter" && values["type"] == "SecureString").all(
+      values["key_id"] != null && values["key_id"] != ""
       )
   - uid: mondoo-aws-security-ssm-parameter-encryption-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::SSM::Parameter")
@@ -26340,8 +26348,9 @@ queries:
         entries.where(ruleAction == "allow").length == 0
       )
   - uid: mondoo-aws-security-default-nacl-restrictive-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_default_network_acl")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_vpc" || nameLabel == "aws_default_network_acl")
     mql: |
+      terraform.resources.where(nameLabel == "aws_vpc").length == 0 || terraform.resources.where(nameLabel == "aws_default_network_acl").length > 0
       terraform.resources("aws_default_network_acl").all(
       arguments.ingress == empty && arguments.egress == empty &&
       blocks.none( type == "ingress" ) && blocks.none( type == "egress" )
@@ -26623,10 +26632,15 @@ queries:
     filters: asset.platform == "aws-rds-dbinstance"
     mql: aws.rds.dbinstance.iamDatabaseAuthentication == true
   - uid: mondoo-aws-security-rds-instance-iam-auth-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_db_instance")
+    filters: |
+      asset.platform == "terraform-hcl"
+      terraform.resources.contains(nameLabel == "aws_db_instance") || terraform.blocks.contains(type == "module" && arguments["source"] == /terraform-aws-modules\/rds/)
     mql: |
       terraform.resources("aws_db_instance").all(
       arguments.iam_database_authentication_enabled == true
+      )
+      terraform.blocks.where(type == "module").where(arguments['source'] == /terraform-aws-modules\/rds/).all(
+      arguments['iam_database_authentication_enabled'] == true
       )
   - uid: mondoo-aws-security-rds-instance-iam-auth-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_db_instance")
@@ -26789,15 +26803,14 @@ queries:
     mql: |
       aws.ec2.ebsEncryptionByDefault.all(value == true)
   - uid: mondoo-aws-security-eks-nodegroup-encrypted-volumes-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_launch_template")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_launch_template" || nameLabel == "aws_ebs_encryption_by_default")
     mql: |
       terraform.resources("aws_launch_template").all(
-        blocks.where(type == "block_device_mappings") != empty &&
         blocks.where(type == "block_device_mappings").all(
-          blocks.where(type == "ebs") != empty &&
-          blocks.where(type == "ebs").all(arguments.encrypted == true)
+          blocks.where(type == "ebs").all(arguments.encrypted != false)
         )
       )
+      terraform.resources("aws_ebs_encryption_by_default").all(arguments.enabled != false)
   - uid: mondoo-aws-security-eks-nodegroup-encrypted-volumes-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_launch_template")
     mql: |
@@ -26970,7 +26983,7 @@ queries:
     mql: |
       terraform.resources("aws_eks_cluster").all(
       blocks.where(type == "access_config") != empty &&
-      blocks.where(type == "access_config").all(arguments.authentication_mode == "API" || arguments.authentication_mode == "API_AND_CONFIG_MAP")
+      blocks.where(type == "access_config").all(arguments.authentication_mode != "CONFIG_MAP")
       )
   - uid: mondoo-aws-security-eks-cluster-iam-auth-mode-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_eks_cluster")
@@ -27107,9 +27120,15 @@ queries:
   - uid: mondoo-aws-security-eks-control-plane-egress-customer-routed
     title: Ensure EKS control-plane egress is customer-routed
     impact: 60
-    filters: asset.platform == "aws"
-    mql: |
-      aws.eks.clusters.all( controlPlaneEgressMode == "CUSTOMER_ROUTED" )
+    variants:
+      - uid: mondoo-aws-security-eks-control-plane-egress-customer-routed-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-eks-control-plane-egress-customer-routed-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that EKS clusters route control-plane egress through your own VPC subnets rather than letting Amazon EKS manage the egress path. With `CUSTOMER_ROUTED`, the control plane's outbound traffic to endpoints such as webhook servers and OIDC providers flows through subnets you control, so it can be filtered, inspected, and logged with your existing network controls. With `AWS_MANAGED`, Amazon EKS handles egress and you have no control point on that traffic.
@@ -27202,6 +27221,20 @@ queries:
         title: AWS Documentation - Amazon EKS networking requirements
       - url: https://docs.aws.amazon.com/eks/latest/userguide/eks-networking.html
         title: AWS Documentation - Amazon EKS cluster networking
+  - uid: mondoo-aws-security-eks-control-plane-egress-customer-routed-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.eks.clusters.all( controlPlaneEgressMode == "CUSTOMER_ROUTED" )
+  - uid: mondoo-aws-security-eks-control-plane-egress-customer-routed-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_eks_cluster")
+    mql: |
+      terraform.resources("aws_eks_cluster").all(
+        blocks.where( type == "vpc_config" ) != empty &&
+        blocks.where( type == "vpc_config" ).all(
+          arguments.control_plane_egress_mode == "CUSTOMER_ROUTED" ||
+          arguments.control_plane_egress_mode == /^(var|local|module|each|data)\./
+        )
+      )
   - uid: mondoo-aws-security-ecs-cluster-container-insights
     title: Ensure ECS clusters have Container Insights enabled
     impact: 60
@@ -28477,7 +28510,7 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_s3_bucket")
     mql: |
       kmsBuckets = terraform.resources("aws_s3_bucket_server_side_encryption_configuration").where(blocks.where(type == "rule").all(blocks.where(type == "apply_server_side_encryption_by_default").all(arguments["sse_algorithm"] == "aws:kms" || arguments["sse_algorithm"] == "aws:kms:dsse"))).map(arguments["bucket"]).join(",")
-      terraform.resources("aws_s3_bucket").all(kmsBuckets.contains("." + labels[1] + "."))
+      terraform.resources("aws_s3_bucket").all(kmsBuckets.contains("." + labels[1] + ".") || kmsBuckets.contains("." + labels[1] + '"'))
   - uid: mondoo-aws-security-s3-bucket-encryption-uses-kms-cmk-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_s3_bucket_server_side_encryption_configuration")
     mql: |
@@ -30708,7 +30741,7 @@ queries:
   - uid: mondoo-aws-security-appstream-fleet-max-session-duration-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_appstream_fleet")
     mql: |
-      terraform.resources("aws_appstream_fleet").all(
+      terraform.resources("aws_appstream_fleet").where(arguments["max_user_duration_in_seconds"] != /^(var|local|module|data|each)\./).all(
       arguments["max_user_duration_in_seconds"] == null || arguments.max_user_duration_in_seconds <= 36000
       )
   - uid: mondoo-aws-security-appstream-fleet-max-session-duration-terraform-plan
@@ -30861,7 +30894,7 @@ queries:
   - uid: mondoo-aws-security-appstream-fleet-idle-disconnect-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_appstream_fleet")
     mql: |
-      terraform.resources("aws_appstream_fleet").all(
+      terraform.resources("aws_appstream_fleet").where(arguments["idle_disconnect_timeout_in_seconds"] != /^(var|local|module|data|each)\./).all(
       arguments.idle_disconnect_timeout_in_seconds > 0 && arguments.idle_disconnect_timeout_in_seconds <= 900
       )
   - uid: mondoo-aws-security-appstream-fleet-idle-disconnect-terraform-plan
@@ -30905,6 +30938,10 @@ queries:
         tags:
           mondoo.com/filter-title: "AWS Account"
           mondoo.com/filter-icon: "aws"
+      - uid: mondoo-aws-security-appstream-fleet-imdsv2-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
       - uid: mondoo-aws-security-appstream-fleet-imdsv2-cloudformation
         tags:
           mondoo.com/filter-title: CloudFormation
@@ -30977,7 +31014,28 @@ queries:
                   InstanceType: stream.standard.medium
                   DisableIMDSV1: true
             ```
-        # No Terraform remediation: the aws_appstream_fleet resource has no IMDS/instance-metadata argument to set. Revisit if the AWS Terraform provider adds one.
+        - id: terraform
+          desc: |
+            The hashicorp/aws provider's `aws_appstream_fleet` resource exposes no IMDS argument, so fleets it creates always leave IMDSv1 enabled. To require IMDSv2 in Terraform, manage the fleet with the community St3ffn/aws-appstream provider, which supports `disable_imds_v1`:
+
+            ```hcl
+            terraform {
+              required_providers {
+                awsappstream = {
+                  source = "St3ffn/aws-appstream"
+                }
+              }
+            }
+
+            resource "awsappstream_fleet" "example" {
+              name            = "example-fleet"
+              instance_type   = "stream.standard.medium"
+              image_name      = "AppStream-WinServer2019"
+              disable_imds_v1 = true
+            }
+            ```
+
+            Alternatively, manage the fleet with CloudFormation and set `DisableIMDSV1: true`.
     refs:
       - url: https://docs.aws.amazon.com/appstream2/latest/developerguide/appstream2-instance-metadata-service.html
         title: Amazon AppStream 2.0 instance metadata service
@@ -30987,6 +31045,15 @@ queries:
     filters: asset.platform == "aws"
     mql: |
       aws.appstream.fleets.all(disableIMDSV1 == true)
+  - uid: mondoo-aws-security-appstream-fleet-imdsv2-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_appstream_fleet" || nameLabel == "awsappstream_fleet")
+    mql: |
+      terraform.resources.where(nameLabel == "aws_appstream_fleet").all(
+        arguments["disable_imds_v1"] == true
+      )
+      terraform.resources.where(nameLabel == "awsappstream_fleet").all(
+        arguments["disable_imds_v1"] == true
+      )
   - uid: mondoo-aws-security-appstream-fleet-imdsv2-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::AppStream::Fleet")
     mql: |
@@ -37459,10 +37526,13 @@ queries:
         _['EncryptionAtRest']['CatalogEncryptionMode'] != "" && _['EncryptionAtRest']['CatalogEncryptionMode'] != "DISABLED"
       )
   - uid: mondoo-aws-security-glue-catalog-encryption-enabled-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_glue_data_catalog_encryption_settings")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == /^aws_glue_/)
     mql: |
+      terraform.resources.where(nameLabel == "aws_glue_data_catalog_encryption_settings") != empty
       terraform.resources("aws_glue_data_catalog_encryption_settings").all(
+        blocks.where(type == "data_catalog_encryption_settings") != empty &&
         blocks.where(type == "data_catalog_encryption_settings").all(
+          blocks.where(type == "encryption_at_rest") != empty &&
           blocks.where(type == "encryption_at_rest").all(
             arguments.catalog_encryption_mode == /SSE-KMS/
           )
@@ -43252,7 +43322,7 @@ queries:
         )
       )
   - uid: mondoo-aws-security-cloudwatch-unauthorized-api-alarm-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudtrail") && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("UnauthorizedOperation") || arguments.pattern.contains("AccessDenied")
@@ -43464,7 +43534,7 @@ queries:
         )
       )
   - uid: mondoo-aws-security-cloudwatch-no-mfa-login-alarm-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudtrail") && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("ConsoleLogin") && arguments.pattern.contains("MFAUsed")
@@ -43677,7 +43747,7 @@ queries:
         )
       )
   - uid: mondoo-aws-security-cloudwatch-root-usage-alarm-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudtrail") && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("Root") && arguments.pattern.contains("userIdentity")
@@ -43891,7 +43961,7 @@ queries:
         )
       )
   - uid: mondoo-aws-security-cloudwatch-iam-policy-change-alarm-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudtrail") && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("CreatePolicy") || arguments.pattern.contains("DeletePolicy") || arguments.pattern.contains("AttachRolePolicy")
@@ -44104,7 +44174,7 @@ queries:
         )
       )
   - uid: mondoo-aws-security-cloudwatch-cloudtrail-config-alarm-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudtrail") && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("CreateTrail") || arguments.pattern.contains("UpdateTrail") || arguments.pattern.contains("DeleteTrail") || arguments.pattern.contains("StartLogging") || arguments.pattern.contains("StopLogging")
@@ -44317,10 +44387,10 @@ queries:
         )
       )
   - uid: mondoo-aws-security-cloudwatch-console-auth-failure-alarm-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudtrail") && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
-      arguments.pattern.contains("ConsoleLogin") && arguments.pattern.contains("Failed")
+      arguments.pattern.contains("ConsoleLogin") && arguments.pattern == /Failed|Failure/
       )
   - uid: mondoo-aws-security-cloudwatch-console-auth-failure-alarm-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_cloudwatch_log_metric_filter")
@@ -44530,7 +44600,7 @@ queries:
         )
       )
   - uid: mondoo-aws-security-cloudwatch-cmk-disable-delete-alarm-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudtrail") && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("DisableKey") || arguments.pattern.contains("ScheduleKeyDeletion")
@@ -44743,7 +44813,7 @@ queries:
         )
       )
   - uid: mondoo-aws-security-cloudwatch-s3-policy-change-alarm-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudtrail") && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("PutBucketPolicy") || arguments.pattern.contains("DeleteBucketPolicy")
@@ -44956,7 +45026,7 @@ queries:
         )
       )
   - uid: mondoo-aws-security-cloudwatch-config-change-alarm-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudtrail") && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("StopConfigurationRecorder") || arguments.pattern.contains("DeleteDeliveryChannel")
@@ -45169,7 +45239,7 @@ queries:
         )
       )
   - uid: mondoo-aws-security-cloudwatch-security-group-change-alarm-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudtrail") && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("AuthorizeSecurityGroupIngress") || arguments.pattern.contains("RevokeSecurityGroupIngress")
@@ -45382,7 +45452,7 @@ queries:
         )
       )
   - uid: mondoo-aws-security-cloudwatch-nacl-change-alarm-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudtrail") && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("CreateNetworkAcl") || arguments.pattern.contains("DeleteNetworkAcl")
@@ -45595,7 +45665,7 @@ queries:
         )
       )
   - uid: mondoo-aws-security-cloudwatch-network-gw-change-alarm-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudtrail") && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("CreateCustomerGateway") || arguments.pattern.contains("AttachInternetGateway")
@@ -45808,7 +45878,7 @@ queries:
         )
       )
   - uid: mondoo-aws-security-cloudwatch-route-table-change-alarm-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudtrail") && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("CreateRoute") || arguments.pattern.contains("DeleteRoute")
@@ -46021,7 +46091,7 @@ queries:
         )
       )
   - uid: mondoo-aws-security-cloudwatch-vpc-change-alarm-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudtrail") && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("CreateVpc") || arguments.pattern.contains("DeleteVpc")
@@ -46234,7 +46304,7 @@ queries:
         )
       )
   - uid: mondoo-aws-security-cloudwatch-org-change-alarm-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudtrail") && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_metric_filter")
     mql: |
       terraform.resources("aws_cloudwatch_log_metric_filter").any(
       arguments.pattern.contains("organizations.amazonaws.com")
@@ -46815,19 +46885,19 @@ queries:
     filters: asset.platform == "aws"
     mql: aws.iam.policies.where(arn == "arn:aws:iam::aws:policy/AWSSupportAccess").any(attachedUsers.length > 0 || attachedRoles.length > 0 || attachedGroups.length > 0)
   - uid: mondoo-aws-security-iam-support-role-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_iam_role_policy_attachment")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_iam_role_policy_attachment" && arguments["policy_arn"] == "arn:aws:iam::aws:policy/AWSSupportAccess")
     mql: |
-      terraform.resources("aws_iam_role_policy_attachment").any(
+      terraform.resources.where(nameLabel == "aws_iam_role_policy_attachment").any(
         arguments['policy_arn'] == "arn:aws:iam::aws:policy/AWSSupportAccess"
       )
   - uid: mondoo-aws-security-iam-support-role-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_iam_role_policy_attachment")
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_iam_role_policy_attachment" && change.after["policy_arn"] == "arn:aws:iam::aws:policy/AWSSupportAccess")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_iam_role_policy_attachment").any(
         change.after.policy_arn == "arn:aws:iam::aws:policy/AWSSupportAccess"
       )
   - uid: mondoo-aws-security-iam-support-role-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_iam_role_policy_attachment")
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_iam_role_policy_attachment" && values["policy_arn"] == "arn:aws:iam::aws:policy/AWSSupportAccess")
     mql: |
       terraform.state.resources.where(type == "aws_iam_role_policy_attachment").any(
         values.policy_arn == "arn:aws:iam::aws:policy/AWSSupportAccess"
@@ -50082,9 +50152,14 @@ queries:
     filters: asset.platform == "aws-rds-dbinstance"
     mql: aws.rds.dbinstance.backupRetentionPeriod > 0
   - uid: mondoo-aws-security-rds-backup-retention-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_db_instance")
+    filters: |
+      asset.platform == "terraform-hcl"
+      terraform.resources.contains(nameLabel == "aws_db_instance") || terraform.blocks.contains(type == "module" && arguments["source"] == /terraform-aws-modules\/rds/)
     mql: |
       terraform.resources("aws_db_instance").all(
+        arguments['backup_retention_period'] > 0
+      )
+      terraform.blocks.where(type == "module").where(arguments['source'] == /terraform-aws-modules\/rds/).all(
         arguments['backup_retention_period'] > 0
       )
   - uid: mondoo-aws-security-rds-backup-retention-terraform-plan
@@ -50248,9 +50323,17 @@ queries:
     filters: asset.platform == "aws-rds-dbinstance"
     mql: aws.rds.dbinstance.performanceInsightsEnabled == true
   - uid: mondoo-aws-security-rds-performance-insights-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_db_instance")
+    filters: |
+      asset.platform == "terraform-hcl"
+      terraform.resources.contains(nameLabel == "aws_db_instance") || terraform.resources.contains(nameLabel == "aws_rds_cluster_instance") || terraform.blocks.contains(type == "module" && arguments["source"] == /terraform-aws-modules\/rds/)
     mql: |
-      terraform.resources("aws_db_instance").all(
+      terraform.resources.where(nameLabel == "aws_db_instance").all(
+        arguments['performance_insights_enabled'] == true
+      )
+      terraform.resources.where(nameLabel == "aws_rds_cluster_instance").all(
+        arguments['performance_insights_enabled'] == true
+      )
+      terraform.blocks.where(type == "module").where(arguments['source'] == /terraform-aws-modules\/rds/).all(
         arguments['performance_insights_enabled'] == true
       )
   - uid: mondoo-aws-security-rds-performance-insights-terraform-plan
@@ -50409,9 +50492,17 @@ queries:
     filters: asset.platform == "aws-rds-dbinstance"
     mql: aws.rds.dbinstance.deletionProtection == true
   - uid: mondoo-aws-security-rds-deletion-protection-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_db_instance")
+    filters: |
+      asset.platform == "terraform-hcl"
+      terraform.resources.contains(nameLabel == "aws_db_instance") || terraform.resources.contains(nameLabel == "aws_rds_cluster") || terraform.blocks.contains(type == "module" && arguments["source"] == /terraform-aws-modules\/rds/)
     mql: |
-      terraform.resources("aws_db_instance").all(
+      terraform.resources.where(nameLabel == "aws_db_instance").all(
+        arguments['deletion_protection'] == true
+      )
+      terraform.resources.where(nameLabel == "aws_rds_cluster").all(
+        arguments['deletion_protection'] == true
+      )
+      terraform.blocks.where(type == "module").where(arguments['source'] == /terraform-aws-modules\/rds/).all(
         arguments['deletion_protection'] == true
       )
   - uid: mondoo-aws-security-rds-deletion-protection-terraform-plan
@@ -51246,7 +51337,7 @@ queries:
     filters: asset.platform == "aws"
     mql: aws.config.aggregators.length > 0
   - uid: mondoo-aws-security-config-aggregator-enabled-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_config_configuration_aggregator")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_config_configuration_recorder" || nameLabel == "aws_config_configuration_aggregator")
     mql: |
       terraform.resources("aws_config_configuration_aggregator").length > 0
   - uid: mondoo-aws-security-config-aggregator-enabled-terraform-plan
@@ -51409,11 +51500,13 @@ queries:
         organizationAggregationSource != null && organizationAggregationSource.allAwsRegions == true
       )
   - uid: mondoo-aws-security-config-aggregator-all-regions-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_config_configuration_aggregator")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_config_configuration_recorder" || nameLabel == "aws_config_configuration_aggregator")
     mql: |
+      terraform.resources.where(nameLabel == "aws_config_configuration_aggregator").length > 0
       terraform.resources("aws_config_configuration_aggregator").all(
-        blocks.where(type == "account_aggregation_source").all(arguments.all_regions == true) &&
-        blocks.where(type == "organization_aggregation_source").all(arguments.all_regions == true)
+        blocks.where(type == /account_aggregation_source|organization_aggregation_source/).length > 0 &&
+        blocks.where(type == "account_aggregation_source").all(arguments["all_regions"] == true) &&
+        blocks.where(type == "organization_aggregation_source").all(arguments["all_regions"] == true)
       )
   - uid: mondoo-aws-security-config-aggregator-all-regions-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_config_configuration_aggregator")
@@ -51613,7 +51706,7 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_ecr_repository_policy")
     mql: |
       terraform.resources("aws_ecr_repository_policy").all(
-        arguments.policy.first["Statement"].none(
+        arguments.policy.first["Statement"].where(_["Condition"] == null).none(
           _["Principal"] == "*" || _["Principal"]["AWS"] == "*"
         )
       )
@@ -51621,7 +51714,7 @@ queries:
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_ecr_repository_policy")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_ecr_repository_policy").all(
-        change.after["policy"]["Statement"].none(
+        change.after["policy"]["Statement"].where(_["Condition"] == null).none(
           _["Principal"] == "*" || _["Principal"]["AWS"] == "*"
         )
       )
@@ -51629,7 +51722,7 @@ queries:
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_ecr_repository_policy")
     mql: |
       terraform.state.resources.where(type == "aws_ecr_repository_policy").all(
-        values["policy"]["Statement"].none(
+        values["policy"]["Statement"].where(_["Condition"] == null).none(
           _["Principal"] == "*" || _["Principal"]["AWS"] == "*"
         )
       )
@@ -53544,21 +53637,21 @@ queries:
     mql: |
       terraform.resources("aws_emr_cluster").all(
         blocks.where(type == "ec2_attributes") != empty &&
-        blocks.where(type == "ec2_attributes").all(arguments['subnet_id'] != empty)
+        blocks.where(type == "ec2_attributes").all(arguments['subnet_id'] != empty || arguments['subnet_ids'] != empty)
       )
   - uid: mondoo-aws-security-emr-not-publicly-accessible-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_emr_cluster")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_emr_cluster").all(
         change.after['ec2_attributes'] != empty &&
-        change.after['ec2_attributes'].all(_['subnet_id'] != empty)
+        change.after['ec2_attributes'].all(_['subnet_id'] != empty || _['subnet_ids'] != empty)
       )
   - uid: mondoo-aws-security-emr-not-publicly-accessible-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_emr_cluster")
     mql: |
       terraform.state.resources.where(type == "aws_emr_cluster").all(
         values['ec2_attributes'] != empty &&
-        values['ec2_attributes'].all(_['subnet_id'] != empty)
+        values['ec2_attributes'].all(_['subnet_id'] != empty || _['subnet_ids'] != empty)
       )
   - uid: mondoo-aws-security-emr-not-publicly-accessible-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EMR::Cluster")
@@ -56739,7 +56832,7 @@ queries:
       cloudformation.template.resources.where(type == "AWS::Cassandra::Table").all(
         properties['PointInTimeRecoveryEnabled'] == true
       )
-  # No Terraform variants: AppStream stack `contentRedirection.hostToClientEnabled` is not exposed as an argument on the `aws_appstream_stack` Terraform resource.
+  # No Terraform variants: AppStream stack `contentRedirection.hostToClientEnabled` is not exposed as an argument on the `aws_appstream_stack` Terraform resource. Revisit when the provider adds content redirection support.
   - uid: mondoo-aws-security-appstream-stack-url-redirection-disabled
     title: Ensure AppStream stacks have URL redirection disabled
     impact: 70
@@ -57322,6 +57415,10 @@ queries:
         tags:
           mondoo.com/filter-title: AWS EC2 VPC
           mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-vpc-subnet-flow-logs-enabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that individual subnets within a VPC have flow logs enabled, providing granular network traffic visibility at the subnet level. While VPC-level flow logs capture traffic across the entire VPC, subnet-level flow logs enable targeted monitoring of sensitive or high-risk network segments.
@@ -57435,6 +57532,11 @@ queries:
       aws.vpc.subnets.all(
         flowLogs.length > 0
       )
+  - uid: mondoo-aws-security-vpc-subnet-flow-logs-enabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_subnet")
+    mql: |
+      flowLogRefs = terraform.resources.where(nameLabel == "aws_flow_log").map(arguments["subnet_id"]).join(" ")
+      terraform.resources.where(nameLabel == "aws_subnet").all(flowLogRefs.contains("aws_subnet." + labels[1]))
   - uid: mondoo-aws-security-vpc-flow-logs-iam-role
     title: Ensure VPC flow logs have an IAM role for CloudWatch delivery
     impact: 60
@@ -58258,19 +58360,19 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_ssm_patch_baseline")
     mql: |
       terraform.resources("aws_ssm_patch_baseline").all(
-        arguments.rejected_patches_action != null && arguments.rejected_patches_action != "ALLOW_AS_DEPENDENCY"
+        arguments["rejected_patches_action"] == null || arguments["rejected_patches_action"] != "ALLOW_AS_DEPENDENCY"
       )
   - uid: mondoo-aws-security-ssm-patch-baseline-reject-action-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_ssm_patch_baseline")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_ssm_patch_baseline").all(
-        change.after.rejected_patches_action != null && change.after.rejected_patches_action != "ALLOW_AS_DEPENDENCY"
+        change.after["rejected_patches_action"] == null || change.after["rejected_patches_action"] != "ALLOW_AS_DEPENDENCY"
       )
   - uid: mondoo-aws-security-ssm-patch-baseline-reject-action-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_ssm_patch_baseline")
     mql: |
       terraform.state.resources.where(type == "aws_ssm_patch_baseline").all(
-        values.rejected_patches_action != null && values.rejected_patches_action != "ALLOW_AS_DEPENDENCY"
+        values["rejected_patches_action"] == null || values["rejected_patches_action"] != "ALLOW_AS_DEPENDENCY"
       )
   - uid: mondoo-aws-security-ssm-patch-baseline-reject-action-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::SSM::PatchBaseline")
@@ -61419,8 +61521,8 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_launch_template")
     mql: |
       terraform.resources("aws_launch_template").all(
-        blocks.where(type == "metadata_options").any(
-          arguments.http_tokens == "required"
+        blocks.where(type == "metadata_options").all(
+          arguments["http_tokens"] != "optional"
         )
       )
   - uid: mondoo-aws-security-ec2-launch-template-imdsv2-terraform-plan
@@ -61898,7 +62000,7 @@ queries:
         standardSubscriptions.length > 0
       )
   - uid: mondoo-aws-security-securityhub-standards-enabled-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_securityhub_account")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_securityhub_account" || nameLabel == "aws_organizations_organization")
     mql: |
       terraform.resources("aws_securityhub_account") != empty &&
       terraform.resources("aws_securityhub_standards_subscription") != empty
@@ -62078,9 +62180,15 @@ queries:
   - uid: mondoo-aws-security-sns-no-public-access-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_sns_topic_policy")
     mql: |
-      terraform.resources("aws_sns_topic_policy").all(
-        arguments.policy.first["Statement"].where(_["Effect"] == "Allow").none(
+      terraform.resources("aws_sns_topic_policy").where(arguments["policy"].first["Statement"] != null).all(
+        arguments["policy"].first["Statement"].where(_["Effect"] == "Allow").none(
           _["Principal"] == "*" || _["Principal"]["AWS"] == "*"
+        )
+      )
+      terraform.datasources.where(nameLabel == "aws_iam_policy_document").all(
+        blocks.where(type == "statement" && arguments["effect"] != "Deny").all(
+          blocks.none(type == "principals" && arguments["type"] == "AWS" && arguments["identifiers"].contains("*")) ||
+          blocks.contains(type == "condition")
         )
       )
   - uid: mondoo-aws-security-sns-no-public-access-terraform-plan
@@ -62836,7 +62944,7 @@ queries:
           ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
           )
   - uid: mondoo-aws-security-secgroup-restricted-postgresql-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule" || nameLabel == "aws_security_group_rule") != empty
     mql: |
       terraform.resources("aws_security_group").all(
         blocks.where(type == "ingress" && arguments.from_port <= 5432 && arguments.to_port >= 5432).none(
@@ -62851,6 +62959,9 @@ queries:
         arguments["ingress"].where(_["from_port"] <= 5432 && _["to_port"] >= 5432).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
+      ) &&
+      terraform.resources("aws_security_group_rule").where(arguments["type"] == "ingress").where(arguments["from_port"] != /^(var|local|module|data|each)\./ && arguments["to_port"] != /^(var|local|module|data|each)\./).where(arguments["from_port"] <= 5432 && arguments["to_port"] >= 5432).none(
+        arguments["cidr_blocks"].contains("0.0.0.0/0") || arguments["ipv6_cidr_blocks"].contains("::/0")
       )
   - uid: mondoo-aws-security-secgroup-restricted-postgresql-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule") != empty
@@ -63008,7 +63119,7 @@ queries:
           ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
           )
   - uid: mondoo-aws-security-secgroup-restricted-mysql-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule" || nameLabel == "aws_security_group_rule") != empty
     mql: |
       terraform.resources("aws_security_group").all(
         blocks.where(type == "ingress" && arguments.from_port <= 3306 && arguments.to_port >= 3306).none(
@@ -63023,6 +63134,9 @@ queries:
         arguments["ingress"].where(_["from_port"] <= 3306 && _["to_port"] >= 3306).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
+      ) &&
+      terraform.resources("aws_security_group_rule").where(arguments["type"] == "ingress").where(arguments["from_port"] != /^(var|local|module|data|each)\./ && arguments["to_port"] != /^(var|local|module|data|each)\./).where(arguments["from_port"] <= 3306 && arguments["to_port"] >= 3306).none(
+        arguments["cidr_blocks"].contains("0.0.0.0/0") || arguments["ipv6_cidr_blocks"].contains("::/0")
       )
   - uid: mondoo-aws-security-secgroup-restricted-mysql-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule") != empty
@@ -63180,7 +63294,7 @@ queries:
           ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
           )
   - uid: mondoo-aws-security-secgroup-restricted-mssql-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule" || nameLabel == "aws_security_group_rule") != empty
     mql: |
       terraform.resources("aws_security_group").all(
         blocks.where(type == "ingress" && arguments.from_port <= 1433 && arguments.to_port >= 1433).none(
@@ -63195,6 +63309,9 @@ queries:
         arguments["ingress"].where(_["from_port"] <= 1433 && _["to_port"] >= 1433).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
+      ) &&
+      terraform.resources("aws_security_group_rule").where(arguments["type"] == "ingress").where(arguments["from_port"] != /^(var|local|module|data|each)\./ && arguments["to_port"] != /^(var|local|module|data|each)\./).where(arguments["from_port"] <= 1433 && arguments["to_port"] >= 1433).none(
+        arguments["cidr_blocks"].contains("0.0.0.0/0") || arguments["ipv6_cidr_blocks"].contains("::/0")
       )
   - uid: mondoo-aws-security-secgroup-restricted-mssql-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule") != empty
@@ -63358,7 +63475,7 @@ queries:
           ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
           )
   - uid: mondoo-aws-security-secgroup-restricted-oracle-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule" || nameLabel == "aws_security_group_rule") != empty
     mql: |
       terraform.resources("aws_security_group").all(
         blocks.where(type == "ingress" && arguments.from_port <= 1521 && arguments.to_port >= 1521).none(
@@ -63373,6 +63490,9 @@ queries:
         arguments["ingress"].where(_["from_port"] <= 1521 && _["to_port"] >= 1521).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
+      ) &&
+      terraform.resources("aws_security_group_rule").where(arguments["type"] == "ingress").where(arguments["from_port"] != /^(var|local|module|data|each)\./ && arguments["to_port"] != /^(var|local|module|data|each)\./).where(arguments["from_port"] <= 1521 && arguments["to_port"] >= 1521).none(
+        arguments["cidr_blocks"].contains("0.0.0.0/0") || arguments["ipv6_cidr_blocks"].contains("::/0")
       )
   - uid: mondoo-aws-security-secgroup-restricted-oracle-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule") != empty
@@ -63536,7 +63656,7 @@ queries:
           ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
           )
   - uid: mondoo-aws-security-secgroup-restricted-mongodb-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_security_group_rule" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
     mql: |
       terraform.resources("aws_security_group").all(
         blocks.where(type == "ingress" && arguments.from_port <= 27017 && arguments.to_port >= 27017).none(
@@ -63551,6 +63671,9 @@ queries:
         arguments["ingress"].where(_["from_port"] <= 27017 && _["to_port"] >= 27017).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
+      ) &&
+      terraform.resources("aws_security_group_rule").where(arguments["type"] == "ingress").where(arguments["from_port"] != /^(var|local|module|data|each)\./ && arguments["to_port"] != /^(var|local|module|data|each)\./).where(arguments["from_port"] <= 27017 && arguments["to_port"] >= 27017).none(
+        arguments["cidr_blocks"].contains("0.0.0.0/0") || arguments["ipv6_cidr_blocks"].contains("::/0")
       )
   - uid: mondoo-aws-security-secgroup-restricted-mongodb-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule") != empty
@@ -63714,7 +63837,7 @@ queries:
           ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
           )
   - uid: mondoo-aws-security-secgroup-restricted-redis-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule" || nameLabel == "aws_security_group_rule") != empty
     mql: |
       terraform.resources("aws_security_group").all(
         blocks.where(type == "ingress" && arguments.from_port <= 6379 && arguments.to_port >= 6379).none(
@@ -63729,6 +63852,9 @@ queries:
         arguments["ingress"].where(_["from_port"] <= 6379 && _["to_port"] >= 6379).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
+      ) &&
+      terraform.resources("aws_security_group_rule").where(arguments["type"] == "ingress").where(arguments["from_port"] != /^(var|local|module|data|each)\./ && arguments["to_port"] != /^(var|local|module|data|each)\./).where(arguments["from_port"] <= 6379 && arguments["to_port"] >= 6379).none(
+        arguments["cidr_blocks"].contains("0.0.0.0/0") || arguments["ipv6_cidr_blocks"].contains("::/0")
       )
   - uid: mondoo-aws-security-secgroup-restricted-redis-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule") != empty
@@ -63896,7 +64022,7 @@ queries:
           ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
           )
   - uid: mondoo-aws-security-secgroup-restricted-memcached-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_security_group_rule" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
     mql: |
       terraform.resources("aws_security_group").all(
         blocks.where(type == "ingress" && arguments.from_port <= 11211 && arguments.to_port >= 11211).none(
@@ -63911,6 +64037,9 @@ queries:
         arguments["ingress"].where(_["from_port"] <= 11211 && _["to_port"] >= 11211).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
+      ) &&
+      terraform.resources("aws_security_group_rule").where(arguments["type"] == "ingress").where(arguments["from_port"] != /^(var|local|module|data|each)\./ && arguments["to_port"] != /^(var|local|module|data|each)\./).where(arguments["from_port"] <= 11211 && arguments["to_port"] >= 11211).none(
+        arguments["cidr_blocks"].contains("0.0.0.0/0") || arguments["ipv6_cidr_blocks"].contains("::/0")
       )
   - uid: mondoo-aws-security-secgroup-restricted-memcached-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule") != empty
@@ -64074,7 +64203,7 @@ queries:
           ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
           )
   - uid: mondoo-aws-security-secgroup-restricted-elasticsearch-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_security_group_rule" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
     mql: |
       terraform.resources("aws_security_group").all(
         blocks.where(type == "ingress" && arguments.from_port <= 9300 && arguments.to_port >= 9200).none(
@@ -64089,6 +64218,9 @@ queries:
         arguments["ingress"].where(_["from_port"] <= 9300 && _["to_port"] >= 9200).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
+      ) &&
+      terraform.resources("aws_security_group_rule").where(arguments["type"] == "ingress").where(arguments["from_port"] != /^(var|local|module|data|each)\./ && arguments["to_port"] != /^(var|local|module|data|each)\./).where(arguments["from_port"] <= 9300 && arguments["to_port"] >= 9200).none(
+        arguments["cidr_blocks"].contains("0.0.0.0/0") || arguments["ipv6_cidr_blocks"].contains("::/0")
       )
   - uid: mondoo-aws-security-secgroup-restricted-elasticsearch-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule") != empty
@@ -64252,7 +64384,7 @@ queries:
           ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
           )
   - uid: mondoo-aws-security-secgroup-restricted-winrm-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule" || nameLabel == "aws_security_group_rule") != empty
     mql: |
       terraform.resources("aws_security_group").all(
         blocks.where(type == "ingress" && arguments.from_port <= 5986 && arguments.to_port >= 5985).none(
@@ -64267,6 +64399,9 @@ queries:
         arguments["ingress"].where(_["from_port"] <= 5986 && _["to_port"] >= 5985).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
+      ) &&
+      terraform.resources("aws_security_group_rule").where(arguments["type"] == "ingress").where(arguments["from_port"] != /^(var|local|module|data|each)\./ && arguments["to_port"] != /^(var|local|module|data|each)\./).where(arguments["from_port"] <= 5986 && arguments["to_port"] >= 5985).none(
+        arguments["cidr_blocks"].contains("0.0.0.0/0") || arguments["ipv6_cidr_blocks"].contains("::/0")
       )
   - uid: mondoo-aws-security-secgroup-restricted-winrm-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule") != empty
@@ -64432,7 +64567,7 @@ queries:
           ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
           )
   - uid: mondoo-aws-security-secgroup-restricted-docker-daemon-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_security_group_rule" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
     mql: |
       terraform.resources("aws_security_group").all(
         blocks.where(type == "ingress" && arguments.from_port <= 2376 && arguments.to_port >= 2375).none(
@@ -64447,6 +64582,9 @@ queries:
         arguments["ingress"].where(_["from_port"] <= 2376 && _["to_port"] >= 2375).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
+      ) &&
+      terraform.resources("aws_security_group_rule").where(arguments["type"] == "ingress").where(arguments["from_port"] != /^(var|local|module|data|each)\./ && arguments["to_port"] != /^(var|local|module|data|each)\./).where(arguments["from_port"] <= 2376 && arguments["to_port"] >= 2375).none(
+        arguments["cidr_blocks"].contains("0.0.0.0/0") || arguments["ipv6_cidr_blocks"].contains("::/0")
       )
   - uid: mondoo-aws-security-secgroup-restricted-docker-daemon-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule") != empty
@@ -64612,7 +64750,7 @@ queries:
           ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
           )
   - uid: mondoo-aws-security-secgroup-restricted-kubernetes-api-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_security_group_rule" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
     mql: |
       terraform.resources("aws_security_group").all(
         blocks.where(type == "ingress" && arguments.from_port <= 6443 && arguments.to_port >= 6443).none(
@@ -64627,6 +64765,9 @@ queries:
         arguments["ingress"].where(_["from_port"] <= 6443 && _["to_port"] >= 6443).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
+      ) &&
+      terraform.resources("aws_security_group_rule").where(arguments["type"] == "ingress").where(arguments["from_port"] != /^(var|local|module|data|each)\./ && arguments["to_port"] != /^(var|local|module|data|each)\./).where(arguments["from_port"] <= 6443 && arguments["to_port"] >= 6443).none(
+        arguments["cidr_blocks"].contains("0.0.0.0/0") || arguments["ipv6_cidr_blocks"].contains("::/0")
       )
   - uid: mondoo-aws-security-secgroup-restricted-kubernetes-api-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule") != empty
@@ -64789,7 +64930,7 @@ queries:
           ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
           )
   - uid: mondoo-aws-security-secgroup-restricted-kubelet-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_security_group_rule" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
     mql: |
       terraform.resources("aws_security_group").all(
         blocks.where(type == "ingress" && arguments.from_port <= 10255 && arguments.to_port >= 10250).none(
@@ -64804,6 +64945,9 @@ queries:
         arguments["ingress"].where(_["from_port"] <= 10255 && _["to_port"] >= 10250).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
+      ) &&
+      terraform.resources("aws_security_group_rule").where(arguments["type"] == "ingress").where(arguments["from_port"] != /^(var|local|module|data|each)\./ && arguments["to_port"] != /^(var|local|module|data|each)\./).where(arguments["from_port"] <= 10255 && arguments["to_port"] >= 10250).none(
+        arguments["cidr_blocks"].contains("0.0.0.0/0") || arguments["ipv6_cidr_blocks"].contains("::/0")
       )
   - uid: mondoo-aws-security-secgroup-restricted-kubelet-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule") != empty
@@ -64965,7 +65109,7 @@ queries:
           ipRanges.contains("0.0.0.0/0") || ipRanges.contains("::/0")
           )
   - uid: mondoo-aws-security-secgroup-restricted-etcd-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_security_group_rule" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
     mql: |
       terraform.resources("aws_security_group").all(
         blocks.where(type == "ingress" && arguments.from_port <= 2380 && arguments.to_port >= 2379).none(
@@ -64980,6 +65124,9 @@ queries:
         arguments["ingress"].where(_["from_port"] <= 2380 && _["to_port"] >= 2379).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
+      ) &&
+      terraform.resources("aws_security_group_rule").where(arguments["type"] == "ingress").where(arguments["from_port"] != /^(var|local|module|data|each)\./ && arguments["to_port"] != /^(var|local|module|data|each)\./).where(arguments["from_port"] <= 2380 && arguments["to_port"] >= 2379).none(
+        arguments["cidr_blocks"].contains("0.0.0.0/0") || arguments["ipv6_cidr_blocks"].contains("::/0")
       )
   - uid: mondoo-aws-security-secgroup-restricted-etcd-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule") != empty
@@ -65433,7 +65580,7 @@ queries:
   - uid: mondoo-aws-security-s3-bucket-policy-no-public-principal-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_s3_bucket_policy")
     mql: |
-      terraform.resources("aws_s3_bucket_policy").all(
+      terraform.resources("aws_s3_bucket_policy").where(arguments.policy.first["Statement"] != null).all(
         arguments.policy.first["Statement"].where(_["Effect"] == "Allow").none(
           _["Principal"] == "*" || _["Principal"]["AWS"] == "*"
         )
@@ -65641,7 +65788,7 @@ queries:
   - uid: mondoo-aws-security-s3-bucket-policy-secure-transport-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_s3_bucket_policy")
     mql: |
-      terraform.resources("aws_s3_bucket_policy").all(
+      terraform.resources("aws_s3_bucket_policy").where(arguments.policy.first["Statement"] != null).all(
         arguments.policy.first["Statement"].any(
           _["Effect"] == "Deny" &&
           _["Condition"]["Bool"]["aws:SecureTransport"] == "false" ||
@@ -69921,10 +70068,13 @@ queries:
         _['EncryptionAtRest']['SseAwsKmsKeyId'] != ""
       )
   - uid: mondoo-aws-security-glue-catalog-encryption-cmk-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_glue_data_catalog_encryption_settings")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == /^aws_glue_/)
     mql: |
+      terraform.resources.where(nameLabel == "aws_glue_data_catalog_encryption_settings") != empty
       terraform.resources("aws_glue_data_catalog_encryption_settings").all(
+        blocks.where(type == "data_catalog_encryption_settings") != empty &&
         blocks.where(type == "data_catalog_encryption_settings").all(
+          blocks.where(type == "encryption_at_rest") != empty &&
           blocks.where(type == "encryption_at_rest").all(
             arguments.catalog_encryption_mode == "SSE-KMS" &&
             arguments.sse_aws_kms_key_id != null &&
@@ -71538,16 +71688,19 @@ queries:
       loggedVpcIds = aws.route53.resolver.queryLogConfigAssociations.where(status == "ACTIVE").map(resourceId)
       aws.vpcs.all(id.in(loggedVpcIds))
   - uid: mondoo-aws-security-route53-resolver-query-logging-enabled-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_route53_resolver_query_log_config")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_vpc")
     mql: |
+      terraform.resources("aws_route53_resolver_query_log_config").length > 0 &&
       terraform.resources("aws_route53_resolver_query_log_config_association").length > 0
   - uid: mondoo-aws-security-route53-resolver-query-logging-enabled-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_route53_resolver_query_log_config")
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_vpc")
     mql: |
+      terraform.plan.resourceChanges.where(type == "aws_route53_resolver_query_log_config").length > 0 &&
       terraform.plan.resourceChanges.where(type == "aws_route53_resolver_query_log_config_association").length > 0
   - uid: mondoo-aws-security-route53-resolver-query-logging-enabled-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_route53_resolver_query_log_config")
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_vpc")
     mql: |
+      terraform.state.resources.where(type == "aws_route53_resolver_query_log_config").length > 0 &&
       terraform.state.resources.where(type == "aws_route53_resolver_query_log_config_association").length > 0
   - uid: mondoo-aws-security-route53-resolver-query-logging-enabled-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Route53Resolver::ResolverQueryLoggingConfig")
@@ -72954,6 +73107,17 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_sqs_queue_policy")
     mql: |
       terraform.resources("aws_sqs_queue_policy").all(
+        arguments.policy.first["Statement"] == null &&
+        terraform.datasources.where(nameLabel == "aws_iam_policy_document").contains(
+          blocks.where(type == "statement").any(
+            arguments["effect"] == "Deny" &&
+            blocks.where(type == "condition").any(
+              arguments["test"] == "Bool" &&
+              arguments["variable"] == "aws:SecureTransport" &&
+              arguments["values"].contains("false")
+            )
+          )
+        ) ||
         arguments.policy.first["Statement"].any(
           _["Effect"] == "Deny" &&
           _["Condition"]["Bool"]["aws:SecureTransport"] == "false" ||
@@ -76005,10 +76169,15 @@ queries:
   - uid: mondoo-aws-security-kms-key-no-public-access-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_kms_key")
     mql: |
-      terraform.resources("aws_kms_key").all(
-        arguments.policy == empty ||
+      terraform.resources("aws_kms_key").where(arguments["policy"].where(_["Statement"] != null) != empty).all(
         arguments.policy.first["Statement"].where(_["Effect"] == "Allow").none(
           _["Principal"] == "*" || _["Principal"]["AWS"] == "*"
+        )
+      )
+      refs = terraform.resources.where(nameLabel == "aws_kms_key").where(arguments["policy"] == /aws_iam_policy_document/).map(arguments["policy"]).join(",")
+      terraform.blocks.where(type == "data").where(labels.first == "aws_iam_policy_document").where(refs.contains("aws_iam_policy_document." + labels[1] + ".json")).all(
+        blocks.where(type == "statement").where(arguments["effect"] != "Deny").where(blocks.where(type == "condition") == empty).all(
+          blocks.where(type == "principals").none(arguments["type"] == "AWS" && arguments["identifiers"].where(_ == "*") != empty)
         )
       )
   - uid: mondoo-aws-security-kms-key-no-public-access-terraform-plan
@@ -76552,9 +76721,10 @@ queries:
     mql: |
       aws.vpcs.all(encryptionControl != empty && encryptionControl.mode == "enforce")
   - uid: mondoo-aws-security-vpc-encryption-in-transit-enforced-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_vpc_encryption_control")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_vpc" || nameLabel == "aws_vpc_encryption_control") != empty
     mql: |
-      terraform.resources("aws_vpc_encryption_control").all(
+      terraform.resources.where(nameLabel == "aws_vpc_encryption_control") != empty
+      terraform.resources.where(nameLabel == "aws_vpc_encryption_control").where(arguments["mode"] != /^(var|local|module|data|each)\./).all(
         arguments.mode == "enforce"
       )
   - uid: mondoo-aws-security-vpc-encryption-in-transit-enforced-terraform-plan
