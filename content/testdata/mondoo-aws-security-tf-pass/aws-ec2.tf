@@ -4,7 +4,8 @@ resource "aws_ebs_volume" "pass_example" {
   tags = {
     Name = "Encrypted"
   }
-  encrypted = true
+  encrypted  = true
+  kms_key_id = aws_kms_key.pass_example.arn
 }
 
 resource "aws_ebs_encryption_by_default" "pass_example" {
@@ -14,6 +15,11 @@ resource "aws_ebs_encryption_by_default" "pass_example" {
 resource "aws_instance" "pass_example_1" {
   ami           = "ami-0279c3b3186e54acd"
   instance_type = "t2.micro"
+
+  root_block_device {
+    encrypted  = true
+    kms_key_id = aws_kms_key.pass_example.arn
+  }
   metadata_options {
     http_tokens = "required"
   }
@@ -22,6 +28,11 @@ resource "aws_instance" "pass_example_1" {
 resource "aws_instance" "pass_example_2" {
   ami           = "ami-0279c3b3186e54acd"
   instance_type = "t2.micro"
+
+  root_block_device {
+    encrypted  = true
+    kms_key_id = aws_kms_key.pass_example.arn
+  }
   metadata_options {
     http_endpoint = "disabled"
   }
@@ -30,6 +41,11 @@ resource "aws_instance" "pass_example_2" {
 resource "aws_instance" "pass_example_3" {
   ami           = "ami-0279c3b3186e54acd"
   instance_type = "t2.micro"
+
+  root_block_device {
+    encrypted  = true
+    kms_key_id = aws_kms_key.pass_example.arn
+  }
 
   user_data = <<EOF
   export MY_KEY=VALUE
@@ -43,6 +59,11 @@ EOF
 resource "aws_instance" "pass_example_4" {
   ami           = "ami-0279c3b3186e54acd"
   instance_type = "t2.micro"
+
+  root_block_device {
+    encrypted  = true
+    kms_key_id = aws_kms_key.pass_example.arn
+  }
   user_data = <<EOF
 export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
 export AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/A1AAAAA/bPxRfiCYAAAAAAAKEY

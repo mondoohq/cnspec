@@ -3691,7 +3691,7 @@ queries:
   - uid: mondoo-aws-security-iam-users-only-one-access-key-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_iam_access_key")
     mql: |
-      terraform.resources.where(nameLabel == "aws_iam_access_key").where(arguments["status"] != "Inactive").map(arguments["user"]).join(",").split(",").duplicates == empty
+      terraform.resources.where(nameLabel == "aws_iam_access_key").where(arguments["status"] != "Inactive").map(arguments["user"]).join("|").split("|").duplicates == empty
   - uid: mondoo-aws-security-iam-users-only-one-access-key-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_iam_policy")
     mql: |
@@ -4246,6 +4246,7 @@ queries:
   - uid: mondoo-aws-security-ec2-ebs-encryption-by-default-aws
     filters: asset.platform == "aws"
     mql: aws.ec2.ebsEncryptionByDefault.values.all(_ == true)
+  # enabled == null passes deliberately: the AWS provider defaults aws_ebs_encryption_by_default.enabled to true, so declaring the resource without the argument still enables account-level encryption.
   - uid: mondoo-aws-security-ec2-ebs-encryption-by-default-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.providers.contains(nameLabel == "aws")
     mql: |
@@ -31016,7 +31017,7 @@ queries:
             ```
         - id: terraform
           desc: |
-            The hashicorp/aws provider's `aws_appstream_fleet` resource exposes no IMDS argument, so fleets it creates always leave IMDSv1 enabled. To require IMDSv2 in Terraform, manage the fleet with the community St3ffn/aws-appstream provider, which supports `disable_imds_v1`:
+            The hashicorp/aws provider's `aws_appstream_fleet` resource exposes no IMDS argument, so fleets it creates always leave IMDSv1 enabled. To require IMDSv2 in Terraform, manage the fleet with the community St3ffn/aws-appstream provider, which supports `disable_imds_v1`. Community providers carry supply-chain risk: review the provider's source, pin an exact version, and verify its checksums per your organization's policy before adopting it (alternatively use the CloudFormation remediation until the official provider exposes this setting):
 
             ```hcl
             terraform {
@@ -57536,7 +57537,7 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_subnet")
     mql: |
       flowLogRefs = terraform.resources.where(nameLabel == "aws_flow_log").map(arguments["subnet_id"]).join(" ")
-      terraform.resources.where(nameLabel == "aws_subnet").all(flowLogRefs.contains("aws_subnet." + labels[1]))
+      terraform.resources.where(nameLabel == "aws_subnet").all(flowLogRefs.contains("aws_subnet." + labels[1] + "."))
   - uid: mondoo-aws-security-vpc-flow-logs-iam-role
     title: Ensure VPC flow logs have an IAM role for CloudWatch delivery
     impact: 60
@@ -62185,7 +62186,8 @@ queries:
           _["Principal"] == "*" || _["Principal"]["AWS"] == "*"
         )
       )
-      terraform.datasources.where(nameLabel == "aws_iam_policy_document").all(
+      snsDocRefs = terraform.resources.where(nameLabel == "aws_sns_topic_policy").map(arguments["policy"]).join(",")
+      terraform.datasources.where(nameLabel == "aws_iam_policy_document").where(snsDocRefs.contains("data.aws_iam_policy_document." + labels[1] + ".json")).all(
         blocks.where(type == "statement" && arguments["effect"] != "Deny").all(
           blocks.none(type == "principals" && arguments["type"] == "AWS" && arguments["identifiers"].contains("*")) ||
           blocks.contains(type == "condition")
@@ -73106,18 +73108,19 @@ queries:
   - uid: mondoo-aws-security-sqs-queue-policy-secure-transport-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_sqs_queue_policy")
     mql: |
+      secureTransportDocs = terraform.datasources.where(nameLabel == "aws_iam_policy_document").where(
+        blocks.where(type == "statement").any(
+          arguments["effect"] == "Deny" &&
+          blocks.where(type == "condition").any(
+            arguments["test"] == "Bool" &&
+            arguments["variable"] == "aws:SecureTransport" &&
+            arguments["values"].contains("false")
+          )
+        )
+      ).map("data.aws_iam_policy_document." + labels[1] + ".json").join(",")
       terraform.resources("aws_sqs_queue_policy").all(
         arguments.policy.first["Statement"] == null &&
-        terraform.datasources.where(nameLabel == "aws_iam_policy_document").contains(
-          blocks.where(type == "statement").any(
-            arguments["effect"] == "Deny" &&
-            blocks.where(type == "condition").any(
-              arguments["test"] == "Bool" &&
-              arguments["variable"] == "aws:SecureTransport" &&
-              arguments["values"].contains("false")
-            )
-          )
-        ) ||
+        secureTransportDocs.contains(arguments["policy"]) ||
         arguments.policy.first["Statement"].any(
           _["Effect"] == "Deny" &&
           _["Condition"]["Bool"]["aws:SecureTransport"] == "false" ||
