@@ -237,6 +237,29 @@ AWS_CLI_CUSTOM_SUBCOMMANDS = {
     "wait",
 }
 
+# Service-scoped subcommands the AWS CLI synthesizes on top of the botocore
+# model. They are real CLI surface but have no service-2.json operation, so the
+# generated database never contains them. Each maps to the flags the CLI
+# exposes for that customization.
+AWS_CLI_CUSTOM_SERVICE_SUBCOMMANDS = {
+    "emr": {
+        # `modify-cluster-attributes` wraps SetVisibleToAllUsers /
+        # SetTerminationProtection / etc.; it replaces the removed
+        # set-visible-to-all-users command in CLI v2.
+        "modify-cluster-attributes": [
+            "--cluster-id",
+            "--visible-to-all-users",
+            "--no-visible-to-all-users",
+            "--termination-protected",
+            "--no-termination-protected",
+            "--unhealthy-node-replacement",
+            "--no-unhealthy-node-replacement",
+            "--auto-terminate",
+            "--no-auto-terminate",
+        ],
+    },
+}
+
 AWS_CLI_CUSTOM_FLAGS = {
     # CLI customization that writes the seed material to a local file.
     "iam create-virtual-mfa-device": ["--outfile", "--bootstrap-method"],
@@ -270,6 +293,14 @@ def validate_aws_command(
 
     if subcommand in AWS_CLI_CUSTOM_SUBCOMMANDS:
         return True, []
+
+    custom_subcommands = AWS_CLI_CUSTOM_SERVICE_SUBCOMMANDS.get(service, {})
+    if subcommand in custom_subcommands:
+        valid_flags = set(custom_subcommands[subcommand])
+        for flag in flags:
+            if flag not in valid_flags:
+                errors.append(f"unknown flag '{flag}' for '{service} {subcommand}'")
+        return len(errors) == 0, errors
 
     valid_subcommands = commands_db[service]
     if subcommand not in valid_subcommands:

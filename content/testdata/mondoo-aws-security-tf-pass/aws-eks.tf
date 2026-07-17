@@ -16,10 +16,9 @@ resource "aws_eks_cluster" "good_example" {
   }
 
   vpc_config {
-    endpoint_public_access    = false
-    endpoint_private_access   = true
-    public_access_cidrs       = ["10.2.0.0/16"]
-    control_plane_egress_mode = "CUSTOMER_ROUTED"
+    endpoint_public_access  = false
+    endpoint_private_access = true
+    public_access_cidrs     = ["10.2.0.0/16"]
   }
 }
 
