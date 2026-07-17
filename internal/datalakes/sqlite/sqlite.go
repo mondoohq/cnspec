@@ -10,17 +10,20 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnspec/v13"
 	"go.mondoo.com/cnspec/v13/internal/datalakes/inmemory"
 	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/cnspec/v13/policy/scandb"
+	"go.mondoo.com/cnspec/v13/policy/scanstats"
 	"go.mondoo.com/cnspec/v13/upload"
 	"go.mondoo.com/mql/v13/llx"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/health"
+	"google.golang.org/protobuf/types/known/anypb"
 )
 
 // outputDirCtxKey is the unexported key used to thread the
@@ -61,11 +64,13 @@ func WithServices(ctx context.Context, runtime llx.Runtime, asset *inventory.Ass
 			}
 		}
 
-		_, ls, err := inmemory.NewServices(runtime, inmemory.WithDataWriter(scandb.NewScanDataStoreWrapper(scanDataStore, assetMrn)))
-
+		wrapper := scandb.NewScanDataStoreWrapper(scanDataStore, assetMrn)
+		_, ls, err := inmemory.NewServices(runtime, inmemory.WithDataWriter(wrapper))
 		if err != nil {
 			return err
 		}
+
+		stats := scanstats.New()
 
 		var upstream *policy.Services
 		if upstreamClient != nil {
@@ -80,17 +85,22 @@ func WithServices(ctx context.Context, runtime llx.Runtime, asset *inventory.Ass
 		}
 
 		ls.Upstream = upstream
+		scanStart := time.Now()
 		if err := f(ctx, ls); err != nil {
 			return err
 		}
+		stats.AddDuration(scanstats.MetricScanDuration, time.Since(scanStart))
+		stats.AddInt(scanstats.MetricQueriesExecuted, "count", wrapper.ExecutedCount())
+		stats.AddInt(scanstats.MetricQueriesErrored, "count", wrapper.ErroredCount())
 
 		if upstream != nil {
 			scanDataPath, err := scanDataStore.Finalize()
 			if err != nil {
 				return err
 			}
+			stats.AddInt(scanstats.MetricUploadSize, "bytes", fileSizeBytes(scanDataPath))
 
-			return uploadScanDataStore(ctx, upstream, assetMrn, scanDataPath)
+			return uploadScanDataStore(ctx, upstream, assetMrn, scanDataPath, stats)
 		}
 
 		return nil
@@ -150,7 +160,16 @@ func withSqliteDataStore(ctx context.Context, assetMrn string, f func(scanDataSt
 	return f(scanDataStore)
 }
 
-func uploadScanDataStore(ctx context.Context, services *policy.Services, assetMrn string, scanDataPath string) error {
+// fileSizeBytes returns the size of the file at path, or 0 if it cannot be stat'd.
+func fileSizeBytes(path string) int64 {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	return info.Size()
+}
+
+func uploadScanDataStore(ctx context.Context, services *policy.Services, assetMrn string, scanDataPath string, stats *scanstats.Collector) error {
 	urlResp, err := services.GetUploadURL(ctx, &policy.GetUploadURLReq{
 		Kind:     policy.UploadURLKind_UPLOAD_URL_KIND_SCAN_DATABASE_V0,
 		ScopeMrn: assetMrn,
@@ -187,12 +206,19 @@ func uploadScanDataStore(ctx context.Context, services *policy.Services, assetMr
 		return fmt.Errorf("upload failed with status %d", resp.StatusCode)
 	}
 
-	// Confirm the upload
-	_, err = services.ReportUploadCompleted(ctx, &policy.ReportUploadCompletedReq{
+	// Confirm the upload, attaching scan statistics as the completion payload.
+	req := &policy.ReportUploadCompletedReq{
 		UploadSessionId: urlResp.UploadSessionId,
 		ScopeMrn:        assetMrn,
-	})
-	if err != nil {
+	}
+	if s := stats.ToProto(); s != nil {
+		if details, aerr := anypb.New(s); aerr != nil {
+			log.Warn().Err(aerr).Msg("failed to encode scan statistics; sending upload confirmation without them")
+		} else {
+			req.Details = details
+		}
+	}
+	if _, err = services.ReportUploadCompleted(ctx, req); err != nil {
 		return err
 	}
 
