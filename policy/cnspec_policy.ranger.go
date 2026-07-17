@@ -442,6 +442,7 @@ type PolicyResolver interface {
 	GetResourcesData(context.Context, *recording.EntityResourcesReq) (*recording.EntityResourcesRes, error)
 	SynchronizeAssets(context.Context, *SynchronizeAssetsReq) (*SynchronizeAssetsResp, error)
 	PurgeAssets(context.Context, *PurgeAssetsRequest) (*PurgeAssetsConfirmation, error)
+	RefreshAssetScores(context.Context, *RefreshAssetScoresRequest) (*RefreshAssetScoresResponse, error)
 	GetScanParameters(context.Context, *GetScanParametersReq) (*ScanParameters, error)
 }
 
@@ -551,6 +552,11 @@ func (c *PolicyResolverClient) PurgeAssets(ctx context.Context, in *PurgeAssetsR
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/PurgeAssets"}, ""), in, out)
 	return out, err
 }
+func (c *PolicyResolverClient) RefreshAssetScores(ctx context.Context, in *RefreshAssetScoresRequest) (*RefreshAssetScoresResponse, error) {
+	out := new(RefreshAssetScoresResponse)
+	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/RefreshAssetScores"}, ""), in, out)
+	return out, err
+}
 func (c *PolicyResolverClient) GetScanParameters(ctx context.Context, in *GetScanParametersReq) (*ScanParameters, error) {
 	out := new(ScanParameters)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetScanParameters"}, ""), in, out)
@@ -595,6 +601,7 @@ func NewPolicyResolverServer(handler PolicyResolver, opts ...PolicyResolverServe
 			"GetResourcesData":      srv.GetResourcesData,
 			"SynchronizeAssets":     srv.SynchronizeAssets,
 			"PurgeAssets":           srv.PurgeAssets,
+			"RefreshAssetScores":    srv.RefreshAssetScores,
 			"GetScanParameters":     srv.GetScanParameters,
 		},
 	}
@@ -989,6 +996,30 @@ func (p *PolicyResolverServer) PurgeAssets(ctx context.Context, reqBytes *[]byte
 		return nil, err
 	}
 	return p.handler.PurgeAssets(ctx, &req)
+}
+func (p *PolicyResolverServer) RefreshAssetScores(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+	var req RefreshAssetScoresRequest
+	var err error
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, errors.New("could not access header")
+	}
+
+	switch md.First("Content-Type") {
+	case "application/protobuf", "application/octet-stream", "application/grpc+proto":
+		err = pb.Unmarshal(*reqBytes, &req)
+	default:
+		// handle case of empty object
+		if len(*reqBytes) > 0 {
+			err = jsonpb.UnmarshalOptions{DiscardUnknown: true}.Unmarshal(*reqBytes, &req)
+		}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	return p.handler.RefreshAssetScores(ctx, &req)
 }
 func (p *PolicyResolverServer) GetScanParameters(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req GetScanParametersReq
