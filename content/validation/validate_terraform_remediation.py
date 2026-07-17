@@ -223,10 +223,17 @@ def write_tflint_config(tmp_dir: Path, providers: set[str]) -> None:
             lines.append(f'  enabled = true\n')
             lines.append(f'  version = "{version}"\n')
             lines.append(f'  source  = "{source}"\n')
-            # Force legacy PGP verification: sigstore attestation verification
-            # panics on current GitHub attestation responses (tflint#2591).
-            # Requires tflint >= 0.63.1; drop once the upstream crash is fixed.
-            lines.append(f'  signature = "pgp"\n')
+            # TEMPORARY (2026-07-17): pinned to PGP because the default "auto"
+            # verification crashes. GitHub removed the `bundle` field from
+            # attestation API responses, so `tflint --init` nil-derefs in
+            # sigstore-go while verifying the ruleset and never reaches the
+            # lint stage. Upstream fix: terraform-linters/tflint#2593
+            # (unreleased). "pgp" still verifies the plugin cryptographically
+            # via the legacy signing key -- it is NOT "none", which would skip
+            # verification entirely. Requires tflint >= 0.62; 0.61 and earlier
+            # silently ignore this attribute. REVERT (delete this line) once
+            # #2593 ships -- attestations verify provenance, PGP only signing.
+            lines.append('  signature = "pgp"\n')
             lines.append('}\n')
 
     (tmp_dir / ".tflint.hcl").write_text("".join(lines))
