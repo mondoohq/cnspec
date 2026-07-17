@@ -223,6 +223,10 @@ def write_tflint_config(tmp_dir: Path, providers: set[str]) -> None:
             lines.append(f'  enabled = true\n')
             lines.append(f'  version = "{version}"\n')
             lines.append(f'  source  = "{source}"\n')
+            # Force legacy PGP verification: sigstore attestation verification
+            # panics on current GitHub attestation responses (tflint#2591).
+            # Requires tflint >= 0.63.1; drop once the upstream crash is fixed.
+            lines.append(f'  signature = "pgp"\n')
             lines.append('}\n')
 
     (tmp_dir / ".tflint.hcl").write_text("".join(lines))
