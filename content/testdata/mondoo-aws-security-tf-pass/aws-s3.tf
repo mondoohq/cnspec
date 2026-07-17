@@ -38,7 +38,8 @@ resource "aws_s3_bucket_acl" "pass_example" {
 resource "aws_s3_bucket_versioning" "pass_example" {
   bucket = aws_s3_bucket.pass_example.id
   versioning_configuration {
-    status = "Enabled"
+    status     = "Enabled"
+    mfa_delete = "Enabled"
   }
 }
 
@@ -80,7 +81,8 @@ resource "aws_s3_bucket_acl" "pass_example_log1" {
 resource "aws_s3_bucket_versioning" "pass_example_log1" {
   bucket = aws_s3_bucket.pass_example_log1.id
   versioning_configuration {
-    status = "Enabled"
+    status     = "Enabled"
+    mfa_delete = "Enabled"
   }
 }
 
@@ -121,7 +123,8 @@ resource "aws_s3_bucket_acl" "pass_example_log2" {
 resource "aws_s3_bucket_versioning" "pass_example_log2" {
   bucket = aws_s3_bucket.pass_example_log2.id
   versioning_configuration {
-    status = "Enabled"
+    status     = "Enabled"
+    mfa_delete = "Enabled"
   }
 }
 
@@ -156,5 +159,12 @@ resource "aws_s3_bucket_public_access_block" "pass_example" {
   block_public_policy = true
   block_public_acls = true
   ignore_public_acls = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_account_public_access_block" "pass_example" {
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
   restrict_public_buckets = true
 }
