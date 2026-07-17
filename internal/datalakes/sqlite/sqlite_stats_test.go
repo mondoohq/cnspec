@@ -19,10 +19,15 @@ func TestFileSizeBytes(t *testing.T) {
 	require.Equal(t, int64(0), fileSizeBytes(filepath.Join(t.TempDir(), "missing.db")))
 }
 
-func TestCollectorUploadSize(t *testing.T) {
+func TestUploadSizeFromFile(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "scan.db")
+	require.NoError(t, os.WriteFile(p, []byte("hello world"), 0o600))
+
 	c := scanstats.New()
-	c.AddInt(scanstats.MetricUploadSize, "bytes", 11)
+	c.AddInt(scanstats.MetricUploadSize, "bytes", fileSizeBytes(p))
+
 	stats := c.ToProto()
 	require.Equal(t, scanstats.MetricUploadSize, stats.Metrics[0].Name)
+	require.Equal(t, "bytes", stats.Metrics[0].Unit)
 	require.Equal(t, int64(11), stats.Metrics[0].GetIntValue())
 }

@@ -28,7 +28,7 @@ type ScanDataStoreWrapper struct {
 	store    ScanDataStore
 	assetMrn string
 
-	executed atomic.Int64 // total queries written (scores + data)
+	executed atomic.Int64 // total queries attempted (scores + data)
 	errored  atomic.Int64 // queries in an error state
 }
 

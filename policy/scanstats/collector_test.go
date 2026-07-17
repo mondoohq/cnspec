@@ -33,3 +33,15 @@ func TestCollector_Adders(t *testing.T) {
 	require.Equal(t, 3.5, stats.Metrics[2].GetDoubleValue())
 	require.Equal(t, true, stats.Metrics[3].GetBoolValue())
 }
+
+func TestCollector_ErroredAndUploadSizeConstants(t *testing.T) {
+	c := New()
+	c.AddInt(MetricQueriesErrored, "count", 3)
+	c.AddInt(MetricUploadSize, "bytes", 4096)
+	stats := c.ToProto()
+	require.Len(t, stats.Metrics, 2)
+	require.Equal(t, "cnspec.scan.queries_errored", stats.Metrics[0].Name)
+	require.Equal(t, int64(3), stats.Metrics[0].GetIntValue())
+	require.Equal(t, "cnspec.scan.upload_size", stats.Metrics[1].Name)
+	require.Equal(t, int64(4096), stats.Metrics[1].GetIntValue())
+}

@@ -67,5 +67,7 @@ func (c *Collector) ToProto() *policy.ScanStatistics {
 	if len(c.metrics) == 0 {
 		return nil
 	}
-	return &policy.ScanStatistics{Metrics: c.metrics}
+	out := make([]*policy.Metric, len(c.metrics))
+	copy(out, c.metrics)
+	return &policy.ScanStatistics{Metrics: out}
 }

@@ -35,6 +35,9 @@ func requireStatsRoundTrip(t *testing.T, got *ReportUploadCompletedReq) {
 	require.Len(t, stats.Metrics, 2)
 	require.Equal(t, "cnspec.scan.duration", stats.Metrics[0].Name)
 	require.Equal(t, int64(4200), stats.Metrics[0].GetIntValue())
+	require.Equal(t, "cnspec.scan.queries_executed", stats.Metrics[1].Name)
+	require.Equal(t, "count", stats.Metrics[1].Unit)
+	require.Equal(t, int64(128), stats.Metrics[1].GetIntValue())
 }
 
 func TestReportUploadCompletedReq_AnyRoundTrip_Proto(t *testing.T) {
