@@ -11,6 +11,7 @@ upload. For v1 we want three metrics:
 
 - how long the scan took,
 - how many queries were executed,
+- how many of those queries errored,
 - how big the upload is (the scan database file size).
 
 The mechanism must make it **easy to add more metrics later** — including
@@ -131,6 +132,7 @@ Well-known metric-name constants (same package):
 const (
     MetricScanDuration     = "cnspec.scan.duration"          // ms
     MetricQueriesExecuted  = "cnspec.scan.queries_executed"  // count
+    MetricQueriesErrored   = "cnspec.scan.queries_errored"   // count
     MetricUploadSize       = "cnspec.scan.upload_size"       // bytes
 )
 ```
@@ -141,9 +143,12 @@ const (
 2. It times the scan closure `f(ctx, ls)` and records
    `AddDuration(MetricScanDuration, elapsed)`.
 3. After the scan, it records the query count with
-   `AddInt(MetricQueriesExecuted, "count", n)`. Source: the count of
-   scores + data results written to the scan data store (fallback: resolved
-   policy `QueryCounts`). Exact source finalized during implementation.
+   `AddInt(MetricQueriesExecuted, "count", n)` and the errored-query count with
+   `AddInt(MetricQueriesErrored, "count", nErrored)`. Source: the count of
+   scores + data results written to the scan data store, with errored queries
+   being those in an error state (fallback: resolved policy `QueryCounts` and
+   the `Stats.errors` distribution). Exact source finalized during
+   implementation.
 4. It hands the `Collector` to `uploadScanDataStore`.
 5. `uploadScanDataStore` stats the finalized file and records
    `AddInt(MetricUploadSize, "bytes", os.Stat(scanDataPath).Size())` — there is
@@ -189,8 +194,8 @@ mechanism is out of scope here.
 
 ## Open implementation questions
 
-- Exact source for `queries_executed` (scan-db row count vs resolved-policy
-  `QueryCounts`) — decide during implementation; either lands as the same
-  metric name.
+- Exact source for `queries_executed` / `queries_errored` (scan-db row counts
+  and error state vs resolved-policy `QueryCounts` and `Stats.errors`) — decide
+  during implementation; either lands as the same metric names.
 - Whether `google.protobuf.Any` needs any addition to the `make cnspec/generate`
   proto include paths — verified as part of the de-risk task.
