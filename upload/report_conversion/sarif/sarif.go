@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"strings"
+	"time"
 
 	gosarif "github.com/owenrumney/go-sarif/v2/sarif"
 	rc "go.mondoo.com/cnspec/v13/upload/report_conversion"
@@ -27,41 +28,52 @@ func Convert(data []byte) ([]*fex.FindingDocument, error) {
 	}
 
 	var docs []*fex.FindingDocument
+	index := 0
 	for _, run := range report.Runs {
 		source := &fex.Source{Name: run.Tool.Driver.Name}
+		runTime := runStartTime(run)
 		for _, result := range run.Results {
-			docs = append(docs, fex.FexToDocument(convertResult(result, source)))
+			docs = append(docs, fex.FexToDocument(convertResult(result, source, runTime, index)))
+			index++
 		}
 	}
 	return docs, nil
 }
 
-func convertResult(result *gosarif.Result, source *fex.Source) *fex.FindingExchange {
+func convertResult(result *gosarif.Result, source *fex.Source, runTime *time.Time, index int) *fex.FindingExchange {
 	ruleID := deref(result.RuleID)
 	message := ""
 	if result.Message.Text != nil {
 		message = *result.Message.Text
 	}
 
-	// Id must be stable and non-empty; prefer the rule id, fall back to a hash of
-	// the message so a result without a ruleId still validates.
+	// Id must be stable and non-empty. Prefer the rule id; else a hash of the
+	// message; else fall back to the result index so empty-rule/empty-message
+	// results don't collapse into one finding.
 	id := ruleID
 	if id == "" {
-		id = shortHash(message)
+		if message != "" {
+			id = shortHash(message)
+		} else {
+			id = fmt.Sprintf("finding-%d", index)
+		}
 	}
-	// Summary must be non-empty; prefer the message, fall back to the rule id.
+	// Summary must be non-empty; prefer the message, then the rule id, then a
+	// generic label so Validate never rejects it.
 	summary := message
 	if summary == "" {
 		summary = ruleID
 	}
+	if summary == "" {
+		summary = "Finding from " + source.Name
+	}
 
 	f := &fex.FindingExchange{
-		Id:          id,
-		Ref:         ruleID,
-		Summary:     summary,
-		Source:      source,
-		Status:      fex.Status_STATUS_AFFECTED,
-		FirstSeenAt: timestamppb.Now(),
+		Id:      id,
+		Ref:     ruleID,
+		Summary: summary,
+		Source:  source,
+		Status:  fex.Status_STATUS_AFFECTED,
 		Details: &fex.FindingDetail{
 			Category:    fex.FindingDetail_CATEGORY_SECURITY,
 			Description: message,
@@ -69,9 +81,38 @@ func convertResult(result *gosarif.Result, source *fex.Source) *fex.FindingExcha
 			Properties:  stringProps(result.Properties),
 		},
 	}
+	// Prefer the scanner's own first-detection time so re-uploading an old report
+	// doesn't reset first-seen to upload time; leave unset when unknown so the
+	// platform can assign/preserve it.
+	if ts := firstSeen(result, runTime); ts != nil {
+		f.FirstSeenAt = timestamppb.New(*ts)
+	}
 	f.Affects = convertAffects(result)
 	f.Remediations = convertRemediations(result)
 	return f
+}
+
+// runStartTime returns the earliest invocation start time of a run, or nil.
+func runStartTime(run *gosarif.Run) *time.Time {
+	var earliest *time.Time
+	for _, inv := range run.Invocations {
+		if inv.StartTimeUTC == nil {
+			continue
+		}
+		if earliest == nil || inv.StartTimeUTC.Before(*earliest) {
+			earliest = inv.StartTimeUTC
+		}
+	}
+	return earliest
+}
+
+// firstSeen prefers a result's provenance first-detection time, falling back to
+// the run's start time. Returns nil when neither is present.
+func firstSeen(result *gosarif.Result, runTime *time.Time) *time.Time {
+	if result.Provenance != nil && result.Provenance.FirstDetectionTimeUTC != nil {
+		return result.Provenance.FirstDetectionTimeUTC
+	}
+	return runTime
 }
 
 func convertSeverity(level *string) *fex.Severity {

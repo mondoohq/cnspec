@@ -15,6 +15,9 @@ import (
 	_ "go.mondoo.com/cnspec/v13/upload/report_conversion/all"
 )
 
+// maxReportSize caps the report file read into memory (512 MiB).
+const maxReportSize = 512 << 20
+
 func init() {
 	rootCmd.AddCommand(uploadCmd)
 	uploadCmd.Flags().String("format", "", "Source report format (use --format list to see all)")
@@ -64,6 +67,14 @@ func runUpload(cmd *cobra.Command, args []string) error {
 	conv, ok := rc.Get(format)
 	if !ok {
 		return fmt.Errorf("unknown format %q; use --format list to see supported formats", format)
+	}
+
+	// Guard against reading an accidentally huge file into memory (arbitrary
+	// user-supplied path).
+	if info, err := os.Stat(args[0]); err != nil {
+		return fmt.Errorf("stat %s: %w", args[0], err)
+	} else if info.Size() > maxReportSize {
+		return fmt.Errorf("report %s is %d bytes, which exceeds the %d byte limit", args[0], info.Size(), int64(maxReportSize))
 	}
 
 	data, err := os.ReadFile(args[0])
