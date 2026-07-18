@@ -135,11 +135,4 @@ Protobuf is central to cnspec's architecture.
 
 ## Generated code
 
-Never edit these files manually:
-
-- `*.pb.go` — Generated from proto files.
-- `*.ranger.go` — Generated ranger-rpc code.
-- `*.vtproto.pb.go` — Optimized vtproto marshaling.
-- `*_gen.go` — Generated via `go generate`.
-
-Regenerate with `make cnspec/generate` after source changes. When proto files reference mql types, ensure the mql repo is present via `make prep/repos`.
+Same as the root `CLAUDE.md` — never hand-edit generated files (`*.pb.go`, `*.ranger.go`, `*.vtproto.pb.go`, `*_gen.go`); regenerate with `make cnspec/generate`.
