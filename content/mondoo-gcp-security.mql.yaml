@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-gcp-security
     name: Mondoo Google Cloud (GCP) Security
-    version: 9.5.1
+    version: 9.6.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -432,6 +432,12 @@ policies:
           - uid: mondoo-gcp-security-vertexai-custom-job-private-network
           - uid: mondoo-gcp-security-vertexai-custom-job-web-access-disabled
           - uid: mondoo-gcp-security-vertexai-additional-resources-cmek-encryption
+          - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-cmek-encryption
+          - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-shielded-vm
+          - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-private-network
+          - uid: mondoo-gcp-security-workbench-instance-no-default-service-account
+          - uid: mondoo-gcp-security-vertexai-rag-corpus-cmek-encryption
+          - uid: mondoo-gcp-security-vertexai-job-cmek-encryption
       - title: Cloud Workstations
         checks:
           - uid: mondoo-gcp-security-workstations-cluster-private-cluster
@@ -42491,3 +42497,705 @@ queries:
     refs:
       - url: https://cloud.google.com/domains/docs/dnssec-advanced
         title: DNSSEC configuration in Cloud Domains
+  - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-cmek-encryption
+    title: Ensure Vertex AI notebook runtime templates are encrypted with CMEK
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-11
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-cmek-encryption-gcp
+        tags:
+          mondoo.com/filter-title: GCP Vertex AI
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-cmek-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-cmek-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-cmek-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Vertex AI notebook runtime templates are encrypted with a customer-managed encryption key (CMEK) rather than a Google-managed key. A runtime template defines the machine, disk, and software configuration that Colab Enterprise notebooks run on, and the disks provisioned from it hold notebook code, cached data, and credentials. By default Google encrypts them with a key the customer cannot rotate, audit, or revoke independently.
+
+        **Why this matters**
+
+        - **Key control:** CMEK gives the organization direct authority over the key protecting notebook runtime disks, enabling custom rotation and access policies.
+        - **Revocability:** Disabling or destroying the Cloud KMS key immediately blocks access to disks provisioned from the template, a containment mechanism unavailable with Google-managed keys.
+        - **Audit visibility:** Key usage appears in Cloud KMS audit logs, providing a verifiable record of access to the encryption key.
+
+        **Risk mitigation**
+
+        - **Incident containment:** If a notebook runtime is found to hold sensitive data, revoking the CMEK key prevents further access while remediation proceeds.
+        - **Separation of duties:** Storing the key in a separate KMS project enforces a boundary between notebook operators and key custodians.
+      audit: |
+        ### Audit via Console
+
+        1. In the Google Cloud Console, go to **Vertex AI** > **Colab Enterprise** > **Runtime templates**.
+        2. Select each runtime template and open its details.
+        3. Under **Encryption**, confirm that a Cloud KMS key is configured.
+
+        A passing runtime template shows a customer-managed Cloud KMS key. A failing template shows Google-managed encryption.
+
+        ### Audit via CLI
+
+        1. List runtime templates and their encryption specification:
+
+        ```bash
+        gcloud colab runtime-templates list \
+          --region=REGION \
+          --format="table(name,displayName,encryptionSpec.kmsKeyName)"
+        ```
+
+        A passing template returns a KMS key name. A failing template returns an empty value.
+      remediation:
+        - id: console
+          desc: |
+            The encryption key is set at creation. To use a CMEK key with the Google Cloud Console:
+
+            1. Go to **Vertex AI** > **Colab Enterprise** > **Runtime templates**.
+            2. Create a new runtime template, and under **Encryption**, select **Customer-managed key** and choose your Cloud KMS key.
+            3. Replace references to the old template and delete it.
+        - id: cli
+          desc: |
+            To create a Vertex AI notebook runtime template encrypted with a CMEK key using the Google Cloud CLI:
+
+            ```bash
+            gcloud colab runtime-templates create \
+              --display-name=NAME \
+              --machine-type=e2-standard-4 \
+              --region=REGION \
+              --kms-key=KEY \
+              --kms-keyring=KEYRING \
+              --kms-location=LOCATION \
+              --kms-project=PROJECT
+            ```
+        - id: terraform
+          desc: |
+            To encrypt a Vertex AI notebook runtime template with a CMEK key in Terraform, set `kms_key_name` in the `encryption_spec` block of the `google_colab_runtime_template` resource:
+
+            ```hcl
+            resource "google_colab_runtime_template" "example" {
+              name         = "example-template"
+              display_name = "example-template"
+              location     = "us-central1"
+              machine_spec {
+                machine_type = "e2-standard-4"
+              }
+
+              encryption_spec {
+                kms_key_name = google_kms_crypto_key.example.id
+              }
+            }
+            ```
+    refs:
+      - url: https://cloud.google.com/vertex-ai/docs/general/cmek
+        title: Customer-managed encryption keys (CMEK) for Vertex AI
+  - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-cmek-encryption-gcp
+    filters: asset.platform == 'gcp-project'
+    mql: |
+      gcp.project.vertexaiService.notebookRuntimeTemplates.all(
+        kmsKey != null
+      )
+  - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-cmek-encryption-terraform-hcl
+    filters: asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_colab_runtime_template')
+    mql: |
+      terraform.resources('google_colab_runtime_template').all(
+        blocks.where(type == 'encryption_spec') != empty &&
+        blocks.where(type == 'encryption_spec').all(arguments['kms_key_name'] != null && arguments['kms_key_name'] != "")
+      )
+  - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-cmek-encryption-terraform-plan
+    filters: asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_colab_runtime_template')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_colab_runtime_template').all(
+        change.after['encryption_spec'] != empty &&
+        change.after['encryption_spec'].all(_['kms_key_name'] != null && _['kms_key_name'] != "")
+      )
+  - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-cmek-encryption-terraform-state
+    filters: asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_colab_runtime_template')
+    mql: |
+      terraform.state.resources.where(type == 'google_colab_runtime_template').all(
+        values['encryption_spec'] != empty &&
+        values['encryption_spec'].all(_['kms_key_name'] != null && _['kms_key_name'] != "")
+      )
+  - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-shielded-vm
+    title: Ensure Vertex AI notebook runtime templates enable Shielded VM
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-c-1-integrity
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ds-6
+      compliance/nist-csf-2: nist-csf-2-pr-ps-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-2
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc6-8-2
+      compliance/vda-isa-5: vda-isa-5-5-2-3
+    variants:
+      - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-shielded-vm-gcp
+        tags:
+          mondoo.com/filter-title: GCP Vertex AI
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-shielded-vm-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-shielded-vm-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-shielded-vm-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Vertex AI notebook runtime templates enable Shielded VM secure boot. Shielded VM protects the runtime against boot- and kernel-level malware by verifying, through secure boot, that only signed and trusted boot components load. Without secure boot, a rootkit or bootkit that compromises a notebook runtime can persist undetected across restarts.
+
+        **Why this matters**
+
+        - **Boot integrity:** Secure boot ensures the runtime loads only signed firmware and kernel components, blocking persistence techniques that tamper with the boot chain.
+        - **Tamper evidence:** Shielded VM integrity monitoring surfaces changes to the boot baseline, giving early warning of a compromised runtime.
+        - **Defense in depth:** Notebook runtimes hold code and credentials, so boot-level assurance complements network and encryption controls.
+
+        **Risk mitigation**
+
+        - **Enable secure boot at creation:** Configure the runtime template with Shielded VM secure boot so every runtime provisioned from it is protected.
+        - **Monitor integrity:** Review Shielded VM integrity monitoring signals to detect boot-level tampering.
+      audit: |
+        ### Audit via Console
+
+        1. In the Google Cloud Console, go to **Vertex AI** > **Colab Enterprise** > **Runtime templates**.
+        2. Select each runtime template and open its details.
+        3. Confirm that **Secure boot** is enabled under the Shielded VM configuration.
+
+        A passing runtime template has secure boot enabled. A failing template has it disabled.
+
+        ### Audit via CLI
+
+        1. List runtime templates and their Shielded VM configuration:
+
+        ```bash
+        gcloud colab runtime-templates list \
+          --region=REGION \
+          --format="table(name,displayName,shieldedVmConfig.enableSecureBoot)"
+        ```
+
+        A passing template returns `True` for secure boot. A failing template returns `False` or an empty value.
+      remediation:
+        - id: console
+          desc: |
+            Shielded VM configuration is set at creation. To enable secure boot with the Google Cloud Console:
+
+            1. Go to **Vertex AI** > **Colab Enterprise** > **Runtime templates**.
+            2. Create a new runtime template and enable **Secure boot** under the Shielded VM options.
+            3. Replace references to the old template and delete it.
+        - id: cli
+          desc: |
+            To create a Vertex AI notebook runtime template with Shielded VM secure boot using the Google Cloud CLI:
+
+            ```bash
+            gcloud colab runtime-templates create \
+              --display-name=NAME \
+              --machine-type=e2-standard-4 \
+              --region=REGION \
+              --enable-secure-boot
+            ```
+        - id: terraform
+          desc: |
+            To enable Shielded VM secure boot on a Vertex AI notebook runtime template in Terraform, set `enable_secure_boot` in the `shielded_vm_config` block of the `google_colab_runtime_template` resource:
+
+            ```hcl
+            resource "google_colab_runtime_template" "example" {
+              name         = "example-template"
+              display_name = "example-template"
+              location     = "us-central1"
+              machine_spec {
+                machine_type = "e2-standard-4"
+              }
+
+              shielded_vm_config {
+                enable_secure_boot = true
+              }
+            }
+            ```
+    refs:
+      - url: https://cloud.google.com/security/shielded-cloud/shielded-vm
+        title: Shielded VM
+  - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-shielded-vm-gcp
+    filters: asset.platform == 'gcp-project'
+    mql: |
+      gcp.project.vertexaiService.notebookRuntimeTemplates.all(
+        shieldedVmConfig != empty && shieldedVmConfig['enableSecureBoot'] == true
+      )
+  - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-shielded-vm-terraform-hcl
+    filters: asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_colab_runtime_template')
+    mql: |
+      terraform.resources('google_colab_runtime_template').all(
+        blocks.where(type == 'shielded_vm_config') != empty &&
+        blocks.where(type == 'shielded_vm_config').all(arguments['enable_secure_boot'] == true)
+      )
+  - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-shielded-vm-terraform-plan
+    filters: asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_colab_runtime_template')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_colab_runtime_template').all(
+        change.after['shielded_vm_config'] != empty &&
+        change.after['shielded_vm_config'].all(_['enable_secure_boot'] == true)
+      )
+  - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-shielded-vm-terraform-state
+    filters: asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_colab_runtime_template')
+    mql: |
+      terraform.state.resources.where(type == 'google_colab_runtime_template').all(
+        values['shielded_vm_config'] != empty &&
+        values['shielded_vm_config'].all(_['enable_secure_boot'] == true)
+      )
+  - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-private-network
+    title: Ensure Vertex AI notebook runtime templates use a private VPC network
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    variants:
+      - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-private-network-gcp
+        tags:
+          mondoo.com/filter-title: GCP Vertex AI
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-private-network-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-private-network-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-private-network-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Vertex AI notebook runtime templates are bound to a specific VPC network rather than defaulting to a Google-managed network with direct internet access. Binding the runtime to a customer VPC forces its traffic through the organization's own subnets, routes, firewall rules, and private service endpoints, so egress can be governed centrally rather than leaving the runtime with an uncontrolled path to the internet.
+
+        **Why this matters**
+
+        - **Controlled egress:** A runtime on a customer VPC reaches Google services through Private Google Access or private endpoints, and internet-bound traffic is subject to the organization's firewall and NAT policy.
+        - **Exfiltration resistance:** A runtime with an unbound, internet-attached default network can move notebook data or credentials to arbitrary destinations without passing any customer control.
+        - **Consistent segmentation:** Binding runtimes to designated subnets keeps them within the network segmentation model applied to the rest of the environment.
+
+        **Risk mitigation**
+
+        - **Bind runtimes to a VPC:** Configure the runtime template with an explicit VPC network and subnetwork that enforce the required egress policy.
+        - **Disable direct internet access:** Combine the private network binding with disabled internet access so the runtime relies on private paths and controlled egress.
+      audit: |
+        ### Audit via Console
+
+        1. In the Google Cloud Console, go to **Vertex AI** > **Colab Enterprise** > **Runtime templates**.
+        2. Select each runtime template and open its details.
+        3. Under **Networking**, confirm that a VPC network and subnetwork are configured.
+
+        A passing runtime template shows an explicit VPC network. A failing template shows no network binding or a default network with internet access.
+
+        ### Audit via CLI
+
+        1. List runtime templates and their network configuration:
+
+        ```bash
+        gcloud colab runtime-templates list \
+          --region=REGION \
+          --format="table(name,displayName,networkSpec.network)"
+        ```
+
+        A passing template returns a VPC network name. A failing template returns an empty value.
+      remediation:
+        - id: console
+          desc: |
+            The network configuration is set at creation. To bind the runtime to a VPC using the Google Cloud Console:
+
+            1. Go to **Vertex AI** > **Colab Enterprise** > **Runtime templates**.
+            2. Create a new runtime template, and under **Networking**, select your VPC network and subnetwork and disable external internet access.
+            3. Replace references to the old template and delete it.
+        - id: cli
+          desc: |
+            To create a Vertex AI notebook runtime template bound to a VPC network using the Google Cloud CLI:
+
+            ```bash
+            gcloud colab runtime-templates create \
+              --display-name=NAME \
+              --machine-type=e2-standard-4 \
+              --region=REGION \
+              --network=projects/PROJECT/global/networks/NETWORK \
+              --subnetwork=projects/PROJECT/regions/REGION/subnetworks/SUBNET \
+              --no-enable-internet-access
+            ```
+        - id: terraform
+          desc: |
+            To bind a Vertex AI notebook runtime template to a VPC network in Terraform, set `network` in the `network_spec` block of the `google_colab_runtime_template` resource:
+
+            ```hcl
+            resource "google_colab_runtime_template" "example" {
+              name         = "example-template"
+              display_name = "example-template"
+              location     = "us-central1"
+              machine_spec {
+                machine_type = "e2-standard-4"
+              }
+
+              network_spec {
+                enable_internet_access = false
+                network                = google_compute_network.example.id
+                subnetwork             = google_compute_subnetwork.example.id
+              }
+            }
+            ```
+    refs:
+      - url: https://cloud.google.com/colab/docs/runtimes
+        title: Colab Enterprise runtimes
+  - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-private-network-gcp
+    filters: asset.platform == 'gcp-project'
+    mql: |
+      gcp.project.vertexaiService.notebookRuntimeTemplates.all(
+        networkSpec != empty && networkSpec['network'] != null && networkSpec['network'] != ""
+      )
+  - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-private-network-terraform-hcl
+    filters: asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_colab_runtime_template')
+    mql: |
+      terraform.resources('google_colab_runtime_template').all(
+        blocks.where(type == 'network_spec') != empty &&
+        blocks.where(type == 'network_spec').all(arguments['network'] != null && arguments['network'] != "")
+      )
+  - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-private-network-terraform-plan
+    filters: asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_colab_runtime_template')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_colab_runtime_template').all(
+        change.after['network_spec'] != empty &&
+        change.after['network_spec'].all(_['network'] != null && _['network'] != "")
+      )
+  - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-private-network-terraform-state
+    filters: asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_colab_runtime_template')
+    mql: |
+      terraform.state.resources.where(type == 'google_colab_runtime_template').all(
+        values['network_spec'] != empty &&
+        values['network_spec'].all(_['network'] != null && _['network'] != "")
+      )
+  # No Terraform variants for the runtime resource: google_workbench_instance gen-2 stores its service account in a nested gce_setup.service_accounts block; the Terraform coverage below targets the legacy google_notebooks_instance whose flat service_account argument matches the runtime notebooksService.instances resource this check evaluates.
+  - uid: mondoo-gcp-security-workbench-instance-no-default-service-account
+    title: Ensure Vertex AI Workbench instances use a non-default service account
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc6-3-1
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-gcp-security-workbench-instance-no-default-service-account-gcp
+        tags:
+          mondoo.com/filter-title: GCP Vertex AI
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-workbench-instance-no-default-service-account-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-workbench-instance-no-default-service-account-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-workbench-instance-no-default-service-account-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that Vertex AI Workbench and Notebooks instances do not run as the default Compute Engine service account. The default Compute Engine service account is granted the broad Editor role on the project, so an instance that runs as it can act across nearly every project resource. Because a Workbench instance runs user-supplied notebook code, a compromise of that code inherits the instance's identity, making a default, over-privileged service account a direct path to project-wide access.
+
+        **Why this matters**
+
+        - **Least privilege:** A dedicated service account can be scoped to only the APIs and resources the notebook workflow needs, rather than the project-wide Editor role the default account holds.
+        - **Blast-radius containment:** If notebook code is compromised, a narrowly scoped service account limits what the attacker can reach.
+        - **Attribution:** A per-workload service account makes it clear in audit logs which workflow performed an action.
+
+        **Risk mitigation**
+
+        - **Assign a dedicated service account:** Create the instance with a purpose-built service account granted only the roles the workflow requires.
+        - **Avoid the default Compute Engine account:** Do not leave the service account unset, which causes the instance to fall back to the default Compute Engine account.
+      audit: |
+        ### Audit via Console
+
+        1. In the Google Cloud Console, go to **Vertex AI** > **Workbench**.
+        2. Select each instance and open its details.
+        3. Under **Permission** or **System information**, review the service account.
+
+        A passing instance uses a dedicated service account. A failing instance uses the default Compute Engine service account (an address ending in `-compute@developer.gserviceaccount.com`).
+
+        ### Audit via CLI
+
+        1. List Workbench instances and their service account:
+
+        ```bash
+        gcloud workbench instances list \
+          --location=LOCATION \
+          --format="table(name,gceSetup.serviceAccounts[0].email)"
+        ```
+
+        A passing instance returns a dedicated service account email. A failing instance returns an address ending in `-compute@developer.gserviceaccount.com`.
+      remediation:
+        - id: console
+          desc: |
+            The service account is set at instance creation. To use a dedicated service account with the Google Cloud Console:
+
+            1. Go to **Vertex AI** > **Workbench** and create a new instance.
+            2. Under **Permission**, select **Service account** and choose a dedicated, least-privilege service account.
+            3. Migrate work to the new instance and delete the old one.
+        - id: cli
+          desc: |
+            To create a Vertex AI Workbench instance with a dedicated service account using the Google Cloud CLI:
+
+            ```bash
+            gcloud workbench instances create INSTANCE_NAME \
+              --location=LOCATION \
+              --service-account-email=dedicated-sa@PROJECT.iam.gserviceaccount.com
+            ```
+        - id: terraform
+          desc: |
+            To assign a dedicated service account to a legacy Notebooks instance in Terraform, set `service_account` on the `google_notebooks_instance` resource:
+
+            ```hcl
+            resource "google_notebooks_instance" "example" {
+              name         = "example-instance"
+              location     = "us-central1-a"
+              machine_type = "e2-medium"
+
+              service_account = google_service_account.notebook.email
+            }
+            ```
+    refs:
+      - url: https://cloud.google.com/vertex-ai/docs/workbench/instances/manage-identity
+        title: Manage identity and access for Vertex AI Workbench instances
+  - uid: mondoo-gcp-security-workbench-instance-no-default-service-account-gcp
+    filters: asset.platform == 'gcp-project'
+    mql: |
+      gcp.project.notebooksService.instances.all(
+        serviceAccount != empty && serviceAccount.contains("-compute@developer.gserviceaccount.com") == false
+      )
+  - uid: mondoo-gcp-security-workbench-instance-no-default-service-account-terraform-hcl
+    filters: asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_notebooks_instance')
+    mql: |
+      terraform.resources('google_notebooks_instance').all(
+        arguments['service_account'] != null && arguments['service_account'] != "" &&
+        arguments['service_account'].contains("-compute@developer.gserviceaccount.com") == false
+      )
+  - uid: mondoo-gcp-security-workbench-instance-no-default-service-account-terraform-plan
+    filters: asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_notebooks_instance')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_notebooks_instance').all(
+        change.after['service_account'] != null && change.after['service_account'] != "" &&
+        change.after['service_account'].contains("-compute@developer.gserviceaccount.com") == false
+      )
+  - uid: mondoo-gcp-security-workbench-instance-no-default-service-account-terraform-state
+    filters: asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_notebooks_instance')
+    mql: |
+      terraform.state.resources.where(type == 'google_notebooks_instance').all(
+        values['service_account'] != null && values['service_account'] != "" &&
+        values['service_account'].contains("-compute@developer.gserviceaccount.com") == false
+      )
+  # No Terraform variants: RAG corpora are created imperatively through the Vertex AI RAG Engine API and have no dedicated Terraform resource that expresses the encryption key.
+  - uid: mondoo-gcp-security-vertexai-rag-corpus-cmek-encryption
+    title: Ensure Vertex AI RAG corpora are encrypted with CMEK
+    impact: 70
+    filters: asset.platform == 'gcp-project'
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-11
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    mql: |
+      gcp.project.vertexaiService.ragCorpora.all(
+        kmsKey != null
+      )
+    docs:
+      desc: |
+        This check ensures that Vertex AI RAG (retrieval-augmented generation) corpora are encrypted with a customer-managed encryption key (CMEK) rather than a Google-managed key. A RAG corpus stores the ingested documents and their vector embeddings that ground model responses, so it holds the source content the organization has chosen to expose to its models. By default Google encrypts it with a key the customer cannot rotate, audit, or revoke independently.
+
+        **Why this matters**
+
+        - **Grounding-data sensitivity:** A RAG corpus often contains internal knowledge-base content, contracts, or support data that is exactly the material that should be encrypted under customer-controlled keys.
+        - **Revocability:** Disabling or destroying the Cloud KMS key immediately blocks access to the corpus and its embeddings, a containment mechanism unavailable with Google-managed keys.
+        - **Audit visibility:** Key usage appears in Cloud KMS audit logs, providing a verifiable record of access to the encryption key.
+
+        **Risk mitigation**
+
+        - **Incident containment:** If corpus content is found to be exposed, revoking the CMEK key prevents further access while remediation proceeds.
+        - **Separation of duties:** Storing the key in a separate KMS project enforces a boundary between corpus operators and key custodians.
+      audit: |
+        ### Audit via Console
+
+        1. In the Google Cloud Console, go to **Vertex AI** > **RAG Engine**.
+        2. Select each corpus and open its details.
+        3. Confirm that a Cloud KMS key is configured for encryption.
+
+        A passing corpus shows a customer-managed Cloud KMS key. A failing corpus shows Google-managed encryption.
+
+        ### Audit via CLI
+
+        1. List RAG corpora and inspect the encryption specification through the Vertex AI API:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+          "https://REGION-aiplatform.googleapis.com/v1/projects/PROJECT/locations/REGION/ragCorpora"
+        ```
+
+        A passing corpus returns an `encryptionSpec.kmsKeyName` value. A failing corpus returns no encryption key.
+      remediation:
+        - id: console
+          desc: |
+            The encryption key is set when the corpus is created. To use a CMEK key with the Google Cloud Console:
+
+            1. Go to **Vertex AI** > **RAG Engine** and create a new corpus.
+            2. Under the encryption settings, select a Cloud KMS customer-managed key.
+            3. Re-ingest content into the new corpus and delete the old one.
+        - id: cli
+          desc: |
+            RAG corpus encryption is set at creation through the Vertex AI RAG Engine API. To create a corpus with a CMEK key, include an `encryptionSpec` in the request body:
+
+            ```bash
+            curl -s -X POST \
+              -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+              -H "Content-Type: application/json" \
+              "https://REGION-aiplatform.googleapis.com/v1/projects/PROJECT/locations/REGION/ragCorpora" \
+              -d '{"displayName":"example-corpus","encryptionSpec":{"kmsKeyName":"projects/PROJECT/locations/REGION/keyRings/KEYRING/cryptoKeys/KEY"}}'
+            ```
+        # No Terraform remediation: RAG corpora are created through the Vertex AI RAG Engine API and have no dedicated Terraform resource that expresses the encryption key.
+    refs:
+      - url: https://cloud.google.com/vertex-ai/generative-ai/docs/rag-engine/rag-overview
+        title: Vertex AI RAG Engine overview
+  - uid: mondoo-gcp-security-vertexai-job-cmek-encryption
+    title: Ensure Vertex AI batch prediction and tuning jobs use CMEK
+    impact: 70
+    filters: asset.platform == 'gcp-project'
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-11
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    mql: |
+      gcp.project.vertexaiService.batchPredictionJobs.all(
+        kmsKey != null
+      )
+      gcp.project.vertexaiService.tuningJobs.all(
+        kmsKey != null
+      )
+    docs:
+      desc: |
+        This check ensures that Vertex AI batch prediction jobs and tuning jobs are encrypted with a customer-managed encryption key (CMEK) rather than a Google-managed key. A batch prediction job reads an input dataset and writes prediction output, and a tuning job reads training data and produces a tuned model, so both process and persist data derived from potentially sensitive inputs. By default Google encrypts the job's resources with a key the customer cannot rotate, audit, or revoke independently.
+
+        **Why this matters**
+
+        - **Derived-data sensitivity:** Prediction outputs and tuned models encode patterns from the input and training data, which may be regulated or proprietary.
+        - **Revocability:** Disabling or destroying the Cloud KMS key immediately blocks access to the job's encrypted resources, a containment mechanism unavailable with Google-managed keys.
+        - **Audit visibility:** Key usage appears in Cloud KMS audit logs, providing a verifiable record of access to the encryption key.
+
+        **Risk mitigation**
+
+        - **Set CMEK at job submission:** Provide an `encryptionSpec` with a Cloud KMS key when creating batch prediction and tuning jobs.
+        - **Separation of duties:** Storing the key in a separate KMS project enforces a boundary between job operators and key custodians.
+      audit: |
+        ### Audit via Console
+
+        1. In the Google Cloud Console, go to **Vertex AI** and open **Batch predictions** and **Tuning**.
+        2. Select each job and open its details.
+        3. Confirm that a Cloud KMS key is shown under encryption.
+
+        A passing job shows a customer-managed Cloud KMS key. A failing job shows Google-managed encryption.
+
+        ### Audit via CLI
+
+        1. List batch prediction jobs and their encryption specification:
+
+        ```bash
+        gcloud ai batch-prediction-jobs list \
+          --region=REGION \
+          --format="table(name,displayName,encryptionSpec.kmsKeyName)"
+        ```
+
+        A passing job returns a KMS key name. A failing job returns an empty value.
+      remediation:
+        - id: console
+          desc: |
+            A job's encryption key is fixed at submission. To use a CMEK key with the Google Cloud Console:
+
+            1. Go to **Vertex AI** and start a new **Batch prediction** or **Tuning** job.
+            2. Under the encryption settings, select a Cloud KMS customer-managed key.
+            3. Submit the job. Existing jobs cannot be re-encrypted; resubmit them with a CMEK key.
+        - id: cli
+          desc: |
+            Job encryption is set at submission through the Vertex AI API. To create a batch prediction job with a CMEK key, include an `encryptionSpec` in the request body:
+
+            ```bash
+            curl -s -X POST \
+              -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+              -H "Content-Type: application/json" \
+              "https://REGION-aiplatform.googleapis.com/v1/projects/PROJECT/locations/REGION/batchPredictionJobs" \
+              -d '{"displayName":"example-job","model":"MODEL","encryptionSpec":{"kmsKeyName":"projects/PROJECT/locations/REGION/keyRings/KEYRING/cryptoKeys/KEY"}}'
+            ```
+        # No Terraform remediation: Vertex AI batch prediction and tuning jobs are imperative API calls with no dedicated Terraform resource that expresses the encryption key.
+    refs:
+      - url: https://cloud.google.com/vertex-ai/docs/general/cmek
+        title: Customer-managed encryption keys (CMEK) for Vertex AI
