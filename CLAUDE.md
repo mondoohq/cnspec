@@ -115,6 +115,7 @@ This section is for any automated reviewer (mondoo-code-review, Claude, etc.) co
 - **`!= ""` is not null-safe.** `"" == empty` is true, but `null != ""` is also true — use `!= empty` for null-safe non-empty assertions.
 - **`filters:` is asset selection, not logic.** `filters:` only selects which assets a check applies to (`asset.platform == "..."`). Predicate logic (`field != empty`, `flag == true`, …) belongs in `mql:`. Don't flag a query for "duplicating" a condition that legitimately lives in `mql:` rather than `filters:`, and don't suggest lifting predicates into `filters:` — that silently drops assets from scoring. Multi-line `filters:` join with explicit `&&`; multi-line `mql:` uses newline-as-AND.
 - **Newline-as-AND in `mql:`.** Multiple lines in an `mql:` block are implicitly AND-ed. A query that "looks like it ignores" an earlier line is usually relying on this — verify before flagging.
+- **`null && null` is `true`.** MQL boolean logic is three-valued — two null operands `&&`-ed yield `true`, not null or false. A check like `field_a == "x" && field_b == "y"` silently *passes* when both fields are absent (each comparison is null, and `null && null` is true), scoring the asset compliant on data that never resolved. Assert presence first (`field_a != empty`) before comparing, or the check reports a false pass.
 
 ### Policy/content specifics
 
