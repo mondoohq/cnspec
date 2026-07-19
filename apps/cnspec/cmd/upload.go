@@ -5,7 +5,6 @@ package cmd
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"os"
 	"sort"
@@ -110,10 +109,26 @@ func runUpload(cmd *cobra.Command, args []string) error {
 	space, _ := cmd.Flags().GetString("space")
 	opts := upload.Opts{ConfigPath: configPath, ScopeMrn: space}
 
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
+
 	var docs []*fex.FindingDocument
 	if sbomFormats[format] {
-		// SBOM path: decode → scan on Mondoo Platform (returns VEX) → documents.
-		docs, err = scanSBOMFile(cmd.Context(), opts, data)
+		// SBOM path: decode locally, then scan on Mondoo Platform (remote) for VEX.
+		bom, perr := sbom.DefaultMultiDecoder().Parse(bytes.NewReader(data))
+		if perr != nil {
+			return fmt.Errorf("parse SBOM (expected CycloneDX, SPDX, or Mondoo JSON): %w", perr)
+		}
+		// --dry-run must not touch the network: stop after the local decode.
+		if dryRun {
+			fmt.Printf("Parsed SBOM from %s (dry run — not scanned or uploaded)\n", args[0])
+			return nil
+		}
+		vex, serr := upload.ScanSBOM(cmd.Context(), opts, bom)
+		if serr != nil {
+			err = serr
+		} else {
+			docs = fex.VexToDocuments(vex)
+		}
 	} else {
 		docs, err = conv(data)
 	}
@@ -133,7 +148,8 @@ func runUpload(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
+	// Converter (local) dry-run: findings were produced without any network call.
+	if dryRun {
 		fmt.Printf("Converted %d finding(s) from %s (dry run — not uploaded)\n", len(docs), args[0])
 		return nil
 	}
@@ -153,18 +169,4 @@ func runUpload(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Uploaded %d finding(s) from %s\n", len(docs), args[0])
 	return nil
-}
-
-// scanSBOMFile decodes SBOM bytes (CycloneDX/SPDX/Mondoo JSON, auto-detected),
-// scans them on Mondoo Platform, and wraps the resulting VEX as documents.
-func scanSBOMFile(ctx context.Context, opts upload.Opts, data []byte) ([]*fex.FindingDocument, error) {
-	bom, err := sbom.DefaultMultiDecoder().Parse(bytes.NewReader(data))
-	if err != nil {
-		return nil, fmt.Errorf("parse SBOM (expected CycloneDX, SPDX, or Mondoo JSON): %w", err)
-	}
-	vex, err := upload.ScanSBOM(ctx, opts, bom)
-	if err != nil {
-		return nil, err
-	}
-	return fex.VexToDocuments(vex), nil
 }
