@@ -13,6 +13,7 @@ package defectdojo
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -62,13 +63,17 @@ func Convert(data []byte) ([]*fex.FindingDocument, error) {
 
 	docs := make([]*fex.FindingDocument, 0, len(findings))
 	for i, f := range findings {
+		// Skip fully blank rows (common as trailing empty CSV lines).
+		if f.Title == "" && f.Severity == "" && f.Description == "" {
+			continue
+		}
 		if f.Title == "" || f.Severity == "" || f.Description == "" {
 			return nil, fmt.Errorf("finding %d: title, severity, and description are required", i)
 		}
 		if f.CVE != "" {
 			docs = append(docs, fex.VexToDocument(toVex(f, source)))
 		} else {
-			docs = append(docs, fex.FexToDocument(toFex(f, source, i)))
+			docs = append(docs, fex.FexToDocument(toFex(f, source)))
 		}
 	}
 	return docs, nil
@@ -76,18 +81,25 @@ func Convert(data []byte) ([]*fex.FindingDocument, error) {
 
 // parse auto-detects JSON vs CSV and returns the source name and findings.
 func parse(data []byte) (string, []finding, error) {
-	if trimmed := bytes.TrimSpace(data); len(trimmed) > 0 && trimmed[0] == '{' {
+	trimmed := bytes.TrimSpace(data)
+	switch {
+	case len(trimmed) > 0 && trimmed[0] == '{':
 		var r report
 		if err := json.Unmarshal(data, &r); err != nil {
 			return "", nil, fmt.Errorf("parse DefectDojo JSON: %w", err)
 		}
 		return sourceName(r.Name), r.Findings, nil
+	case len(trimmed) > 0 && trimmed[0] == '[':
+		// DefectDojo's Generic Findings Import uses a {"findings": [...]} object,
+		// not a bare array — give a clear error instead of failing as CSV.
+		return "", nil, fmt.Errorf("expected a DefectDojo JSON object {\"findings\": [...]}, got a JSON array")
+	default:
+		findings, err := parseCSV(data)
+		if err != nil {
+			return "", nil, err
+		}
+		return "defectdojo", findings, nil
 	}
-	findings, err := parseCSV(data)
-	if err != nil {
-		return "", nil, err
-	}
-	return "defectdojo", findings, nil
 }
 
 // parseCSV maps the DefectDojo CSV columns (by header name) onto findings.
@@ -118,18 +130,17 @@ func parseCSV(data []byte) ([]finding, error) {
 		if err != nil {
 			return nil, fmt.Errorf("parse DefectDojo CSV row: %w", err)
 		}
+		// DefectDojo's CSV format defines TitleCase columns; component_name /
+		// file_path are JSON-only fields and are intentionally not read here.
 		f := finding{
-			Title:            get(row, "Title"),
-			Severity:         get(row, "Severity"),
-			Description:      get(row, "Description"),
-			Mitigation:       get(row, "Mitigation"),
-			Impact:           get(row, "Impact"),
-			CVE:              get(row, "CVE"),
-			References:       firstNonEmpty(get(row, "References"), get(row, "Url")),
-			Date:             get(row, "Date"),
-			ComponentName:    get(row, "component_name"),
-			ComponentVersion: get(row, "component_version"),
-			FilePath:         get(row, "file_path"),
+			Title:       get(row, "Title"),
+			Severity:    get(row, "Severity"),
+			Description: get(row, "Description"),
+			Mitigation:  get(row, "Mitigation"),
+			Impact:      get(row, "Impact"),
+			CVE:         get(row, "CVE"),
+			References:  firstNonEmpty(get(row, "References"), get(row, "Url")),
+			Date:        get(row, "Date"),
 		}
 		if cwe := get(row, "CweId"); cwe != "" {
 			f.CWE, _ = strconv.Atoi(cwe)
@@ -139,10 +150,11 @@ func parseCSV(data []byte) ([]finding, error) {
 	return findings, nil
 }
 
-func toFex(f finding, source *fex.Source, index int) *fex.FindingExchange {
+func toFex(f finding, source *fex.Source) *fex.FindingExchange {
 	id := f.UniqueIDFromTool
 	if id == "" {
-		id = fmt.Sprintf("finding-%d", index)
+		// Content-based id so it's stable across reorderings of the input.
+		id = shortHash(f.Title + "\x00" + f.Description)
 	}
 	fx := &fex.FindingExchange{
 		Id:      id,
@@ -254,6 +266,11 @@ func sourceName(name string) string {
 		return "defectdojo"
 	}
 	return name
+}
+
+func shortHash(s string) string {
+	h := sha256.Sum256([]byte(s))
+	return fmt.Sprintf("%x", h)[:16]
 }
 
 func firstNonEmpty(vals ...string) string {
