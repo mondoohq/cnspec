@@ -24,6 +24,10 @@ type sbomScanner interface {
 // and returns the resulting VEX. The scan is ephemeral — the platform stores
 // nothing; the caller uploads the returned VEX itself (e.g. via UploadFindings).
 // This is the same flow xgrep uses for dependency vulnerability scanning.
+//
+// This is the "scan for results" path, distinct from UploadSBOM ("store and
+// auto-enrich"). It is used by `cnspec vuln --upload`; the `cnspec upload
+// --format sbom` file path uses UploadSBOM instead.
 func ScanSBOM(ctx context.Context, opts Opts, bom *sbom.Sbom) ([]*fex.VulnerabilityExchange, error) {
 	creds, spaceMrn, err := LoadCredentials(opts)
 	if err != nil {

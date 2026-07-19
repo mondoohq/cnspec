@@ -50,5 +50,7 @@ func uploadSBOM(ctx context.Context, client sbomUploader, spaceMrn string, boms 
 	if err != nil {
 		return 0, fmt.Errorf("upload sbom: %w", err)
 	}
+	// GetCount is nil-safe (generated proto getter), so a nil resp on a nil err
+	// yields 0 rather than panicking.
 	return int(resp.GetCount()), nil
 }
