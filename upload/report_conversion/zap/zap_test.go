@@ -59,6 +59,28 @@ func TestConvert(t *testing.T) {
 	}
 }
 
+func TestConvertPreservesDistinctInstances(t *testing.T) {
+	// Same URL, different method/param → distinct Affects (not collapsed);
+	// a truly identical instance is deduped.
+	xml := []byte(`<OWASPZAPReport><site name="s"><alerts><alertitem>
+	  <pluginid>1</pluginid><name>x</name><riskcode>2</riskcode>
+	  <desc>d</desc>
+	  <instances>
+	    <instance><uri>https://a/x</uri><method>GET</method><param>q</param></instance>
+	    <instance><uri>https://a/x</uri><method>POST</method><param>q</param></instance>
+	    <instance><uri>https://a/x</uri><method>GET</method><param>q</param></instance>
+	  </instances>
+	</alertitem></alerts></site></OWASPZAPReport>`)
+	docs, err := zap.Convert(xml)
+	if err != nil {
+		t.Fatalf("convert: %v", err)
+	}
+	affects := docs[0].GetFex().GetAffects()
+	if len(affects) != 2 {
+		t.Fatalf("want 2 distinct instances (GET+POST; duplicate GET deduped), got %d", len(affects))
+	}
+}
+
 func TestConvertNotZAP(t *testing.T) {
 	_, err := zap.Convert([]byte(`<something/>`))
 	if err == nil {

@@ -108,13 +108,21 @@ func affects(a zapAlert) []*fex.Affects {
 	seen := map[string]bool{}
 	for _, in := range a.Instances {
 		uri := clean(in.URI)
-		if uri == "" || seen[uri] {
+		if uri == "" {
 			continue
 		}
-		seen[uri] = true
+		method, param := clean(in.Method), clean(in.Param)
+		// Key on uri+method+param so distinct request contexts against the same
+		// URL (e.g. a GET and a POST, or two different parameters) are preserved
+		// rather than collapsed to the first instance.
+		key := uri + "\x00" + method + "\x00" + param
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
 		props := map[string]string{}
-		putIf(props, "method", clean(in.Method))
-		putIf(props, "param", clean(in.Param))
+		putIf(props, "method", method)
+		putIf(props, "param", param)
 		putIf(props, "attack", clean(in.Attack))
 		putIf(props, "evidence", clean(in.Evidence))
 		out = append(out, &fex.Affects{Component: &fex.Component{Id: uri, Properties: props}})
@@ -215,6 +223,9 @@ func sourceName(name string) string {
 	return name
 }
 
+// shortHash returns a 16-hex-char (64-bit) SHA-256 prefix. It is only used as a
+// fallback finding id for alerts without a pluginid; a collision would merge two
+// such findings, which is acceptable given how rare nameless/idless alerts are.
 func shortHash(s string) string {
 	h := sha256.Sum256([]byte(s))
 	return fmt.Sprintf("%x", h)[:16]
