@@ -145,12 +145,26 @@ func convertAffects(result *gosarif.Result) []*fex.Affects {
 			continue
 		}
 		seen[*uri] = true
+		file := &fex.FileComponent{Path: *uri}
+		if r := loc.PhysicalLocation.Region; r != nil {
+			file.StartLine = derefInt(r.StartLine)
+			file.EndLine = derefInt(r.EndLine)
+			file.StartColumn = derefInt(r.StartColumn)
+			file.EndColumn = derefInt(r.EndColumn)
+		}
 		out = append(out, &fex.Affects{Component: &fex.Component{
 			Id:      shortHash(*uri),
-			Details: &fex.Component_File{File: &fex.FileComponent{Path: *uri}},
+			Details: &fex.Component_File{File: file},
 		}})
 	}
 	return out
+}
+
+func derefInt(p *int) int32 {
+	if p == nil {
+		return 0
+	}
+	return int32(*p)
 }
 
 func convertRemediations(result *gosarif.Result) []*fex.Remediation {

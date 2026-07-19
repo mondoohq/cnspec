@@ -37,16 +37,23 @@ func TestConvert(t *testing.T) {
 	if got := xss.GetDetails().GetDescription(); got == "" || containsHTMLTag(got) {
 		t.Errorf("description not cleaned: %q", got)
 	}
-	// Affected URL = host+path, with the location parameter captured.
+	// Affected URL = host+path.
 	if len(xss.GetAffects()) != 1 {
 		t.Fatalf("want 1 affected URL, got %d", len(xss.GetAffects()))
 	}
-	comp := xss.GetAffects()[0].GetComponent()
-	if comp.GetId() != "https://example.com/search" {
-		t.Errorf("affected url = %q", comp.GetId())
+	if got := xss.GetAffects()[0].GetComponent().GetId(); got != "https://example.com/search" {
+		t.Errorf("affected url = %q", got)
 	}
-	if comp.GetProperties()["location"] != "q parameter" {
-		t.Errorf("location property = %q, want 'q parameter'", comp.GetProperties()["location"])
+	// Request context is first-class HttpRequest evidence.
+	if len(xss.GetEvidences()) != 1 {
+		t.Fatalf("want 1 evidence, got %d", len(xss.GetEvidences()))
+	}
+	hr := xss.GetEvidences()[0].GetHttpRequest()
+	if hr == nil || hr.GetUrl() != "https://example.com/search" {
+		t.Errorf("http evidence url = %+v", hr)
+	}
+	if hr.GetParam() != "q parameter" {
+		t.Errorf("http evidence param = %q, want 'q parameter'", hr.GetParam())
 	}
 	// CWE reference + remediation.
 	if len(xss.GetDetails().GetReferences()) != 1 || xss.GetDetails().GetReferences()[0].GetName() != "CWE-79" {

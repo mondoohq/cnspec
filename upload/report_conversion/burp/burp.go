@@ -93,6 +93,7 @@ func toFex(iss burpIssue, source *fex.Source) *fex.FindingExchange {
 			References:  references(iss),
 		},
 		Affects:      affects(iss),
+		Evidences:    httpEvidence(iss),
 		Remediations: remediations(iss),
 	}
 }
@@ -103,12 +104,22 @@ func affects(iss burpIssue) []*fex.Affects {
 	if host == "" && path == "" {
 		return nil
 	}
-	props := map[string]string{}
-	// Burp encodes the affected parameter in location, e.g. "/x [q parameter]".
-	if m := locParam.FindStringSubmatch(clean(iss.Location)); len(m) == 2 {
-		props["location"] = strings.TrimSpace(m[1])
+	return []*fex.Affects{{Component: &fex.Component{Id: host + path}}}
+}
+
+// httpEvidence carries the affected URL and the tested parameter (from Burp's
+// location, e.g. "/x [q parameter]") as first-class HttpRequest evidence.
+func httpEvidence(iss burpIssue) []*fex.Evidence {
+	host := clean(iss.Host.Value)
+	path := clean(iss.Path)
+	if host == "" && path == "" {
+		return nil
 	}
-	return []*fex.Affects{{Component: &fex.Component{Id: host + path, Properties: props}}}
+	hr := &fex.HttpRequest{Url: host + path}
+	if m := locParam.FindStringSubmatch(clean(iss.Location)); len(m) == 2 {
+		hr.Param = strings.TrimSpace(m[1])
+	}
+	return []*fex.Evidence{{Details: &fex.Evidence_HttpRequest{HttpRequest: hr}}}
 }
 
 func references(iss burpIssue) []*fex.Reference {

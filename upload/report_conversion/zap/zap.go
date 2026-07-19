@@ -96,13 +96,12 @@ func toFex(a zapAlert, source *fex.Source) *fex.FindingExchange {
 			References:  references(a),
 		},
 		Affects:      affects(a),
+		Evidences:    httpEvidence(a),
 		Remediations: remediations(a),
 	}
 }
 
-// affects lists the vulnerable URLs. The DAST request context (method, param,
-// attack, evidence) is attached as component properties for now; a first-class
-// HTTP-request evidence type is a planned FEX proto extension (ADR-062).
+// affects lists the vulnerable URLs (one Affects per distinct request context).
 func affects(a zapAlert) []*fex.Affects {
 	var out []*fex.Affects
 	seen := map[string]bool{}
@@ -111,21 +110,39 @@ func affects(a zapAlert) []*fex.Affects {
 		if uri == "" {
 			continue
 		}
-		method, param := clean(in.Method), clean(in.Param)
 		// Key on uri+method+param so distinct request contexts against the same
 		// URL (e.g. a GET and a POST, or two different parameters) are preserved
 		// rather than collapsed to the first instance.
-		key := uri + "\x00" + method + "\x00" + param
+		key := uri + "\x00" + clean(in.Method) + "\x00" + clean(in.Param)
 		if seen[key] {
 			continue
 		}
 		seen[key] = true
-		props := map[string]string{}
-		putIf(props, "method", method)
-		putIf(props, "param", param)
-		putIf(props, "attack", clean(in.Attack))
-		putIf(props, "evidence", clean(in.Evidence))
-		out = append(out, &fex.Affects{Component: &fex.Component{Id: uri, Properties: props}})
+		out = append(out, &fex.Affects{Component: &fex.Component{Id: uri}})
+	}
+	return out
+}
+
+// httpEvidence carries the DAST request context (method, param, attack, matched
+// evidence) as first-class HttpRequest evidence, one per distinct request.
+func httpEvidence(a zapAlert) []*fex.Evidence {
+	var out []*fex.Evidence
+	seen := map[string]bool{}
+	for _, in := range a.Instances {
+		uri := clean(in.URI)
+		method, param := clean(in.Method), clean(in.Param)
+		key := uri + "\x00" + method + "\x00" + param
+		if uri == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, &fex.Evidence{Details: &fex.Evidence_HttpRequest{HttpRequest: &fex.HttpRequest{
+			Url:      uri,
+			Method:   method,
+			Param:    param,
+			Attack:   clean(in.Attack),
+			Evidence: clean(in.Evidence),
+		}}})
 	}
 	return out
 }
@@ -208,12 +225,6 @@ func splitLines(s string) []string {
 		}
 	}
 	return out
-}
-
-func putIf(m map[string]string, k, v string) {
-	if v != "" {
-		m[k] = v
-	}
 }
 
 func sourceName(name string) string {

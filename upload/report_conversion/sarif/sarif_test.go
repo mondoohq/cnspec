@@ -31,7 +31,11 @@ func TestConvert(t *testing.T) {
 		t.Errorf("severity = %v, want HIGH (from sarif level=error)", got)
 	}
 	if len(f.GetAffects()) != 1 {
-		t.Errorf("want 1 affected component, got %d", len(f.GetAffects()))
+		t.Fatalf("want 1 affected component, got %d", len(f.GetAffects()))
+	}
+	// The SARIF region line is captured on the file component.
+	if got := f.GetAffects()[0].GetComponent().GetFile().GetStartLine(); got != 42 {
+		t.Errorf("start_line = %d, want 42 (from sarif region)", got)
 	}
 }
 
