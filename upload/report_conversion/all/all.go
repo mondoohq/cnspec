@@ -10,4 +10,5 @@ import (
 	_ "go.mondoo.com/cnspec/v13/upload/report_conversion/defectdojo"
 	_ "go.mondoo.com/cnspec/v13/upload/report_conversion/junit"
 	_ "go.mondoo.com/cnspec/v13/upload/report_conversion/sarif"
+	_ "go.mondoo.com/cnspec/v13/upload/report_conversion/zap"
 )
