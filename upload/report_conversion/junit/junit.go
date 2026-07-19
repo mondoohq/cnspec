@@ -11,6 +11,7 @@ package junit
 import (
 	"crypto/sha256"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -84,8 +85,15 @@ func Convert(data []byte) ([]*fex.FindingDocument, error) {
 // parse accepts either a <testsuites> root or a bare <testsuite>.
 func parse(data []byte) ([]testsuite, error) {
 	var root testsuites
-	if err := xml.Unmarshal(data, &root); err == nil && len(root.Suites) > 0 {
+	err := xml.Unmarshal(data, &root)
+	if err == nil && len(root.Suites) > 0 {
 		return root.Suites, nil
+	}
+	// A genuine syntax error won't be fixed by trying a different root element —
+	// surface it instead of falling through to a misleading structural message.
+	var syntaxErr *xml.SyntaxError
+	if errors.As(err, &syntaxErr) {
+		return nil, fmt.Errorf("parse JUnit XML: %w", err)
 	}
 	var single testsuite
 	if err := xml.Unmarshal(data, &single); err != nil {

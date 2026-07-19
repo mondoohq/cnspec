@@ -4,6 +4,7 @@
 package junit_test
 
 import (
+	"strings"
 	"testing"
 
 	rc "go.mondoo.com/cnspec/v13/upload/report_conversion"
@@ -50,6 +51,18 @@ func TestConvertDuplicateCasesGetDistinctIDs(t *testing.T) {
 	}
 	if docs[0].GetFex().GetId() == docs[1].GetFex().GetId() {
 		t.Errorf("duplicate cases collapsed to the same id %q", docs[0].GetFex().GetId())
+	}
+}
+
+func TestConvertMalformedXML(t *testing.T) {
+	// A genuine syntax error should surface as a parse error, not a misleading
+	// "no testsuite element found".
+	_, err := junit.Convert([]byte(`<testsuite name="s"><testcase`))
+	if err == nil {
+		t.Fatal("expected a parse error for malformed XML")
+	}
+	if strings.Contains(err.Error(), "no testsuite element found") {
+		t.Errorf("got misleading structural error instead of the syntax error: %v", err)
 	}
 }
 
