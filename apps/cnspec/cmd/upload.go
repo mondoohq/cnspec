@@ -14,7 +14,6 @@ import (
 	"go.mondoo.com/cnspec/v13/upload"
 	rc "go.mondoo.com/cnspec/v13/upload/report_conversion"
 	_ "go.mondoo.com/cnspec/v13/upload/report_conversion/all"
-	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/fex"
 	"go.mondoo.com/mql/v13/sbom"
 )
 
@@ -111,32 +110,33 @@ func runUpload(cmd *cobra.Command, args []string) error {
 
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 
-	var docs []*fex.FindingDocument
+	// SBOM path: decode locally, then hand the SBOM to Mondoo Platform, which
+	// stores it and computes the vulnerabilities itself (no VEX round-trip).
 	if sbomFormats[format] {
-		// SBOM path: decode locally, then scan on Mondoo Platform (remote) for VEX.
 		bom, perr := sbom.DefaultMultiDecoder().Parse(bytes.NewReader(data))
 		if perr != nil {
 			return fmt.Errorf("parse SBOM (expected CycloneDX, SPDX, or Mondoo JSON): %w", perr)
 		}
 		// --dry-run must not touch the network: stop after the local decode.
 		if dryRun {
-			fmt.Printf("Parsed SBOM from %s (dry run — not scanned or uploaded)\n", args[0])
+			fmt.Printf("Parsed SBOM from %s (dry run — not uploaded)\n", args[0])
 			return nil
 		}
-		vex, serr := upload.ScanSBOM(cmd.Context(), opts, bom)
-		if serr != nil {
-			err = serr
-		} else {
-			docs = fex.VexToDocuments(vex)
+		count, uerr := upload.UploadSBOM(cmd.Context(), opts, []*sbom.Sbom{bom}, true)
+		if uerr != nil {
+			if upload.IsNoCredentials(uerr) {
+				return fmt.Errorf("no Mondoo credentials found; run `cnspec login` or pass --config <path>")
+			}
+			return fmt.Errorf("upload SBOM from %s: %w", args[0], uerr)
 		}
-	} else {
-		docs, err = conv(data)
+		fmt.Printf("Uploaded SBOM from %s to %d asset(s); Mondoo Platform will compute vulnerabilities\n", args[0], count)
+		return nil
 	}
+
+	// Converter path: local, pure conversion to findings.
+	docs, err := conv(data)
 	if err != nil {
-		if upload.IsNoCredentials(err) {
-			return fmt.Errorf("no Mondoo credentials found; run `cnspec login` or pass --config <path>")
-		}
-		return fmt.Errorf("process %s: %w", args[0], err)
+		return fmt.Errorf("convert %s: %w", args[0], err)
 	}
 	if len(docs) == 0 {
 		fmt.Printf("No findings in %s\n", args[0])
