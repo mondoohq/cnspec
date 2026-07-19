@@ -12,6 +12,7 @@ import (
 	"crypto/sha256"
 	"encoding/xml"
 	"fmt"
+	"strconv"
 	"strings"
 
 	rc "go.mondoo.com/cnspec/v13/upload/report_conversion"
@@ -54,6 +55,11 @@ func Convert(data []byte) ([]*fex.FindingDocument, error) {
 		return nil, err
 	}
 
+	// seen disambiguates test cases that share the same suite + name (e.g.
+	// parameterized tests or merged reports), which would otherwise produce
+	// identical ids and collapse into one finding downstream.
+	seen := map[string]int{}
+
 	var docs []*fex.FindingDocument
 	for _, ts := range suites {
 		source := &fex.Source{Name: sourceName(ts.Name)}
@@ -62,7 +68,14 @@ func Convert(data []byte) ([]*fex.FindingDocument, error) {
 			if res == nil {
 				continue // passing or skipped case — not a finding
 			}
-			docs = append(docs, fex.FexToDocument(toFex(tc, res, rating, source)))
+			f := toFex(tc, res, rating, source)
+			key := source.Name + "\x00" + f.Ref
+			if n := seen[key]; n > 0 {
+				// Keep the first occurrence's id stable; suffix the rest.
+				f.Id = shortHash(key + "#" + strconv.Itoa(n))
+			}
+			seen[key]++
+			docs = append(docs, fex.FexToDocument(f))
 		}
 	}
 	return docs, nil

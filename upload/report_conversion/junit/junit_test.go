@@ -34,6 +34,25 @@ func TestConvert(t *testing.T) {
 	}
 }
 
+func TestConvertDuplicateCasesGetDistinctIDs(t *testing.T) {
+	// Two failing cases with the same suite + classname + name (e.g. a merged
+	// report) must not collapse into one id.
+	xml := []byte(`<testsuite name="s">
+	  <testcase classname="c" name="t"><failure message="a"/></testcase>
+	  <testcase classname="c" name="t"><failure message="b"/></testcase>
+	</testsuite>`)
+	docs, err := junit.Convert(xml)
+	if err != nil {
+		t.Fatalf("convert: %v", err)
+	}
+	if len(docs) != 2 {
+		t.Fatalf("want 2 documents, got %d", len(docs))
+	}
+	if docs[0].GetFex().GetId() == docs[1].GetFex().GetId() {
+		t.Errorf("duplicate cases collapsed to the same id %q", docs[0].GetFex().GetId())
+	}
+}
+
 func TestConvertBareTestsuite(t *testing.T) {
 	xml := []byte(`<testsuite name="s"><testcase name="t"><failure message="boom"/></testcase></testsuite>`)
 	docs, err := junit.Convert(xml)
