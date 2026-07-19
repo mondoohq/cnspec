@@ -155,8 +155,9 @@ var vulnCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 		log.Fatal().Err(err).Msg("failed to print")
 	}
 
-	if upload, _ := cmd.Flags().GetBool("upload"); upload {
-		uploadVulnFindings(ctx, cnspecReport.ToCnqueryReport())
+	if doUpload, _ := cmd.Flags().GetBool("upload"); doUpload {
+		// Target the same space the scan resolved, honoring the user's config.
+		uploadVulnFindings(ctx, cnspecReport.ToCnqueryReport(), upstreamConf.SpaceMrn)
 	}
 }
 
@@ -164,14 +165,15 @@ var vulnCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 // as VEX findings. It builds an SBOM from the scan report, scans it on the
 // platform (ExtendedVulnMgmt.ScanUploadedSbom returns VEX), and uploads the VEX —
 // the same SBOM-scan flow the `cnspec upload --format sbom` path and xgrep use.
-func uploadVulnFindings(ctx context.Context, cnqueryReport *cr.Report) {
+// spaceMrn targets the same space the scan used (empty falls back to the config).
+func uploadVulnFindings(ctx context.Context, cnqueryReport *cr.Report, spaceMrn string) {
 	boms := mqlsbomgen.GenerateBom(cnqueryReport)
 	if len(boms) != 1 {
 		log.Error().Msg("skipping upload: expected exactly one asset SBOM")
 		return
 	}
 
-	opts := upload.Opts{}
+	opts := upload.Opts{ScopeMrn: spaceMrn}
 	vex, err := upload.ScanSBOM(ctx, opts, boms[0])
 	if err != nil {
 		if upload.IsNoCredentials(err) {
