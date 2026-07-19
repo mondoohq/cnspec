@@ -4,19 +4,43 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
+	"sort"
 
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"go.mondoo.com/cnspec/v13/upload"
 	rc "go.mondoo.com/cnspec/v13/upload/report_conversion"
 	_ "go.mondoo.com/cnspec/v13/upload/report_conversion/all"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/fex"
+	"go.mondoo.com/mql/v13/sbom"
 )
 
 // maxReportSize caps the report file read into memory (512 MiB).
 const maxReportSize = 512 << 20
+
+// sbomFormats are handled by the SBOM path: the file is decoded into an SBOM and
+// scanned by Mondoo Platform (ExtendedVulnMgmt.ScanUploadedSbom), which returns
+// VEX. The mql multi-decoder auto-detects the concrete encoding, so these names
+// are for discoverability; all route through the same path.
+var sbomFormats = map[string]bool{
+	"sbom":      true,
+	"cyclonedx": true,
+	"spdx":      true,
+}
+
+// allFormats lists every accepted --format value (pure converters + SBOM).
+func allFormats() []string {
+	out := rc.Formats()
+	for f := range sbomFormats {
+		out = append(out, f)
+	}
+	sort.Strings(out)
+	return out
+}
 
 func init() {
 	rootCmd.AddCommand(uploadCmd)
@@ -52,7 +76,7 @@ func runUpload(cmd *cobra.Command, args []string) error {
 
 	if format == "list" {
 		fmt.Println("Supported formats:")
-		for _, f := range rc.Formats() {
+		for _, f := range allFormats() {
 			fmt.Println("  " + f)
 		}
 		return nil
@@ -64,8 +88,8 @@ func runUpload(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("exactly one report file is required")
 	}
 
-	conv, ok := rc.Get(format)
-	if !ok {
+	conv, isConverter := rc.Get(format)
+	if !isConverter && !sbomFormats[format] {
 		return fmt.Errorf("unknown format %q; use --format list to see supported formats", format)
 	}
 
@@ -81,9 +105,23 @@ func runUpload(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("read %s: %w", args[0], err)
 	}
-	docs, err := conv(data)
+
+	configPath, _ := cmd.Flags().GetString("config")
+	space, _ := cmd.Flags().GetString("space")
+	opts := upload.Opts{ConfigPath: configPath, ScopeMrn: space}
+
+	var docs []*fex.FindingDocument
+	if sbomFormats[format] {
+		// SBOM path: decode → scan on Mondoo Platform (returns VEX) → documents.
+		docs, err = scanSBOMFile(cmd.Context(), opts, data)
+	} else {
+		docs, err = conv(data)
+	}
 	if err != nil {
-		return fmt.Errorf("convert %s: %w", args[0], err)
+		if upload.IsNoCredentials(err) {
+			return fmt.Errorf("no Mondoo credentials found; run `cnspec login` or pass --config <path>")
+		}
+		return fmt.Errorf("process %s: %w", args[0], err)
 	}
 	if len(docs) == 0 {
 		fmt.Printf("No findings in %s\n", args[0])
@@ -104,10 +142,8 @@ func runUpload(cmd *cobra.Command, args []string) error {
 	if source == "" {
 		source = format
 	}
-	configPath, _ := cmd.Flags().GetString("config")
-	space, _ := cmd.Flags().GetString("space")
 
-	err = upload.UploadFindings(context.Background(), upload.Opts{ConfigPath: configPath, ScopeMrn: space}, docs, source)
+	err = upload.UploadFindings(cmd.Context(), opts, docs, source)
 	if err != nil {
 		if upload.IsNoCredentials(err) {
 			return fmt.Errorf("no Mondoo credentials found; run `cnspec login` or pass --config <path>")
@@ -117,4 +153,18 @@ func runUpload(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Uploaded %d finding(s) from %s\n", len(docs), args[0])
 	return nil
+}
+
+// scanSBOMFile decodes SBOM bytes (CycloneDX/SPDX/Mondoo JSON, auto-detected),
+// scans them on Mondoo Platform, and wraps the resulting VEX as documents.
+func scanSBOMFile(ctx context.Context, opts upload.Opts, data []byte) ([]*fex.FindingDocument, error) {
+	bom, err := sbom.DefaultMultiDecoder().Parse(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("parse SBOM (expected CycloneDX, SPDX, or Mondoo JSON): %w", err)
+	}
+	vex, err := upload.ScanSBOM(ctx, opts, bom)
+	if err != nil {
+		return nil, err
+	}
+	return fex.VexToDocuments(vex), nil
 }
