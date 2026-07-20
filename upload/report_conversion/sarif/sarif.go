@@ -141,10 +141,9 @@ func convertAffects(result *gosarif.Result) []*fex.Affects {
 			continue
 		}
 		uri := loc.PhysicalLocation.ArtifactLocation.URI
-		if uri == nil || seen[*uri] {
+		if uri == nil {
 			continue
 		}
-		seen[*uri] = true
 		file := &fex.FileComponent{Path: *uri}
 		if r := loc.PhysicalLocation.Region; r != nil {
 			file.StartLine = derefInt(r.StartLine)
@@ -152,8 +151,15 @@ func convertAffects(result *gosarif.Result) []*fex.Affects {
 			file.StartColumn = derefInt(r.StartColumn)
 			file.EndColumn = derefInt(r.EndColumn)
 		}
+		// Dedup on the full code location (path + region) so distinct lines in
+		// the same file are preserved rather than collapsed to the first one.
+		key := fmt.Sprintf("%s:%d:%d:%d:%d", file.Path, file.StartLine, file.EndLine, file.StartColumn, file.EndColumn)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
 		out = append(out, &fex.Affects{Component: &fex.Component{
-			Id:      shortHash(*uri),
+			Id:      shortHash(key),
 			Details: &fex.Component_File{File: file},
 		}})
 	}
