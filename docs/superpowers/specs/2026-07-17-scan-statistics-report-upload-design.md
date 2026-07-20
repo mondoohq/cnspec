@@ -7,12 +7,16 @@ Status: approved design, pending spec review
 
 Send per-scan statistics to the Mondoo platform as part of the
 `ReportUploadCompleted` RPC that cnspec already makes at the end of a scan
-upload. For v1 we want three metrics:
+upload. For v1 we want:
 
 - how long the scan took,
-- how many queries were executed,
-- how many of those queries errored,
-- how big the upload is (the scan database file size).
+- how big the upload is (the scan database file size),
+- a per-kind breakdown of the scored entities in the scan: checks, data
+  queries, policies, controls, frameworks,
+- how many checks and data queries errored.
+
+Per-kind counts are derived from the resolved policy's reporting jobs (the
+canonical classifier), not from counting write operations — see "Counting" below.
 
 The mechanism must make it **easy to add more metrics later** — including
 metrics that, in the future, are contributed by providers (e.g. number of
@@ -130,31 +134,60 @@ Well-known metric-name constants (same package):
 
 ```go
 const (
-    MetricScanDuration     = "cnspec.scan.duration"          // ms
-    MetricQueriesExecuted  = "cnspec.scan.queries_executed"  // count
-    MetricQueriesErrored   = "cnspec.scan.queries_errored"   // count
-    MetricUploadSize       = "cnspec.scan.upload_size"       // bytes
+    MetricScanDuration       = "cnspec.scan.duration"             // ms
+    MetricUploadSize         = "cnspec.scan.upload_size"          // bytes
+    MetricChecks             = "cnspec.scan.checks"               // count
+    MetricDataQueries        = "cnspec.scan.data_queries"         // count
+    MetricPolicies           = "cnspec.scan.policies"             // count
+    MetricControls           = "cnspec.scan.controls"             // count
+    MetricFrameworks         = "cnspec.scan.frameworks"           // count
+    MetricChecksErrored      = "cnspec.scan.checks_errored"       // count
+    MetricDataQueriesErrored = "cnspec.scan.data_queries_errored" // count
 )
 ```
 
+### Counting — per-kind from the resolved policy
+
+An earlier draft counted `WriteScore`/`WriteData` calls on the scan-data-store
+wrapper. That is wrong: the in-memory data lake writes a placeholder score/data
+value for **every** reporting job (including aggregate policy/control/root nodes)
+and then rewrites on each state change, so a raw write count is inflated 2×+ and
+mixes leaf checks with aggregates. Instead, counts come from the **resolved
+policy** at finalize:
+
+- `ResolvedPolicy.CollectorJob.ReportingJobs` is a map of reporting jobs; each
+  has a `Type` (`CHECK`, `DATA_QUERY`, `CONTROL`, `POLICY`, `FRAMEWORK`,
+  `RISK_FACTOR`, `CHECK_AND_DATA_QUERY`) and a `qr_id`. Executed counts are the
+  distinct `qr_id`s per kind, excluding the asset-root aggregate (`qr_id ==
+  "root"`) and `RISK_FACTOR`.
+- Errored checks are error-typed scores (`score.Type == ScoreType_Error`) whose
+  `qr_id` maps to a CHECK reporting job. Errored data queries are data results
+  with a non-empty `Error` (data-query failures surface on `llx.Result`, not as
+  scores).
+
+A pure `scanstats.CountByKind(rp, scores, dataResults) KindCounts` implements
+this and is unit-tested in isolation.
+
 ### Data flow
 
-1. `WithServices` creates a `Collector`.
+1. `WithServices` captures the in-memory `*Db` (from `inmemory.NewServices`) and
+   creates a `Collector`.
 2. It times the scan closure `f(ctx, ls)` and records
    `AddDuration(MetricScanDuration, elapsed)`.
-3. After the scan, it records the query count with
-   `AddInt(MetricQueriesExecuted, "count", n)` and the errored-query count with
-   `AddInt(MetricQueriesErrored, "count", nErrored)`. Source: the count of
-   scores + data results written to the scan data store, with errored queries
-   being those in an error state (fallback: resolved policy `QueryCounts` and
-   the `Stats.errors` distribution). Exact source finalized during
-   implementation.
+3. In the `upstream != nil` block, after `Finalize()`:
+   - `AddInt(MetricUploadSize, "bytes", fileSizeBytes(scanDataPath))`.
+   - Fetch the resolved policy from the **local** data lake:
+     `rp, _ := db.GetResolvedPolicy(ctx, assetMrn)` (must use the local `*Db`,
+     not `LocalServices.GetResolvedPolicy`, which forwards upstream when an
+     upstream is set).
+   - Stream the finalized scores and data (`scanDataStore.StreamScores` /
+     `StreamData`, both valid in read-only mode after `Finalize`).
+   - `counts := scanstats.CountByKind(rp, scores, data)` and record the seven
+     per-kind metrics via `AddInt`.
+   - Kind counting is best-effort: a `GetResolvedPolicy` error logs a warning
+     and the upload proceeds without the per-kind metrics.
 4. It hands the `Collector` to `uploadScanDataStore`.
-5. `uploadScanDataStore` stats the finalized file and records
-   `AddInt(MetricUploadSize, "bytes", os.Stat(scanDataPath).Size())` — there is
-   already a `DEBUG_PROVIDER_MEMORY` stat call at this spot to reuse the
-   pattern.
-6. It builds the payload: `stats := collector.ToProto()`; if non-nil,
+5. `uploadScanDataStore` builds the payload: `stats := collector.ToProto()`; if non-nil,
    `details, _ := anypb.New(stats)` and sets it on the request:
    ```go
    services.ReportUploadCompleted(ctx, &policy.ReportUploadCompletedReq{
@@ -192,10 +225,11 @@ mechanism is out of scope here.
 - Wiring assertion: after `Finalize()`, `uploadScanDataStore` sets
   `cnspec.scan.upload_size` to the on-disk file size.
 
-## Open implementation questions
+## Resolved implementation notes
 
-- Exact source for `queries_executed` / `queries_errored` (scan-db row counts
-  and error state vs resolved-policy `QueryCounts` and `Stats.errors`) — decide
-  during implementation; either lands as the same metric names.
-- Whether `google.protobuf.Any` needs any addition to the `make cnspec/generate`
-  proto include paths — verified as part of the de-risk task.
+- Count source: resolved-policy reporting jobs (per-kind) + final scores/data
+  from the scan store (errored), not write-op counters. See "Counting" above.
+- `google.protobuf.Any` needs no extra `make cnspec/generate` include paths —
+  it resolves via the same well-known-types path as `timestamp.proto`, and
+  vtproto handles it via the planetscale `anypb` VT wrapper (verified by the
+  de-risk round-trip test).
