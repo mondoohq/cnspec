@@ -6,7 +6,6 @@ package scandb
 import (
 	"context"
 	"fmt"
-	"sync/atomic"
 
 	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/mql/v13/llx"
@@ -27,9 +26,6 @@ import (
 type ScanDataStoreWrapper struct {
 	store    ScanDataStore
 	assetMrn string
-
-	executed atomic.Int64 // total queries attempted (scores + data)
-	errored  atomic.Int64 // queries in an error state
 }
 
 // NewScanDataStoreWrapper creates a wrapper around a ScanDataStore that validates asset MRN
@@ -52,10 +48,6 @@ func (w *ScanDataStoreWrapper) WriteScore(ctx context.Context, assetMrn string, 
 	if err := w.validate(assetMrn); err != nil {
 		return err
 	}
-	w.executed.Add(1)
-	if score.Type == policy.ScoreType_Error {
-		w.errored.Add(1)
-	}
 	return w.store.WriteScores(ctx, []*policy.Score{score})
 }
 
@@ -72,10 +64,6 @@ func (w *ScanDataStoreWrapper) GetScore(ctx context.Context, assetMrn string, sc
 func (w *ScanDataStoreWrapper) WriteData(ctx context.Context, assetMrn string, data *llx.Result) error {
 	if err := w.validate(assetMrn); err != nil {
 		return err
-	}
-	w.executed.Add(1)
-	if data.GetError() != "" {
-		w.errored.Add(1)
 	}
 	return w.store.WriteData(ctx, []*llx.Result{data})
 }
@@ -138,12 +126,6 @@ func (w *ScanDataStoreWrapper) StreamRisks(ctx context.Context, assetMrn string,
 	})
 	return err
 }
-
-// ExecutedCount returns the number of queries (scores + data results) written.
-func (w *ScanDataStoreWrapper) ExecutedCount() int64 { return w.executed.Load() }
-
-// ErroredCount returns the number of written queries in an error state.
-func (w *ScanDataStoreWrapper) ErroredCount() int64 { return w.errored.Load() }
 
 // Finalize optimizes the underlying store and returns the database path
 func (w *ScanDataStoreWrapper) Finalize() (string, error) {

@@ -65,7 +65,7 @@ func WithServices(ctx context.Context, runtime llx.Runtime, asset *inventory.Ass
 		}
 
 		wrapper := scandb.NewScanDataStoreWrapper(scanDataStore, assetMrn)
-		_, ls, err := inmemory.NewServices(runtime, inmemory.WithDataWriter(wrapper))
+		db, ls, err := inmemory.NewServices(runtime, inmemory.WithDataWriter(wrapper))
 		if err != nil {
 			return err
 		}
@@ -90,8 +90,6 @@ func WithServices(ctx context.Context, runtime llx.Runtime, asset *inventory.Ass
 			return err
 		}
 		stats.AddDuration(scanstats.MetricScanDuration, time.Since(scanStart))
-		stats.AddInt(scanstats.MetricQueriesExecuted, "count", wrapper.ExecutedCount())
-		stats.AddInt(scanstats.MetricQueriesErrored, "count", wrapper.ErroredCount())
 
 		if upstream != nil {
 			scanDataPath, err := scanDataStore.Finalize()
@@ -99,6 +97,7 @@ func WithServices(ctx context.Context, runtime llx.Runtime, asset *inventory.Ass
 				return err
 			}
 			stats.AddInt(scanstats.MetricUploadSize, "bytes", fileSizeBytes(scanDataPath))
+			recordKindMetrics(ctx, db, scanDataStore, assetMrn, stats)
 
 			return uploadScanDataStore(ctx, upstream, assetMrn, scanDataPath, stats)
 		}
@@ -167,6 +166,43 @@ func fileSizeBytes(path string) int64 {
 		return 0
 	}
 	return info.Size()
+}
+
+// recordKindMetrics derives per-kind scan counts from the resolved policy and
+// the finalized scan store, and records them on the collector. It is
+// best-effort: any failure logs a warning and skips the affected metrics so the
+// upload confirmation is never blocked.
+func recordKindMetrics(ctx context.Context, db *inmemory.Db, store *scandb.SqliteScanDataStore, assetMrn string, stats *scanstats.Collector) {
+	rp, err := db.GetResolvedPolicy(ctx, assetMrn)
+	if err != nil {
+		log.Warn().Err(err).Str("asset", assetMrn).Msg("no resolved policy for scan statistics; skipping per-kind metrics")
+		return
+	}
+
+	var scores []*policy.Score
+	if err := store.StreamScores(ctx, func(s *policy.Score) error {
+		scores = append(scores, s)
+		return nil
+	}); err != nil {
+		log.Warn().Err(err).Msg("failed to read scores for scan statistics")
+	}
+
+	var data []*llx.Result
+	if err := store.StreamData(ctx, func(_ string, r *llx.Result) error {
+		data = append(data, r)
+		return nil
+	}); err != nil {
+		log.Warn().Err(err).Msg("failed to read data results for scan statistics")
+	}
+
+	counts := scanstats.CountByKind(rp, scores, data)
+	stats.AddInt(scanstats.MetricChecks, "count", counts.Checks)
+	stats.AddInt(scanstats.MetricDataQueries, "count", counts.DataQueries)
+	stats.AddInt(scanstats.MetricPolicies, "count", counts.Policies)
+	stats.AddInt(scanstats.MetricControls, "count", counts.Controls)
+	stats.AddInt(scanstats.MetricFrameworks, "count", counts.Frameworks)
+	stats.AddInt(scanstats.MetricChecksErrored, "count", counts.ChecksErrored)
+	stats.AddInt(scanstats.MetricDataQueriesErrored, "count", counts.DataQueriesErrored)
 }
 
 func uploadScanDataStore(ctx context.Context, services *policy.Services, assetMrn string, scanDataPath string, stats *scanstats.Collector) error {

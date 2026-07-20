@@ -15,10 +15,8 @@ import (
 // Well-known core metric names. Core cnspec metrics use the "cnspec.scan.*"
 // namespace; provider-contributed metrics use "provider.<name>.*".
 const (
-	MetricScanDuration    = "cnspec.scan.duration"         // unit: ms
-	MetricQueriesExecuted = "cnspec.scan.queries_executed" // unit: count
-	MetricQueriesErrored  = "cnspec.scan.queries_errored"  // unit: count
-	MetricUploadSize      = "cnspec.scan.upload_size"      // unit: bytes
+	MetricScanDuration = "cnspec.scan.duration"    // unit: ms
+	MetricUploadSize   = "cnspec.scan.upload_size" // unit: bytes
 
 	MetricChecks             = "cnspec.scan.checks"               // unit: count
 	MetricDataQueries        = "cnspec.scan.data_queries"         // unit: count

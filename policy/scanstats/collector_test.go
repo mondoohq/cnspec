@@ -19,7 +19,7 @@ func TestCollector_Empty_ToProtoNil(t *testing.T) {
 func TestCollector_Adders(t *testing.T) {
 	c := New()
 	c.AddDuration(MetricScanDuration, 4200*time.Millisecond)
-	c.AddInt(MetricQueriesExecuted, "count", 128)
+	c.AddInt(MetricChecks, "count", 128)
 	c.AddDouble("cnspec.scan.avg_latency", "ms", 3.5)
 	c.AddBool("cnspec.scan.truncated", true)
 
@@ -39,11 +39,11 @@ func TestCollector_Adders(t *testing.T) {
 
 func TestCollector_ErroredAndUploadSizeConstants(t *testing.T) {
 	c := New()
-	c.AddInt(MetricQueriesErrored, "count", 3)
+	c.AddInt(MetricChecksErrored, "count", 3)
 	c.AddInt(MetricUploadSize, "bytes", 4096)
 	stats := c.ToProto()
 	require.Len(t, stats.Metrics, 2)
-	require.Equal(t, "cnspec.scan.queries_errored", stats.Metrics[0].Name)
+	require.Equal(t, "cnspec.scan.checks_errored", stats.Metrics[0].Name)
 	require.Equal(t, int64(3), stats.Metrics[0].GetIntValue())
 	require.Equal(t, "cnspec.scan.upload_size", stats.Metrics[1].Name)
 	require.Equal(t, int64(4096), stats.Metrics[1].GetIntValue())
