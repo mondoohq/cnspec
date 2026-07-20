@@ -578,7 +578,7 @@ func platformIdsExcludeSet(inv *inventory.Inventory) map[string]struct{} {
 		parts := strings.Split(v, ",")
 		set := make(map[string]struct{}, len(parts))
 		for _, p := range parts {
-			set[p] = struct{}{}
+			set[strings.TrimSpace(p)] = struct{}{}
 		}
 		return set
 	}
@@ -656,8 +656,15 @@ func (sc *scanContext) scanSubtree(ctx context.Context, node *discovery.TrackedA
 		}
 
 		if sc.platformIdsExclude != nil {
-			if _, excluded := sc.platformIdsExclude[connected.Asset.PlatformIds[0]]; excluded {
-				log.Info().Str("name", connected.Asset.Name).Str("platformId", connected.Asset.PlatformIds[0]).Msg("asset already reported, skipping")
+			var excludedID string
+			for _, pid := range connected.Asset.PlatformIds {
+				if _, ok := sc.platformIdsExclude[pid]; ok {
+					excludedID = pid
+					break
+				}
+			}
+			if excludedID != "" {
+				log.Info().Str("name", connected.Asset.Name).Str("platformId", excludedID).Msg("asset already reported, skipping")
 				sc.skipAsset(connected)
 				continue
 			}
