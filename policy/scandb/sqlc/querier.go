@@ -9,6 +9,8 @@ import (
 )
 
 type Querier interface {
+	CountErroredData(ctx context.Context) (int64, error)
+	ErroredScoreQrIds(ctx context.Context, type_ int64) ([]string, error)
 	GetAsset(ctx context.Context) ([]byte, error)
 	GetData(ctx context.Context, codeID string) ([]byte, error)
 	GetMetadata(ctx context.Context) ([]Metadata, error)
@@ -33,7 +35,7 @@ type Querier interface {
 	// Scores operations
 	InsertScore(ctx context.Context, arg InsertScoreParams) error
 	StreamAssetFilters(ctx context.Context) ([]string, error)
-	StreamData(ctx context.Context) ([]Datum, error)
+	StreamData(ctx context.Context) ([]StreamDataRow, error)
 	StreamResources(ctx context.Context) ([]Resource, error)
 	StreamRiskFactors(ctx context.Context) ([]ScoredRiskFactor, error)
 	StreamScores(ctx context.Context) ([]Score, error)

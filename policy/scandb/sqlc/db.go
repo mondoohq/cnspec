@@ -24,6 +24,12 @@ func New(db DBTX) *Queries {
 func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	q := Queries{db: db}
 	var err error
+	if q.countErroredDataStmt, err = db.PrepareContext(ctx, countErroredData); err != nil {
+		return nil, fmt.Errorf("error preparing query CountErroredData: %w", err)
+	}
+	if q.erroredScoreQrIdsStmt, err = db.PrepareContext(ctx, erroredScoreQrIds); err != nil {
+		return nil, fmt.Errorf("error preparing query ErroredScoreQrIds: %w", err)
+	}
 	if q.getAssetStmt, err = db.PrepareContext(ctx, getAsset); err != nil {
 		return nil, fmt.Errorf("error preparing query GetAsset: %w", err)
 	}
@@ -86,6 +92,16 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 
 func (q *Queries) Close() error {
 	var err error
+	if q.countErroredDataStmt != nil {
+		if cerr := q.countErroredDataStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing countErroredDataStmt: %w", cerr)
+		}
+	}
+	if q.erroredScoreQrIdsStmt != nil {
+		if cerr := q.erroredScoreQrIdsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing erroredScoreQrIdsStmt: %w", cerr)
+		}
+	}
 	if q.getAssetStmt != nil {
 		if cerr := q.getAssetStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getAssetStmt: %w", cerr)
@@ -220,6 +236,8 @@ func (q *Queries) queryRow(ctx context.Context, stmt *sql.Stmt, query string, ar
 type Queries struct {
 	db                     DBTX
 	tx                     *sql.Tx
+	countErroredDataStmt   *sql.Stmt
+	erroredScoreQrIdsStmt  *sql.Stmt
 	getAssetStmt           *sql.Stmt
 	getDataStmt            *sql.Stmt
 	getMetadataStmt        *sql.Stmt
@@ -245,6 +263,8 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 	return &Queries{
 		db:                     tx,
 		tx:                     tx,
+		countErroredDataStmt:   q.countErroredDataStmt,
+		erroredScoreQrIdsStmt:  q.erroredScoreQrIdsStmt,
 		getAssetStmt:           q.getAssetStmt,
 		getDataStmt:            q.getDataStmt,
 		getMetadataStmt:        q.getMetadataStmt,

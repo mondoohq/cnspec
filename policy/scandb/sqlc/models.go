@@ -20,6 +20,7 @@ type AssetFilter struct {
 type Datum struct {
 	CodeID string `json:"code_id"`
 	Data   []byte `json:"data"`
+	Error  string `json:"error"`
 }
 
 type Metadata struct {

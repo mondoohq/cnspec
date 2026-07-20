@@ -193,6 +193,7 @@ func (s *SqliteScanDataStore) WriteData(ctx context.Context, data []*llx.Result)
 		if err := s.queries.InsertData(ctx, sqlc.InsertDataParams{
 			CodeID: codeId,
 			Data:   resultData,
+			Error:  result.GetError(),
 		}); err != nil {
 			return fmt.Errorf("failed to write data %s: %w", codeId, err)
 		}
@@ -403,6 +404,17 @@ func (s *SqliteScanDataStore) StreamData(ctx context.Context, callback func(stri
 	}
 
 	return nil
+}
+
+// ErroredScoreQrIds returns the qr_ids of scores whose type is Error. This is a
+// cheap column-only query — it does not load score blobs.
+func (s *SqliteScanDataStore) ErroredScoreQrIds(ctx context.Context) ([]string, error) {
+	return s.queries.ErroredScoreQrIds(ctx, int64(policy.ScoreType_Error))
+}
+
+// ErroredDataCount returns the number of data results that recorded an error.
+func (s *SqliteScanDataStore) ErroredDataCount(ctx context.Context) (int64, error) {
+	return s.queries.CountErroredData(ctx)
 }
 
 // GetScore retrieves a specific score by QR ID

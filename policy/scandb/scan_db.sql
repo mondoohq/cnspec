@@ -35,7 +35,8 @@ CREATE TABLE scores (
 -- code_id is the primary key for uniqueness and upsert operations
 CREATE TABLE data (
     code_id TEXT PRIMARY KEY,        -- llx.Result.CodeID (query checksum, unique identifier)
-    data BLOB NOT NULL               -- protobuf encoded llx.Result
+    data BLOB NOT NULL,              -- protobuf encoded llx.Result
+    error TEXT NOT NULL DEFAULT ''   -- llx.Result.error, extracted for cheap error counting
 );
 
 -- ScoredRiskFactor table - stores individual risk factors for scores
