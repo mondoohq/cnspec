@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-snowflake-security
     name: Mondoo Snowflake Security
-    version: 1.2.1
+    version: 2.0.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -21,10 +21,12 @@ policies:
         This policy provides security checks across key Snowflake areas:
 
         - Identity and access management
+        - Authentication policies and multi-factor authentication enforcement
         - Password and key-pair authentication policies
         - Network access controls and network policies
         - Privileged role management for ACCOUNTADMIN, SECURITYADMIN, and SYSADMIN
-        - Session and federation settings
+        - Session management and single sign-on integrity
+        - Data egress controls for stages, integrations, and functions
 
         Learn more about scanning Snowflake in the [cnspec Snowflake documentation](https://mondoo.com/docs/cnspec/saas/snowflake).
 
@@ -36,6 +38,16 @@ policies:
           - uid: mondoo-snowflake-security-accountadmin-role-limited
           - uid: mondoo-snowflake-security-no-users-pending-password-change
           - uid: mondoo-snowflake-security-no-accountadmin-default-role
+          - uid: mondoo-snowflake-security-service-users-no-password
+          - uid: mondoo-snowflake-security-no-legacy-service-users
+          - uid: mondoo-snowflake-security-no-dormant-active-users
+          - uid: mondoo-snowflake-security-no-never-logged-in-active-users
+          - uid: mondoo-snowflake-security-tasks-not-owned-by-privileged-role
+      - title: Authentication and MFA
+        checks:
+          - uid: mondoo-snowflake-security-authentication-policy-mfa-required
+          - uid: mondoo-snowflake-security-authentication-policy-no-single-factor-password
+          - uid: mondoo-snowflake-security-no-active-mfa-bypass
       - title: Password Policies
         checks:
           - uid: mondoo-snowflake-security-password-policy-minimum-length
@@ -47,6 +59,23 @@ policies:
         checks:
           - uid: mondoo-snowflake-security-network-policies-configured
           - uid: mondoo-snowflake-security-network-policies-no-unrestricted-access
+          - uid: mondoo-snowflake-security-network-policies-define-allow-entries
+      - title: Session Management
+        checks:
+          - uid: mondoo-snowflake-security-session-policy-idle-timeout
+          - uid: mondoo-snowflake-security-session-policy-ui-idle-timeout
+      - title: Federation and SSO
+        checks:
+          - uid: mondoo-snowflake-security-saml2-integrations-sign-requests
+      - title: Data Egress Controls
+        checks:
+          - uid: mondoo-snowflake-security-account-prevent-unload-to-inline-url
+          - uid: mondoo-snowflake-security-account-require-storage-integration-for-stage-creation
+          - uid: mondoo-snowflake-security-external-stages-no-inline-credentials
+          - uid: mondoo-snowflake-security-external-access-integrations-scoped
+          - uid: mondoo-snowflake-security-external-access-functions-secure
+          - uid: mondoo-snowflake-security-api-integrations-restrict-prefixes
+          - uid: mondoo-snowflake-security-storage-integrations-restrict-locations
       - title: Data Protection
         checks:
           - uid: mondoo-snowflake-security-databases-retention-configured
@@ -1723,4 +1752,2409 @@ queries:
     mql: |
       terraform.state.resources.where(type == 'snowflake_database').all(
         values['data_retention_time_in_days'] == null || values['data_retention_time_in_days'] > 0
+      )
+  - uid: mondoo-snowflake-security-authentication-policy-mfa-required
+    title: Ensure an authentication policy enforces MFA enrollment
+    impact: 90
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-14
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-j
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-3
+      compliance/pci-dss-4: pcidss-requirement-8-4-2
+      compliance/soc2-2017: soc2-control-cc6-6-3
+      compliance/vda-isa-5: vda-isa-5-4-1-2
+    variants:
+      - uid: mondoo-snowflake-security-authentication-policy-mfa-required-snowflake
+        tags:
+          mondoo.com/filter-title: Snowflake
+          mondoo.com/filter-icon: snowflake
+      - uid: mondoo-snowflake-security-authentication-policy-mfa-required-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-authentication-policy-mfa-required-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-authentication-policy-mfa-required-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that at least one authentication policy exists and that every authentication policy sets MFA enrollment to required. Snowflake ships with no authentication policy attached, and in that default state multi-factor authentication is optional, so a user who never enrolls a second factor can sign in with a password alone. Requiring MFA enrollment through a policy is what turns account-wide MFA from opt-in into mandatory.
+
+        **Why this matters**
+
+        - **Enforces MFA account-wide:** A policy that requires enrollment applies to every user in scope, closing the gap left by relying on individual users to opt in.
+        - **Resists credential theft:** Stolen or phished passwords cannot complete a sign-in when a second factor is mandatory.
+        - **Removes the silent default:** With no authentication policy present, MFA is never enforced, so the absence of a policy is itself the exposure this check surfaces.
+
+        **Risk mitigation**
+
+        - **Attach a required-MFA policy account-wide:** Create an authentication policy with enrollment set to required and bind it to the account so it covers all interactive users.
+        - **Prioritize privileged users:** Confirm the policy scope reaches users holding ACCOUNTADMIN, SECURITYADMIN, and SYSADMIN first.
+        - **Review policy scope regularly:** Audit which policy is attached and which users it governs so newly created users inherit the requirement.
+      audit: |
+        ### Audit via Snowsight
+
+        1. Sign in to Snowsight as a user with the ACCOUNTADMIN role.
+        2. Open the user menu in the top-right corner and select **Account Details**, then review the **Authentication policy** field to confirm a policy is attached.
+        3. Open a worksheet and describe the attached policy to inspect its enrollment setting.
+
+        A passing result shows an authentication policy attached with MFA enrollment set to required; a failing result shows no policy attached or a policy whose enrollment is not required.
+
+        ### Audit via SQL
+
+        Run the queries in a Snowsight worksheet or with SnowSQL:
+
+        ```sql
+        SHOW AUTHENTICATION POLICIES;
+        DESC AUTHENTICATION POLICY <policy_name>;
+        ```
+
+        A passing result lists at least one policy and shows `MFA_ENROLLMENT` set to `REQUIRED` on every policy; a failing result shows no policies or a policy where `MFA_ENROLLMENT` is `OPTIONAL`.
+      remediation:
+        - id: console
+          desc: |
+            **Using Snowsight**
+
+            Authentication policies are managed as schema-level objects, so create and attach them from a Snowsight worksheet.
+
+            1. In Snowsight, open **Projects** → **Worksheets** and start a new worksheet as `ACCOUNTADMIN`.
+            2. Create an authentication policy that requires MFA enrollment.
+            3. Attach the policy at the account level so it applies to all users.
+            4. Open **Account Details** from the top-right user menu and confirm the **Authentication policy** field now names your policy.
+
+            ```sql
+            CREATE AUTHENTICATION POLICY IF NOT EXISTS require_mfa_policy
+              AUTHENTICATION_METHODS     = ('PASSWORD', 'SAML')
+              MFA_AUTHENTICATION_METHODS = ('PASSWORD', 'SAML')
+              MFA_ENROLLMENT             = 'REQUIRED';
+
+            ALTER ACCOUNT SET AUTHENTICATION POLICY require_mfa_policy;
+            ```
+        - id: sql
+          desc: |
+            Run as `ACCOUNTADMIN` in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
+
+            1. Inspect existing policies and what is attached. A Snowflake account attaches at most one authentication policy:
+
+                ```sql
+                SHOW AUTHENTICATION POLICIES;
+                SHOW PARAMETERS LIKE 'AUTHENTICATION_POLICY' IN ACCOUNT;
+                ```
+
+            2. Create a policy that requires MFA enrollment, or alter an existing one so `MFA_ENROLLMENT` is `REQUIRED`:
+
+                ```sql
+                CREATE AUTHENTICATION POLICY IF NOT EXISTS require_mfa_policy
+                  AUTHENTICATION_METHODS     = ('PASSWORD', 'SAML')
+                  MFA_AUTHENTICATION_METHODS = ('PASSWORD', 'SAML')
+                  MFA_ENROLLMENT             = 'REQUIRED';
+                ```
+
+            3. Attach the policy at the account level so it governs all interactive users:
+
+                ```sql
+                ALTER ACCOUNT SET AUTHENTICATION POLICY require_mfa_policy;
+                ```
+
+            Enrollment is enforced on the next sign-in. Sessions authenticated before the policy was attached are not retroactively logged out.
+        - id: terraform
+          desc: |
+            With the `snowflakedb/snowflake` provider, define a `snowflake_authentication_policy` whose `mfa_enrollment` is `REQUIRED` and attach it to the account:
+
+            ```hcl
+            resource "snowflake_authentication_policy" "require_mfa" {
+              database               = "SECURITY"
+              schema                 = "POLICIES"
+              name                   = "REQUIRE_MFA_POLICY"
+              authentication_methods = ["PASSWORD", "SAML"]
+              mfa_enrollment         = "REQUIRED"
+            }
+
+            resource "snowflake_account_authentication_policy_attachment" "account" {
+              authentication_policy = snowflake_authentication_policy.require_mfa.fully_qualified_name
+            }
+            ```
+    refs:
+      - url: https://docs.snowflake.com/en/user-guide/authentication-policies
+        title: Snowflake authentication policies
+  - uid: mondoo-snowflake-security-authentication-policy-no-single-factor-password
+    title: Ensure authentication policies do not permit password-only sign-in
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-14
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-j
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-3
+      compliance/pci-dss-4: pcidss-requirement-8-4-2
+      compliance/soc2-2017: soc2-control-cc6-6-3
+      compliance/vda-isa-5: vda-isa-5-4-1-2
+    variants:
+      - uid: mondoo-snowflake-security-authentication-policy-no-single-factor-password-snowflake
+        tags:
+          mondoo.com/filter-title: Snowflake
+          mondoo.com/filter-icon: snowflake
+      - uid: mondoo-snowflake-security-authentication-policy-no-single-factor-password-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-authentication-policy-no-single-factor-password-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-authentication-policy-no-single-factor-password-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that no authentication policy allows a user to sign in with a password as the only factor. A policy satisfies the requirement when it either requires MFA enrollment or excludes both the `PASSWORD` and `ALL` authentication methods, so any policy that keeps password sign-in available must also mandate a second factor. By default Snowflake permits all authentication methods, so a policy that lists `PASSWORD` or `ALL` without requiring MFA leaves single-factor password access open.
+
+        **Why this matters**
+
+        - **Closes the single-factor path:** A password by itself is the weakest credential, and a policy that permits it without MFA lets a stolen password complete a sign-in.
+        - **Catches misconfigured policies:** An account can attach a policy that technically exists yet still allows password-only access, which looks compliant but is not.
+        - **Aligns password use with MFA:** Where password authentication remains enabled, pairing it with mandatory MFA preserves usability without leaving a single-factor gap.
+
+        **Risk mitigation**
+
+        - **Require MFA wherever password is allowed:** Set enrollment to required on any policy that lists the password method so no single-factor login remains.
+        - **Restrict the method list:** Remove `PASSWORD` and `ALL` from policies that should rely only on federated or key-based authentication.
+        - **Review every attached policy:** Confirm that each policy governing interactive users forecloses password-only sign-in.
+      audit: |
+        ### Audit via Snowsight
+
+        1. Sign in to Snowsight as a user with the ACCOUNTADMIN role.
+        2. Open **Projects** → **Worksheets** and start a worksheet.
+        3. List the authentication policies and describe each one to review its authentication methods and enrollment setting.
+
+        A passing result shows every policy either requiring MFA enrollment or omitting both `PASSWORD` and `ALL` from its authentication methods; a failing result shows a policy that permits `PASSWORD` or `ALL` while MFA enrollment is optional.
+
+        ### Audit via SQL
+
+        Run the queries in a Snowsight worksheet or with SnowSQL:
+
+        ```sql
+        SHOW AUTHENTICATION POLICIES;
+        DESC AUTHENTICATION POLICY <policy_name>;
+        ```
+
+        A passing result shows, for each policy, `MFA_ENROLLMENT` set to `REQUIRED` or an `AUTHENTICATION_METHODS` list that contains neither `PASSWORD` nor `ALL`; a failing result shows a policy whose methods include `PASSWORD` or `ALL` while `MFA_ENROLLMENT` is `OPTIONAL`.
+      remediation:
+        - id: console
+          desc: |
+            **Using Snowsight**
+
+            Authentication policies are managed as schema-level objects, so adjust them from a Snowsight worksheet.
+
+            1. In Snowsight, open **Projects** → **Worksheets** and start a new worksheet as `ACCOUNTADMIN`.
+            2. For each policy that keeps password sign-in available, set MFA enrollment to required so password use is always paired with a second factor.
+            3. Alternatively, remove `PASSWORD` and `ALL` from the policy's authentication methods where password login is not needed.
+
+            ```sql
+            ALTER AUTHENTICATION POLICY require_mfa_policy SET
+              MFA_ENROLLMENT = 'REQUIRED';
+            ```
+        - id: sql
+          desc: |
+            Run as `ACCOUNTADMIN` in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
+
+            1. Identify policies that allow password-only sign-in by describing each one and checking whether `PASSWORD` or `ALL` appears in `AUTHENTICATION_METHODS` while `MFA_ENROLLMENT` is `OPTIONAL`:
+
+                ```sql
+                SHOW AUTHENTICATION POLICIES;
+                DESC AUTHENTICATION POLICY <policy_name>;
+                ```
+
+            2. Require MFA on any policy that keeps password authentication, so no single factor is sufficient:
+
+                ```sql
+                ALTER AUTHENTICATION POLICY <policy_name> SET
+                  MFA_ENROLLMENT = 'REQUIRED';
+                ```
+
+            3. Where password sign-in is not needed at all, drop it from the method list instead:
+
+                ```sql
+                ALTER AUTHENTICATION POLICY <policy_name> SET
+                  AUTHENTICATION_METHODS = ('SAML', 'OAUTH');
+                ```
+        - id: terraform
+          desc: |
+            With the `snowflakedb/snowflake` provider, ensure every `snowflake_authentication_policy` that keeps password sign-in also sets `mfa_enrollment` to `REQUIRED`, or drops `PASSWORD` and `ALL` from `authentication_methods`:
+
+            ```hcl
+            resource "snowflake_authentication_policy" "require_mfa" {
+              database               = "SECURITY"
+              schema                 = "POLICIES"
+              name                   = "REQUIRE_MFA_POLICY"
+              authentication_methods = ["PASSWORD", "SAML"]
+              mfa_enrollment         = "REQUIRED"
+            }
+            ```
+    refs:
+      - url: https://docs.snowflake.com/en/sql-reference/sql/create-authentication-policy
+        title: CREATE AUTHENTICATION POLICY
+  # No Terraform variants: minsToBypassMfa reflects a temporary administrator-granted MFA bypass window on a live user identity, a runtime operational state that has no snowflake_user configuration analog to assert against.
+  - uid: mondoo-snowflake-security-no-active-mfa-bypass
+    title: Ensure no active user has a temporary MFA bypass window
+    impact: 70
+    filters: asset.platform == 'snowflake'
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-14
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-j
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-3
+      compliance/pci-dss-4: pcidss-requirement-8-4-2
+      compliance/soc2-2017: soc2-control-cc6-6-3
+      compliance/vda-isa-5: vda-isa-5-4-1-2
+    mql: |
+      snowflake.account.users.where(disabled == false).all(minsToBypassMfa == "")
+    docs:
+      desc: |
+        This check ensures that no active user has a temporary MFA bypass window in effect. An administrator can grant a user a time-boxed bypass so they can sign in without their second factor, typically to recover from a lost device, and while that window is open the user authenticates with a password alone. Snowflake leaves the bypass unset by default, so any user carrying a bypass value has had MFA suspended for a period.
+
+        **Why this matters**
+
+        - **Suspends MFA on a live account:** For the duration of the window the account is protected by a single factor, reversing the protection MFA provides.
+        - **Bypasses outlive their purpose:** A window opened for a one-time recovery is easy to forget, leaving MFA disabled far longer than intended.
+        - **Targets known accounts:** An attacker who learns that a bypass is active gains a predictable interval in which a stolen password is enough to sign in.
+
+        **Risk mitigation**
+
+        - **Clear stale bypasses:** Remove the bypass on any active user who no longer needs it so MFA is immediately back in force.
+        - **Keep windows short:** When a bypass is unavoidable, grant the smallest window that lets the user re-enroll their device.
+        - **Re-enroll promptly:** Have the affected user register a new MFA device and confirm the bypass has expired.
+      audit: |
+        ### Audit via Snowsight
+
+        1. Sign in to Snowsight as a user with the ACCOUNTADMIN or SECURITYADMIN role.
+        2. Go to **Admin** > **Users & Roles** > **Users**.
+        3. Open each active user and review whether a temporary MFA bypass is set on the account.
+
+        A passing result shows no active user with a bypass window in effect; a failing result shows one or more active users with a non-empty bypass value.
+
+        ### Audit via SQL
+
+        Run the query in a Snowsight worksheet or with SnowSQL:
+
+        ```sql
+        SHOW USERS;
+        ```
+
+        A passing result shows `mins_to_bypass_mfa` empty for every row where `disabled` is false; a failing result shows at least one active user with a non-empty `mins_to_bypass_mfa` value.
+      remediation:
+        - id: console
+          desc: |
+            **Using Snowsight**
+
+            1. In Snowsight, go to **Admin** → **Users & Roles** → **Users**.
+            2. Open each active user flagged with a temporary MFA bypass.
+            3. Confirm the user has re-enrolled a working MFA device, then clear the bypass so MFA is enforced again on the next sign-in.
+        - id: sql
+          desc: |
+            Run as `ACCOUNTADMIN` or `SECURITYADMIN` in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
+
+            1. Identify active users that currently carry a bypass window:
+
+                ```sql
+                SHOW USERS;
+                ```
+
+                Inspect the `mins_to_bypass_mfa` column and note every active user where it is not empty.
+
+            2. Clear the bypass on each affected user once they have re-enrolled a second factor:
+
+                ```sql
+                ALTER USER <user_name> SET MINS_TO_BYPASS_MFA = 0;
+                ```
+
+            3. Re-run `SHOW USERS;` and confirm no active user reports a remaining bypass window.
+        # No Terraform remediation: the MFA bypass window is a live, time-boxed identity state set on a user through an imperative ALTER USER grant, not a declarative snowflake_user attribute Terraform can converge, so there is no configuration to encode.
+    refs:
+      - url: https://docs.snowflake.com/en/user-guide/security-mfa
+        title: Multi-factor authentication (MFA)
+  - uid: mondoo-snowflake-security-authentication-policy-mfa-required-snowflake
+    filters: asset.platform == 'snowflake'
+    mql: |
+      snowflake.account.authenticationPolicies != empty
+      snowflake.account.authenticationPolicies.all(mfaEnrollment == "REQUIRED")
+  - uid: mondoo-snowflake-security-authentication-policy-mfa-required-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'snowflake_authentication_policy')
+    mql: |
+      terraform.resources('snowflake_authentication_policy').all(
+        arguments['mfa_enrollment'] == "REQUIRED"
+      )
+  - uid: mondoo-snowflake-security-authentication-policy-mfa-required-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'snowflake_authentication_policy')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'snowflake_authentication_policy').all(
+        change.after['mfa_enrollment'] == "REQUIRED"
+      )
+  - uid: mondoo-snowflake-security-authentication-policy-mfa-required-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'snowflake_authentication_policy')
+    mql: |
+      terraform.state.resources.where(type == 'snowflake_authentication_policy').all(
+        values['mfa_enrollment'] == "REQUIRED"
+      )
+  - uid: mondoo-snowflake-security-authentication-policy-no-single-factor-password-snowflake
+    filters: asset.platform == 'snowflake'
+    mql: |
+      snowflake.account.authenticationPolicies.all(mfaEnrollment == "REQUIRED" || authenticationMethods.containsNone(["PASSWORD", "ALL"]))
+  - uid: mondoo-snowflake-security-authentication-policy-no-single-factor-password-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'snowflake_authentication_policy')
+    mql: |
+      terraform.resources('snowflake_authentication_policy').all(
+        arguments['mfa_enrollment'] == "REQUIRED" || arguments['authentication_methods'] == null || arguments['authentication_methods'].containsNone(["PASSWORD", "ALL"])
+      )
+  - uid: mondoo-snowflake-security-authentication-policy-no-single-factor-password-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'snowflake_authentication_policy')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'snowflake_authentication_policy').all(
+        change.after['mfa_enrollment'] == "REQUIRED" || change.after['authentication_methods'] == null || change.after['authentication_methods'].containsNone(["PASSWORD", "ALL"])
+      )
+  - uid: mondoo-snowflake-security-authentication-policy-no-single-factor-password-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'snowflake_authentication_policy')
+    mql: |
+      terraform.state.resources.where(type == 'snowflake_authentication_policy').all(
+        values['mfa_enrollment'] == "REQUIRED" || values['authentication_methods'] == null || values['authentication_methods'].containsNone(["PASSWORD", "ALL"])
+      )
+  - uid: mondoo-snowflake-security-service-users-no-password
+    title: Ensure service users do not authenticate with passwords
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-14
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-2
+      compliance/pci-dss-4: pcidss-requirement-8-6-2
+      compliance/soc2-2017: soc2-control-cc6-1-8
+      compliance/vda-isa-5: vda-isa-5-4-1-2
+    variants:
+      - uid: mondoo-snowflake-security-service-users-no-password-snowflake
+        tags:
+          mondoo.com/filter-title: Snowflake
+          mondoo.com/filter-icon: snowflake
+      - uid: mondoo-snowflake-security-service-users-no-password-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-service-users-no-password-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-service-users-no-password-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that machine identities of type SERVICE and LEGACY_SERVICE have no password set and instead authenticate with a key pair or OAuth. Snowflake allows a password to be assigned to any user, so a service account can end up with a password unless administrators deliberately provision it with programmatic credentials only.
+
+        **Why this matters**
+
+        - **Machines cannot use MFA:** A service account authenticating with a password alone has no second factor, so a leaked password grants direct access.
+        - **Passwords spread through automation:** Service passwords are embedded in scripts, CI systems, and configuration files, multiplying the places they can leak.
+        - **Key pairs are stronger:** RSA key-pair and OAuth authentication rely on cryptographic secrets that are far harder to guess, phish, or reuse than a static password.
+
+        **Risk mitigation**
+
+        - **Provision programmatic credentials only:** Create SERVICE users with an RSA public key or an OAuth integration and never assign them a password.
+        - **Rotate keys on a schedule:** Rotate RSA key pairs regularly and remove keys that are no longer in use.
+        - **Migrate legacy identities:** Move any LEGACY_SERVICE account still using a password to a SERVICE user with key-pair or OAuth authentication.
+      audit: |
+        ### Audit via Snowsight
+
+        1. Sign in to Snowsight as a user with the ACCOUNTADMIN or SECURITYADMIN role.
+        2. Go to **Admin** > **Users & Roles** > **Users**.
+        3. Review each user whose **Type** is `SERVICE` or `LEGACY_SERVICE` and confirm it has no password set.
+
+        A passing result shows every service user with no password and a key pair or OAuth configured; a failing result shows one or more service users that have a password.
+
+        ### Audit via SQL
+
+        Run the query in a Snowsight worksheet or with SnowSQL:
+
+        ```sql
+        SHOW USERS;
+        ```
+
+        A passing result shows `has_password` set to false for every row where `type` is `SERVICE` or `LEGACY_SERVICE`; a failing result shows at least one such user with `has_password` set to true.
+      remediation:
+        - id: console
+          desc: |
+            **Using Snowsight**
+
+            1. In Snowsight, go to **Admin** → **Users & Roles** → **Users**.
+            2. Open each user whose **Type** is `SERVICE` or `LEGACY_SERVICE`.
+            3. Remove the password and configure key-pair or OAuth authentication instead. Snowsight lets you add an RSA public key under the user's authentication settings.
+            4. For a LEGACY_SERVICE account, plan a migration to a SERVICE user that uses key-pair or OAuth authentication.
+        - id: sql
+          desc: |
+            Run as `ACCOUNTADMIN` or `SECURITYADMIN` in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
+
+            1. Identify service users that still have a password:
+
+                ```sql
+                SELECT NAME, TYPE, HAS_PASSWORD, HAS_RSA_PUBLIC_KEY
+                FROM SNOWFLAKE.ACCOUNT_USAGE.USERS
+                WHERE TYPE IN ('SERVICE', 'LEGACY_SERVICE')
+                  AND HAS_PASSWORD = TRUE;
+                ```
+
+            2. Attach an RSA public key and remove the password on each affected user:
+
+                ```sql
+                ALTER USER <service_user> SET RSA_PUBLIC_KEY = '<base64_public_key>';
+                ALTER USER <service_user> UNSET PASSWORD;
+                ```
+
+            3. Re-run the query in step 1. The result should be empty.
+        - id: terraform
+          desc: |
+            With the `snowflakedb/snowflake` provider, declare service identities as `snowflake_service_user` or `snowflake_legacy_service_user` and never set the `password` argument. Provide an `rsa_public_key` instead so the account authenticates with a key pair:
+
+            ```hcl
+            resource "snowflake_service_user" "etl" {
+              name           = "ETL_SERVICE"
+              rsa_public_key = file("${path.module}/keys/etl_service.pub")
+              # password is intentionally omitted
+            }
+            ```
+    refs:
+      - url: https://docs.snowflake.com/en/user-guide/admin-user-management
+        title: Managing users
+  # No Terraform variants: asserting the absence of a resource type across a Terraform configuration is vacuous, since a configuration that simply declares no legacy service users would never match to fail.
+  - uid: mondoo-snowflake-security-no-legacy-service-users
+    title: Ensure no active users are legacy service users
+    impact: 60
+    filters: asset.platform == 'snowflake'
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-07
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-4-ii-c-information-access-management-access-establishment-and-modification
+      compliance/iso-27001-2022: iso-27001-2022-a-5-16
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-2
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: pcidss-requirement-8-2-4
+      compliance/soc2-2017: soc2-control-cc6-2-3
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    mql: |
+      snowflake.account.users.where(disabled == false).none(type == "LEGACY_SERVICE")
+    docs:
+      desc: |
+        This check ensures that no active user carries the LEGACY_SERVICE type. LEGACY_SERVICE is the pre-programmatic-authentication service identity that Snowflake retains for backward compatibility, and it can still authenticate with a password rather than the key-pair or OAuth credentials required of a modern SERVICE user.
+
+        **Why this matters**
+
+        - **Weaker authentication:** Legacy service identities can sign in with a static password and cannot be constrained to programmatic credentials the way SERVICE users are.
+        - **Outside current controls:** Legacy accounts predate the SERVICE user model, so newer authentication policies and guardrails may not apply to them cleanly.
+        - **Signals unfinished migration:** An active LEGACY_SERVICE user usually means an automation workload was never moved onto modern programmatic authentication.
+
+        **Risk mitigation**
+
+        - **Migrate to SERVICE users:** Recreate each workload as a SERVICE user that authenticates with an RSA key pair or OAuth.
+        - **Remove the legacy account:** Once the workload runs under a modern SERVICE user, drop or disable the LEGACY_SERVICE identity.
+        - **Block new legacy accounts:** Establish a standard that all new automation identities are provisioned as SERVICE users.
+      audit: |
+        ### Audit via Snowsight
+
+        1. Sign in to Snowsight as a user with the ACCOUNTADMIN or SECURITYADMIN role.
+        2. Go to **Admin** > **Users & Roles** > **Users**.
+        3. Review the **Type** column and look for any active user marked `LEGACY_SERVICE`.
+
+        A passing result shows no active user of type `LEGACY_SERVICE`; a failing result shows one or more active users of that type.
+
+        ### Audit via SQL
+
+        Run the query in a Snowsight worksheet or with SnowSQL:
+
+        ```sql
+        SHOW USERS;
+        ```
+
+        A passing result shows no row where `disabled` is false and `type` equals `LEGACY_SERVICE`; a failing result shows at least one such row.
+      remediation:
+        - id: console
+          desc: |
+            **Using Snowsight**
+
+            1. In Snowsight, go to **Admin** → **Users & Roles** → **Users** and filter by **Type** `LEGACY_SERVICE`.
+            2. For each legacy account, create a replacement SERVICE user and configure it with an RSA public key or an OAuth integration.
+            3. Repoint the automation or integration to the new SERVICE user and confirm it authenticates successfully.
+            4. Disable, then drop, the original LEGACY_SERVICE account.
+        - id: sql
+          desc: |
+            Run as `ACCOUNTADMIN` or `SECURITYADMIN` in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
+
+            1. Identify active legacy service users:
+
+                ```sql
+                SELECT NAME, TYPE, DISABLED
+                FROM SNOWFLAKE.ACCOUNT_USAGE.USERS
+                WHERE TYPE = 'LEGACY_SERVICE'
+                  AND DISABLED = FALSE;
+                ```
+
+            2. Create a modern SERVICE user for each workload and attach programmatic credentials:
+
+                ```sql
+                CREATE USER <service_user> TYPE = SERVICE RSA_PUBLIC_KEY = '<base64_public_key>';
+                ```
+
+            3. After repointing the workload, remove the legacy account:
+
+                ```sql
+                DROP USER <legacy_service_user>;
+                ```
+        # No Terraform remediation: the fix is to remove or replace an existing LEGACY_SERVICE identity, which Terraform expresses as deleting a resource from the configuration rather than as a securable argument, so there is no meaningful HCL example to enforce.
+    refs:
+      - url: https://docs.snowflake.com/en/user-guide/admin-user-management
+        title: Managing users
+  # No Terraform variants: daysSinceLastLogin is observed login telemetry with no configuration analog, so a Terraform configuration cannot express or enforce it.
+  - uid: mondoo-snowflake-security-no-dormant-active-users
+    title: Ensure active users have logged in within the last 90 days
+    impact: 70
+    filters: asset.platform == 'snowflake'
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-07
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-4-ii-c-information-access-management-access-establishment-and-modification
+      compliance/iso-27001-2022: iso-27001-2022-a-5-16
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-6
+      compliance/pci-dss-4: pcidss-requirement-8-2-6
+      compliance/soc2-2017: soc2-control-cc6-2-3
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    mql: |
+      snowflake.account.users.where(disabled == false).all(daysSinceLastLogin <= 90)
+    docs:
+      desc: |
+        This check ensures that every active user has signed in within the last 90 days. Snowflake does not automatically disable accounts that stop being used, so a dormant account remains a valid, sign-in-capable identity indefinitely until an administrator acts on it. Users that have never logged in are covered by a separate check and are not counted as dormant here.
+
+        **Why this matters**
+
+        - **Dormant accounts go unwatched:** An account no one uses is also an account no one is monitoring, so misuse can go unnoticed for a long time.
+        - **Expands the attack surface:** Every idle but enabled credential is one more way into the account that an attacker can target.
+        - **Reflects stale access:** Long-unused accounts often belong to people who changed roles or left, meaning their access should already have been revoked.
+
+        **Risk mitigation**
+
+        - **Disable idle accounts:** Disable users that have not signed in within your inactivity threshold, and drop them once you confirm they are no longer needed.
+        - **Review access periodically:** Run a recurring access review that flags accounts with no recent login activity.
+        - **Automate offboarding:** Tie account de-provisioning to your joiner-mover-leaver process so departures disable access promptly.
+      audit: |
+        ### Audit via Snowsight
+
+        1. Sign in to Snowsight as a user with the ACCOUNTADMIN or SECURITYADMIN role.
+        2. Go to **Admin** > **Users & Roles** > **Users**.
+        3. Review each active user's most recent successful sign-in and compare it against a 90-day threshold.
+
+        A passing result shows every active user with a successful login in the last 90 days; a failing result shows one or more active users whose last login is older than 90 days.
+
+        ### Audit via SQL
+
+        Run the query in a Snowsight worksheet or with SnowSQL:
+
+        ```sql
+        SELECT NAME, LAST_SUCCESS_LOGIN, DISABLED
+        FROM SNOWFLAKE.ACCOUNT_USAGE.USERS
+        WHERE DISABLED = FALSE
+          AND LAST_SUCCESS_LOGIN < DATEADD(day, -90, CURRENT_TIMESTAMP());
+        ```
+
+        A passing result returns no rows; a failing result returns one or more active users whose last successful login is older than 90 days.
+      remediation:
+        - id: console
+          desc: |
+            **Using Snowsight**
+
+            1. In Snowsight, go to **Admin** → **Users & Roles** → **Users**.
+            2. Review each active user's last successful login and identify those with no sign-in in the last 90 days.
+            3. Open each dormant user and select **Disable user**.
+            4. After confirming the account is no longer required, drop it to remove the credential entirely.
+        - id: sql
+          desc: |
+            Run as `ACCOUNTADMIN` or `SECURITYADMIN` in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
+
+            1. List active users that have not logged in within 90 days:
+
+                ```sql
+                SELECT NAME, LAST_SUCCESS_LOGIN
+                FROM SNOWFLAKE.ACCOUNT_USAGE.USERS
+                WHERE DISABLED = FALSE
+                  AND LAST_SUCCESS_LOGIN < DATEADD(day, -90, CURRENT_TIMESTAMP());
+                ```
+
+                `ACCOUNT_USAGE` views can lag the live state by up to ~3 hours. For an authoritative snapshot, run `SHOW USERS;` and inspect each user's most recent login.
+
+            2. Disable each dormant account:
+
+                ```sql
+                ALTER USER <user_name> SET DISABLED = TRUE;
+                ```
+
+            3. Once you confirm the account is no longer needed, remove it:
+
+                ```sql
+                DROP USER <user_name>;
+                ```
+        # No Terraform remediation: whether a user has logged in recently is runtime telemetry, not a configurable argument, so there is no HCL setting that resolves this finding.
+    refs:
+      - url: https://docs.snowflake.com/en/sql-reference/account-usage/users
+        title: USERS view
+  # No Terraform variants: login history is runtime telemetry with no configuration analog, so a Terraform configuration cannot express or enforce it.
+  - uid: mondoo-snowflake-security-no-never-logged-in-active-users
+    title: Ensure active users have logged in at least once
+    impact: 60
+    filters: asset.platform == 'snowflake'
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-07
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-4-ii-c-information-access-management-access-establishment-and-modification
+      compliance/iso-27001-2022: iso-27001-2022-a-5-16
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-6
+      compliance/pci-dss-4: pcidss-requirement-8-2-6
+      compliance/soc2-2017: soc2-control-cc6-2-3
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    mql: |
+      snowflake.account.users.where(disabled == false).all(daysSinceLastLogin != -1)
+    docs:
+      desc: |
+        This check ensures that every active user has signed in at least once. An enabled account that has never authenticated is usually an orphaned provisioning artifact, such as a user created for onboarding that was never claimed or a leftover from a test or migration. Freshly provisioned accounts are expected here too, so they should be onboarded promptly or disabled rather than left enabled and unused.
+
+        **Why this matters**
+
+        - **Orphaned credentials linger:** An account created but never used is easy to forget, yet it remains a valid path into the environment.
+        - **No baseline of normal use:** With no login history there is nothing to compare against, so unexpected first-time use is harder to spot as anomalous.
+        - **Signals broken provisioning:** A never-used account often means an onboarding step failed or a temporary account was never cleaned up.
+
+        **Risk mitigation**
+
+        - **Onboard or disable promptly:** Require that newly created accounts be claimed within a short window, and disable those that are not.
+        - **Clean up test artifacts:** Remove accounts left behind by migrations, proofs of concept, and test runs.
+        - **Review provisioning:** Reconcile the user list against your identity source so every account maps to a real, active owner.
+      audit: |
+        ### Audit via Snowsight
+
+        1. Sign in to Snowsight as a user with the ACCOUNTADMIN or SECURITYADMIN role.
+        2. Go to **Admin** > **Users & Roles** > **Users**.
+        3. Review each active user's most recent successful sign-in and look for accounts that have never logged in.
+
+        A passing result shows every active user with at least one successful login; a failing result shows one or more active users that have never signed in.
+
+        ### Audit via SQL
+
+        Run the query in a Snowsight worksheet or with SnowSQL:
+
+        ```sql
+        SELECT NAME, CREATED_ON, LAST_SUCCESS_LOGIN, DISABLED
+        FROM SNOWFLAKE.ACCOUNT_USAGE.USERS
+        WHERE DISABLED = FALSE
+          AND LAST_SUCCESS_LOGIN IS NULL;
+        ```
+
+        A passing result returns no rows; a failing result returns one or more active users whose `LAST_SUCCESS_LOGIN` is null.
+      remediation:
+        - id: console
+          desc: |
+            **Using Snowsight**
+
+            1. In Snowsight, go to **Admin** → **Users & Roles** → **Users**.
+            2. Identify active users that have never signed in.
+            3. For each one, confirm whether the account is still needed. If it is, drive the intended user through first login promptly.
+            4. If the account is not needed, select **Disable user**, then drop it once you confirm it is unused.
+        - id: sql
+          desc: |
+            Run as `ACCOUNTADMIN` or `SECURITYADMIN` in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
+
+            1. List active users that have never logged in:
+
+                ```sql
+                SELECT NAME, CREATED_ON
+                FROM SNOWFLAKE.ACCOUNT_USAGE.USERS
+                WHERE DISABLED = FALSE
+                  AND LAST_SUCCESS_LOGIN IS NULL;
+                ```
+
+            2. For accounts that are not needed, disable and then remove them:
+
+                ```sql
+                ALTER USER <user_name> SET DISABLED = TRUE;
+                DROP USER <user_name>;
+                ```
+
+            3. For accounts that are still required, ensure the intended user completes a first login promptly so the account is no longer dormant.
+        # No Terraform remediation: whether an account has ever logged in is runtime telemetry, not a configurable argument, so there is no HCL setting that resolves this finding.
+    refs:
+      - url: https://docs.snowflake.com/en/sql-reference/account-usage/users
+        title: USERS view
+  - uid: mondoo-snowflake-security-service-users-no-password-snowflake
+    filters: asset.platform == 'snowflake'
+    mql: |
+      snowflake.account.users.where(type == "SERVICE" || type == "LEGACY_SERVICE").all(hasPassword == false)
+  - uid: mondoo-snowflake-security-service-users-no-password-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'snowflake_service_user') || terraform.resources.contains(nameLabel == 'snowflake_legacy_service_user')
+    mql: |
+      terraform.resources('snowflake_service_user').all(arguments['password'] == null) && terraform.resources('snowflake_legacy_service_user').all(arguments['password'] == null)
+  - uid: mondoo-snowflake-security-service-users-no-password-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'snowflake_service_user') || terraform.plan.resourceChanges.contains(type == 'snowflake_legacy_service_user')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'snowflake_service_user' || type == 'snowflake_legacy_service_user').all(change.after['password'] == null)
+  - uid: mondoo-snowflake-security-service-users-no-password-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'snowflake_service_user') || terraform.state.resources.contains(type == 'snowflake_legacy_service_user')
+    mql: |
+      terraform.state.resources.where(type == 'snowflake_service_user' || type == 'snowflake_legacy_service_user').all(values['password'] == null)
+  - uid: mondoo-snowflake-security-account-prevent-unload-to-inline-url
+    title: Ensure the account prevents data unload to inline URLs
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-dsp-10
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-12
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ds-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-4
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-3
+      compliance/pci-dss-4: pcidss-requirement-1-3-2
+      compliance/soc2-2017: soc2-control-cc6-7-1
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    variants:
+      - uid: mondoo-snowflake-security-account-prevent-unload-to-inline-url-snowflake
+        tags:
+          mondoo.com/filter-title: Snowflake
+          mondoo.com/filter-icon: snowflake
+      - uid: mondoo-snowflake-security-account-prevent-unload-to-inline-url-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-account-prevent-unload-to-inline-url-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-account-prevent-unload-to-inline-url-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that the account sets `PREVENT_UNLOAD_TO_INLINE_URL` to true, so the `COPY INTO <location>` command cannot write data to an ad-hoc URL supplied directly in the statement. By default this parameter is false, and any role that can run an unload command may export table data to an arbitrary cloud location of its choosing.
+
+        **Why this matters**
+
+        - **Closes an exfiltration path:** An inline URL lets a user copy query results straight to storage they control, bypassing every stage and integration an administrator has approved.
+        - **Forces governed exports:** With the parameter set, unload must target a named stage backed by a storage integration, so data leaves only through locations the account already trusts.
+        - **Restores visibility:** Exports that flow through named stages and integrations are attributable and reviewable, while inline-URL writes leave little trace of where data went.
+
+        **Risk mitigation**
+
+        - **Approve destinations centrally:** Define storage integrations and named stages for the cloud buckets your organization sanctions, and require unload to use them.
+        - **Pair with stage governance:** Combine this parameter with a requirement that stage creation reference a storage integration, so no ungoverned egress path remains.
+        - **Review unload activity:** Monitor `COPY` history for unexpected destinations and investigate exports to locations outside your approved set.
+      audit: |
+        ### Audit via Snowsight
+
+        1. Sign in to Snowsight as a user with the ACCOUNTADMIN role.
+        2. Open a worksheet and run the SQL below.
+        3. Review the returned `value` for the parameter.
+
+        A passing result shows `PREVENT_UNLOAD_TO_INLINE_URL` set to `true`; a failing result shows `false`.
+
+        ### Audit via SQL
+
+        Run the query in a Snowsight worksheet or with SnowSQL:
+
+        ```sql
+        SHOW PARAMETERS LIKE 'PREVENT_UNLOAD_TO_INLINE_URL' IN ACCOUNT;
+        ```
+
+        A passing result shows `true` in the `value` column; a failing result shows `false`.
+      remediation:
+        - id: console
+          desc: |
+            **Using Snowsight**
+
+            Snowsight has no dedicated toggle for this account parameter, so set it from a worksheet:
+
+            1. In Snowsight, open a new worksheet while using the ACCOUNTADMIN role.
+            2. Run `ALTER ACCOUNT SET PREVENT_UNLOAD_TO_INLINE_URL = TRUE;`.
+            3. Confirm the change with `SHOW PARAMETERS LIKE 'PREVENT_UNLOAD_TO_INLINE_URL' IN ACCOUNT;`.
+        - id: sql
+          desc: |
+            Run as `ACCOUNTADMIN` in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI:
+
+            ```sql
+            ALTER ACCOUNT SET PREVENT_UNLOAD_TO_INLINE_URL = TRUE;
+            ```
+
+            After enabling it, existing unload jobs that target inline URLs will fail until they are rewritten to use a named stage backed by a storage integration.
+        - id: terraform
+          desc: |
+            With the `snowflakedb/snowflake` provider, set the account parameter with `snowflake_account_parameter`:
+
+            ```hcl
+            resource "snowflake_account_parameter" "prevent_unload_to_inline_url" {
+              key   = "PREVENT_UNLOAD_TO_INLINE_URL"
+              value = "true"
+            }
+            ```
+    refs:
+      - url: https://docs.snowflake.com/en/sql-reference/parameters
+        title: Parameters
+  - uid: mondoo-snowflake-security-account-require-storage-integration-for-stage-creation
+    title: Ensure stage creation requires a storage integration
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-dsp-10
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-5-14
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ds-5
+      compliance/nist-csf-2: nist-csf-2-pr-ps-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-3
+      compliance/pci-dss-4: pcidss-requirement-1-3-2
+      compliance/soc2-2017: soc2-control-cc6-7-1
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    variants:
+      - uid: mondoo-snowflake-security-account-require-storage-integration-for-stage-creation-snowflake
+        tags:
+          mondoo.com/filter-title: Snowflake
+          mondoo.com/filter-icon: snowflake
+      - uid: mondoo-snowflake-security-account-require-storage-integration-for-stage-creation-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-account-require-storage-integration-for-stage-creation-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-account-require-storage-integration-for-stage-creation-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that the account sets `REQUIRE_STORAGE_INTEGRATION_FOR_STAGE_CREATION` to true, so every new external stage must reference a storage integration rather than carry inline cloud credentials. By default this parameter is false, and a stage can be created with an access key or SAS token embedded directly in its definition.
+
+        **Why this matters**
+
+        - **Centralizes trust:** A storage integration names the exact cloud buckets an account may reach, so stages built on it can only point at locations an administrator has approved.
+        - **Removes embedded secrets:** Requiring an integration stops long-lived access keys and tokens from being written into stage metadata where any role with visibility can read them.
+        - **Governs new egress paths:** Because the requirement applies at creation time, no team can quietly stand up an external stage that reaches an unsanctioned bucket.
+
+        **Risk mitigation**
+
+        - **Define integrations first:** Create storage integrations for each cloud account and bucket prefix your organization sanctions, and grant usage only to the roles that need it.
+        - **Rotate at the integration:** Manage credentials through the integration and the cloud IAM role it assumes, so rotation happens in one place instead of across many stage definitions.
+        - **Audit existing stages:** Review stages created before the parameter was enabled and migrate any that still embed inline credentials.
+      audit: |
+        ### Audit via Snowsight
+
+        1. Sign in to Snowsight as a user with the ACCOUNTADMIN role.
+        2. Open a worksheet and run the SQL below.
+        3. Review the returned `value` for the parameter.
+
+        A passing result shows `REQUIRE_STORAGE_INTEGRATION_FOR_STAGE_CREATION` set to `true`; a failing result shows `false`.
+
+        ### Audit via SQL
+
+        Run the query in a Snowsight worksheet or with SnowSQL:
+
+        ```sql
+        SHOW PARAMETERS LIKE 'REQUIRE_STORAGE_INTEGRATION_FOR_STAGE_CREATION' IN ACCOUNT;
+        ```
+
+        A passing result shows `true` in the `value` column; a failing result shows `false`.
+      remediation:
+        - id: console
+          desc: |
+            **Using Snowsight**
+
+            Snowsight has no dedicated toggle for this account parameter, so set it from a worksheet:
+
+            1. In Snowsight, open a new worksheet while using the ACCOUNTADMIN role.
+            2. Run `ALTER ACCOUNT SET REQUIRE_STORAGE_INTEGRATION_FOR_STAGE_CREATION = TRUE;`.
+            3. Confirm the change with `SHOW PARAMETERS LIKE 'REQUIRE_STORAGE_INTEGRATION_FOR_STAGE_CREATION' IN ACCOUNT;`.
+        - id: sql
+          desc: |
+            Run as `ACCOUNTADMIN` in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI:
+
+            ```sql
+            ALTER ACCOUNT SET REQUIRE_STORAGE_INTEGRATION_FOR_STAGE_CREATION = TRUE;
+            ```
+
+            After enabling it, any attempt to create an external stage without a storage integration fails, so define the integrations your teams need before you turn the requirement on.
+        - id: terraform
+          desc: |
+            With the `snowflakedb/snowflake` provider, set the account parameter with `snowflake_account_parameter`:
+
+            ```hcl
+            resource "snowflake_account_parameter" "require_storage_integration_for_stage_creation" {
+              key   = "REQUIRE_STORAGE_INTEGRATION_FOR_STAGE_CREATION"
+              value = "true"
+            }
+            ```
+    refs:
+      - url: https://docs.snowflake.com/en/sql-reference/parameters
+        title: Parameters
+  - uid: mondoo-snowflake-security-external-stages-no-inline-credentials
+    title: Ensure external stages do not embed inline credentials
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-2
+      compliance/pci-dss-4: pcidss-requirement-8-6-2
+      compliance/soc2-2017: soc2-control-cc6-1-9
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    variants:
+      - uid: mondoo-snowflake-security-external-stages-no-inline-credentials-snowflake
+        tags:
+          mondoo.com/filter-title: Snowflake
+          mondoo.com/filter-icon: snowflake
+      - uid: mondoo-snowflake-security-external-stages-no-inline-credentials-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-external-stages-no-inline-credentials-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-external-stages-no-inline-credentials-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that external stages authenticate through a storage integration and do not carry an inline `credentials` value in their definition. By default Snowflake lets a stage hold cloud credentials such as an access key or SAS token directly, and those secrets then sit in object metadata that any role with visibility on the stage can read.
+
+        **Why this matters**
+
+        - **Keeps secrets out of metadata:** A storage integration references a cloud IAM role, so no long-lived key or token is written into the stage where it can be read or leaked.
+        - **Narrows the blast radius:** Inline credentials often grant broad access to a bucket, whereas an integration constrains a stage to the exact locations an administrator has approved.
+        - **Simplifies rotation:** Credentials managed through the integration and its cloud IAM role rotate in one place, instead of being copied into every stage that needs them.
+
+        **Risk mitigation**
+
+        - **Replace inline credentials:** Recreate external stages to reference a `STORAGE_INTEGRATION` and drop the embedded `CREDENTIALS` clause.
+        - **Enforce at creation:** Set the account so stage creation requires a storage integration, preventing new stages from embedding secrets.
+        - **Rotate exposed keys:** Treat any access key or token that was stored inline as compromised and rotate it at the cloud provider.
+      audit: |
+        ### Audit via Snowsight
+
+        1. Sign in to Snowsight as a user with the ACCOUNTADMIN role.
+        2. Open **Data** and browse to each database and schema that holds stages, or list stages from a worksheet with `SHOW STAGES;`.
+        3. For each external stage (one with a `url`), run `DESC STAGE <name>;` and inspect the `STORAGE_INTEGRATION` and credential properties.
+
+        A passing result shows external stages bound to a storage integration with no inline credential set; a failing result shows an external stage whose definition carries an access key, SAS token, or other inline credential.
+
+        ### Audit via SQL
+
+        Run the query in a Snowsight worksheet or with SnowSQL:
+
+        ```sql
+        SHOW STAGES;
+        DESC STAGE <stage_name>;
+        ```
+
+        In the `DESC STAGE` output, a passing external stage lists a `STORAGE_INTEGRATION` and no inline credential; a failing one shows a populated credential property such as `AWS_KEY_ID` or `AZURE_SAS_TOKEN`.
+      remediation:
+        - id: console
+          desc: |
+            **Using Snowsight**
+
+            Snowsight has no form for editing a stage's credentials, so recreate the stage from a worksheet:
+
+            1. In Snowsight, open a new worksheet while using a role that owns the stage.
+            2. Create or recreate the external stage so it references a `STORAGE_INTEGRATION` instead of an inline `CREDENTIALS` clause (see the SQL method).
+            3. Confirm with `DESC STAGE <stage_name>;` that a storage integration is set and no inline credential remains.
+        - id: sql
+          desc: |
+            Run as a role that owns the stage in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
+
+            1. Create a storage integration for the cloud location the stage uses (once per cloud role):
+
+                ```sql
+                CREATE STORAGE INTEGRATION my_s3_int
+                  TYPE = EXTERNAL_STAGE
+                  STORAGE_PROVIDER = 'S3'
+                  ENABLED = TRUE
+                  STORAGE_AWS_ROLE_ARN = 'arn:aws:iam::123456789012:role/snowflake-access'
+                  STORAGE_ALLOWED_LOCATIONS = ('s3://my-bucket/path/');
+                ```
+
+            2. Recreate the stage to use the integration and drop the inline credentials:
+
+                ```sql
+                CREATE OR REPLACE STAGE my_stage
+                  STORAGE_INTEGRATION = my_s3_int
+                  URL = 's3://my-bucket/path/';
+                ```
+
+            3. Rotate the access key or token that was previously embedded, since it was readable in the stage metadata.
+        - id: terraform
+          desc: |
+            With the `snowflakedb/snowflake` provider, define a `snowflake_storage_integration` and reference it from the `snowflake_stage` with `storage_integration` instead of `credentials`:
+
+            ```hcl
+            resource "snowflake_storage_integration" "s3" {
+              name                      = "MY_S3_INT"
+              type                      = "EXTERNAL_STAGE"
+              storage_provider          = "S3"
+              enabled                   = true
+              storage_aws_role_arn      = "arn:aws:iam::123456789012:role/snowflake-access"
+              storage_allowed_locations = ["s3://my-bucket/path/"]
+            }
+
+            resource "snowflake_stage" "external" {
+              name                = "MY_STAGE"
+              url                 = "s3://my-bucket/path/"
+              storage_integration = snowflake_storage_integration.s3.name
+            }
+            ```
+    refs:
+      - url: https://docs.snowflake.com/en/user-guide/data-load-s3-config-storage-integration
+        title: Configuring a Snowflake storage integration
+  # No Terraform variants: Terraform models user-defined functions as language-split resources (snowflake_function_python, snowflake_function_java, snowflake_function_scala, snowflake_function_javascript, snowflake_function_sql) whose external-access and secure flags do not map to a single faithful assertion. The runtime check inspects the resolved function set instead.
+  - uid: mondoo-snowflake-security-external-access-functions-secure
+    title: Ensure functions with external network access are secure
+    impact: 60
+    filters: asset.platform == 'snowflake'
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-16
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-4
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ds-5
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/pci-dss-4: pcidss-requirement-8-6-2
+      compliance/soc2-2017: soc2-control-cc6-1-12
+      compliance/vda-isa-5: vda-isa-5-5-3-1
+    mql: |
+      snowflake.account.functions.where(externalAccessIntegrations != empty).all(isSecure == true)
+    docs:
+      desc: |
+        This check ensures that every user-defined function granted external network access is defined as a secure function. By default a function is not secure, so its definition, including the body that encodes which external endpoints it reaches and how it handles secrets, is visible to roles that can see the function but do not own it.
+
+        **Why this matters**
+
+        - **Hides egress detail:** A function with an external access integration reaches outside Snowflake, and a secure function keeps its body, which names those endpoints and any secret handling, from roles without ownership.
+        - **Protects embedded logic:** Marking the function secure prevents unprivileged roles from reading credentials references, request formats, and other sensitive logic in the definition.
+        - **Limits reconnaissance:** Concealing the body denies an attacker with limited access a map of the external systems the account talks to and how.
+
+        **Risk mitigation**
+
+        - **Mark external functions secure:** Recreate or alter any function that uses an external access integration so it is a secure function.
+        - **Review integrations and secrets:** Confirm each external access integration is scoped to the endpoints it needs and that the secrets it uses are held in Snowflake secret objects, not inline.
+        - **Restrict usage grants:** Grant usage on external-access functions only to the roles that require them, so the surface that can invoke egress stays small.
+      audit: |
+        ### Audit via Snowsight
+
+        1. Sign in to Snowsight as a user with the ACCOUNTADMIN role.
+        2. Open a worksheet and list functions that reference an external access integration.
+        3. For each such function, check whether it is secure.
+
+        A passing result shows every function that references an external access integration marked as secure; a failing result shows at least one external-access function that is not secure.
+
+        ### Audit via SQL
+
+        Run the query in a Snowsight worksheet or with SnowSQL:
+
+        ```sql
+        SELECT function_name, function_schema, is_secure, external_access_integrations
+        FROM SNOWFLAKE.ACCOUNT_USAGE.FUNCTIONS
+        WHERE external_access_integrations IS NOT NULL
+          AND deleted IS NULL;
+        ```
+
+        A passing result shows `is_secure` set to `YES` for every row returned; a failing result shows a row with an external access integration and `is_secure` set to `NO`.
+      remediation:
+        - id: console
+          desc: |
+            **Using Snowsight**
+
+            Snowsight has no toggle for the secure property, so alter the function from a worksheet:
+
+            1. In Snowsight, open a new worksheet while using a role that owns the function.
+            2. Run `ALTER FUNCTION <name>(<arg_types>) SET SECURE;` for each external-access function that is not yet secure.
+            3. Confirm with the audit query that `is_secure` now reads `YES`.
+        - id: sql
+          desc: |
+            Run as a role that owns the function in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI:
+
+            ```sql
+            ALTER FUNCTION my_external_function(VARCHAR) SET SECURE;
+            ```
+
+            Repeat for every function that references an external access integration. Include the exact argument types, since they are part of the function's signature.
+        # No Terraform remediation: the fix flips the SECURE property on a function whose external-access flag Terraform models across language-split resources (snowflake_function_python, snowflake_function_java, and so on), so there is no single resource argument that faithfully expresses the runtime assertion.
+    refs:
+      - url: https://docs.snowflake.com/en/developer-guide/external-network-access/external-network-access-overview
+        title: External network access overview
+  - uid: mondoo-snowflake-security-account-prevent-unload-to-inline-url-snowflake
+    filters: asset.platform == 'snowflake'
+    mql: |
+      snowflake.account.parameters.one(key == "PREVENT_UNLOAD_TO_INLINE_URL" && value == "true")
+  - uid: mondoo-snowflake-security-account-prevent-unload-to-inline-url-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'snowflake_account_parameter')
+    mql: |
+      terraform.resources('snowflake_account_parameter').where(arguments['key'] == "PREVENT_UNLOAD_TO_INLINE_URL").all(
+        arguments['value'] == "true"
+      )
+  - uid: mondoo-snowflake-security-account-prevent-unload-to-inline-url-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'snowflake_account_parameter')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'snowflake_account_parameter').where(change.after['key'] == "PREVENT_UNLOAD_TO_INLINE_URL").all(
+        change.after['value'] == "true"
+      )
+  - uid: mondoo-snowflake-security-account-prevent-unload-to-inline-url-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'snowflake_account_parameter')
+    mql: |
+      terraform.state.resources.where(type == 'snowflake_account_parameter').where(values['key'] == "PREVENT_UNLOAD_TO_INLINE_URL").all(
+        values['value'] == "true"
+      )
+  - uid: mondoo-snowflake-security-account-require-storage-integration-for-stage-creation-snowflake
+    filters: asset.platform == 'snowflake'
+    mql: |
+      snowflake.account.parameters.one(key == "REQUIRE_STORAGE_INTEGRATION_FOR_STAGE_CREATION" && value == "true")
+  - uid: mondoo-snowflake-security-account-require-storage-integration-for-stage-creation-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'snowflake_account_parameter')
+    mql: |
+      terraform.resources('snowflake_account_parameter').where(arguments['key'] == "REQUIRE_STORAGE_INTEGRATION_FOR_STAGE_CREATION").all(
+        arguments['value'] == "true"
+      )
+  - uid: mondoo-snowflake-security-account-require-storage-integration-for-stage-creation-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'snowflake_account_parameter')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'snowflake_account_parameter').where(change.after['key'] == "REQUIRE_STORAGE_INTEGRATION_FOR_STAGE_CREATION").all(
+        change.after['value'] == "true"
+      )
+  - uid: mondoo-snowflake-security-account-require-storage-integration-for-stage-creation-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'snowflake_account_parameter')
+    mql: |
+      terraform.state.resources.where(type == 'snowflake_account_parameter').where(values['key'] == "REQUIRE_STORAGE_INTEGRATION_FOR_STAGE_CREATION").all(
+        values['value'] == "true"
+      )
+  - uid: mondoo-snowflake-security-external-stages-no-inline-credentials-snowflake
+    filters: asset.platform == 'snowflake'
+    mql: |
+      snowflake.account.stages.where(type == "EXTERNAL").all(hasCredentials == false)
+  - uid: mondoo-snowflake-security-external-stages-no-inline-credentials-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'snowflake_stage')
+    mql: |
+      terraform.resources('snowflake_stage').where(arguments['url'] != null && arguments['url'] != "").all(
+        arguments['credentials'] == null || arguments['credentials'] == ""
+      )
+  - uid: mondoo-snowflake-security-external-stages-no-inline-credentials-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'snowflake_stage')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'snowflake_stage').where(change.after['url'] != null && change.after['url'] != "").all(
+        change.after['credentials'] == null || change.after['credentials'] == ""
+      )
+  - uid: mondoo-snowflake-security-external-stages-no-inline-credentials-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'snowflake_stage')
+    mql: |
+      terraform.state.resources.where(type == 'snowflake_stage').where(values['url'] != null && values['url'] != "").all(
+        values['credentials'] == null || values['credentials'] == ""
+      )
+  - uid: mondoo-snowflake-security-external-access-integrations-scoped
+    title: Ensure external access integrations are scoped to network rules
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/pci-dss-4: pcidss-requirement-1-3-2
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    variants:
+      - uid: mondoo-snowflake-security-external-access-integrations-scoped-snowflake
+        tags:
+          mondoo.com/filter-title: Snowflake
+          mondoo.com/filter-icon: snowflake
+      - uid: mondoo-snowflake-security-external-access-integrations-scoped-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-external-access-integrations-scoped-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-external-access-integrations-scoped-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that every enabled external access integration is bound to explicit network rules that constrain where its egress traffic may go. An external access integration without allowed network rules leaves the hosts that user-defined functions and stored procedures can reach unconstrained, so the code they run can open outbound connections to arbitrary destinations.
+
+        **Why this matters**
+
+        - **Blocks arbitrary egress:** Scoping an integration to named egress network rules stops UDF and procedure code from reaching hosts you never approved.
+        - **Contains data exfiltration:** An attacker who lands code execution inside Snowflake cannot ship data to an external endpoint that the integration's rules do not permit.
+        - **Enforces intent:** Named rules document exactly which external services the account is allowed to call, so drift and over-broad access surface during review.
+
+        **Risk mitigation**
+
+        - **Bind every integration:** Attach one or more egress network rules to each external access integration before enabling it.
+        - **Keep the allowlist tight:** List only the specific host and port destinations each workload legitimately needs, and remove entries that are no longer used.
+        - **Review regularly:** Re-examine allowed network rules as external dependencies change so the egress surface stays minimal.
+      audit: |
+        ### Audit via Snowsight
+
+        1. Sign in to Snowsight as a user with the ACCOUNTADMIN role.
+        2. Open a SQL worksheet.
+        3. List the integrations and inspect each one:
+
+            ```sql
+            SHOW EXTERNAL ACCESS INTEGRATIONS;
+            DESC INTEGRATION <integration_name>;
+            ```
+
+        A passing result shows a non-empty `ALLOWED_NETWORK_RULES` property for every enabled integration; a failing result shows an enabled integration whose `ALLOWED_NETWORK_RULES` is empty.
+
+        ### Audit via SQL
+
+        Run the same commands with SnowSQL or the Snowflake CLI:
+
+        ```sql
+        SHOW EXTERNAL ACCESS INTEGRATIONS;
+        DESC INTEGRATION <integration_name>;
+        ```
+
+        A passing result shows `ALLOWED_NETWORK_RULES` populated for each integration where `enabled` is true; a failing result shows at least one enabled integration with no allowed network rules.
+      remediation:
+        - id: console
+          desc: |
+            **Using a Snowsight worksheet**
+
+            External access integrations are managed through SQL. Run the following as `ACCOUNTADMIN` in a Snowsight worksheet.
+
+            1. Create an egress network rule describing the exact destinations the workload needs:
+
+                ```sql
+                CREATE OR REPLACE NETWORK RULE my_db.my_schema.egress_rule
+                  MODE = EGRESS
+                  TYPE = HOST_PORT
+                  VALUE_LIST = ('api.example.com:443');
+                ```
+
+            2. Bind the rule to the integration and re-enable it:
+
+                ```sql
+                ALTER EXTERNAL ACCESS INTEGRATION <integration_name>
+                  SET ALLOWED_NETWORK_RULES = (my_db.my_schema.egress_rule);
+                ```
+        - id: sql
+          desc: |
+            Run as `ACCOUNTADMIN` in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
+
+            1. Find integrations that are enabled but not scoped to any network rule:
+
+                ```sql
+                SHOW EXTERNAL ACCESS INTEGRATIONS;
+                DESC INTEGRATION <integration_name>;
+                ```
+
+            2. Create an egress network rule and attach it to the integration so its outbound traffic is constrained:
+
+                ```sql
+                CREATE OR REPLACE NETWORK RULE my_db.my_schema.egress_rule
+                  MODE = EGRESS
+                  TYPE = HOST_PORT
+                  VALUE_LIST = ('api.example.com:443');
+
+                ALTER EXTERNAL ACCESS INTEGRATION <integration_name>
+                  SET ALLOWED_NETWORK_RULES = (my_db.my_schema.egress_rule);
+                ```
+
+            3. Re-run `DESC INTEGRATION <integration_name>` and confirm `ALLOWED_NETWORK_RULES` is populated.
+        - id: terraform
+          desc: |
+            With the `snowflakedb/snowflake` provider, define a `snowflake_network_rule` in `EGRESS` mode and reference it from the `allowed_network_rules` argument of every `snowflake_external_access_integration`:
+
+            ```hcl
+            resource "snowflake_network_rule" "egress" {
+              database   = "SECURITY"
+              schema     = "NETWORK"
+              name       = "EGRESS_RULE"
+              type       = "HOST_PORT"
+              mode       = "EGRESS"
+              value_list = ["api.example.com:443"]
+            }
+
+            resource "snowflake_external_access_integration" "eai" {
+              name                  = "MY_EAI"
+              allowed_network_rules = [snowflake_network_rule.egress.fully_qualified_name]
+              enabled               = true
+            }
+            ```
+    refs:
+      - url: https://docs.snowflake.com/en/sql-reference/sql/create-external-access-integration
+        title: CREATE EXTERNAL ACCESS INTEGRATION
+  - uid: mondoo-snowflake-security-api-integrations-restrict-prefixes
+    title: Ensure API integrations restrict allowed URL prefixes
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/pci-dss-4: pcidss-requirement-1-3-2
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    variants:
+      - uid: mondoo-snowflake-security-api-integrations-restrict-prefixes-snowflake
+        tags:
+          mondoo.com/filter-title: Snowflake
+          mondoo.com/filter-icon: snowflake
+      - uid: mondoo-snowflake-security-api-integrations-restrict-prefixes-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-api-integrations-restrict-prefixes-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-api-integrations-restrict-prefixes-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that every enabled API integration limits the URL prefixes that external functions may call through it. When the allowed prefixes list is empty, the integration places no ceiling on which endpoints an external function can invoke, so a function bound to it can reach any URL the integration's cloud credentials permit.
+
+        **Why this matters**
+
+        - **Constrains external calls:** An allowed-prefixes list restricts external functions to the specific API gateway paths you approved instead of the entire provider surface.
+        - **Limits credential abuse:** The integration holds cloud credentials, so narrowing its reachable endpoints shrinks what a misused function can do with them.
+        - **Surfaces intent:** Explicit prefixes document the exact services the account calls outbound, making over-broad access visible during review.
+
+        **Risk mitigation**
+
+        - **Set prefixes on every integration:** Populate `api_allowed_prefixes` with the specific gateway URLs each workload needs before enabling the integration.
+        - **Scope to the path:** Include the full stage or resource path in each prefix rather than a bare host, so unrelated endpoints on the same host stay out of reach.
+        - **Prune stale entries:** Remove prefixes for functions and endpoints that are no longer in use.
+      audit: |
+        ### Audit via Snowsight
+
+        1. Sign in to Snowsight as a user with the ACCOUNTADMIN role.
+        2. Open a SQL worksheet.
+        3. List the integrations and inspect each one:
+
+            ```sql
+            SHOW API INTEGRATIONS;
+            DESC INTEGRATION <integration_name>;
+            ```
+
+        A passing result shows a non-empty `API_ALLOWED_PREFIXES` property for every enabled integration; a failing result shows an enabled integration whose `API_ALLOWED_PREFIXES` is empty.
+
+        ### Audit via SQL
+
+        Run the same commands with SnowSQL or the Snowflake CLI:
+
+        ```sql
+        SHOW API INTEGRATIONS;
+        DESC INTEGRATION <integration_name>;
+        ```
+
+        A passing result shows `API_ALLOWED_PREFIXES` populated for each integration where `enabled` is true; a failing result shows at least one enabled integration with no allowed prefixes.
+      remediation:
+        - id: console
+          desc: |
+            **Using a Snowsight worksheet**
+
+            API integrations are managed through SQL. Run the following as `ACCOUNTADMIN` in a Snowsight worksheet.
+
+            1. Inspect the integration to see its current prefixes:
+
+                ```sql
+                DESC INTEGRATION <integration_name>;
+                ```
+
+            2. Restrict it to the specific gateway URLs the external functions need:
+
+                ```sql
+                ALTER API INTEGRATION <integration_name>
+                  SET API_ALLOWED_PREFIXES = ('https://my-account.execute-api.us-east-1.amazonaws.com/prod/');
+                ```
+        - id: sql
+          desc: |
+            Run as `ACCOUNTADMIN` in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
+
+            1. Find integrations that are enabled but do not restrict allowed prefixes:
+
+                ```sql
+                SHOW API INTEGRATIONS;
+                DESC INTEGRATION <integration_name>;
+                ```
+
+            2. Set `API_ALLOWED_PREFIXES` to the specific endpoints each external function calls:
+
+                ```sql
+                ALTER API INTEGRATION <integration_name>
+                  SET API_ALLOWED_PREFIXES = ('https://my-account.execute-api.us-east-1.amazonaws.com/prod/');
+                ```
+
+            3. Re-run `DESC INTEGRATION <integration_name>` and confirm `API_ALLOWED_PREFIXES` is populated.
+        - id: terraform
+          desc: |
+            With the `snowflakedb/snowflake` provider, set `api_allowed_prefixes` to the specific gateway URLs on every `snowflake_api_integration` resource:
+
+            ```hcl
+            resource "snowflake_api_integration" "api" {
+              name                 = "MY_API_INTEGRATION"
+              api_provider         = "aws_api_gateway"
+              api_aws_role_arn     = "arn:aws:iam::123456789012:role/my-snowflake-role"
+              api_allowed_prefixes = ["https://my-account.execute-api.us-east-1.amazonaws.com/prod/"]
+              enabled              = true
+            }
+            ```
+    refs:
+      - url: https://docs.snowflake.com/en/sql-reference/sql/create-api-integration
+        title: CREATE API INTEGRATION
+  - uid: mondoo-snowflake-security-storage-integrations-restrict-locations
+    title: Ensure storage integrations restrict allowed locations
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/pci-dss-4: pcidss-requirement-1-3-2
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    variants:
+      - uid: mondoo-snowflake-security-storage-integrations-restrict-locations-snowflake
+        tags:
+          mondoo.com/filter-title: Snowflake
+          mondoo.com/filter-icon: snowflake
+      - uid: mondoo-snowflake-security-storage-integrations-restrict-locations-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-storage-integrations-restrict-locations-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-storage-integrations-restrict-locations-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that every enabled storage integration restricts stages to specific cloud storage locations and does not use the `*` wildcard that permits all locations. A storage integration with an empty or wildcard allowed-locations list lets stages built on it read from and write to any bucket or container the integration's cloud credentials can reach.
+
+        **Why this matters**
+
+        - **Confines data movement:** A scoped allowed-locations list limits where external stages can load from and unload to, keeping data inside approved storage.
+        - **Prevents exfiltration paths:** Without a restriction, a stage on the integration can unload query results to an arbitrary bucket the credentials permit.
+        - **Blocks the wildcard trap:** A `*` entry looks configured but gates nothing, so an integration appears restricted while allowing every location.
+
+        **Risk mitigation**
+
+        - **List explicit locations:** Populate `storage_allowed_locations` with the exact bucket or container paths each workload uses.
+        - **Never use the wildcard:** Remove any `*` entry and replace it with the specific storage URLs your workloads require.
+        - **Review regularly:** Re-examine allowed locations as storage layouts change so the set stays minimal.
+      audit: |
+        ### Audit via Snowsight
+
+        1. Sign in to Snowsight as a user with the ACCOUNTADMIN role.
+        2. Open a SQL worksheet.
+        3. List the integrations and inspect each one:
+
+            ```sql
+            SHOW STORAGE INTEGRATIONS;
+            DESC INTEGRATION <integration_name>;
+            ```
+
+        A passing result shows a non-empty `STORAGE_ALLOWED_LOCATIONS` property with no `*` entry for every enabled integration; a failing result shows an enabled integration whose allowed locations are empty or include `*`.
+
+        ### Audit via SQL
+
+        Run the same commands with SnowSQL or the Snowflake CLI:
+
+        ```sql
+        SHOW STORAGE INTEGRATIONS;
+        DESC INTEGRATION <integration_name>;
+        ```
+
+        A passing result shows `STORAGE_ALLOWED_LOCATIONS` populated with specific paths for each enabled integration; a failing result shows an empty list or a `*` wildcard entry.
+      remediation:
+        - id: console
+          desc: |
+            **Using a Snowsight worksheet**
+
+            Storage integrations are managed through SQL. Run the following as `ACCOUNTADMIN` in a Snowsight worksheet.
+
+            1. Inspect the integration to see its current locations:
+
+                ```sql
+                DESC INTEGRATION <integration_name>;
+                ```
+
+            2. Restrict it to the specific storage paths your workloads use, replacing any `*` wildcard:
+
+                ```sql
+                ALTER STORAGE INTEGRATION <integration_name>
+                  SET STORAGE_ALLOWED_LOCATIONS = ('s3://my-bucket/path/');
+                ```
+        - id: sql
+          desc: |
+            Run as `ACCOUNTADMIN` in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
+
+            1. Find integrations that are enabled but unrestricted or wildcarded:
+
+                ```sql
+                SHOW STORAGE INTEGRATIONS;
+                DESC INTEGRATION <integration_name>;
+                ```
+
+            2. Set `STORAGE_ALLOWED_LOCATIONS` to the exact bucket or container paths each workload uses, and remove any `*` entry:
+
+                ```sql
+                ALTER STORAGE INTEGRATION <integration_name>
+                  SET STORAGE_ALLOWED_LOCATIONS = ('s3://my-bucket/path/');
+                ```
+
+            3. Re-run `DESC INTEGRATION <integration_name>` and confirm the locations are specific and contain no `*`.
+        - id: terraform
+          desc: |
+            With the `snowflakedb/snowflake` provider, set `storage_allowed_locations` to specific storage paths on every `snowflake_storage_integration` resource. Never use the `*` wildcard:
+
+            ```hcl
+            resource "snowflake_storage_integration" "storage" {
+              name                      = "MY_STORAGE_INTEGRATION"
+              storage_provider          = "S3"
+              storage_aws_role_arn      = "arn:aws:iam::123456789012:role/my-snowflake-role"
+              storage_allowed_locations = ["s3://my-bucket/path/"]
+              enabled                   = true
+            }
+            ```
+    refs:
+      - url: https://docs.snowflake.com/en/sql-reference/sql/create-storage-integration
+        title: CREATE STORAGE INTEGRATION
+  - uid: mondoo-snowflake-security-external-access-integrations-scoped-snowflake
+    filters: asset.platform == 'snowflake'
+    mql: |
+      snowflake.account.externalAccessIntegrations.where(enabled == true).all(allowedNetworkRules != empty)
+  - uid: mondoo-snowflake-security-external-access-integrations-scoped-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'snowflake_external_access_integration')
+    mql: |
+      terraform.resources('snowflake_external_access_integration').where(arguments['enabled'] != false).all(
+        arguments['allowed_network_rules'] != null && arguments['allowed_network_rules'] != []
+      )
+  - uid: mondoo-snowflake-security-external-access-integrations-scoped-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'snowflake_external_access_integration')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'snowflake_external_access_integration').where(change.after['enabled'] != false).all(
+        change.after['allowed_network_rules'] != null && change.after['allowed_network_rules'] != []
+      )
+  - uid: mondoo-snowflake-security-external-access-integrations-scoped-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'snowflake_external_access_integration')
+    mql: |
+      terraform.state.resources.where(type == 'snowflake_external_access_integration').where(values['enabled'] != false).all(
+        values['allowed_network_rules'] != null && values['allowed_network_rules'] != []
+      )
+  - uid: mondoo-snowflake-security-api-integrations-restrict-prefixes-snowflake
+    filters: asset.platform == 'snowflake'
+    mql: |
+      snowflake.account.apiIntegrations.where(enabled == true).all(apiAllowedPrefixes != empty)
+  - uid: mondoo-snowflake-security-api-integrations-restrict-prefixes-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'snowflake_api_integration')
+    mql: |
+      terraform.resources('snowflake_api_integration').where(arguments['enabled'] != false).all(
+        arguments['api_allowed_prefixes'] != null && arguments['api_allowed_prefixes'] != []
+      )
+  - uid: mondoo-snowflake-security-api-integrations-restrict-prefixes-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'snowflake_api_integration')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'snowflake_api_integration').where(change.after['enabled'] != false).all(
+        change.after['api_allowed_prefixes'] != null && change.after['api_allowed_prefixes'] != []
+      )
+  - uid: mondoo-snowflake-security-api-integrations-restrict-prefixes-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'snowflake_api_integration')
+    mql: |
+      terraform.state.resources.where(type == 'snowflake_api_integration').where(values['enabled'] != false).all(
+        values['api_allowed_prefixes'] != null && values['api_allowed_prefixes'] != []
+      )
+  - uid: mondoo-snowflake-security-storage-integrations-restrict-locations-snowflake
+    filters: asset.platform == 'snowflake'
+    mql: |
+      snowflake.account.storageIntegrations.where(enabled == true).all(storageAllowedLocations != empty && storageAllowedLocations.none(_ == "*"))
+  - uid: mondoo-snowflake-security-storage-integrations-restrict-locations-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'snowflake_storage_integration')
+    mql: |
+      terraform.resources('snowflake_storage_integration').where(arguments['enabled'] != false).all(
+        arguments['storage_allowed_locations'] != null && arguments['storage_allowed_locations'] != [] && arguments['storage_allowed_locations'].containsNone(["*"])
+      )
+  - uid: mondoo-snowflake-security-storage-integrations-restrict-locations-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'snowflake_storage_integration')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'snowflake_storage_integration').where(change.after['enabled'] != false).all(
+        change.after['storage_allowed_locations'] != null && change.after['storage_allowed_locations'] != [] && change.after['storage_allowed_locations'].containsNone(["*"])
+      )
+  - uid: mondoo-snowflake-security-storage-integrations-restrict-locations-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'snowflake_storage_integration')
+    mql: |
+      terraform.state.resources.where(type == 'snowflake_storage_integration').where(values['enabled'] != false).all(
+        values['storage_allowed_locations'] != null && values['storage_allowed_locations'] != [] && values['storage_allowed_locations'].containsNone(["*"])
+      )
+  - uid: mondoo-snowflake-security-session-policy-idle-timeout
+    title: Ensure a session policy bounds the idle timeout
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iii-access-control-automatic-logoff
+      compliance/iso-27001-2022: false
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-12
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-11
+      compliance/pci-dss-4: pcidss-requirement-8-2-8
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-snowflake-security-session-policy-idle-timeout-snowflake
+        tags:
+          mondoo.com/filter-title: Snowflake
+          mondoo.com/filter-icon: snowflake
+      - uid: mondoo-snowflake-security-session-policy-idle-timeout-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-session-policy-idle-timeout-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-session-policy-idle-timeout-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that at least one session policy exists and that every session policy terminates an idle session within 60 minutes of inactivity. Snowflake applies a default idle timeout of 240 minutes, which leaves an authenticated session usable for hours after a user walks away. The 60-minute ceiling here is an organizational baseline that can be tightened further.
+
+        **Why this matters**
+
+        - **Closes abandoned sessions:** An idle session on an unlocked, unattended workstation is a ready-made entry point for anyone with physical or remote access to that machine.
+        - **Shrinks token exposure:** The longer a session token stays valid, the longer a stolen or hijacked token remains useful to an attacker.
+        - **Enforces re-authentication:** A bounded idle timeout forces users back through authentication, giving controls such as MFA and network policies another chance to intervene.
+
+        **Risk mitigation**
+
+        - **Set an account-wide baseline:** Attach a session policy with a bounded `SESSION_IDLE_TIMEOUT_MINS` at the account level so every user inherits it.
+        - **Tighten for sensitive roles:** Apply a shorter timeout through a dedicated session policy for users who hold privileged roles or access regulated data.
+        - **Review periodically:** Confirm the session policy stays attached and that no override loosens the timeout beyond the baseline.
+      audit: |
+        ### Audit via Snowsight
+
+        1. Sign in to Snowsight as a user with the ACCOUNTADMIN or SECURITYADMIN role.
+        2. Open a worksheet and list the session policies in the account.
+        3. Inspect the idle timeout on each policy and confirm one is attached at the account level.
+
+        A passing result shows at least one session policy whose idle timeout is 60 minutes or less; a failing result shows no session policy, or a policy whose idle timeout exceeds 60 minutes.
+
+        ### Audit via SQL
+
+        Run the queries in a Snowsight worksheet or with SnowSQL:
+
+        ```sql
+        SHOW SESSION POLICIES;
+        DESC SESSION POLICY <policy_name>;
+        ```
+
+        A passing result shows at least one policy whose `SESSION_IDLE_TIMEOUT_MINS` is 60 or less; a failing result shows no session policies, or a `SESSION_IDLE_TIMEOUT_MINS` above 60.
+      remediation:
+        - id: console
+          desc: |
+            **Using Snowsight**
+
+            Snowsight has no dedicated editor for session policies, so create and attach the policy from a worksheet:
+
+            1. Sign in to Snowsight as a user with the ACCOUNTADMIN role.
+            2. Open a new worksheet.
+            3. Run the statements from the SQL remediation below to create a session policy with a bounded idle timeout and attach it to the account.
+        - id: sql
+          desc: |
+            Run as `ACCOUNTADMIN` in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
+
+            1. Create a session policy with a bounded idle timeout:
+
+                ```sql
+                CREATE SESSION POLICY IF NOT EXISTS security.policies.session_baseline
+                  SESSION_IDLE_TIMEOUT_MINS = 60;
+                ```
+
+            2. Attach the policy at the account level so every user inherits it:
+
+                ```sql
+                ALTER ACCOUNT SET SESSION POLICY security.policies.session_baseline;
+                ```
+
+            3. Verify the timeout:
+
+                ```sql
+                DESC SESSION POLICY security.policies.session_baseline;
+                ```
+        - id: terraform
+          desc: |
+            With the `snowflakedb/snowflake` provider, define a `snowflake_session_policy` with a bounded `session_idle_timeout_mins` and attach it to the account:
+
+            ```hcl
+            resource "snowflake_session_policy" "baseline" {
+              database                  = "SECURITY"
+              schema                    = "POLICIES"
+              name                      = "SESSION_BASELINE"
+              session_idle_timeout_mins = 60
+            }
+            ```
+    refs:
+      - url: https://docs.snowflake.com/en/user-guide/session-policies
+        title: Session policies
+  - uid: mondoo-snowflake-security-session-policy-ui-idle-timeout
+    title: Ensure a session policy bounds the Snowsight UI idle timeout
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iii-access-control-automatic-logoff
+      compliance/iso-27001-2022: false
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-12
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-11
+      compliance/pci-dss-4: pcidss-requirement-8-2-8
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-snowflake-security-session-policy-ui-idle-timeout-snowflake
+        tags:
+          mondoo.com/filter-title: Snowflake
+          mondoo.com/filter-icon: snowflake
+      - uid: mondoo-snowflake-security-session-policy-ui-idle-timeout-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-session-policy-ui-idle-timeout-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-session-policy-ui-idle-timeout-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that at least one session policy exists and that every session policy times out an inactive Snowsight web session within 30 minutes. Interactive browser sessions run on shared and mobile devices where an unattended screen is more likely, so their idle limit should sit tighter than the limit for programmatic sessions. Snowflake leaves the UI idle timeout unbounded by default until a session policy sets it.
+
+        **Why this matters**
+
+        - **Protects interactive sessions:** A logged-in Snowsight tab left open on an unattended laptop exposes worksheets, data previews, and administrative controls to anyone at the keyboard.
+        - **Matches the higher UI risk:** Browser sessions travel to laptops, kiosks, and mobile devices far more than programmatic connections, so they warrant a shorter idle window.
+        - **Layers with the session idle limit:** A separate, tighter UI limit lets you keep automated connections workable while still closing human sessions quickly.
+
+        **Risk mitigation**
+
+        - **Set a tighter UI ceiling:** Configure `SESSION_UI_IDLE_TIMEOUT_MINS` to 30 minutes or less in the account session policy.
+        - **Reduce for privileged consoles:** Apply an even shorter UI timeout to policies covering administrators who use Snowsight for account management.
+        - **Keep the policy attached:** Confirm the account-level session policy remains in place so the UI timeout applies to every interactive user.
+      audit: |
+        ### Audit via Snowsight
+
+        1. Sign in to Snowsight as a user with the ACCOUNTADMIN or SECURITYADMIN role.
+        2. Open a worksheet and list the session policies in the account.
+        3. Inspect the UI idle timeout on each policy and confirm one is attached at the account level.
+
+        A passing result shows at least one session policy whose UI idle timeout is 30 minutes or less; a failing result shows no session policy, or a policy whose UI idle timeout exceeds 30 minutes.
+
+        ### Audit via SQL
+
+        Run the queries in a Snowsight worksheet or with SnowSQL:
+
+        ```sql
+        SHOW SESSION POLICIES;
+        DESC SESSION POLICY <policy_name>;
+        ```
+
+        A passing result shows at least one policy whose `SESSION_UI_IDLE_TIMEOUT_MINS` is 30 or less; a failing result shows no session policies, or a `SESSION_UI_IDLE_TIMEOUT_MINS` above 30.
+      remediation:
+        - id: console
+          desc: |
+            **Using Snowsight**
+
+            Snowsight has no dedicated editor for session policies, so create and attach the policy from a worksheet:
+
+            1. Sign in to Snowsight as a user with the ACCOUNTADMIN role.
+            2. Open a new worksheet.
+            3. Run the statements from the SQL remediation below to create a session policy with a bounded UI idle timeout and attach it to the account.
+        - id: sql
+          desc: |
+            Run as `ACCOUNTADMIN` in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
+
+            1. Create or update a session policy with a bounded UI idle timeout:
+
+                ```sql
+                CREATE SESSION POLICY IF NOT EXISTS security.policies.session_baseline
+                  SESSION_UI_IDLE_TIMEOUT_MINS = 30;
+                ```
+
+            2. Attach the policy at the account level so every interactive user inherits it:
+
+                ```sql
+                ALTER ACCOUNT SET SESSION POLICY security.policies.session_baseline;
+                ```
+
+            3. Verify the timeout:
+
+                ```sql
+                DESC SESSION POLICY security.policies.session_baseline;
+                ```
+        - id: terraform
+          desc: |
+            With the `snowflakedb/snowflake` provider, define a `snowflake_session_policy` with a bounded `session_ui_idle_timeout_mins` and attach it to the account:
+
+            ```hcl
+            resource "snowflake_session_policy" "baseline" {
+              database                     = "SECURITY"
+              schema                       = "POLICIES"
+              name                         = "SESSION_BASELINE"
+              session_ui_idle_timeout_mins = 30
+            }
+            ```
+    refs:
+      - url: https://docs.snowflake.com/en/user-guide/session-policies
+        title: Session policies
+  - uid: mondoo-snowflake-security-network-policies-define-allow-entries
+    title: Ensure every network policy defines at least one allowed entry
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    variants:
+      - uid: mondoo-snowflake-security-network-policies-define-allow-entries-snowflake
+        tags:
+          mondoo.com/filter-title: Snowflake
+          mondoo.com/filter-icon: snowflake
+      - uid: mondoo-snowflake-security-network-policies-define-allow-entries-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-network-policies-define-allow-entries-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-network-policies-define-allow-entries-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that every Snowflake network policy specifies at least one allowed entry, meaning a non-empty allowed IP list or at least one allowed network rule. A network policy that lists no allowed IPs and no allowed network rules gates nothing and provides a false sense of network restriction. Snowflake does not require either list to be populated when a policy is created.
+
+        **Why this matters**
+
+        - **Prevents empty gates:** A network policy with no allow entries applies no restriction, so the account remains reachable from anywhere the policy was meant to block.
+        - **Avoids misleading audits:** A named, attached policy can make a review appear compliant even though it enforces nothing.
+        - **Anchors allow-list intent:** Requiring a concrete allow entry forces administrators to state which networks are actually permitted rather than leaving the decision implicit.
+
+        **Risk mitigation**
+
+        - **Populate the allow list:** Add the specific trusted CIDR ranges or network rules the policy is meant to permit.
+        - **Attach only meaningful policies:** Do not activate a network policy until it defines the networks it allows.
+        - **Review for empties:** Periodically check that every defined policy still carries at least one allow entry.
+      audit: |
+        ### Audit via Snowsight
+
+        1. Sign in to Snowsight as a user with the ACCOUNTADMIN or SECURITYADMIN role.
+        2. Go to **Admin** > **Security** > **Network Policies**.
+        3. Open each policy and review its **Allowed IPs** and allowed network rules.
+
+        A passing result shows every policy listing at least one allowed IP or allowed network rule; a failing result shows a policy with both lists empty.
+
+        ### Audit via SQL
+
+        Run the query in a Snowsight worksheet or with SnowSQL:
+
+        ```sql
+        SHOW NETWORK POLICIES;
+        ```
+
+        For each policy, run `DESC NETWORK POLICY <policy_name>`: a passing result shows a non-empty `ALLOWED_IP_LIST` or a non-empty `ALLOWED_NETWORK_RULE_LIST`, while a failing result shows both allowed lists empty.
+      remediation:
+        - id: console
+          desc: |
+            **Using Snowsight**
+
+            1. In Snowsight, go to **Admin** → **Security** → **Network Policies**.
+            2. Open the policy whose allowed IPs and allowed network rules are both empty.
+            3. Add the specific CIDR ranges your organization actually uses, such as office, VPN, and data center egress, or attach the allowed network rules that describe them.
+            4. Save the policy.
+
+            > **Warning:** Adding allow entries restricts access immediately. Confirm your own current public IP is one of the allowed ranges before you save, or you will lock yourself out of the account.
+        - id: sql
+          desc: |
+            Run as `ACCOUNTADMIN` (or `SECURITYADMIN`) in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
+
+            1. Find the empty policy and read its current lists:
+
+                ```sql
+                SHOW NETWORK POLICIES;
+                DESC NETWORK POLICY <policy_name>;
+                ```
+
+            2. Set an allowed IP list of the specific CIDR ranges your organization uses. The `203.0.113.0/24` and `198.51.100.0/24` values below are reserved documentation ranges from RFC 5737, so replace them with your real egress ranges. Make sure the new list includes your own current public IP or you will be locked out:
+
+                ```sql
+                ALTER NETWORK POLICY <policy_name>
+                  SET ALLOWED_IP_LIST = ('203.0.113.0/24', '198.51.100.0/24');
+                ```
+
+            3. Verify the change:
+
+                ```sql
+                DESC NETWORK POLICY <policy_name>;
+                ```
+        - id: terraform
+          desc: |
+            With the `snowflakedb/snowflake` provider, give every `snowflake_network_policy` a non-empty `allowed_ip_list` or `allowed_network_rule_list` of specific trusted entries:
+
+            ```hcl
+            resource "snowflake_network_policy" "corp" {
+              name            = "CORP_NETWORK_POLICY"
+              allowed_ip_list = ["203.0.113.0/24", "198.51.100.0/24"]
+            }
+            ```
+    refs:
+      - url: https://docs.snowflake.com/en/user-guide/network-policies
+        title: Network policies
+  - uid: mondoo-snowflake-security-saml2-integrations-sign-requests
+    title: Ensure SAML2 integrations sign authentication requests
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-2-i-transmission-security-integrity-controls
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-aa-04
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-23
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-15
+      compliance/pci-dss-4: pcidss-requirement-8-3-2
+      compliance/soc2-2017: soc2-control-cc6-6-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    variants:
+      - uid: mondoo-snowflake-security-saml2-integrations-sign-requests-snowflake
+        tags:
+          mondoo.com/filter-title: Snowflake
+          mondoo.com/filter-icon: snowflake
+      - uid: mondoo-snowflake-security-saml2-integrations-sign-requests-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-saml2-integrations-sign-requests-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-saml2-integrations-sign-requests-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that every enabled SAML2 single sign-on integration signs the SAML authentication requests it sends to the identity provider. Signing the `AuthnRequest` cryptographically binds it to Snowflake, so the identity provider can reject requests that were forged, altered, or replayed by a third party. Snowflake leaves request signing off by default when a SAML2 integration is created.
+
+        **Why this matters**
+
+        - **Protects the SSO handshake:** A signed authentication request lets the identity provider verify the request genuinely originated from Snowflake before it prompts a user to authenticate.
+        - **Blocks tampering and replay:** Without a signature, an attacker who can intercept or craft an `AuthnRequest` can alter its parameters or replay it against the identity provider.
+        - **Hardens federated login:** Request signing closes a gap in the federation trust that MFA and password controls on the identity provider cannot cover on their own.
+
+        **Risk mitigation**
+
+        - **Enable request signing:** Set `SAML2_SIGN_REQUEST` to true on every enabled SAML2 integration.
+        - **Register the certificate:** Provide Snowflake's signing certificate to the identity provider so it can validate the signature.
+        - **Review new integrations:** Confirm request signing is enabled whenever a SAML2 integration is added or reconfigured.
+      audit: |
+        ### Audit via Snowsight
+
+        1. Sign in to Snowsight as a user with the ACCOUNTADMIN role.
+        2. Open a worksheet and list the security integrations in the account.
+        3. For each enabled SAML2 integration, inspect its request-signing property.
+
+        A passing result shows every enabled SAML2 integration with request signing turned on; a failing result shows an enabled SAML2 integration with request signing off.
+
+        ### Audit via SQL
+
+        Run the queries in a Snowsight worksheet or with SnowSQL:
+
+        ```sql
+        SHOW SECURITY INTEGRATIONS;
+        DESC SECURITY INTEGRATION <integration_name>;
+        ```
+
+        A passing result shows `SAML2_SIGN_REQUEST` set to `true` for every enabled SAML2 integration; a failing result shows an enabled SAML2 integration whose `SAML2_SIGN_REQUEST` is `false`.
+      remediation:
+        - id: console
+          desc: |
+            **Using Snowsight**
+
+            Snowsight has no dedicated editor for security integrations, so update the integration from a worksheet:
+
+            1. Sign in to Snowsight as a user with the ACCOUNTADMIN role.
+            2. Open a new worksheet.
+            3. Run the statements from the SQL remediation below to enable request signing on each SAML2 integration, then register the signing certificate with your identity provider.
+        - id: sql
+          desc: |
+            Run as `ACCOUNTADMIN` in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
+
+            1. Enable request signing on the integration:
+
+                ```sql
+                ALTER SECURITY INTEGRATION <integration_name>
+                  SET SAML2_SIGN_REQUEST = TRUE;
+                ```
+
+            2. Retrieve Snowflake's signing certificate and register it with the identity provider so it can validate signed requests:
+
+                ```sql
+                DESC SECURITY INTEGRATION <integration_name>;
+                ```
+
+            3. Confirm the change:
+
+                ```sql
+                DESC SECURITY INTEGRATION <integration_name>;
+                ```
+        - id: terraform
+          desc: |
+            With the `snowflakedb/snowflake` provider, set `saml2_sign_request` to true on every `snowflake_saml2_integration`:
+
+            ```hcl
+            resource "snowflake_saml2_integration" "sso" {
+              name               = "SSO"
+              saml2_provider     = "CUSTOM"
+              saml2_issuer       = "https://idp.example.com/issuer"
+              saml2_sso_url      = "https://idp.example.com/sso"
+              saml2_x509_cert    = var.idp_certificate
+              saml2_sign_request = true
+              enabled            = true
+            }
+            ```
+    refs:
+      - url: https://docs.snowflake.com/en/sql-reference/sql/create-security-integration-saml2
+        title: CREATE SECURITY INTEGRATION (SAML2)
+  # No Terraform variants: task ownership is grant/role state set via GRANT OWNERSHIP, not a snowflake_task argument, so there is no faithful Terraform analog.
+  - uid: mondoo-snowflake-security-tasks-not-owned-by-privileged-role
+    title: Ensure scheduled tasks are not owned by ACCOUNTADMIN or SECURITYADMIN
+    impact: 70
+    filters: asset.platform == 'snowflake'
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/pci-dss-4: pcidss-requirement-7-2-2
+      compliance/soc2-2017: soc2-control-cc6-3-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    mql: |
+      snowflake.account.tasks.all(owner == null || owner.name != "ACCOUNTADMIN" && owner.name != "SECURITYADMIN")
+    docs:
+      desc: |
+        This check ensures that no scheduled task is owned by the ACCOUNTADMIN or SECURITYADMIN role. A task runs on its schedule with the privileges of its owning role, so a task owned by a top-level administrative role executes recurring code with account-wide power. Snowflake assigns ownership to the role that creates the task, which is easily an administrative role during setup.
+
+        **Why this matters**
+
+        - **Removes a persistence vector:** A task owned by ACCOUNTADMIN runs attacker-supplied SQL on a schedule with full account privileges, giving a foothold that survives after the initial access is closed.
+        - **Prevents privilege escalation:** Anyone able to alter a privileged task's definition inherits the owning role's rights every time the task fires.
+        - **Enforces least privilege for automation:** Scheduled jobs should run with only the privileges their work requires, not the highest role in the account.
+
+        **Risk mitigation**
+
+        - **Own tasks with scoped roles:** Transfer task ownership to a purpose-built role that holds only the privileges the task needs.
+        - **Keep admin roles interactive:** Reserve ACCOUNTADMIN and SECURITYADMIN for human, interactive administration rather than unattended scheduled execution.
+        - **Review task ownership:** Periodically confirm no task has been created or transferred under a privileged administrative role.
+      audit: |
+        ### Audit via Snowsight
+
+        1. Sign in to Snowsight as a user with the ACCOUNTADMIN role.
+        2. Open a worksheet and list the tasks in the account along with their owning role.
+        3. Review the owner of each task.
+
+        A passing result shows no task owned by `ACCOUNTADMIN` or `SECURITYADMIN`; a failing result shows at least one task owned by either role.
+
+        ### Audit via SQL
+
+        Run the query in a Snowsight worksheet or with SnowSQL:
+
+        ```sql
+        SHOW TASKS IN ACCOUNT;
+        ```
+
+        Review the `owner` column of each row: a passing result shows no task whose owner is `ACCOUNTADMIN` or `SECURITYADMIN`; a failing result shows at least one such task.
+      remediation:
+        - id: console
+          desc: |
+            **Using Snowsight**
+
+            Task ownership is changed with a grant statement, so update it from a worksheet:
+
+            1. Sign in to Snowsight as a user with the ACCOUNTADMIN role.
+            2. Open a new worksheet.
+            3. Run the statements from the SQL remediation below to transfer each privileged task to a scoped, least-privilege role.
+        - id: sql
+          desc: |
+            Run as `ACCOUNTADMIN` in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
+
+            1. Identify tasks owned by a privileged role:
+
+                ```sql
+                SHOW TASKS IN ACCOUNT;
+                ```
+
+            2. Create or choose a scoped role with only the privileges the task needs, grant it the privileges required to run the task, then transfer ownership to it:
+
+                ```sql
+                GRANT OWNERSHIP ON TASK <database>.<schema>.<task_name>
+                  TO ROLE <scoped_role> COPY CURRENT GRANTS;
+                ```
+
+            3. Confirm the new owner:
+
+                ```sql
+                SHOW TASKS IN ACCOUNT;
+                ```
+        # No Terraform remediation: task ownership is set with GRANT OWNERSHIP against role/grant state, not through an argument on the snowflake_task resource, so there is no faithful Terraform analog.
+    refs:
+      - url: https://docs.snowflake.com/en/user-guide/tasks-intro
+        title: Introduction to tasks
+  - uid: mondoo-snowflake-security-session-policy-idle-timeout-snowflake
+    filters: asset.platform == 'snowflake'
+    mql: |
+      snowflake.account.sessionPolicies != empty
+      snowflake.account.sessionPolicies.all(sessionIdleTimeoutMins <= 60)
+  - uid: mondoo-snowflake-security-session-policy-idle-timeout-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'snowflake_session_policy')
+    mql: |
+      terraform.resources('snowflake_session_policy').all(
+        arguments['session_idle_timeout_mins'] != null && arguments['session_idle_timeout_mins'] <= 60
+      )
+  - uid: mondoo-snowflake-security-session-policy-idle-timeout-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'snowflake_session_policy')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'snowflake_session_policy').all(
+        change.after['session_idle_timeout_mins'] != null && change.after['session_idle_timeout_mins'] <= 60
+      )
+  - uid: mondoo-snowflake-security-session-policy-idle-timeout-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'snowflake_session_policy')
+    mql: |
+      terraform.state.resources.where(type == 'snowflake_session_policy').all(
+        values['session_idle_timeout_mins'] != null && values['session_idle_timeout_mins'] <= 60
+      )
+  - uid: mondoo-snowflake-security-session-policy-ui-idle-timeout-snowflake
+    filters: asset.platform == 'snowflake'
+    mql: |
+      snowflake.account.sessionPolicies != empty
+      snowflake.account.sessionPolicies.all(sessionUiIdleTimeoutMins <= 30)
+  - uid: mondoo-snowflake-security-session-policy-ui-idle-timeout-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'snowflake_session_policy')
+    mql: |
+      terraform.resources('snowflake_session_policy').all(
+        arguments['session_ui_idle_timeout_mins'] != null && arguments['session_ui_idle_timeout_mins'] <= 30
+      )
+  - uid: mondoo-snowflake-security-session-policy-ui-idle-timeout-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'snowflake_session_policy')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'snowflake_session_policy').all(
+        change.after['session_ui_idle_timeout_mins'] != null && change.after['session_ui_idle_timeout_mins'] <= 30
+      )
+  - uid: mondoo-snowflake-security-session-policy-ui-idle-timeout-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'snowflake_session_policy')
+    mql: |
+      terraform.state.resources.where(type == 'snowflake_session_policy').all(
+        values['session_ui_idle_timeout_mins'] != null && values['session_ui_idle_timeout_mins'] <= 30
+      )
+  - uid: mondoo-snowflake-security-network-policies-define-allow-entries-snowflake
+    filters: asset.platform == 'snowflake'
+    mql: |
+      snowflake.account.networkPolicies.all(entriesInAllowedIpList > 0 || entriesInAllowedNetworkRules > 0)
+  - uid: mondoo-snowflake-security-network-policies-define-allow-entries-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'snowflake_network_policy')
+    mql: |
+      terraform.resources('snowflake_network_policy').all(
+        arguments['allowed_ip_list'] != null && arguments['allowed_ip_list'] != [] || arguments['allowed_network_rule_list'] != null && arguments['allowed_network_rule_list'] != []
+      )
+  - uid: mondoo-snowflake-security-network-policies-define-allow-entries-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'snowflake_network_policy')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'snowflake_network_policy').all(
+        change.after['allowed_ip_list'] != null && change.after['allowed_ip_list'] != [] || change.after['allowed_network_rule_list'] != null && change.after['allowed_network_rule_list'] != []
+      )
+  - uid: mondoo-snowflake-security-network-policies-define-allow-entries-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'snowflake_network_policy')
+    mql: |
+      terraform.state.resources.where(type == 'snowflake_network_policy').all(
+        values['allowed_ip_list'] != null && values['allowed_ip_list'] != [] || values['allowed_network_rule_list'] != null && values['allowed_network_rule_list'] != []
+      )
+  - uid: mondoo-snowflake-security-saml2-integrations-sign-requests-snowflake
+    filters: asset.platform == 'snowflake'
+    mql: |
+      snowflake.account.securityIntegrations.where(type == "SAML2" && enabled == true).all(saml2SignRequest == true)
+  - uid: mondoo-snowflake-security-saml2-integrations-sign-requests-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'snowflake_saml2_integration')
+    mql: |
+      terraform.resources('snowflake_saml2_integration').where(arguments['enabled'] != false).all(
+        arguments['saml2_sign_request'] == true
+      )
+  - uid: mondoo-snowflake-security-saml2-integrations-sign-requests-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'snowflake_saml2_integration')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'snowflake_saml2_integration').where(change.after['enabled'] != false).all(
+        change.after['saml2_sign_request'] == true
+      )
+  - uid: mondoo-snowflake-security-saml2-integrations-sign-requests-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'snowflake_saml2_integration')
+    mql: |
+      terraform.state.resources.where(type == 'snowflake_saml2_integration').where(values['enabled'] != false).all(
+        values['saml2_sign_request'] == true
       )
