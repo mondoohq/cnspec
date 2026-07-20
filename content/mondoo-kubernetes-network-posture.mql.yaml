@@ -1,0 +1,344 @@
+# Copyright Mondoo, Inc. 2026
+# SPDX-License-Identifier: BUSL-1.1
+
+policies:
+  - uid: mondoo-kubernetes-network-posture
+    name: Mondoo Kubernetes Network Posture
+    version: 0.1.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: kubernetes
+    require:
+      - provider: k8s
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Validate Kubernetes network exposure, Gateway API routing, egress, NAT, and policy coverage
+    docs:
+      desc: |
+        The Mondoo Kubernetes Network Posture policy validates normalized network posture evidence from Kubernetes resources, Gateway API routes, HBN network intent, MultiNetworkPolicy, AdminNetworkPolicy, BaselineAdminNetworkPolicy, and compatible CNI integrations. It focuses on visibility and guardrails for internet exposure, public egress, egress NAT, and primary- plus secondary-interface policy coverage.
+
+        This policy does not run in the Kubernetes admission path and does not mutate network configuration. It evaluates collected API and integration state so accepted exposures and migration gaps can be handled with normal Mondoo policy exceptions.
+
+        When testing this policy directly, use cluster discovery so cluster-scoped network evidence is collected, for example: `cnspec scan k8s --discover clusters --policy-bundle content/mondoo-kubernetes-network-posture.mql.yaml`.
+    groups:
+      - title: Network Exposure
+        filters: asset.platform == "k8s-cluster"
+        checks:
+          - uid: mondoo-kubernetes-network-posture-internet-exposure-evidence
+          - uid: mondoo-kubernetes-network-posture-public-egress-classified
+          - uid: mondoo-kubernetes-network-posture-public-egress-nat-owned
+          - uid: mondoo-kubernetes-network-posture-secondary-interface-covered
+          - uid: mondoo-kubernetes-network-posture-primary-egress-isolated
+          - uid: mondoo-kubernetes-network-posture-admin-policy-deny-semantics
+    scoring_system: highest impact
+
+queries:
+  - uid: mondoo-kubernetes-network-posture-internet-exposure-evidence
+    title: Internet exposure should have high-confidence classification evidence
+    impact: 70
+    mql: |
+      k8s.networkExposures.where(internetExposed == true).all(sourceRef != "" && exposureReason != "" && metadataClassification != "" && owner != "" && confidence != "low" && networkClassifications.length > 0)
+    docs:
+      desc: |
+        This check ensures that every internet-exposed Kubernetes service, ingress, gateway, or network intent object has normalized classification evidence. The evidence includes the source object, exposure reason, public/private classification, and static-analysis confidence.
+
+        **Why this matters**
+
+        - **Exposure inventory:** Internet-facing paths must be visible before teams can approve, harden, or remove them.
+        - **Stable exceptions:** A source reference and exposure reason let teams attach Mondoo policy exceptions to the network object instead of a transient scan detail.
+        - **Operational clarity:** Low-confidence exposure records need review because static API state alone may not prove dataplane reachability.
+      audit: |
+        ### Audit via kubectl
+
+        1. List public-facing Kubernetes Services, Ingresses, and Gateways:
+
+           ```bash
+           kubectl get services,ingresses,gateway -A -o wide
+           ```
+
+        2. Inspect any object with an external IP, public hostname, load balancer address, or Gateway status address:
+
+           ```bash
+           kubectl describe service -n <namespace> <name>
+           kubectl describe ingress -n <namespace> <name>
+           kubectl describe gateway -n <namespace> <name>
+           ```
+
+        A passing object has a clear owning resource, intended public exposure, classification metadata, and an address status that matches the declared exposure path. A failing object is internet-facing without one of those evidence fields.
+      remediation:
+        - id: kubectl
+          desc: |
+            To review and reduce internet exposure using kubectl:
+
+            1. Inspect the exposed object and confirm that the external address is intended.
+            2. Remove unintended public addresses, restrict `loadBalancerSourceRanges`, or move exposure behind the approved ingress or gateway path.
+            3. Add the team's approved classification or owner metadata when public exposure is intentional.
+
+            ```bash
+            kubectl annotate service -n <namespace> <name> mondoo.com/owner=<team>
+            kubectl label service -n <namespace> <name> network.mondoo.com/classification=internet
+            ```
+        - id: manifest
+          desc: |
+            To document an approved public Service in Kubernetes YAML:
+
+            ```yaml
+            apiVersion: v1
+            kind: Service
+            metadata:
+              name: app
+              namespace: prod
+              labels:
+                network.mondoo.com/classification: internet
+              annotations:
+                mondoo.com/owner: platform
+            spec:
+              type: LoadBalancer
+              loadBalancerSourceRanges:
+                - 203.0.113.0/24
+            ```
+        - id: helm
+          desc: |
+            To manage approved exposure through Helm, template owner, classification, and source-range values into the Service, Ingress, or Gateway chart so every release preserves the metadata and restrictions.
+  - uid: mondoo-kubernetes-network-posture-public-egress-classified
+    title: Public egress routes should be classified
+    impact: 70
+    mql: |
+      k8s.egressRoutes.where(publicCidrs.length > 0).all(sourceRef != "" && metadataClassification != "" && owner != "" && confidence != "low")
+    docs:
+      desc: |
+        This check ensures that egress routes containing public CIDRs carry a stable source reference, route classification, and non-low-confidence observation. HBN and compatible network integrations can report route intent and compiled route state so public destinations are visible alongside Kubernetes policy coverage.
+
+        **Why this matters**
+
+        - **Egress governance:** Public destinations should be intentionally classified so teams can distinguish approved internet access from accidental leakage.
+        - **Routing review:** Low-confidence route evidence can hide gaps between declared intent and compiled dataplane state.
+        - **Exception stability:** Stable source references and classified route summaries provide durable identifiers for accepted public egress exceptions.
+      audit: |
+        ### Audit via kubectl
+
+        1. Review HBN or network-operator route intent resources in the cluster:
+
+           ```bash
+           kubectl api-resources --api-group=network.t-caas.telekom.com
+           kubectl api-resources --api-group=network-connector.sylvaproject.org
+           kubectl get <resource> -A
+           ```
+
+        2. Inspect any route, destination, or outbound object that contains a public CIDR.
+
+        A passing route has non-empty classification and owner metadata on the resource that declares the public destination. A failing route exposes public CIDRs without metadata-backed classification or with ambiguous route ownership.
+      remediation:
+        - id: kubectl
+          desc: |
+            To classify public egress intent using kubectl:
+
+            1. Identify the route or outbound intent object that owns the public destination.
+            2. Add the approved classification and owner metadata used by your network inventory collector.
+            3. Reconcile the network operator and confirm the route appears with non-empty metadata-backed classification and owner fields.
+
+            ```bash
+            kubectl annotate <kind> -n <namespace> <name> mondoo.com/owner=<team>
+            kubectl label <kind> -n <namespace> <name> network.mondoo.com/classification=approved-egress
+            ```
+        - id: manifest
+          desc: |
+            To keep egress classification in Git, add the approved owner and classification labels to the HBN or network-operator manifest that declares the public route.
+        - id: helm
+          desc: |
+            To manage public egress through Helm, expose owner and classification values in the chart and render them into the network intent resource metadata.
+  - uid: mondoo-kubernetes-network-posture-public-egress-nat-owned
+    title: Public egress NAT should have owner and classification metadata
+    impact: 70
+    mql: |
+      k8s.egressNats.where(publicCidrs.length > 0).all(sourceRef != "" && metadataClassification != "" && owner != "")
+    docs:
+      desc: |
+        This check ensures that egress NAT entries covering public CIDRs include a stable source reference plus classification and owner metadata. NAT changes the externally observed source of workload traffic, so public NAT paths need explicit ownership and review.
+
+        **Why this matters**
+
+        - **Accountability:** Owner metadata identifies the team responsible for the public egress path.
+        - **Incident response:** NAT ownership helps responders map external traffic back to the responsible network intent or workload domain.
+        - **Change control:** Public NAT without stable source evidence and classification can bypass intended egress review workflows.
+      audit: |
+        ### Audit via kubectl
+
+        1. Review HBN or network-operator NAT intent and node status resources:
+
+           ```bash
+           kubectl api-resources --api-group=network.t-caas.telekom.com
+           kubectl api-resources --api-group=network-connector.sylvaproject.org
+           kubectl get <resource> -A
+           ```
+
+        2. Inspect NAT entries that advertise, translate, or source traffic for public CIDRs.
+
+        A passing NAT entry has owner and classification metadata on the resource that declares or reconciles the public NAT path. A failing NAT entry has public CIDRs without one or both fields.
+      remediation:
+        - id: kubectl
+          desc: |
+            To annotate the owner and classification for public NAT using kubectl:
+
+            ```bash
+            kubectl annotate <kind> -n <namespace> <name> mondoo.com/owner=<team>
+            kubectl label <kind> -n <namespace> <name> network.mondoo.com/classification=approved-nat
+            ```
+        - id: manifest
+          desc: |
+            To keep NAT ownership in source control, add owner annotations and classification labels to the HBN or network-operator resource that declares the NAT path.
+        - id: helm
+          desc: |
+            To manage NAT intent through Helm, render owner and classification values into the NAT or outbound route resources created by the chart.
+  - uid: mondoo-kubernetes-network-posture-secondary-interface-covered
+    title: Secondary pod interfaces should have ingress and egress policy coverage
+    impact: 80
+    mql: |
+      k8s.networkPolicyCoverages.where(interfaces.contains("secondary") && workloadRef != "").all(secondaryInterfaceIngressCovered == true && secondaryInterfaceEgressCovered == true)
+    docs:
+      desc: |
+        This check ensures that workloads with secondary pod interfaces have both ingress and egress policy coverage. Native Kubernetes NetworkPolicy usually applies to the primary pod network, while MultiNetworkPolicy is used for secondary interfaces.
+
+        Mondoo creates secondary-interface coverage records from pod network annotations and network status evidence. The check evaluates the pod-level records after matching MultiNetworkPolicy coverage has been aggregated across ingress and egress policies.
+
+        **Why this matters**
+
+        - **Lateral movement control:** Secondary interfaces can bypass primary-network policy assumptions if they are not covered separately.
+        - **Consistent segmentation:** MultiNetworkPolicy coverage keeps traffic controls aligned across all pod interfaces.
+        - **CNI visibility:** Calico and Cilium policy references help teams understand primary-network dataplane decisions alongside secondary-interface MultiNetworkPolicy coverage.
+      audit: |
+        ### Audit via kubectl
+
+        1. List NetworkAttachmentDefinitions and MultiNetworkPolicies:
+
+           ```bash
+           kubectl get network-attachment-definitions -A
+           kubectl get multinetworkpolicies -A
+           ```
+
+        2. Inspect pods with secondary network annotations:
+
+           ```bash
+           kubectl get pods -A -o jsonpath='{range .items[?(@.metadata.annotations.k8s\.v1\.cni\.cncf\.io/networks)]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}'
+           ```
+
+        A passing workload has both secondary-interface ingress and egress coverage from MultiNetworkPolicy. A failing workload has a secondary interface without coverage in one or both directions.
+      remediation:
+        - id: kubectl
+          desc: |
+            To apply MultiNetworkPolicy coverage with kubectl:
+
+            1. Identify the NetworkAttachmentDefinition used by the workload.
+            2. Create or update a MultiNetworkPolicy that selects the workload and covers ingress and egress on that secondary network.
+            3. Confirm the MultiNetworkPolicy controller has reconciled successfully.
+
+            ```bash
+            kubectl apply -f multinetworkpolicy.yaml
+            kubectl describe multinetworkpolicy -n <namespace> <name>
+            ```
+        - id: manifest
+          desc: |
+            To declare secondary-interface policy coverage in YAML, create a MultiNetworkPolicy that selects the workload and references the secondary network attachment used by the pod.
+        - id: helm
+          desc: |
+            To manage secondary-interface policy through Helm, template MultiNetworkPolicy resources from the same values that enable secondary network attachments.
+  - uid: mondoo-kubernetes-network-posture-primary-egress-isolated
+    title: Primary pod network policies should default deny egress
+    impact: 60
+    mql: |
+      k8s.networkPolicyCoverages.where(interfaces.contains("primary")).length > 0 &&
+        k8s.networkPolicyCoverages.where(interfaces.contains("primary")).all(defaultDenyEgress == true)
+    docs:
+      desc: |
+        This check ensures that primary pod network policy coverage applies default-deny egress semantics. In Kubernetes, ingress-only NetworkPolicies do not restrict outbound traffic, and an empty egress rule such as `egress: [{}]` allows all outbound destinations.
+
+        **Why this matters**
+
+        - **Data egress control:** Egress isolation limits where compromised workloads can connect.
+        - **Policy completeness:** A namespace with ingress-only policies may still allow unrestricted outbound traffic.
+        - **Migration visibility:** Coverage gaps identify policies that need explicit egress handling before stricter network enforcement is enabled.
+      audit: |
+        ### Audit via kubectl
+
+        1. List NetworkPolicies in each namespace:
+
+           ```bash
+           kubectl get networkpolicies -A
+           ```
+
+        2. Inspect policies that select workloads and confirm `policyTypes` includes `Egress` with the intended rules:
+
+           ```bash
+           kubectl get networkpolicy -n <namespace> <name> -o yaml
+           ```
+
+        A passing namespace or workload has a NetworkPolicy with `policyTypes` including `Egress` and either no egress rules or explicit allowed destinations. A failing namespace or workload has primary-interface pods without egress default-deny semantics.
+      remediation:
+        - id: kubectl
+          desc: |
+            To add egress default-deny behavior with kubectl, apply a NetworkPolicy that selects the workload and includes `policyTypes: ["Egress"]` with no egress rules or with explicit allowed destinations.
+
+            ```bash
+            kubectl apply -f networkpolicy-egress.yaml
+            ```
+        - id: manifest
+          desc: |
+            To declare egress default-deny behavior in YAML:
+
+            ```yaml
+            apiVersion: networking.k8s.io/v1
+            kind: NetworkPolicy
+            metadata:
+              name: default-deny-egress
+              namespace: prod
+            spec:
+              podSelector: {}
+              policyTypes:
+                - Egress
+            ```
+        - id: helm
+          desc: |
+            To manage egress default-deny behavior through Helm, add a chart value that renders an egress NetworkPolicy for each namespace or workload group that requires outbound restrictions.
+  - uid: mondoo-kubernetes-network-posture-admin-policy-deny-semantics
+    title: Admin network policies should declare catch-all deny guardrails
+    impact: 65
+    mql: |
+      k8s.networkPolicyCoverages.where(adminNetworkPolicies.length > 0).all(adminDefaultDenyIngress == true || adminDefaultDenyEgress == true)
+    docs:
+      desc: |
+        This check ensures that AdminNetworkPolicy or BaselineAdminNetworkPolicy coverage contributes an explicit catch-all deny guardrail for ingress or egress. The check uses typed admin default-deny evidence from the Kubernetes provider instead of parsing display-oriented coverage-gap text. Scoped denies, `Allow`, and `Pass` rules are important policy evidence, but they do not create namespace or workload default-deny posture on their own.
+
+        **Why this matters**
+
+        - **Cluster guardrails:** Admin network policies are often used to enforce baseline segmentation above namespace-owned NetworkPolicy.
+        - **Semantic accuracy:** Reporting any AdminNetworkPolicy as default-deny would hide gaps where the policy only denies a narrow source, destination, or port.
+        - **Exception clarity:** Catch-all deny evidence lets teams distinguish intentional baseline isolation from partial migration rules.
+      audit: |
+        ### Audit via kubectl
+
+        1. List cluster-scoped admin network policies:
+
+           ```bash
+           kubectl get adminnetworkpolicies,baselineadminnetworkpolicies
+           ```
+
+        2. Inspect the `subject`, `ingress`, and `egress` sections for deny rules that cover the full direction rather than a narrow peer or port:
+
+           ```bash
+           kubectl get adminnetworkpolicy <name> -o yaml
+           kubectl get baselineadminnetworkpolicy <name> -o yaml
+           ```
+
+        A passing coverage record has at least one AdminNetworkPolicy or BaselineAdminNetworkPolicy that creates default-deny ingress or egress semantics for the selected workload or namespace. A failing record has admin policy references but no catch-all deny guardrail.
+      remediation:
+        - id: kubectl
+          desc: |
+            To add an admin-level guardrail, apply an AdminNetworkPolicy or BaselineAdminNetworkPolicy with a subject that selects the intended namespaces or pods and a deny rule that covers the complete ingress or egress direction.
+        - id: manifest
+          desc: |
+            To keep admin policy guardrails in Git, store the AdminNetworkPolicy or BaselineAdminNetworkPolicy manifest with explicit subject selectors, documented ownership metadata, and catch-all deny semantics for the protected direction.
+        - id: helm
+          desc: |
+            To manage admin policy guardrails through Helm, template the subject selector, owner metadata, and deny direction from chart values so the rendered policy cannot silently drift into a scoped-only deny.
