@@ -34,16 +34,23 @@ func TestConvert(t *testing.T) {
 	if got := xss.GetDetails().GetDescription(); got != "Reflected XSS in the q parameter." {
 		t.Errorf("description = %q (HTML not cleaned?)", got)
 	}
-	// Affected URL + request context.
+	// Affected URL.
 	if len(xss.GetAffects()) != 1 {
 		t.Fatalf("want 1 affected URL, got %d", len(xss.GetAffects()))
 	}
-	comp := xss.GetAffects()[0].GetComponent()
-	if comp.GetId() != "https://example.com/search?q=test" {
-		t.Errorf("affected uri = %q", comp.GetId())
+	if got := xss.GetAffects()[0].GetComponent().GetId(); got != "https://example.com/search?q=test" {
+		t.Errorf("affected uri = %q", got)
 	}
-	if comp.GetProperties()["param"] != "q" {
-		t.Errorf("param property = %q, want q", comp.GetProperties()["param"])
+	// Request context is first-class HttpRequest evidence.
+	if len(xss.GetEvidences()) != 1 {
+		t.Fatalf("want 1 evidence, got %d", len(xss.GetEvidences()))
+	}
+	hr := xss.GetEvidences()[0].GetHttpRequest()
+	if hr == nil {
+		t.Fatal("expected HttpRequest evidence")
+	}
+	if hr.GetParam() != "q" || hr.GetMethod() != "GET" {
+		t.Errorf("http evidence = method %q param %q, want GET/q", hr.GetMethod(), hr.GetParam())
 	}
 	// CWE reference + remediation.
 	if len(xss.GetDetails().GetReferences()) == 0 || xss.GetDetails().GetReferences()[0].GetName() != "CWE-79" {

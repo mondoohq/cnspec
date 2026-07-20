@@ -141,16 +141,39 @@ func convertAffects(result *gosarif.Result) []*fex.Affects {
 			continue
 		}
 		uri := loc.PhysicalLocation.ArtifactLocation.URI
-		if uri == nil || seen[*uri] {
+		if uri == nil {
 			continue
 		}
-		seen[*uri] = true
+		file := &fex.FileComponent{Path: *uri}
+		if r := loc.PhysicalLocation.Region; r != nil {
+			file.StartLine = derefInt(r.StartLine)
+			file.EndLine = derefInt(r.EndLine)
+			file.StartColumn = derefInt(r.StartColumn)
+			file.EndColumn = derefInt(r.EndColumn)
+		}
+		// Dedup on the code location so distinct lines in the same file are
+		// preserved rather than collapsed to the first one. Key on path + start
+		// line/column only (not the end range): those are the stable anchors, so
+		// the derived component Id stays consistent across re-scans while still
+		// distinguishing separate findings.
+		key := fmt.Sprintf("%s:%d:%d", file.Path, file.StartLine, file.StartColumn)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
 		out = append(out, &fex.Affects{Component: &fex.Component{
-			Id:      shortHash(*uri),
-			Details: &fex.Component_File{File: &fex.FileComponent{Path: *uri}},
+			Id:      shortHash(key),
+			Details: &fex.Component_File{File: file},
 		}})
 	}
 	return out
+}
+
+func derefInt(p *int) int32 {
+	if p == nil {
+		return 0
+	}
+	return int32(*p)
 }
 
 func convertRemediations(result *gosarif.Result) []*fex.Remediation {

@@ -31,7 +31,11 @@ func TestConvert(t *testing.T) {
 		t.Errorf("severity = %v, want HIGH (from sarif level=error)", got)
 	}
 	if len(f.GetAffects()) != 1 {
-		t.Errorf("want 1 affected component, got %d", len(f.GetAffects()))
+		t.Fatalf("want 1 affected component, got %d", len(f.GetAffects()))
+	}
+	// The SARIF region line is captured on the file component.
+	if got := f.GetAffects()[0].GetComponent().GetFile().GetStartLine(); got != 42 {
+		t.Errorf("start_line = %d, want 42 (from sarif region)", got)
 	}
 }
 
@@ -66,5 +70,27 @@ func TestConvertEmptyFields(t *testing.T) {
 			t.Errorf("duplicate id %q — empty-field results collapsed", id)
 		}
 		ids[id] = true
+	}
+}
+
+// A single result with multiple locations in the same file at different lines
+// must keep each distinct code location; only exact duplicates are deduped.
+func TestConvertSameFileDifferentLines(t *testing.T) {
+	docs := rc.AssertClean(t, sarif.Convert, "testdata/same_file_lines.sarif")
+	if len(docs) != 1 {
+		t.Fatalf("want 1 document, got %d", len(docs))
+	}
+
+	affects := docs[0].GetFex().GetAffects()
+	if len(affects) != 2 {
+		t.Fatalf("want 2 affected locations (line 42 and 100, exact dup dropped), got %d", len(affects))
+	}
+
+	lines := map[int32]bool{}
+	for _, a := range affects {
+		lines[a.GetComponent().GetFile().GetStartLine()] = true
+	}
+	if !lines[42] || !lines[100] {
+		t.Errorf("want lines 42 and 100 preserved, got %v", lines)
 	}
 }
