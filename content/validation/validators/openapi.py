@@ -144,6 +144,51 @@ def _index_spec_paths(spec: dict) -> dict[str, set[str]]:
     return out
 
 
+# A leading `/vN` API version segment. Vercel versions every endpoint in the
+# URL (`/v9/projects/{id}`, `/v3/user/tokens/{id}`) and keeps several
+# versions live simultaneously, but its OpenAPI spec documents only one
+# version per operation — often a different one than the policy's remediation
+# uses (the token endpoints are `/v6` and `/v3` in the spec, `/v5` in the
+# docs). Matching the version literally would reject valid calls, so for
+# providers that set `strip_api_version` we normalize the version away on
+# both sides. See _merge_version_stripped_paths.
+_API_VERSION_RE = re.compile(r"^/v\d+(?=/)")
+
+
+def _strip_api_version(path: str) -> str:
+    return _API_VERSION_RE.sub("", path)
+
+
+def _merge_version_stripped_paths(spec: dict) -> None:
+    """Add version-stripped aliases of every `/vN/...` path into the spec's
+    `paths`, in place, so a curl call whose version differs from the spec's
+    still resolves — and its request-body schema (looked up by path
+    template) is still found.
+
+    When two versions of the same base path each document a different
+    method (`GET /v6/user/tokens`, `POST /v3/user/tokens`), their methods
+    coexist on the merged `/user/tokens`. When both document the same
+    method, the higher version wins, so we merge in ascending version
+    order.
+    """
+    paths = spec.setdefault("paths", {})
+
+    def version(p: str) -> int:
+        m = re.match(r"^/v(\d+)/", p)
+        return int(m.group(1)) if m else -1
+
+    versioned = sorted(
+        (p for p in list(paths) if _API_VERSION_RE.match(p)), key=version
+    )
+    for p in versioned:
+        stripped = _strip_api_version(p)
+        if stripped == p:
+            continue
+        dst = paths.setdefault(stripped, {})
+        for method, op in paths[p].items():
+            dst[method] = op  # ascending order => higher version wins
+
+
 # ---------------------------------------------------------------------------
 # Path matching
 # ---------------------------------------------------------------------------
@@ -649,6 +694,27 @@ API_PROVIDERS = {
             "pin": GRAFANA_OPENAPI_SHA,
         }],
     },
+    "vercel": {
+        # The Vercel policy documents its non-CLI fixes as `curl` calls
+        # against the REST API under `- id: api`, and its audit steps use
+        # the same API, so both are validated (remediation_ids + the
+        # default include_audit). Vercel serves its spec from a live,
+        # unversioned endpoint (https://openapi.vercel.sh), so it is
+        # checked in via dump_api_specs.py.
+        #
+        # strip_api_version: Vercel versions every path in the URL and
+        # keeps multiple versions live, but the spec documents one version
+        # per operation; normalizing the `/vN` prefix on both sides is what
+        # makes the policy's `/v5/user/tokens` match the spec's `/v6`.
+        "policies": ["mondoo-vercel-security.mql.yaml"],
+        "host": "https://api.vercel.com",
+        "specs": [{"name": "vercel", "file": "vercel_openapi.json"}],
+        "remediation_ids": ("cli", "api"),
+        "strip_api_version": True,
+        # The list-stores endpoint is live but undocumented in the spec,
+        # which carries only `/storage/stores/{id}`.
+        "path_exemptions": {"/storage/stores"},
+    },
 }
 
 
@@ -669,6 +735,16 @@ def validate_api_curl(
     order; the best (most literal) template match across all specs wins.
     """
     errors: list[str] = []
+
+    if provider.get("strip_api_version"):
+        path = _strip_api_version(path)
+
+    # Endpoints the vendor's API serves but omits from its published spec
+    # (e.g. Vercel's `GET /storage/stores` list — the spec documents only
+    # `/storage/stores/{id}`). Compared version-stripped, matching how they
+    # are written in the registry.
+    if path in provider.get("path_exemptions", set()):
+        return True, errors
 
     matched: str | None = None
     matched_spec: dict | None = None
@@ -766,8 +842,14 @@ def validate_api_provider(key: str) -> tuple[int, int]:
 
         content = policy_file.read_text()
         # For API-first products the audit path is also a curl call, so
-        # audit blocks are validated alongside cli remediation blocks.
-        blocks = extract_bash_blocks(content, include_audit=True)
+        # audit blocks are validated alongside remediation blocks. A
+        # provider may document its fix under `- id: api` instead of the
+        # default `- id: cli` (see remediation_ids).
+        blocks = extract_bash_blocks(
+            content,
+            include_audit=True,
+            remediation_ids=provider.get("remediation_ids", ("cli",)),
+        )
 
         # Skip loading specs entirely if the policy has no curl calls
         # against this provider's API.
@@ -778,6 +860,8 @@ def validate_api_provider(key: str) -> tuple[int, int]:
             loaded_specs = []
             for source in provider["specs"]:
                 spec = _load_spec(source)
+                if provider.get("strip_api_version"):
+                    _merge_version_stripped_paths(spec)
                 loaded_specs.append((spec, _spec_mount(spec), _index_spec_paths(spec)))
 
         relpath = policy_relpath(policy_file)

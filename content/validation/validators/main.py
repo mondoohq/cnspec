@@ -13,6 +13,7 @@ from .gcloud import validate_gcloud
 from .nutanix import validate_nutanix
 from .oci import validate_oci
 from .openapi import API_PROVIDERS, validate_api_provider
+from .vercel import validate_vercel
 
 # CLI validators, dispatched by name. The Cobra CLI and REST API
 # validators come from their registries and are appended below.
@@ -23,6 +24,7 @@ CLI_VALIDATORS = {
     "gcp": validate_gcloud,
     "digitalocean": validate_digitalocean,
     "nutanix": validate_nutanix,
+    "vercel": validate_vercel,
 }
 
 VALIDATORS = list(CLI_VALIDATORS) + list(COBRA_CLIS) + list(API_PROVIDERS)

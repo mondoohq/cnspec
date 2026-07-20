@@ -43,6 +43,15 @@ SPECS = [
         "format": "json",
         "output": "atlassian_user_management_openapi.json",
     },
+    {
+        # Vercel serves its spec from a live, unversioned endpoint. It is
+        # large (~9.5 MiB pretty-printed), so it is stored minified (~2.9
+        # MiB, comparable to azure_commands.json).
+        "source": "https://openapi.vercel.sh/",
+        "format": "json",
+        "output": "vercel_openapi.json",
+        "minify": True,
+    },
 ]
 
 
@@ -74,7 +83,10 @@ def main():
             spec = json.loads(raw)
         spec["_meta"] = {"source": entry["source"]}
         out = CMD_DATA_DIR / entry["output"]
-        out.write_text(json.dumps(spec, indent=1, sort_keys=True) + "\n")
+        if entry.get("minify"):
+            out.write_text(json.dumps(spec, separators=(",", ":"), sort_keys=True) + "\n")
+        else:
+            out.write_text(json.dumps(spec, indent=1, sort_keys=True) + "\n")
         print(f"  wrote {out} ({out.stat().st_size // 1024} KiB)", file=sys.stderr)
 
 
