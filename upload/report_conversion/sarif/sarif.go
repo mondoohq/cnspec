@@ -151,9 +151,12 @@ func convertAffects(result *gosarif.Result) []*fex.Affects {
 			file.StartColumn = derefInt(r.StartColumn)
 			file.EndColumn = derefInt(r.EndColumn)
 		}
-		// Dedup on the full code location (path + region) so distinct lines in
-		// the same file are preserved rather than collapsed to the first one.
-		key := fmt.Sprintf("%s:%d:%d:%d:%d", file.Path, file.StartLine, file.EndLine, file.StartColumn, file.EndColumn)
+		// Dedup on the code location so distinct lines in the same file are
+		// preserved rather than collapsed to the first one. Key on path + start
+		// line/column only (not the end range): those are the stable anchors, so
+		// the derived component Id stays consistent across re-scans while still
+		// distinguishing separate findings.
+		key := fmt.Sprintf("%s:%d:%d", file.Path, file.StartLine, file.StartColumn)
 		if seen[key] {
 			continue
 		}
