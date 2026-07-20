@@ -15,7 +15,7 @@ func newReqWithStats(t *testing.T) *ReportUploadCompletedReq {
 	t.Helper()
 	stats := &ScanStatistics{Metrics: []*Metric{
 		{Name: "cnspec.scan.duration", Unit: "ms", Value: &Metric_IntValue{IntValue: 4200}},
-		{Name: "cnspec.scan.queries_executed", Unit: "count", Value: &Metric_IntValue{IntValue: 128}},
+		{Name: "cnspec.scan.checks", Unit: "count", Value: &Metric_IntValue{IntValue: 128}},
 	}}
 	details, err := anypb.New(stats)
 	require.NoError(t, err)
@@ -35,7 +35,7 @@ func requireStatsRoundTrip(t *testing.T, got *ReportUploadCompletedReq) {
 	require.Len(t, stats.Metrics, 2)
 	require.Equal(t, "cnspec.scan.duration", stats.Metrics[0].Name)
 	require.Equal(t, int64(4200), stats.Metrics[0].GetIntValue())
-	require.Equal(t, "cnspec.scan.queries_executed", stats.Metrics[1].Name)
+	require.Equal(t, "cnspec.scan.checks", stats.Metrics[1].Name)
 	require.Equal(t, "count", stats.Metrics[1].Unit)
 	require.Equal(t, int64(128), stats.Metrics[1].GetIntValue())
 }

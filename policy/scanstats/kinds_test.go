@@ -49,3 +49,29 @@ func TestCountByKind_NilSafe(t *testing.T) {
 	require.Equal(t, KindCounts{}, CountByKind(nil, nil, nil))
 	require.Equal(t, KindCounts{}, CountByKind(&policy.ResolvedPolicy{}, nil, nil))
 }
+
+// TestCountByKind_CheckAndDataQuery verifies a CHECK_AND_DATA_QUERY job counts
+// as a check (both for the executed count and for errored classification), and
+// that an error score mapped to a non-check kind (e.g. a policy) is NOT counted
+// as an errored check.
+func TestCountByKind_CheckAndDataQuery(t *testing.T) {
+	rp := &policy.ResolvedPolicy{
+		CollectorJob: &policy.CollectorJob{
+			ReportingJobs: map[string]*policy.ReportingJob{
+				"u1": {QrId: "//q/cadq", Type: policy.ReportingJob_CHECK_AND_DATA_QUERY},
+				"u2": {QrId: "//p/pol1", Type: policy.ReportingJob_POLICY},
+			},
+		},
+	}
+	scores := []*policy.Score{
+		{QrId: "//q/cadq", Type: policy.ScoreType_Error}, // errored check-and-data-query -> errored check
+		{QrId: "//p/pol1", Type: policy.ScoreType_Error}, // errored policy -> NOT an errored check
+	}
+
+	c := CountByKind(rp, scores, nil)
+	require.Equal(t, int64(1), c.Checks)      // CHECK_AND_DATA_QUERY counts as a check
+	require.Equal(t, int64(0), c.DataQueries) // and not separately as a data query
+	require.Equal(t, int64(1), c.Policies)
+	require.Equal(t, int64(1), c.ChecksErrored) // only the cadq error, not the policy error
+	require.Equal(t, int64(0), c.DataQueriesErrored)
+}
