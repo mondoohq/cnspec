@@ -12,6 +12,7 @@
 #   python3 validate_remediation_commands.py oci           # validate OCI commands only
 #   python3 validate_remediation_commands.py gcp           # validate gcloud commands only
 #   python3 validate_remediation_commands.py digitalocean  # validate doctl commands only
+#   python3 validate_remediation_commands.py alicloud      # validate aliyun commands only
 #   python3 validate_remediation_commands.py cloudflare    # validate Cloudflare API curl commands only
 #   python3 validate_remediation_commands.py mongodbatlas  # validate MongoDB Atlas API curl commands only
 #   python3 validate_remediation_commands.py nutanix       # validate Nutanix ncli commands only
