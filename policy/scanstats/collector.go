@@ -19,6 +19,14 @@ const (
 	MetricQueriesExecuted = "cnspec.scan.queries_executed" // unit: count
 	MetricQueriesErrored  = "cnspec.scan.queries_errored"  // unit: count
 	MetricUploadSize      = "cnspec.scan.upload_size"      // unit: bytes
+
+	MetricChecks             = "cnspec.scan.checks"               // unit: count
+	MetricDataQueries        = "cnspec.scan.data_queries"         // unit: count
+	MetricPolicies           = "cnspec.scan.policies"             // unit: count
+	MetricControls           = "cnspec.scan.controls"             // unit: count
+	MetricFrameworks         = "cnspec.scan.frameworks"           // unit: count
+	MetricChecksErrored      = "cnspec.scan.checks_errored"       // unit: count
+	MetricDataQueriesErrored = "cnspec.scan.data_queries_errored" // unit: count
 )
 
 // Collector accumulates scan metrics. It is safe for concurrent use.
