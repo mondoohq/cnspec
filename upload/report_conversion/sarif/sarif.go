@@ -266,11 +266,16 @@ func convertSeverity(level *string) *fex.Severity {
 	var rating fex.SeverityRating
 	switch strings.ToLower(*level) {
 	case "error":
+		// SARIF "error" is the tool's highest level, but a SAST/lint error is not
+		// the same as a CVSS-critical vulnerability, so map it to HIGH rather than
+		// CRITICAL (reserve CRITICAL for scanners that carry a real CVSS score).
 		rating = fex.SeverityRating_SEVERITY_RATING_HIGH
 	case "warning":
 		rating = fex.SeverityRating_SEVERITY_RATING_MEDIUM
 	case "note":
 		rating = fex.SeverityRating_SEVERITY_RATING_LOW
+	case "none":
+		rating = fex.SeverityRating_SEVERITY_RATING_NONE
 	default:
 		return nil
 	}

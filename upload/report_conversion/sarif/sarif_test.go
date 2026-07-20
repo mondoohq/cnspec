@@ -157,3 +157,27 @@ func TestConvertRuleEnrichmentAndSuppression(t *testing.T) {
 		t.Errorf("suppressed status = %v, want NOT_AFFECTED", got)
 	}
 }
+
+func TestConvertNoneLevelKeepsSeverity(t *testing.T) {
+	report := []byte(`{
+	  "version": "2.1.0",
+	  "runs": [{
+	    "tool": {"driver": {"name": "toolx"}},
+	    "results": [
+	      {"ruleId": "r1", "level": "none", "message": {"text": "informational"},
+	       "locations": [{"physicalLocation": {"artifactLocation": {"uri": "a.go"}}}]}
+	    ]
+	  }]
+	}`)
+	docs, err := sarif.Convert(report)
+	if err != nil {
+		t.Fatalf("convert: %v", err)
+	}
+	if len(docs) != 1 {
+		t.Fatalf("want 1 document, got %d", len(docs))
+	}
+	sev := docs[0].GetFex().GetDetails().GetSeverity()
+	if sev == nil || sev.GetRating() != fex.SeverityRating_SEVERITY_RATING_NONE {
+		t.Errorf("level none → %v, want SEVERITY_RATING_NONE (not dropped)", sev.GetRating())
+	}
+}
