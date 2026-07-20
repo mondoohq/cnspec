@@ -11,6 +11,7 @@ import (
 	"go.mondoo.com/cnspec/v13/cli/progress"
 	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/cnspec/v13/policy/executor/internal"
+	"go.mondoo.com/cnspec/v13/policy/scanstats"
 	"go.mondoo.com/mql/v13"
 	"go.mondoo.com/mql/v13/llx"
 	"go.mondoo.com/mql/v13/mqlc"
@@ -70,6 +71,14 @@ func ExecuteResolvedPolicy(ctx context.Context, runtime llx.Runtime, collectorSv
 	builder := builderFromResolvedPolicy(resolvedPolicy)
 	builder.AddDatapointCollector(collector)
 	builder.AddScoreCollector(collector)
+
+	var counter *countingCollector
+	if stats := scanstats.CollectorFromContext(ctx); stats != nil {
+		counter = newCountingCollector(resolvedPolicy)
+		builder.AddScoreCollector(counter)
+		builder.AddDatapointCollector(counter)
+	}
+
 	if progressReporter != nil {
 		builder.WithProgressReporter(progressReporter)
 	}
@@ -85,7 +94,11 @@ func ExecuteResolvedPolicy(ctx context.Context, runtime llx.Runtime, collectorSv
 
 	ge.Debug(ctx, "resolved-policy")
 
-	return ge.Execute()
+	err = ge.Execute()
+	if counter != nil {
+		counter.recordTo(scanstats.CollectorFromContext(ctx))
+	}
+	return err
 }
 
 func ExecuteFilterQueries(ctx context.Context, runtime llx.Runtime, queries []*policy.Mquery, timeout time.Duration) ([]*policy.Mquery, []error) {

@@ -65,3 +65,18 @@ func (pk *PolicyKinds) IsCheckQrId(qrid string) bool {
 	_, ok := pk.checkQrIds[qrid]
 	return ok
 }
+
+// RecordKindCounts records the per-kind counts as the well-known scan metrics
+// on the collector. No-op if c is nil.
+func RecordKindCounts(c *Collector, k KindCounts) {
+	if c == nil {
+		return
+	}
+	c.AddInt(MetricChecks, "count", k.Checks)
+	c.AddInt(MetricDataQueries, "count", k.DataQueries)
+	c.AddInt(MetricPolicies, "count", k.Policies)
+	c.AddInt(MetricControls, "count", k.Controls)
+	c.AddInt(MetricFrameworks, "count", k.Frameworks)
+	c.AddInt(MetricChecksErrored, "count", k.ChecksErrored)
+	c.AddInt(MetricDataQueriesErrored, "count", k.DataQueriesErrored)
+}
