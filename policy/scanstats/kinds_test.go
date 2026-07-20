@@ -8,16 +8,15 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnspec/v13/policy"
-	"go.mondoo.com/mql/v13/llx"
 )
 
-func TestCountByKind(t *testing.T) {
+func TestNewPolicyKinds_Counts(t *testing.T) {
 	rp := &policy.ResolvedPolicy{
 		CollectorJob: &policy.CollectorJob{
 			ReportingJobs: map[string]*policy.ReportingJob{
 				"u0": {QrId: "root", Type: policy.ReportingJob_POLICY}, // ignored
 				"u1": {QrId: "//q/check1", Type: policy.ReportingJob_CHECK},
-				"u2": {QrId: "//q/check2", Type: policy.ReportingJob_CHECK},
+				"u2": {QrId: "//q/cadq1", Type: policy.ReportingJob_CHECK_AND_DATA_QUERY},
 				"u3": {QrId: "//q/data1", Type: policy.ReportingJob_DATA_QUERY},
 				"u4": {QrId: "//p/pol1", Type: policy.ReportingJob_POLICY},
 				"u5": {QrId: "//c/ctrl1", Type: policy.ReportingJob_CONTROL},
@@ -26,52 +25,51 @@ func TestCountByKind(t *testing.T) {
 			},
 		},
 	}
-	scores := []*policy.Score{
-		{QrId: "//q/check1", Type: policy.ScoreType_Error},  // errored check
-		{QrId: "//q/check2", Type: policy.ScoreType_Result}, // passing check
-	}
-	data := []*llx.Result{
-		{CodeId: "d1"},
-		{CodeId: "d2", Error: "boom"}, // errored data query
-	}
 
-	c := CountByKind(rp, scores, data)
-	require.Equal(t, int64(2), c.Checks)
-	require.Equal(t, int64(1), c.DataQueries)
-	require.Equal(t, int64(1), c.Policies)
-	require.Equal(t, int64(1), c.Controls)
-	require.Equal(t, int64(1), c.Frameworks)
-	require.Equal(t, int64(1), c.ChecksErrored)
-	require.Equal(t, int64(1), c.DataQueriesErrored)
+	pk := NewPolicyKinds(rp)
+	require.Equal(t, int64(2), pk.Counts.Checks) // CHECK + CHECK_AND_DATA_QUERY
+	require.Equal(t, int64(1), pk.Counts.DataQueries)
+	require.Equal(t, int64(1), pk.Counts.Policies)
+	require.Equal(t, int64(1), pk.Counts.Controls)
+	require.Equal(t, int64(1), pk.Counts.Frameworks)
+	// errored fields are filled by the caller, not NewPolicyKinds
+	require.Equal(t, int64(0), pk.Counts.ChecksErrored)
+	require.Equal(t, int64(0), pk.Counts.DataQueriesErrored)
 }
 
-func TestCountByKind_NilSafe(t *testing.T) {
-	require.Equal(t, KindCounts{}, CountByKind(nil, nil, nil))
-	require.Equal(t, KindCounts{}, CountByKind(&policy.ResolvedPolicy{}, nil, nil))
-}
-
-// TestCountByKind_CheckAndDataQuery verifies a CHECK_AND_DATA_QUERY job counts
-// as a check (both for the executed count and for errored classification), and
-// that an error score mapped to a non-check kind (e.g. a policy) is NOT counted
-// as an errored check.
-func TestCountByKind_CheckAndDataQuery(t *testing.T) {
+func TestNewPolicyKinds_IsCheckQrId(t *testing.T) {
 	rp := &policy.ResolvedPolicy{
 		CollectorJob: &policy.CollectorJob{
 			ReportingJobs: map[string]*policy.ReportingJob{
-				"u1": {QrId: "//q/cadq", Type: policy.ReportingJob_CHECK_AND_DATA_QUERY},
-				"u2": {QrId: "//p/pol1", Type: policy.ReportingJob_POLICY},
+				"u1": {QrId: "//q/check1", Type: policy.ReportingJob_CHECK},
+				"u2": {QrId: "//q/cadq1", Type: policy.ReportingJob_CHECK_AND_DATA_QUERY},
+				"u3": {QrId: "//q/data1", Type: policy.ReportingJob_DATA_QUERY},
+				"u4": {QrId: "//p/pol1", Type: policy.ReportingJob_POLICY},
 			},
 		},
 	}
-	scores := []*policy.Score{
-		{QrId: "//q/cadq", Type: policy.ScoreType_Error}, // errored check-and-data-query -> errored check
-		{QrId: "//p/pol1", Type: policy.ScoreType_Error}, // errored policy -> NOT an errored check
-	}
 
-	c := CountByKind(rp, scores, nil)
-	require.Equal(t, int64(1), c.Checks)      // CHECK_AND_DATA_QUERY counts as a check
-	require.Equal(t, int64(0), c.DataQueries) // and not separately as a data query
-	require.Equal(t, int64(1), c.Policies)
-	require.Equal(t, int64(1), c.ChecksErrored) // only the cadq error, not the policy error
-	require.Equal(t, int64(0), c.DataQueriesErrored)
+	pk := NewPolicyKinds(rp)
+
+	// CHECK and CHECK_AND_DATA_QUERY qr_ids are recognized as checks
+	require.True(t, pk.IsCheckQrId("//q/check1"))
+	require.True(t, pk.IsCheckQrId("//q/cadq1"))
+
+	// data query, policy, root, and unknown qr_ids are not checks
+	require.False(t, pk.IsCheckQrId("//q/data1"))
+	require.False(t, pk.IsCheckQrId("//p/pol1"))
+	require.False(t, pk.IsCheckQrId("root"))
+	require.False(t, pk.IsCheckQrId("//unknown/qr"))
+}
+
+func TestNewPolicyKinds_NilSafe(t *testing.T) {
+	pk := NewPolicyKinds(nil)
+	require.NotNil(t, pk)
+	require.Equal(t, KindCounts{}, pk.Counts)
+	require.False(t, pk.IsCheckQrId("anything"))
+
+	pk2 := NewPolicyKinds(&policy.ResolvedPolicy{})
+	require.NotNil(t, pk2)
+	require.Equal(t, KindCounts{}, pk2.Counts)
+	require.False(t, pk2.IsCheckQrId("anything"))
 }

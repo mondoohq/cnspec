@@ -179,23 +179,25 @@ func recordKindMetrics(ctx context.Context, db *inmemory.Db, store *scandb.Sqlit
 		return
 	}
 
-	var scores []*policy.Score
-	if err := store.StreamScores(ctx, func(s *policy.Score) error {
-		scores = append(scores, s)
-		return nil
-	}); err != nil {
-		log.Warn().Err(err).Msg("failed to read scores for scan statistics")
+	pk := scanstats.NewPolicyKinds(rp)
+	counts := pk.Counts
+
+	if qrids, err := store.ErroredScoreQrIds(ctx); err != nil {
+		log.Warn().Err(err).Msg("failed to read errored score qr_ids for scan statistics")
+	} else {
+		for _, qrid := range qrids {
+			if pk.IsCheckQrId(qrid) {
+				counts.ChecksErrored++
+			}
+		}
 	}
 
-	var data []*llx.Result
-	if err := store.StreamData(ctx, func(_ string, r *llx.Result) error {
-		data = append(data, r)
-		return nil
-	}); err != nil {
-		log.Warn().Err(err).Msg("failed to read data results for scan statistics")
+	if n, err := store.ErroredDataCount(ctx); err != nil {
+		log.Warn().Err(err).Msg("failed to count errored data for scan statistics")
+	} else {
+		counts.DataQueriesErrored = n
 	}
 
-	counts := scanstats.CountByKind(rp, scores, data)
 	stats.AddInt(scanstats.MetricChecks, "count", counts.Checks)
 	stats.AddInt(scanstats.MetricDataQueries, "count", counts.DataQueries)
 	stats.AddInt(scanstats.MetricPolicies, "count", counts.Policies)
