@@ -24,6 +24,11 @@ type GraphExecutor interface {
 // for callers of RescoreResolvedPolicy.
 type ScoreCollector = internal.ScoreCollector
 
+// DurationCollector receives the wall-clock execution time of each query
+// the graph executor runs. Re-exported so callers of ExecuteResolvedPolicy
+// can register a sink without importing the internal package.
+type DurationCollector = internal.DurationCollector
+
 // RescoreResolvedPolicy rolls up pre-computed leaf scores through the graph
 // executor without running any queries. Reporting jobs whose QrId is a key
 // in scores are built as static nodes holding the supplied score; aggregate
@@ -50,6 +55,7 @@ func RescoreResolvedPolicy(
 
 func ExecuteResolvedPolicy(ctx context.Context, runtime llx.Runtime, collectorSvc policy.PolicyResolver, assetMrn string,
 	resolvedPolicy *policy.ResolvedPolicy, features mql.Features, progressReporter progress.Progress,
+	durationCollectors ...DurationCollector,
 ) error {
 	var opts []internal.BufferedCollectorOpt
 
@@ -70,6 +76,11 @@ func ExecuteResolvedPolicy(ctx context.Context, runtime llx.Runtime, collectorSv
 	builder := builderFromResolvedPolicy(resolvedPolicy)
 	builder.AddDatapointCollector(collector)
 	builder.AddScoreCollector(collector)
+	for _, dc := range durationCollectors {
+		if dc != nil {
+			builder.AddDurationCollector(dc)
+		}
+	}
 	if progressReporter != nil {
 		builder.WithProgressReporter(progressReporter)
 	}

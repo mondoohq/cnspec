@@ -27,6 +27,11 @@ type Metadata struct {
 	Value string `json:"value"`
 }
 
+type QueryDuration struct {
+	CodeID     string `json:"code_id"`
+	DurationMs int64  `json:"duration_ms"`
+}
+
 type Resource struct {
 	Name string `json:"name"`
 	ID   string `json:"id"`

@@ -239,6 +239,32 @@ func TestSqliteScanDataStore(t *testing.T) {
 	})
 }
 
+func TestQueryDurations(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test_durations.db")
+	assetMrn := "//assets.api.mondoo.com/spaces/test-space/assets/durations"
+
+	store, err := NewSqliteScanDataStore(dbPath, assetMrn)
+	require.NoError(t, err)
+	defer store.Close()
+
+	ctx := context.Background()
+
+	require.NoError(t, store.WriteQueryDuration(ctx, "code-a", 17))
+	require.NoError(t, store.WriteQueryDuration(ctx, "code-b", 250))
+	// upsert: a second write replaces the row
+	require.NoError(t, store.WriteQueryDuration(ctx, "code-a", 42))
+	// empty code_id is a no-op
+	require.NoError(t, store.WriteQueryDuration(ctx, "", 99))
+
+	got := map[string]int64{}
+	require.NoError(t, store.StreamQueryDurations(ctx, func(codeID string, ms int64) error {
+		got[codeID] = ms
+		return nil
+	}))
+	assert.Equal(t, map[string]int64{"code-a": 42, "code-b": 250}, got)
+}
+
 func TestStreamingReads(t *testing.T) {
 	// Create a temporary file for testing
 	tempDir := t.TempDir()

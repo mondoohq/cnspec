@@ -1338,7 +1338,8 @@ func (s *localAssetScanner) runPolicy() (*policy.ResolvedPolicy, error) {
 	scandump.JSON(s.job.Ctx, "resolvedPolicy", resolvedPolicy)
 
 	features := mql.GetFeatures(s.job.Ctx)
-	err = executor.ExecuteResolvedPolicy(s.job.Ctx, s.Runtime, resolver, s.job.Asset.Mrn, resolvedPolicy, features, s.ProgressReporter)
+	durationCollector := newQueryDurationCollector(s.job.Ctx, s.services.DataLake, s.job.Asset.Mrn, resolvedPolicy)
+	err = executor.ExecuteResolvedPolicy(s.job.Ctx, s.Runtime, resolver, s.job.Asset.Mrn, resolvedPolicy, features, s.ProgressReporter, durationCollector)
 	if err != nil {
 		return nil, err
 	}
@@ -1460,4 +1461,104 @@ func createProgressBar(disableProgressBar bool) (progress.MultiProgress, error) 
 		return progress.NewTodoList(progress.WithScore())
 	}
 	return progress.NoopMultiProgress{}, nil
+}
+
+// queryDurationCollector forwards per-query execution times to the
+// DataLake. Most datalakes treat WriteQueryDuration as a no-op; the
+// SQLite scandb path persists the row so a captured scan db carries
+// per-query timings. When the resolved policy maps a code_id to one or
+// more query MRNs the collector writes one row per MRN (with the same
+// duration); when no MRN is known it writes a single row keyed by the
+// raw llx code_id.
+type queryDurationCollector struct {
+	ctx          context.Context
+	dataLake     policy.DataLake
+	assetMrn     string
+	codeIDToMrns map[string][]string
+}
+
+func newQueryDurationCollector(ctx context.Context, dataLake policy.DataLake, assetMrn string, resolvedPolicy *policy.ResolvedPolicy) *queryDurationCollector {
+	return &queryDurationCollector{
+		ctx:          ctx,
+		dataLake:     dataLake,
+		assetMrn:     assetMrn,
+		codeIDToMrns: buildCodeIDToMrns(resolvedPolicy),
+	}
+}
+
+func (c *queryDurationCollector) SinkDuration(codeID string, duration time.Duration) {
+	if c == nil || c.dataLake == nil || codeID == "" {
+		return
+	}
+	ms := duration.Milliseconds()
+	ids := c.codeIDToMrns[codeID]
+	if len(ids) == 0 {
+		ids = []string{codeID}
+	}
+	for _, id := range ids {
+		if err := c.dataLake.WriteQueryDuration(c.ctx, c.assetMrn, id, ms); err != nil {
+			log.Debug().Err(err).Str("codeID", codeID).Str("id", id).Msg("failed to record query duration")
+		}
+	}
+}
+
+// buildCodeIDToMrns walks the resolved policy's CollectorJob to map
+// each query checksum (code_id) to the MRNs the policy bundle attaches
+// to it. The traversal mirrors the collector graph: every
+// ReportingJob whose qr_id is an MRN reports up from one or more
+// EXECUTION_QUERY child jobs whose qr_id is the code_id. A single
+// code_id can appear under multiple MRN-bearing reporting jobs
+// (deduped MQL across policies), so each (code_id, mrn) pair is
+// recorded and de-duplicated.
+func buildCodeIDToMrns(resolvedPolicy *policy.ResolvedPolicy) map[string][]string {
+	out := map[string][]string{}
+	if resolvedPolicy == nil || resolvedPolicy.CollectorJob == nil {
+		return out
+	}
+	jobs := resolvedPolicy.CollectorJob.ReportingJobs
+	seen := map[string]map[string]struct{}{}
+	add := func(codeID, mrn string) {
+		if codeID == "" || mrn == "" {
+			return
+		}
+		bucket, ok := seen[codeID]
+		if !ok {
+			bucket = map[string]struct{}{}
+			seen[codeID] = bucket
+		}
+		if _, dup := bucket[mrn]; dup {
+			return
+		}
+		bucket[mrn] = struct{}{}
+		out[codeID] = append(out[codeID], mrn)
+	}
+	for _, rj := range jobs {
+		if rj == nil {
+			continue
+		}
+		// Source of truth for an MRN-bearing reporting job is its
+		// mrns list; fall back to qr_id when the list is missing but
+		// the qr_id itself is recognizably an MRN.
+		mrns := rj.Mrns
+		if len(mrns) == 0 && strings.HasPrefix(rj.QrId, "//") {
+			mrns = []string{rj.QrId}
+		}
+		if len(mrns) == 0 {
+			continue
+		}
+		for childUUID := range rj.ChildJobs {
+			child, ok := jobs[childUUID]
+			if !ok || child == nil {
+				continue
+			}
+			if child.Type != policy.ReportingJob_EXECUTION_QUERY {
+				continue
+			}
+			codeID := child.QrId
+			for _, mrn := range mrns {
+				add(codeID, mrn)
+			}
+		}
+	}
+	return out
 }
