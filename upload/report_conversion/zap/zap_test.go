@@ -94,3 +94,33 @@ func TestConvertNotZAP(t *testing.T) {
 		t.Fatal("expected error for non-ZAP XML")
 	}
 }
+
+func TestConvertMultiSiteDistinctIDs(t *testing.T) {
+	// The same plugin fires on two sites; the findings must get distinct ids
+	// (previously the bare plugin id collided across sites).
+	xml := []byte(`<OWASPZAPReport>
+	  <site name="https://a.example.com"><alerts><alertitem>
+	    <pluginid>40012</pluginid><name>XSS</name><riskcode>3</riskcode><desc>d</desc>
+	    <instances><instance><uri>https://a.example.com/x</uri><method>GET</method></instance></instances>
+	  </alertitem></alerts></site>
+	  <site name="https://b.example.com"><alerts><alertitem>
+	    <pluginid>40012</pluginid><name>XSS</name><riskcode>3</riskcode><desc>d</desc>
+	    <instances><instance><uri>https://b.example.com/x</uri><method>GET</method></instance></instances>
+	  </alertitem></alerts></site>
+	</OWASPZAPReport>`)
+	docs, err := zap.Convert(xml)
+	if err != nil {
+		t.Fatalf("convert: %v", err)
+	}
+	if len(docs) != 2 {
+		t.Fatalf("want 2 findings, got %d", len(docs))
+	}
+	id0, id1 := docs[0].GetFex().GetId(), docs[1].GetFex().GetId()
+	if id0 == id1 {
+		t.Errorf("ids collided across sites: %q", id0)
+	}
+	// Ref still carries the raw plugin id.
+	if docs[0].GetFex().GetRef() != "40012" {
+		t.Errorf("Ref = %q, want 40012", docs[0].GetFex().GetRef())
+	}
+}

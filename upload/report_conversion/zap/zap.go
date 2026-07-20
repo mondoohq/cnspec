@@ -67,17 +67,21 @@ func Convert(data []byte) ([]*fex.FindingDocument, error) {
 	for _, site := range report.Sites {
 		source := &fex.Source{Name: sourceName(site.Name)}
 		for _, a := range site.Alerts {
-			docs = append(docs, fex.FexToDocument(toFex(a, source)))
+			docs = append(docs, fex.FexToDocument(toFex(a, site.Name, source)))
 		}
 	}
 	return docs, nil
 }
 
-func toFex(a zapAlert, source *fex.Source) *fex.FindingExchange {
-	id := a.PluginID
-	if id == "" {
-		id = shortHash(a.Name)
+func toFex(a zapAlert, siteName string, source *fex.Source) *fex.FindingExchange {
+	// Fold the site into the id: the same plugin can fire on multiple sites in
+	// one report, and a bare plugin id would collide across them (only the
+	// source name would differ). Ref keeps the raw plugin id.
+	seed := a.PluginID
+	if seed == "" {
+		seed = a.Name
 	}
+	id := shortHash(siteName + "\x00" + seed)
 	summary := clean(a.Name)
 	if summary == "" {
 		summary = "ZAP alert"

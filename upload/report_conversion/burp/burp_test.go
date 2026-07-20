@@ -22,8 +22,14 @@ func TestConvert(t *testing.T) {
 	if xss == nil {
 		t.Fatal("expected FEX")
 	}
-	if xss.GetId() != "123456789" {
-		t.Errorf("id = %q, want serialNumber 123456789", xss.GetId())
+	// id is a deterministic hash of the issue identity, NOT Burp's volatile
+	// serialNumber (which is regenerated each scan and would cause duplicates).
+	if xss.GetId() == "" || xss.GetId() == "123456789" {
+		t.Errorf("id = %q, want a deterministic hash, not the serialNumber", xss.GetId())
+	}
+	// Ref keeps the Burp type/plugin id.
+	if xss.GetRef() != "2097936" {
+		t.Errorf("ref = %q, want burp type 2097936", xss.GetRef())
 	}
 	if xss.GetSource().GetName() != "burp" {
 		t.Errorf("source = %q", xss.GetSource().GetName())
@@ -41,8 +47,13 @@ func TestConvert(t *testing.T) {
 	if len(xss.GetAffects()) != 1 {
 		t.Fatalf("want 1 affected URL, got %d", len(xss.GetAffects()))
 	}
-	if got := xss.GetAffects()[0].GetComponent().GetId(); got != "https://example.com/search" {
+	comp := xss.GetAffects()[0].GetComponent()
+	if got := comp.GetId(); got != "https://example.com/search" {
 		t.Errorf("affected url = %q", got)
+	}
+	// Host IP is carried as a component identifier.
+	if got := comp.GetIdentifiers()["ip"]; got != "93.184.216.34" {
+		t.Errorf("component ip identifier = %q, want 93.184.216.34", got)
 	}
 	// Request context is first-class HttpRequest evidence.
 	if len(xss.GetEvidences()) != 1 {
@@ -55,9 +66,19 @@ func TestConvert(t *testing.T) {
 	if hr.GetParam() != "q parameter" {
 		t.Errorf("http evidence param = %q, want 'q parameter'", hr.GetParam())
 	}
-	// CWE reference + remediation.
+	// The captured request/response are base64-decoded from Burp's XML.
+	if got := hr.GetRequest(); got != "GET /search?q=test" {
+		t.Errorf("http evidence request = %q, want decoded 'GET /search?q=test'", got)
+	}
+	if got := hr.GetResponse(); got != "HTTP/1.1 200 OK" {
+		t.Errorf("http evidence response = %q, want decoded 'HTTP/1.1 200 OK'", got)
+	}
+	// CWE reference (with mitre URL) + remediation.
 	if len(xss.GetDetails().GetReferences()) != 1 || xss.GetDetails().GetReferences()[0].GetName() != "CWE-79" {
 		t.Errorf("expected CWE-79 reference, got %+v", xss.GetDetails().GetReferences())
+	}
+	if got := xss.GetDetails().GetReferences()[0].GetUrl(); got != "https://cwe.mitre.org/data/definitions/79.html" {
+		t.Errorf("CWE reference url = %q", got)
 	}
 	if len(xss.GetRemediations()) != 1 {
 		t.Errorf("expected a remediation, got %d", len(xss.GetRemediations()))
@@ -70,6 +91,25 @@ func TestConvert(t *testing.T) {
 	}
 	if hsts.GetDetails().GetConfidence() != fex.Confidence_CONFIDENCE_MEDIUM {
 		t.Errorf("confidence Firm → %v, want MEDIUM", hsts.GetDetails().GetConfidence())
+	}
+}
+
+func TestConvertDeterministicID(t *testing.T) {
+	// The same Burp export converted twice must produce the same finding ids,
+	// even though Burp regenerates serialNumbers per scan.
+	first := rc.AssertClean(t, burp.Convert, "testdata/basic.xml")
+	second := rc.AssertClean(t, burp.Convert, "testdata/basic.xml")
+	if len(first) != len(second) {
+		t.Fatalf("doc count differs: %d vs %d", len(first), len(second))
+	}
+	for i := range first {
+		a, b := first[i].GetFex().GetId(), second[i].GetFex().GetId()
+		if a == "" {
+			t.Fatalf("doc %d has empty id", i)
+		}
+		if a != b {
+			t.Errorf("doc %d id not deterministic: %q vs %q", i, a, b)
+		}
 	}
 }
 

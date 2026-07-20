@@ -9,6 +9,7 @@ package burp
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/xml"
 	"fmt"
 	"html"
@@ -27,23 +28,47 @@ type burpReport struct {
 }
 
 type burpIssue struct {
-	SerialNumber   string   `xml:"serialNumber"`
-	Type           string   `xml:"type"`
-	Name           string   `xml:"name"`
-	Host           burpHost `xml:"host"`
-	Path           string   `xml:"path"`
-	Location       string   `xml:"location"`
-	Severity       string   `xml:"severity"`
-	Confidence     string   `xml:"confidence"`
-	Background     string   `xml:"issueBackground"`
-	Detail         string   `xml:"issueDetail"`
-	Remediation    string   `xml:"remediationBackground"`
-	Classification string   `xml:"vulnerabilityClassifications"`
+	SerialNumber     string                `xml:"serialNumber"`
+	Type             string                `xml:"type"`
+	Name             string                `xml:"name"`
+	Host             burpHost              `xml:"host"`
+	Path             string                `xml:"path"`
+	Location         string                `xml:"location"`
+	Severity         string                `xml:"severity"`
+	Confidence       string                `xml:"confidence"`
+	Background       string                `xml:"issueBackground"`
+	Detail           string                `xml:"issueDetail"`
+	Remediation      string                `xml:"remediationBackground"`
+	Classification   string                `xml:"vulnerabilityClassifications"`
+	RequestResponses []burpRequestResponse `xml:"requestresponse"`
 }
 
 type burpHost struct {
 	IP    string `xml:"ip,attr"`
 	Value string `xml:",chardata"`
+}
+
+type burpRequestResponse struct {
+	Request  burpData `xml:"request"`
+	Response burpData `xml:"response"`
+}
+
+// burpData is a request or response payload. Burp base64-encodes these when
+// base64="true" (the common case); otherwise the raw bytes are inline.
+type burpData struct {
+	Base64 bool   `xml:"base64,attr"`
+	Value  string `xml:",chardata"`
+}
+
+// decode returns the payload, base64-decoding it when Burp marked it encoded.
+// If decoding fails, the raw value is returned unchanged.
+func (d burpData) decode() string {
+	if d.Base64 {
+		if decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(d.Value)); err == nil {
+			return string(decoded)
+		}
+	}
+	return d.Value
 }
 
 var (
@@ -71,10 +96,15 @@ func Convert(data []byte) ([]*fex.FindingDocument, error) {
 }
 
 func toFex(iss burpIssue, source *fex.Source) *fex.FindingExchange {
-	id := iss.SerialNumber
-	if id == "" {
-		id = firstNonEmpty(iss.Type, shortHash(iss.Name))
-	}
+	// Burp regenerates serialNumber on every scan, so it is not stable across
+	// re-uploads. Derive a deterministic id from the issue's identity (type +
+	// host + path + location) so the same finding keeps the same id.
+	id := shortHash(strings.Join([]string{
+		iss.Type,
+		clean(iss.Host.Value),
+		clean(iss.Path),
+		clean(iss.Location),
+	}, "\x00"))
 	summary := clean(iss.Name)
 	if summary == "" {
 		summary = "Burp issue"
@@ -104,22 +134,43 @@ func affects(iss burpIssue) []*fex.Affects {
 	if host == "" && path == "" {
 		return nil
 	}
-	return []*fex.Affects{{Component: &fex.Component{Id: host + path}}}
+	comp := &fex.Component{Id: host + path}
+	if ip := strings.TrimSpace(iss.Host.IP); ip != "" {
+		comp.Identifiers = map[string]string{"ip": ip}
+	}
+	return []*fex.Affects{{Component: comp}}
 }
 
-// httpEvidence carries the affected URL and the tested parameter (from Burp's
-// location, e.g. "/x [q parameter]") as first-class HttpRequest evidence.
+// httpEvidence carries the captured HTTP request/response pairs (Burp's headline
+// evidence) plus the affected URL and tested parameter (from Burp's location,
+// e.g. "/x [q parameter]") as first-class HttpRequest evidence. An issue may
+// carry multiple requestresponse elements; each becomes one evidence entry.
 func httpEvidence(iss burpIssue) []*fex.Evidence {
 	host := clean(iss.Host.Value)
 	path := clean(iss.Path)
-	if host == "" && path == "" {
-		return nil
-	}
-	hr := &fex.HttpRequest{Url: host + path}
+	url := host + path
+	var param string
 	if m := locParam.FindStringSubmatch(clean(iss.Location)); len(m) == 2 {
-		hr.Param = strings.TrimSpace(m[1])
+		param = strings.TrimSpace(m[1])
 	}
-	return []*fex.Evidence{{Details: &fex.Evidence_HttpRequest{HttpRequest: hr}}}
+
+	var out []*fex.Evidence
+	for _, rr := range iss.RequestResponses {
+		out = append(out, &fex.Evidence{Details: &fex.Evidence_HttpRequest{HttpRequest: &fex.HttpRequest{
+			Url:      url,
+			Param:    param,
+			Request:  rr.Request.decode(),
+			Response: rr.Response.decode(),
+		}}})
+	}
+	// No captured request/response: still surface the URL context if we have one.
+	if len(out) == 0 && url != "" {
+		out = append(out, &fex.Evidence{Details: &fex.Evidence_HttpRequest{HttpRequest: &fex.HttpRequest{
+			Url:   url,
+			Param: param,
+		}}})
+	}
+	return out
 }
 
 func references(iss burpIssue) []*fex.Reference {
@@ -131,7 +182,11 @@ func references(iss burpIssue) []*fex.Reference {
 			continue
 		}
 		seen[name] = true
-		out = append(out, &fex.Reference{Type: "CWE", Name: name})
+		out = append(out, &fex.Reference{
+			Type: "CWE",
+			Name: name,
+			Url:  "https://cwe.mitre.org/data/definitions/" + m[1] + ".html",
+		})
 	}
 	return out
 }
@@ -191,15 +246,6 @@ func confidence(c string) fex.Confidence {
 func clean(s string) string {
 	s = tagRe.ReplaceAllString(s, "")
 	return strings.TrimSpace(html.UnescapeString(s))
-}
-
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
 }
 
 func shortHash(s string) string {
