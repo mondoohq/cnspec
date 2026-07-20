@@ -73,9 +73,14 @@ queries:
 
         A passing result shows the root domain resolving through A or AAAA records with no CNAME present. A failing result shows a CNAME record returned for the root domain.
       remediation: |
-        1. Replace the CNAME record at the root domain with an A or ALIAS record, if your DNS provider supports ALIAS records, pointing to the appropriate IP address or hostname.
-        2. Ensure the A or ALIAS record is correctly configured to maintain DNS compatibility and avoid resolution failures.
-        3. Verify the updated DNS configuration with `dig <domain>` to confirm proper resolution and functionality.
+        Replace the apex CNAME with a record type that is valid at the zone root. Add the replacement record before removing the CNAME so the domain never has a gap in resolution.
+
+        Steps to remediate:
+          1. Identify the hostname the apex CNAME currently points to and resolve its addresses with `dig A <target>` and `dig AAAA <target>`.
+          2. If your DNS provider supports ALIAS, ANAME, or CNAME flattening at the apex, create that record pointing to the same hostname. This keeps the dynamic target while staying standards compliant on the wire.
+          3. Otherwise, create A and AAAA records at the apex using the addresses gathered in step 1, and plan to update them whenever the target's addresses change.
+          4. Remove the CNAME record from the apex only after the replacement record is in place.
+          5. Verify the updated configuration with `dig <domain>` and confirm the apex answers with A or AAAA records and no CNAME.
     refs:
       - url: https://www.cisa.gov/dns-security
         title: CISA DNS Security
@@ -97,10 +102,12 @@ queries:
       compliance/soc2-2017: soc2-control-cc7-2-1
       compliance/vda-isa-5: vda-isa-5-5-2-4
     mql: |
-      dns.mx != empty
+      // Domains with no MX records pass this MX assertion vacuously, which is
+      // intentional: not every domain receives mail, and a null-MX setup is a
+      // valid choice. When MX records exist, none may point to an IP address.
       dns.mx.all(domainName != regex.ipv4 && domainName != regex.ipv6)
       dns.records.where(type == "NS") != empty
-      dns.records.where(type == "NS").all( rdata != regex.ipv4 && rdata != regex.ipv6 )
+      dns.records.where(type == "NS").all( rdata.none(_ == regex.ipv4 || _ == regex.ipv6) )
     docs:
       desc: |
         This check verifies that DNS Name Server (NS) and Mail Exchange (MX) records resolve to fully qualified domain names rather than pointing directly to IP addresses. The DNS standard requires both record types to reference hostnames.
@@ -116,17 +123,20 @@ queries:
 
         A passing result shows every NS and MX record pointing to a hostname such as `ns1.example.com` or `mail.example.com`. A failing result shows any NS or MX record whose target is a literal IPv4 or IPv6 address.
       remediation: |
+        Point NS and MX records at fully qualified domain names instead of IP addresses.
+
         For NS records:
           1. Identify the authoritative DNS servers for your domain.
-          2. Update the NS records in your DNS settings to point to the fully qualified domain names (FQDNs) of these servers (e.g., ns1.example.com).
+          2. Update the NS records in your DNS settings to point to the fully qualified domain names of these servers, such as `ns1.example.com`.
           3. Remove any NS records pointing to IP addresses to ensure compliance with DNS standards.
-          4. Verify the configuration using DNS validation tools to confirm proper resolution.
+          4. Verify the configuration with `dig NS <domain>` and confirm every entry is a hostname.
 
         For MX records:
-          1. Identify the correct mail server FQDNs for your email provider (e.g., mail.example.com).
-          2. Update the MX records in your DNS settings to point to these FQDNs, ensuring the correct priority values are set.
+          1. Identify the correct mail server hostnames for your email provider, such as `mail.example.com`.
+          2. Update the MX records in your DNS settings to point to these hostnames, ensuring the correct priority values are set.
           3. Remove any MX records pointing to IP addresses or outdated servers to avoid misrouting or security risks.
-          4. Test the configuration by sending and receiving emails to confirm proper functionality.
+          4. If the domain does not handle email at all, publish a null MX record consisting of a single MX entry with preference 0 and target `.` as defined in RFC 7505.
+          5. Test the configuration by sending and receiving emails to confirm proper functionality.
     refs:
       - url: https://www.cisa.gov/dns-security
         title: CISA DNS Security
@@ -167,13 +177,13 @@ queries:
 
         A passing result shows MX records pointing to current Microsoft 365 endpoints under `*.mail.protection.outlook.com`. A failing result shows an MX record pointing to a legacy host such as `mail.outlook.com` or `mail.global.frontbridge.com`.
       remediation: |
-        Replace all legacy MX records with the current Microsoft 365 MX records shown in the Microsoft 365 admin center.
+        Replace the legacy MX records with the current Microsoft 365 MX endpoint shown for your domain in the Microsoft 365 admin center. The current endpoint has the form `<domain-key>.mail.protection.outlook.com`.
 
         Steps to remediate:
-          1. Sign in to your DNS hosting provider's control panel.
-          2. Locate the DNS settings for your domain.
-          3. Add or update the MX records to match the Microsoft 365 configuration, setting the correct priorities.
-          4. Remove any legacy or non-Microsoft MX records to avoid misrouting or security vulnerabilities.
+          1. Sign in to the Microsoft 365 admin center, open Settings, select Domains, and select your domain to view the expected MX record.
+          2. Sign in to your DNS hosting provider's control panel and locate the DNS settings for your domain.
+          3. Add or update the MX record to match the value from the admin center, setting the priority it specifies.
+          4. Remove the legacy MX records such as `mail.outlook.com`, `mail.messaging.microsoft.com`, `mail.global.frontbridge.com`, and `mail.global.bigfish.com`. Keep any third-party mail gateway records that your organization intentionally routes mail through.
           5. Save the changes and verify the configuration with `dig MX <domain>`.
     refs:
       - url: https://learn.microsoft.com/en-us/microsoft-365/admin/get-help-with-domains/create-dns-records-at-any-dns-hosting-provider?view=o365-worldwide
@@ -214,7 +224,11 @@ queries:
 
         A passing result shows MX records pointing only to `aspmx.l.google.com` and its `alt1` through `alt4` variants. A failing result shows a record under `l.google.com` that points to any other host.
       remediation: |
-        To ensure proper email routing and security, configure the domain's MX records to point to Google's designated email servers:
+        Configure the domain's MX records to match Google's current guidance. For new setups Google recommends a single MX record:
+
+          - SMTP.GOOGLE.COM (Priority: 1)
+
+        Existing setups that use the classic five-record configuration remain fully supported:
 
           - ASPMX.L.GOOGLE.COM (Priority: 1)
           - ALT1.ASPMX.L.GOOGLE.COM (Priority: 5)
@@ -225,8 +239,8 @@ queries:
         Steps to remediate:
           1. Log in to your DNS hosting provider's control panel.
           2. Locate the DNS settings for your domain.
-          3. Add or update the MX records to match the above configuration, ensuring the correct priorities are set.
-          4. Remove any legacy or non-Google MX records to avoid misrouting or security vulnerabilities.
+          3. Add or update the MX records to match one of the configurations above, ensuring the correct priorities are set.
+          4. Remove any stale Google MX records that do not match the chosen configuration. Keep any third-party mail gateway records that your organization intentionally routes mail through.
           5. Save the changes and verify the configuration with `dig MX <domain>`.
     refs:
       - url: https://support.google.com/a/answer/140034?hl=en
@@ -264,12 +278,14 @@ queries:
 
         A passing result shows one or more DNSKEY records published for the domain. A failing result shows an empty answer section, indicating DNSSEC is not enabled.
       remediation: |
-        * Enable DNSSEC for your domain through your DNS hosting provider or domain registrar's control panel, following their instructions for signing the zone.
-        * Publish the DS (Delegation Signer) record at your domain registrar so it appears in the parent zone. Signing the zone at the DNS host only generates the keys. Until the matching DS record exists in the parent zone, resolvers have no trust anchor and DNSSEC validation never activates. This missing DS-record step is the most common reason DNSSEC appears configured but provides no protection. If your DNS host and registrar are different providers, copy the DS record (or the DNSKEY values used to build it) from the host into the registrar's DNSSEC settings.
-        * Verify the DS record is live in the parent zone with `dig DS <domain>`. An empty answer section means the registrar has not published it yet and the chain of trust is broken.
-        * Monitor DNSSEC signatures so they remain valid and do not expire. Set up alerts or reminders for signature expiration dates.
-        * Verify proper configuration with `dig DNSKEY <domain>` and `dig +dnssec <domain>`, and address any validation warnings promptly.
-        * Establish a process for periodic DNSSEC reviews to ensure ongoing compliance and security.
+        Enable DNSSEC signing for the zone and complete the chain of trust at the registrar. Plan the rollout carefully: a mismatched or stale DS record makes the domain unresolvable for every validating resolver.
+
+        Steps to remediate:
+          1. Enable DNSSEC for your domain through your DNS hosting provider's control panel, following their instructions for signing the zone. This publishes DNSKEY records for the domain.
+          2. Retrieve the DS record values from your DNS provider and publish them at your domain registrar so the parent zone anchors the chain of trust. Signing the zone at the DNS host only generates the keys; until the matching DS record exists in the parent zone, resolvers have no trust anchor and DNSSEC validation never activates. Confirm the DS digest matches the published key-signing key before saving. If your DNS host and registrar are different providers, copy the DS record values from the host into the registrar's DNSSEC settings. Some registrar and provider combinations automate this step through CDS and CDNSKEY records.
+          3. Verify the configuration with `dig DNSKEY <domain>` and `dig DS <domain>`, then confirm the full chain of trust with `dig +dnssec <domain>` and an external validator such as DNSViz. An empty `dig DS <domain>` answer section means the registrar has not published the DS record yet and the chain of trust is broken.
+          4. Monitor DNSSEC signatures so they remain valid and do not expire. Set up alerts or reminders for signature expiration and key rollover dates.
+          5. Before migrating DNS providers or disabling DNSSEC, remove the DS record at the registrar first and wait for its TTL to expire. Unsigning the zone while a DS record remains published breaks resolution for the entire domain.
     refs:
       - url: https://www.icann.org/resources/pages/dnssec-what-is-it-why-is-it-important-2019-03-05-en
         title: ICANN DNSSEC Overview
@@ -290,10 +306,17 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-1-3-1
       compliance/soc2-2017: soc2-control-cc6-6-1
       compliance/vda-isa-5: vda-isa-5-5-2-6
-    mql: dns.records.none(name == /\*/)
+    mql: |
+      // Query a deliberately nonexistent subdomain: only a wildcard record
+      // synthesizes an answer for it, so any A, AAAA, or CNAME result means
+      // the zone serves a wildcard. The label is a fixed sentinel chosen to
+      // be implausible as a real record rather than randomly generated.
+      dns(fqdn: "mondoo-wildcard-probe-f3a9." + domainName.fqdn).records.where(type.in(["A", "AAAA", "CNAME"])) == empty
     docs:
       desc: |
         This check verifies that a domain has no wildcard DNS records, such as a record whose name begins with `*`. A wildcard makes every undefined subdomain resolve to a single target, including names the operator never intended to publish.
+
+        To detect a wildcard, this check queries a fixed sentinel subdomain that is unlikely to exist as an explicit record. If the zone happens to publish a real record for that exact name, the check reports a wildcard when none is configured.
 
         **Why this matters**
 
@@ -306,9 +329,14 @@ queries:
 
         A passing result shows no answer for the wildcard query, indicating no wildcard record is configured. A failing result shows the wildcard query resolving to an IP address or hostname.
       remediation: |
-        * Avoid wildcard DNS records, such as `*.example.com`, unless a specific and well-documented use case requires one.
-        * Replace wildcard records with explicit DNS records for each required subdomain to maintain precise control over DNS resolution.
-        * If a wildcard record is genuinely required, monitor and secure it to prevent misuse or exploitation.
+        Remove wildcard DNS records and publish explicit records for each subdomain you intend to serve.
+
+        Steps to remediate:
+          1. Review your zone for records whose name begins with `*`, such as `*.example.com`.
+          2. Inventory the subdomains that currently rely on the wildcard and create explicit A, AAAA, or CNAME records for each one.
+          3. Remove the wildcard record only after the explicit records are in place, so legitimate subdomains keep resolving.
+          4. If a wildcard record is genuinely required, document the use case and monitor DNS query logs and certificate transparency logs for abuse.
+          5. Verify the change by querying an arbitrary undefined subdomain and confirming it no longer resolves.
     refs:
       - url: https://www.cisa.gov/dns-security
         title: CISA DNS Security
@@ -352,8 +380,9 @@ queries:
         Steps to remediate:
           1. Identify your current nameservers using `dig NS <domain>` and inspecting the answer section.
           2. If only one nameserver is listed, add a secondary nameserver through your DNS provider or a third-party DNS service.
-          3. Ensure the additional nameserver is on a different network or subnet to avoid correlated failures.
-          4. Verify the configuration using DNS validation tools to confirm all nameservers respond correctly.
+          3. Update the NS records in the zone itself and update the delegation at your domain registrar so both lists contain the same complete set of nameservers.
+          4. Ensure the additional nameserver is on a different network or subnet to avoid correlated failures.
+          5. Verify with `dig NS <domain>` that all nameservers are returned and that each one answers authoritatively for the zone.
     refs:
       - url: https://datatracker.ietf.org/doc/html/rfc1034#section-4.1
         title: 'RFC 1034: Domain Names - Concepts and Facilities'
