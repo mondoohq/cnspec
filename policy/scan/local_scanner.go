@@ -504,12 +504,13 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	batcher := newSyncBatcher(dispatcher, services, spaceMrn, s.recording, multiprogress)
 
 	scanCtx := &scanContext{
-		explorer:      explorer,
-		reporter:      reporter,
-		multiprogress: multiprogress,
-		connSem:       connSem,
-		batcher:       batcher,
-		dispatcher:    dispatcher,
+		explorer:           explorer,
+		reporter:           reporter,
+		multiprogress:      multiprogress,
+		connSem:            connSem,
+		platformIdsExclude: platformIdsExcludeSet(job.Inventory),
+		batcher:            batcher,
+		dispatcher:         dispatcher,
 	}
 
 	// Process each root asset's subtree. The root is already connected by
@@ -537,6 +538,10 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	scanGroups.Wait() // wait for the progress bar to finish
 
 	if scannedAssets.Load() == 0 {
+		if scanCtx.platformIdsExclude != nil {
+			log.Info().Msg("all discovered assets already reported, nothing to scan")
+			return reporter.Reports(), nil
+		}
 		return nil, errors.New("could not find an asset that we can connect to")
 	}
 
@@ -553,9 +558,38 @@ type scanContext struct {
 	// connSem limits the number of simultaneously connected assets.
 	connSem chan struct{}
 
+	platformIdsExclude map[string]struct{}
+
 	// Pipeline stages.
 	batcher    *syncBatcher
 	dispatcher *scanDispatcher
+}
+
+func (sc *scanContext) skipAsset(asset *discovery.TrackedAsset) {
+	sc.multiprogress.Filtered(1)
+	if err := sc.explorer.CloseAsset(asset); err != nil {
+		log.Error().Err(err).Str("asset", asset.Asset.Name).Msg("failed to close asset")
+	}
+	<-sc.connSem
+}
+
+func platformIdsExcludeSet(inv *inventory.Inventory) map[string]struct{} {
+	if v := inventoryAnnotation(inv, "platformids-exclude"); v != "" {
+		parts := strings.Split(v, ",")
+		set := make(map[string]struct{}, len(parts))
+		for _, p := range parts {
+			set[strings.TrimSpace(p)] = struct{}{}
+		}
+		return set
+	}
+	return nil
+}
+
+func inventoryAnnotation(inv *inventory.Inventory, key string) string {
+	if inv == nil || inv.Metadata == nil {
+		return ""
+	}
+	return inv.Metadata.Annotations[key]
 }
 
 // scanSubtree processes a single connected node's subtree depth-first.
@@ -617,12 +651,23 @@ func (sc *scanContext) scanSubtree(ctx context.Context, node *discovery.TrackedA
 		// Leaf node — skip if it has no platform IDs (not scannable).
 		if len(connected.Asset.PlatformIds) == 0 {
 			log.Debug().Str("name", connected.Asset.Name).Msg("asset has no platform IDs, skipping")
-			sc.multiprogress.Filtered(1)
-			if err := sc.explorer.CloseAsset(connected); err != nil {
-				log.Error().Err(err).Str("asset", connected.Asset.Name).Msg("failed to close asset")
-			}
-			<-sc.connSem
+			sc.skipAsset(connected)
 			continue
+		}
+
+		if sc.platformIdsExclude != nil {
+			var excludedID string
+			for _, pid := range connected.Asset.PlatformIds {
+				if _, ok := sc.platformIdsExclude[pid]; ok {
+					excludedID = pid
+					break
+				}
+			}
+			if excludedID != "" {
+				log.Info().Str("name", connected.Asset.Name).Str("platformId", excludedID).Msg("asset already reported, skipping")
+				sc.skipAsset(connected)
+				continue
+			}
 		}
 
 		// Feed leaf to the batcher — it will sync and dispatch automatically.

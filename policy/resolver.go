@@ -300,6 +300,10 @@ func (s *LocalServices) PurgeAssets(context.Context, *PurgeAssetsRequest) (*Purg
 	return nil, nil
 }
 
+func (s *LocalServices) RefreshAssetScores(context.Context, *RefreshAssetScoresRequest) (*RefreshAssetScoresResponse, error) {
+	return nil, nil
+}
+
 // GetScanParameters is not required for local services (no server-side scan parameters)
 func (s *LocalServices) GetScanParameters(context.Context, *GetScanParametersReq) (*ScanParameters, error) {
 	return &ScanParameters{}, nil
