@@ -47,6 +47,11 @@ func (c *countingCollector) SinkScore(scores []*policy.Score) {
 	}
 }
 
+// SinkData tracks data queries that returned a genuine query error. Note this
+// counts real result errors on the raw stream; it does not count datapoints the
+// downstream store later drops or replaces (e.g. an oversized payload swapped
+// for a synthetic "datafield removed" marker), so the count reflects actual
+// query failures rather than storage-side substitutions.
 func (c *countingCollector) SinkData(results []*llx.RawResult) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

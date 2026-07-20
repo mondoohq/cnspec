@@ -72,8 +72,9 @@ func ExecuteResolvedPolicy(ctx context.Context, runtime llx.Runtime, collectorSv
 	builder.AddDatapointCollector(collector)
 	builder.AddScoreCollector(collector)
 
+	stats := scanstats.CollectorFromContext(ctx)
 	var counter *countingCollector
-	if stats := scanstats.CollectorFromContext(ctx); stats != nil {
+	if stats != nil {
 		counter = newCountingCollector(resolvedPolicy)
 		builder.AddScoreCollector(counter)
 		builder.AddDatapointCollector(counter)
@@ -96,7 +97,7 @@ func ExecuteResolvedPolicy(ctx context.Context, runtime llx.Runtime, collectorSv
 
 	err = ge.Execute()
 	if counter != nil {
-		counter.recordTo(scanstats.CollectorFromContext(ctx))
+		counter.recordTo(stats)
 	}
 	return err
 }
