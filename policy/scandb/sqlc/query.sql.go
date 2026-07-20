@@ -10,44 +10,6 @@ import (
 	"database/sql"
 )
 
-const countErroredData = `-- name: CountErroredData :one
-SELECT COUNT(*) FROM data WHERE error != ''
-`
-
-func (q *Queries) CountErroredData(ctx context.Context) (int64, error) {
-	row := q.queryRow(ctx, q.countErroredDataStmt, countErroredData)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
-const erroredScoreQrIds = `-- name: ErroredScoreQrIds :many
-SELECT qr_id FROM scores WHERE type = ?
-`
-
-func (q *Queries) ErroredScoreQrIds(ctx context.Context, type_ int64) ([]string, error) {
-	rows, err := q.query(ctx, q.erroredScoreQrIdsStmt, erroredScoreQrIds, type_)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []string
-	for rows.Next() {
-		var qr_id string
-		if err := rows.Scan(&qr_id); err != nil {
-			return nil, err
-		}
-		items = append(items, qr_id)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const getAsset = `-- name: GetAsset :one
 SELECT data FROM asset WHERE id = 0
 `
@@ -183,18 +145,17 @@ func (q *Queries) InsertAssetFilter(ctx context.Context, codeID string) error {
 }
 
 const insertData = `-- name: InsertData :exec
-INSERT OR REPLACE INTO data (code_id, data, error) VALUES (?, ?, ?)
+INSERT OR REPLACE INTO data (code_id, data) VALUES (?, ?)
 `
 
 type InsertDataParams struct {
 	CodeID string `json:"code_id"`
 	Data   []byte `json:"data"`
-	Error  string `json:"error"`
 }
 
 // Data operations
 func (q *Queries) InsertData(ctx context.Context, arg InsertDataParams) error {
-	_, err := q.exec(ctx, q.insertDataStmt, insertData, arg.CodeID, arg.Data, arg.Error)
+	_, err := q.exec(ctx, q.insertDataStmt, insertData, arg.CodeID, arg.Data)
 	return err
 }
 
@@ -318,20 +279,15 @@ const streamData = `-- name: StreamData :many
 SELECT code_id, data FROM data ORDER BY code_id
 `
 
-type StreamDataRow struct {
-	CodeID string `json:"code_id"`
-	Data   []byte `json:"data"`
-}
-
-func (q *Queries) StreamData(ctx context.Context) ([]StreamDataRow, error) {
+func (q *Queries) StreamData(ctx context.Context) ([]Datum, error) {
 	rows, err := q.query(ctx, q.streamDataStmt, streamData)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []StreamDataRow
+	var items []Datum
 	for rows.Next() {
-		var i StreamDataRow
+		var i Datum
 		if err := rows.Scan(&i.CodeID, &i.Data); err != nil {
 			return nil, err
 		}

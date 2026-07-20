@@ -27,19 +27,13 @@ FROM scores ORDER BY qr_id;
 
 -- Data operations
 -- name: InsertData :exec
-INSERT OR REPLACE INTO data (code_id, data, error) VALUES (?, ?, ?);
+INSERT OR REPLACE INTO data (code_id, data) VALUES (?, ?);
 
 -- name: GetData :one
 SELECT data FROM data WHERE code_id = ?;
 
 -- name: StreamData :many
 SELECT code_id, data FROM data ORDER BY code_id;
-
--- name: ErroredScoreQrIds :many
-SELECT qr_id FROM scores WHERE type = ?;
-
--- name: CountErroredData :one
-SELECT COUNT(*) FROM data WHERE error != '';
 
 -- Risk factor operations
 -- name: InsertRiskFactor :exec
