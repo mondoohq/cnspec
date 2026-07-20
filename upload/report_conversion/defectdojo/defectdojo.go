@@ -54,7 +54,9 @@ type finding struct {
 
 	// Status flags. DefectDojo emits these as booleans; they are pointers so we
 	// can tell "absent" from an explicit false (Active defaults to true in
-	// DefectDojo). See status() for the mapping to fex.Status.
+	// DefectDojo). Active/FalseP/OutOfScope/RiskAccepted/IsMitigated feed
+	// status(); Verified feeds confidence(); Duplicate causes the finding to be
+	// skipped in Convert.
 	Active       *bool `json:"active"`
 	Verified     *bool `json:"verified"`
 	FalseP       *bool `json:"false_p"`
@@ -82,6 +84,12 @@ func Convert(data []byte) ([]*fex.FindingDocument, error) {
 		}
 		if f.Title == "" || f.Severity == "" || f.Description == "" {
 			return nil, fmt.Errorf("finding %d: title, severity, and description are required", i)
+		}
+		// Skip findings DefectDojo already marked as duplicates of another finding
+		// — fex has no duplicate status, and importing them would just create
+		// redundant findings.
+		if boolVal(f.Duplicate) {
+			continue
 		}
 		if f.CVE != "" {
 			docs = append(docs, fex.VexToDocument(toVex(f, source)))
@@ -157,12 +165,12 @@ func parseCSV(data []byte) ([]finding, error) {
 			Date:        get(row, "Date"),
 			// Status columns (TitleCase in the DefectDojo CSV export). Header
 			// names vary slightly between exports, so accept a couple variants.
-			Active:       parseCSVBool(firstNonEmpty(get(row, "Active"))),
-			Verified:     parseCSVBool(firstNonEmpty(get(row, "Verified"))),
+			Active:       parseCSVBool(get(row, "Active")),
+			Verified:     parseCSVBool(get(row, "Verified")),
 			FalseP:       parseCSVBool(firstNonEmpty(get(row, "FalsePositive"), get(row, "False Positive"))),
 			OutOfScope:   parseCSVBool(firstNonEmpty(get(row, "OutOfScope"), get(row, "Out Of Scope"))),
 			RiskAccepted: parseCSVBool(firstNonEmpty(get(row, "RiskAccepted"), get(row, "Risk Accepted"))),
-			Duplicate:    parseCSVBool(firstNonEmpty(get(row, "Duplicate"))),
+			Duplicate:    parseCSVBool(get(row, "Duplicate")),
 			IsMitigated:  parseCSVBool(firstNonEmpty(get(row, "IsMitigated"), get(row, "Is Mitigated"))),
 		}
 		if cwe := get(row, "CweId"); cwe != "" {
@@ -197,6 +205,7 @@ func toFex(f finding, source *fex.Source) *fex.FindingExchange {
 			Category:    fex.FindingDetail_CATEGORY_SECURITY,
 			Description: joinDetail(f),
 			Severity:    severity(f.Severity),
+			Confidence:  confidence(f.Verified),
 			References:  references(f),
 		},
 		Affects: affects(f),
@@ -249,6 +258,20 @@ func status(f finding) fex.Status {
 		return fex.Status_STATUS_NOT_AFFECTED
 	default:
 		return fex.Status_STATUS_AFFECTED
+	}
+}
+
+// confidence maps DefectDojo's "verified" flag (a human confirmed the finding)
+// onto fex confidence: verified → HIGH, explicitly unverified → LOW, absent →
+// unspecified.
+func confidence(verified *bool) fex.Confidence {
+	switch {
+	case verified == nil:
+		return fex.Confidence_CONFIDENCE_UNSPECIFIED
+	case *verified:
+		return fex.Confidence_CONFIDENCE_HIGH
+	default:
+		return fex.Confidence_CONFIDENCE_LOW
 	}
 }
 

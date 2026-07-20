@@ -65,8 +65,9 @@ func TestConvertMissingRequired(t *testing.T) {
 
 func TestConvertStatusAndMappings(t *testing.T) {
 	docs := rc.AssertClean(t, defectdojo.Convert, "testdata/extended.json")
+	// 6 findings in the fixture, but the DefectDojo-flagged duplicate is skipped.
 	if len(docs) != 5 {
-		t.Fatalf("want 5 documents, got %d", len(docs))
+		t.Fatalf("want 5 documents (duplicate skipped), got %d", len(docs))
 	}
 
 	// A false_p finding maps to STATUS_FALSE_POSITIVE (not AFFECTED).
@@ -123,6 +124,17 @@ func TestConvertStatusAndMappings(t *testing.T) {
 	}
 	if file.GetStartLine() != 12 {
 		t.Errorf("file start line = %d, want 12", file.GetStartLine())
+	}
+	// verified:true maps to HIGH confidence.
+	if fc.GetDetails().GetConfidence() != fex.Confidence_CONFIDENCE_HIGH {
+		t.Errorf("verified finding confidence = %v, want HIGH", fc.GetDetails().GetConfidence())
+	}
+
+	// The DefectDojo-flagged duplicate must not appear in the output.
+	for _, d := range docs {
+		if d.GetFex().GetSummary() == "Duplicate of the hardcoded secret finding" {
+			t.Error("duplicate finding should have been skipped")
+		}
 	}
 
 	// Two findings with the same title/description but different files get
