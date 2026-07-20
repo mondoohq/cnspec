@@ -35,20 +35,35 @@ type report struct {
 }
 
 type finding struct {
-	Title            string `json:"title"`
-	Severity         string `json:"severity"`
-	Description      string `json:"description"`
-	Mitigation       string `json:"mitigation"`
-	Impact           string `json:"impact"`
-	CVE              string `json:"cve"`
-	CWE              int    `json:"cwe"`
-	FilePath         string `json:"file_path"`
-	Line             int    `json:"line"`
-	ComponentName    string `json:"component_name"`
-	ComponentVersion string `json:"component_version"`
-	UniqueIDFromTool string `json:"unique_id_from_tool"`
-	References       string `json:"references"`
-	Date             string `json:"date"` // RFC3339 or YYYY-MM-DD
+	Title            string  `json:"title"`
+	Severity         string  `json:"severity"`
+	Description      string  `json:"description"`
+	Mitigation       string  `json:"mitigation"`
+	Impact           string  `json:"impact"`
+	CVE              string  `json:"cve"`
+	CWE              int     `json:"cwe"`
+	CVSSv3           string  `json:"cvssv3"`       // CVSSv3 vector string
+	CVSSv3Score      float64 `json:"cvssv3_score"` // CVSSv3 base score
+	FilePath         string  `json:"file_path"`
+	Line             int     `json:"line"`
+	ComponentName    string  `json:"component_name"`
+	ComponentVersion string  `json:"component_version"`
+	UniqueIDFromTool string  `json:"unique_id_from_tool"`
+	References       string  `json:"references"`
+	Date             string  `json:"date"` // RFC3339 or YYYY-MM-DD
+
+	// Status flags. DefectDojo emits these as booleans; they are pointers so we
+	// can tell "absent" from an explicit false (Active defaults to true in
+	// DefectDojo). Active/FalseP/OutOfScope/RiskAccepted/IsMitigated feed
+	// status(); Verified feeds confidence(); Duplicate causes the finding to be
+	// skipped in Convert.
+	Active       *bool `json:"active"`
+	Verified     *bool `json:"verified"`
+	FalseP       *bool `json:"false_p"`
+	OutOfScope   *bool `json:"out_of_scope"`
+	RiskAccepted *bool `json:"risk_accepted"`
+	Duplicate    *bool `json:"duplicate"`
+	IsMitigated  *bool `json:"is_mitigated"`
 }
 
 // Convert parses an OWASP DefectDojo Generic Findings Import report (JSON or CSV,
@@ -69,6 +84,12 @@ func Convert(data []byte) ([]*fex.FindingDocument, error) {
 		}
 		if f.Title == "" || f.Severity == "" || f.Description == "" {
 			return nil, fmt.Errorf("finding %d: title, severity, and description are required", i)
+		}
+		// Skip findings DefectDojo already marked as duplicates of another finding
+		// — fex has no duplicate status, and importing them would just create
+		// redundant findings.
+		if boolVal(f.Duplicate) {
+			continue
 		}
 		if f.CVE != "" {
 			docs = append(docs, fex.VexToDocument(toVex(f, source)))
@@ -139,11 +160,24 @@ func parseCSV(data []byte) ([]finding, error) {
 			Mitigation:  get(row, "Mitigation"),
 			Impact:      get(row, "Impact"),
 			CVE:         get(row, "CVE"),
+			CVSSv3:      firstNonEmpty(get(row, "CVSSV3"), get(row, "CvssV3")),
 			References:  firstNonEmpty(get(row, "References"), get(row, "Url")),
 			Date:        get(row, "Date"),
+			// Status columns (TitleCase in the DefectDojo CSV export). Header
+			// names vary slightly between exports, so accept a couple variants.
+			Active:       parseCSVBool(get(row, "Active")),
+			Verified:     parseCSVBool(get(row, "Verified")),
+			FalseP:       parseCSVBool(firstNonEmpty(get(row, "FalsePositive"), get(row, "False Positive"))),
+			OutOfScope:   parseCSVBool(firstNonEmpty(get(row, "OutOfScope"), get(row, "Out Of Scope"))),
+			RiskAccepted: parseCSVBool(firstNonEmpty(get(row, "RiskAccepted"), get(row, "Risk Accepted"))),
+			Duplicate:    parseCSVBool(get(row, "Duplicate")),
+			IsMitigated:  parseCSVBool(firstNonEmpty(get(row, "IsMitigated"), get(row, "Is Mitigated"))),
 		}
 		if cwe := get(row, "CweId"); cwe != "" {
 			f.CWE, _ = strconv.Atoi(cwe)
+		}
+		if s := firstNonEmpty(get(row, "CVSSV3 Score"), get(row, "CvssV3Score")); s != "" {
+			f.CVSSv3Score, _ = strconv.ParseFloat(s, 64)
 		}
 		findings = append(findings, f)
 	}
@@ -153,19 +187,25 @@ func parseCSV(data []byte) ([]finding, error) {
 func toFex(f finding, source *fex.Source) *fex.FindingExchange {
 	id := f.UniqueIDFromTool
 	if id == "" {
-		// Content-based id so it's stable across reorderings of the input.
-		id = shortHash(f.Title + "\x00" + f.Description)
+		// Content-based id so it's stable across reorderings of the input. Include
+		// the file/line/component so otherwise-identical findings at different
+		// locations do not collapse onto the same id.
+		id = shortHash(strings.Join([]string{
+			f.Title, f.Description, f.FilePath, strconv.Itoa(f.Line),
+			f.ComponentName, f.ComponentVersion,
+		}, "\x00"))
 	}
 	fx := &fex.FindingExchange{
 		Id:      id,
 		Ref:     f.UniqueIDFromTool,
 		Summary: f.Title,
 		Source:  source,
-		Status:  fex.Status_STATUS_AFFECTED,
+		Status:  status(f),
 		Details: &fex.FindingDetail{
 			Category:    fex.FindingDetail_CATEGORY_SECURITY,
 			Description: joinDetail(f),
 			Severity:    severity(f.Severity),
+			Confidence:  confidence(f.Verified),
 			References:  references(f),
 		},
 		Affects: affects(f),
@@ -185,12 +225,14 @@ func toVex(f finding, source *fex.Source) *fex.VulnerabilityExchange {
 		Ref:     f.UniqueIDFromTool,
 		Summary: f.Title,
 		Source:  source,
-		Status:  fex.Status_STATUS_AFFECTED,
+		Status:  status(f),
 		Details: &fex.VulnerabilityDetails{
 			Details:        joinDetail(f),
 			Recommendation: f.Mitigation,
 		},
-		Affects: affects(f),
+		Affects:    affects(f),
+		Ratings:    ratings(f),
+		References: references(f),
 	}
 	if ts := parseTime(f.Date); ts != nil {
 		vx.FirstSeen = ts
@@ -198,18 +240,111 @@ func toVex(f finding, source *fex.Source) *fex.VulnerabilityExchange {
 	return vx
 }
 
+// status maps the DefectDojo status booleans onto fex.Status. Checked in order
+// of precedence; the same mapping is used for both FEX and VEX documents.
+func status(f finding) fex.Status {
+	switch {
+	case boolVal(f.FalseP):
+		return fex.Status_STATUS_FALSE_POSITIVE
+	case boolVal(f.RiskAccepted):
+		return fex.Status_STATUS_WONT_FIX // accepted risk
+	case boolVal(f.IsMitigated):
+		return fex.Status_STATUS_FIXED
+	case f.Active != nil && !*f.Active:
+		// Explicitly inactive: DefectDojo marks a finding inactive once it is no
+		// longer present. Active defaults to true, so an absent flag stays affected.
+		return fex.Status_STATUS_FIXED
+	case boolVal(f.OutOfScope):
+		return fex.Status_STATUS_NOT_AFFECTED
+	default:
+		return fex.Status_STATUS_AFFECTED
+	}
+}
+
+// confidence maps DefectDojo's "verified" flag (a human confirmed the finding)
+// onto fex confidence: verified → HIGH, explicitly unverified → LOW, absent →
+// unspecified.
+func confidence(verified *bool) fex.Confidence {
+	switch {
+	case verified == nil:
+		return fex.Confidence_CONFIDENCE_UNSPECIFIED
+	case *verified:
+		return fex.Confidence_CONFIDENCE_HIGH
+	default:
+		return fex.Confidence_CONFIDENCE_LOW
+	}
+}
+
+// ratings builds a CVSSv3 rating from the severity mapping and any CVSS score or
+// vector present in the finding. Returns nil when there is nothing to report.
+func ratings(f finding) []*fex.Rating {
+	r := &fex.Rating{}
+	has := false
+	if severity(f.Severity) != nil {
+		r.Severity = strings.ToLower(strings.TrimSpace(f.Severity))
+		has = true
+	}
+	if f.CVSSv3Score > 0 {
+		r.Score = float32(f.CVSSv3Score)
+		r.Method = fex.ScoringMethod_SCOREMETHOD_CVSSv3
+		has = true
+	}
+	if v := strings.TrimSpace(f.CVSSv3); v != "" {
+		r.Vector = v
+		r.Method = fex.ScoringMethod_SCOREMETHOD_CVSSv3
+		has = true
+	}
+	if !has {
+		return nil
+	}
+	return []*fex.Rating{r}
+}
+
+func boolVal(b *bool) bool {
+	return b != nil && *b
+}
+
+// parseCSVBool parses a CSV cell into an optional bool. Empty cells stay nil so
+// an absent column does not read as false.
+func parseCSVBool(s string) *bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	b, err := strconv.ParseBool(strings.ToLower(s))
+	if err != nil {
+		return nil
+	}
+	return &b
+}
+
 func affects(f finding) []*fex.Affects {
+	// Build the file location (path + optional 1-based start line) up front so it
+	// can be attached whether or not a component name is also present.
+	var file *fex.FileComponent
+	if f.FilePath != "" {
+		file = &fex.FileComponent{Path: f.FilePath}
+		if f.Line > 0 {
+			file.StartLine = int32(f.Line)
+		}
+	}
+
 	switch {
 	case f.ComponentName != "":
 		ids := map[string]string{}
 		if f.ComponentVersion != "" {
 			ids["version"] = f.ComponentVersion
 		}
-		return []*fex.Affects{{Component: &fex.Component{Id: f.ComponentName, Identifiers: ids}}}
-	case f.FilePath != "":
+		comp := &fex.Component{Id: f.ComponentName, Identifiers: ids}
+		// Represent both the component and the file location when we have both.
+		if file != nil {
+			comp.Details = &fex.Component_File{File: file}
+		}
+		return []*fex.Affects{{Component: comp}}
+	case file != nil:
 		return []*fex.Affects{{Component: &fex.Component{
 			Id:      f.FilePath,
-			Details: &fex.Component_File{File: &fex.FileComponent{Path: f.FilePath}},
+			Details: &fex.Component_File{File: file},
 		}}}
 	default:
 		return nil

@@ -33,13 +33,20 @@ type testsuite struct {
 	XMLName   xml.Name   `xml:"testsuite"`
 	Name      string     `xml:"name,attr"`
 	Testcases []testcase `xml:"testcase"`
+	// Aggregated reports (pytest, Maven Surefire, Jest) nest <testsuite> inside
+	// <testsuite>; without this the nested cases (and their failures) are dropped.
+	Suites []testsuite `xml:"testsuite"`
 }
 
 type testcase struct {
 	Name      string  `xml:"name,attr"`
 	Classname string  `xml:"classname,attr"`
+	File      string  `xml:"file,attr"`
+	Line      string  `xml:"line,attr"`
 	Failure   *result `xml:"failure"`
 	Error     *result `xml:"error"`
+	SystemOut string  `xml:"system-out"`
+	SystemErr string  `xml:"system-err"`
 }
 
 type result struct {
@@ -63,13 +70,13 @@ func Convert(data []byte) ([]*fex.FindingDocument, error) {
 
 	var docs []*fex.FindingDocument
 	for _, ts := range suites {
-		source := &fex.Source{Name: sourceName(ts.Name)}
-		for _, tc := range ts.Testcases {
-			res, rating := failureOf(tc)
+		for _, c := range flatten(ts, "") {
+			res, rating := failureOf(c.tc)
 			if res == nil {
 				continue // passing or skipped case — not a finding
 			}
-			f := toFex(tc, res, rating, source)
+			source := &fex.Source{Name: sourceName(c.suiteName)}
+			f := toFex(c.tc, res, rating, source)
 			key := source.Name + "\x00" + f.Ref
 			if n := seen[key]; n > 0 {
 				// Keep the first occurrence's id stable; suffix the rest.
@@ -80,6 +87,30 @@ func Convert(data []byte) ([]*fex.FindingDocument, error) {
 		}
 	}
 	return docs, nil
+}
+
+// caseInSuite pairs a test case with the name of the suite that contains it.
+type caseInSuite struct {
+	tc        testcase
+	suiteName string
+}
+
+// flatten walks the suite tree (aggregated reports nest <testsuite> inside
+// <testsuite>) and returns every test case with its effective suite name. A
+// nested suite without a name inherits its parent's name.
+func flatten(ts testsuite, parentName string) []caseInSuite {
+	name := ts.Name
+	if name == "" {
+		name = parentName
+	}
+	out := make([]caseInSuite, 0, len(ts.Testcases))
+	for _, tc := range ts.Testcases {
+		out = append(out, caseInSuite{tc: tc, suiteName: name})
+	}
+	for _, child := range ts.Suites {
+		out = append(out, flatten(child, name)...)
+	}
+	return out
 }
 
 // parse accepts either a <testsuites> root or a bare <testsuite>.
@@ -138,19 +169,44 @@ func toFex(tc testcase, res *result, rating fex.SeverityRating, source *fex.Sour
 		Status:  fex.Status_STATUS_AFFECTED,
 		Details: &fex.FindingDetail{
 			Category:    fex.FindingDetail_CATEGORY_SECURITY,
-			Description: description(res),
+			Description: description(tc, res),
 			Severity:    &fex.Severity{Rating: rating},
 		},
+		Affects: affects(tc),
 	}
 }
 
-func description(res *result) string {
-	parts := make([]string, 0, 2)
+// affects maps the testcase's file/line attributes (emitted by many JUnit
+// producers) to a FileComponent so the finding points at the source location.
+func affects(tc testcase) []*fex.Affects {
+	file := strings.TrimSpace(tc.File)
+	if file == "" {
+		return nil
+	}
+	fc := &fex.FileComponent{Path: file}
+	if n, err := strconv.Atoi(strings.TrimSpace(tc.Line)); err == nil && n > 0 {
+		fc.StartLine = int32(n)
+	}
+	return []*fex.Affects{{Component: &fex.Component{
+		Id:      file,
+		Details: &fex.Component_File{File: fc},
+	}}}
+}
+
+func description(tc testcase, res *result) string {
+	parts := make([]string, 0, 4)
 	if res.Message != "" {
 		parts = append(parts, res.Message)
 	}
 	if c := strings.TrimSpace(res.Contents); c != "" {
 		parts = append(parts, c)
+	}
+	// system-out/system-err carry extra failure context (captured stdout/stderr).
+	if o := strings.TrimSpace(tc.SystemOut); o != "" {
+		parts = append(parts, "system-out:\n"+o)
+	}
+	if e := strings.TrimSpace(tc.SystemErr); e != "" {
+		parts = append(parts, "system-err:\n"+e)
 	}
 	return strings.Join(parts, "\n\n")
 }

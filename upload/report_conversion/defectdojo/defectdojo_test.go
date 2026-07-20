@@ -62,3 +62,88 @@ func TestConvertMissingRequired(t *testing.T) {
 		t.Fatal("expected error for missing severity/description")
 	}
 }
+
+func TestConvertStatusAndMappings(t *testing.T) {
+	docs := rc.AssertClean(t, defectdojo.Convert, "testdata/extended.json")
+	// 6 findings in the fixture, but the DefectDojo-flagged duplicate is skipped.
+	if len(docs) != 5 {
+		t.Fatalf("want 5 documents (duplicate skipped), got %d", len(docs))
+	}
+
+	// A false_p finding maps to STATUS_FALSE_POSITIVE (not AFFECTED).
+	fp := docs[0].GetFex()
+	if fp == nil {
+		t.Fatal("finding 0: expected FEX")
+	}
+	if fp.GetStatus() != fex.Status_STATUS_FALSE_POSITIVE {
+		t.Errorf("false_p status = %v, want STATUS_FALSE_POSITIVE", fp.GetStatus())
+	}
+
+	// A CVE finding becomes VEX with Ratings (severity + CVSSv3) and References.
+	v := docs[1].GetVex()
+	if v == nil {
+		t.Fatal("finding 1: expected VEX")
+	}
+	if v.GetStatus() != fex.Status_STATUS_AFFECTED {
+		t.Errorf("vex status = %v, want STATUS_AFFECTED", v.GetStatus())
+	}
+	if len(v.GetRatings()) == 0 {
+		t.Fatal("vex: expected Ratings to be set")
+	}
+	rating := v.GetRatings()[0]
+	if rating.GetSeverity() != "high" {
+		t.Errorf("vex rating severity = %q, want high", rating.GetSeverity())
+	}
+	if rating.GetScore() != 7.5 {
+		t.Errorf("vex rating score = %v, want 7.5", rating.GetScore())
+	}
+	if rating.GetMethod() != fex.ScoringMethod_SCOREMETHOD_CVSSv3 {
+		t.Errorf("vex rating method = %v, want CVSSv3", rating.GetMethod())
+	}
+	if rating.GetVector() == "" {
+		t.Error("vex rating vector should be set")
+	}
+	if len(v.GetReferences()) == 0 {
+		t.Error("vex: expected References to be set")
+	}
+
+	// file_path + line populate FileComponent.StartLine.
+	fc := docs[2].GetFex()
+	if fc == nil {
+		t.Fatal("finding 2: expected FEX")
+	}
+	if len(fc.GetAffects()) == 0 {
+		t.Fatal("finding 2: expected an affected component")
+	}
+	file := fc.GetAffects()[0].GetComponent().GetFile()
+	if file == nil {
+		t.Fatal("finding 2: expected a FileComponent")
+	}
+	if file.GetPath() != "config/app.yaml" {
+		t.Errorf("file path = %q", file.GetPath())
+	}
+	if file.GetStartLine() != 12 {
+		t.Errorf("file start line = %d, want 12", file.GetStartLine())
+	}
+	// verified:true maps to HIGH confidence.
+	if fc.GetDetails().GetConfidence() != fex.Confidence_CONFIDENCE_HIGH {
+		t.Errorf("verified finding confidence = %v, want HIGH", fc.GetDetails().GetConfidence())
+	}
+
+	// The DefectDojo-flagged duplicate must not appear in the output.
+	for _, d := range docs {
+		if d.GetFex().GetSummary() == "Duplicate of the hardcoded secret finding" {
+			t.Error("duplicate finding should have been skipped")
+		}
+	}
+
+	// Two findings with the same title/description but different files get
+	// distinct ids (the fallback hash includes the file path).
+	a, b := docs[3].GetFex(), docs[4].GetFex()
+	if a == nil || b == nil {
+		t.Fatal("findings 3/4: expected FEX")
+	}
+	if a.GetId() == "" || a.GetId() == b.GetId() {
+		t.Errorf("expected distinct ids, got %q and %q", a.GetId(), b.GetId())
+	}
+}
