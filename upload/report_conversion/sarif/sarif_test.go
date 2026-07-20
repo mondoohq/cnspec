@@ -94,3 +94,66 @@ func TestConvertSameFileDifferentLines(t *testing.T) {
 		t.Errorf("want lines 42 and 100 preserved, got %v", lines)
 	}
 }
+
+func TestConvertRuleEnrichmentAndSuppression(t *testing.T) {
+	report := []byte(`{
+	  "version": "2.1.0",
+	  "runs": [{
+	    "tool": {"driver": {
+	      "name": "codeql",
+	      "rules": [{
+	        "id": "rule1",
+	        "name": "SQL Injection",
+	        "shortDescription": {"text": "SQL injection vulnerability."},
+	        "helpUri": "https://example.com/rules/rule1",
+	        "defaultConfiguration": {"level": "error"},
+	        "properties": {"precision": "high", "tags": ["security", "external/cwe/cwe-89"]}
+	      }]
+	    }},
+	    "results": [
+	      {"ruleId": "rule1", "locations": [{"physicalLocation": {"artifactLocation": {"uri": "a.go"}, "region": {"startLine": 5}}}]},
+	      {"ruleId": "rule1", "message": {"text": "suppressed"}, "suppressions": [{"kind": "inSource"}], "locations": [{"physicalLocation": {"artifactLocation": {"uri": "b.go"}, "region": {"startLine": 9}}}]}
+	    ]
+	  }]
+	}`)
+	docs, err := sarif.Convert(report)
+	if err != nil {
+		t.Fatalf("convert: %v", err)
+	}
+	if len(docs) != 2 {
+		t.Fatalf("want 2 documents, got %d", len(docs))
+	}
+
+	// First result has no message/level: description, severity, confidence and
+	// references are all enriched from the rule definition.
+	f := docs[0].GetFex()
+	if got := f.GetDetails().GetDescription(); got != "SQL injection vulnerability." {
+		t.Errorf("description = %q, want rule short description", got)
+	}
+	if got := f.GetDetails().GetSeverity().GetRating(); got != fex.SeverityRating_SEVERITY_RATING_HIGH {
+		t.Errorf("severity = %v, want HIGH (from rule default level error)", got)
+	}
+	if got := f.GetDetails().GetConfidence(); got != fex.Confidence_CONFIDENCE_HIGH {
+		t.Errorf("confidence = %v, want HIGH (from precision)", got)
+	}
+	var haveHelp, haveCWE bool
+	for _, r := range f.GetDetails().GetReferences() {
+		if r.GetUrl() == "https://example.com/rules/rule1" {
+			haveHelp = true
+		}
+		if r.GetType() == "CWE" && r.GetName() == "CWE-89" {
+			haveCWE = true
+		}
+	}
+	if !haveHelp || !haveCWE {
+		t.Errorf("expected helpUri + CWE-89 references, got %+v", f.GetDetails().GetReferences())
+	}
+	if f.GetStatus() != fex.Status_STATUS_AFFECTED {
+		t.Errorf("status = %v, want AFFECTED", f.GetStatus())
+	}
+
+	// Second result is suppressed → NOT_AFFECTED.
+	if got := docs[1].GetFex().GetStatus(); got != fex.Status_STATUS_NOT_AFFECTED {
+		t.Errorf("suppressed status = %v, want NOT_AFFECTED", got)
+	}
+}

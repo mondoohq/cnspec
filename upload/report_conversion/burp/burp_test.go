@@ -80,8 +80,17 @@ func TestConvert(t *testing.T) {
 	if got := xss.GetDetails().GetReferences()[0].GetUrl(); got != "https://cwe.mitre.org/data/definitions/79.html" {
 		t.Errorf("CWE reference url = %q", got)
 	}
-	if len(xss.GetRemediations()) != 1 {
-		t.Errorf("expected a remediation, got %d", len(xss.GetRemediations()))
+	// Both the general remediation (remediationBackground) and the
+	// instance-specific one (remediationDetail) are surfaced.
+	rems := xss.GetRemediations()
+	if len(rems) != 2 {
+		t.Fatalf("expected 2 remediations (background + detail), got %d", len(rems))
+	}
+	if got := rems[0].GetDetails(); got != "Encode output." {
+		t.Errorf("remediation[0] = %q, want the background", got)
+	}
+	if got := rems[1].GetDetails(); got != "HTML-encode the q parameter before echoing it." {
+		t.Errorf("remediation[1] = %q, want the instance-specific detail", got)
 	}
 
 	// Second issue: Low + Firm.

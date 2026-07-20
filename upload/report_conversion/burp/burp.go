@@ -28,19 +28,20 @@ type burpReport struct {
 }
 
 type burpIssue struct {
-	SerialNumber     string                `xml:"serialNumber"`
-	Type             string                `xml:"type"`
-	Name             string                `xml:"name"`
-	Host             burpHost              `xml:"host"`
-	Path             string                `xml:"path"`
-	Location         string                `xml:"location"`
-	Severity         string                `xml:"severity"`
-	Confidence       string                `xml:"confidence"`
-	Background       string                `xml:"issueBackground"`
-	Detail           string                `xml:"issueDetail"`
-	Remediation      string                `xml:"remediationBackground"`
-	Classification   string                `xml:"vulnerabilityClassifications"`
-	RequestResponses []burpRequestResponse `xml:"requestresponse"`
+	SerialNumber      string                `xml:"serialNumber"`
+	Type              string                `xml:"type"`
+	Name              string                `xml:"name"`
+	Host              burpHost              `xml:"host"`
+	Path              string                `xml:"path"`
+	Location          string                `xml:"location"`
+	Severity          string                `xml:"severity"`
+	Confidence        string                `xml:"confidence"`
+	Background        string                `xml:"issueBackground"`
+	Detail            string                `xml:"issueDetail"`
+	Remediation       string                `xml:"remediationBackground"`
+	RemediationDetail string                `xml:"remediationDetail"`
+	Classification    string                `xml:"vulnerabilityClassifications"`
+	RequestResponses  []burpRequestResponse `xml:"requestresponse"`
 }
 
 type burpHost struct {
@@ -191,12 +192,18 @@ func references(iss burpIssue) []*fex.Reference {
 	return out
 }
 
+// remediations carries Burp's general remediation guidance (remediationBackground)
+// and, when present, the instance-specific remediation (remediationDetail) as a
+// separate entry.
 func remediations(iss burpIssue) []*fex.Remediation {
-	rem := clean(iss.Remediation)
-	if rem == "" {
-		return nil
+	var out []*fex.Remediation
+	if rem := clean(iss.Remediation); rem != "" {
+		out = append(out, &fex.Remediation{Summary: "Remediation", Details: rem})
 	}
-	return []*fex.Remediation{{Summary: "Remediation", Details: rem}}
+	if detail := clean(iss.RemediationDetail); detail != "" {
+		out = append(out, &fex.Remediation{Summary: "Remediation detail", Details: detail})
+	}
+	return out
 }
 
 func description(iss burpIssue) string {

@@ -15,16 +15,20 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	rc "go.mondoo.com/cnspec/v13/upload/report_conversion"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/fex"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func init() { rc.Register("zap", Convert) }
 
 type zapReport struct {
-	XMLName xml.Name  `xml:"OWASPZAPReport"`
-	Sites   []zapSite `xml:"site"`
+	XMLName xml.Name `xml:"OWASPZAPReport"`
+	// Report-level generation time, e.g. "Wed, 1 Jan 2025 12:00:00".
+	Generated string    `xml:"generated,attr"`
+	Sites     []zapSite `xml:"site"`
 }
 
 type zapSite struct {
@@ -63,14 +67,47 @@ func Convert(data []byte) ([]*fex.FindingDocument, error) {
 		return nil, fmt.Errorf("parse ZAP XML: not an OWASPZAPReport document")
 	}
 
+	// The report carries a single generation time; use it as the first-seen time
+	// for every finding so re-uploading an old report doesn't reset first-seen to
+	// upload time. Left unset when it can't be parsed (never falls back to now).
+	generated := parseGenerated(report.Generated)
+
 	var docs []*fex.FindingDocument
 	for _, site := range report.Sites {
 		source := &fex.Source{Name: sourceName(site.Name)}
 		for _, a := range site.Alerts {
-			docs = append(docs, fex.FexToDocument(toFex(a, site.Name, source)))
+			f := toFex(a, site.Name, source)
+			if generated != nil {
+				f.FirstSeenAt = timestamppb.New(*generated)
+			}
+			docs = append(docs, fex.FexToDocument(f))
 		}
 	}
 	return docs, nil
+}
+
+// zapDateLayouts covers ZAP's "generated" attribute, which is emitted with
+// Java's "EEE, d MMM yyyy HH:mm:ss" and may or may not carry a timezone.
+var zapDateLayouts = []string{
+	"Mon, 2 Jan 2006 15:04:05",
+	"Mon, 2 Jan 2006 15:04:05 MST",
+	"Mon, 2 Jan 2006 15:04:05 -0700",
+	"Mon, 2 Jan 2006 15:04:05 MST-07:00",
+}
+
+// parseGenerated parses ZAP's report-level date, returning nil when it is empty
+// or in an unrecognized format (callers then leave FirstSeenAt unset).
+func parseGenerated(s string) *time.Time {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	for _, layout := range zapDateLayouts {
+		if t, err := time.Parse(layout, s); err == nil {
+			return &t
+		}
+	}
+	return nil
 }
 
 func toFex(a zapAlert, siteName string, source *fex.Source) *fex.FindingExchange {

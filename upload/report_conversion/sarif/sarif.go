@@ -32,19 +32,50 @@ func Convert(data []byte) ([]*fex.FindingDocument, error) {
 	for _, run := range report.Runs {
 		source := &fex.Source{Name: run.Tool.Driver.Name}
 		runTime := runStartTime(run)
+		rules := ruleIndex(run)
 		for _, result := range run.Results {
-			docs = append(docs, fex.FexToDocument(convertResult(result, source, runTime, index)))
+			docs = append(docs, fex.FexToDocument(convertResult(result, source, runTime, rules, index)))
 			index++
 		}
 	}
 	return docs, nil
 }
 
-func convertResult(result *gosarif.Result, source *fex.Source, runTime *time.Time, index int) *fex.FindingExchange {
+// ruleIndex maps a run's rule definitions by id so results can be enriched with
+// the rule's description, help URI, taxa (CWE) and default severity.
+func ruleIndex(run *gosarif.Run) map[string]*gosarif.ReportingDescriptor {
+	out := map[string]*gosarif.ReportingDescriptor{}
+	if run.Tool.Driver != nil {
+		for _, r := range run.Tool.Driver.Rules {
+			if r != nil {
+				out[r.ID] = r
+			}
+		}
+	}
+	for _, ext := range run.Tool.Extensions {
+		for _, r := range ext.Rules {
+			if r != nil {
+				out[r.ID] = r
+			}
+		}
+	}
+	return out
+}
+
+func convertResult(result *gosarif.Result, source *fex.Source, runTime *time.Time, rules map[string]*gosarif.ReportingDescriptor, index int) *fex.FindingExchange {
 	ruleID := deref(result.RuleID)
+	rule := rules[ruleID]
 	message := ""
 	if result.Message.Text != nil {
 		message = *result.Message.Text
+	}
+	// Fall back to the rule's own description when the result carries no message.
+	if message == "" && rule != nil {
+		if d := mfmsText(rule.ShortDescription); d != "" {
+			message = d
+		} else if d := mfmsText(rule.FullDescription); d != "" {
+			message = d
+		}
 	}
 
 	// Id must be stable and non-empty. Prefer the rule id; else a hash of the
@@ -68,16 +99,24 @@ func convertResult(result *gosarif.Result, source *fex.Source, runTime *time.Tim
 		summary = "Finding from " + source.Name
 	}
 
+	// Severity: prefer the result level, fall back to the rule's default level.
+	severity := convertSeverity(result.Level)
+	if severity == nil && rule != nil && rule.DefaultConfiguration != nil {
+		severity = convertSeverity(&rule.DefaultConfiguration.Level)
+	}
+
 	f := &fex.FindingExchange{
 		Id:      id,
 		Ref:     ruleID,
 		Summary: summary,
 		Source:  source,
-		Status:  fex.Status_STATUS_AFFECTED,
+		Status:  resultStatus(result),
 		Details: &fex.FindingDetail{
 			Category:    fex.FindingDetail_CATEGORY_SECURITY,
 			Description: message,
-			Severity:    convertSeverity(result.Level),
+			Severity:    severity,
+			Confidence:  resultConfidence(result, rule),
+			References:  ruleReferences(rule),
 			Properties:  stringProps(result.Properties),
 		},
 	}
@@ -90,6 +129,111 @@ func convertResult(result *gosarif.Result, source *fex.Source, runTime *time.Tim
 	f.Affects = convertAffects(result)
 	f.Remediations = convertRemediations(result)
 	return f
+}
+
+// resultStatus maps SARIF suppressions onto the finding status. A result with any
+// suppression is treated as not affected (the scanner/user has suppressed it).
+func resultStatus(result *gosarif.Result) fex.Status {
+	for _, s := range result.Suppressions {
+		if s == nil {
+			continue
+		}
+		// A suppression with an explicit "rejected" status is not actually
+		// suppressed; anything else (accepted / under review / unset) is.
+		if s.Status != nil && strings.EqualFold(*s.Status, "rejected") {
+			continue
+		}
+		return fex.Status_STATUS_NOT_AFFECTED
+	}
+	return fex.Status_STATUS_AFFECTED
+}
+
+// resultConfidence maps a SARIF "precision" property (on the result, then the
+// rule) onto fex confidence.
+func resultConfidence(result *gosarif.Result, rule *gosarif.ReportingDescriptor) fex.Confidence {
+	precision := propString(result.Properties, "precision")
+	if precision == "" && rule != nil {
+		precision = propString(rule.Properties, "precision")
+	}
+	switch strings.ToLower(precision) {
+	case "very-high", "high":
+		return fex.Confidence_CONFIDENCE_HIGH
+	case "medium":
+		return fex.Confidence_CONFIDENCE_MEDIUM
+	case "low":
+		return fex.Confidence_CONFIDENCE_LOW
+	default:
+		return fex.Confidence_CONFIDENCE_UNSPECIFIED
+	}
+}
+
+// ruleReferences builds structured references from a rule's help URI and any CWE
+// taxa carried in its tags (the "external/cwe/cwe-NNN" convention used by CodeQL,
+// Semgrep, and others).
+func ruleReferences(rule *gosarif.ReportingDescriptor) []*fex.Reference {
+	if rule == nil {
+		return nil
+	}
+	var refs []*fex.Reference
+	if rule.HelpURI != nil && *rule.HelpURI != "" {
+		name := "Help"
+		if rule.Name != nil && *rule.Name != "" {
+			name = *rule.Name
+		}
+		refs = append(refs, &fex.Reference{Name: name, Url: *rule.HelpURI})
+	}
+	for _, tag := range ruleTags(rule) {
+		lower := strings.ToLower(tag)
+		idx := strings.Index(lower, "cwe-")
+		if idx < 0 {
+			continue
+		}
+		num := strings.TrimSpace(tag[idx+len("cwe-"):])
+		if num == "" {
+			continue
+		}
+		refs = append(refs, &fex.Reference{
+			Name: "CWE-" + num,
+			Type: "CWE",
+			Url:  "https://cwe.mitre.org/data/definitions/" + num + ".html",
+		})
+	}
+	return refs
+}
+
+func ruleTags(rule *gosarif.ReportingDescriptor) []string {
+	raw, ok := rule.Properties["tags"]
+	if !ok {
+		return nil
+	}
+	list, ok := raw.([]interface{})
+	if !ok {
+		return nil
+	}
+	var tags []string
+	for _, v := range list {
+		if s, ok := v.(string); ok {
+			tags = append(tags, s)
+		}
+	}
+	return tags
+}
+
+func mfmsText(m *gosarif.MultiformatMessageString) string {
+	if m == nil || m.Text == nil {
+		return ""
+	}
+	return *m.Text
+}
+
+func propString(p gosarif.Properties, key string) string {
+	if p == nil {
+		return ""
+	}
+	if s, ok := p[key].(string); ok {
+		return s
+	}
+	return ""
 }
 
 // runStartTime returns the earliest invocation start time of a run, or nil.

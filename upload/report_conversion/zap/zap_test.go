@@ -64,6 +64,33 @@ func TestConvert(t *testing.T) {
 	if got := docs[1].GetFex().GetDetails().GetSeverity().GetRating(); got != fex.SeverityRating_SEVERITY_RATING_LOW {
 		t.Errorf("riskcode 1 → %v, want LOW", got)
 	}
+
+	// The report-level generated date is used as first-seen for every finding.
+	ts := xss.GetFirstSeenAt()
+	if ts == nil {
+		t.Fatal("expected FirstSeenAt from the report generated date")
+	}
+	if got := ts.AsTime().UTC().Format("2006-01-02 15:04:05"); got != "2025-01-01 12:00:00" {
+		t.Errorf("first-seen = %q, want 2025-01-01 12:00:00", got)
+	}
+	if docs[1].GetFex().GetFirstSeenAt() == nil {
+		t.Error("expected FirstSeenAt on the second finding too")
+	}
+}
+
+func TestConvertUnparsableGeneratedLeavesFirstSeenUnset(t *testing.T) {
+	// An unrecognized generated date must not fall back to time.Now(); leave unset.
+	xml := []byte(`<OWASPZAPReport generated="not a date"><site name="s"><alerts><alertitem>
+	  <pluginid>1</pluginid><name>x</name><riskcode>2</riskcode><desc>d</desc>
+	  <instances><instance><uri>https://a/x</uri><method>GET</method></instance></instances>
+	</alertitem></alerts></site></OWASPZAPReport>`)
+	docs, err := zap.Convert(xml)
+	if err != nil {
+		t.Fatalf("convert: %v", err)
+	}
+	if docs[0].GetFex().GetFirstSeenAt() != nil {
+		t.Errorf("expected FirstSeenAt unset for an unparsable date, got %v", docs[0].GetFex().GetFirstSeenAt())
+	}
 }
 
 func TestConvertPreservesDistinctInstances(t *testing.T) {
