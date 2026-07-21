@@ -29,13 +29,23 @@ def policy_relpath(policy_file: Path) -> str:
 # ---------------------------------------------------------------------------
 
 def extract_bash_blocks(
-    content: str, include_audit: bool = False
+    content: str,
+    include_audit: bool = False,
+    remediation_ids: tuple[str, ...] = ("cli",),
 ) -> list[tuple[str, int, str]]:
-    """Extract bash code blocks from cli remediation sections.
+    """Extract bash code blocks from remediation sections.
 
     Returns a list of (block_text, line_number, uid) tuples where line_number
     is the 1-based line of the first code line in the block, and uid is the
     check UID that contains this remediation block.
+
+    remediation_ids selects which `- id: <method>` remediation entries are
+    scanned. It defaults to `("cli",)` — the vendor-CLI method every CLI
+    validator reads. API-first products that document their fix as a REST
+    call under `- id: api` (e.g. the Vercel policy) pass `("cli", "api")`
+    so both are validated; the lookahead already stops each block at the
+    next `- id:` regardless of method, so adding ids never bleeds one
+    block into the next.
 
     With include_audit=True, bash blocks in `audit: |` sections are
     extracted as well. The REST API validators use this — for API-first
@@ -63,8 +73,10 @@ def extract_bash_blocks(
                 break
         return result
 
+    id_alt = "|".join(re.escape(i) for i in remediation_ids)
     pattern = re.compile(
-        r"- id: cli\s*\n\s+desc: \|\s*\n(.*?)(?=\n\s+- id: |\n\s+refs:|\n  - uid: |\Z)",
+        rf"- id: (?:{id_alt})\s*\n\s+desc: \|\s*\n"
+        r"(.*?)(?=\n\s+- id: |\n\s+refs:|\n  - uid: |\Z)",
         re.DOTALL,
     )
     blocks = []

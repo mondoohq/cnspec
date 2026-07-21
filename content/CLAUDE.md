@@ -260,6 +260,9 @@ python3 content/validation/validate_remediation_commands.py gcp
 python3 content/validation/validate_remediation_commands.py digitalocean
 python3 content/validation/validate_remediation_commands.py nutanix
 
+# Validate Vercel (runs BOTH the `vercel` CLI and the REST API checks)
+python3 content/validation/validate_remediation_commands.py vercel
+
 # Validate a Cobra-based CLI (kubectl / gh / glab / hcloud)
 python3 content/validation/validate_remediation_commands.py kubernetes
 python3 content/validation/validate_remediation_commands.py github
@@ -274,7 +277,9 @@ python3 content/validation/validate_remediation_commands.py atlassian
 python3 content/validation/validate_remediation_commands.py grafana
 ```
 
-The validator scans each `aws`/`az`/`oci`/`gcloud`/`doctl`/`ncli`/`kubectl`/`gh`/`glab`/`hcloud` CLI command — and `curl` calls against the registered vendor API hosts — in ```` ```bash ```` code blocks within `id: cli` remediation sections. For the REST API and Cobra CLI targets, ```` ```bash ```` blocks in `audit:` sections are validated too (these products' verification paths use the same CLI/API surface, and the new validators have no backlog of unvalidated audit blocks). Output shows `[PASS]` or `[FAIL]` with the check UID and the offending command.
+The validator scans each `aws`/`az`/`oci`/`gcloud`/`doctl`/`ncli`/`vercel`/`kubectl`/`gh`/`glab`/`hcloud` CLI command — and `curl` calls against the registered vendor API hosts — in ```` ```bash ```` code blocks within `id: cli` remediation sections. For the REST API and Cobra CLI targets, ```` ```bash ```` blocks in `audit:` sections are validated too (these products' verification paths use the same CLI/API surface, and the new validators have no backlog of unvalidated audit blocks). Output shows `[PASS]` or `[FAIL]` with the check UID and the offending command.
+
+The `vercel` target is the only one that runs a **CLI validator and a REST API validator together** (both keyed `vercel`): the Vercel policy fixes some settings with the `vercel` CLI (`- id: cli`) and others with `curl` against the Vercel REST API (`- id: api`). Both remediation ids and the `audit:` blocks are validated.
 
 The code lives in the `content/validation/validators/` package — one module per validator family (`aws.py`, `azure.py`, …, `openapi.py` for all REST APIs), shared helpers in `common.py` — with `validate_remediation_commands.py` as the entry-point shim.
 
@@ -290,23 +295,24 @@ For `aws`, `oci`, `gcp`, and `digitalocean`, the database is built **in-memory**
 - **digitalocean**: walks the `doctl --help` Cobra tree breadth-first (parallelized; ~1s for the full ~475-command tree)
 - **kubernetes / github / gitlab / hetzner**: walk the CLI's hidden Cobra `__complete` command (`kubectl`/`gh`/`glab`/`hcloud` must be on PATH), which returns machine-readable subcommand and flag candidates regardless of each CLI's custom help layout. Valid flags are the union of flag completions and flag lines parsed from `--help` (hcloud filters its flag completions to required-only). The walk runs with cloud credentials stripped (`KUBECONFIG=/dev/null`, tokens unset) so positional-value completions stay empty, and only tab-described candidates count as subcommands (kubectl's `rollout restart` statically completes resource types as bare names). Each CLI is an entry in the `COBRA_CLIS` registry in `validators/cobra.py`.
 
-The REST API targets (**cloudflare**, **tailscale**, **slack**, **atlassian**, **grafana**) need no CLI: each provider is an entry in the `API_PROVIDERS` registry in `validators/openapi.py` that maps an API host to the vendor's OpenAPI (or Swagger 2.0) spec. The validator verifies each curl call's path + HTTP method, plus the `--data` JSON payload against the operation's `requestBody` schema: field names, types, enums, and required properties. Angle-bracket (`<account-name>`) and environment-variable (`$ORG_ID`) placeholders act as wildcards. Known spec-vs-docs divergences are listed per provider under `body_exemptions`; Cloudflare additionally narrows the generic `/zones/{zone_id}/settings/{setting_id}` schema to the per-setting component via its `path_hook`.
+The REST API targets (**cloudflare**, **tailscale**, **slack**, **atlassian**, **grafana**, **vercel**) need no CLI: each provider is an entry in the `API_PROVIDERS` registry in `validators/openapi.py` that maps an API host to the vendor's OpenAPI (or Swagger 2.0) spec. The validator verifies each curl call's path + HTTP method, plus the `--data` JSON payload against the operation's `requestBody` schema: field names, types, enums, and required properties. Angle-bracket (`<account-name>`) and environment-variable (`$ORG_ID`) placeholders act as wildcards. Known spec-vs-docs divergences are listed per provider under `body_exemptions`; Cloudflare additionally narrows the generic `/zones/{zone_id}/settings/{setting_id}` schema to the per-setting component via its `path_hook`. Two more per-provider options exist for API-first products: `strip_api_version` normalizes a leading `/vN` URL segment on both the curl path and the spec (Vercel versions every path and keeps several versions live, but the spec documents one version per operation), and `path_exemptions` allowlists endpoints the API serves but omits from its published spec.
 
 API specs are sourced two ways:
 
 - **Pinned download** (cloudflare, slack, grafana): the spec lives in a git repo, so it's downloaded at validation time from a raw URL pinned to a commit SHA (cached under `~/.cache/cnspec-validation/`). Bump the `*_OPENAPI_SHA` constant in `validators/openapi.py` to refresh.
-- **Checked-in dump** (tailscale, atlassian): the vendor serves the spec from a live, unversioned endpoint, so it's checked into `cmd_data/` and refreshed with `python3 content/validation/dump_api_specs.py`.
+- **Checked-in dump** (tailscale, atlassian, vercel): the vendor serves the spec from a live, unversioned endpoint, so it's checked into `cmd_data/` and refreshed with `python3 content/validation/dump_api_specs.py`. The Vercel spec is stored minified (~2.9 MiB vs. ~9.5 MiB pretty-printed).
 
 If a required CLI is missing, the validator prints actionable install hints and exits non-zero.
 
-**azure** is the exception among the CLI targets: it uses a checked-in `content/validation/cmd_data/azure_commands.json` because refreshing Azure CLI metadata is slow enough that doing it on every run would significantly extend CI.
+**azure** and **vercel** are the exceptions among the CLI targets: they use a checked-in command grammar (`cmd_data/azure_commands.json`, `cmd_data/vercel_commands.json`) rather than live introspection. Azure CLI metadata is too slow to refresh every run; `vercel` is a Node.js CLI with no completion surface (not Cobra, no botocore/Click tree), so `dump_vercel_commands.py` parses its `--help` tree once — scoped to the command groups the policy uses — and checks the result in.
 
 **Regenerate checked-in command/spec data**:
 
 ```bash
 python3 content/validation/dump_azure_commands.py   # when the Azure CLI version changes
 python3 content/validation/dump_ncli_commands.py    # when bumping the pinned AOS release
-python3 content/validation/dump_api_specs.py        # Tailscale + Atlassian API specs
+python3 content/validation/dump_vercel_commands.py  # when bumping the pinned vercel CLI version
+python3 content/validation/dump_api_specs.py        # Tailscale + Atlassian + Vercel API specs
 ```
 
 **Never hand-edit** the files in `cmd_data/`.

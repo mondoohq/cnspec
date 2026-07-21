@@ -1,0 +1,1431 @@
+# Copyright Mondoo, Inc. 2024, 2026
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: mondoo-vercel-security
+    name: Mondoo Vercel Security
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: vercel,saas
+    require:
+      - provider: vercel
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Secure Vercel projects and teams by enforcing deployment protection, firewall, secret hygiene, and credential controls
+    docs:
+      desc: |
+        The Mondoo Vercel Security policy identifies misconfigurations in Vercel teams and projects that could expose non-production deployments, source code, and application data, or leave the account reachable through stale credentials. This policy helps organizations detect and remediate weaknesses before they can be exploited, reducing the likelihood of unauthorized deployment access, secret leakage, and takeover of unverified or expiring domains.
+
+        This policy provides security checks across key Vercel areas:
+
+        - Deployment protection (Vercel Authentication, password protection, Trusted IPs)
+        - Build and source controls (Git fork protection, source visibility, runtime version)
+        - Environment variable and secret hygiene
+        - Web Application Firewall configuration
+        - API token lifecycle
+        - Storage, domain, and TLS certificate posture
+
+        **A note on scanning scope**
+
+        The provider discovers two kinds of assets: **Vercel Team** assets carry account-wide posture (API tokens, storage stores, domains, and certificates), and **Vercel Project** assets carry per-project deployment and build settings. Each check applies to the asset kind that owns the setting, so team-scoped and project-scoped findings appear against the corresponding asset.
+
+        **A note on API authentication**
+
+        The audit and command-line examples in this policy authenticate to the Vercel REST API with a bearer token, written as `curl -H "Authorization: Bearer $VERCEL_TOKEN"`. Team-scoped endpoints additionally take a `teamId` query parameter. The `vercel` CLI reads the same token from `vercel login` and is used where it exposes the setting directly. Create and scope tokens from **Account Settings > Tokens** in the Vercel dashboard.
+
+        Learn more about scanning Vercel in the [cnspec documentation](https://mondoo.com/docs/cnspec).
+
+        Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
+    groups:
+      - title: Vercel Deployment Protection
+        filters: asset.platform == "vercel-project"
+        checks:
+          - uid: mondoo-vercel-security-project-preview-deployments-authenticated
+          - uid: mondoo-vercel-security-project-password-protection-enabled
+          - uid: mondoo-vercel-security-project-trusted-ips-enforced
+          - uid: mondoo-vercel-security-project-trusted-ips-allowlist-configured
+      - title: Vercel Build and Source
+        filters: asset.platform == "vercel-project"
+        checks:
+          - uid: mondoo-vercel-security-project-git-fork-protection-enabled
+          - uid: mondoo-vercel-security-project-source-not-public
+          - uid: mondoo-vercel-security-project-supported-node-version
+      - title: Vercel Environment Variables
+        filters: asset.platform == "vercel-project"
+        checks:
+          - uid: mondoo-vercel-security-project-no-plaintext-env-vars
+      - title: Vercel Web Application Firewall
+        filters: asset.platform == "vercel-project"
+        checks:
+          - uid: mondoo-vercel-security-project-firewall-enabled
+          - uid: mondoo-vercel-security-project-firewall-no-broad-ip-allow
+      - title: Vercel API Tokens
+        filters: asset.platform == "vercel-team"
+        checks:
+          - uid: mondoo-vercel-security-tokens-have-expiration
+          - uid: mondoo-vercel-security-tokens-not-stale
+      - title: Vercel Storage
+        filters: asset.platform == "vercel-team"
+        checks:
+          - uid: mondoo-vercel-security-stores-no-public-blob
+      - title: Vercel Domains and Certificates
+        filters: asset.platform == "vercel-team"
+        checks:
+          - uid: mondoo-vercel-security-certificates-auto-renew
+          - uid: mondoo-vercel-security-domains-verified
+          - uid: mondoo-vercel-security-domains-auto-renew
+    scoring_system: highest impact
+queries:
+  # ---------------------------------------------------------------------------
+  # Deployment protection
+  # ---------------------------------------------------------------------------
+  - uid: mondoo-vercel-security-project-preview-deployments-authenticated
+    title: Ensure Vercel Authentication protects the project's deployments
+    impact: 85
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-14
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-2
+      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/soc2-2017: soc2-control-cc6-1-4
+      compliance/vda-isa-5: vda-isa-5-4-1-2
+    mql: |
+      vercel.project.ssoProtectionDeploymentType != empty
+    docs:
+      desc: |
+        This check ensures that Vercel Authentication (SSO) is enabled for the project so that viewing a deployment requires logging in to Vercel. When it is disabled, every generated deployment URL, including preview builds of unreleased features, is reachable by anyone who has the link.
+
+        **Why this matters**
+
+        - **Preview URLs leak easily:** Preview links are posted in pull requests, chat, and CI logs, and they index in search engines when left open.
+        - **Pre-production code is sensitive:** Unreleased features, debug output, and test data are often exposed in preview builds before they are hardened.
+        - **Link secrecy is not access control:** A hard-to-guess URL is not a security boundary; only authentication gates who can load the deployment.
+
+        **Risk mitigation**
+
+        - **Require a Vercel login:** Force viewers to authenticate before any protected deployment renders.
+        - **Scope protection broadly:** Apply protection to all deployments, not only previews, when production must stay private.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Sign in to the Vercel dashboard at vercel.com.
+        2. Open the project, then go to **Settings > Deployment Protection**.
+        3. Review the **Vercel Authentication** section.
+
+        A passing result shows Vercel Authentication enabled for the project's deployments; a failing result shows it turned off.
+
+        ### Audit via API
+
+        ```bash
+        curl -s -H "Authorization: Bearer $VERCEL_TOKEN" \
+          "https://api.vercel.com/v9/projects/<project-id>?teamId=<team-id>" \
+          | jq '.ssoProtection'
+        ```
+
+        A passing response returns a non-null `ssoProtection` object with a `deploymentType`; a failing response returns `null`.
+      remediation:
+        - id: console
+          desc: |
+            To require authentication for the project's deployments using the Vercel dashboard:
+
+            1. Open the project and go to **Settings > Deployment Protection**.
+            2. In the **Vercel Authentication** section, enable protection.
+            3. Choose the deployment scope: **Standard Protection**, or **All Deployments** when production must also be gated.
+            4. Save the changes.
+        - id: api
+          desc: |
+            To enable Vercel Authentication through the REST API:
+
+            ```bash
+            curl -s -X PATCH -H "Authorization: Bearer $VERCEL_TOKEN" \
+              -H "Content-Type: application/json" \
+              "https://api.vercel.com/v9/projects/<project-id>?teamId=<team-id>" \
+              --data '{ "ssoProtection": { "deploymentType": "prod_deployment_urls_and_all_previews" } }'
+            ```
+        - id: terraform
+          desc: |
+            To require authentication in Terraform, set the `vercel_authentication` block on the `vercel_project` resource:
+
+            ```hcl
+            resource "vercel_project" "example" {
+              name = "example"
+
+              vercel_authentication = {
+                deployment_type = "standard_protection"
+              }
+            }
+            ```
+    refs:
+      - url: https://vercel.com/docs/security/deployment-protection
+        title: Vercel deployment protection documentation
+
+  - uid: mondoo-vercel-security-project-password-protection-enabled
+    title: Ensure password protection is enabled for the project's deployments
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-14
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-2
+      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-3
+      compliance/vda-isa-5: vda-isa-5-4-1-2
+    mql: |
+      vercel.project.passwordProtectionDeploymentType != empty
+    docs:
+      desc: |
+        This check ensures that password protection is enabled for the project so that viewing a deployment requires a shared password. It provides an access gate for teams and reviewers who do not have Vercel accounts, and layers defense in depth on top of Vercel Authentication.
+
+        **Why this matters**
+
+        - **Covers non-Vercel viewers:** External reviewers and stakeholders without Vercel logins can still be gated behind a password instead of an open URL.
+        - **Adds a second barrier:** A password requirement keeps deployments private even if a link is shared more widely than intended.
+        - **Protects staging content:** Password gates keep marketing previews and staging environments out of public and crawler reach.
+
+        **Risk mitigation**
+
+        - **Require a shared password:** Force viewers to enter a password before a protected deployment renders.
+        - **Rotate the password:** Change the shared password periodically and after any suspected exposure.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Sign in to the Vercel dashboard at vercel.com.
+        2. Open the project, then go to **Settings > Deployment Protection**.
+        3. Review the **Password Protection** section.
+
+        A passing result shows password protection enabled; a failing result shows it turned off.
+
+        ### Audit via API
+
+        ```bash
+        curl -s -H "Authorization: Bearer $VERCEL_TOKEN" \
+          "https://api.vercel.com/v9/projects/<project-id>?teamId=<team-id>" \
+          | jq '.passwordProtection'
+        ```
+
+        A passing response returns a non-null `passwordProtection` object; a failing response returns `null`.
+      remediation:
+        - id: console
+          desc: |
+            To enable password protection using the Vercel dashboard:
+
+            1. Open the project and go to **Settings > Deployment Protection**.
+            2. In the **Password Protection** section, enable protection.
+            3. Set a strong shared password and choose the deployment scope.
+            4. Save the changes.
+        - id: api
+          desc: |
+            To enable password protection through the REST API:
+
+            ```bash
+            curl -s -X PATCH -H "Authorization: Bearer $VERCEL_TOKEN" \
+              -H "Content-Type: application/json" \
+              "https://api.vercel.com/v9/projects/<project-id>?teamId=<team-id>" \
+              --data '{ "passwordProtection": { "deploymentType": "preview", "password": "<strong-password>" } }'
+            ```
+        - id: terraform
+          desc: |
+            To enable password protection in Terraform, set the `password_protection` block on the `vercel_project` resource:
+
+            ```hcl
+            resource "vercel_project" "example" {
+              name = "example"
+
+              password_protection = {
+                deployment_type = "standard_protection"
+                password        = var.preview_password
+              }
+            }
+            ```
+    refs:
+      - url: https://vercel.com/docs/security/deployment-protection
+        title: Vercel deployment protection documentation
+
+  - uid: mondoo-vercel-security-project-trusted-ips-enforced
+    title: Ensure Trusted IPs protection is enforced rather than optional
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    mql: |
+      vercel.project.trustedIpsProtectionMode == empty || vercel.project.trustedIpsProtectionMode == "additional"
+    docs:
+      desc: |
+        This check ensures that when Trusted IPs protection is configured for the project, it is set to the required mode rather than the optional mode. In optional mode a request from outside the allowlist can still reach the deployment by satisfying another protection method, which weakens the network boundary the allowlist is meant to enforce.
+
+        **Why this matters**
+
+        - **Optional mode is bypassable:** In optional mode an off-allowlist client can still load the deployment through another protection method, defeating the IP restriction.
+        - **Network boundaries should be strict:** An allowlist only limits exposure if requests from outside it are rejected outright.
+        - **Least privilege for reach:** Required mode confines who can reach the deployment to the networks you explicitly trust.
+
+        **Risk mitigation**
+
+        - **Set required mode:** Configure Trusted IPs so that only allowlisted addresses can reach protected deployments.
+        - **Review the allowlist:** Keep the trusted ranges current and remove networks that no longer need access.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Sign in to the Vercel dashboard at vercel.com.
+        2. Open the project, then go to **Settings > Deployment Protection**.
+        3. Review the **Trusted IPs** section and its enforcement mode.
+
+        A passing result shows Trusted IPs disabled or set to require a trusted IP; a failing result shows it set to the optional mode.
+
+        ### Audit via API
+
+        ```bash
+        curl -s -H "Authorization: Bearer $VERCEL_TOKEN" \
+          "https://api.vercel.com/v9/projects/<project-id>?teamId=<team-id>" \
+          | jq '.trustedIps.protectionMode'
+        ```
+
+        A passing response returns `null` or `"additional"` (Trusted IPs required alongside any other protection); a failing response returns `"exclusive"` (a matching IP alone bypasses protection).
+      remediation:
+        - id: console
+          desc: |
+            To enforce Trusted IPs using the Vercel dashboard:
+
+            1. Open the project and go to **Settings > Deployment Protection**.
+            2. In the **Trusted IPs** section, set the enforcement mode to require a trusted IP.
+            3. Confirm the allowlisted address ranges are correct.
+            4. Save the changes.
+        - id: api
+          desc: |
+            To set Trusted IPs to required mode through the REST API:
+
+            ```bash
+            curl -s -X PATCH -H "Authorization: Bearer $VERCEL_TOKEN" \
+              -H "Content-Type: application/json" \
+              "https://api.vercel.com/v9/projects/<project-id>?teamId=<team-id>" \
+              --data '{ "trustedIps": { "deploymentType": "all", "protectionMode": "additional", "addresses": [ { "value": "203.0.113.0/24" } ] } }'
+            ```
+        - id: terraform
+          desc: |
+            To enforce Trusted IPs in Terraform, set `protection_mode` on the `trusted_ips` block of the `vercel_project` resource:
+
+            ```hcl
+            resource "vercel_project" "example" {
+              name = "example"
+
+              trusted_ips = {
+                deployment_type = "all"
+                protection_mode = "trusted_ip_required"
+                addresses = [
+                  { value = "203.0.113.0/24" }
+                ]
+              }
+            }
+            ```
+    refs:
+      - url: https://vercel.com/docs/security/deployment-protection/methods-to-protect-deployments/trusted-ips
+        title: Vercel Trusted IPs documentation
+
+  - uid: mondoo-vercel-security-project-trusted-ips-allowlist-configured
+    title: Ensure a Trusted IPs allowlist is set when the protection is enabled
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    mql: |
+      vercel.project.trustedIpsProtectionMode == empty || vercel.project.trustedIpsAddresses != empty
+    docs:
+      desc: |
+        This check ensures that when Trusted IPs protection is enabled for the project, at least one address range is present in the allowlist. A protection mode with an empty allowlist either blocks all traffic or, depending on configuration, enforces nothing, leaving the control misconfigured rather than protective.
+
+        **Why this matters**
+
+        - **An empty allowlist is not a control:** Trusted IPs only restrict reach when the allowlist names the networks permitted to connect.
+        - **Misconfiguration hides as protection:** An enabled-but-empty allowlist can read as protected in a settings overview while enforcing nothing meaningful.
+        - **Explicit trust is required:** Every network permitted to reach protected deployments should be declared deliberately.
+
+        **Risk mitigation**
+
+        - **Populate the allowlist:** Add the specific CIDR ranges that must reach protected deployments.
+        - **Audit the ranges:** Keep the entries scoped to current office, VPN, and CI networks.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Sign in to the Vercel dashboard at vercel.com.
+        2. Open the project, then go to **Settings > Deployment Protection**.
+        3. In the **Trusted IPs** section, review the configured address ranges.
+
+        A passing result shows Trusted IPs disabled, or enabled with one or more address ranges; a failing result shows it enabled with no ranges.
+
+        ### Audit via API
+
+        ```bash
+        curl -s -H "Authorization: Bearer $VERCEL_TOKEN" \
+          "https://api.vercel.com/v9/projects/<project-id>?teamId=<team-id>" \
+          | jq '.trustedIps.addresses'
+        ```
+
+        A passing response returns `null` when disabled, or a non-empty array; a failing response returns an empty array while `trustedIps` is set.
+      remediation:
+        - id: console
+          desc: |
+            To populate the Trusted IPs allowlist using the Vercel dashboard:
+
+            1. Open the project and go to **Settings > Deployment Protection**.
+            2. In the **Trusted IPs** section, add each CIDR range that must reach protected deployments.
+            3. Save the changes.
+        - id: api
+          desc: |
+            To set the Trusted IPs allowlist through the REST API:
+
+            ```bash
+            curl -s -X PATCH -H "Authorization: Bearer $VERCEL_TOKEN" \
+              -H "Content-Type: application/json" \
+              "https://api.vercel.com/v9/projects/<project-id>?teamId=<team-id>" \
+              --data '{ "trustedIps": { "deploymentType": "all", "protectionMode": "additional", "addresses": [ { "value": "203.0.113.0/24", "note": "office" } ] } }'
+            ```
+        - id: terraform
+          desc: |
+            To declare the allowlist in Terraform, populate `addresses` on the `trusted_ips` block of the `vercel_project` resource:
+
+            ```hcl
+            resource "vercel_project" "example" {
+              name = "example"
+
+              trusted_ips = {
+                deployment_type = "all"
+                protection_mode = "trusted_ip_required"
+                addresses = [
+                  { value = "203.0.113.0/24", note = "office" },
+                  { value = "198.51.100.10/32", note = "ci" }
+                ]
+              }
+            }
+            ```
+    refs:
+      - url: https://vercel.com/docs/security/deployment-protection/methods-to-protect-deployments/trusted-ips
+        title: Vercel Trusted IPs documentation
+
+  # ---------------------------------------------------------------------------
+  # Build and source
+  # ---------------------------------------------------------------------------
+  - uid: mondoo-vercel-security-project-git-fork-protection-enabled
+    title: Ensure Git fork protection is enabled for the project
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ais-06
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-25
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-ps-06
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-2
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc8-1-2
+      compliance/vda-isa-5: false
+    mql: |
+      vercel.project.gitForkProtection == true
+    docs:
+      desc: |
+        This check ensures that the project requires authorization before it builds pull requests opened from forked repositories. Without fork protection, a pull request from any fork can trigger a deployment that runs the project's build with access to its environment variables, letting an outside contributor exfiltrate secrets or run arbitrary build steps.
+
+        **Why this matters**
+
+        - **Forks run your build with your secrets:** An auto-deployed fork PR executes untrusted code in a build that can read the project's environment variables.
+        - **Secret exfiltration is trivial:** A malicious build step can print or POST environment variables to an attacker-controlled endpoint.
+        - **Anyone can open a fork PR:** On public repositories the pool of potential contributors is unbounded.
+
+        **Risk mitigation**
+
+        - **Require authorization for fork PRs:** Hold deployments from forks until a maintainer approves them.
+        - **Scope build secrets:** Keep sensitive environment variables out of the preview environment that fork builds run in.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Sign in to the Vercel dashboard at vercel.com.
+        2. Open the project, then go to **Settings > Git**.
+        3. Review the **Fork Protection** setting, which holds deployments from forked repositories until they are authorized.
+
+        A passing result shows fork protection enabled; a failing result shows it disabled.
+
+        ### Audit via API
+
+        ```bash
+        curl -s -H "Authorization: Bearer $VERCEL_TOKEN" \
+          "https://api.vercel.com/v9/projects/<project-id>?teamId=<team-id>" \
+          | jq '.gitForkProtection'
+        ```
+
+        A passing response returns `true`; a failing response returns `false`.
+      remediation:
+        - id: console
+          desc: |
+            To enable fork protection using the Vercel dashboard:
+
+            1. Open the project and go to **Settings > Git**.
+            2. Enable **Fork Protection** so pull requests from forks require authorization before they deploy.
+            3. Save the changes.
+        - id: api
+          desc: |
+            To enable fork protection through the REST API:
+
+            ```bash
+            curl -s -X PATCH -H "Authorization: Bearer $VERCEL_TOKEN" \
+              -H "Content-Type: application/json" \
+              "https://api.vercel.com/v9/projects/<project-id>?teamId=<team-id>" \
+              --data '{ "gitForkProtection": true }'
+            ```
+        - id: terraform
+          desc: |
+            To enable fork protection in Terraform, set `git_fork_protection` on the `vercel_project` resource:
+
+            ```hcl
+            resource "vercel_project" "example" {
+              name                = "example"
+              git_fork_protection = true
+            }
+            ```
+    refs:
+      - url: https://vercel.com/docs/git
+        title: Vercel Git integration documentation
+
+  - uid: mondoo-vercel-security-project-source-not-public
+    title: Ensure the project's deployment source is not publicly viewable
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-dsp-17
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-4
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ds-5
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-22
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-22
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc6-1-12
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    mql: |
+      vercel.project.publicSource == false
+    docs:
+      desc: |
+        This check ensures that the project's source code is not exposed through the public deployment inspector. When public source is enabled, anyone with a deployment URL can browse the build's source, output, and logs, which can reveal secrets, internal logic, and infrastructure details.
+
+        **Why this matters**
+
+        - **Source exposure reveals secrets:** Build source and logs frequently contain tokens, endpoints, and configuration that were never meant to be public.
+        - **Attackers map your app:** Readable source and output make it easy to find weak points and undocumented endpoints.
+        - **The default is convenience, not privacy:** Public source is meant for open collaboration, not for private applications.
+
+        **Risk mitigation**
+
+        - **Disable public source:** Keep the deployment inspector's source and logs private to team members.
+        - **Review what builds emit:** Ensure build logs do not print secrets even when source visibility is restricted.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Sign in to the Vercel dashboard at vercel.com.
+        2. Open the project, then go to **Settings > General**.
+        3. Review the **Publicly viewable source** setting for the deployment inspector.
+
+        A passing result shows public source disabled; a failing result shows it enabled.
+
+        ### Audit via API
+
+        ```bash
+        curl -s -H "Authorization: Bearer $VERCEL_TOKEN" \
+          "https://api.vercel.com/v9/projects/<project-id>?teamId=<team-id>" \
+          | jq '.publicSource'
+        ```
+
+        A passing response returns `false` or `null`; a failing response returns `true`.
+      remediation:
+        - id: console
+          desc: |
+            To make the deployment source private using the Vercel dashboard:
+
+            1. Open the project and go to **Settings > General**.
+            2. Disable **Publicly viewable source**.
+            3. Save the changes.
+        - id: api
+          desc: |
+            To disable public source through the REST API:
+
+            ```bash
+            curl -s -X PATCH -H "Authorization: Bearer $VERCEL_TOKEN" \
+              -H "Content-Type: application/json" \
+              "https://api.vercel.com/v9/projects/<project-id>?teamId=<team-id>" \
+              --data '{ "publicSource": false }'
+            ```
+        - id: terraform
+          desc: |
+            To keep the source private in Terraform, set `public_source` to `false` on the `vercel_project` resource:
+
+            ```hcl
+            resource "vercel_project" "example" {
+              name          = "example"
+              public_source = false
+            }
+            ```
+    refs:
+      - url: https://vercel.com/docs/deployments/inspect-deployment
+        title: Vercel deployment inspector documentation
+
+  - uid: mondoo-vercel-security-project-supported-node-version
+    title: Ensure the project builds on a supported Node.js version
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-tvm-01
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-1-ii-b-security-management-process-risk-management
+      compliance/iso-27001-2022: iso-27001-2022-a-8-8
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ip-12
+      compliance/nist-csf-2: nist-csf-2-pr-ps-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sa-22
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-1
+      compliance/pci-dss-4: pcidss-requirement-6-3-3
+      compliance/soc2-2017: soc2-control-cc7-1-5
+      compliance/vda-isa-5: vda-isa-5-5-2-5
+    mql: |
+      vercel.project.nodeVersion == empty || ["14.x", "16.x", "18.x"].contains(vercel.project.nodeVersion) == false
+    docs:
+      desc: |
+        This check ensures that the project is not pinned to a Node.js major version that has reached end of life. End-of-life runtimes stop receiving security patches, so builds and serverless functions running on them accumulate unfixed vulnerabilities in the runtime itself.
+
+        **Why this matters**
+
+        - **End-of-life runtimes are unpatched:** Once a Node.js major line reaches end of life it receives no further security fixes.
+        - **Functions inherit the runtime's flaws:** Serverless functions execute on the selected runtime, so a vulnerable runtime is a vulnerable function.
+        - **Upgrades get harder over time:** Staying current avoids a large, risky jump across several major versions later.
+
+        **Risk mitigation**
+
+        - **Pin a supported version:** Move the project to a Node.js major line that is still in maintenance.
+        - **Track the release schedule:** Plan upgrades ahead of each version's end-of-life date.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Sign in to the Vercel dashboard at vercel.com.
+        2. Open the project, then go to **Settings > General**.
+        3. Review the **Node.js Version** setting.
+
+        A passing result shows a supported Node.js major version; a failing result shows an end-of-life version such as 14.x, 16.x, or 18.x.
+
+        ### Audit via API
+
+        ```bash
+        curl -s -H "Authorization: Bearer $VERCEL_TOKEN" \
+          "https://api.vercel.com/v9/projects/<project-id>?teamId=<team-id>" \
+          | jq '.nodeVersion'
+        ```
+
+        A passing response returns a supported version; a failing response returns an end-of-life version.
+      remediation:
+        - id: console
+          desc: |
+            To upgrade the Node.js version using the Vercel dashboard:
+
+            1. Open the project and go to **Settings > General**.
+            2. Set **Node.js Version** to a supported major version.
+            3. Redeploy the project so the new runtime takes effect.
+        - id: api
+          desc: |
+            To set the Node.js version through the REST API:
+
+            ```bash
+            curl -s -X PATCH -H "Authorization: Bearer $VERCEL_TOKEN" \
+              -H "Content-Type: application/json" \
+              "https://api.vercel.com/v9/projects/<project-id>?teamId=<team-id>" \
+              --data '{ "nodeVersion": "22.x" }'
+            ```
+        - id: terraform
+          desc: |
+            To pin a supported runtime in Terraform, set `node_version` on the `vercel_project` resource:
+
+            ```hcl
+            resource "vercel_project" "example" {
+              name         = "example"
+              node_version = "22.x"
+            }
+            ```
+    refs:
+      - url: https://vercel.com/docs/functions/runtimes/node-js
+        title: Vercel Node.js runtime documentation
+
+  # ---------------------------------------------------------------------------
+  # Environment variables
+  # ---------------------------------------------------------------------------
+  - uid: mondoo-vercel-security-project-no-plaintext-env-vars
+    title: Ensure environment variables are not stored in plaintext
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-10
+      compliance/pci-dss-4: pcidss-requirement-8-3-2
+      compliance/soc2-2017: soc2-control-cc6-1-10
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    mql: |
+      vercel.project.environmentVariables.all(type != "plain")
+    docs:
+      desc: |
+        This check ensures that the project has no environment variables stored with the plaintext type. Plaintext values are stored and returned in clear text through the API and dashboard, so any secret held that way is readable by anyone with project access and is exposed in API responses. Secrets should use the encrypted, sensitive, or secret types instead.
+
+        **Why this matters**
+
+        - **Plaintext values are readable:** A plaintext variable is returned in clear text to anyone who can read the project, including through the API.
+        - **Secrets end up in the wrong hands:** Tokens, database URLs, and API keys stored as plaintext are exposed far more widely than intended.
+        - **Sensitive types hide values after creation:** The sensitive and secret types prevent the stored value from being read back.
+
+        **Risk mitigation**
+
+        - **Use encrypted or sensitive types:** Store secrets so their values cannot be retrieved after they are set.
+        - **Reserve plaintext for non-secrets:** Only use plaintext for values that are genuinely public, and treat any plaintext secret as compromised and rotate it.
+      audit: |
+        ### Audit via CLI
+
+        1. Ensure the `vercel` CLI is authenticated with `vercel login`.
+        2. Pull the project's environment variables and inspect their types:
+
+        ```bash
+        vercel env ls
+        ```
+
+        A passing result lists no variables of the plaintext type; a failing result shows one or more plaintext entries.
+
+        ### Audit via API
+
+        ```bash
+        curl -s -H "Authorization: Bearer $VERCEL_TOKEN" \
+          "https://api.vercel.com/v9/projects/<project-id>/env?teamId=<team-id>" \
+          | jq '.envs[] | select(.type == "plain") | .key'
+        ```
+
+        A passing response returns nothing; a failing response lists the keys stored as plaintext.
+      remediation:
+        - id: console
+          desc: |
+            To convert plaintext variables using the Vercel dashboard:
+
+            1. Open the project and go to **Settings > Environment Variables**.
+            2. Remove each plaintext secret and re-add it as a **Sensitive** variable.
+            3. Rotate any secret that was previously stored as plaintext, since its value may have been exposed.
+        - id: cli
+          desc: |
+            To replace a plaintext variable with a sensitive one using the `vercel` CLI, remove it and re-add it with the `--sensitive` flag:
+
+            ```bash
+            # Remove the plaintext variable from the environment it targets
+            vercel env rm DATABASE_URL production --yes
+
+            # Re-add it as a sensitive variable
+            vercel env add DATABASE_URL production --sensitive --value "<secret>"
+            ```
+        - id: terraform
+          desc: |
+            To store a secret with a protected type in Terraform, set `sensitive = true` on the `vercel_project_environment_variable` resource:
+
+            ```hcl
+            resource "vercel_project_environment_variable" "database_url" {
+              project_id = vercel_project.example.id
+              key        = "DATABASE_URL"
+              value      = var.database_url
+              target     = ["production"]
+              sensitive  = true
+            }
+            ```
+    refs:
+      - url: https://vercel.com/docs/environment-variables/sensitive-environment-variables
+        title: Vercel sensitive environment variables documentation
+
+  # ---------------------------------------------------------------------------
+  # Web Application Firewall
+  # ---------------------------------------------------------------------------
+  - uid: mondoo-vercel-security-project-firewall-enabled
+    title: Ensure the project's Web Application Firewall is enabled
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-09
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-pt-4
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/pci-dss-4: pcidss-requirement-6-4-2
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    mql: |
+      vercel.project.firewall.enabled == true
+    docs:
+      desc: |
+        This check ensures that the Vercel Web Application Firewall (WAF) is enabled for the project. With the firewall off, custom rules, managed rulesets, and IP rules are not evaluated, so the project has no application-layer filtering in front of its deployments.
+
+        **Why this matters**
+
+        - **No firewall means no filtering:** Custom and managed rules only take effect while the firewall is enabled.
+        - **Application-layer attacks reach the app:** Without the WAF, injection and bot traffic hit the deployment directly.
+        - **Defense in depth starts at the edge:** Filtering malicious requests before they reach functions reduces both risk and cost.
+
+        **Risk mitigation**
+
+        - **Enable the firewall:** Turn on the WAF so rules are enforced at the edge.
+        - **Adopt managed rulesets:** Enable managed protections such as the OWASP ruleset for baseline coverage.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Sign in to the Vercel dashboard at vercel.com.
+        2. Open the project, then go to the **Firewall** tab.
+        3. Review whether the firewall is enabled.
+
+        A passing result shows the firewall enabled; a failing result shows it disabled.
+
+        ### Audit via API
+
+        ```bash
+        curl -s -H "Authorization: Bearer $VERCEL_TOKEN" \
+          "https://api.vercel.com/v1/security/firewall/config/active?projectId=<project-id>&teamId=<team-id>" \
+          | jq '.firewallEnabled'
+        ```
+
+        A passing response returns `true`; a failing response returns `false`.
+      remediation:
+        - id: console
+          desc: |
+            To enable the firewall using the Vercel dashboard:
+
+            1. Open the project and go to the **Firewall** tab.
+            2. Enable the Web Application Firewall.
+            3. Review and enable the managed rulesets you want to enforce.
+        - id: api
+          desc: |
+            To enable the firewall through the REST API:
+
+            ```bash
+            curl -s -X PUT -H "Authorization: Bearer $VERCEL_TOKEN" \
+              -H "Content-Type: application/json" \
+              "https://api.vercel.com/v1/security/firewall/config?projectId=<project-id>&teamId=<team-id>" \
+              --data '{ "firewallEnabled": true }'
+            ```
+        - id: terraform
+          desc: |
+            To enable the firewall in Terraform, set `enabled` on the `vercel_firewall_config` resource:
+
+            ```hcl
+            resource "vercel_firewall_config" "example" {
+              project_id = vercel_project.example.id
+              enabled    = true
+            }
+            ```
+    refs:
+      - url: https://vercel.com/docs/vercel-firewall/vercel-waf
+        title: Vercel Web Application Firewall documentation
+
+  - uid: mondoo-vercel-security-project-firewall-no-broad-ip-allow
+    title: Ensure no firewall IP rule allows all source addresses
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    mql: |
+      vercel.project.firewall.ipRules.none(action == "allow" && ip == "0.0.0.0/0")
+      vercel.project.firewall.ipRules.none(action == "allow" && ip == "::/0")
+    docs:
+      desc: |
+        This check ensures that the project's firewall has no IP rule that allows every source address. An allow rule matching `0.0.0.0/0` or `::/0` waves through all traffic from that address family, which can override deny rules and managed protections and effectively neutralize the firewall.
+
+        **Why this matters**
+
+        - **An allow-all rule bypasses protections:** A rule that permits every address can take precedence over deny rules and rulesets.
+        - **It hides as a specific exception:** A broad allow entry looks like a scoped exception in a rule list but matches everyone.
+        - **Attack traffic is explicitly welcomed:** Allowing all sources removes the firewall's ability to block known-bad clients by IP.
+
+        **Risk mitigation**
+
+        - **Remove blanket allow rules:** Delete any IP allow rule matching `0.0.0.0/0` or `::/0`.
+        - **Scope allow rules narrowly:** Replace broad entries with the specific ranges that genuinely need to bypass filtering.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Sign in to the Vercel dashboard at vercel.com.
+        2. Open the project, then go to the **Firewall** tab.
+        3. Review the IP rules for any allow entry covering all addresses.
+
+        A passing result shows no allow rule matching `0.0.0.0/0` or `::/0`; a failing result shows such a rule.
+
+        ### Audit via API
+
+        ```bash
+        curl -s -H "Authorization: Bearer $VERCEL_TOKEN" \
+          "https://api.vercel.com/v1/security/firewall/config/active?projectId=<project-id>&teamId=<team-id>" \
+          | jq '.ips[] | select(.action == "allow" and (.ip == "0.0.0.0/0" or .ip == "::/0"))'
+        ```
+
+        A passing response returns nothing; a failing response returns the offending rule.
+      remediation:
+        - id: console
+          desc: |
+            To remove a broad allow rule using the Vercel dashboard:
+
+            1. Open the project and go to the **Firewall** tab.
+            2. Locate any IP allow rule matching `0.0.0.0/0` or `::/0`.
+            3. Delete the rule, or narrow it to the specific ranges that need to bypass filtering.
+        - id: api
+          desc: |
+            To remove a broad IP allow rule through the REST API, delete it by its rule identifier:
+
+            ```bash
+            curl -s -X PATCH -H "Authorization: Bearer $VERCEL_TOKEN" \
+              -H "Content-Type: application/json" \
+              "https://api.vercel.com/v1/security/firewall/config?projectId=<project-id>&teamId=<team-id>" \
+              --data '{ "action": "ip.remove", "id": "<ip-rule-id>" }'
+            ```
+        - id: terraform
+          desc: |
+            To scope firewall IP rules in Terraform, define only the specific ranges on the `vercel_firewall_config` resource and omit any all-addresses allow entry:
+
+            ```hcl
+            resource "vercel_firewall_config" "example" {
+              project_id = vercel_project.example.id
+              enabled    = true
+
+              ip_rules = {
+                rules = [
+                  {
+                    action = "allow"
+                    ip     = "203.0.113.0/24"
+                    hostname = "*"
+                  }
+                ]
+              }
+            }
+            ```
+    refs:
+      - url: https://vercel.com/docs/vercel-firewall/vercel-waf/ip-blocking
+        title: Vercel firewall IP rules documentation
+
+  # ---------------------------------------------------------------------------
+  # API tokens (team-scoped posture)
+  # ---------------------------------------------------------------------------
+  - uid: mondoo-vercel-security-tokens-have-expiration
+    title: Ensure Vercel API tokens have an expiration date
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-2
+      compliance/pci-dss-4: pcidss-requirement-8-6-3
+      compliance/soc2-2017: soc2-control-cc6-1-9
+      compliance/vda-isa-5: vda-isa-5-4-1-1
+    mql: |
+      vercel.accessTokens.none(expiresAt == empty)
+    docs:
+      desc: |
+        This check ensures that every API token owned by the authenticated account has an expiration date. A non-expiring token is a permanent credential: if it leaks in a commit, log, or CI job, it grants access indefinitely until someone notices and revokes it by hand.
+
+        **Why this matters**
+
+        - **Non-expiring tokens never self-heal:** A leaked permanent token stays valid until it is manually revoked.
+        - **Long-lived credentials spread:** Tokens without an expiry accumulate in scripts, pipelines, and developer machines over time.
+        - **Rotation is not enforced:** Without an expiry there is no built-in prompt to replace an aging credential.
+
+        **Risk mitigation**
+
+        - **Set an expiration on every token:** Create tokens with the shortest practical lifetime.
+        - **Rotate before expiry:** Replace tokens on a schedule so automation never depends on a permanent credential.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Sign in to the Vercel dashboard at vercel.com.
+        2. Go to **Account Settings > Tokens**.
+        3. Review the expiration shown for each token.
+
+        A passing result shows an expiration date on every token; a failing result shows one or more tokens that never expire.
+
+        ### Audit via API
+
+        ```bash
+        curl -s -H "Authorization: Bearer $VERCEL_TOKEN" \
+          "https://api.vercel.com/v5/user/tokens" \
+          | jq '.tokens[] | select(.expiresAt == null) | .name'
+        ```
+
+        A passing response returns nothing; a failing response lists the names of tokens with no expiration.
+      remediation:
+        - id: console
+          desc: |
+            To replace a non-expiring token using the Vercel dashboard:
+
+            1. Go to **Account Settings > Tokens**.
+            2. Create a new token and choose an explicit expiration.
+            3. Update the consumers to use the new token.
+            4. Delete the old non-expiring token.
+        - id: cli
+          desc: |
+            To revoke a non-expiring token using the `vercel` CLI, list the tokens to find its ID and remove it, then recreate it with an expiration through the dashboard:
+
+            ```bash
+            # Find the token's ID
+            vercel tokens ls
+
+            # Revoke the non-expiring token
+            vercel tokens remove <token-id>
+            ```
+        # No Terraform remediation: personal API tokens are account credentials that
+        # the vercel Terraform provider does not manage; they are created and revoked
+        # through the dashboard or the REST API only.
+    refs:
+      - url: https://vercel.com/docs/rest-api/reference/welcome/api-scopes
+        title: Vercel access token documentation
+
+  - uid: mondoo-vercel-security-tokens-not-stale
+    title: Ensure unused Vercel API tokens are removed
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-08
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-5-18
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-6
+      compliance/pci-dss-4: pcidss-requirement-8-2-6
+      compliance/soc2-2017: soc2-control-cc6-2-3
+      compliance/vda-isa-5: vda-isa-5-4-1-1
+    mql: |
+      vercel.accessTokens.all(lastUsedAt != empty && time.now - lastUsedAt < 90 * time.day || lastUsedAt == empty && time.now - createdAt < 90 * time.day)
+    docs:
+      desc: |
+        This check ensures that the account holds no stale API tokens: tokens that have not been used in the last 90 days, and tokens that were created more than 90 days ago and have never been used. Every unused token is standing attack surface that grants access but is not being watched, so a leak may go unnoticed indefinitely.
+
+        **Why this matters**
+
+        - **Unused tokens are unwatched tokens:** A credential nobody uses is a credential nobody notices being abused.
+        - **Abandoned tokens outlive their purpose:** Tokens for old integrations and departed staff keep granting access after the need is gone.
+        - **Fewer credentials, smaller surface:** Removing idle tokens shrinks the set of secrets that could leak.
+
+        **Risk mitigation**
+
+        - **Remove idle tokens:** Delete tokens with no recent use and tokens created long ago that were never used.
+        - **Inventory regularly:** Review the token list on a schedule and prune anything without an owner or a purpose.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Sign in to the Vercel dashboard at vercel.com.
+        2. Go to **Account Settings > Tokens**.
+        3. Review the last-used time shown for each token.
+
+        A passing result shows every token used within the last 90 days; a failing result shows tokens idle for more than 90 days or never used since well before then.
+
+        ### Audit via API
+
+        ```bash
+        curl -s -H "Authorization: Bearer $VERCEL_TOKEN" \
+          "https://api.vercel.com/v5/user/tokens" \
+          | jq '.tokens[] | {name, activeAt, createdAt}'
+        ```
+
+        A passing response shows a recent `activeAt` for each token; a failing response shows tokens whose last activity is old or absent.
+      remediation:
+        - id: console
+          desc: |
+            To remove stale tokens using the Vercel dashboard:
+
+            1. Go to **Account Settings > Tokens**.
+            2. Identify tokens with no recent use.
+            3. Delete each token that is no longer needed after confirming nothing depends on it.
+        - id: cli
+          desc: |
+            To delete a stale token using the `vercel` CLI, list the tokens and remove the unused one by its ID:
+
+            ```bash
+            vercel tokens ls
+            vercel tokens remove <token-id>
+            ```
+        # No Terraform remediation: personal API tokens are account credentials that
+        # the vercel Terraform provider does not manage; they are created and revoked
+        # through the dashboard or the REST API only.
+    refs:
+      - url: https://vercel.com/docs/rest-api/reference/welcome/api-scopes
+        title: Vercel access token documentation
+
+  # ---------------------------------------------------------------------------
+  # Storage
+  # ---------------------------------------------------------------------------
+  - uid: mondoo-vercel-security-stores-no-public-blob
+    title: Ensure Blob stores are not publicly accessible
+    impact: 85
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-dsp-17
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ds-5
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-22
+      compliance/pci-dss-4: pcidss-requirement-1-4-4
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    mql: |
+      vercel.team.stores.where(storeType == "blob").none(access == "public")
+    docs:
+      desc: |
+        This check ensures that the team has no Blob store configured with public access. A public Blob store serves its objects to anyone with the URL and no authentication, so any sensitive file placed in it is exposed to the internet.
+
+        **Why this matters**
+
+        - **Public objects need no credentials:** Anyone with a Blob URL can download the object, and Blob URLs are easy to enumerate or leak.
+        - **Sensitive data ends up public:** Uploads, exports, and user content stored in a public bucket are readable by the world.
+        - **Exposure is silent:** There is no per-request authorization to log or alert on when access is public by design.
+
+        **Risk mitigation**
+
+        - **Use private Blob stores:** Keep stores private and serve objects through signed, time-limited URLs.
+        - **Audit store contents:** Confirm that anything genuinely public was intended to be, and move sensitive files to a private store.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Sign in to the Vercel dashboard at vercel.com.
+        2. Go to the team's **Storage** tab.
+        3. Open each Blob store and review its access level.
+
+        A passing result shows every Blob store set to private; a failing result shows one or more Blob stores set to public.
+
+        ### Audit via API
+
+        ```bash
+        curl -s -H "Authorization: Bearer $VERCEL_TOKEN" \
+          "https://api.vercel.com/v1/storage/stores?teamId=<team-id>" \
+          | jq '.stores[] | select(.type == "blob" and .access == "public") | .name'
+        ```
+
+        A passing response returns nothing; a failing response lists the public Blob stores.
+      remediation:
+        - id: console
+          desc: |
+            To make a Blob store private using the Vercel dashboard:
+
+            1. Go to the team's **Storage** tab and open the Blob store.
+            2. Change its access level to private.
+            3. Update any consumer that relied on public URLs to use signed URLs instead.
+        - id: cli
+          desc: |
+            To review Blob stores using the `vercel` CLI, then change a store's access level from the dashboard. Blob store access is set through the dashboard and the Blob SDK:
+
+            ```bash
+            # List all Blob stores for the team
+            vercel blob list-stores
+
+            # Inspect a specific store
+            vercel blob get-store <store-id>
+            ```
+        # No Terraform remediation: Vercel Blob stores and their access level are
+        # provisioned through the dashboard and the Blob SDK; the vercel Terraform
+        # provider does not expose a Blob store resource.
+    refs:
+      - url: https://vercel.com/docs/vercel-blob
+        title: Vercel Blob documentation
+
+  # ---------------------------------------------------------------------------
+  # Domains and certificates
+  # ---------------------------------------------------------------------------
+  - uid: mondoo-vercel-security-certificates-auto-renew
+    title: Ensure TLS certificates renew automatically
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-17
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-10
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    mql: |
+      vercel.team.certificates.none(autoRenew == false)
+    docs:
+      desc: |
+        This check ensures that every TLS certificate issued for the team's domains is set to renew automatically. A certificate without auto-renewal will eventually expire, breaking HTTPS for the domains it covers and driving users toward insecure fallbacks or unreachable services.
+
+        **Why this matters**
+
+        - **Expired certificates break HTTPS:** When a certificate lapses, browsers reject the connection and the site becomes unreachable over TLS.
+        - **Manual renewal is easy to miss:** Certificates that depend on a person to renew them lapse when that step is forgotten.
+        - **Outages erode trust:** A TLS error page trains users to click through warnings, undermining the protection HTTPS provides.
+
+        **Risk mitigation**
+
+        - **Enable auto-renewal:** Let Vercel reissue certificates before they expire.
+        - **Monitor expiry dates:** Track certificate expiration so a renewal failure is caught before the certificate lapses.
+      audit: |
+        ### Audit via CLI
+
+        1. Ensure the `vercel` CLI is authenticated with `vercel login`.
+        2. List the team's certificates and review their renewal state:
+
+        ```bash
+        vercel certs ls
+        ```
+
+        A passing result shows every certificate set to renew automatically; a failing result shows certificates without auto-renewal.
+
+        ### Audit via Dashboard
+
+        1. Sign in to the Vercel dashboard at vercel.com.
+        2. Open a domain under the team's **Domains** tab and review its certificate.
+
+        A passing result shows automatic renewal enabled; a failing result shows it disabled.
+      remediation:
+        - id: console
+          desc: |
+            To restore automatic renewal using the Vercel dashboard:
+
+            1. Go to the team's **Domains** tab and open the affected domain.
+            2. Ensure the domain's DNS and configuration allow Vercel to manage its certificate.
+            3. Let Vercel reissue an auto-renewing certificate for the domain.
+        - id: cli
+          desc: |
+            To issue a Vercel-managed certificate that renews automatically, remove the stale certificate and let Vercel reissue one:
+
+            ```bash
+            vercel certs issue <domain>
+            ```
+        # No Terraform remediation: TLS certificates are issued and auto-renewed by
+        # Vercel for configured domains; the vercel Terraform provider does not expose
+        # a certificate renewal resource.
+    refs:
+      - url: https://vercel.com/docs/domains/working-with-ssl
+        title: Vercel SSL certificate documentation
+
+  - uid: mondoo-vercel-security-domains-verified
+    title: Ensure all team domains are verified
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-5-9
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: false
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc6-1-1
+      compliance/vda-isa-5: false
+    mql: |
+      vercel.team.domains.none(verified == false)
+    docs:
+      desc: |
+        This check ensures that every domain registered to the team is verified. An unverified domain is not fully controlled by the team in Vercel, which can indicate a pending misconfiguration or a stale entry, and unverified or dangling domain configurations are a common path to subdomain takeover.
+
+        **Why this matters**
+
+        - **Unverified means unproven control:** Vercel cannot confirm the team owns an unverified domain, so its routing and certificates are not fully established.
+        - **Dangling domains get taken over:** A configured-but-unverified domain pointing at Vercel can be claimed by an attacker who completes the verification.
+        - **Stale entries hide problems:** Long-unverified domains often signal an abandoned or broken setup that should be cleaned up.
+
+        **Risk mitigation**
+
+        - **Complete verification:** Add the required DNS records so every domain resolves to a verified state.
+        - **Remove unused domains:** Delete domains the team no longer controls or intends to use.
+      audit: |
+        ### Audit via CLI
+
+        1. Ensure the `vercel` CLI is authenticated with `vercel login`.
+        2. List the team's domains and review their verification state:
+
+        ```bash
+        vercel domains ls
+        ```
+
+        A passing result shows every domain verified; a failing result shows one or more domains marked unverified.
+
+        ### Audit via API
+
+        ```bash
+        curl -s -H "Authorization: Bearer $VERCEL_TOKEN" \
+          "https://api.vercel.com/v5/domains?teamId=<team-id>" \
+          | jq '.domains[] | select(.verified == false) | .name'
+        ```
+
+        A passing response returns nothing; a failing response lists the unverified domains.
+      remediation:
+        - id: console
+          desc: |
+            To verify a domain using the Vercel dashboard:
+
+            1. Go to the team's **Domains** tab and open the unverified domain.
+            2. Add the verification DNS records shown for the domain at your DNS provider.
+            3. Trigger verification once the records propagate.
+        - id: cli
+          desc: |
+            To inspect and verify a domain through the `vercel` CLI:
+
+            ```bash
+            vercel domains inspect <domain>
+            ```
+
+            Add the DNS records the command reports at your DNS provider, then re-run it to confirm the domain reaches a verified state.
+        # No Terraform remediation: domain ownership verification is a DNS-record and
+        # dashboard workflow tied to the registrar; the vercel Terraform provider does
+        # not manage the verification handshake for a team domain.
+    refs:
+      - url: https://vercel.com/docs/domains/working-with-domains/add-a-domain
+        title: Vercel domain verification documentation
+
+  - uid: mondoo-vercel-security-domains-auto-renew
+    title: Ensure purchased domains renew automatically
+    impact: 65
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: false
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: nist-csf-2-id-am-08
+      compliance/nist-sp-800-53-rev5: false
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc6-1-1
+      compliance/vda-isa-5: false
+    mql: |
+      vercel.team.domains.where(boughtAt != empty).none(renewAutomatically == false)
+    docs:
+      desc: |
+        This check ensures that every domain purchased through Vercel is set to renew automatically. A purchased domain without auto-renewal expires at the end of its term, at which point it can be registered by anyone, letting an attacker take over the name along with any service, email, or trust attached to it.
+
+        **Why this matters**
+
+        - **Expired domains are up for grabs:** Once a domain lapses, a third party can register it and impersonate the service.
+        - **Takeover follows expiry:** An attacker who registers a lapsed domain inherits its traffic, links, and any residual DNS trust.
+        - **Renewal deadlines are easy to miss:** Manual renewal depends on someone acting before the expiry date every term.
+
+        **Risk mitigation**
+
+        - **Enable auto-renewal:** Let Vercel renew purchased domains before they expire.
+        - **Keep billing current:** Ensure a valid payment method is on file so auto-renewal does not fail.
+      audit: |
+        ### Audit via CLI
+
+        1. Ensure the `vercel` CLI is authenticated with `vercel login`.
+        2. List the team's domains and review the renewal setting for purchased domains:
+
+        ```bash
+        vercel domains ls
+        ```
+
+        A passing result shows every purchased domain set to renew automatically; a failing result shows a purchased domain with auto-renewal off.
+
+        ### Audit via API
+
+        ```bash
+        curl -s -H "Authorization: Bearer $VERCEL_TOKEN" \
+          "https://api.vercel.com/v5/domains?teamId=<team-id>" \
+          | jq '.domains[] | select(.boughtAt != null and .renewAutomatically == false) | .name'
+        ```
+
+        A passing response returns nothing; a failing response lists purchased domains without auto-renewal.
+      remediation:
+        - id: console
+          desc: |
+            To enable auto-renewal using the Vercel dashboard:
+
+            1. Go to the team's **Domains** tab and open the purchased domain.
+            2. Enable automatic renewal for the domain.
+            3. Confirm a valid payment method is on file so the renewal can complete.
+        - id: cli
+          desc: |
+            To review a purchased domain's registration and renewal state through the `vercel` CLI:
+
+            ```bash
+            vercel domains inspect <domain>
+            ```
+
+            Enable automatic renewal from the dashboard if the command reports it is off.
+        # No Terraform remediation: domain registration and auto-renewal are billing
+        # operations on domains purchased through Vercel; the vercel Terraform provider
+        # does not manage domain registration lifecycle.
+    refs:
+      - url: https://vercel.com/docs/domains/working-with-domains/renew-a-domain
+        title: Vercel domain renewal documentation
