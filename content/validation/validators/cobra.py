@@ -98,6 +98,15 @@ COBRA_CLIS = {
             "  Linux:            https://github.com/hetznercloud/cli/releases"
         ),
     },
+    "databricks": {
+        "cli": "databricks",
+        "policies": ["mondoo-databricks-security.mql.yaml"],
+        "include_audit": True,
+        "install": (
+            "  macOS (Homebrew): brew tap databricks/tap && brew install databricks\n"
+            "  All platforms:    https://docs.databricks.com/dev-tools/cli/install.html"
+        ),
+    },
 }
 
 
@@ -107,10 +116,16 @@ def _walk_env() -> dict:
     completions (pod names, server names) come back empty."""
     env = dict(os.environ)
     env["KUBECONFIG"] = "/dev/null"
+    # Keep the databricks CLI from loading a ~/.databrickscfg profile and
+    # reaching a live workspace/account during completion.
+    env["DATABRICKS_CONFIG_FILE"] = "/dev/null"
     for var in (
         "GH_TOKEN", "GITHUB_TOKEN",
         "GITLAB_TOKEN", "GLAB_TOKEN",
         "HCLOUD_TOKEN",
+        "DATABRICKS_HOST", "DATABRICKS_TOKEN",
+        "DATABRICKS_CLIENT_ID", "DATABRICKS_CLIENT_SECRET",
+        "DATABRICKS_ACCOUNT_ID",
     ):
         env.pop(var, None)
     return env

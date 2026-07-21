@@ -263,11 +263,12 @@ python3 content/validation/validate_remediation_commands.py nutanix
 # Validate Vercel (runs BOTH the `vercel` CLI and the REST API checks)
 python3 content/validation/validate_remediation_commands.py vercel
 
-# Validate a Cobra-based CLI (kubectl / gh / glab / hcloud)
+# Validate a Cobra-based CLI (kubectl / gh / glab / hcloud / databricks)
 python3 content/validation/validate_remediation_commands.py kubernetes
 python3 content/validation/validate_remediation_commands.py github
 python3 content/validation/validate_remediation_commands.py gitlab
 python3 content/validation/validate_remediation_commands.py hetzner
+python3 content/validation/validate_remediation_commands.py databricks
 
 # Validate a specific REST API (curl commands against a vendor API)
 python3 content/validation/validate_remediation_commands.py cloudflare
@@ -277,7 +278,7 @@ python3 content/validation/validate_remediation_commands.py atlassian
 python3 content/validation/validate_remediation_commands.py grafana
 ```
 
-The validator scans each `aws`/`az`/`oci`/`gcloud`/`doctl`/`ncli`/`vercel`/`kubectl`/`gh`/`glab`/`hcloud` CLI command — and `curl` calls against the registered vendor API hosts — in ```` ```bash ```` code blocks within `id: cli` remediation sections. For the REST API and Cobra CLI targets, ```` ```bash ```` blocks in `audit:` sections are validated too (these products' verification paths use the same CLI/API surface, and the new validators have no backlog of unvalidated audit blocks). Output shows `[PASS]` or `[FAIL]` with the check UID and the offending command.
+The validator scans each `aws`/`az`/`oci`/`gcloud`/`doctl`/`ncli`/`vercel`/`kubectl`/`gh`/`glab`/`hcloud`/`databricks` CLI command — and `curl` calls against the registered vendor API hosts — in ```` ```bash ```` code blocks within `id: cli` remediation sections. For the REST API and Cobra CLI targets, ```` ```bash ```` blocks in `audit:` sections are validated too (these products' verification paths use the same CLI/API surface, and the new validators have no backlog of unvalidated audit blocks). Output shows `[PASS]` or `[FAIL]` with the check UID and the offending command.
 
 The `vercel` target is the only one that runs a **CLI validator and a REST API validator together** (both keyed `vercel`): the Vercel policy fixes some settings with the `vercel` CLI (`- id: cli`) and others with `curl` against the Vercel REST API (`- id: api`). Both remediation ids and the `audit:` blocks are validated.
 
@@ -293,7 +294,7 @@ For `aws`, `oci`, `gcp`, and `digitalocean`, the database is built **in-memory**
 - **oci**: walks the Click command tree from the `oci_cli` Python package
 - **gcp**: reads the Google Cloud SDK's static completion tree
 - **digitalocean**: walks the `doctl --help` Cobra tree breadth-first (parallelized; ~1s for the full ~475-command tree)
-- **kubernetes / github / gitlab / hetzner**: walk the CLI's hidden Cobra `__complete` command (`kubectl`/`gh`/`glab`/`hcloud` must be on PATH), which returns machine-readable subcommand and flag candidates regardless of each CLI's custom help layout. Valid flags are the union of flag completions and flag lines parsed from `--help` (hcloud filters its flag completions to required-only). The walk runs with cloud credentials stripped (`KUBECONFIG=/dev/null`, tokens unset) so positional-value completions stay empty, and only tab-described candidates count as subcommands (kubectl's `rollout restart` statically completes resource types as bare names). Each CLI is an entry in the `COBRA_CLIS` registry in `validators/cobra.py`.
+- **kubernetes / github / gitlab / hetzner / databricks**: walk the CLI's hidden Cobra `__complete` command (`kubectl`/`gh`/`glab`/`hcloud`/`databricks` must be on PATH), which returns machine-readable subcommand and flag candidates regardless of each CLI's custom help layout. Valid flags are the union of flag completions and flag lines parsed from `--help` (hcloud filters its flag completions to required-only). The walk runs with cloud credentials stripped (`KUBECONFIG=/dev/null`, tokens unset, `DATABRICKS_CONFIG_FILE=/dev/null` so the databricks CLI loads no profile) so positional-value completions stay empty, and only tab-described candidates count as subcommands (kubectl's `rollout restart` statically completes resource types as bare names). Each CLI is an entry in the `COBRA_CLIS` registry in `validators/cobra.py`.
 
 The REST API targets (**cloudflare**, **tailscale**, **slack**, **atlassian**, **grafana**, **vercel**) need no CLI: each provider is an entry in the `API_PROVIDERS` registry in `validators/openapi.py` that maps an API host to the vendor's OpenAPI (or Swagger 2.0) spec. The validator verifies each curl call's path + HTTP method, plus the `--data` JSON payload against the operation's `requestBody` schema: field names, types, enums, and required properties. Angle-bracket (`<account-name>`) and environment-variable (`$ORG_ID`) placeholders act as wildcards. Known spec-vs-docs divergences are listed per provider under `body_exemptions`; Cloudflare additionally narrows the generic `/zones/{zone_id}/settings/{setting_id}` schema to the per-setting component via its `path_hook`. Two more per-provider options exist for API-first products: `strip_api_version` normalizes a leading `/vN` URL segment on both the curl path and the spec (Vercel versions every path and keeps several versions live, but the spec documents one version per operation), and `path_exemptions` allowlists endpoints the API serves but omits from its published spec.
 
