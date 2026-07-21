@@ -8754,13 +8754,15 @@ func (x *PurgeAssetsConfirmation) GetErrors() map[string]string {
 }
 
 type RefreshAssetScoresRequest struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	ScopeMrn        string                 `protobuf:"bytes,1,opt,name=scope_mrn,json=scopeMrn,proto3" json:"scope_mrn,omitempty"`
-	ManagedBy       string                 `protobuf:"bytes,2,opt,name=managed_by,json=managedBy,proto3" json:"managed_by,omitempty"`
-	PlatformRuntime string                 `protobuf:"bytes,3,opt,name=platform_runtime,json=platformRuntime,proto3" json:"platform_runtime,omitempty"`
-	Labels          map[string]string      `protobuf:"bytes,4,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	ScopeMrn          string                 `protobuf:"bytes,1,opt,name=scope_mrn,json=scopeMrn,proto3" json:"scope_mrn,omitempty"`
+	ManagedBy         string                 `protobuf:"bytes,2,opt,name=managed_by,json=managedBy,proto3" json:"managed_by,omitempty"`
+	PlatformRuntime   string                 `protobuf:"bytes,3,opt,name=platform_runtime,json=platformRuntime,proto3" json:"platform_runtime,omitempty"`
+	Labels            map[string]string      `protobuf:"bytes,4,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	EnableCacheExpiry bool                   `protobuf:"varint,5,opt,name=enable_cache_expiry,json=enableCacheExpiry,proto3" json:"enable_cache_expiry,omitempty"`
+	CacheTtlSeconds   int64                  `protobuf:"varint,6,opt,name=cache_ttl_seconds,json=cacheTtlSeconds,proto3" json:"cache_ttl_seconds,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *RefreshAssetScoresRequest) Reset() {
@@ -8819,6 +8821,20 @@ func (x *RefreshAssetScoresRequest) GetLabels() map[string]string {
 		return x.Labels
 	}
 	return nil
+}
+
+func (x *RefreshAssetScoresRequest) GetEnableCacheExpiry() bool {
+	if x != nil {
+		return x.EnableCacheExpiry
+	}
+	return false
+}
+
+func (x *RefreshAssetScoresRequest) GetCacheTtlSeconds() int64 {
+	if x != nil {
+		return x.CacheTtlSeconds
+	}
+	return 0
 }
 
 type RefreshAssetScoresResponse struct {
@@ -9889,13 +9905,15 @@ const file_cnspec_policy_proto_rawDesc = "" +
 	"\x06errors\x18\x02 \x03(\v25.cnspec.policy.v1.PurgeAssetsConfirmation.ErrorsEntryR\x06errors\x1a9\n" +
 	"\vErrorsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x8e\x02\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xea\x02\n" +
 	"\x19RefreshAssetScoresRequest\x12\x1b\n" +
 	"\tscope_mrn\x18\x01 \x01(\tR\bscopeMrn\x12\x1d\n" +
 	"\n" +
 	"managed_by\x18\x02 \x01(\tR\tmanagedBy\x12)\n" +
 	"\x10platform_runtime\x18\x03 \x01(\tR\x0fplatformRuntime\x12O\n" +
-	"\x06labels\x18\x04 \x03(\v27.cnspec.policy.v1.RefreshAssetScoresRequest.LabelsEntryR\x06labels\x1a9\n" +
+	"\x06labels\x18\x04 \x03(\v27.cnspec.policy.v1.RefreshAssetScoresRequest.LabelsEntryR\x06labels\x12.\n" +
+	"\x13enable_cache_expiry\x18\x05 \x01(\bR\x11enableCacheExpiry\x12*\n" +
+	"\x11cache_ttl_seconds\x18\x06 \x01(\x03R\x0fcacheTtlSeconds\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xa0\x01\n" +

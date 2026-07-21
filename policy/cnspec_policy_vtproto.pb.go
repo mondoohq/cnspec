@@ -2900,6 +2900,8 @@ func (m *RefreshAssetScoresRequest) CloneVT() *RefreshAssetScoresRequest {
 	r.ScopeMrn = m.ScopeMrn
 	r.ManagedBy = m.ManagedBy
 	r.PlatformRuntime = m.PlatformRuntime
+	r.EnableCacheExpiry = m.EnableCacheExpiry
+	r.CacheTtlSeconds = m.CacheTtlSeconds
 	if rhs := m.Labels; rhs != nil {
 		tmpContainer := make(map[string]string, len(rhs))
 		for k, v := range rhs {
@@ -11110,6 +11112,21 @@ func (m *RefreshAssetScoresRequest) MarshalToSizedBufferVT(dAtA []byte) (int, er
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if m.CacheTtlSeconds != 0 {
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(m.CacheTtlSeconds))
+		i--
+		dAtA[i] = 0x30
+	}
+	if m.EnableCacheExpiry {
+		i--
+		if m.EnableCacheExpiry {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i--
+		dAtA[i] = 0x28
+	}
 	if len(m.Labels) > 0 {
 		for k := range m.Labels {
 			v := m.Labels[k]
@@ -14758,6 +14775,12 @@ func (m *RefreshAssetScoresRequest) SizeVT() (n int) {
 			mapEntrySize := 1 + len(k) + protohelpers.SizeOfVarint(uint64(len(k))) + 1 + len(v) + protohelpers.SizeOfVarint(uint64(len(v)))
 			n += mapEntrySize + 1 + protohelpers.SizeOfVarint(uint64(mapEntrySize))
 		}
+	}
+	if m.EnableCacheExpiry {
+		n += 2
+	}
+	if m.CacheTtlSeconds != 0 {
+		n += 1 + protohelpers.SizeOfVarint(uint64(m.CacheTtlSeconds))
 	}
 	n += len(m.unknownFields)
 	return n
@@ -38537,6 +38560,45 @@ func (m *RefreshAssetScoresRequest) UnmarshalVT(dAtA []byte) error {
 			}
 			m.Labels[mapkey] = mapvalue
 			iNdEx = postIndex
+		case 5:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field EnableCacheExpiry", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.EnableCacheExpiry = bool(v != 0)
+		case 6:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field CacheTtlSeconds", wireType)
+			}
+			m.CacheTtlSeconds = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.CacheTtlSeconds |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
