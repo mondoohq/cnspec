@@ -55,6 +55,7 @@ from .common import (
 CLOUDFLARE_OPENAPI_SHA = "a0e7cfa11b0d08b05a0b373f47ea722bd48ca7c4"
 SLACK_OPENAPI_SHA = "bc08db49625630e3585bf2f1322128ea04f2a7f3"
 GRAFANA_OPENAPI_SHA = "8c7e01c44c7afd14f7143589840bbd820a4195f9"
+MONGODBATLAS_OPENAPI_SHA = "666c7156b8287182f5300bbde93b91575e79e900"
 
 
 def _spec_cache_path(name: str, pin: str) -> Path:
@@ -714,6 +715,28 @@ API_PROVIDERS = {
         # The list-stores endpoint is live but undocumented in the spec,
         # which carries only `/storage/stores/{id}`.
         "path_exemptions": {"/storage/stores"},
+    },
+    "mongodbatlas": {
+        # The MongoDB Atlas policy documents its non-console fixes as
+        # `curl` calls against the Atlas Administration API under
+        # `- id: api`, and its audit steps use the same API, so both are
+        # validated (remediation_ids + the default include_audit). The
+        # Atlas Administration API OpenAPI spec is published in the
+        # mongodb/openapi git repo, so it is downloaded at validation time
+        # from a raw URL pinned to a commit SHA. Its `servers[0].url` is
+        # the bare host, and every path template already carries the
+        # `/api/atlas/v2` prefix the policy's curl URLs use.
+        "policies": ["mondoo-mongodbatlas-security.mql.yaml"],
+        "host": "https://cloud.mongodb.com",
+        "specs": [{
+            "name": "mongodbatlas",
+            "url": (
+                "https://raw.githubusercontent.com/mongodb/openapi/"
+                f"{MONGODBATLAS_OPENAPI_SHA}/openapi/v2.json"
+            ),
+            "pin": MONGODBATLAS_OPENAPI_SHA,
+        }],
+        "remediation_ids": ("api",),
     },
 }
 
