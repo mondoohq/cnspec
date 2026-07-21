@@ -48,8 +48,11 @@ PRODUCTS = [
 
 def _get(url: str) -> bytes:
     req = urllib.request.Request(url, headers={"User-Agent": "cnspec-validation"})
-    with urllib.request.urlopen(req, timeout=60) as r:
-        return r.read()
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return r.read()
+    except Exception as e:
+        raise RuntimeError(f"failed to fetch {url}: {e}") from e
 
 
 def _get_json(url: str):
@@ -108,15 +111,15 @@ def fetch_oss_subcommands() -> list:
         try:
             text = _get(f"{CLI_RAW}/oss/lib/{fn}").decode("utf-8", "replace")
         except Exception:
-            return None
-        m = name_re.search(text)
-        return m.group(1) if m else None
+            return []
+        # findall (not search): a single .go file may register more than one
+        # command, and we want every `name:` it defines, not just the first.
+        return name_re.findall(text)
 
     names = set()
     with ThreadPoolExecutor(max_workers=16) as pool:
-        for n in pool.map(one, go_files):
-            if n:
-                names.add(n)
+        for found in pool.map(one, go_files):
+            names.update(found)
     print(f"  oss (ossutil)  subcommands={len(names)}", file=sys.stderr)
     return sorted(names)
 
