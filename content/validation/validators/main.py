@@ -4,6 +4,7 @@
 
 import sys
 
+from .alicloud import validate_alicloud
 from .aws import validate_aws
 from .azure import validate_azure
 from .cobra import COBRA_CLIS, validate_cobra_cli
@@ -25,6 +26,7 @@ CLI_VALIDATORS = {
     "digitalocean": validate_digitalocean,
     "nutanix": validate_nutanix,
     "vercel": validate_vercel,
+    "alicloud": validate_alicloud,
 }
 
 VALIDATORS = list(CLI_VALIDATORS) + list(COBRA_CLIS) + list(API_PROVIDERS)
