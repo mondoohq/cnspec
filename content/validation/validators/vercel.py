@@ -109,7 +109,7 @@ def parse_vercel_command(
 
     if not command_path and positionals:
         # Nothing resolved: report the leading positionals as the unknown
-        # command (a top-level typo like `vercel enviroment`).
+        # command (a misspelled top-level command, e.g. `vercel env` typed wrong).
         command_path = positionals[0]
 
     flags = [t.split("=")[0] for t in parts if t.startswith("--")]
