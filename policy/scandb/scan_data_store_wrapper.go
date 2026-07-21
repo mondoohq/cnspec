@@ -48,7 +48,6 @@ func (w *ScanDataStoreWrapper) WriteScore(ctx context.Context, assetMrn string, 
 	if err := w.validate(assetMrn); err != nil {
 		return err
 	}
-
 	return w.store.WriteScores(ctx, []*policy.Score{score})
 }
 
@@ -66,7 +65,6 @@ func (w *ScanDataStoreWrapper) WriteData(ctx context.Context, assetMrn string, d
 	if err := w.validate(assetMrn); err != nil {
 		return err
 	}
-
 	return w.store.WriteData(ctx, []*llx.Result{data})
 }
 
