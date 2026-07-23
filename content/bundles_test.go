@@ -41,6 +41,21 @@ func TestMain(m *testing.M) {
 		}
 	}
 
+	// Warm the provider cache once, serially, now that every provider is
+	// installed. providers.ListAll caches into an unsynchronized global and, on a
+	// cache miss, sets it to an empty slice before repopulating it. The
+	// iac_variants suites scan in parallel (t.Parallel + -parallel), so if the
+	// cache is cold when the first scans fan out, one goroutine can observe that
+	// intermediate empty slice and fail to resolve the asset's connector
+	// ("cannot find provider for conn type=terraform-hcl"). The race window
+	// widens with the number of installed providers, which is why it only bites
+	// once the IaC suites add their extra providers. Installing leaves the cache
+	// nil (the last install invalidates it), so populate it here, before any
+	// parallel scan, and every scan then hits the warm read-only fast path.
+	if _, err := providers.ListAll(); err != nil {
+		panic(err)
+	}
+
 	// Run tests
 	exitVal := m.Run()
 	os.Exit(exitVal)

@@ -9,6 +9,15 @@ name: Content IaC Variant Tests
 ## runs many provider-backed scans, so it must never slow down or destabilize the
 ## default `go test ./...`. One matrix job per IaC type keeps wall-clock down and
 ## makes failures easy to attribute.
+##
+## The Terraform suite is by far the largest (~1,200 variants, thousands of
+## provider-backed scans). Because in-process concurrency is capped at a safe
+## -parallel to avoid provider-subprocess deadlocks, we cut its wall-clock by
+## fanning it out across TF_SHARDS runners: each terraform matrix entry sets
+## IAC_SHARD_INDEX/IAC_SHARD_TOTAL, and the harness (iacShard/inShard in
+## content/iac_variants_test.go) runs only the scenarios that hash into its shard.
+## The smaller suites (cloudformation/bicep/dockerfile/kubernetes) stay on one
+## runner each.
 on:
   push:
     branches: ["main"]
@@ -30,9 +39,28 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
+      # The terraform suite is sharded across several runners (IAC_SHARD_*); the
+      # smaller suites run on a single runner. To change the terraform fan-out,
+      # add/remove terraform entries and keep every `shards` value equal to the
+      # number of terraform entries.
       matrix:
-        iac: [terraform, cloudformation, bicep, dockerfile, kubernetes]
-    name: ${{ matrix.iac }}
+        include:
+          # shards: 1 = run everything on one runner; the harness treats total 1
+          # as "no sharding". Explicit values keep IAC_SHARD_* non-empty so
+          # Actions emits no empty-env annotations.
+          - { iac: cloudformation, shard: 0, shards: 1 }
+          - { iac: bicep, shard: 0, shards: 1 }
+          - { iac: dockerfile, shard: 0, shards: 1 }
+          - { iac: kubernetes, shard: 0, shards: 1 }
+          - { iac: terraform, shard: 0, shards: 8 }
+          - { iac: terraform, shard: 1, shards: 8 }
+          - { iac: terraform, shard: 2, shards: 8 }
+          - { iac: terraform, shard: 3, shards: 8 }
+          - { iac: terraform, shard: 4, shards: 8 }
+          - { iac: terraform, shard: 5, shards: 8 }
+          - { iac: terraform, shard: 6, shards: 8 }
+          - { iac: terraform, shard: 7, shards: 8 }
+    name: ${{ matrix.iac == 'terraform' && format('terraform (shard {0}/{1})', matrix.shard, matrix.shards) || matrix.iac }}
     steps:
       - name: Checkout code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -61,6 +89,10 @@ jobs:
 
       # matrix.iac is a fixed enum (terraform|cloudformation|bicep|dockerfile|
       # kubernetes) that maps to a dedicated make target — no untrusted input
-      # reaches the shell.
+      # reaches the shell. The non-terraform suites pass shards=1, which the
+      # harness treats as "run every scenario" (no sharding).
       - name: Run ${{ matrix.iac }} variant tests
+        env:
+          IAC_SHARD_INDEX: ${{ matrix.shard }}
+          IAC_SHARD_TOTAL: ${{ matrix.shards }}
         run: make test/go/content-iac/${{ matrix.iac }}

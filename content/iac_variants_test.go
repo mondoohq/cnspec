@@ -13,9 +13,11 @@ package content
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -28,10 +30,32 @@ import (
 
 // init registers the providers only this suite needs, so the default test build
 // (main cnspec app test) never downloads them. See extraProviders in
-// bundles_test.go. bicep backs the Bicep variants; os backs the Dockerfile
-// suite (the docker-file connection lives in the os provider).
+// bundles_test.go, which installs them serially in TestMain before any parallel
+// scan runs.
+//
+// Pre-installing every provider a registered policy needs is not just an
+// optimization — it is required for correctness under -parallel. Scanning a
+// Terraform asset still loads the whole policy bundle, whose runtime-variant
+// checks reference their cloud's resources (e.g. gitlab.namespace in
+// mondoo-gitlab-security), so the bundle only compiles if that provider's schema
+// is installed. Left to the scanner's lazy auto-install, the first wave of
+// same-provider subtests would race to install into a fresh providers dir and
+// some would lose with "cannot find resource for identifier '<provider>'". A
+// single CI runner usually won the race by luck; fanning the suite out across
+// shards made it lose reliably. Installing eagerly and serially here removes the
+// race for every provider these suites touch.
+//
+// bicep backs the Bicep variants; os backs the Dockerfile suite (the docker-file
+// connection lives in the os provider); the rest back the non-cloud policies in
+// tfVariantPolicies. The base list (terraform/k8s/aws/azure/gcp/cloudformation)
+// lives in bundles_test.go.
 func init() {
-	extraProviders = append(extraProviders, "bicep", "os")
+	extraProviders = append(extraProviders,
+		"bicep", "os",
+		"oci", "vsphere", "okta", "openstack", "gitlab", "cloudflare",
+		"github", "digitalocean", "unifi", "portainer", "snowflake",
+		"hetzner", "tailscale", "ms365",
+	)
 }
 
 // tfVariantsRoot holds one directory per IaC variant, named after the
@@ -287,12 +311,63 @@ func runVariantSuite(t *testing.T, label string, suffixes []string) {
 	}, tfAssetForVariant)
 }
 
+// iacShard reads the shard partition from the environment. Each provider-backed
+// scan spawns a provider subprocess, and in-process concurrency is capped at a
+// safe -parallel to avoid subprocess-contention deadlocks, so the only way to cut
+// the large Terraform suite's wall-clock is to fan its scenarios out across many
+// CI runners. IAC_SHARD_TOTAL is the number of runners; IAC_SHARD_INDEX is this
+// runner's 0-based slot. Unset (or total == 1) means "run everything", so local
+// runs and the small suites are unaffected.
+//
+// A malformed or out-of-range value is fatal rather than silently coerced: a
+// typo'd shard would otherwise run the wrong slice, leaving another shard's
+// scenarios unrun everywhere and the coverage gap invisible in a green build.
+func iacShard(t *testing.T) (index, total int) {
+	total = 1
+	if v := os.Getenv("IAC_SHARD_TOTAL"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			t.Fatalf("IAC_SHARD_TOTAL=%q must be a positive integer", v)
+		}
+		total = n
+	}
+	if v := os.Getenv("IAC_SHARD_INDEX"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			t.Fatalf("IAC_SHARD_INDEX=%q must be a non-negative integer", v)
+		}
+		index = n
+	}
+	if index >= total {
+		t.Fatalf("IAC_SHARD_INDEX=%d out of range for IAC_SHARD_TOTAL=%d (valid: 0..%d)", index, total, total-1)
+	}
+	return index, total
+}
+
+// inShard reports whether the scenario identified by key belongs to this runner.
+// The FNV-1a hash is stable across runs, machines, and iteration order, so a
+// scenario always lands in the same shard — reruns and reruns-of-a-single-shard
+// are reproducible. Distribution is even enough across the suite's thousands of
+// scenarios that per-shard wall-clock stays balanced.
+func inShard(key string, index, total int) bool {
+	if total <= 1 {
+		return true
+	}
+	h := fnv.New32a()
+	h.Write([]byte(key))
+	return int(h.Sum32()%uint32(total)) == index
+}
+
 // runFixtureSuite is the shared engine behind every IaC suite. For each policy
 // it discovers uid subdirectories under tfVariantsRoot that satisfy uidMatch,
 // then for each pass/fail scenario builds a scan asset with assetFor, scans it,
 // and asserts the check produced the expected outcome (pass scenarios score 100,
 // fail scenarios score < 100). A skipped check (no asset matched the check's
 // filter) is treated as a fixture bug.
+//
+// When IAC_SHARD_TOTAL > 1 the suite runs only the scenarios that hash into this
+// runner's shard (see iacShard/inShard), letting the workflow spread the suite
+// across parallel runners.
 func runFixtureSuite(
 	t *testing.T,
 	label string,
@@ -300,6 +375,7 @@ func runFixtureSuite(
 	uidMatch func(uid string) bool,
 	assetFor func(uid, dir string) *inventory.Asset,
 ) {
+	shardIndex, shardTotal := iacShard(t)
 	ran := false
 	for _, pol := range policies {
 		policyDir := strings.TrimSuffix(pol.slugPrefix, "-")
@@ -319,8 +395,12 @@ func runFixtureSuite(
 		for _, uid := range uids {
 			mrn := queryMrnPrefix + uid
 			for _, sc := range scenariosFor(policyDir, uid) {
+				name := policyDir + "/" + uid + "/" + sc.name
+				if !inShard(name, shardIndex, shardTotal) {
+					continue
+				}
 				ran = true
-				t.Run(policyDir+"/"+uid+"/"+sc.name, func(t *testing.T) {
+				t.Run(name, func(t *testing.T) {
 					t.Parallel()
 					reports, err := runBundleReports(pol.bundleFile, pol.policyMrn, assetFor(uid, sc.dir))
 
@@ -360,6 +440,9 @@ func runFixtureSuite(
 		}
 	}
 	if !ran {
+		if shardTotal > 1 {
+			t.Skipf("no %s fixtures in shard %d/%d under %s", label, shardIndex, shardTotal, tfVariantsRoot)
+		}
 		t.Skipf("no %s fixtures found under %s", label, tfVariantsRoot)
 	}
 }
