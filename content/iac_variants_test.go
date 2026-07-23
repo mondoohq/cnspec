@@ -13,9 +13,11 @@ package content
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -287,12 +289,55 @@ func runVariantSuite(t *testing.T, label string, suffixes []string) {
 	}, tfAssetForVariant)
 }
 
+// iacShard reads the shard partition from the environment. Each provider-backed
+// scan spawns a provider subprocess, and in-process concurrency is capped at a
+// safe -parallel to avoid subprocess-contention deadlocks, so the only way to cut
+// the large Terraform suite's wall-clock is to fan its scenarios out across many
+// CI runners. IAC_SHARD_TOTAL is the number of runners; IAC_SHARD_INDEX is this
+// runner's 0-based slot. Unset (or total <= 1) means "run everything", so local
+// runs and the small suites are unaffected.
+func iacShard() (index, total int) {
+	total = 1
+	if v := os.Getenv("IAC_SHARD_TOTAL"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			total = n
+		}
+	}
+	if v := os.Getenv("IAC_SHARD_INDEX"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			index = n
+		}
+	}
+	if index >= total {
+		index = 0 // out-of-range index falls back to a single shard's worth
+	}
+	return index, total
+}
+
+// inShard reports whether the scenario identified by key belongs to this runner.
+// The FNV-1a hash is stable across runs, machines, and iteration order, so a
+// scenario always lands in the same shard — reruns and reruns-of-a-single-shard
+// are reproducible. Distribution is even enough across the suite's thousands of
+// scenarios that per-shard wall-clock stays balanced.
+func inShard(key string, index, total int) bool {
+	if total <= 1 {
+		return true
+	}
+	h := fnv.New32a()
+	h.Write([]byte(key))
+	return int(h.Sum32()%uint32(total)) == index
+}
+
 // runFixtureSuite is the shared engine behind every IaC suite. For each policy
 // it discovers uid subdirectories under tfVariantsRoot that satisfy uidMatch,
 // then for each pass/fail scenario builds a scan asset with assetFor, scans it,
 // and asserts the check produced the expected outcome (pass scenarios score 100,
 // fail scenarios score < 100). A skipped check (no asset matched the check's
 // filter) is treated as a fixture bug.
+//
+// When IAC_SHARD_TOTAL > 1 the suite runs only the scenarios that hash into this
+// runner's shard (see iacShard/inShard), letting the workflow spread the suite
+// across parallel runners.
 func runFixtureSuite(
 	t *testing.T,
 	label string,
@@ -300,6 +345,7 @@ func runFixtureSuite(
 	uidMatch func(uid string) bool,
 	assetFor func(uid, dir string) *inventory.Asset,
 ) {
+	shardIndex, shardTotal := iacShard()
 	ran := false
 	for _, pol := range policies {
 		policyDir := strings.TrimSuffix(pol.slugPrefix, "-")
@@ -319,8 +365,12 @@ func runFixtureSuite(
 		for _, uid := range uids {
 			mrn := queryMrnPrefix + uid
 			for _, sc := range scenariosFor(policyDir, uid) {
+				name := policyDir + "/" + uid + "/" + sc.name
+				if !inShard(name, shardIndex, shardTotal) {
+					continue
+				}
 				ran = true
-				t.Run(policyDir+"/"+uid+"/"+sc.name, func(t *testing.T) {
+				t.Run(name, func(t *testing.T) {
 					t.Parallel()
 					reports, err := runBundleReports(pol.bundleFile, pol.policyMrn, assetFor(uid, sc.dir))
 
@@ -360,6 +410,9 @@ func runFixtureSuite(
 		}
 	}
 	if !ran {
+		if shardTotal > 1 {
+			t.Skipf("no %s fixtures in shard %d/%d under %s", label, shardIndex, shardTotal, tfVariantsRoot)
+		}
 		t.Skipf("no %s fixtures found under %s", label, tfVariantsRoot)
 	}
 }

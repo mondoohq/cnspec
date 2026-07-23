@@ -132,6 +132,11 @@ test/go/plain-ci: prep/tools
 # tag so they never run in the default `go test ./...` (they download extra
 # providers and run many provider-backed scans). Concurrency is kept conservative
 # to avoid provider-subprocess contention; override with IAC_VARIANT_PARALLEL.
+#
+# To fan a suite (in practice the large Terraform one) out across parallel CI
+# runners, set IAC_SHARD_TOTAL to the runner count and IAC_SHARD_INDEX to each
+# runner's 0-based slot; the harness then runs only the scenarios that hash into
+# that shard. Unset means run everything. See .github/workflows/content-iac-tests.yaml.
 IAC_VARIANT_PARALLEL ?= 4
 
 .PHONY: test/go/content-iac test/go/content-iac/terraform test/go/content-iac/cloudformation test/go/content-iac/bicep test/go/content-iac/dockerfile test/go/content-iac/kubernetes
