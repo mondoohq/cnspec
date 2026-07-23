@@ -294,22 +294,30 @@ func runVariantSuite(t *testing.T, label string, suffixes []string) {
 // safe -parallel to avoid subprocess-contention deadlocks, so the only way to cut
 // the large Terraform suite's wall-clock is to fan its scenarios out across many
 // CI runners. IAC_SHARD_TOTAL is the number of runners; IAC_SHARD_INDEX is this
-// runner's 0-based slot. Unset (or total <= 1) means "run everything", so local
+// runner's 0-based slot. Unset (or total == 1) means "run everything", so local
 // runs and the small suites are unaffected.
-func iacShard() (index, total int) {
+//
+// A malformed or out-of-range value is fatal rather than silently coerced: a
+// typo'd shard would otherwise run the wrong slice, leaving another shard's
+// scenarios unrun everywhere and the coverage gap invisible in a green build.
+func iacShard(t *testing.T) (index, total int) {
 	total = 1
 	if v := os.Getenv("IAC_SHARD_TOTAL"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			total = n
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			t.Fatalf("IAC_SHARD_TOTAL=%q must be a positive integer", v)
 		}
+		total = n
 	}
 	if v := os.Getenv("IAC_SHARD_INDEX"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
-			index = n
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			t.Fatalf("IAC_SHARD_INDEX=%q must be a non-negative integer", v)
 		}
+		index = n
 	}
 	if index >= total {
-		index = 0 // out-of-range index falls back to a single shard's worth
+		t.Fatalf("IAC_SHARD_INDEX=%d out of range for IAC_SHARD_TOTAL=%d (valid: 0..%d)", index, total, total-1)
 	}
 	return index, total
 }
@@ -345,7 +353,7 @@ func runFixtureSuite(
 	uidMatch func(uid string) bool,
 	assetFor func(uid, dir string) *inventory.Asset,
 ) {
-	shardIndex, shardTotal := iacShard()
+	shardIndex, shardTotal := iacShard(t)
 	ran := false
 	for _, pol := range policies {
 		policyDir := strings.TrimSuffix(pol.slugPrefix, "-")
