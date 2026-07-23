@@ -1,0 +1,16 @@
+resource sqlServer 'Microsoft.Sql/servers@2023-05-01-preview' = {
+  name: 'sql-prod-eastus'
+  location: 'eastus'
+  properties: {
+    administratorLogin: 'sqladmin'
+    version: '12.0'
+  }
+}
+
+resource devOpsAuditing 'Microsoft.Sql/servers/devOpsAuditingSettings@2023-05-01-preview' = {
+  parent: sqlServer
+  name: 'default'
+  properties: {
+    storageEndpoint: 'https://auditlogs.blob.core.windows.net/'
+  }
+}

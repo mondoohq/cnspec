@@ -1,0 +1,12 @@
+resource "digitalocean_loadbalancer" "internal" {
+  name     = "internal-lb"
+  region   = "nyc1"
+  vpc_uuid = "0d3176ad-41e0-4021-b831-0c5c45c60959"
+
+  forwarding_rule {
+    entry_port      = 80
+    entry_protocol  = "http"
+    target_port     = 80
+    target_protocol = "http"
+  }
+}

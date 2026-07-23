@@ -126,6 +126,33 @@ test/go/plain:
 test/go/plain-ci: prep/tools
 	gotestsum --junitfile report.xml --format pkgname -- -cover $(shell go list ./... | grep -v '/vendor/')
 
+# Content IaC-variant suites (Terraform / CloudFormation / Bicep / Dockerfile /
+# Kubernetes) validate every policy check against its per-check pass/fail fixtures
+# in content/iac-variant-testdata. They are isolated behind the `iac_variants` build
+# tag so they never run in the default `go test ./...` (they download extra
+# providers and run many provider-backed scans). Concurrency is kept conservative
+# to avoid provider-subprocess contention; override with IAC_VARIANT_PARALLEL.
+IAC_VARIANT_PARALLEL ?= 4
+
+.PHONY: test/go/content-iac test/go/content-iac/terraform test/go/content-iac/cloudformation test/go/content-iac/bicep test/go/content-iac/dockerfile test/go/content-iac/kubernetes
+test/go/content-iac: prep/tools
+	go test -tags iac_variants -timeout 30m -parallel $(IAC_VARIANT_PARALLEL) -run 'TestTerraformVariants|TestCloudFormationVariants|TestBicepVariants|TestDockerfileVariants|TestKubernetesManifestVariants' ./content
+
+test/go/content-iac/terraform: prep/tools
+	go test -tags iac_variants -timeout 30m -parallel $(IAC_VARIANT_PARALLEL) -run '^TestTerraformVariants$$' ./content
+
+test/go/content-iac/cloudformation: prep/tools
+	go test -tags iac_variants -timeout 30m -parallel $(IAC_VARIANT_PARALLEL) -run '^TestCloudFormationVariants$$' ./content
+
+test/go/content-iac/bicep: prep/tools
+	go test -tags iac_variants -timeout 30m -parallel $(IAC_VARIANT_PARALLEL) -run '^TestBicepVariants$$' ./content
+
+test/go/content-iac/dockerfile: prep/tools
+	go test -tags iac_variants -timeout 30m -parallel $(IAC_VARIANT_PARALLEL) -run '^TestDockerfileVariants$$' ./content
+
+test/go/content-iac/kubernetes: prep/tools
+	go test -tags iac_variants -timeout 30m -parallel $(IAC_VARIANT_PARALLEL) -run '^TestKubernetesManifestVariants$$' ./content
+
 .PHONY: test/lint/staticcheck
 test/lint/staticcheck:
 	staticcheck $(shell go list ./... | grep -v /ent/ | grep -v /benchmark/)

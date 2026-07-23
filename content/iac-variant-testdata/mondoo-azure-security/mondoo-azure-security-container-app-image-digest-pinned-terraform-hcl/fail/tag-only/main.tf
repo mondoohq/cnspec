@@ -1,0 +1,15 @@
+resource "azurerm_container_app" "example" {
+  name                         = "example-app"
+  container_app_environment_id = azurerm_container_app_environment.example.id
+  resource_group_name          = "example-rg"
+  revision_mode                = "Single"
+
+  template {
+    container {
+      name   = "app"
+      image  = "myregistry.azurecr.io/app:v1.2.3"
+      cpu    = 0.25
+      memory = "0.5Gi"
+    }
+  }
+}

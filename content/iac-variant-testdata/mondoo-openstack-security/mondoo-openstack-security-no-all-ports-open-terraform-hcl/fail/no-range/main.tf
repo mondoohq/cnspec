@@ -1,0 +1,7 @@
+# Non-compliant: no port range and no protocol means all ports open to the world.
+resource "openstack_networking_secgroup_rule_v2" "wide_open" {
+  direction         = "ingress"
+  ethertype         = "IPv4"
+  remote_ip_prefix  = "0.0.0.0/0"
+  security_group_id = "b1c2d3e4-1234-5678-90ab-cdef01234567"
+}

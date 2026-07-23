@@ -1,0 +1,16 @@
+resource "azurerm_linux_function_app" "example" {
+  name                             = "example-func"
+  resource_group_name              = "example-rg"
+  location                         = "eastus"
+  service_plan_id                  = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/example-rg/providers/Microsoft.Web/serverfarms/example-plan"
+  storage_account_name             = "examplestorage"
+  storage_account_access_key       = "examplekey=="
+  key_vault_reference_identity_id  = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/example-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/example-identity"
+
+  identity {
+    type         = "UserAssigned"
+    identity_ids = ["/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/example-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/example-identity"]
+  }
+
+  site_config {}
+}
