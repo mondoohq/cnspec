@@ -122,22 +122,13 @@ def find_az_site_packages() -> str:
     sys.exit(1)
 
 
-def get_flags_from_help(cmd_name: str) -> list[str]:
-    """Parse `az <cmd> --help` to extract user-facing flags.
+def _parse_help_flags(output: str) -> list[str]:
+    """Extract user-facing flags from `az <cmd> --help` output.
 
     Only extracts flags from argument sections (e.g. "Arguments",
     "Global Arguments"), stopping at "Examples" to avoid picking up
     flags from example text.
     """
-    result = subprocess.run(
-        ["az"] + cmd_name.split() + ["--help"],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    output = result.stdout + result.stderr
-
-    # Only parse lines within argument sections, stop at Examples
     flags = set()
     in_args = False
     for line in output.splitlines():
@@ -156,6 +147,40 @@ def get_flags_from_help(cmd_name: str) -> list[str]:
             for match in re.finditer(r"(--[a-z][a-z0-9-]*)", line):
                 flags.add(match.group(1))
     return sorted(flags)
+
+
+def get_flags_from_help(cmd_name: str, retries: int = 4) -> list[str]:
+    """Parse `az <cmd> --help` to extract user-facing flags, with retries.
+
+    Under the 8-way concurrent Phase 2 load, individual `az --help`
+    invocations occasionally fail transiently (nonzero exit, or empty
+    output from a cold-starting interpreter). Every real leaf command's
+    help lists at least the "Global Arguments" (--debug, --help, ...), so
+    an empty flag set is never legitimate — it always signals a failed
+    invocation. Retry those, and raise if they never succeed, so the
+    caller can fail loudly rather than silently checking in a command with
+    a truncated flag list (which then rejects valid remediation commands).
+    """
+    last_err = ""
+    for attempt in range(retries):
+        try:
+            result = subprocess.run(
+                ["az"] + cmd_name.split() + ["--help"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except subprocess.SubprocessError as e:
+            last_err = f"subprocess error: {e}"
+            continue
+        flags = _parse_help_flags(result.stdout + result.stderr)
+        if flags:
+            return flags
+        last_err = (
+            f"rc={result.returncode}, no flags parsed "
+            f"(stdout={len(result.stdout)}B, stderr={len(result.stderr)}B)"
+        )
+    raise RuntimeError(f"az {cmd_name} --help failed after {retries} tries: {last_err}")
 
 
 def main():
@@ -243,11 +268,12 @@ def main():
         file=sys.stderr,
     )
 
-    def process_cmd(cmd_name: str) -> tuple[str, list[str]]:
+    def process_cmd(cmd_name: str) -> tuple[str, list[str] | None]:
         try:
             help_flags = get_flags_from_help(cmd_name)
-        except Exception:
-            help_flags = []
+        except Exception as e:
+            print(f"  WARNING: {e}", file=sys.stderr)
+            return cmd_name, None
         api_flags = commands.get(cmd_name, [])
         merged = sorted(
             f for f in set(api_flags + help_flags + GLOBAL_FLAGS)
@@ -255,13 +281,30 @@ def main():
         )
         return cmd_name, merged
 
+    failed = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
         futures = {
             executor.submit(process_cmd, cmd): cmd for cmd in policy_commands
         }
         for future in concurrent.futures.as_completed(futures):
             cmd_name, merged_flags = future.result()
+            if merged_flags is None:
+                failed.append(cmd_name)
+                continue
             commands[cmd_name] = merged_flags
+
+    # A policy command whose --help never resolved would be checked in with
+    # only its (often differently-named) API flags, silently rejecting valid
+    # remediation commands. Refuse to write truncated data — fail loudly so
+    # the maintainer re-runs instead.
+    if failed:
+        print(
+            f"\nError: could not resolve --help flags for {len(failed)} policy "
+            f"command(s): {', '.join(sorted(failed))}\n"
+            "Not writing output; re-run the script.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     # Add global flags to remaining commands
     for key in commands:
