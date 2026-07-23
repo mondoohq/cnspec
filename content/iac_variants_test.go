@@ -30,10 +30,32 @@ import (
 
 // init registers the providers only this suite needs, so the default test build
 // (main cnspec app test) never downloads them. See extraProviders in
-// bundles_test.go. bicep backs the Bicep variants; os backs the Dockerfile
-// suite (the docker-file connection lives in the os provider).
+// bundles_test.go, which installs them serially in TestMain before any parallel
+// scan runs.
+//
+// Pre-installing every provider a registered policy needs is not just an
+// optimization — it is required for correctness under -parallel. Scanning a
+// Terraform asset still loads the whole policy bundle, whose runtime-variant
+// checks reference their cloud's resources (e.g. gitlab.namespace in
+// mondoo-gitlab-security), so the bundle only compiles if that provider's schema
+// is installed. Left to the scanner's lazy auto-install, the first wave of
+// same-provider subtests would race to install into a fresh providers dir and
+// some would lose with "cannot find resource for identifier '<provider>'". A
+// single CI runner usually won the race by luck; fanning the suite out across
+// shards made it lose reliably. Installing eagerly and serially here removes the
+// race for every provider these suites touch.
+//
+// bicep backs the Bicep variants; os backs the Dockerfile suite (the docker-file
+// connection lives in the os provider); the rest back the non-cloud policies in
+// tfVariantPolicies. The base list (terraform/k8s/aws/azure/gcp/cloudformation)
+// lives in bundles_test.go.
 func init() {
-	extraProviders = append(extraProviders, "bicep", "os")
+	extraProviders = append(extraProviders,
+		"bicep", "os",
+		"oci", "vsphere", "okta", "openstack", "gitlab", "cloudflare",
+		"github", "digitalocean", "unifi", "portainer", "snowflake",
+		"hetzner", "tailscale", "ms365",
+	)
 }
 
 // tfVariantsRoot holds one directory per IaC variant, named after the
