@@ -105,9 +105,14 @@ func (sb *syncBatcher) Flush(ctx context.Context) error {
 	if len(readyToSync) > 0 {
 		if err := syncBatchWithUpstream(ctx, readyToSync, sb.services, sb.spaceMrn, sb.recording); err != nil {
 			for _, tracked := range batch {
-				if closeErr := sb.dispatcher.explorer.CloseAsset(tracked); closeErr != nil {
-					log.Error().Err(closeErr).Str("asset", tracked.Asset.Name).Msg("failed to close asset")
+				assetName := ""
+				if tracked.Asset != nil {
+					assetName = tracked.Asset.Name
 				}
+				if closeErr := sb.dispatcher.explorer.CloseAsset(tracked); closeErr != nil {
+					log.Error().Err(closeErr).Str("asset", assetName).Msg("failed to close asset")
+				}
+				tracked.Asset = nil
 				<-sb.dispatcher.connSem
 			}
 			return err
@@ -191,15 +196,20 @@ func (d *scanDispatcher) Submit(ctx context.Context, tracked *discovery.TrackedA
 		case d.scanSem <- struct{}{}:
 			defer func() { <-d.scanSem }()
 		case <-ctx.Done():
-			if err := d.explorer.CloseAsset(tracked); err != nil {
-				log.Error().Err(err).Str("asset", tracked.Asset.Name).Msg("failed to close asset")
+			assetName := ""
+			if tracked.Asset != nil {
+				assetName = tracked.Asset.Name
 			}
+			if err := d.explorer.CloseAsset(tracked); err != nil {
+				log.Error().Err(err).Str("asset", assetName).Msg("failed to close asset")
+			}
+			tracked.Asset = nil
 			return
 		}
 
 		// Mark asset as in-progress as soon as we pick it up, not when
 		// the first query result comes back.
-		if len(tracked.Asset.PlatformIds) > 0 {
+		if tracked.Asset != nil && len(tracked.Asset.PlatformIds) > 0 {
 			d.multiprogress.OnProgress(tracked.Asset.PlatformIds[0], 0)
 		}
 
@@ -230,8 +240,9 @@ func (d *scanDispatcher) scanSingleAsset(ctx context.Context, tracked *discovery
 		if err != nil {
 			d.reporter.AddScanError(asset, err)
 			if err := d.explorer.CloseAsset(tracked); err != nil {
-				log.Error().Err(err).Str("asset", tracked.Asset.Name).Msg("failed to close asset")
+				log.Error().Err(err).Str("asset", asset.Name).Msg("failed to close asset")
 			}
+			tracked.Asset = nil
 			return
 		}
 		asset = updatedAsset
@@ -246,8 +257,9 @@ func (d *scanDispatcher) scanSingleAsset(ctx context.Context, tracked *discovery
 				d.multiprogress.Errored(asset.PlatformIds[0])
 			}
 			if err := d.explorer.CloseAsset(tracked); err != nil {
-				log.Error().Err(err).Str("asset", tracked.Asset.Name).Msg("failed to close asset")
+				log.Error().Err(err).Str("asset", asset.Name).Msg("failed to close asset")
 			}
+			tracked.Asset = nil
 			return
 		}
 	}
@@ -255,8 +267,9 @@ func (d *scanDispatcher) scanSingleAsset(ctx context.Context, tracked *discovery
 	if len(asset.PlatformIds) == 0 {
 		log.Warn().Str("name", asset.Name).Msg("asset has no platform IDs after discovery, skipping")
 		if err := d.explorer.CloseAsset(tracked); err != nil {
-			log.Error().Err(err).Str("asset", tracked.Asset.Name).Msg("failed to close asset")
+			log.Error().Err(err).Str("asset", asset.Name).Msg("failed to close asset")
 		}
+		tracked.Asset = nil
 		return
 	}
 
@@ -291,8 +304,15 @@ func (d *scanDispatcher) scanSingleAsset(ctx context.Context, tracked *discovery
 
 	// Close asset after scanning to free the gRPC connection.
 	if err := d.explorer.CloseAsset(tracked); err != nil {
-		log.Error().Err(err).Str("asset", tracked.Asset.Name).Msg("failed to close asset")
+		log.Error().Err(err).Str("asset", asset.Name).Msg("failed to close asset")
 	}
+
+	// Break the allAssets → Asset reference so the proto data (connections,
+	// platform, labels, etc.) becomes GC-eligible immediately. The local
+	// `asset` variable still holds a reference for logMemoryStats below;
+	// reporters that need the data (AggregateReporter) already captured
+	// their own reference via AddReport.
+	tracked.Asset = nil
 
 	debug.FreeOSMemory()
 
@@ -354,7 +374,7 @@ func (d *scanDispatcher) reportPanic(tracked *discovery.TrackedAsset) {
 		tags := map[string]string{
 			"spaceMrn": d.spaceMrn,
 		}
-		if tracked != nil {
+		if tracked != nil && tracked.Asset != nil {
 			tags["assetMrn"] = tracked.Asset.Mrn
 			tags["assetName"] = tracked.Asset.Name
 			tags["platformIDs"] = strings.Join(tracked.Asset.PlatformIds, ",")

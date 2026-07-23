@@ -567,9 +567,14 @@ type scanContext struct {
 
 func (sc *scanContext) skipAsset(asset *discovery.TrackedAsset) {
 	sc.multiprogress.Filtered(1)
-	if err := sc.explorer.CloseAsset(asset); err != nil {
-		log.Error().Err(err).Str("asset", asset.Asset.Name).Msg("failed to close asset")
+	assetName := ""
+	if asset.Asset != nil {
+		assetName = asset.Asset.Name
 	}
+	if err := sc.explorer.CloseAsset(asset); err != nil {
+		log.Error().Err(err).Str("asset", assetName).Msg("failed to close asset")
+	}
+	asset.Asset = nil
 	<-sc.connSem
 }
 
@@ -701,13 +706,24 @@ func (sc *scanContext) scanSubtree(ctx context.Context, node *discovery.TrackedA
 		}
 	} else {
 		sc.multiprogress.Filtered(1)
-		if err := sc.explorer.CloseAsset(node); err != nil {
-			log.Error().Err(err).Str("asset", node.Asset.Name).Msg("failed to close asset")
+		nodeName := ""
+		if node.Asset != nil {
+			nodeName = node.Asset.Name
 		}
+		if err := sc.explorer.CloseAsset(node); err != nil {
+			log.Error().Err(err).Str("asset", nodeName).Msg("failed to close asset")
+		}
+		node.Asset = nil
 	}
 
 	// Wait for all scans (children + node) to complete before returning.
 	sc.dispatcher.Wait()
+
+	// Release the subtree's children references. All children have been
+	// scanned and closed, so these pointers only prevent GC. Clearing
+	// them before processing the next subtree (namespace) keeps peak
+	// memory proportional to one subtree, not the entire tree.
+	node.Children = nil
 
 	return nil
 }
@@ -722,17 +738,38 @@ func syncBatchWithUpstream(
 	rec llx.Recording,
 ) error {
 	if services != nil {
-		log.Info().Msg("synchronize assets")
+		log.Info().Int("batch-size", len(batch)).Msg("synchronizing assets with upstream")
 		assetsToSync := make([]*inventory.Asset, 0, len(batch))
 		for _, tracked := range batch {
 			assetsToSync = append(assetsToSync, tracked.Asset)
 		}
-		log.Debug().Int("assets", len(assetsToSync)).Msg("synchronizing assets upstream")
-		resp, err := services.SynchronizeAssets(ctx, &policy.SynchronizeAssetsReq{
-			SpaceMrn: spaceMrn,
-			List:     assetsToSync,
-		})
+
+		const maxSyncRetries = 3
+		var resp *policy.SynchronizeAssetsResp
+		var err error
+		for attempt := 1; attempt <= maxSyncRetries; attempt++ {
+			resp, err = services.SynchronizeAssets(ctx, &policy.SynchronizeAssetsReq{
+				SpaceMrn: spaceMrn,
+				List:     assetsToSync,
+			})
+			if err == nil {
+				break
+			}
+			if attempt < maxSyncRetries {
+				backoff := time.Duration(attempt) * 2 * time.Second
+				log.Warn().Err(err).Int("attempt", attempt).Dur("backoff", backoff).
+					Msg("SynchronizeAssets failed, retrying")
+				t := time.NewTimer(backoff)
+				select {
+				case <-ctx.Done():
+					t.Stop()
+					return ctx.Err()
+				case <-t.C:
+				}
+			}
+		}
 		if err != nil {
+			log.Error().Err(err).Int("attempts", maxSyncRetries).Msg("SynchronizeAssets failed after all retries")
 			return err
 		}
 		log.Debug().Int("assets", len(resp.Details)).Msg("got assets details")
