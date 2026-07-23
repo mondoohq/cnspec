@@ -738,17 +738,38 @@ func syncBatchWithUpstream(
 	rec llx.Recording,
 ) error {
 	if services != nil {
-		log.Info().Msg("synchronize assets")
+		log.Info().Int("batch-size", len(batch)).Msg("synchronizing assets with upstream")
 		assetsToSync := make([]*inventory.Asset, 0, len(batch))
 		for _, tracked := range batch {
 			assetsToSync = append(assetsToSync, tracked.Asset)
 		}
-		log.Debug().Int("assets", len(assetsToSync)).Msg("synchronizing assets upstream")
-		resp, err := services.SynchronizeAssets(ctx, &policy.SynchronizeAssetsReq{
-			SpaceMrn: spaceMrn,
-			List:     assetsToSync,
-		})
+
+		const maxSyncRetries = 3
+		var resp *policy.SynchronizeAssetsResp
+		var err error
+		for attempt := 1; attempt <= maxSyncRetries; attempt++ {
+			resp, err = services.SynchronizeAssets(ctx, &policy.SynchronizeAssetsReq{
+				SpaceMrn: spaceMrn,
+				List:     assetsToSync,
+			})
+			if err == nil {
+				break
+			}
+			if attempt < maxSyncRetries {
+				backoff := time.Duration(attempt) * 2 * time.Second
+				log.Warn().Err(err).Int("attempt", attempt).Dur("backoff", backoff).
+					Msg("SynchronizeAssets failed, retrying")
+				t := time.NewTimer(backoff)
+				select {
+				case <-ctx.Done():
+					t.Stop()
+					return ctx.Err()
+				case <-t.C:
+				}
+			}
+		}
 		if err != nil {
+			log.Error().Err(err).Int("attempts", maxSyncRetries).Msg("SynchronizeAssets failed after all retries")
 			return err
 		}
 		log.Debug().Int("assets", len(resp.Details)).Msg("got assets details")
