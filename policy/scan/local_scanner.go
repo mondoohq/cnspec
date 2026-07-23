@@ -567,9 +567,14 @@ type scanContext struct {
 
 func (sc *scanContext) skipAsset(asset *discovery.TrackedAsset) {
 	sc.multiprogress.Filtered(1)
-	if err := sc.explorer.CloseAsset(asset); err != nil {
-		log.Error().Err(err).Str("asset", asset.Asset.Name).Msg("failed to close asset")
+	assetName := ""
+	if asset.Asset != nil {
+		assetName = asset.Asset.Name
 	}
+	if err := sc.explorer.CloseAsset(asset); err != nil {
+		log.Error().Err(err).Str("asset", assetName).Msg("failed to close asset")
+	}
+	asset.Asset = nil
 	<-sc.connSem
 }
 
@@ -701,13 +706,24 @@ func (sc *scanContext) scanSubtree(ctx context.Context, node *discovery.TrackedA
 		}
 	} else {
 		sc.multiprogress.Filtered(1)
-		if err := sc.explorer.CloseAsset(node); err != nil {
-			log.Error().Err(err).Str("asset", node.Asset.Name).Msg("failed to close asset")
+		nodeName := ""
+		if node.Asset != nil {
+			nodeName = node.Asset.Name
 		}
+		if err := sc.explorer.CloseAsset(node); err != nil {
+			log.Error().Err(err).Str("asset", nodeName).Msg("failed to close asset")
+		}
+		node.Asset = nil
 	}
 
 	// Wait for all scans (children + node) to complete before returning.
 	sc.dispatcher.Wait()
+
+	// Release the subtree's children references. All children have been
+	// scanned and closed, so these pointers only prevent GC. Clearing
+	// them before processing the next subtree (namespace) keeps peak
+	// memory proportional to one subtree, not the entire tree.
+	node.Children = nil
 
 	return nil
 }
