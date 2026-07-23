@@ -4,7 +4,7 @@ resource "aws_sns_topic" "example" {
 }
 
 resource "aws_sns_topic_policy" "example" {
-  arn = aws_sns_topic.example.arn
+  arn = "arn:aws:sns:us-east-1:111122223333:example-topic"
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -14,7 +14,7 @@ resource "aws_sns_topic_policy" "example" {
         Effect    = "Allow"
         Principal = "*"
         Action    = "SNS:Publish"
-        Resource  = aws_sns_topic.example.arn
+        Resource  = "arn:aws:sns:us-east-1:111122223333:example-topic"
       }
     ]
   })

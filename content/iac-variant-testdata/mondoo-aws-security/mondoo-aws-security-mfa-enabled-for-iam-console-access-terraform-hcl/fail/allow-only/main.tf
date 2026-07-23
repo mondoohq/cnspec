@@ -15,3 +15,8 @@ resource "aws_iam_policy" "allow_read" {
     ]
   })
 }
+
+# A console user exists, so the MFA-enforcement check applies.
+resource "aws_iam_user_login_profile" "example" {
+  user = "example-user"
+}
