@@ -61,6 +61,62 @@ var Ms365AppPermissions = Permissions{
 				ID:   "OrgSettings-AppsAndServices.Read.All",
 				Type: "Role",
 			},
+			{
+				// PIM role definitions, assignments, role management policies, and eligibility schedules.
+				// Required by the cis-microsoft-365 5.3.x checks and the PIM privileged-roles check.
+				ID:   "RoleManagement.Read.All",
+				Type: "Role",
+			},
+			{
+				// Required by the cis-microsoft-365 5.3.2/5.3.3 access-review checks.
+				ID:   "AccessReview.Read.All",
+				Type: "Role",
+			},
+			{
+				ID:   "UserAuthenticationMethod.Read.All",
+				Type: "Role",
+			},
+			{
+				// Sign-in activity, sign-in logs, and authentication method registration details.
+				ID:   "AuditLog.Read.All",
+				Type: "Role",
+			},
+			{
+				ID:   "IdentityRiskEvent.Read.All",
+				Type: "Role",
+			},
+			{
+				ID:   "IdentityRiskyUser.Read.All",
+				Type: "Role",
+			},
+			{
+				// Intune managed apps, app configurations, and app protection policies.
+				ID:   "DeviceManagementApps.Read.All",
+				Type: "Role",
+			},
+			{
+				// Intune role-based access control (RBAC) settings.
+				ID:   "DeviceManagementRBAC.Read.All",
+				Type: "Role",
+			},
+			{
+				// Microsoft Graph security alerts_v2 (not covered by SecurityEvents.Read.All).
+				ID:   "SecurityAlert.Read.All",
+				Type: "Role",
+			},
+			{
+				ID:   "SecurityIncident.Read.All",
+				Type: "Role",
+			},
+			{
+				ID:   "InformationProtectionPolicy.Read.All",
+				Type: "Role",
+			},
+			{
+				// Directory reads such as OAuth2 permission grants, service principals, and group settings.
+				ID:   "Directory.Read.All",
+				Type: "Role",
+			},
 		},
 	},
 	{
