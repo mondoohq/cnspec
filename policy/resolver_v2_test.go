@@ -2389,6 +2389,52 @@ policies:
 	})
 }
 
+// A check that is defined in the bundle's shared `queries` section and only
+// referenced by uid from a group is compiled on a merged copy of the query.
+// Implicit properties resolved during that compilation have to make it back
+// into the shared query, otherwise resolving fails with "cannot find property".
+func TestResolveV2_ImplicitProps_SharedQuery(t *testing.T) {
+	ctx := context.Background()
+	b := parseBundle(t, `
+owner_mrn: //test.sth
+policies:
+- uid: policy1
+  props:
+  - uid: name
+    mql: return "definitely not the asset name"
+  groups:
+  - type: chapter
+    filters: "true"
+    checks:
+    - uid: check1
+queries:
+- uid: check1
+  mql: asset.name == props.name
+`)
+
+	srv := initResolver(t, []*testAsset{
+		{asset: "asset1", policies: []string{policyMrn("policy1")}},
+	}, []*policy.Bundle{b})
+
+	t.Run("resolve with correct filters", func(t *testing.T) {
+		rp, err := srv.Resolve(ctx, &policy.ResolveReq{
+			PolicyMrn:    policyMrn("policy1"),
+			AssetFilters: []*policy.Mquery{{Mql: "true"}},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, rp)
+
+		rpTester := newResolvedPolicyTester(b, srv.NewCompilerConfig())
+		rpTester.
+			ExecutesQuery(queryMrn("check1")).
+			WithProps(map[string]string{"name": `return "definitely not the asset name"`})
+		rpTester.CodeIdReportingJobForMrn(queryMrn("check1")).Notifies(queryMrn("check1"))
+		rpTester.ReportingJobByMrn(queryMrn("check1")).Notifies("root")
+
+		rpTester.doTest(t, rp)
+	})
+}
+
 func TestResolveV2_ValidUntil(t *testing.T) {
 	ctx := context.Background()
 	bYaml := `

@@ -18,6 +18,7 @@ import (
 	"go.mondoo.com/cnspec/v13/internal/datalakes/inmemory"
 	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/mql/v13/providers"
+	llxtypes "go.mondoo.com/mql/v13/types"
 )
 
 type s3Fake struct {
@@ -828,4 +829,50 @@ queries:
 	require.Equal(t, b.Queries[1].Props[0].Mrn, b.Policies[0].Props[0].For[0].Mrn)
 	require.Equal(t, b.Queries[2].Props[0].Mrn, b.Policies[0].Props[0].For[1].Mrn)
 	require.Equal(t, b.Queries[3].Props[0].Mrn, b.Policies[0].Props[0].For[2].Mrn)
+}
+
+func TestProps_ImplicitPropsOnSharedQueries(t *testing.T) {
+	// Checks that live in the shared `queries` section and are only referenced
+	// by uid from a group are compiled on a merged copy of the query. The
+	// implicit property that the compiler creates for `props.crontabDir` has to
+	// end up on the shared query itself, otherwise the resolver has no property
+	// to compile the check against.
+	bundleYaml := `
+policies:
+  - uid: example1
+    name: Example policy 1
+    version: "1.0.0"
+    groups:
+      - title: group1
+        filters: return true
+        checks:
+          - uid: check-1
+          - uid: check-2
+    props:
+      - uid: crontabDir
+        mql: return "/etc/cron.d"
+
+queries:
+  - uid: check-1
+    mql: props.crontabDir != ""
+  - uid: check-2
+    mql: props.crontabDir == "/etc/cron.d"`
+
+	b, err := policy.BundleFromYAML([]byte(bundleYaml))
+	require.NoError(t, err)
+	_, err = b.CompileExt(context.Background(), policy.BundleCompileConf{
+		CompilerConfig: conf,
+	})
+	require.NoError(t, err)
+
+	require.Len(t, b.Policies[0].Props, 1)
+	policyProp := b.Policies[0].Props[0]
+	require.Len(t, policyProp.For, 2)
+
+	require.Len(t, b.Queries, 2)
+	for i, query := range b.Queries {
+		require.Len(t, query.Props, 1, "query %s has no property", query.Mrn)
+		require.Equal(t, policyProp.For[i].Mrn, query.Props[0].Mrn)
+		require.Equal(t, string(llxtypes.String), query.Props[0].Type)
+	}
 }
