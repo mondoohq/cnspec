@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-dns-security
     name: Mondoo DNS Security
-    version: 1.3.2
+    version: 1.3.3
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -38,6 +38,7 @@ policies:
           - uid: mondoo-dns-security-no-wildcard
           - uid: mondoo-dns-security-ns-redundancy
           - uid: mondoo-dns-security-reasonable-ttls
+    scoring_system: highest impact
 queries:
   - uid: mondoo-dns-security-no-cname-for-root-domain
     title: Ensure no CNAME is used for root domain
@@ -54,6 +55,7 @@ queries:
       compliance/nist-csf-2: nist-csf-2-de-cm-09
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-6
       compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
       compliance/pci-dss-4: pcidss-requirement-10-2-1
       compliance/soc2-2017: soc2-control-cc7-2-1
       compliance/vda-isa-5: vda-isa-5-5-2-4
@@ -72,10 +74,55 @@ queries:
         Run the `dig <domain>` command and inspect the answer section for the root domain.
 
         A passing result shows the root domain resolving through A or AAAA records with no CNAME present. A failing result shows a CNAME record returned for the root domain.
-      remediation: |
-        1. Replace the CNAME record at the root domain with an A or ALIAS record, if your DNS provider supports ALIAS records, pointing to the appropriate IP address or hostname.
-        2. Ensure the A or ALIAS record is correctly configured to maintain DNS compatibility and avoid resolution failures.
-        3. Verify the updated DNS configuration with `dig <domain>` to confirm proper resolution and functionality.
+      remediation:
+        - id: console
+          desc: |
+            To replace an apex CNAME using your DNS provider's control panel:
+
+            1. Sign in to the control panel for the provider that hosts the zone and open the DNS records for the domain.
+            2. Note the target the apex `CNAME` currently points to, then delete the record.
+            3. Create an `A` record at the apex (`@`) pointing to the service IP address. If the target is a hostname whose address changes, create an `ALIAS`, `ANAME`, or `CNAME flattening` record instead, whichever your provider offers.
+            4. Save the zone and confirm the apex now returns an address record.
+        - id: cli
+          desc: |
+            To confirm the apex resolves through an address record rather than a CNAME:
+
+            1. Inspect the current apex answer:
+
+                ```bash
+                dig +noall +answer example.com CNAME
+                dig +noall +answer example.com A
+                ```
+
+            2. Remove the apex `CNAME` and publish an `A` or `ALIAS` record through your provider's API or CLI.
+            3. Re-run the commands. The `CNAME` query must return no answer and the `A` query must return an address.
+        - id: terraform
+          desc: |
+            To publish an apex address record with Terraform, use the alias-style resource your DNS provider offers rather than a `CNAME`:
+
+            ```hcl
+            # AWS Route 53 - alias record at the apex
+            resource "aws_route53_record" "apex" {
+              zone_id = aws_route53_zone.primary.zone_id
+              name    = "example.com"
+              type    = "A"
+
+              alias {
+                name                   = aws_lb.web.dns_name
+                zone_id                = aws_lb.web.zone_id
+                evaluate_target_health = true
+              }
+            }
+
+            # Cloudflare - CNAME flattening applies automatically at the apex
+            resource "cloudflare_record" "apex" {
+              zone_id = var.cloudflare_zone_id
+              name    = "@"
+              type    = "CNAME"
+              content = "web.example.net"
+              proxied = true
+            }
+            ```
     refs:
       - url: https://www.cisa.gov/dns-security
         title: CISA DNS Security
@@ -93,6 +140,7 @@ queries:
       compliance/nist-csf-2: nist-csf-2-de-cm-09
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-6
       compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
       compliance/pci-dss-4: pcidss-requirement-10-2-1
       compliance/soc2-2017: soc2-control-cc7-2-1
       compliance/vda-isa-5: vda-isa-5-5-2-4
@@ -115,18 +163,55 @@ queries:
         Run the `dig NS <domain>` and `dig MX <domain>` commands and inspect the answer sections.
 
         A passing result shows every NS and MX record pointing to a hostname such as `ns1.example.com` or `mail.example.com`. A failing result shows any NS or MX record whose target is a literal IPv4 or IPv6 address.
-      remediation: |
-        For NS records:
-          1. Identify the authoritative DNS servers for your domain.
-          2. Update the NS records in your DNS settings to point to the fully qualified domain names (FQDNs) of these servers (e.g., ns1.example.com).
-          3. Remove any NS records pointing to IP addresses to ensure compliance with DNS standards.
-          4. Verify the configuration using DNS validation tools to confirm proper resolution.
+      remediation:
+        - id: console
+          desc: |
+            To replace literal IP addresses in NS and MX records using your DNS provider's control panel:
 
-        For MX records:
-          1. Identify the correct mail server FQDNs for your email provider (e.g., mail.example.com).
-          2. Update the MX records in your DNS settings to point to these FQDNs, ensuring the correct priority values are set.
-          3. Remove any MX records pointing to IP addresses or outdated servers to avoid misrouting or security risks.
-          4. Test the configuration by sending and receiving emails to confirm proper functionality.
+            1. Sign in to the control panel for the provider that hosts the zone and open the DNS records for the domain.
+            2. For each `NS` record whose value is an IP address, create or confirm a hostname for that nameserver (for example `ns1.example.com`), publish an `A`/`AAAA` record for it, then change the `NS` record to reference that hostname.
+            3. For each `MX` record whose value is an IP address, replace it with the fully qualified hostname of the mail server (for example `mail.example.com`) and keep the existing preference value.
+            4. Delete the records that still carry literal addresses, then save the zone.
+        - id: cli
+          desc: |
+            To confirm no NS or MX record resolves to a literal address:
+
+            1. Inspect the current values:
+
+                ```bash
+                dig +noall +answer example.com NS
+                dig +noall +answer example.com MX
+                ```
+
+            2. Publish hostname-based replacements through your provider's API or CLI, adding `A`/`AAAA` records for any nameserver hostname that does not already have one.
+            3. Re-run the commands. Every answer must be a hostname; a passing zone shows values such as `ns1.example.com.` and `10 mail.example.com.`, never a dotted-quad or IPv6 literal.
+        - id: terraform
+          desc: |
+            To publish hostname-based NS and MX records with Terraform:
+
+            ```hcl
+            resource "aws_route53_record" "mx" {
+              zone_id = aws_route53_zone.primary.zone_id
+              name    = "example.com"
+              type    = "MX"
+              ttl     = 3600
+              records = [
+                "10 mail.example.com",
+                "20 mail2.example.com",
+              ]
+            }
+
+            resource "aws_route53_record" "ns" {
+              zone_id = aws_route53_zone.primary.zone_id
+              name    = "example.com"
+              type    = "NS"
+              ttl     = 172800
+              records = [
+                "ns1.example.com",
+                "ns2.example.com",
+              ]
+            }
+            ```
     refs:
       - url: https://www.cisa.gov/dns-security
         title: CISA DNS Security
@@ -144,6 +229,7 @@ queries:
       compliance/nist-csf-2: nist-csf-2-de-cm-09
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-6
       compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
       compliance/pci-dss-4: pcidss-requirement-10-2-1
       compliance/soc2-2017: soc2-control-cc7-2-1
       compliance/vda-isa-5: vda-isa-5-5-2-4
@@ -166,15 +252,41 @@ queries:
         Run the `dig MX <domain>` command and inspect the answer section.
 
         A passing result shows MX records pointing to current Microsoft 365 endpoints under `*.mail.protection.outlook.com`. A failing result shows an MX record pointing to a legacy host such as `mail.outlook.com` or `mail.global.frontbridge.com`.
-      remediation: |
-        Replace all legacy MX records with the current Microsoft 365 MX records shown in the Microsoft 365 admin center.
+      remediation:
+        - id: console
+          desc: |
+            To replace legacy Microsoft 365 MX records using your DNS provider's control panel:
 
-        Steps to remediate:
-          1. Sign in to your DNS hosting provider's control panel.
-          2. Locate the DNS settings for your domain.
-          3. Add or update the MX records to match the Microsoft 365 configuration, setting the correct priorities.
-          4. Remove any legacy or non-Microsoft MX records to avoid misrouting or security vulnerabilities.
-          5. Save the changes and verify the configuration with `dig MX <domain>`.
+            1. Sign in to the Microsoft 365 admin center, open **Settings > Domains**, select the domain, and copy the MX value Microsoft currently publishes for it. It has the form `<domain-key>.mail.protection.outlook.com`.
+            2. Sign in to the control panel for the provider that hosts the zone and open the DNS records for the domain.
+            3. Add an `MX` record at the apex with that value and preference `0`.
+            4. Delete the legacy records — `mail.outlook.com`, `mail.messaging.microsoft.com`, `mail.global.frontbridge.com`, and `mail.global.bigfish.com` are all retired endpoints.
+            5. Save the zone.
+        - id: cli
+          desc: |
+            To confirm the domain uses the current Microsoft 365 mail endpoint:
+
+            1. Inspect the published MX records:
+
+                ```bash
+                dig +noall +answer example.com MX
+                ```
+
+            2. Replace any retired endpoint with the `*.mail.protection.outlook.com` host shown for the domain in the Microsoft 365 admin center, using your DNS provider's API or CLI.
+            3. Re-run the command. A passing zone returns a single `0 <domain-key>.mail.protection.outlook.com.` answer and none of the retired hostnames.
+        - id: terraform
+          desc: |
+            To publish the current Microsoft 365 MX record with Terraform:
+
+            ```hcl
+            resource "aws_route53_record" "m365_mx" {
+              zone_id = aws_route53_zone.primary.zone_id
+              name    = "example.com"
+              type    = "MX"
+              ttl     = 3600
+              records = ["0 example-com.mail.protection.outlook.com"]
+            }
+            ```
     refs:
       - url: https://learn.microsoft.com/en-us/microsoft-365/admin/get-help-with-domains/create-dns-records-at-any-dns-hosting-provider?view=o365-worldwide
         title: Add DNS records to connect your domain
@@ -192,6 +304,7 @@ queries:
       compliance/nist-csf-2: nist-csf-2-de-cm-09
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-6
       compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
       compliance/pci-dss-4: pcidss-requirement-10-2-1
       compliance/soc2-2017: soc2-control-cc7-2-1
       compliance/vda-isa-5: vda-isa-5-5-2-4
@@ -213,21 +326,55 @@ queries:
         Run the `dig MX <domain>` command and inspect the answer section.
 
         A passing result shows MX records pointing only to `aspmx.l.google.com` and its `alt1` through `alt4` variants. A failing result shows a record under `l.google.com` that points to any other host.
-      remediation: |
-        To ensure proper email routing and security, configure the domain's MX records to point to Google's designated email servers:
+      remediation:
+        - id: console
+          desc: |
+            To publish the Google Workspace MX records using your DNS provider's control panel:
 
-          - ASPMX.L.GOOGLE.COM (Priority: 1)
-          - ALT1.ASPMX.L.GOOGLE.COM (Priority: 5)
-          - ALT2.ASPMX.L.GOOGLE.COM (Priority: 5)
-          - ALT3.ASPMX.L.GOOGLE.COM (Priority: 10)
-          - ALT4.ASPMX.L.GOOGLE.COM (Priority: 10)
+            1. Sign in to the control panel for the provider that hosts the zone and open the DNS records for the domain.
+            2. Add `MX` records at the apex for the five Google endpoints, with these preference values:
 
-        Steps to remediate:
-          1. Log in to your DNS hosting provider's control panel.
-          2. Locate the DNS settings for your domain.
-          3. Add or update the MX records to match the above configuration, ensuring the correct priorities are set.
-          4. Remove any legacy or non-Google MX records to avoid misrouting or security vulnerabilities.
-          5. Save the changes and verify the configuration with `dig MX <domain>`.
+                | Preference | Mail server |
+                |---|---|
+                | 1 | `ASPMX.L.GOOGLE.COM` |
+                | 5 | `ALT1.ASPMX.L.GOOGLE.COM` |
+                | 5 | `ALT2.ASPMX.L.GOOGLE.COM` |
+                | 10 | `ALT3.ASPMX.L.GOOGLE.COM` |
+                | 10 | `ALT4.ASPMX.L.GOOGLE.COM` |
+
+            3. Delete any remaining MX records that point at a previous mail provider, so mail cannot be routed to a system nobody monitors.
+            4. Save the zone.
+        - id: cli
+          desc: |
+            To confirm the domain routes mail to the Google Workspace endpoints:
+
+            1. Inspect the published MX records:
+
+                ```bash
+                dig +noall +answer example.com MX
+                ```
+
+            2. Publish the five `ASPMX`/`ALT*.ASPMX` records with the preferences above through your provider's API or CLI, and remove any others.
+            3. Re-run the command. A passing zone returns exactly the five Google endpoints and no third-party mail hosts.
+        - id: terraform
+          desc: |
+            To publish the Google Workspace MX records with Terraform:
+
+            ```hcl
+            resource "aws_route53_record" "google_mx" {
+              zone_id = aws_route53_zone.primary.zone_id
+              name    = "example.com"
+              type    = "MX"
+              ttl     = 3600
+              records = [
+                "1 ASPMX.L.GOOGLE.COM",
+                "5 ALT1.ASPMX.L.GOOGLE.COM",
+                "5 ALT2.ASPMX.L.GOOGLE.COM",
+                "10 ALT3.ASPMX.L.GOOGLE.COM",
+                "10 ALT4.ASPMX.L.GOOGLE.COM",
+              ]
+            }
+            ```
     refs:
       - url: https://support.google.com/a/answer/140034?hl=en
         title: Set up MX records for Google Workspace email
@@ -240,11 +387,13 @@ queries:
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/mitre-attack: mitre-attack-t1557
       compliance/nis-2: nis-2-21-2-h
       compliance/nist-csf-1: nist-csf-1-pr-ds-2
       compliance/nist-csf-2: nist-csf-2-pr-ds-02
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
       compliance/pci-dss-4: pcidss-requirement-4-2-1
       compliance/soc2-2017: soc2-control-cc6-7-2
       compliance/vda-isa-5: vda-isa-5-5-1-2
@@ -263,13 +412,63 @@ queries:
         Run the `dig DNSKEY <domain>` command and inspect the answer section.
 
         A passing result shows one or more DNSKEY records published for the domain. A failing result shows an empty answer section, indicating DNSSEC is not enabled.
-      remediation: |
-        * Enable DNSSEC for your domain through your DNS hosting provider or domain registrar's control panel, following their instructions for signing the zone.
-        * Publish the DS (Delegation Signer) record at your domain registrar so it appears in the parent zone. Signing the zone at the DNS host only generates the keys. Until the matching DS record exists in the parent zone, resolvers have no trust anchor and DNSSEC validation never activates. This missing DS-record step is the most common reason DNSSEC appears configured but provides no protection. If your DNS host and registrar are different providers, copy the DS record (or the DNSKEY values used to build it) from the host into the registrar's DNSSEC settings.
-        * Verify the DS record is live in the parent zone with `dig DS <domain>`. An empty answer section means the registrar has not published it yet and the chain of trust is broken.
-        * Monitor DNSSEC signatures so they remain valid and do not expire. Set up alerts or reminders for signature expiration dates.
-        * Verify proper configuration with `dig DNSKEY <domain>` and `dig +dnssec <domain>`, and address any validation warnings promptly.
-        * Establish a process for periodic DNSSEC reviews to ensure ongoing compliance and security.
+      remediation:
+        - id: console
+          desc: |
+            To enable DNSSEC, sign the zone at the DNS host **and** publish the DS record at the registrar. Doing only the first step is the most common reason DNSSEC appears configured but provides no protection:
+
+            1. Sign in to the control panel for the provider that hosts the zone, open the DNS settings for the domain, and enable DNSSEC. The provider generates the signing keys and serves `DNSKEY` and `RRSIG` records.
+            2. Copy the DS record the host displays, or the DNSKEY values needed to build it.
+            3. Sign in to the domain registrar, open the DNSSEC settings for the domain, and publish that DS record. Until the DS exists in the parent zone, resolvers have no trust anchor and never validate.
+            4. If the host and the registrar are the same provider, confirm it published the DS on your behalf rather than assuming it did.
+            5. Set a reminder to review signature expiry and any planned key rollover.
+        - id: cli
+          desc: |
+            To confirm the full chain of trust is live, check both the zone signature and the parent-zone delegation:
+
+            1. Confirm the zone is signed:
+
+                ```bash
+                dig +noall +answer example.com DNSKEY
+                ```
+
+            2. Confirm the registrar published the DS record in the parent zone:
+
+                ```bash
+                dig +noall +answer example.com DS
+                ```
+
+            3. Confirm a validating resolver accepts the answer:
+
+                ```bash
+                dig +dnssec example.com A
+                ```
+
+            A passing domain returns DNSKEY records, at least one DS record, and an answer carrying the `ad` (authenticated data) flag. An empty `DS` answer means the zone is signed but the chain of trust is broken at the registrar.
+        - id: terraform
+          desc: |
+            To enable DNSSEC with Terraform, sign the zone and publish the delegation:
+
+            ```hcl
+            # Cloudflare - enabling DNSSEC returns the DS values to hand to the registrar
+            resource "cloudflare_zone_dnssec" "example" {
+              zone_id = var.cloudflare_zone_id
+            }
+
+            # AWS Route 53 - sign the zone, then publish the DS at the registrar
+            resource "aws_route53_key_signing_key" "example" {
+              hosted_zone_id             = aws_route53_zone.primary.id
+              key_management_service_arn = aws_kms_key.dnssec.arn
+              name                       = "example-ksk"
+            }
+
+            resource "aws_route53_hosted_zone_dnssec" "example" {
+              depends_on     = [aws_route53_key_signing_key.example]
+              hosted_zone_id = aws_route53_key_signing_key.example.hosted_zone_id
+            }
+            ```
+
+            Terraform can sign the zone, but publishing the DS record at the registrar is a registrar operation. Where the registrar is not the DNS host, complete that step in the registrar's control panel or API.
     refs:
       - url: https://www.icann.org/resources/pages/dnssec-what-is-it-why-is-it-important-2019-03-05-en
         title: ICANN DNSSEC Overview
@@ -282,11 +481,13 @@ queries:
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
       compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/mitre-attack: mitre-attack-t1584-002
       compliance/nis-2: nis-2-21-2-e
       compliance/nist-csf-1: nist-csf-1-pr-ac-5
       compliance/nist-csf-2: nist-csf-2-pr-ir-01
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
       compliance/pci-dss-4: pcidss-requirement-1-3-1
       compliance/soc2-2017: soc2-control-cc6-6-1
       compliance/vda-isa-5: vda-isa-5-5-2-6
@@ -305,10 +506,51 @@ queries:
         Run the `dig '*.<domain>'` command and inspect the answer section.
 
         A passing result shows no answer for the wildcard query, indicating no wildcard record is configured. A failing result shows the wildcard query resolving to an IP address or hostname.
-      remediation: |
-        * Avoid wildcard DNS records, such as `*.example.com`, unless a specific and well-documented use case requires one.
-        * Replace wildcard records with explicit DNS records for each required subdomain to maintain precise control over DNS resolution.
-        * If a wildcard record is genuinely required, monitor and secure it to prevent misuse or exploitation.
+      remediation:
+        - id: console
+          desc: |
+            To remove a wildcard record using your DNS provider's control panel:
+
+            1. Sign in to the control panel for the provider that hosts the zone and open the DNS records for the domain.
+            2. Find records whose name begins with `*`, such as `*.example.com`, and list the subdomains that legitimately rely on them.
+            3. Create an explicit record for each of those subdomains.
+            4. Delete the wildcard record once the explicit records resolve correctly.
+            5. If a wildcard is genuinely required — a multi-tenant product that provisions customer subdomains on demand, for example — document the reason and monitor which names get requested, since a wildcard answers for every name an attacker invents.
+        - id: cli
+          desc: |
+            To confirm the zone publishes no wildcard record:
+
+            1. Query a name that should not exist:
+
+                ```bash
+                dig +noall +answer this-name-should-not-exist.example.com A
+                ```
+
+            2. Replace any wildcard with explicit records for the subdomains that need them, using your provider's API or CLI.
+            3. Re-run the command. A passing zone returns no answer; a zone with a wildcard still in place returns an address for the invented name.
+        - id: terraform
+          desc: |
+            To replace a wildcard with explicit records in Terraform, declare each subdomain you actually serve:
+
+            ```hcl
+            resource "aws_route53_record" "www" {
+              zone_id = aws_route53_zone.primary.zone_id
+              name    = "www.example.com"
+              type    = "A"
+              ttl     = 300
+              records = ["203.0.113.10"]
+            }
+
+            resource "aws_route53_record" "api" {
+              zone_id = aws_route53_zone.primary.zone_id
+              name    = "api.example.com"
+              type    = "A"
+              ttl     = 300
+              records = ["203.0.113.11"]
+            }
+            ```
+
+            Remove any `name = "*.example.com"` resource once the explicit records are in place.
     refs:
       - url: https://www.cisa.gov/dns-security
         title: CISA DNS Security
@@ -326,6 +568,7 @@ queries:
       compliance/nist-csf-2: nist-csf-2-pr-ds-11
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cp-9
       compliance/nist-sp-800-171: false
+      compliance/owasp-top-10-2025: false
       compliance/pci-dss-4: false
       compliance/soc2-2017: soc2-control-cc9-1-1
       compliance/vda-isa-5: vda-isa-5-3-1-2
@@ -346,14 +589,54 @@ queries:
         Run the `dig NS <domain>` command and inspect the answer section.
 
         A passing result shows two or more NS records returned for the domain. A failing result shows a single NS record or none, indicating no nameserver redundancy.
-      remediation: |
-        Configure at least two authoritative nameservers for your domain, ideally hosted on separate networks or with different DNS providers for maximum resilience.
+      remediation:
+        - id: console
+          desc: |
+            To add nameserver redundancy using your DNS provider's control panel:
 
-        Steps to remediate:
-          1. Identify your current nameservers using `dig NS <domain>` and inspecting the answer section.
-          2. If only one nameserver is listed, add a secondary nameserver through your DNS provider or a third-party DNS service.
-          3. Ensure the additional nameserver is on a different network or subnet to avoid correlated failures.
-          4. Verify the configuration using DNS validation tools to confirm all nameservers respond correctly.
+            1. Sign in to the control panel for the provider that hosts the zone and open the DNS records for the domain.
+            2. Review the `NS` records at the apex. If only one is present, add at least one more.
+            3. Prefer nameservers on separate networks, ideally at a second DNS provider, so a single provider outage cannot take the domain offline. Most managed DNS providers assign four nameservers across distinct networks by default.
+            4. Update the nameserver delegation at the domain registrar so the parent zone lists the same set.
+            5. Save the zone.
+        - id: cli
+          desc: |
+            To confirm the domain has redundant authoritative nameservers:
+
+            1. Inspect the delegation:
+
+                ```bash
+                dig +noall +answer example.com NS
+                ```
+
+            2. Confirm each one answers authoritatively for the zone:
+
+                ```bash
+                dig @ns1.example.com example.com SOA
+                dig @ns2.example.com example.com SOA
+                ```
+
+            3. A passing domain lists two or more `NS` records and every one returns the SOA. A single `NS` record, or one that fails to answer, is a single point of failure.
+        - id: terraform
+          desc: |
+            To declare redundant nameservers with Terraform:
+
+            ```hcl
+            resource "aws_route53_record" "ns" {
+              zone_id = aws_route53_zone.primary.zone_id
+              name    = "example.com"
+              type    = "NS"
+              ttl     = 172800
+              records = [
+                "ns1.example.com",
+                "ns2.example.com",
+                "ns3.example.net",
+                "ns4.example.net",
+              ]
+            }
+            ```
+
+            Publishing the NS set in the zone is only half of it — the registrar's delegation must list the same nameservers. Where the registrar has a Terraform provider, manage the delegation there too; otherwise update it in the registrar's control panel.
     refs:
       - url: https://datatracker.ietf.org/doc/html/rfc1034#section-4.1
         title: 'RFC 1034: Domain Names - Concepts and Facilities'
@@ -366,11 +649,13 @@ queries:
       compliance/dora: dora-art-10
       compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
       compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/mitre-attack: mitre-attack-t1568-001
       compliance/nis-2: nis-2-21-2-e
       compliance/nist-csf-1: nist-csf-1-de-cm-1
       compliance/nist-csf-2: nist-csf-2-de-cm-09
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-6
       compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/owasp-top-10-2025: false
       compliance/pci-dss-4: pcidss-requirement-10-2-1
       compliance/soc2-2017: soc2-control-cc7-2-1
       compliance/vda-isa-5: vda-isa-5-5-2-4
@@ -389,14 +674,48 @@ queries:
         Run the `dig <domain>` command and inspect the TTL column of the A and AAAA records in the answer section.
 
         A passing result shows every A and AAAA record with a TTL of 60 seconds or greater. A failing result shows an A or AAAA record with a TTL below 60 seconds.
-      remediation: |
-        Review and increase TTL values for A and AAAA records that have been set below 60 seconds.
+      remediation:
+        - id: console
+          desc: |
+            To raise suspiciously low TTLs using your DNS provider's control panel:
 
-        Steps to remediate:
-          1. Identify records with low TTLs using `dig <domain>` and checking the TTL column.
-          2. For production records that are not undergoing migration, set TTLs to at least 300 seconds (5 minutes). Common production values range from 300 to 3600 seconds.
-          3. If low TTLs were set temporarily for a migration or troubleshooting, restore them to normal production values once the change is complete.
-          4. Verify the updated TTL values are in effect by querying the domain and confirming the new TTL is returned.
+            1. Sign in to the control panel for the provider that hosts the zone and open the DNS records for the domain.
+            2. Review the TTL column for every `A` and `AAAA` record and note any below 60 seconds.
+            3. Set production records to at least 300 seconds. Values between 300 and 3600 are typical.
+            4. If a low TTL was set deliberately to shorten a cutover window, restore the normal value once the migration is finished rather than leaving it in place.
+            5. Save the zone.
+        - id: cli
+          desc: |
+            To confirm no address record carries an unusually low TTL:
+
+            1. Inspect the TTL column, which is the second field of each answer:
+
+                ```bash
+                dig +noall +answer example.com A
+                dig +noall +answer example.com AAAA
+                ```
+
+            2. Raise any value below 60 through your provider's API or CLI.
+            3. Re-run the commands against an authoritative nameserver so a cached answer does not show a decremented TTL:
+
+                ```bash
+                dig @ns1.example.com +noall +answer example.com A
+                ```
+        - id: terraform
+          desc: |
+            To set explicit production TTLs with Terraform:
+
+            ```hcl
+            resource "aws_route53_record" "www" {
+              zone_id = aws_route53_zone.primary.zone_id
+              name    = "www.example.com"
+              type    = "A"
+              ttl     = 300
+              records = ["203.0.113.10"]
+            }
+            ```
+
+            Where a short TTL is needed for a planned cutover, change `ttl` in a dedicated commit and revert it once the migration completes, so the low value does not silently become permanent.
     refs:
       - url: https://www.cisa.gov/dns-security
         title: CISA DNS Security
