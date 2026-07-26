@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-email-security
     name: Mondoo Email Security
-    version: 1.4.0
+    version: 1.5.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -81,7 +81,7 @@ policies:
     scoring_system: highest impact
 queries:
   - uid: mondoo-email-security-reverse-ip-ptr-record-set
-    title: Ensure Reverse IP Lookup PTR record is set (DNS Forward confirmed)
+    title: Ensure mail exchangers have reverse DNS that resolves back
     impact: 60
     tags:
       compliance/bsi-sys-1-5: false
@@ -98,68 +98,111 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-2-2-1
       compliance/soc2-2017: soc2-control-cc7-1-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
+    # Checks the mail exchangers, not the domain's own address. `dns.reverse`
+    # resolves the *domain's* A/AAAA records, which for most organizations is a
+    # web host on a CDN, not a mail server — so the previous query examined the
+    # wrong addresses entirely and then required the PTR name to sit inside the
+    # scanned domain. That is not what forward-confirmed reverse DNS means, and
+    # it is impossible for hosted mail: Google Workspace mail leaves an IP whose
+    # PTR is in 1e100.net and Microsoft 365 from outlook.com, neither of which a
+    # customer controls. Both are correctly configured. The round trip is what
+    # matters, not who owns the name.
     mql: |
-      dns.reverse.any(rdata.any(_.contains(domainName.fqdn)))
+      dns.mx.all( dns(fqdn: _.domainName).reverse != empty )
+      dns.mx.all( dns(fqdn: _.domainName).reverse.all( rdata.all( dns(fqdn: _).records.where(type == "A") != empty ) ) )
     docs:
       desc: |
-        A reverse DNS PTR record maps the sending mail server's IP address back to a fully qualified domain name within your domain. Reverse DNS queries for IPv4 addresses use the special domain `in-addr.arpa`, where the IPv4 address is represented in reverse octet order followed by the `.in-addr.arpa` suffix. When the PTR record resolves to a hostname whose forward A record points back to the original IP address, the domain is in a forward-confirmed reverse DNS state, which receiving mail servers treat as a reliable signal that the sender is legitimate.
+        This check verifies that every mail exchanger listed for the domain has reverse DNS in place: the address behind each MX host resolves to a PTR record, and that PTR name itself resolves back to an address. Receiving mail servers use this round trip as a basic signal that a sender is a legitimate, deliberately operated mail host rather than a compromised machine or a transient cloud instance.
 
         **Why this matters**
 
-        - Validates sender identity and prevents spam classification.
-        - Reduces phishing and spoofing by verifying legitimate email servers.
-        - Forward-confirmed reverse DNS provides authentication strong enough to be used for allowlisting email servers.
+        - **Deliverability:** Large providers, including Gmail and Outlook, treat a sending address with no PTR record as a strong spam signal and may reject or silently drop the mail.
+        - **Sender accountability:** A resolvable PTR ties the sending address to a named host, which is what allows receivers and abuse desks to attribute traffic.
+        - **Operational hygiene:** A missing PTR usually means a mail server was brought up on an address nobody configured reverse DNS for, which is exactly the pattern of an unmanaged or hijacked sender.
 
-        **If you don't fix this**
+        **What this does not require**
 
-        - Major providers like Gmail and Outlook may reject or silently drop your emails.
+        The PTR name does **not** have to sit inside your own domain. Reverse DNS for an address is controlled by whoever owns the IP range, so a domain using hosted email cannot influence it: Google Workspace mail arrives from addresses whose PTR is in `1e100.net`, and Microsoft 365 from `outlook.com`. Both are correct configurations, and requiring the name to match the sending domain would fail every hosted-email tenant. What matters is that the round trip resolves.
 
-        Example:
-        IP `123.123.123.123` should have a PTR record pointing to `mail.example.com`, and a forward lookup of `mail.example.com` should resolve back to `123.123.123.123`.
+        **Risk mitigation**
+
+        - **Hosted email:** Nothing to do. Your provider maintains reverse DNS for its sending infrastructure.
+        - **Self-hosted mail:** Ask whoever owns the IP range, usually your hosting or cloud provider, to publish a PTR for each sending address, and publish a matching forward record for the name it returns.
       audit: |
-        Run the `dig -t PTR <special-reverse-domain>` command and verify that it points to your mail domain.
+        ### Audit via dig
 
-        Example:
-        For the IP address `123.123.123.123`, the reverse domain would be `123.123.123.123.in-addr.arpa`. The output should show:
+        Check each mail exchanger in turn. The round trip has two halves.
 
-        ```text
-        123.123.123.123.in-addr.arpa  name = mail.example.com.
-        ```
+        1. List the mail exchangers:
+
+            ```bash
+            dig +short lunalectric.com MX
+            ```
+
+        2. For each MX host, resolve its address and look up the PTR:
+
+            ```bash
+            dig +short aspmx.l.google.com A
+            dig +short -x 142.250.153.27
+            ```
+
+            A configured host returns a name, for example `ea-in-f27.1e100.net.` An empty result is the finding.
+
+        3. Confirm the name the PTR returned resolves back:
+
+            ```bash
+            dig +short ea-in-f27.1e100.net A
+            ```
+
+            A correctly configured host returns the address you started from, completing the round trip.
+
+        The check passes when every mail exchanger clears both halves. Note that the PTR name belonging to your mail provider rather than to your own domain is expected and is not a finding.
       remediation:
         - id: console
           desc: |
-            A PTR record lives in the reverse zone for the IP address, which is controlled by whoever owns the IP range, not by your domain registrar. To publish one:
+            Reverse DNS for an address is published by whoever owns the IP range, not by your domain registrar, so where you go depends on how you send mail.
 
-            1. Identify the public IP addresses your outbound mail servers send from.
+            **If you use hosted email** (Google Workspace, Microsoft 365, or similar), there is nothing to configure. The provider maintains reverse DNS for its own sending infrastructure, and the PTR name will belong to the provider rather than to you. That is correct and satisfies this check. If the check is failing, verify the MX records themselves are right before looking any further.
+
+            **If you run your own mail servers:**
+
+            1. List the mail exchangers for the domain and resolve each to its address.
             2. Sign in to the control panel of the hosting or cloud provider that owns those addresses and open its reverse DNS or PTR settings. On most clouds this is a property of the instance or the allocated public IP, not of your DNS zone.
-            3. Set the PTR for each address to a fully qualified hostname in your own domain, such as `mail.lunalectric.com`.
-            4. In your own DNS zone, publish a matching forward `A` record so `mail.lunalectric.com` resolves back to the same address. Without both halves the lookup is not forward-confirmed.
+            3. Set a PTR for each sending address to a hostname you control, such as `mail.lunalectric.com`.
+            4. In your own DNS zone, publish a matching forward `A` record for that hostname so the round trip completes.
             5. Where the provider does not expose PTR settings, open a support request naming the address and the desired hostname.
         - id: cli
           desc: |
-            To confirm the round trip resolves in both directions:
+            To confirm the round trip for every mail exchanger:
 
-            1. Look up the PTR for the sending address:
-
-                ```bash
-                dig -x 203.0.113.10 +short
-                ```
-
-                A configured address returns a hostname such as `mail.lunalectric.com.`
-
-            2. Look up the forward record for that hostname:
+            1. List the mail exchangers:
 
                 ```bash
-                dig +short A mail.lunalectric.com
+                dig +short lunalectric.com MX
                 ```
 
-            3. The check passes only when step 2 returns the address used in step 1. A PTR that points at a hostname which resolves elsewhere, or not at all, is not forward-confirmed and receiving mail servers treat it as unverified.
+            2. For each one, resolve the address and look up its PTR:
+
+                ```bash
+                dig +short mail.lunalectric.com A
+                dig +short -x 203.0.113.10
+                ```
+
+                An empty PTR result is the finding.
+
+            3. Confirm the name the PTR returned resolves back to the same address:
+
+                ```bash
+                dig +short mail.lunalectric.com A
+                ```
+
+            The PTR name belonging to your mail provider rather than to your own domain is expected for hosted email and is not a finding.
         - id: terraform
           desc: |
-            To publish the forward record and, where the provider supports it, the PTR:
+            Terraform can manage the forward record in your own zone, and the PTR only where the provider exposes reverse DNS as a resource:
 
             ```hcl
-            # Forward record in your own zone
+            # Forward record for the mail host, in your own zone
             resource "aws_route53_record" "mail" {
               zone_id = aws_route53_zone.primary.zone_id
               name    = "mail.lunalectric.com"
@@ -184,7 +227,7 @@ queries:
             }
             ```
 
-            AWS does not expose EC2 reverse DNS through Terraform; request the PTR for an Elastic IP through AWS Support and manage only the forward record here.
+            AWS does not expose EC2 reverse DNS through Terraform; request the PTR for an Elastic IP through AWS Support and manage only the forward record here. Nothing to manage at all when using hosted email.
     refs:
       - url: https://en.wikipedia.org/wiki/Reverse_DNS_lookup
         title: Reverse DNS Lookup
