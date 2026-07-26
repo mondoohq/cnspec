@@ -42,6 +42,35 @@ type mqlTest struct {
 	expected func(*testing.T, test.Runner)
 }
 
+// decodeJSON unmarshals the runner's stdout into dst.
+//
+// It fails the subtest immediately rather than merely recording an assertion,
+// because every caller goes on to index into the decoded result. Continuing
+// past a decode error would reach that index on an empty slice and panic,
+// which takes down the whole test binary instead of this one subtest. The
+// captured output is included so a CI failure says why the payload was
+// unusable, not just that it was.
+func decodeJSON(t *testing.T, r test.Runner, dst any) {
+	t.Helper()
+	if err := r.Json(dst); err != nil {
+		t.Fatalf("could not decode JSON output: %v\n--- stdout ---\n%s\n--- stderr ---\n%s",
+			err, r.Stdout(), r.Stderr())
+	}
+}
+
+// requireResults fails the subtest when a query returned no rows.
+//
+// A well-formed but empty JSON array decodes without error, so the length has
+// to be checked separately before indexing. This is the case a flaky container
+// pull or an unreachable target produces.
+func requireResults(t *testing.T, r test.Runner, n int) {
+	t.Helper()
+	if n == 0 {
+		t.Fatalf("query returned no results\n--- stdout ---\n%s\n--- stderr ---\n%s",
+			r.Stdout(), r.Stderr())
+	}
+}
+
 func TestOsProviderSharedTests(t *testing.T) {
 	once.Do(setup)
 
@@ -55,8 +84,8 @@ func TestOsProviderSharedTests(t *testing.T) {
 					mqlPackagesQuery,
 					func(t *testing.T, r test.Runner) {
 						var c mqlPackages
-						err := r.Json(&c)
-						assert.NoError(t, err)
+						decodeJSON(t, r, &c)
+						requireResults(t, r, len(c))
 
 						x := c[0]
 						assert.NotNil(t, x.Packages)
@@ -67,8 +96,8 @@ func TestOsProviderSharedTests(t *testing.T) {
 					mqlPlatformQuery,
 					func(t *testing.T, r test.Runner) {
 						var c mqlPlatform
-						err := r.Json(&c)
-						assert.NoError(t, err)
+						decodeJSON(t, r, &c)
+						requireResults(t, r, len(c))
 
 						x := c[0]
 						assert.True(t, len(x.Platform) > 0)
@@ -85,8 +114,8 @@ func TestOsProviderSharedTests(t *testing.T) {
 					mqlPackagesQuery,
 					func(t *testing.T, r test.Runner) {
 						var c mqlPackages
-						err := r.Json(&c)
-						assert.NoError(t, err)
+						decodeJSON(t, r, &c)
+						requireResults(t, r, len(c))
 
 						x := c[0]
 						assert.NotNil(t, x.Packages)
@@ -97,8 +126,8 @@ func TestOsProviderSharedTests(t *testing.T) {
 					mqlPlatformQuery,
 					func(t *testing.T, r test.Runner) {
 						var c mqlPlatform
-						err := r.Json(&c)
-						assert.NoError(t, err)
+						decodeJSON(t, r, &c)
+						requireResults(t, r, len(c))
 
 						x := c[0]
 						assert.Equal(t, "debian", x.Platform)
@@ -115,8 +144,8 @@ func TestOsProviderSharedTests(t *testing.T) {
 					mqlPackagesQuery,
 					func(t *testing.T, r test.Runner) {
 						var c mqlPackages
-						err := r.Json(&c)
-						assert.NoError(t, err)
+						decodeJSON(t, r, &c)
+						requireResults(t, r, len(c))
 
 						x := c[0]
 						assert.NotNil(t, x.Packages)
@@ -127,8 +156,8 @@ func TestOsProviderSharedTests(t *testing.T) {
 					mqlPlatformQuery,
 					func(t *testing.T, r test.Runner) {
 						var c mqlPlatform
-						err := r.Json(&c)
-						assert.NoError(t, err)
+						decodeJSON(t, r, &c)
+						requireResults(t, r, len(c))
 
 						x := c[0]
 						assert.Equal(t, "alpine", x.Platform)
