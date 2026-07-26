@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-dns-security
     name: Mondoo DNS Security
-    version: 1.3.3
+    version: 1.4.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -491,7 +491,15 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-1-3-1
       compliance/soc2-2017: soc2-control-cc6-6-1
       compliance/vda-isa-5: vda-isa-5-5-2-6
-    mql: dns.records.none(name == /\*/)
+    # Detection has to probe a name that should not exist. A wildcard RR has the
+    # owner name `*.example.com`, and the provider only ever queries the exact
+    # FQDN, so the wildcard is never present in an answer for `example.com` —
+    # matching on `name == /\*/` could not fail. The authoritative server
+    # expands the wildcard, so an improbable label resolving is the signal.
+    # Uses dns.fqdn rather than domainName.fqdn: domainName errors with
+    # "cannot derive eTLD+1" on a name that is itself a public suffix.
+    mql: |
+      dns(fqdn: "mondoo-wildcard-probe-x7f3q9." + dns.fqdn).records.where(type == "A") == empty
     docs:
       desc: |
         This check verifies that a domain has no wildcard DNS records, such as a record whose name begins with `*`. A wildcard makes every undefined subdomain resolve to a single target, including names the operator never intended to publish.
@@ -503,9 +511,25 @@ queries:
         - **Resolution control:** Defining each subdomain explicitly keeps traffic routed only to names the operator deliberately published.
         - **Standards compliance:** Security best practices discourage wildcard DNS records on production domains.
       audit: |
-        Run the `dig '*.<domain>'` command and inspect the answer section.
+        A wildcard is detected by asking for a name that should not exist. If the zone answers for an arbitrary label, a wildcard is expanding it.
 
-        A passing result shows no answer for the wildcard query, indicating no wildcard record is configured. A failing result shows the wildcard query resolving to an IP address or hostname.
+        1. Query an improbable subdomain:
+
+            ```bash
+            dig +noall +answer wildcard-probe-x7f3q9.example.com A
+            ```
+
+            A passing domain returns nothing, because the name genuinely does not exist. A failing domain returns an address, meaning a wildcard answered for a name nobody published.
+
+        2. Confirm by querying the wildcard record directly. A wildcard is a real resource record whose owner name is `*`, so it can be looked up:
+
+            ```bash
+            dig +noall +answer '*.example.com' A
+            ```
+
+            An answer here names the wildcard target explicitly.
+
+        Note that step 1 is the reliable test. Querying the zone apex or any specific hostname will never reveal a wildcard, because the authoritative server expands the wildcard and answers with the name that was asked for.
       remediation:
         - id: console
           desc: |

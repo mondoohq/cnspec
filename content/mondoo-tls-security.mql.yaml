@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-tls-security
     name: Mondoo TLS/SSL Security
-    version: 1.7.4
+    version: 1.8.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -3311,8 +3311,11 @@ queries:
     refs:
       - url: https://datatracker.ietf.org/doc/html/rfc8446
         title: TLS 1.3 RFC 8446
+  # The uid still says "ocsp" for continuity: renaming a shipped uid would break
+  # existing exceptions and the framework maps that reference it. The assertion is
+  # revocation availability by either mechanism, as the title and docs describe.
   - uid: mondoo-tls-security-cert-ocsp-configured
-    title: Ensure OCSP responder is configured for the certificate
+    title: Ensure the certificate publishes OCSP or CRL revocation information
     impact: 60
     tags:
       compliance/bsi-sys-1-5: false
@@ -3331,48 +3334,70 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-7-2
       compliance/vda-isa-5: vda-isa-5-5-1-2
     mql: |
-      tls.certificates.first.ocspServer.length > 0
+      tls.certificates.first.ocspServer != empty || tls.certificates.first.crlDistributionPoints != empty
     docs:
       desc: |
-        This check ensures that the server's leaf certificate is issued with at least one OCSP responder URL in its Authority Information Access extension. An OCSP responder lets clients confirm the real-time revocation status of the certificate.
+        This check ensures that the server's leaf certificate tells clients how to determine whether it has been revoked, by publishing an OCSP responder URL in its Authority Information Access extension, a CRL distribution point, or both. Either mechanism satisfies the requirement.
 
         **Why this matters**
 
-        - **Undetected revocation:** Without an OCSP responder, clients cannot determine that a certificate has been revoked and may continue to trust it.
-        - **Costly CRL fallback:** Relying solely on certificate revocation lists forces clients to download large files, degrading connection performance.
-        - **Stapling prerequisite:** OCSP stapling, which improves both privacy and performance, requires an OCSP responder URL in the certificate.
-        - **Inconsistent client behavior:** When revocation checking is unavailable, some clients fail open and accept the certificate anyway, creating a security gap.
-        - **Compliance expectations:** Many security frameworks expect a functional revocation checking mechanism to be in place.
+        - **Undetected revocation:** A certificate carrying neither an OCSP responder nor a CRL distribution point gives clients no way to learn it was revoked, so a compromised key stays trusted until the certificate expires on its own.
+        - **Key compromise response:** Revocation is the only tool for withdrawing trust in a certificate before its natural expiry. Without a published mechanism, the response to a stolen private key is to wait.
+        - **Inconsistent client behavior:** When revocation information is unavailable, some clients fail open and accept the certificate anyway, creating a silent security gap.
+        - **Compliance expectations:** Security frameworks expect a functional revocation mechanism, without mandating which one.
+
+        **Why both mechanisms count**
+
+        The industry has moved revocation checking from OCSP toward CRLs. Let's Encrypt, the largest certificate authority by volume, stopped including OCSP URLs in its certificates in May 2025 and shut down its OCSP responders that August, citing the privacy cost of OCSP: a responder learns which site each visitor is browsing. Its certificates publish a CRL distribution point instead. Requiring OCSP specifically would therefore fail a large share of correctly configured, modern certificates, so this check accepts either mechanism.
 
         **Risk mitigation**
 
-        - **Use a CA that publishes OCSP:** Obtain certificates from a Certificate Authority that includes OCSP responder URLs, and confirm OCSP support with the CA first, since some CAs, including Let's Encrypt, no longer publish OCSP responders.
-        - **Enable OCSP stapling:** Have the server staple a fresh OCSP response so clients receive revocation status without contacting the responder directly.
+        - **Confirm your CA publishes revocation data:** Any publicly trusted CA does, though which mechanism varies. A certificate with neither is the case to investigate.
+        - **Enable OCSP stapling where OCSP exists:** If your CA still publishes an OCSP responder, stapling lets the server deliver a fresh signed status so clients never contact the responder themselves, removing the privacy and latency cost.
       audit: |
         ### Audit via openssl
 
-        Inspect the certificate's Authority Information Access extension for an OCSP responder URL:
+        Check both revocation mechanisms. The certificate needs at least one of them.
 
-        ```bash
-        openssl s_client -connect example.com:443 -servername example.com 2>/dev/null | openssl x509 -noout -ocsp_uri
-        ```
+        1. Look for an OCSP responder URL:
 
-        The check passes when the command prints at least one OCSP responder URL, and fails when it prints nothing, which means the certificate was issued without an OCSP responder.
+            ```bash
+            openssl s_client -connect example.com:443 -servername example.com </dev/null 2>/dev/null \
+              | openssl x509 -noout -ocsp_uri
+            ```
+
+        2. Look for a CRL distribution point:
+
+            ```bash
+            openssl s_client -connect example.com:443 -servername example.com </dev/null 2>/dev/null \
+              | openssl x509 -noout -text \
+              | grep -A4 "CRL Distribution Points"
+            ```
+
+        The check passes when either command returns a URL. It fails only when both return nothing, meaning the certificate publishes no way to check its revocation status at all.
+
+        An empty result from step 1 alone is expected for certificates from a CA that has retired OCSP, such as Let's Encrypt, and is not a finding on its own.
       remediation:
         - id: apache
           desc: |
             **Using Apache**
 
-            1. Confirm the cert advertises an OCSP responder:
+            This check fails only when the certificate publishes neither an OCSP responder nor a CRL distribution point, which is rare for a publicly trusted certificate. Confirm which mechanism is present before changing anything:
+
+            1. Check for both mechanisms:
 
                 ```bash
                 openssl s_client -connect yourdomain.com:443 </dev/null 2>/dev/null \
                   | openssl x509 -noout -ocsp_uri
+
+                openssl s_client -connect yourdomain.com:443 </dev/null 2>/dev/null \
+                  | openssl x509 -noout -text \
+                  | grep -A4 "CRL Distribution Points"
                 ```
 
-                If the command returns nothing, the certificate was issued without an OCSP responder URL. Let's Encrypt stopped including OCSP URLs in May 2025 and shut down its responders in August 2025, so Let's Encrypt certificates cannot satisfy this requirement. To keep OCSP, obtain the certificate from a CA that still publishes OCSP responders, such as DigiCert, Sectigo, or GlobalSign, and confirm OCSP support with the CA first because the industry is shifting revocation checking to CRLs.
+            2. If both are empty, the certificate itself is the problem and no server setting will fix it. Reissue from a publicly trusted CA. A self-signed or internally issued certificate is the usual cause. Note that an empty OCSP result with a populated CRL is fine and satisfies this check.
 
-            2. Enable OCSP stapling. Add the following to your global SSL config, for example `/etc/apache2/mods-enabled/ssl.conf`. `SSLUseStapling` and `SSLStaplingCache` must live in the global scope, not per-vhost:
+            3. If an OCSP responder *is* present, enabling stapling is worthwhile hardening: the server delivers a fresh signed status so clients never contact the responder, removing the latency and the privacy leak. `SSLUseStapling` and `SSLStaplingCache` must live in the global scope, not per-vhost:
 
                 ```apache
                 SSLUseStapling          on
@@ -3381,36 +3406,38 @@ queries:
                 SSLStaplingReturnResponderErrors off
                 ```
 
-            3. Reload Apache:
+            4. Reload and verify:
 
                 ```bash
                 apachectl configtest
                 systemctl reload apache2   # Debian/Ubuntu
                 systemctl reload httpd     # RHEL/CentOS
-                ```
 
-            4. Verify the response is being stapled:
-
-                ```bash
                 openssl s_client -connect yourdomain.com:443 -status </dev/null 2>&1 \
                   | grep -A5 "OCSP Response"
                 ```
 
-                A `Cert Status: good` line confirms stapling is working.
+                A `Cert Status: good` line confirms stapling is working. Nothing to verify here if the CA publishes no OCSP responder.
         - id: nginx
           desc: |
             **Using Nginx**
 
-            1. Confirm the cert advertises an OCSP responder:
+            This check fails only when the certificate publishes neither an OCSP responder nor a CRL distribution point, which is rare for a publicly trusted certificate. Confirm which mechanism is present before changing anything:
+
+            1. Check for both mechanisms:
 
                 ```bash
                 openssl s_client -connect yourdomain.com:443 </dev/null 2>/dev/null \
                   | openssl x509 -noout -ocsp_uri
+
+                openssl s_client -connect yourdomain.com:443 </dev/null 2>/dev/null \
+                  | openssl x509 -noout -text \
+                  | grep -A4 "CRL Distribution Points"
                 ```
 
-                If the command returns nothing, the certificate was issued without an OCSP responder URL. Let's Encrypt stopped including OCSP URLs in May 2025 and shut down its responders in August 2025, so Let's Encrypt certificates cannot satisfy this requirement. To keep OCSP, obtain the certificate from a CA that still publishes OCSP responders, such as DigiCert, Sectigo, or GlobalSign, and confirm OCSP support with the CA first because the industry is shifting revocation checking to CRLs.
+            2. If both are empty, reissue the certificate from a publicly trusted CA. No Nginx directive can add revocation information the CA did not put in the certificate. An empty OCSP result with a populated CRL is fine and satisfies this check.
 
-            2. Enable OCSP stapling in the `server` block or globally in `http`. `ssl_trusted_certificate` must point at a file containing the issuing CA so Nginx can validate the OCSP response:
+            3. If an OCSP responder *is* present, enable stapling. `ssl_trusted_certificate` must point at a file containing the issuing CA so Nginx can validate the response:
 
                 ```nginx
                 ssl_stapling          on;
@@ -3420,72 +3447,57 @@ queries:
                 resolver_timeout      5s;
                 ```
 
-            3. Reload Nginx:
+            4. Reload and verify:
 
                 ```bash
                 nginx -t && systemctl reload nginx
-                ```
 
-            4. Verify the response is being stapled:
-
-                ```bash
-                openssl s_client -connect yourdomain.com:443 -status </dev/null 2>&1 \
-                  | grep -A5 "OCSP Response"
-                ```
-
-                A `Cert Status: good` line confirms stapling is working. Nginx caches the response for about an hour, so the first request after a reload may not include one.
-        - id: haproxy
-          desc: |
-            **Using HAProxy**
-
-            1. Confirm the cert advertises an OCSP responder:
-
-                ```bash
-                openssl s_client -connect yourdomain.com:443 </dev/null 2>/dev/null \
-                  | openssl x509 -noout -ocsp_uri
-                ```
-
-                If the command returns nothing, the certificate was issued without an OCSP responder URL. Let's Encrypt stopped including OCSP URLs in May 2025 and shut down its responders in August 2025, so Let's Encrypt certificates cannot satisfy this requirement. To keep OCSP, obtain the certificate from a CA that still publishes OCSP responders, such as DigiCert, Sectigo, or GlobalSign, and confirm OCSP support with the CA first because the industry is shifting revocation checking to CRLs.
-
-            2. On HAProxy 2.8 and newer, let HAProxy fetch and refresh the stapled response automatically with a crt-list:
-
-                ```haproxy
-                # /etc/haproxy/crt-list.txt
-                /etc/haproxy/certs/yourdomain.com.pem [ocsp-update on]
-                ```
-
-                ```haproxy
-                frontend https-in
-                    bind *:443 ssl crt-list /etc/haproxy/crt-list.txt
-                ```
-
-            3. On older HAProxy releases, generate the sibling `.ocsp` file yourself with a script such as `/usr/local/sbin/refresh-ocsp.sh`, mode 0755:
-
-                ```bash
-                #!/bin/bash
-                set -euo pipefail
-                cert=/etc/haproxy/certs/yourdomain.com.pem
-                issuer=/etc/haproxy/certs/yourdomain.com.issuer.pem
-                url=$(openssl x509 -in "$cert" -noout -ocsp_uri)
-                openssl ocsp -no_nonce -issuer "$issuer" -cert "$cert" \
-                  -url "$url" -respout "$cert.ocsp"
-                systemctl reload haproxy
-                ```
-
-                Run it daily from cron, since OCSP responses typically have a 7-day lifetime:
-
-                ```cron
-                15 3 * * * /usr/local/sbin/refresh-ocsp.sh
-                ```
-
-            4. Verify the response is being stapled:
-
-                ```bash
                 openssl s_client -connect yourdomain.com:443 -status </dev/null 2>&1 \
                   | grep -A5 "OCSP Response"
                 ```
 
                 A `Cert Status: good` line confirms stapling is working.
+        - id: haproxy
+          desc: |
+            **Using HAProxy**
+
+            This check fails only when the certificate publishes neither an OCSP responder nor a CRL distribution point, which is rare for a publicly trusted certificate.
+
+            1. Check for both mechanisms:
+
+                ```bash
+                openssl s_client -connect yourdomain.com:443 </dev/null 2>/dev/null \
+                  | openssl x509 -noout -ocsp_uri
+
+                openssl s_client -connect yourdomain.com:443 </dev/null 2>/dev/null \
+                  | openssl x509 -noout -text \
+                  | grep -A4 "CRL Distribution Points"
+                ```
+
+            2. If both are empty, reissue the certificate from a publicly trusted CA. An empty OCSP result with a populated CRL is fine and satisfies this check.
+
+            3. If an OCSP responder *is* present, HAProxy serves a stapled response from a `.ocsp` file placed alongside the certificate rather than fetching it itself. Fetch and refresh it on a schedule:
+
+                ```bash
+                openssl ocsp \
+                  -issuer /etc/haproxy/certs/issuer.pem \
+                  -cert /etc/haproxy/certs/yourdomain.com.pem \
+                  -url "$(openssl x509 -in /etc/haproxy/certs/yourdomain.com.pem -noout -ocsp_uri)" \
+                  -respout /etc/haproxy/certs/yourdomain.com.pem.ocsp \
+                  -no_nonce
+                ```
+
+            4. Reload HAProxy and verify:
+
+                ```bash
+                haproxy -c -f /etc/haproxy/haproxy.cfg
+                systemctl reload haproxy
+
+                openssl s_client -connect yourdomain.com:443 -status </dev/null 2>&1 \
+                  | grep -A5 "OCSP Response"
+                ```
+
+                Because the response expires, refresh the `.ocsp` file from cron or a timer; a stale file causes clients to see an expired status.
     refs:
       - url: https://datatracker.ietf.org/doc/html/rfc6960
         title: OCSP RFC 6960
