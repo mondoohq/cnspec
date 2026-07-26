@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-email-security
     name: Mondoo Email Security
-    version: 1.3.0
+    version: 1.4.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -28,18 +28,34 @@ policies:
 
         Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
     groups:
+      # Two different gates below, on purpose.
+      #
+      # Checks about how a domain *handles* mail need a real mail exchanger, and
+      # `dns.mx != empty` was not that test: RFC 7505 lets a domain publish a
+      # null MX (a single "." target) to declare that it handles no mail at all,
+      # and that satisfies `!= empty`. example.com does exactly this, so every
+      # check here ran against a domain that had explicitly opted out of email.
+      # `dns.mx.where(domainName != ".")` excludes it.
+      #
+      # Checks that stop someone *spoofing* a domain must not depend on MX at
+      # all — a domain with no mail servers is the easiest to forge and the most
+      # important to cover, yet the old gate skipped it entirely. Those groups
+      # gate on the apex instead. The apex restriction is required because
+      # dns.dmarc resolves `_dmarc.<fqdn>` with no organizational-domain
+      # fallback, so it is null on any subdomain; without it, scanning
+      # www.example.com would report spurious DMARC failures. `dns.fqdn != empty`
+      # comes first so && short-circuits before domainName is dereferenced,
+      # which errors on an IP target and on a name that is itself a public suffix.
       - title: DNS Configuration
         filters: |
-          asset.platform == "host" &&
-          dns.mx != empty
+          asset.platform == "host" && dns.mx.where(domainName != ".") != empty
         checks:
           - uid: mondoo-email-security-txt-record
           - uid: mondoo-email-security-a-record
           - uid: mondoo-email-security-reverse-ip-ptr-record-set
       - title: SPF (Sender Policy Framework)
         filters: |
-          asset.platform == "host" &&
-          dns.mx != empty
+          asset.platform == "host" && dns.fqdn != empty && domainName.fqdn == domainName.effectiveTLDPlusOne
         checks:
           - uid: mondoo-email-security-spf
           - uid: mondoo-email-security-single-spf
@@ -50,14 +66,12 @@ policies:
           - uid: mondoo-email-security-spf-dns-record
       - title: DKIM (DomainKeys Identified Mail)
         filters: |
-          asset.platform == "host" &&
-          dns.mx != empty
+          asset.platform == "host" && dns.mx.where(domainName != ".") != empty
         checks:
           - uid: mondoo-email-security-dkim
       - title: DMARC (Domain-based Message Authentication)
         filters: |
-          asset.platform == "host" &&
-          dns.mx != empty
+          asset.platform == "host" && dns.fqdn != empty && domainName.fqdn == domainName.effectiveTLDPlusOne
         checks:
           - uid: mondoo-email-security-dmarc
           - uid: mondoo-email-security-dmarc-version
