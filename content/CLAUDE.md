@@ -163,10 +163,12 @@ Both ride along with every new or modified check — don't ship one without the 
 
 Convert single-platform checks to a `variants:` block with up to four children:
 
-- `<uid>-<cloud>` — runtime check (`asset.platform == 'gcp'`, `'aws'`, …)
+- `<uid>-<cloud>` — runtime check (`asset.platform == 'aws'`, `'azure'`, `'gcp-project'`, `'oci'`, …)
 - `<uid>-terraform-hcl` — `terraform.resources(...)` against HCL source
 - `<uid>-terraform-plan` — `terraform.plan.resourceChanges` against `terraform plan` JSON
 - `<uid>-terraform-state` — `terraform.state.resources` against `terraform.tfstate`
+
+**The runtime platform name must come from the provider's catalog, not from the cloud's short name.** A filter naming a platform the provider never emits compiles, lints, and passes CI — it just never matches an asset, so the check silently never runs. Check the name against `providers/<cloud>/connection/platforms.go` (or `providers/<cloud>/resources/platforms.go`) in the mql repo, or the `Platforms` array in the installed `~/.config/mondoo/providers/<cloud>/<cloud>.json`. AWS, Azure, and OCI do have an account-level platform named for the cloud (`aws`, `azure`, `oci`); **GCP does not** — use `gcp-project`, `gcp-org`, `gcp-folder`, or a per-resource platform such as `gcp-storage-bucket`.
 
 Reference patterns in this repo:
 
