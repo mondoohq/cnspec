@@ -366,11 +366,11 @@ queries:
       asset.family.contains("linux") &&
       (kernel.info['machine'] == 'i386' || kernel.info['machine'] == 'i686')
     mql: |
-      auditd.rules.files.where(path == '/etc/localtime' && keyname != '').length > 0 &&
+      auditd.rules.files.where(path == '/etc/localtime' && keyname != empty).length > 0 &&
       auditd.rules.syscalls.where(
         fields.any(key == 'arch' && value == 'b32') &&
         syscalls.contains('adjtimex') &&
-        fields.any(key == 'key' && value != '')
+        fields.any(key == 'key' && value != empty)
       ).length > 0
 
   # 64-bit specific rules
@@ -379,16 +379,16 @@ queries:
       asset.family.contains("linux") &&
       (kernel.info['machine'] == 'x86_64' || kernel.info['machine'].contains('64'))
     mql: |
-      auditd.rules.files.where(path == '/etc/localtime' && keyname != '').length > 0 &&
+      auditd.rules.files.where(path == '/etc/localtime' && keyname != empty).length > 0 &&
       auditd.rules.syscalls.where(
         fields.any(key == 'arch' && value == 'b64') &&
         syscalls.contains('adjtimex') &&
-        fields.any(key == 'key' && value != '')
+        fields.any(key == 'key' && value != empty)
       ).length > 0 &&
       auditd.rules.syscalls.where(
         fields.any(key == 'arch' && value == 'b32') &&
         syscalls.contains('stime') &&
-        fields.any(key == 'key' && value != '')
+        fields.any(key == 'key' && value != empty)
       ).length > 0
 
   # Comprehensive check (if architecture detection is complex)
@@ -399,31 +399,31 @@ queries:
       is_64bit = machine_arch == 'x86_64' || machine_arch.contains('64')
 
       localtime_rule = auditd.rules.files.where(
-        path == '/etc/localtime' && keyname != ''
+        path == '/etc/localtime' && keyname != empty
       ).length > 0
 
       if (is_64bit) {
         localtime_rule &&
         auditd.rules.syscalls.where(
           fields.any(key == 'arch' && value == 'b64') &&
-          fields.any(key == 'key' && value != '')
+          fields.any(key == 'key' && value != empty)
         ).length > 0 &&
         auditd.rules.syscalls.where(
           fields.any(key == 'arch' && value == 'b32') &&
-          fields.any(key == 'key' && value != '')
+          fields.any(key == 'key' && value != empty)
         ).length > 0
       } else {
         localtime_rule &&
         auditd.rules.syscalls.where(
           fields.any(key == 'arch' && value == 'b32') &&
-          fields.any(key == 'key' && value != '')
+          fields.any(key == 'key' && value != empty)
         ).length > 0
       }
 ```
 
 > **Note:** the auditd key (`-k <key>`, equivalently `-F key=<key>`) is only a label used to
 > group and search audit events — the kernel emits the record either way. Assert that a key is
-> present, never that it equals a particular literal, or the check reports a false negative on
+> present (`!= empty`, which rejects both an absent and a blank key), never that it equals a particular literal, or the check reports a false negative on
 > hosts that use a different naming convention. On watch rules (`-w`) read `keyname`; on syscall
 > rules (`-a`) read the normalized `fields` entry, which covers both spellings.
 
