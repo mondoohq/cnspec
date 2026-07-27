@@ -12409,9 +12409,15 @@ queries:
 
       userBlocks = sshd.config.blocks.where(criteria.contains(props.excludedMatchBlocks) == false && criteria != "");
 
-      userBlocks.all(params.ClientAliveInterval >= 1)
-      userBlocks.all(params.ClientAliveInterval <= 300)
-      userBlocks.all(params.ClientAliveCountMax > 0) && userBlocks.all(params.ClientAliveCountMax <= 3)
+      // A Match block only carries the parameters it sets itself; anything it does not set is
+      // inherited from the default block. Only check the blocks that override these settings,
+      // otherwise every Match block that leaves them alone is reported as unset.
+      intervalBlocks = userBlocks.where(params["ClientAliveInterval"] != null);
+      countMaxBlocks = userBlocks.where(params["ClientAliveCountMax"] != null);
+
+      intervalBlocks.all(params.ClientAliveInterval >= 1)
+      intervalBlocks.all(params.ClientAliveInterval <= 300)
+      countMaxBlocks.all(params.ClientAliveCountMax > 0) && countMaxBlocks.all(params.ClientAliveCountMax <= 3)
 
       defaultBlock.all(params.ClientAliveInterval >= 1)
       defaultBlock.all(params.ClientAliveInterval <= 300)
@@ -12430,13 +12436,22 @@ queries:
 
         By configuring `ClientAliveInterval` within 1-300 seconds and `ClientAliveCountMax` within 1-3, organizations can enforce predictable session timeouts, reduce the risk of unauthorized access from abandoned sessions, and balance usability with security.
       audit: |
-        Run this command to inspect the SSH idle timeout settings:
+        Run this command to inspect the effective SSH idle timeout settings:
 
         ```bash
         sshd -T | grep -iE 'clientalive(interval|countmax)'
         ```
 
         A passing result shows `clientaliveinterval` between `1` and `300` and `clientalivecountmax` between `1` and `3`. A failing result shows either value outside these ranges or absent.
+
+        `Match` blocks are evaluated as well: a block that overrides these settings with a
+        non-compliant value also fails the check, while a block that does not set them at all
+        inherits the global values and is ignored. Run this command to inspect the settings that
+        apply inside a `Match` block:
+
+        ```bash
+        sshd -T -C user=<user>,host=<host>,addr=<addr> | grep -iE 'clientalive(interval|countmax)'
+        ```
       remediation:
         - id: cli
           desc: |
