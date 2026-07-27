@@ -5899,7 +5899,7 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that the resource-based policy attached to each AWS Lambda function contains no statements that grant unscoped invocation rights to the wildcard principal (`*`). By default, Lambda functions have no resource-based policy, but policies added for service integrations or cross-account access can inadvertently include a wildcard principal that exposes the function to any AWS identity or unauthenticated caller unless constrained by a condition such as `AWS:SourceArn`, `AWS:SourceAccount`, or `aws:PrincipalOrgID`. Source conditions should be specific; avoid wildcard source ARN values that effectively grant broad invoke access.
+        This check ensures that the resource-based policy attached to each AWS Lambda function contains no statements that grant unscoped invocation rights to the wildcard principal (`*`). By default, Lambda functions have no resource-based policy, but policies added for service integrations or cross-account access can inadvertently include a wildcard principal that exposes the function to any AWS identity or unauthenticated caller unless constrained by a condition such as `AWS:SourceArn`, `AWS:SourceAccount`, or `aws:PrincipalOrgID`. Named service principals such as `events.amazonaws.com` are not wildcard principals and do not make a function public, whether or not the statement carries a source condition. Source conditions should be specific; avoid wildcard source ARN values that effectively grant broad invoke access.
 
         **Why this matters**
 
@@ -6035,29 +6035,13 @@ queries:
     filters: |
       asset.platform == "aws-lambda-function"
     mql: |
-      # Null covers functions without a resource policy; empty covers empty policy documents.
-      # MQL short-circuits before Statement access when the policy is absent.
-      aws.lambda.function.policy == null ||
-      aws.lambda.function.policy == empty ||
-      aws.lambda.function.policy.Statement == null ||
-      aws.lambda.function.policy.Statement == empty ||
-      aws.lambda.function.policy.Statement.where(Effect == "Allow").where(
-        # AWS principals can be encoded as a string or a list; contains(/^\*$/) covers list entries exactly equal to "*".
-        Principal == "*" ||
-        Principal['AWS'] == "*" ||
-        Principal['AWS'].contains(/^\*$/) ||
-        Principal['Service'] == "*" ||
-        Principal['Service'].contains(/^\*$/)
-      ).all(
-        # Require at least one recognized source condition without a bare wildcard value.
-        Condition != null &&
-        Condition.values.any(
-          _.where(key == /aws:(SourceArn|SourceAccount|PrincipalOrgID)/i) != empty &&
-          # values.contains catches scalar values; values.any catches list-valued condition values.
-          _.where(key == /aws:(SourceArn|SourceAccount|PrincipalOrgID)/i).values.contains(/^\*$/) == false &&
-          _.where(key == /aws:(SourceArn|SourceAccount|PrincipalOrgID)/i).values.any(_.contains(/^\*$/)) == false
-        )
-      )
+      # allowsPublicAccess is the provider-side verdict shared with the EFS, SNS, SQS, KMS and
+      # ECR resource-policy checks: an Allow statement granting the `*` principal without a
+      # scoping condition on aws:SourceArn, aws:SourceAccount, or aws:PrincipalOrgID. It matches
+      # the wildcard structurally, so a named service principal such as events.amazonaws.com is
+      # never a candidate, and a function with no resource policy is not public. Function URL
+      # auth type is covered separately by mondoo-aws-security-lambda-function-url-auth-required.
+      aws.lambda.function.allowsPublicAccess == false
   - uid: mondoo-aws-security-lambda-function-public-access-prohibited-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_lambda_permission")
     mql: |
