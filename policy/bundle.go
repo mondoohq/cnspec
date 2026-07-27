@@ -1372,6 +1372,13 @@ func (c *bundleCache) compileQueries(queries []*Mquery, policy *Policy) error {
 				queries[i].Checksum = query.Checksum
 				queries[i].CodeId = query.CodeId
 				queries[i].Type = query.Type
+				// Compilation turns implicit properties (eg: a query that uses
+				// props.name, where name is only defined on the policy) into
+				// explicit properties on the query. Shared queries are compiled
+				// on a merged copy, so those new properties would be lost here.
+				// Without them the resolver has nothing to compile the query
+				// against and fails with "cannot find property".
+				addMissingProps(queries[i], query.Props)
 			}
 		}
 	}
@@ -1380,6 +1387,27 @@ func (c *bundleCache) compileQueries(queries []*Mquery, policy *Policy) error {
 	// Since shared queries may be used in other places, any errors here will prevent
 	// us from compiling further.
 	return c.error()
+}
+
+// addMissingProps adds all properties to the query that it doesn't carry yet.
+// Properties are identified by their MRN, existing ones are left untouched.
+func addMissingProps(query *Mquery, props []*Property) {
+	if len(props) == 0 {
+		return
+	}
+
+	existing := make(map[string]struct{}, len(query.Props))
+	for _, prop := range query.Props {
+		existing[prop.Mrn] = struct{}{}
+	}
+
+	for _, prop := range props {
+		if _, ok := existing[prop.Mrn]; ok {
+			continue
+		}
+		existing[prop.Mrn] = struct{}{}
+		query.Props = append(query.Props, prop)
+	}
 }
 
 // precompileQuery indexes the query, turns UIDs into MRNs, compiles properties
