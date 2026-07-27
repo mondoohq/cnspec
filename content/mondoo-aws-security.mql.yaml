@@ -21058,6 +21058,10 @@ queries:
         tags:
           mondoo.com/filter-title: AWS Account
           mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-backup-vault-encrypted-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
       - uid: mondoo-aws-security-backup-vault-encrypted-cloudformation
         tags:
           mondoo.com/filter-title: CloudFormation
@@ -21146,6 +21150,12 @@ queries:
   - uid: mondoo-aws-security-backup-vault-encrypted-aws
     filters: asset.platform == "aws"
     mql: aws.backup.vaults.all(encryptionKey != null)
+  - uid: mondoo-aws-security-backup-vault-encrypted-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_backup_vault")
+    mql: |
+      terraform.resources("aws_backup_vault").all(
+        arguments.kms_key_arn != empty
+      )
   - uid: mondoo-aws-security-backup-vault-encrypted-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Backup::BackupVault")
     mql: |
@@ -51979,6 +51989,10 @@ queries:
         tags:
           mondoo.com/filter-title: AWS CloudTrail Trail
           mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-cloudtrail-is-logging-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that all multi-region AWS CloudTrail trails have logging actively enabled. The check scopes to multi-region trails because these provide the broadest visibility across all AWS regions, making them the most critical trails to keep active. A trail that exists but has logging stopped provides no visibility into API activity, creating a dangerous blind spot in your security monitoring.
@@ -52086,6 +52100,13 @@ queries:
     filters: asset.platform == "aws-cloudtrail-trail" && aws.cloudtrail.trail.isMultiRegionTrail == true
     mql: |
       aws.cloudtrail.trail.isLogging == true
+  - uid: mondoo-aws-security-cloudtrail-is-logging-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudtrail")
+    mql: |
+      terraform.resources("aws_cloudtrail").all(
+        # enable_logging defaults to true in the AWS provider, so != false (rather than == true) still passes when the argument is omitted
+        arguments.enable_logging != false
+      )
   - uid: mondoo-aws-security-ec2-snapshot-not-public
     title: Ensure EBS snapshots are not publicly shared
     impact: 90
@@ -58746,6 +58767,10 @@ queries:
         tags:
           mondoo.com/filter-title: AWS Account
           mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-vpc-endpoint-service-restrict-principals-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that VPC endpoint service configurations have an explicit list of allowed principals. Without restricting allowed principals, any AWS account that discovers the endpoint service name can request a connection, even when acceptance is required. The allowed principals list acts as a first line of defense by limiting who can even initiate a connection request.
@@ -58858,6 +58883,13 @@ queries:
       aws.ec2.vpcEndpointServiceConfigurations.all(
         allowedPrincipals.length > 0 &&
         allowedPrincipals.none(_ == "*")
+      )
+  - uid: mondoo-aws-security-vpc-endpoint-service-restrict-principals-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_vpc_endpoint_service")
+    mql: |
+      terraform.resources("aws_vpc_endpoint_service").all(
+        arguments.allowed_principals != empty &&
+        arguments.allowed_principals.none(_ == "*")
       )
   - uid: mondoo-aws-security-sfn-logging-enabled
     title: Ensure Step Functions state machines have logging enabled
@@ -65202,6 +65234,10 @@ queries:
         tags:
           mondoo.com/filter-title: AWS Security Group
           mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-secgroup-internet-facing-restrict-admin-ports-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that security groups attached to internet-facing resources do not permit unrestricted inbound access on the SSH (port 22) or RDP (port 3389) administrative ports. A security group is only flagged when it is actually attached to a network interface that holds a public IP address — whether that interface belongs to an EC2 instance, a load balancer, a database, or another service — so the finding represents a directly reachable management port rather than a rule that exists on paper but protects nothing.
@@ -65323,6 +65359,26 @@ queries:
       aws.ec2.securitygroup.networkInterfaces.none(publicIp != empty) ||
       aws.ec2.securitygroup.ipPermissions.where(fromPort <= 22 && toPort >= 22 && toPort != 0).none(includesPublicSource) &&
       aws.ec2.securitygroup.ipPermissions.where(fromPort <= 3389 && toPort >= 3389 && toPort != 0).none(includesPublicSource)
+  - uid: mondoo-aws-security-secgroup-internet-facing-restrict-admin-ports-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
+    mql: |
+      terraform.resources("aws_security_group").all(
+        blocks.where(type == "ingress" && arguments.from_port <= 22 && arguments.to_port >= 22).none(
+          arguments.cidr_blocks.contains("0.0.0.0/0") || arguments.ipv6_cidr_blocks.contains("::/0")
+        ) &&
+        blocks.where(type == "ingress" && arguments.from_port <= 3389 && arguments.to_port >= 3389).none(
+          arguments.cidr_blocks.contains("0.0.0.0/0") || arguments.ipv6_cidr_blocks.contains("::/0")
+        )
+      )
+      terraform.resources("aws_vpc_security_group_ingress_rule").where(arguments.from_port <= 22 && arguments.to_port >= 22 || arguments.from_port <= 3389 && arguments.to_port >= 3389).all(
+        arguments.cidr_ipv4 != "0.0.0.0/0" && arguments.cidr_ipv6 != "::/0"
+      )
+      terraform.resources("aws_security_group").all(
+        arguments["ingress"] == empty ||
+        arguments["ingress"].where(_["from_port"] <= 22 && _["to_port"] >= 22 || _["from_port"] <= 3389 && _["to_port"] >= 3389).none(
+          _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
+        )
+      )
   - uid: mondoo-aws-security-secgroup-internet-facing-restrict-database-ports
     title: Ensure internet-facing security groups restrict database ports
     impact: 95
@@ -65345,6 +65401,10 @@ queries:
         tags:
           mondoo.com/filter-title: AWS Security Group
           mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-secgroup-internet-facing-restrict-database-ports-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that security groups attached to internet-facing resources do not permit unrestricted inbound access on common database engine ports — PostgreSQL (5432), MySQL/MariaDB (3306), Microsoft SQL Server (1433), Oracle (1521), MongoDB (27017), and Redis (6379). A security group is only flagged when it is actually attached to a network interface that holds a public IP address, so the finding represents a database port that is directly reachable from the internet rather than a rule that exists on paper but protects nothing.
@@ -65457,6 +65517,26 @@ queries:
       aws.ec2.securitygroup.ipPermissions.where(fromPort <= 1521 && toPort >= 1521 && toPort != 0).none(includesPublicSource) &&
       aws.ec2.securitygroup.ipPermissions.where(fromPort <= 27017 && toPort >= 27017 && toPort != 0).none(includesPublicSource) &&
       aws.ec2.securitygroup.ipPermissions.where(fromPort <= 6379 && toPort >= 6379 && toPort != 0).none(includesPublicSource)
+  - uid: mondoo-aws-security-secgroup-internet-facing-restrict-database-ports-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
+    mql: |
+      terraform.resources("aws_security_group").all(
+        blocks.where(type == "ingress" && arguments.from_port <= 5432 && arguments.to_port >= 5432).none(arguments.cidr_blocks.contains("0.0.0.0/0") || arguments.ipv6_cidr_blocks.contains("::/0")) &&
+        blocks.where(type == "ingress" && arguments.from_port <= 3306 && arguments.to_port >= 3306).none(arguments.cidr_blocks.contains("0.0.0.0/0") || arguments.ipv6_cidr_blocks.contains("::/0")) &&
+        blocks.where(type == "ingress" && arguments.from_port <= 1433 && arguments.to_port >= 1433).none(arguments.cidr_blocks.contains("0.0.0.0/0") || arguments.ipv6_cidr_blocks.contains("::/0")) &&
+        blocks.where(type == "ingress" && arguments.from_port <= 1521 && arguments.to_port >= 1521).none(arguments.cidr_blocks.contains("0.0.0.0/0") || arguments.ipv6_cidr_blocks.contains("::/0")) &&
+        blocks.where(type == "ingress" && arguments.from_port <= 27017 && arguments.to_port >= 27017).none(arguments.cidr_blocks.contains("0.0.0.0/0") || arguments.ipv6_cidr_blocks.contains("::/0")) &&
+        blocks.where(type == "ingress" && arguments.from_port <= 6379 && arguments.to_port >= 6379).none(arguments.cidr_blocks.contains("0.0.0.0/0") || arguments.ipv6_cidr_blocks.contains("::/0"))
+      )
+      terraform.resources("aws_vpc_security_group_ingress_rule").where(arguments.from_port <= 5432 && arguments.to_port >= 5432 || arguments.from_port <= 3306 && arguments.to_port >= 3306 || arguments.from_port <= 1433 && arguments.to_port >= 1433 || arguments.from_port <= 1521 && arguments.to_port >= 1521 || arguments.from_port <= 27017 && arguments.to_port >= 27017 || arguments.from_port <= 6379 && arguments.to_port >= 6379).all(
+        arguments.cidr_ipv4 != "0.0.0.0/0" && arguments.cidr_ipv6 != "::/0"
+      )
+      terraform.resources("aws_security_group").all(
+        arguments["ingress"] == empty ||
+        arguments["ingress"].where(_["from_port"] <= 5432 && _["to_port"] >= 5432 || _["from_port"] <= 3306 && _["to_port"] >= 3306 || _["from_port"] <= 1433 && _["to_port"] >= 1433 || _["from_port"] <= 1521 && _["to_port"] >= 1521 || _["from_port"] <= 27017 && _["to_port"] >= 27017 || _["from_port"] <= 6379 && _["to_port"] >= 6379).none(
+          _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
+        )
+      )
   - uid: mondoo-aws-security-s3-bucket-policy-no-public-principal
     title: Ensure S3 bucket policies do not grant access to anonymous principals
     impact: 100
@@ -68169,6 +68249,10 @@ queries:
         tags:
           mondoo.com/filter-title: AWS Batch Job Definition
           mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-batch-no-privileged-containers-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
       - uid: mondoo-aws-security-batch-no-privileged-containers-cloudformation
         tags:
           mondoo.com/filter-title: CloudFormation
@@ -68293,6 +68377,18 @@ queries:
       aws.batch.jobDefinition.status != "ACTIVE" ||
       aws.batch.jobDefinition.container.privileged != true &&
       aws.batch.jobDefinition.nodeRangeProperties.any(container.privileged == true) == false
+  - uid: mondoo-aws-security-batch-no-privileged-containers-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_batch_job_definition")
+    mql: |
+      terraform.resources("aws_batch_job_definition").all(
+        # AWS Batch container_properties describes a single container, so .first unwraps the jsonencode object rather than selecting among multiple containers
+        arguments.container_properties.first["privileged"] != true
+      )
+      terraform.resources("aws_batch_job_definition").all(
+        arguments.node_properties == empty ||
+        arguments.node_properties.first["nodeRangeProperties"] == empty ||
+        arguments.node_properties.first["nodeRangeProperties"].all(_["container"]["privileged"] != true)
+      )
   - uid: mondoo-aws-security-batch-no-privileged-containers-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Batch::JobDefinition")
     mql: |
@@ -68322,6 +68418,10 @@ queries:
         tags:
           mondoo.com/filter-title: AWS Batch Job Definition
           mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-batch-approved-image-registry-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
       - uid: mondoo-aws-security-batch-approved-image-registry-cloudformation
         tags:
           mondoo.com/filter-title: CloudFormation
@@ -68449,6 +68549,18 @@ queries:
       aws.batch.jobDefinition.images.any(_['registry'] == "docker.io" ||
         _['registry'] == "registry.hub.docker.com" ||
         _['registry'] == "public.ecr.aws") == false
+  - uid: mondoo-aws-security-batch-approved-image-registry-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_batch_job_definition")
+    mql: |
+      images = terraform.resources("aws_batch_job_definition").where(arguments.container_properties.first["image"] != null).map(arguments.container_properties.first["image"].split("@").first)
+      # Multi-node job definitions carry their images under node_properties.nodeRangeProperties rather than container_properties. The live-AWS sibling's `images` field flattens both, so both are inspected here or a multinode definition pulling from a public registry would pass.
+      nodeImages = terraform.resources("aws_batch_job_definition").where(arguments.node_properties.first["nodeRangeProperties"] != empty).map(arguments.node_properties.first["nodeRangeProperties"]).flat.where(_["container"]["image"] != null).map(_["container"]["image"].split("@").first)
+      images.all(_.contains("/"))
+      images.all(_.split("/").first.contains(".") || _.split("/").first.contains(":") || _.split("/").first == "localhost")
+      images.all(_.split("/").first != "docker.io" && _.split("/").first != "registry.hub.docker.com" && _.split("/").first != "public.ecr.aws")
+      nodeImages.all(_.contains("/"))
+      nodeImages.all(_.split("/").first.contains(".") || _.split("/").first.contains(":") || _.split("/").first == "localhost")
+      nodeImages.all(_.split("/").first != "docker.io" && _.split("/").first != "registry.hub.docker.com" && _.split("/").first != "public.ecr.aws")
   - uid: mondoo-aws-security-batch-approved-image-registry-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Batch::JobDefinition")
     mql: |
@@ -68596,7 +68708,10 @@ queries:
           computeEnvironment.subnets.all(mapPublicIpOnLaunch == false)
         )
       )
-  # No Terraform variants: this check follows job-definition references into the IAM role and inspects attached managed-policy documents; that cross-resource correlation against arbitrary aws_iam_role / aws_iam_role_policy / aws_iam_policy resources cannot be replicated structurally.
+  # No Terraform variant: the compute environment references its subnets only by opaque
+  # subnet_id strings; map_public_ip_on_launch lives on a separate aws_subnet resource, and
+  # that cross-resource correlation cannot be replicated faithfully in HCL.
+  # No Terraform variant for batch-job-role: this check follows job-definition references into the IAM role and inspects attached managed-policy documents; that cross-resource correlation against arbitrary aws_iam_role / aws_iam_role_policy / aws_iam_policy resources cannot be replicated structurally.
   # No CloudFormation variant: same cross-resource correlation between AWS::Batch::JobDefinition, AWS::IAM::Role, and AWS::IAM::Policy / AWS::IAM::ManagedPolicy is required.
   - uid: mondoo-aws-security-batch-job-role-no-wildcards
     title: Ensure AWS Batch job roles avoid wildcard permissions and inline policies
@@ -75165,6 +75280,10 @@ queries:
         tags:
           mondoo.com/filter-title: AWS Account
           mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-apprunner-service-not-public-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that AWS App Runner services are not reachable from the public internet through a public ingress endpoint. When public network access is enabled, the service URL is served to any client on the internet. Services intended to sit behind a VPC, load balancer, or private endpoint should disable public ingress.
@@ -75228,6 +75347,16 @@ queries:
   - uid: mondoo-aws-security-apprunner-service-not-public-aws
     filters: asset.platform == "aws"
     mql: aws.apprunner.services.all(isPubliclyAccessible == false)
+  - uid: mondoo-aws-security-apprunner-service-not-public-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_apprunner_service")
+    mql: |
+      terraform.resources("aws_apprunner_service").all(
+        blocks.where(type == "network_configuration") != empty &&
+        blocks.where(type == "network_configuration").all(
+          blocks.where(type == "ingress_configuration") != empty &&
+          blocks.where(type == "ingress_configuration").all(arguments.is_publicly_accessible == false)
+        )
+      )
 
   - uid: mondoo-aws-security-appsync-api-not-public
     title: Ensure AppSync GraphQL APIs use private visibility
@@ -75375,6 +75504,10 @@ queries:
         tags:
           mondoo.com/filter-title: AWS Account
           mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-emr-block-public-access-enabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check ensures that the account-level EMR block public access configuration blocks public security group rules. This guardrail prevents launching a cluster whose security groups allow inbound traffic from the public internet on ports other than the configured exceptions.
@@ -75434,6 +75567,12 @@ queries:
     mql: |
       aws.emr.blockPublicAccessConfiguration != empty &&
       aws.emr.blockPublicAccessConfiguration['BlockPublicSecurityGroupRules'] == true
+  - uid: mondoo-aws-security-emr-block-public-access-enabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_emr_block_public_access_configuration")
+    mql: |
+      terraform.resources("aws_emr_block_public_access_configuration").all(
+        arguments.block_public_security_group_rules == true
+      )
 
   - uid: mondoo-aws-security-qbusiness-application-no-anonymous-access
     title: Ensure Q Business applications do not allow anonymous access
