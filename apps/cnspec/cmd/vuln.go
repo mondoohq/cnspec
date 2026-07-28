@@ -13,10 +13,18 @@ import (
 	"go.mondoo.com/cnspec/v13/internal/sbom/generator"
 	"go.mondoo.com/cnspec/v13/internal/sbom/pack"
 	"go.mondoo.com/cnspec/v13/internal/scandump"
+	"go.mondoo.com/cnspec/v13/upload"
+	cr "go.mondoo.com/mql/v13/cli/reporter"
 	"go.mondoo.com/mql/v13/providers"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/plugin"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/fex"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/mvd"
+	mqlsbomgen "go.mondoo.com/mql/v13/sbom/generator"
 )
+
+// vulnUploadSource identifies cnspec-produced vulnerability findings uploaded to
+// Mondoo Platform.
+const vulnUploadSource = "cnspec"
 
 func init() {
 	rootCmd.AddCommand(vulnCmd)
@@ -30,6 +38,10 @@ func init() {
 	vulnCmd.Flags().String("inventory-file", "", "Set the path to the inventory file")
 	vulnCmd.Flags().Bool("inventory-ansible", false, "Set the inventory format to Ansible")
 	vulnCmd.Flags().Bool("inventory-domainlist", false, "Set the inventory format to domain list")
+
+	// Experimental: upload discovered vulnerabilities to Mondoo Platform as VEX.
+	vulnCmd.Flags().Bool("upload", false, "Experimental: upload discovered vulnerabilities to Mondoo Platform as findings")
+	_ = vulnCmd.Flags().MarkHidden("upload")
 }
 
 var vulnCmd = &cobra.Command{
@@ -142,4 +154,44 @@ var vulnCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 	if err := r.PrintVulns(vulnReport, bom.Asset.Name); err != nil {
 		log.Fatal().Err(err).Msg("failed to print")
 	}
+
+	if doUpload, _ := cmd.Flags().GetBool("upload"); doUpload {
+		// Target the same space the scan resolved, honoring the user's config.
+		uploadVulnFindings(ctx, cnspecReport.ToCnqueryReport(), upstreamConf.SpaceMrn)
+	}
+}
+
+// uploadVulnFindings emits the scanned asset's vulnerabilities to Mondoo Platform
+// as VEX findings. It builds an SBOM from the scan report, scans it on the
+// platform (ExtendedVulnMgmt.ScanUploadedSbom returns VEX), and uploads the VEX —
+// the same SBOM-scan flow the `cnspec upload --format sbom` path and xgrep use.
+// spaceMrn targets the same space the scan used (empty falls back to the config).
+func uploadVulnFindings(ctx context.Context, cnqueryReport *cr.Report, spaceMrn string) {
+	boms := mqlsbomgen.GenerateBom(cnqueryReport)
+	if len(boms) != 1 {
+		log.Error().Msg("skipping upload: expected exactly one asset SBOM")
+		return
+	}
+
+	opts := upload.Opts{ScopeMrn: spaceMrn}
+	vex, err := upload.ScanSBOM(ctx, opts, boms[0])
+	if err != nil {
+		if upload.IsNoCredentials(err) {
+			log.Error().Msg("skipping upload: run `cnspec login` to authenticate with Mondoo Platform")
+			return
+		}
+		log.Error().Err(err).Msg("failed to scan SBOM for upload")
+		return
+	}
+
+	docs := fex.VexToDocuments(vex)
+	if len(docs) == 0 {
+		log.Info().Msg("no vulnerabilities to upload")
+		return
+	}
+	if err := upload.UploadFindings(ctx, opts, docs, vulnUploadSource); err != nil {
+		log.Error().Err(err).Msg("failed to upload vulnerability findings")
+		return
+	}
+	log.Info().Msgf("uploaded %d vulnerability finding(s) to Mondoo Platform", len(docs))
 }
