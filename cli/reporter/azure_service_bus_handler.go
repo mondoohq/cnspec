@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/messaging/azservicebus"
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnspec/v13/policy"
@@ -33,7 +32,7 @@ func (h *azureSbusHandler) WriteReport(ctx context.Context, report *policy.Repor
 	senderName := parts[len(parts)-1]
 	sbusUrl := strings.TrimSuffix(trimmedUrl, "/"+senderName)
 
-	cred, err := azauth.GetDefaultChainedToken(&azidentity.DefaultAzureCredentialOptions{})
+	cred, err := azauth.GetDefaultChainedToken(nil)
 	if err != nil {
 		return err
 	}
