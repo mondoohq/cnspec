@@ -4,7 +4,7 @@
 packs:
   - uid: mondoo-kubernetes-inventory
     name: Kubernetes Inventory Pack
-    version: 1.3.0
+    version: 1.4.0
     license: BUSL-1.1
     require:
       - provider: k8s
@@ -62,8 +62,55 @@ packs:
                 Maps each pod to the node it runs on, tracing workloads behind an
                 internet-facing ingress or load balancer down to a specific node
                 and, via the node provider ID, the underlying cloud instance.
+
+                The pod IP is included so that the registered targets of an
+                ip-type cloud load balancer target group (see the AWS inventory
+                pack's `ipTargets`) resolve to a pod, and from there to a node
+                and its cloud instance, without relying on Service or Ingress
+                relations.
             mql: |
-              k8s.pods { namespace name nodeName }
+              k8s.pods { namespace name nodeName podIP }
+          - uid: k8s-cluster-internet-exposed-pod-nodes
+            title: Nodes hosting internet-exposed workloads
+            docs:
+              desc: |
+                Lists every pod that a Service, Ingress, or Gateway routes to from
+                the public internet, together with the node it runs on and that
+                node's cloud provider ID.
+
+                This is the load-balancer half of host internet exposure. A node
+                can have no public IP, sit in a private subnet, and carry no
+                security group that admits `0.0.0.0/0`, yet still serve internet
+                traffic because an internet-facing load balancer forwards to a pod
+                scheduled on it. Cloud-side instance exposure analysis cannot see
+                that path: with `ip`-type target groups the registered targets are
+                pod IPs, so the instance is never a load balancer target. Each
+                entry names the exposing object and the reason, so a reviewer can
+                tell deliberate exposure from accidental.
+
+                Join `nodeName` to the `Cluster node cloud provider IDs` query in
+                this group to reach the cloud instance. The pod's own `node`
+                relation is deliberately not used here: nodes are cluster-scoped,
+                so it resolves to null on namespace-scoped assets and manifest
+                scans, whereas `nodeName` is always set for a scheduled pod.
+            mql: |
+              k8s.pods.where(exposures.any(internetExposed == true)) {
+                namespace
+                name
+                nodeName
+                podIP
+                exposures {
+                  sourceKind
+                  sourceRef
+                  namespace
+                  name
+                  internetExposed
+                  exposureReason
+                  addresses
+                  ports
+                  protocols
+                }
+              }
           - uid: k8s-cluster-clusterroles
             title: Cluster RBAC ClusterRoles
             docs:
@@ -226,3 +273,20 @@ packs:
               desc: Returns the Ingress rules and backend service configuration.
             mql: |
               k8s.ingress { * }
+      - title: Services inventory
+        filters: asset.platform == "k8s-service"
+        queries:
+          - uid: k8s-service
+            title: Service information
+            docs:
+              desc: |
+                Returns the Service type, selector, ports, load balancer addresses,
+                the pods it routes to, and its network exposures.
+
+                Ingress alone does not describe the full public surface of a
+                cluster. A `type: LoadBalancer` Service provisions its own cloud
+                load balancer with no Ingress object involved, so without this
+                query those workloads, and the nodes they run on, cannot be tied
+                back to the load balancer that publishes them.
+            mql: |
+              k8s.service { * }
