@@ -27247,6 +27247,7 @@ queries:
       asset.platform == "azure-mysql-flexible-server"
     mql: |
       azure.subscription.mySql.flexibleServer.dataEncryptionKey != empty
+  # No runtime variant: customer-managed key encryption is only available on the Enterprise/Managed Redis tier, and the Azure Cache for Redis management API exposes no encryption model on Microsoft.Cache/Redis, so the mql azure provider has no field to assert against. Revisit once the provider models Microsoft.Cache/redisEnterprise.
   - uid: mondoo-azure-security-redis-cmk-encryption
     title: Ensure Azure Cache for Redis uses CMK encryption
     impact: 70
@@ -27265,10 +27266,6 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-10
       compliance/vda-isa-5: vda-isa-5-5-1-1
     variants:
-      - uid: mondoo-azure-security-redis-cmk-encryption-azure
-        tags:
-          mondoo.com/filter-title: Azure Cache for Redis
-          mondoo.com/filter-icon: azure
       - uid: mondoo-azure-security-redis-cmk-encryption-terraform-hcl
         tags:
           mondoo.com/filter-title: Terraform HCL
@@ -27285,30 +27282,39 @@ queries:
 
         **Risk mitigation**
 
-        - Configure customer-managed key encryption on Azure Cache for Redis instances.
+        - Configure customer-managed key encryption on Enterprise tier caches.
         - Implement key rotation policies in Azure Key Vault.
       audit: |
         ### Audit via Portal
 
         1. Navigate to **Azure Cache for Redis** in the Azure Portal.
-        2. Select the cache instance.
+        2. Select an **Enterprise** tier cache.
         3. Under **Settings**, select **Encryption**.
-        4. Review the **Encryption key** setting.
+        4. Review the **Customer-managed key** setting.
 
-        A passing resource shows a configured **Customer-managed key**. A failing resource shows no customer-managed key configured.
+        A passing cluster shows a Key Vault key together with the user-assigned managed identity used to reach it. A failing cluster shows Microsoft-managed key encryption only.
 
         ### Audit via CLI
 
-        1. Run the following command, substituting your resource group and cache name:
+        1. List the Enterprise clusters in the subscription:
 
         ```bash
-        az redis show \
-          --resource-group <ResourceGroupName> \
-          --name <CacheName> \
-          --query "redisConfiguration" -o json
+        az redisenterprise list \
+          --query "[].{name:name, resourceGroup:resourceGroup}" -o table
         ```
 
-        A passing resource returns a `redisConfiguration` object containing `customer-managed-key-encryption` with a configured key URI. A failing resource returns no `customer-managed-key-encryption` field.
+        2. Inspect the encryption settings of each cluster:
+
+        ```bash
+        az redisenterprise show \
+          --cluster-name <ClusterName> \
+          --resource-group-name <ResourceGroupName> \
+          --query "encryption.customerManagedKeyEncryption" -o json
+        ```
+
+        A passing cluster returns a `keyEncryptionKeyUrl` pointing at a Key Vault key. A failing cluster returns `null`.
+
+        The Basic, Standard, and Premium tiers expose no encryption model at all, so a cache on those tiers cannot satisfy this control without migrating to the Enterprise tier.
       remediation:
         - id: portal
           desc: |
@@ -27378,11 +27384,6 @@ queries:
     refs:
       - url: https://learn.microsoft.com/en-us/azure/azure-cache-for-redis/cache-customer-managed-keys
         title: Configure customer-managed keys for Azure Cache for Redis
-  - uid: mondoo-azure-security-redis-cmk-encryption-azure
-    filters: |
-      asset.platform == "azure-cache-redis-instance"
-    mql: |
-      azure.subscription.cacheService.redisInstance.encryptionKey != empty
   # Customer-managed key encryption is only available on the Enterprise/Managed Redis
   # tier, which Terraform models as azurerm_managed_redis with a customer_managed_key
   # block. The classic azurerm_redis_cache resource has no CMK argument.
