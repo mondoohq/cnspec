@@ -3632,6 +3632,20 @@ queries:
   - uid: mondoo-windows-security-configure-smb-v1-client-driver-is-set-to-enabled-disable-driver-recommended
     title: "Ensure SMB v1 client driver is disabled"
     impact: 100
+    # Applicability stays in `filters` — it is the mechanism built for it, and it
+    # keeps the previous reporting exactly: a host with no SMB v1 client driver is
+    # not-applicable and is not reported at all (an `if` guard in the query would
+    # instead surface it as "skipped"). What changed is only the COST: the previous
+    # filter was `windows.optionalFeatures.where(name == "SMB1Protocol")...`, which
+    # forced `Get-WindowsOptionalFeature -Online -FeatureName *` — a DISM image
+    # enumeration — on EVERY asset just to decide this cheap registry read applies.
+    # This reads the same key the check reads. The guard cannot simply be dropped:
+    # a missing property yields `data = null`, and `null == 4` evaluates to false,
+    # so an unguarded check would report a FALSE failure wherever SMB v1 was never
+    # installed.
+    filters: |
+      asset.family.contains('windows')
+      registrykey.property( path: 'HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\mrxsmb10', name: 'Start' ).exists
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ccc-06
@@ -3646,20 +3660,8 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-2-2-1
       compliance/soc2-2017: soc2-control-cc7-1-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
-    # The applicability guard lives in the query, not in `filters`, on purpose. A
-    # filter runs on EVERY asset, and the previous filter
-    # (`windows.optionalFeatures.where(name == "SMB1Protocol")...`) forced
-    # `Get-WindowsOptionalFeature -Online -FeatureName *` — a DISM image
-    # enumeration — fleet-wide just to decide this cheap registry read applies.
-    # The `if` guard reads the same key the check already reads, and keeps the
-    # previous reporting behavior: no SMB v1 client driver -> check is skipped,
-    # not failed. Without a guard the check would report a FALSE failure on those
-    # hosts, because a missing property yields `data = null` and `null == 4`
-    # evaluates to false rather than erroring.
     mql: |
-      if ( registrykey.property( path: 'HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\mrxsmb10', name: 'Start' ).exists ) {
-        registrykey.property( path: 'HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\mrxsmb10', name: 'Start' ).data == 4
-      }
+      registrykey.property( path: 'HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\mrxsmb10', name: 'Start' ).data == 4
     docs:
       refs:
         - url: https://learn.microsoft.com/en-us/windows-server/storage/file-server/smb-security
@@ -3744,6 +3746,14 @@ queries:
   - uid: mondoo-windows-security-configure-smb-v1-server-is-set-to-disabled
     title: Ensure 'Configure SMB v1 server' is set to 'Disabled'
     impact: 100
+    # Same rationale as the SMB v1 client-driver check above: the guard stays in
+    # `filters` (preserving not-applicable reporting) but reads the key the check
+    # already reads instead of running a DISM enumeration on every asset. Keeping a
+    # guard at all matters here: an absent `SMB1` value does not by itself prove the
+    # SMB v1 server is off, so not-applicable is more honest than a blanket pass.
+    filters: |
+      asset.family.contains('windows')
+      registrykey.property( path: 'HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters', name: 'SMB1' ).exists
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ccc-06
@@ -3758,16 +3768,8 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-2-2-1
       compliance/soc2-2017: soc2-control-cc7-1-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
-    # Same rationale as the SMB v1 client-driver check above: the guard moves out
-    # of `filters` (where it ran a DISM enumeration on every asset) and into the
-    # query, reading the same key the check already reads. Keeping the guard —
-    # rather than treating a missing value as compliant — matters more here: an
-    # absent `SMB1` value does not by itself prove the SMB v1 server is off, so
-    # this reports "skipped" rather than a possibly-wrong "pass".
     mql: |
-      if ( registrykey.property( path: 'HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters', name: 'SMB1' ).exists ) {
-        registrykey.property( path: 'HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters', name: 'SMB1' ).data == 0
-      }
+      registrykey.property( path: 'HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters', name: 'SMB1' ).data == 0
     docs:
       refs:
         - url: https://learn.microsoft.com/en-us/windows-server/storage/file-server/smb-security
