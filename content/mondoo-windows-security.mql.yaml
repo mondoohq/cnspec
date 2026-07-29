@@ -3632,8 +3632,24 @@ queries:
   - uid: mondoo-windows-security-configure-smb-v1-client-driver-is-set-to-enabled-disable-driver-recommended
     title: "Ensure SMB v1 client driver is disabled"
     impact: 100
+    # Applicability stays in `filters` — it is the mechanism built for it, and it
+    # keeps the previous reporting exactly: a host with no SMB v1 client driver is
+    # not-applicable and is not reported at all (an `if` guard in the query would
+    # instead surface it as "skipped"). What changed is only the COST: the previous
+    # filter was `windows.optionalFeatures.where(name == "SMB1Protocol")...`, which
+    # forced `Get-WindowsOptionalFeature -Online -FeatureName *` — a DISM image
+    # enumeration — on EVERY asset just to decide this cheap registry read applies.
+    # This reads the same key the check reads. The guard cannot simply be dropped:
+    # a missing property yields `data = null`, and `null == 4` evaluates to false,
+    # so an unguarded check would report a FALSE failure wherever SMB v1 was never
+    # installed.
+    #
+    # The two conditions are joined with `&&`, NOT written on separate lines: each
+    # statement in a filter block compiles to its own entrypoint (mqlc.go), so
+    # newline-separated conditions are resolved independently and the platform check
+    # would NOT gate the registry read.
     filters: |
-      windows.optionalFeatures.where(name == "SMB1Protocol").any(enabled == true)
+      asset.family.contains('windows') && registrykey.property( path: 'HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\mrxsmb10', name: 'Start' ).exists
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ccc-06
@@ -3734,8 +3750,15 @@ queries:
   - uid: mondoo-windows-security-configure-smb-v1-server-is-set-to-disabled
     title: Ensure 'Configure SMB v1 server' is set to 'Disabled'
     impact: 100
+    # Same rationale as the SMB v1 client-driver check above: the guard stays in
+    # `filters` (preserving not-applicable reporting) but reads the key the check
+    # already reads instead of running a DISM enumeration on every asset. Keeping a
+    # guard at all matters here: an absent `SMB1` value does not by itself prove the
+    # SMB v1 server is off, so not-applicable is more honest than a blanket pass.
+    # `&&` rather than separate lines: filter statements compile to independent
+    # entrypoints, so a newline-separated platform check would not gate the registry read.
     filters: |
-      windows.optionalFeatures.where(name == "SMB1Protocol").any(enabled == true)
+      asset.family.contains('windows') && registrykey.property( path: 'HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters', name: 'SMB1' ).exists
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ccc-06
