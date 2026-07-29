@@ -17,6 +17,11 @@ import (
 const (
 	MetricScanDuration = "cnspec.scan.duration"    // unit: ms
 	MetricUploadSize   = "cnspec.scan.upload_size" // unit: bytes
+	// MetricUploadDuration / MetricUploadThroughput give the success-path
+	// baseline for upload latency. Without them a slow failing upload cannot
+	// be compared against the normal distribution.
+	MetricUploadDuration   = "cnspec.scan.upload_duration"       // unit: ms
+	MetricUploadThroughput = "cnspec.scan.upload_throughput_bps" // unit: bps
 
 	MetricChecks             = "cnspec.scan.checks"               // unit: count
 	MetricDataQueries        = "cnspec.scan.data_queries"         // unit: count

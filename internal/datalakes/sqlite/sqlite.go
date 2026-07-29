@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -170,17 +171,63 @@ func fileSizeBytes(path string) int64 {
 	return info.Size()
 }
 
+// uploadFailureReportKind is the value sent on the "reportKind" tag to mark a
+// report as an upload failure. The platform dispatches on it to record the
+// failure with its structured fields, so the literal is part of the wire
+// contract and must stay in sync with the server side.
+const uploadFailureReportKind = "upload_failure"
+
+// uploadFailureTags builds the tag set for an upload-failure report. Numeric
+// values are rendered as strings because health.SendError tags are
+// map[string]string; httpStatus and uploadSessionId are omitted rather than
+// sent as zero/empty so the server can tell "absent" from "actually zero".
+func uploadFailureTags(sessionID, assetMrn string, kind upload.FailureKind, httpStatus int, res upload.Result, bytesTotal int64) map[string]string {
+	tags := map[string]string{
+		"reportKind":  uploadFailureReportKind,
+		"failureKind": string(kind),
+		"bytesSent":   strconv.FormatInt(res.BytesSent, 10),
+		"bytesTotal":  strconv.FormatInt(bytesTotal, 10),
+		"durationMs":  strconv.FormatInt(res.Duration.Milliseconds(), 10),
+	}
+	if sessionID != "" {
+		tags["uploadSessionId"] = sessionID
+	}
+	if assetMrn != "" {
+		tags["assetMrn"] = assetMrn
+	}
+	if httpStatus != 0 {
+		tags["httpStatus"] = strconv.Itoa(httpStatus)
+	}
+	return tags
+}
+
+// reportUploadFailure sends one upload-failure report. Best-effort by
+// construction: health.ReportError swallows its own errors and returns
+// nothing, so a reporting problem can never fail the scan.
+func reportUploadFailure(msg string, tags map[string]string) {
+	health.ReportError("cnspec", cnspec.Version, cnspec.Build, msg, health.WithTags(tags))
+}
+
 func uploadScanDataStore(ctx context.Context, services *policy.Services, assetMrn string, scanDataPath string, stats *scanstats.Collector) error {
+	bytesTotal := fileSizeBytes(scanDataPath)
+
 	urlResp, err := services.GetUploadURL(ctx, &policy.GetUploadURLReq{
 		Kind:     policy.UploadURLKind_UPLOAD_URL_KIND_SCAN_DATABASE_V0,
 		ScopeMrn: assetMrn,
 	})
 	if err != nil {
+		// No upload session exists yet, so the platform has nothing to
+		// correlate this with — but a client that cannot even obtain a URL is
+		// still worth surfacing.
+		reportUploadFailure("upload failed: could not get upload URL: "+err.Error(),
+			uploadFailureTags("", assetMrn, upload.FailureURLRequest, 0, upload.Result{}, bytesTotal))
 		return err
 	}
 
 	uploadUrl := urlResp.UploadUrl
 	if uploadUrl == nil {
+		reportUploadFailure("upload failed: no upload URL for scan data store",
+			uploadFailureTags(urlResp.UploadSessionId, assetMrn, upload.FailureURLRequest, 0, upload.Result{}, bytesTotal))
 		return errors.New("no upload URL for scan data store")
 	}
 
@@ -189,6 +236,12 @@ func uploadScanDataStore(ctx context.Context, services *policy.Services, assetMr
 
 	res, err := upload.UploadFile(ctx, url, headers, scanDataPath, "application/octet-stream")
 	if err != nil {
+		// Previously a bare return with no telemetry at all, which made a
+		// client that fails here invisible: the platform sees only an upload
+		// session that never completed, with no reason attached.
+		kind := upload.ClassifyFailure(err)
+		reportUploadFailure("upload failed: "+err.Error(),
+			uploadFailureTags(urlResp.UploadSessionId, assetMrn, kind, 0, res, bytesTotal))
 		return err
 	}
 	defer res.Response.Body.Close()
@@ -197,14 +250,18 @@ func uploadScanDataStore(ctx context.Context, services *policy.Services, assetMr
 		// Read a limited amount of the response body for diagnostics.
 		// Truncate to 512 bytes to avoid leaking sensitive details in Sentry tags.
 		body, _ := io.ReadAll(io.LimitReader(res.Response.Body, 512))
-		health.ReportError("cnspec", cnspec.Version, cnspec.Build,
-			fmt.Sprintf("upload failed with status %d", res.Response.StatusCode),
-			health.WithTags(map[string]string{
-				"assetMrn":     assetMrn,
-				"responseBody": string(body),
-			}),
-		)
+		tags := uploadFailureTags(urlResp.UploadSessionId, assetMrn,
+			upload.FailureHTTPStatus, res.Response.StatusCode, res, bytesTotal)
+		tags["responseBody"] = string(body)
+		reportUploadFailure(fmt.Sprintf("upload failed with status %d", res.Response.StatusCode), tags)
 		return fmt.Errorf("upload failed with status %d", res.Response.StatusCode)
+	}
+
+	// Success-path baseline: without these, a slow failing upload cannot be
+	// compared against the normal distribution.
+	stats.AddDuration(scanstats.MetricUploadDuration, res.Duration)
+	if secs := res.Duration.Seconds(); secs > 0 {
+		stats.AddDouble(scanstats.MetricUploadThroughput, "bps", float64(res.BytesSent*8)/secs)
 	}
 
 	// Confirm the upload, attaching scan statistics as the completion payload.
@@ -220,9 +277,17 @@ func uploadScanDataStore(ctx context.Context, services *policy.Services, assetMr
 		}
 	}
 	if _, err = services.ReportUploadCompleted(ctx, req); err != nil {
+		// The PUT succeeded, so the object IS in the bucket: this upload is
+		// recoverable, unlike a failed PUT. Worth distinguishing.
+		reportUploadFailure("upload failed: could not report completion: "+err.Error(),
+			uploadFailureTags(urlResp.UploadSessionId, assetMrn, upload.FailureReportRPC, 0, res, bytesTotal))
 		return err
 	}
 
-	log.Info().Str("session", urlResp.UploadSessionId).Msg("successfully uploaded scan data store")
+	log.Info().
+		Str("session", urlResp.UploadSessionId).
+		Int64("bytes", res.BytesSent).
+		Dur("duration", res.Duration).
+		Msg("successfully uploaded scan data store")
 	return nil
 }
