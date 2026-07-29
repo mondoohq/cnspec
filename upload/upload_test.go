@@ -55,7 +55,7 @@ func TestUploadFile_PUTsContent(t *testing.T) {
 	}))
 	defer server.Close()
 
-	resp, err := UploadFile(
+	res, err := UploadFile(
 		context.Background(),
 		server.URL,
 		map[string]string{"X-Test-Header": "header-value"},
@@ -63,10 +63,55 @@ func TestUploadFile_PUTsContent(t *testing.T) {
 		"application/octet-stream",
 	)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer res.Response.Body.Close()
 
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, res.Response.StatusCode)
 	assert.Equal(t, "hello-world", received)
+}
+
+// writeTempFileSize writes a file of exactly size zero bytes. Distinct from
+// writeTempFile above, which takes literal content — the counting-reader tests
+// need a payload large enough to fail partway through.
+func writeTempFileSize(t *testing.T, size int) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "scan.db")
+	require.NoError(t, os.WriteFile(path, make([]byte, size), 0o600))
+	return path
+}
+
+func TestUploadFile_ReportsBytesSentOnSuccess(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	res, err := UploadFile(context.Background(), srv.URL, nil, writeTempFileSize(t, 4096), "application/octet-stream")
+	require.NoError(t, err)
+	defer res.Response.Body.Close()
+
+	assert.Equal(t, http.StatusOK, res.Response.StatusCode)
+	assert.Equal(t, int64(4096), res.BytesSent)
+	assert.Positive(t, res.Duration)
+}
+
+func TestUploadFile_ReportsPartialBytesWhenServerHangsUp(t *testing.T) {
+	// Hijack and close the connection mid-body so the client's write fails
+	// after some bytes have gone out — the "stalled mid-body" case.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			return
+		}
+		_ = conn.Close()
+	}))
+	defer srv.Close()
+
+	res, err := UploadFile(context.Background(), srv.URL, nil, writeTempFileSize(t, 8<<20), "application/octet-stream")
+	require.Error(t, err)
+	assert.Nil(t, res.Response)
+	// Bytes sent is reported even on failure, and is short of the total.
+	assert.Less(t, res.BytesSent, int64(8<<20))
 }
 
 // TestNewHTTPClient_HonorsAPIProxy is the regression test for the

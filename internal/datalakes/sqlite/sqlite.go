@@ -187,24 +187,24 @@ func uploadScanDataStore(ctx context.Context, services *policy.Services, assetMr
 	headers := uploadUrl.Headers
 	url := uploadUrl.Url
 
-	resp, err := upload.UploadFile(ctx, url, headers, scanDataPath, "application/octet-stream")
+	res, err := upload.UploadFile(ctx, url, headers, scanDataPath, "application/octet-stream")
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer res.Response.Body.Close()
 
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+	if res.Response.StatusCode != http.StatusOK && res.Response.StatusCode != http.StatusCreated {
 		// Read a limited amount of the response body for diagnostics.
 		// Truncate to 512 bytes to avoid leaking sensitive details in Sentry tags.
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		body, _ := io.ReadAll(io.LimitReader(res.Response.Body, 512))
 		health.ReportError("cnspec", cnspec.Version, cnspec.Build,
-			fmt.Sprintf("upload failed with status %d", resp.StatusCode),
+			fmt.Sprintf("upload failed with status %d", res.Response.StatusCode),
 			health.WithTags(map[string]string{
 				"assetMrn":     assetMrn,
 				"responseBody": string(body),
 			}),
 		)
-		return fmt.Errorf("upload failed with status %d", resp.StatusCode)
+		return fmt.Errorf("upload failed with status %d", res.Response.StatusCode)
 	}
 
 	// Confirm the upload, attaching scan statistics as the completion payload.
