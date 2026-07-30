@@ -1,0 +1,4156 @@
+# Copyright Mondoo, Inc. 2024, 2026
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: mondoo-mysql-security
+    name: Mondoo MySQL Security
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: linux,mysql
+    require:
+      - provider: os
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Harden MySQL server networking, authentication, privileges, and audit logging
+    docs:
+      desc: |
+        The Mondoo MySQL Security policy assesses the on-disk option files of a self-managed MySQL or Percona Server installation. It reads the option file chain, resolving the `!include` and `!includedir` directives so every fragment contributes, and normalizes option names so `-` and `_` are interchangeable exactly as the server treats them.
+
+        This policy provides security checks across seven areas:
+
+        - Connection surface and network exposure
+        - Transport encryption and certificate material
+        - Authentication plugins and password policy
+        - Filesystem privileges and server-side code execution
+        - Error, general, and audit logging
+        - Encryption at rest for tables and logs
+        - Protection of option files and the credentials they hold
+
+        **Scope and limitations**
+
+        This policy reads configuration as it is written to disk. It does not open a SQL connection to the server, so it cannot assess accounts, granted privileges, the `mysql.user` table, or the effective value of a dynamic variable. Checks describe the configuration the server would load on its next restart.
+
+        Options changed with `SET PERSIST` are written to `mysqld-auto.cnf` in the data directory rather than to an option file. The server applies that file after the option files, so it takes precedence over everything this policy reads. Remediation steps therefore edit the option file directly, which keeps the effective configuration and the audited configuration in agreement. Where an option has already been persisted that way, clear it with `RESET PERSIST <option>` so the option file value takes effect again.
+
+        MariaDB is covered by the Mondoo MariaDB Security policy instead. The underlying resource returns nothing on a host running MariaDB, so the checks here do not apply to those servers.
+
+        Learn more about scanning Linux in the [cnspec Linux documentation](https://mondoo.com/docs/cnspec/os/linux).
+
+        Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
+    groups:
+      - title: Connection and Network Exposure
+        filters: |
+          asset.family.contains("linux") &&
+          mysql.conf.file.exists
+        checks:
+          - uid: mondoo-mysql-security-bind-address-restricted
+          - uid: mondoo-mysql-security-skip-name-resolve-enabled
+          - uid: mondoo-mysql-security-skip-show-database-enabled
+      - title: Transport Encryption
+        filters: |
+          asset.family.contains("linux") &&
+          mysql.conf.file.exists
+        checks:
+          - uid: mondoo-mysql-security-require-secure-transport-enabled
+          - uid: mondoo-mysql-security-tls-version-modern
+          - uid: mondoo-mysql-security-server-certificate-configured
+          - uid: mondoo-mysql-security-client-ca-configured
+      - title: Authentication and Password Policy
+        filters: |
+          asset.family.contains("linux") &&
+          mysql.conf.file.exists
+        checks:
+          - uid: mondoo-mysql-security-skip-grant-tables-disabled
+          - uid: mondoo-mysql-security-strong-authentication-plugin
+          - uid: mondoo-mysql-security-validate-password-plugin-loaded
+          - uid: mondoo-mysql-security-validate-password-policy-strong
+          - uid: mondoo-mysql-security-validate-password-length-sufficient
+          - uid: mondoo-mysql-security-validate-password-checks-user-name
+          - uid: mondoo-mysql-security-password-expiry-configured
+          - uid: mondoo-mysql-security-password-reuse-restricted
+          - uid: mondoo-mysql-security-password-require-current-enabled
+      - title: Filesystem Privileges and Code Execution
+        filters: |
+          asset.family.contains("linux") &&
+          mysql.conf.file.exists
+        checks:
+          - uid: mondoo-mysql-security-runs-as-dedicated-account
+          - uid: mondoo-mysql-security-local-infile-disabled
+          - uid: mondoo-mysql-security-secure-file-priv-restricted
+          - uid: mondoo-mysql-security-symbolic-links-disabled
+          - uid: mondoo-mysql-security-allow-suspicious-udfs-disabled
+          - uid: mondoo-mysql-security-log-bin-trust-function-creators-disabled
+          - uid: mondoo-mysql-security-automatic-sp-privileges-disabled
+      - title: Logging and Audit
+        filters: |
+          asset.family.contains("linux") &&
+          mysql.conf.file.exists
+        checks:
+          - uid: mondoo-mysql-security-error-log-configured
+          - uid: mondoo-mysql-security-log-error-verbosity-includes-warnings
+          - uid: mondoo-mysql-security-log-output-retained
+          - uid: mondoo-mysql-security-general-log-disabled
+          - uid: mondoo-mysql-security-audit-log-enabled
+      - title: Encryption at Rest
+        filters: |
+          asset.family.contains("linux") &&
+          mysql.conf.file.exists
+        checks:
+          - uid: mondoo-mysql-security-default-table-encryption-enabled
+          - uid: mondoo-mysql-security-binlog-encryption-enabled
+          - uid: mondoo-mysql-security-innodb-redo-log-encryption-enabled
+          - uid: mondoo-mysql-security-innodb-undo-log-encryption-enabled
+      - title: Credential and Option File Protection
+        filters: |
+          asset.family.contains("linux") &&
+          mysql.conf.file.exists
+        checks:
+          - uid: mondoo-mysql-security-client-options-no-plaintext-password
+          - uid: mondoo-mysql-security-option-files-restricted-permissions
+          - uid: mondoo-mysql-security-user-option-files-protected
+queries:
+  - uid: mondoo-mysql-security-bind-address-restricted
+    title: Ensure bind_address does not expose MySQL on every interface
+    impact: 75
+    mql: |
+      mysql.conf.bindAddress.none(_ == "*" || _ == "0.0.0.0" || _ == "::")
+    docs:
+      desc: |
+        This check ensures that `bind_address` names specific addresses instead of accepting connections on every interface. MySQL binds to every interface when the option is unset, so an installation that never sets it is reachable from every network the host is attached to.
+
+        Since MySQL 8.0.13 the option accepts a comma-separated list, so a server that must serve several networks can name each one explicitly rather than falling back to the wildcard. Where the database only serves applications on the same host, `skip_networking` removes the TCP listener entirely.
+
+        **Why this matters**
+
+        - **Smaller network surface:** Only the addresses you name can accept a connection attempt.
+        - **Defense in depth behind the firewall:** Binding narrowly means a firewall change does not immediately expose the database.
+        - **Explicit intent:** A named address list documents which networks the server is expected to serve.
+
+        **Risk mitigation**
+
+        - **Blocks opportunistic scanning:** Scanners probing port 3306 cannot fingerprint a server that never answers them.
+        - **Contains credential attacks:** Password guessing cannot begin against an address the server does not accept.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective value from a running server:
+
+        ```bash
+        sudo mysql -e "SHOW VARIABLES LIKE 'bind_address';"
+        ```
+
+        2. Confirm which addresses the server is actually bound to:
+
+        ```bash
+        sudo ss -lntp | grep mysqld
+        ```
+
+        A passing result names specific addresses such as `127.0.0.1` or a private address. A failing result reports `*`, `0.0.0.0`, or `::`, or shows the server listening on `0.0.0.0:3306`.
+      remediation:
+        - id: cli
+          desc: |
+            To bind MySQL to specific addresses using the CLI:
+
+            1. Set `bind_address` in the server option file.
+            2. Restart MySQL, because this option cannot be changed at runtime.
+            3. Confirm the resulting listeners.
+
+            ```bash
+            sudo sed -i "s/^#*\s*bind-address.*/bind-address = 127.0.0.1,10.0.0.5/" \
+              /etc/mysql/mysql.conf.d/mysqld.cnf
+            sudo systemctl restart mysql
+            sudo ss -lntp | grep mysqld
+            ```
+        - id: script
+          desc: |
+            To bind MySQL to specific addresses using a bash script:
+
+            1. Set the addresses the server must serve.
+            2. Replace an existing option or append one under the server group.
+            3. Restart MySQL and report the resulting listeners.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            MYCNF="/etc/mysql/mysql.conf.d/mysqld.cnf"
+            ADDRESSES="127.0.0.1,10.0.0.5"
+
+            if grep -qE "^\s*bind[-_]address" "$MYCNF"; then
+              sed -i "s|^\s*bind[-_]address.*|bind-address = ${ADDRESSES}|" "$MYCNF"
+            else
+              printf "bind-address = %s\n" "$ADDRESSES" >>"$MYCNF"
+            fi
+
+            systemctl restart mysql
+            ss -lntp | grep mysqld
+            ```
+        - id: ansible
+          desc: |
+            To bind MySQL to specific addresses using Ansible:
+
+            1. Set `bind-address` in the server option group.
+            2. Notify a handler that restarts the server.
+
+            ```yaml
+            - name: Restrict the MySQL bind address
+              hosts: mysql
+              become: true
+              vars:
+                mysql_conf: /etc/mysql/mysql.conf.d/mysqld.cnf
+                mysql_bind_address: "127.0.0.1,10.0.0.5"
+              tasks:
+                - name: Set bind-address
+                  community.general.ini_file:
+                    path: "{{ mysql_conf }}"
+                    section: mysqld
+                    option: bind-address
+                    value: "{{ mysql_bind_address }}"
+                    mode: "0640"
+                  notify: Restart mysql
+              handlers:
+                - name: Restart mysql
+                  ansible.builtin.service:
+                    name: mysql
+                    state: restarted
+            ```
+
+  - uid: mondoo-mysql-security-skip-name-resolve-enabled
+    title: Ensure skip_name_resolve is enabled
+    impact: 60
+    mql: |
+      mysql.conf.skipNameResolve == true
+    docs:
+      desc: |
+        This check ensures that `skip_name_resolve` is enabled so the server matches accounts by IP address rather than resolving client hostnames. With name resolution active, an account defined for a hostname is authorized based on the answer a DNS or reverse lookup returns at connection time.
+
+        That makes an external naming service part of the authorization decision. An attacker who can influence reverse DNS for an address they control can cause the server to match a host pattern that was meant for a trusted machine.
+
+        **Why this matters**
+
+        - **Authorization stops depending on DNS:** Host matching uses the address the connection actually came from.
+        - **Removes a spoofable input:** Reverse lookup answers cannot be manipulated into matching a trusted pattern.
+        - **Predictable connection handling:** Connections are not delayed or refused when a naming service is slow or unavailable.
+
+        **Risk mitigation**
+
+        - **Blocks DNS-based authorization bypass:** A forged reverse record cannot satisfy a hostname-scoped account.
+        - **Removes a denial of service path:** A failing resolver cannot prevent clients from connecting.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective value from a running server:
+
+        ```bash
+        sudo mysql -e "SHOW VARIABLES LIKE 'skip_name_resolve';"
+        ```
+
+        2. Identify accounts still defined against a hostname rather than an address:
+
+        ```bash
+        sudo mysql -e "SELECT user, host FROM mysql.user WHERE host NOT REGEXP '^[0-9a-fA-F:.%]+$';"
+        ```
+
+        A passing result reports `ON`. A failing result reports `OFF`, and the second query lists accounts that must be redefined against addresses before the option is enabled.
+      remediation:
+        - id: cli
+          desc: |
+            To disable client hostname resolution using the CLI:
+
+            1. Redefine any account scoped to a hostname so it names an address or address pattern.
+            2. Set `skip_name_resolve` in the server option file.
+            3. Restart MySQL and confirm the effective value.
+
+            ```bash
+            sudo mysql -e "SELECT user, host FROM mysql.user WHERE host NOT REGEXP '^[0-9a-fA-F:.%]+$';"
+            sudo sed -i "s/^#*\s*skip[-_]name[-_]resolve.*/skip_name_resolve = ON/" \
+              /etc/mysql/mysql.conf.d/mysqld.cnf
+            sudo systemctl restart mysql
+            sudo mysql -e "SHOW VARIABLES LIKE 'skip_name_resolve';"
+            ```
+        - id: script
+          desc: |
+            To disable client hostname resolution using a bash script:
+
+            1. Refuse to proceed while accounts are still scoped to hostnames, because they would stop matching.
+            2. Set the option, replacing any existing value.
+            3. Restart MySQL.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            MYCNF="/etc/mysql/mysql.conf.d/mysqld.cnf"
+
+            hostname_accounts=$(mysql -N -B -e \
+              "SELECT count(*) FROM mysql.user WHERE host NOT REGEXP '^[0-9a-fA-F:.%]+\$';")
+
+            if [ "$hostname_accounts" -gt 0 ]; then
+              echo "$hostname_accounts account(s) are scoped to hostnames; redefine them first" >&2
+              exit 1
+            fi
+
+            if grep -qE "^\s*skip[-_]name[-_]resolve" "$MYCNF"; then
+              sed -i "s|^\s*skip[-_]name[-_]resolve.*|skip_name_resolve = ON|" "$MYCNF"
+            else
+              printf "skip_name_resolve = ON\n" >>"$MYCNF"
+            fi
+
+            systemctl restart mysql
+            ```
+        - id: ansible
+          desc: |
+            To disable client hostname resolution using Ansible:
+
+            1. Set `skip_name_resolve` in the server option group.
+            2. Notify a handler that restarts the server.
+
+            ```yaml
+            - name: Disable MySQL client hostname resolution
+              hosts: mysql
+              become: true
+              vars:
+                mysql_conf: /etc/mysql/mysql.conf.d/mysqld.cnf
+              tasks:
+                - name: Set skip_name_resolve
+                  community.general.ini_file:
+                    path: "{{ mysql_conf }}"
+                    section: mysqld
+                    option: skip_name_resolve
+                    value: "ON"
+                    mode: "0640"
+                  notify: Restart mysql
+              handlers:
+                - name: Restart mysql
+                  ansible.builtin.service:
+                    name: mysql
+                    state: restarted
+            ```
+
+  - uid: mondoo-mysql-security-skip-show-database-enabled
+    title: Ensure skip_show_database is enabled
+    impact: 55
+    mql: |
+      mysql.conf.skipShowDatabase == true
+    docs:
+      desc: |
+        This check ensures that `skip_show_database` is enabled so `SHOW DATABASES` is restricted to accounts holding the `SHOW DATABASES` privilege. Without it, every authenticated account can enumerate every schema name on the server, including schemas it has no privilege to read.
+
+        Schema names routinely disclose which applications, tenants, and environments share a server. That information shapes an attacker's next step after obtaining any low-privilege credential.
+
+        **Why this matters**
+
+        - **Limits enumeration:** An account sees only the schemas it is entitled to know about.
+        - **Reduces tenant disclosure:** Shared servers do not reveal the names of unrelated applications or customers.
+        - **Least privilege for metadata:** Catalog visibility becomes a privilege rather than a default.
+
+        **Risk mitigation**
+
+        - **Slows lateral movement:** A compromised application account cannot map the rest of the server.
+        - **Reduces targeting information:** Attackers cannot identify high-value schemas to pursue.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective value from a running server:
+
+        ```bash
+        sudo mysql -e "SHOW VARIABLES LIKE 'skip_show_database';"
+        ```
+
+        2. Review which accounts hold the privilege that grants enumeration anyway:
+
+        ```bash
+        sudo mysql -e "SELECT user, host FROM mysql.user WHERE Show_db_priv = 'Y';"
+        ```
+
+        A passing result reports `ON`. A failing result reports `OFF`, meaning every authenticated account can enumerate all schemas.
+      remediation:
+        - id: cli
+          desc: |
+            To restrict schema enumeration using the CLI:
+
+            1. Grant `SHOW DATABASES` to the administrative accounts that genuinely need it.
+            2. Set `skip_show_database` in the server option file.
+            3. Restart MySQL and confirm the effective value.
+
+            ```bash
+            sudo mysql -e "GRANT SHOW DATABASES ON *.* TO 'dba'@'10.0.0.%';"
+            sudo sed -i "s/^#*\s*skip[-_]show[-_]database.*/skip_show_database = ON/" \
+              /etc/mysql/mysql.conf.d/mysqld.cnf
+            sudo systemctl restart mysql
+            sudo mysql -e "SHOW VARIABLES LIKE 'skip_show_database';"
+            ```
+        - id: script
+          desc: |
+            To restrict schema enumeration using a bash script:
+
+            1. Set the option, replacing any existing value.
+            2. Restart MySQL and report the effective value.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            MYCNF="/etc/mysql/mysql.conf.d/mysqld.cnf"
+
+            if grep -qE "^\s*skip[-_]show[-_]database" "$MYCNF"; then
+              sed -i "s|^\s*skip[-_]show[-_]database.*|skip_show_database = ON|" "$MYCNF"
+            else
+              printf "skip_show_database = ON\n" >>"$MYCNF"
+            fi
+
+            systemctl restart mysql
+            mysql -e "SHOW VARIABLES LIKE 'skip_show_database';"
+            ```
+        - id: ansible
+          desc: |
+            To restrict schema enumeration using Ansible:
+
+            1. Set `skip_show_database` in the server option group.
+            2. Notify a handler that restarts the server.
+
+            ```yaml
+            - name: Restrict MySQL schema enumeration
+              hosts: mysql
+              become: true
+              vars:
+                mysql_conf: /etc/mysql/mysql.conf.d/mysqld.cnf
+              tasks:
+                - name: Set skip_show_database
+                  community.general.ini_file:
+                    path: "{{ mysql_conf }}"
+                    section: mysqld
+                    option: skip_show_database
+                    value: "ON"
+                    mode: "0640"
+                  notify: Restart mysql
+              handlers:
+                - name: Restart mysql
+                  ansible.builtin.service:
+                    name: mysql
+                    state: restarted
+            ```
+
+  - uid: mondoo-mysql-security-require-secure-transport-enabled
+    title: Ensure require_secure_transport is enabled
+    impact: 85
+    mql: |
+      mysql.conf.requireSecureTransport == true
+    docs:
+      desc: |
+        This check ensures that `require_secure_transport` is enabled so the server refuses connections that are neither encrypted nor made over a local socket. Configuring certificate material makes TLS available, but MySQL still accepts unencrypted TCP connections unless this option forces the requirement.
+
+        Enforcing the requirement server-side is what closes the gap. Per-account `REQUIRE SSL` clauses achieve the same for individual accounts, but they must be applied to every account and are easy to omit when a new one is created.
+
+        **Why this matters**
+
+        - **Encryption becomes mandatory:** A client cannot connect by declining TLS.
+        - **Applies to every account:** The requirement does not depend on remembering a per-account clause.
+        - **Credentials protected in transit:** Authentication exchanges are never observable on the network.
+
+        **Risk mitigation**
+
+        - **Defeats passive interception:** Captured traffic yields no readable queries or credentials.
+        - **Prevents accidental cleartext:** A misconfigured client library cannot silently connect without TLS.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective value from a running server:
+
+        ```bash
+        sudo mysql -e "SHOW VARIABLES LIKE 'require_secure_transport';"
+        ```
+
+        2. Confirm current connections are encrypted:
+
+        ```bash
+        sudo mysql -e "SELECT connection_type, count(*) FROM performance_schema.threads t JOIN performance_schema.socket_instances s USING (thread_id) GROUP BY connection_type;"
+        ```
+
+        A passing result reports `ON`. A failing result reports `OFF`, meaning unencrypted TCP connections are still accepted.
+      remediation:
+        - id: cli
+          desc: |
+            To require encrypted connections using the CLI:
+
+            1. Confirm TLS material is configured and the server reports it is available.
+            2. Set `require_secure_transport` in the server option file.
+            3. Restart MySQL and confirm the effective value.
+
+            ```bash
+            sudo mysql -e "SHOW VARIABLES LIKE 'have_ssl';"
+            sudo sed -i "s/^#*\s*require[-_]secure[-_]transport.*/require_secure_transport = ON/" \
+              /etc/mysql/mysql.conf.d/mysqld.cnf
+            sudo systemctl restart mysql
+            sudo mysql -e "SHOW VARIABLES LIKE 'require_secure_transport';"
+            ```
+        - id: script
+          desc: |
+            To require encrypted connections using a bash script:
+
+            1. Refuse to proceed unless the server has usable TLS material, because enabling the requirement would lock out every remote client.
+            2. Set the option, replacing any existing value.
+            3. Restart MySQL.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            MYCNF="/etc/mysql/mysql.conf.d/mysqld.cnf"
+
+            tls_state=$(mysql -N -B -e "SELECT @@have_ssl;" 2>/dev/null || echo "UNKNOWN")
+            if [ "$tls_state" != "YES" ]; then
+              echo "server reports TLS availability as $tls_state; configure certificates first" >&2
+              exit 1
+            fi
+
+            if grep -qE "^\s*require[-_]secure[-_]transport" "$MYCNF"; then
+              sed -i "s|^\s*require[-_]secure[-_]transport.*|require_secure_transport = ON|" "$MYCNF"
+            else
+              printf "require_secure_transport = ON\n" >>"$MYCNF"
+            fi
+
+            systemctl restart mysql
+            ```
+        - id: ansible
+          desc: |
+            To require encrypted connections using Ansible:
+
+            1. Verify the server has usable TLS material.
+            2. Set `require_secure_transport` in the server option group.
+            3. Notify a handler that restarts the server.
+
+            ```yaml
+            - name: Require encrypted MySQL connections
+              hosts: mysql
+              become: true
+              vars:
+                mysql_conf: /etc/mysql/mysql.conf.d/mysqld.cnf
+              tasks:
+                - name: Read TLS availability
+                  ansible.builtin.command:
+                    cmd: mysql -N -B -e "SELECT @@have_ssl;"
+                  changed_when: false
+                  register: have_ssl
+
+                - name: Fail when TLS material is missing
+                  ansible.builtin.fail:
+                    msg: "Configure ssl_cert and ssl_key before requiring secure transport."
+                  when: have_ssl.stdout | trim != "YES"
+
+                - name: Set require_secure_transport
+                  community.general.ini_file:
+                    path: "{{ mysql_conf }}"
+                    section: mysqld
+                    option: require_secure_transport
+                    value: "ON"
+                    mode: "0640"
+                  notify: Restart mysql
+              handlers:
+                - name: Restart mysql
+                  ansible.builtin.service:
+                    name: mysql
+                    state: restarted
+            ```
+
+  - uid: mondoo-mysql-security-tls-version-modern
+    title: Ensure tls_version excludes TLS 1.0 and TLS 1.1
+    impact: 75
+    mql: |
+      mysql.conf.tlsVersion != empty
+      mysql.conf.tlsVersion.none(_.downcase == "tlsv1" || _.downcase == "tlsv1.1")
+    docs:
+      desc: |
+        This check ensures that `tls_version` is set explicitly and names only TLS 1.2 and TLS 1.3. TLS 1.0 and TLS 1.1 are deprecated, depend on obsolete hashing and cipher constructions, and are no longer adequate for protecting authentication material.
+
+        Leaving the option unset falls back to the versions the server was compiled to accept, which varies by build and by MySQL release. Setting it explicitly makes the accepted set verifiable from the option file and keeps it from widening when the server is upgraded or moved to a different build.
+
+        **Why this matters**
+
+        - **Removes downgrade room:** A client cannot negotiate a protocol version the server refuses to offer.
+        - **Modern cipher suites only:** TLS 1.2 and above provide authenticated encryption modes older versions lack.
+        - **Verifiable from configuration:** The accepted set does not depend on a compiled-in default.
+
+        **Risk mitigation**
+
+        - **Blocks protocol downgrade attacks:** An attacker influencing the handshake cannot force a deprecated version.
+        - **Removes weak-cipher exposure:** Attacks against obsolete constructions in TLS 1.0 and 1.1 no longer apply.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective value from a running server:
+
+        ```bash
+        sudo mysql -e "SHOW VARIABLES LIKE 'tls_version';"
+        ```
+
+        2. Confirm which version connections actually negotiate:
+
+        ```bash
+        sudo mysql -e "SHOW SESSION STATUS LIKE 'Ssl_version';"
+        ```
+
+        A passing result names only `TLSv1.2` and `TLSv1.3`. A failing result includes `TLSv1` or `TLSv1.1`, or is unset so the compiled-in default applies.
+      remediation:
+        - id: cli
+          desc: |
+            To restrict accepted TLS versions using the CLI:
+
+            1. Confirm every client library supports TLS 1.2 or above.
+            2. Set `tls_version` in the server option file.
+            3. Restart MySQL and confirm the effective value.
+
+            ```bash
+            sudo sed -i "s/^#*\s*tls[-_]version.*/tls_version = TLSv1.2,TLSv1.3/" \
+              /etc/mysql/mysql.conf.d/mysqld.cnf
+            sudo systemctl restart mysql
+            sudo mysql -e "SHOW VARIABLES LIKE 'tls_version';"
+            ```
+        - id: script
+          desc: |
+            To restrict accepted TLS versions using a bash script:
+
+            1. Define the accepted versions.
+            2. Set the option, replacing any existing value.
+            3. Restart MySQL and report the effective value.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            MYCNF="/etc/mysql/mysql.conf.d/mysqld.cnf"
+            VERSIONS="TLSv1.2,TLSv1.3"
+
+            if grep -qE "^\s*tls[-_]version" "$MYCNF"; then
+              sed -i "s|^\s*tls[-_]version.*|tls_version = ${VERSIONS}|" "$MYCNF"
+            else
+              printf "tls_version = %s\n" "$VERSIONS" >>"$MYCNF"
+            fi
+
+            systemctl restart mysql
+            mysql -e "SHOW VARIABLES LIKE 'tls_version';"
+            ```
+        - id: ansible
+          desc: |
+            To restrict accepted TLS versions using Ansible:
+
+            1. Set `tls_version` in the server option group.
+            2. Notify a handler that restarts the server.
+
+            ```yaml
+            - name: Restrict accepted MySQL TLS versions
+              hosts: mysql
+              become: true
+              vars:
+                mysql_conf: /etc/mysql/mysql.conf.d/mysqld.cnf
+                mysql_tls_versions: "TLSv1.2,TLSv1.3"
+              tasks:
+                - name: Set tls_version
+                  community.general.ini_file:
+                    path: "{{ mysql_conf }}"
+                    section: mysqld
+                    option: tls_version
+                    value: "{{ mysql_tls_versions }}"
+                    mode: "0640"
+                  notify: Restart mysql
+              handlers:
+                - name: Restart mysql
+                  ansible.builtin.service:
+                    name: mysql
+                    state: restarted
+            ```
+
+  - uid: mondoo-mysql-security-server-certificate-configured
+    title: Ensure ssl_cert and ssl_key are configured
+    impact: 70
+    mql: |
+      mysql.conf.sslCertFile != empty
+      mysql.conf.sslKeyFile != empty
+    docs:
+      desc: |
+        This check ensures that `ssl_cert` and `ssl_key` name the server certificate and its private key. Without both, the server cannot present a verifiable identity, and clients configured to verify it will refuse to connect.
+
+        MySQL generates self-signed material on first start when none is provided, which lets TLS negotiate but gives clients nothing they can validate against a trusted authority. Naming the material explicitly means the certificate is one you issued and can rotate.
+
+        **Why this matters**
+
+        - **Server identity is verifiable:** Clients can confirm they reached the intended database rather than an interposed listener.
+        - **Certificates become manageable:** Explicit paths give you a place to rotate and monitor expiry.
+        - **Enables strict client verification:** Clients using verify-identity modes have a chain they can validate.
+
+        **Risk mitigation**
+
+        - **Defeats machine-in-the-middle:** An attacker cannot present substitute material that clients will accept.
+        - **Avoids silent trust of generated material:** Auto-generated self-signed certificates are not relied on in production.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the configured paths from a running server:
+
+        ```bash
+        sudo mysql -e "SHOW VARIABLES WHERE Variable_name IN ('ssl_cert','ssl_key','ssl_ca');"
+        ```
+
+        2. Confirm the certificate is valid and note its expiry:
+
+        ```bash
+        sudo openssl x509 -in /etc/mysql/ssl/server-cert.pem -noout -subject -issuer -dates
+        ```
+
+        A passing result names both files and shows a certificate issued by your authority with a future expiry. A failing result leaves either option empty.
+      remediation:
+        - id: cli
+          desc: |
+            To configure server certificate material using the CLI:
+
+            1. Install the certificate and key where the server account can read them.
+            2. Set `ssl_cert` and `ssl_key` in the server option file.
+            3. Restart MySQL and confirm the paths.
+
+            ```bash
+            sudo install -o mysql -g mysql -m 0600 server-key.pem /etc/mysql/ssl/server-key.pem
+            sudo install -o mysql -g mysql -m 0644 server-cert.pem /etc/mysql/ssl/server-cert.pem
+            sudo tee -a /etc/mysql/mysql.conf.d/mysqld.cnf >/dev/null <<'EOF'
+            ssl_cert = /etc/mysql/ssl/server-cert.pem
+            ssl_key  = /etc/mysql/ssl/server-key.pem
+            EOF
+            sudo systemctl restart mysql
+            sudo mysql -e "SHOW VARIABLES WHERE Variable_name IN ('ssl_cert','ssl_key');"
+            ```
+        - id: script
+          desc: |
+            To configure server certificate material using a bash script:
+
+            1. Verify the certificate and key are present and that the key matches the certificate.
+            2. Set both options, replacing any existing values.
+            3. Restart MySQL.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            MYCNF="/etc/mysql/mysql.conf.d/mysqld.cnf"
+            CERT="/etc/mysql/ssl/server-cert.pem"
+            KEY="/etc/mysql/ssl/server-key.pem"
+
+            cert_mod=$(openssl x509 -in "$CERT" -noout -modulus)
+            key_mod=$(openssl rsa -in "$KEY" -noout -modulus)
+            if [ "$cert_mod" != "$key_mod" ]; then
+              echo "private key does not match the certificate" >&2
+              exit 1
+            fi
+
+            chown mysql:mysql "$KEY" "$CERT"
+            chmod 0600 "$KEY"
+            chmod 0644 "$CERT"
+
+            set_option() {
+              local key="$1" value="$2"
+              if grep -qE "^\s*${key}\b" "$MYCNF"; then
+                sed -i "s|^\s*${key}\b.*|${key} = ${value}|" "$MYCNF"
+              else
+                printf "%s = %s\n" "$key" "$value" >>"$MYCNF"
+              fi
+            }
+
+            set_option ssl_cert "$CERT"
+            set_option ssl_key "$KEY"
+
+            systemctl restart mysql
+            ```
+        - id: ansible
+          desc: |
+            To configure server certificate material using Ansible:
+
+            1. Place the certificate and key with ownership the server can read.
+            2. Set `ssl_cert` and `ssl_key` in the server option group.
+            3. Notify a handler that restarts the server.
+
+            ```yaml
+            - name: Configure MySQL server certificate material
+              hosts: mysql
+              become: true
+              vars:
+                mysql_conf: /etc/mysql/mysql.conf.d/mysqld.cnf
+                mysql_ssl_cert: /etc/mysql/ssl/server-cert.pem
+                mysql_ssl_key: /etc/mysql/ssl/server-key.pem
+              tasks:
+                - name: Protect the private key
+                  ansible.builtin.file:
+                    path: "{{ mysql_ssl_key }}"
+                    owner: mysql
+                    group: mysql
+                    mode: "0600"
+
+                - name: Set the certificate options
+                  community.general.ini_file:
+                    path: "{{ mysql_conf }}"
+                    section: mysqld
+                    option: "{{ item.option }}"
+                    value: "{{ item.value }}"
+                    mode: "0640"
+                  loop:
+                    - { option: "ssl_cert", value: "{{ mysql_ssl_cert }}" }
+                    - { option: "ssl_key", value: "{{ mysql_ssl_key }}" }
+                  notify: Restart mysql
+              handlers:
+                - name: Restart mysql
+                  ansible.builtin.service:
+                    name: mysql
+                    state: restarted
+            ```
+
+  - uid: mondoo-mysql-security-client-ca-configured
+    title: Ensure a certificate authority is configured for client verification
+    impact: 65
+    mql: |
+      mysql.conf.sslCaFile != empty || mysql.conf.sslCaPath != empty
+    docs:
+      desc: |
+        This check ensures that either `ssl_ca` or `ssl_capath` names a trust anchor. The server needs one to validate client certificates, so accounts created with `REQUIRE X509`, `REQUIRE ISSUER`, or `REQUIRE SUBJECT` cannot be enforced without it.
+
+        A configured authority also completes the chain that clients verify. Clients using `VERIFY_CA` or `VERIFY_IDENTITY` need the same authority to validate the certificate the server presents, so publishing it alongside the server material is what makes strict client verification workable.
+
+        **Why this matters**
+
+        - **Client certificates become enforceable:** Account-level X.509 requirements have something to validate against.
+        - **Controls who can issue identities:** Only certificates chaining to the configured authority are accepted.
+        - **Supports revocation:** A managed authority gives you a place to distrust compromised certificates.
+
+        **Risk mitigation**
+
+        - **Rejects untrusted certificates:** A self-issued client certificate cannot satisfy an X.509 account requirement.
+        - **Prevents a false sense of assurance:** Account requirements that could never validate are surfaced before they are relied upon.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the configured trust anchor:
+
+        ```bash
+        sudo mysql -e "SHOW VARIABLES WHERE Variable_name IN ('ssl_ca','ssl_capath','ssl_crl');"
+        ```
+
+        2. Identify accounts that depend on client certificates:
+
+        ```bash
+        sudo mysql -e "SELECT user, host, ssl_type FROM mysql.user WHERE ssl_type <> '';"
+        ```
+
+        3. Inspect the authority contents when one is configured:
+
+        ```bash
+        sudo openssl x509 -in /etc/mysql/ssl/ca.pem -noout -subject -dates
+        ```
+
+        A passing result names an authority file or directory. A failing result leaves both empty, in which case any account requiring X.509 cannot be validated.
+      remediation:
+        - id: cli
+          desc: |
+            To configure a client certificate authority using the CLI:
+
+            1. Install the issuing authority certificate where the server can read it.
+            2. Set `ssl_ca` in the server option file.
+            3. Restart MySQL and confirm the value.
+
+            ```bash
+            sudo install -o mysql -g mysql -m 0644 ca.pem /etc/mysql/ssl/ca.pem
+            sudo sed -i "s|^#*\s*ssl[-_]ca\b.*|ssl_ca = /etc/mysql/ssl/ca.pem|" \
+              /etc/mysql/mysql.conf.d/mysqld.cnf
+            sudo systemctl restart mysql
+            sudo mysql -e "SHOW VARIABLES LIKE 'ssl_ca';"
+            ```
+        - id: script
+          desc: |
+            To configure a client certificate authority using a bash script:
+
+            1. Verify the authority certificate is present and parseable.
+            2. Set `ssl_ca`, replacing any existing value.
+            3. Restart MySQL.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            MYCNF="/etc/mysql/mysql.conf.d/mysqld.cnf"
+            CA_FILE="/etc/mysql/ssl/ca.pem"
+
+            if ! openssl x509 -in "$CA_FILE" -noout >/dev/null 2>&1; then
+              echo "authority certificate missing or unparseable: $CA_FILE" >&2
+              exit 1
+            fi
+
+            chown mysql:mysql "$CA_FILE"
+            chmod 0644 "$CA_FILE"
+
+            if grep -qE "^\s*ssl[-_]ca\b" "$MYCNF"; then
+              sed -i "s|^\s*ssl[-_]ca\b.*|ssl_ca = ${CA_FILE}|" "$MYCNF"
+            else
+              printf "ssl_ca = %s\n" "$CA_FILE" >>"$MYCNF"
+            fi
+
+            systemctl restart mysql
+            ```
+        - id: ansible
+          desc: |
+            To configure a client certificate authority using Ansible:
+
+            1. Place the authority certificate with ownership the server can read.
+            2. Set `ssl_ca` in the server option group.
+            3. Notify a handler that restarts the server.
+
+            ```yaml
+            - name: Configure the MySQL client certificate authority
+              hosts: mysql
+              become: true
+              vars:
+                mysql_conf: /etc/mysql/mysql.conf.d/mysqld.cnf
+                mysql_ssl_ca: /etc/mysql/ssl/ca.pem
+              tasks:
+                - name: Install the authority certificate
+                  ansible.builtin.copy:
+                    src: ca.pem
+                    dest: "{{ mysql_ssl_ca }}"
+                    owner: mysql
+                    group: mysql
+                    mode: "0644"
+
+                - name: Set ssl_ca
+                  community.general.ini_file:
+                    path: "{{ mysql_conf }}"
+                    section: mysqld
+                    option: ssl_ca
+                    value: "{{ mysql_ssl_ca }}"
+                    mode: "0640"
+                  notify: Restart mysql
+              handlers:
+                - name: Restart mysql
+                  ansible.builtin.service:
+                    name: mysql
+                    state: restarted
+            ```
+
+  - uid: mondoo-mysql-security-skip-grant-tables-disabled
+    title: Ensure skip_grant_tables is not enabled
+    impact: 95
+    mql: |
+      mysql.conf.skipGrantTables == false
+    docs:
+      desc: |
+        This check ensures that `skip_grant_tables` is not present in any option file. The option starts the server with the privilege system switched off entirely: every connection is accepted without a password and acts with full privileges on every schema.
+
+        The option exists to recover a server whose administrative password has been lost, and it is meant to be used briefly with networking disabled. Left in an option file, it survives every restart and turns the database into an unauthenticated service. Because the resource reports an option written with no value as enabled, a bare `skip_grant_tables` line is detected as well as an explicit `ON`.
+
+        **Why this matters**
+
+        - **Access control is switched off:** No password is required and no privilege is checked.
+        - **Recovery settings must not persist:** A recovery option left in place becomes a permanent bypass.
+        - **A bare flag counts:** The option is enabled by its presence alone, without a value.
+
+        **Risk mitigation**
+
+        - **Prevents unauthenticated full access:** Nobody reaching the server obtains administrative control without a credential.
+        - **Blocks credential exfiltration:** The account tables cannot be read and cracked offline.
+      audit: |
+        ### Audit via CLI
+
+        1. Confirm the privilege system is active on a running server:
+
+        ```bash
+        sudo mysql -e "SHOW VARIABLES LIKE 'skip_grant_tables';"
+        ```
+
+        2. Search every option file for the option, including include fragments:
+
+        ```bash
+        sudo grep -rniE "^\s*skip[-_]grant[-_]tables" /etc/mysql/ /etc/my.cnf /etc/my.cnf.d/ 2>/dev/null
+        ```
+
+        A passing result reports `OFF` and finds no matching line. A failing result reports `ON`, or finds the option written as a bare flag.
+      remediation:
+        - id: cli
+          desc: |
+            To restore the privilege system using the CLI:
+
+            1. Remove the option from every option file that declares it.
+            2. Restart MySQL so the privilege system is loaded.
+            3. Confirm the option is off and that authentication is required.
+
+            ```bash
+            sudo sed -i -E "/^\s*skip[-_]grant[-_]tables/d" /etc/mysql/mysql.conf.d/mysqld.cnf
+            sudo systemctl restart mysql
+            sudo mysql -e "SHOW VARIABLES LIKE 'skip_grant_tables';"
+            ```
+        - id: script
+          desc: |
+            To restore the privilege system using a bash script:
+
+            1. Remove the option from the main file and every include fragment.
+            2. Restart MySQL.
+            3. Fail if the option survives anywhere.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            for dir in /etc/mysql /etc/my.cnf.d; do
+              [ -d "$dir" ] || continue
+              find "$dir" -type f -name "*.cnf" -exec \
+                sed -i -E "/^[[:space:]]*skip[-_]grant[-_]tables/d" {} +
+            done
+
+            if [ -f /etc/my.cnf ]; then
+              sed -i -E "/^[[:space:]]*skip[-_]grant[-_]tables/d" /etc/my.cnf
+            fi
+
+            systemctl restart mysql
+
+            state=$(mysql -N -B -e "SELECT @@skip_grant_tables;")
+            if [ "$state" != "0" ] && [ "$state" != "OFF" ]; then
+              echo "privilege system still disabled" >&2
+              exit 1
+            fi
+            ```
+        - id: ansible
+          desc: |
+            To restore the privilege system using Ansible:
+
+            1. Remove the option from every option file.
+            2. Notify a handler that restarts the server.
+
+            ```yaml
+            - name: Restore the MySQL privilege system
+              hosts: mysql
+              become: true
+              tasks:
+                - name: Find option files
+                  ansible.builtin.find:
+                    paths:
+                      - /etc/mysql
+                      - /etc/my.cnf.d
+                    patterns: "*.cnf"
+                    recurse: true
+                  register: option_files
+                  failed_when: false
+
+                - name: Remove skip_grant_tables
+                  ansible.builtin.lineinfile:
+                    path: "{{ item.path }}"
+                    regexp: '^\s*skip[-_]grant[-_]tables'
+                    state: absent
+                  loop: "{{ option_files.files | default([]) }}"
+                  loop_control:
+                    label: "{{ item.path }}"
+                  notify: Restart mysql
+              handlers:
+                - name: Restart mysql
+                  ansible.builtin.service:
+                    name: mysql
+                    state: restarted
+            ```
+
+  - uid: mondoo-mysql-security-strong-authentication-plugin
+    title: Ensure mysql_native_password is not the default authentication plugin
+    impact: 80
+    mql: |
+      mysql.conf.defaultAuthenticationPlugin.downcase != "mysql_native_password"
+    docs:
+      desc: |
+        This check ensures that `default_authentication_plugin` is not set to `mysql_native_password`. That plugin stores a single unsalted SHA-1 based hash of the password, so identical passwords produce identical hashes across accounts and servers, and the stored value is directly replayable by a client that knows it.
+
+        MySQL 8.0 defaults to `caching_sha2_password`, which applies salting and iterated hashing. The check treats an unset option as compliant so a default installation is not failed, and fails only where the weaker plugin has been selected explicitly. On MySQL 8.0.27 and later this option is superseded by `authentication_policy`, which the resource also exposes.
+
+        **Why this matters**
+
+        - **Salted, iterated storage:** Identical passwords do not produce identical stored values.
+        - **Stolen hashes are not credentials:** A `caching_sha2_password` value cannot be replayed the way a native password hash can.
+        - **Stronger transport handling:** The modern plugin requires either TLS or an RSA key exchange to carry the password.
+
+        **Risk mitigation**
+
+        - **Defeats precomputation:** Rainbow tables built for unsalted SHA-1 hashes do not apply.
+        - **Blocks pass-the-hash:** Reading the account table no longer yields directly usable credentials.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective plugin selection:
+
+        ```bash
+        sudo mysql -e "SHOW VARIABLES WHERE Variable_name IN ('default_authentication_plugin','authentication_policy');"
+        ```
+
+        2. Identify accounts still using the weaker plugin:
+
+        ```bash
+        sudo mysql -e "SELECT user, host, plugin FROM mysql.user WHERE plugin = 'mysql_native_password';"
+        ```
+
+        A passing result reports `caching_sha2_password` or leaves the option unset. A failing result reports `mysql_native_password`, and the second query lists accounts that need their passwords reset after the change.
+      remediation:
+        - id: cli
+          desc: |
+            To select a stronger authentication plugin using the CLI:
+
+            1. Confirm every client library supports `caching_sha2_password`.
+            2. Set the option in the server option file and restart the server.
+            3. Migrate existing accounts, which requires setting each password again.
+
+            ```bash
+            sudo sed -i "s/^#*\s*default[-_]authentication[-_]plugin.*/default_authentication_plugin = caching_sha2_password/" \
+              /etc/mysql/mysql.conf.d/mysqld.cnf
+            sudo systemctl restart mysql
+            sudo mysql -e "ALTER USER 'app'@'10.0.0.%' IDENTIFIED WITH caching_sha2_password BY 'new-password';"
+            sudo mysql -e "SELECT user, host, plugin FROM mysql.user WHERE plugin = 'mysql_native_password';"
+            ```
+        - id: script
+          desc: |
+            To select a stronger authentication plugin using a bash script:
+
+            1. Set the option, replacing any existing value.
+            2. Restart MySQL.
+            3. Report the accounts that still need migrating rather than resetting passwords automatically.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            MYCNF="/etc/mysql/mysql.conf.d/mysqld.cnf"
+
+            if grep -qE "^\s*default[-_]authentication[-_]plugin" "$MYCNF"; then
+              sed -i "s|^\s*default[-_]authentication[-_]plugin.*|default_authentication_plugin = caching_sha2_password|" "$MYCNF"
+            else
+              printf "default_authentication_plugin = caching_sha2_password\n" >>"$MYCNF"
+            fi
+
+            systemctl restart mysql
+
+            echo "accounts still using mysql_native_password:"
+            mysql -N -B -e \
+              "SELECT concat(user,'@',host) FROM mysql.user WHERE plugin = 'mysql_native_password';"
+            ```
+        - id: ansible
+          desc: |
+            To select a stronger authentication plugin using Ansible:
+
+            1. Set the option in the server option group.
+            2. Notify a handler that restarts the server.
+            3. Report accounts that still need migrating.
+
+            ```yaml
+            - name: Select a stronger MySQL authentication plugin
+              hosts: mysql
+              become: true
+              vars:
+                mysql_conf: /etc/mysql/mysql.conf.d/mysqld.cnf
+              tasks:
+                - name: Set default_authentication_plugin
+                  community.general.ini_file:
+                    path: "{{ mysql_conf }}"
+                    section: mysqld
+                    option: default_authentication_plugin
+                    value: caching_sha2_password
+                    mode: "0640"
+                  notify: Restart mysql
+
+                - name: Flush handlers so the new plugin applies
+                  ansible.builtin.meta: flush_handlers
+
+                - name: Find accounts using the weaker plugin
+                  ansible.builtin.command:
+                    cmd: >-
+                      mysql -N -B -e "SELECT concat(user,'@',host) FROM mysql.user
+                      WHERE plugin = 'mysql_native_password';"
+                  changed_when: false
+                  register: legacy_accounts
+
+                - name: Report accounts needing migration
+                  ansible.builtin.debug:
+                    msg: "Reset the password for: {{ legacy_accounts.stdout_lines }}"
+                  when: legacy_accounts.stdout_lines | length > 0
+              handlers:
+                - name: Restart mysql
+                  ansible.builtin.service:
+                    name: mysql
+                    state: restarted
+            ```
+
+  - uid: mondoo-mysql-security-validate-password-plugin-loaded
+    title: Ensure the validate_password component is loaded at startup
+    impact: 70
+    mql: |
+      mysql.conf.pluginLoad.any(_ == /validate_password/)
+    docs:
+      desc: |
+        This check ensures that `validate_password` is named in `plugin_load` or `plugin_load_add` so password strength rules are enforced from the moment the server starts. Loading it at runtime instead leaves a window after every restart during which any password is accepted, and a runtime installation is easy to lose during a rebuild.
+
+        Without the component, MySQL accepts any password an account is created with, including single characters and the account name itself. The policy options in this group have no effect until the component is loaded.
+
+        **Why this matters**
+
+        - **Rules apply from startup:** There is no interval after a restart where weak passwords are accepted.
+        - **Survives host rebuilds:** The requirement lives in configuration rather than in server state.
+        - **Prerequisite for the policy options:** Length, policy class, and username checks depend on it.
+
+        **Risk mitigation**
+
+        - **Blocks trivial passwords:** Dictionary words and short strings are rejected at the point an account is created.
+        - **Closes the post-restart gap:** Accounts cannot be created with weak passwords immediately after a restart.
+      audit: |
+        ### Audit via CLI
+
+        1. Confirm the component is active:
+
+        ```bash
+        sudo mysql -e "SELECT * FROM mysql.component WHERE component_urn LIKE '%validate_password%';"
+        ```
+
+        2. Confirm the resulting policy variables are present:
+
+        ```bash
+        sudo mysql -e "SHOW VARIABLES LIKE 'validate_password%';"
+        ```
+
+        A passing result shows the component installed and the policy variables present. A failing result returns no rows, meaning no password rules are enforced.
+      remediation:
+        - id: cli
+          desc: |
+            To load password validation at startup using the CLI:
+
+            1. Install the component so it is registered with the server.
+            2. Add it to the option file so it loads on every start.
+            3. Restart MySQL and confirm the policy variables appear.
+
+            ```bash
+            sudo mysql -e "INSTALL COMPONENT 'file://component_validate_password';"
+            sudo tee -a /etc/mysql/mysql.conf.d/mysqld.cnf >/dev/null <<'EOF'
+            plugin_load_add = validate_password.so
+            EOF
+            sudo systemctl restart mysql
+            sudo mysql -e "SHOW VARIABLES LIKE 'validate_password%';"
+            ```
+        - id: script
+          desc: |
+            To load password validation at startup using a bash script:
+
+            1. Install the component when it is not already registered.
+            2. Add the load option when it is absent.
+            3. Restart MySQL and confirm the policy variables are present.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            MYCNF="/etc/mysql/mysql.conf.d/mysqld.cnf"
+
+            installed=$(mysql -N -B -e \
+              "SELECT count(*) FROM mysql.component WHERE component_urn LIKE '%validate_password%';")
+
+            if [ "$installed" -eq 0 ]; then
+              mysql -e "INSTALL COMPONENT 'file://component_validate_password';"
+            fi
+
+            if ! grep -qE "^\s*plugin[-_]load([-_]add)?\s*=.*validate_password" "$MYCNF"; then
+              printf "plugin_load_add = validate_password.so\n" >>"$MYCNF"
+            fi
+
+            systemctl restart mysql
+            mysql -e "SHOW VARIABLES LIKE 'validate_password%';"
+            ```
+        - id: ansible
+          desc: |
+            To load password validation at startup using Ansible:
+
+            1. Install the component.
+            2. Add the load option to the server option group.
+            3. Notify a handler that restarts the server.
+
+            ```yaml
+            - name: Load MySQL password validation at startup
+              hosts: mysql
+              become: true
+              vars:
+                mysql_conf: /etc/mysql/mysql.conf.d/mysqld.cnf
+              tasks:
+                - name: Install the validate_password component
+                  ansible.builtin.command:
+                    cmd: mysql -e "INSTALL COMPONENT 'file://component_validate_password';"
+                  register: install_component
+                  changed_when: install_component.rc == 0
+                  failed_when: >-
+                    install_component.rc != 0 and
+                    'already exists' not in install_component.stderr
+
+                - name: Load the component on every start
+                  community.general.ini_file:
+                    path: "{{ mysql_conf }}"
+                    section: mysqld
+                    option: plugin_load_add
+                    value: validate_password.so
+                    mode: "0640"
+                  notify: Restart mysql
+              handlers:
+                - name: Restart mysql
+                  ansible.builtin.service:
+                    name: mysql
+                    state: restarted
+            ```
+
+  - uid: mondoo-mysql-security-validate-password-policy-strong
+    title: Ensure validate_password.policy is MEDIUM or STRONG
+    impact: 70
+    mql: |
+      mysql.conf.validatePasswordPolicy.downcase == "medium" || mysql.conf.validatePasswordPolicy.downcase == "strong"
+    docs:
+      desc: |
+        This check ensures that `validate_password.policy` is set to `MEDIUM` or `STRONG`. The `LOW` setting enforces length alone, so a password of repeated lowercase letters satisfies it. `MEDIUM` additionally requires numeric, mixed case, and special characters, and `STRONG` adds a dictionary check.
+
+        Composition requirements matter most where passwords are chosen by people or generated by scripts that were written before any policy existed. Service account credentials generated at high entropy already satisfy `STRONG` without effort.
+
+        **Why this matters**
+
+        - **Raises guessing cost:** A larger character set multiplies the search space for any given length.
+        - **Rejects patterned passwords:** Sequential and repeated character passwords fail composition rules.
+        - **Dictionary screening at STRONG:** Known-word passwords are rejected outright.
+
+        **Risk mitigation**
+
+        - **Defeats dictionary attacks:** Common words and their simple mutations are rejected.
+        - **Slows offline cracking:** A stolen hash takes substantially longer to recover.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective policy class:
+
+        ```bash
+        sudo mysql -e "SHOW VARIABLES LIKE 'validate_password.policy';"
+        ```
+
+        2. Confirm the policy is actually enforced by testing a weak password:
+
+        ```bash
+        sudo mysql -e "SELECT VALIDATE_PASSWORD_STRENGTH('password');"
+        ```
+
+        A passing result reports `MEDIUM` or `STRONG`. A failing result reports `LOW`, or returns no row because the component is not loaded.
+      remediation:
+        - id: cli
+          desc: |
+            To strengthen the password policy class using the CLI:
+
+            1. Set `validate_password.policy` in the server option file.
+            2. Restart MySQL.
+            3. Confirm the effective value.
+
+            ```bash
+            sudo sed -i "s/^#*\s*validate_password.policy.*/validate_password.policy = STRONG/" \
+              /etc/mysql/mysql.conf.d/mysqld.cnf
+            sudo systemctl restart mysql
+            sudo mysql -e "SHOW VARIABLES LIKE 'validate_password.policy';"
+            ```
+        - id: script
+          desc: |
+            To strengthen the password policy class using a bash script:
+
+            1. Set the option, replacing any existing value.
+            2. Restart MySQL and report the effective value.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            MYCNF="/etc/mysql/mysql.conf.d/mysqld.cnf"
+            POLICY="STRONG"
+
+            if grep -qE "^\s*validate_password\.policy" "$MYCNF"; then
+              sed -i "s|^\s*validate_password\.policy.*|validate_password.policy = ${POLICY}|" "$MYCNF"
+            else
+              printf "validate_password.policy = %s\n" "$POLICY" >>"$MYCNF"
+            fi
+
+            systemctl restart mysql
+            mysql -e "SHOW VARIABLES LIKE 'validate_password.policy';"
+            ```
+        - id: ansible
+          desc: |
+            To strengthen the password policy class using Ansible:
+
+            1. Set `validate_password.policy` in the server option group.
+            2. Notify a handler that restarts the server.
+
+            ```yaml
+            - name: Strengthen the MySQL password policy class
+              hosts: mysql
+              become: true
+              vars:
+                mysql_conf: /etc/mysql/mysql.conf.d/mysqld.cnf
+                mysql_password_policy: STRONG
+              tasks:
+                - name: Set validate_password.policy
+                  community.general.ini_file:
+                    path: "{{ mysql_conf }}"
+                    section: mysqld
+                    option: validate_password.policy
+                    value: "{{ mysql_password_policy }}"
+                    mode: "0640"
+                  notify: Restart mysql
+              handlers:
+                - name: Restart mysql
+                  ansible.builtin.service:
+                    name: mysql
+                    state: restarted
+            ```
+
+  - uid: mondoo-mysql-security-validate-password-length-sufficient
+    title: Ensure validate_password.length is at least 14 characters
+    impact: 65
+    mql: |
+      mysql.conf.validatePasswordLength >= 14
+    docs:
+      desc: |
+        This check ensures that `validate_password.length` requires at least 14 characters. MySQL defaults this to 8, which is short enough that a stolen hash can be recovered by exhaustive search on commodity hardware.
+
+        Length contributes more to resistance against offline cracking than composition rules do, because each additional character multiplies the search space. The resource reports 0 when the option is unset, so an unset value fails this check and prompts an explicit minimum to be configured.
+
+        **Why this matters**
+
+        - **Exponential cost growth:** Each additional character multiplies the work an attacker must do.
+        - **Outlasts hardware gains:** A 14 character minimum remains defensible as cracking speeds increase.
+        - **Explicit rather than inherited:** The minimum is visible in configuration rather than left at a short default.
+
+        **Risk mitigation**
+
+        - **Defeats exhaustive search:** Full keyspace attacks against a stolen hash become impractical.
+        - **Limits credential stuffing success:** Longer passwords are less likely to appear in breach corpora.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective minimum length:
+
+        ```bash
+        sudo mysql -e "SHOW VARIABLES LIKE 'validate_password.length';"
+        ```
+
+        2. Confirm the minimum is enforced:
+
+        ```bash
+        sudo mysql -e "SELECT VALIDATE_PASSWORD_STRENGTH('Short1!');"
+        ```
+
+        A passing result reports 14 or greater. A failing result reports a smaller number such as 8, or returns no row because the component is not loaded.
+      remediation:
+        - id: cli
+          desc: |
+            To raise the minimum password length using the CLI:
+
+            1. Set `validate_password.length` in the server option file.
+            2. Restart MySQL.
+            3. Confirm the effective value.
+
+            ```bash
+            sudo sed -i "s/^#*\s*validate_password.length.*/validate_password.length = 14/" \
+              /etc/mysql/mysql.conf.d/mysqld.cnf
+            sudo systemctl restart mysql
+            sudo mysql -e "SHOW VARIABLES LIKE 'validate_password.length';"
+            ```
+        - id: script
+          desc: |
+            To raise the minimum password length using a bash script:
+
+            1. Set the option, replacing any existing value.
+            2. Restart MySQL and report the effective value.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            MYCNF="/etc/mysql/mysql.conf.d/mysqld.cnf"
+            MIN_LENGTH=14
+
+            if grep -qE "^\s*validate_password\.length" "$MYCNF"; then
+              sed -i "s|^\s*validate_password\.length.*|validate_password.length = ${MIN_LENGTH}|" "$MYCNF"
+            else
+              printf "validate_password.length = %s\n" "$MIN_LENGTH" >>"$MYCNF"
+            fi
+
+            systemctl restart mysql
+            mysql -e "SHOW VARIABLES LIKE 'validate_password.length';"
+            ```
+        - id: ansible
+          desc: |
+            To raise the minimum password length using Ansible:
+
+            1. Set `validate_password.length` in the server option group.
+            2. Notify a handler that restarts the server.
+
+            ```yaml
+            - name: Raise the MySQL minimum password length
+              hosts: mysql
+              become: true
+              vars:
+                mysql_conf: /etc/mysql/mysql.conf.d/mysqld.cnf
+                mysql_password_min_length: 14
+              tasks:
+                - name: Set validate_password.length
+                  community.general.ini_file:
+                    path: "{{ mysql_conf }}"
+                    section: mysqld
+                    option: validate_password.length
+                    value: "{{ mysql_password_min_length }}"
+                    mode: "0640"
+                  notify: Restart mysql
+              handlers:
+                - name: Restart mysql
+                  ansible.builtin.service:
+                    name: mysql
+                    state: restarted
+            ```
+
+  - uid: mondoo-mysql-security-validate-password-checks-user-name
+    title: Ensure validate_password.check_user_name is enabled
+    impact: 60
+    mql: |
+      mysql.conf.validatePasswordCheckUserName == true
+    docs:
+      desc: |
+        This check ensures that `validate_password.check_user_name` is enabled so a password cannot match the account name it belongs to, forwards or reversed. Account names are the first thing an attacker tries, and they are frequently predictable from the application or service the account serves.
+
+        The comparison is made against the account name at the time the password is set, which catches the common pattern of naming a service account and giving it a password derived from that name.
+
+        **Why this matters**
+
+        - **Removes the first guess:** The most obvious candidate password is rejected outright.
+        - **Covers the reversed form:** A trivially transformed account name is rejected as well.
+        - **Applies at creation time:** Weak choices never enter the account table.
+
+        **Risk mitigation**
+
+        - **Defeats trivial guessing:** Attempts using the account name fail immediately.
+        - **Blocks predictable service credentials:** A password derived from a service account name is rejected.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective value:
+
+        ```bash
+        sudo mysql -e "SHOW VARIABLES LIKE 'validate_password.check_user_name';"
+        ```
+
+        2. Confirm the rule is enforced by testing an account name as a password:
+
+        ```bash
+        sudo mysql -e "SELECT VALIDATE_PASSWORD_STRENGTH('appuser');"
+        ```
+
+        A passing result reports `ON`. A failing result reports `OFF`, or returns no row because the component is not loaded.
+      remediation:
+        - id: cli
+          desc: |
+            To reject account names as passwords using the CLI:
+
+            1. Set `validate_password.check_user_name` in the server option file.
+            2. Restart MySQL.
+            3. Confirm the effective value.
+
+            ```bash
+            sudo sed -i "s/^#*\s*validate_password.check_user_name.*/validate_password.check_user_name = ON/" \
+              /etc/mysql/mysql.conf.d/mysqld.cnf
+            sudo systemctl restart mysql
+            sudo mysql -e "SHOW VARIABLES LIKE 'validate_password.check_user_name';"
+            ```
+        - id: script
+          desc: |
+            To reject account names as passwords using a bash script:
+
+            1. Set the option, replacing any existing value.
+            2. Restart MySQL and report the effective value.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            MYCNF="/etc/mysql/mysql.conf.d/mysqld.cnf"
+
+            if grep -qE "^\s*validate_password\.check_user_name" "$MYCNF"; then
+              sed -i "s|^\s*validate_password\.check_user_name.*|validate_password.check_user_name = ON|" "$MYCNF"
+            else
+              printf "validate_password.check_user_name = ON\n" >>"$MYCNF"
+            fi
+
+            systemctl restart mysql
+            mysql -e "SHOW VARIABLES LIKE 'validate_password.check_user_name';"
+            ```
+        - id: ansible
+          desc: |
+            To reject account names as passwords using Ansible:
+
+            1. Set `validate_password.check_user_name` in the server option group.
+            2. Notify a handler that restarts the server.
+
+            ```yaml
+            - name: Reject MySQL account names used as passwords
+              hosts: mysql
+              become: true
+              vars:
+                mysql_conf: /etc/mysql/mysql.conf.d/mysqld.cnf
+              tasks:
+                - name: Set validate_password.check_user_name
+                  community.general.ini_file:
+                    path: "{{ mysql_conf }}"
+                    section: mysqld
+                    option: validate_password.check_user_name
+                    value: "ON"
+                    mode: "0640"
+                  notify: Restart mysql
+              handlers:
+                - name: Restart mysql
+                  ansible.builtin.service:
+                    name: mysql
+                    state: restarted
+            ```
+
+  - uid: mondoo-mysql-security-password-expiry-configured
+    title: Ensure default_password_lifetime enforces password rotation
+    impact: 55
+    mql: |
+      mysql.conf.defaultPasswordLifetime > 0
+    docs:
+      desc: |
+        This check ensures that `default_password_lifetime` sets a rotation interval in days. MySQL 8.0 defaults to 0, which means passwords never expire, so a credential exposed years ago remains valid indefinitely unless someone notices and changes it.
+
+        A finite lifetime bounds how long a leaked credential stays useful. Where an account genuinely should not rotate, such as one authenticating with a certificate or a socket plugin, the exception belongs on that account with `PASSWORD EXPIRE NEVER` rather than on the whole server.
+
+        **Why this matters**
+
+        - **Bounds credential validity:** An exposed password stops working after a known interval.
+        - **Forces periodic review:** Rotation surfaces accounts nobody owns any more.
+        - **Server-wide default with per-account exceptions:** Automation accounts can opt out deliberately.
+
+        **Risk mitigation**
+
+        - **Limits the value of old leaks:** Credentials from a historic breach expire.
+        - **Shortens undetected access:** An attacker holding a password loses it at the next rotation.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective lifetime:
+
+        ```bash
+        sudo mysql -e "SHOW VARIABLES LIKE 'default_password_lifetime';"
+        ```
+
+        2. Identify accounts that override the default and never expire:
+
+        ```bash
+        sudo mysql -e "SELECT user, host, password_lifetime, password_last_changed FROM mysql.user WHERE password_lifetime = 0;"
+        ```
+
+        A passing result reports a positive number of days. A failing result reports 0, meaning no password on the server ever expires.
+      remediation:
+        - id: cli
+          desc: |
+            To enforce password rotation using the CLI:
+
+            1. Set `default_password_lifetime` in the server option file.
+            2. Mark accounts that must not rotate so they are exempt deliberately.
+            3. Restart MySQL and confirm the effective value.
+
+            ```bash
+            sudo sed -i "s/^#*\s*default[-_]password[-_]lifetime.*/default_password_lifetime = 90/" \
+              /etc/mysql/mysql.conf.d/mysqld.cnf
+            sudo mysql -e "ALTER USER 'replica'@'10.0.0.%' PASSWORD EXPIRE NEVER;"
+            sudo systemctl restart mysql
+            sudo mysql -e "SHOW VARIABLES LIKE 'default_password_lifetime';"
+            ```
+        - id: script
+          desc: |
+            To enforce password rotation using a bash script:
+
+            1. Set the option, replacing any existing value.
+            2. Restart MySQL.
+            3. Report accounts whose passwords are already older than the new interval.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            MYCNF="/etc/mysql/mysql.conf.d/mysqld.cnf"
+            LIFETIME=90
+
+            if grep -qE "^\s*default[-_]password[-_]lifetime" "$MYCNF"; then
+              sed -i "s|^\s*default[-_]password[-_]lifetime.*|default_password_lifetime = ${LIFETIME}|" "$MYCNF"
+            else
+              printf "default_password_lifetime = %s\n" "$LIFETIME" >>"$MYCNF"
+            fi
+
+            systemctl restart mysql
+
+            echo "accounts whose password is already older than ${LIFETIME} days:"
+            mysql -N -B -e "SELECT concat(user,'@',host) FROM mysql.user
+              WHERE password_last_changed < now() - interval ${LIFETIME} day;"
+            ```
+        - id: ansible
+          desc: |
+            To enforce password rotation using Ansible:
+
+            1. Set `default_password_lifetime` in the server option group.
+            2. Notify a handler that restarts the server.
+
+            ```yaml
+            - name: Enforce MySQL password rotation
+              hosts: mysql
+              become: true
+              vars:
+                mysql_conf: /etc/mysql/mysql.conf.d/mysqld.cnf
+                mysql_password_lifetime: 90
+              tasks:
+                - name: Set default_password_lifetime
+                  community.general.ini_file:
+                    path: "{{ mysql_conf }}"
+                    section: mysqld
+                    option: default_password_lifetime
+                    value: "{{ mysql_password_lifetime }}"
+                    mode: "0640"
+                  notify: Restart mysql
+              handlers:
+                - name: Restart mysql
+                  ansible.builtin.service:
+                    name: mysql
+                    state: restarted
+            ```
+
+  - uid: mondoo-mysql-security-password-reuse-restricted
+    title: Ensure password reuse is restricted by history or interval
+    impact: 55
+    mql: |
+      mysql.conf.passwordHistory > 0 || mysql.conf.passwordReuseInterval > 0
+    docs:
+      desc: |
+        This check ensures that either `password_history` or `password_reuse_interval` is set, so a rotation cannot simply restore a previous password. Both default to 0, which means an account prompted to change its password can set it back to the value it just replaced.
+
+        The two options address the same weakness from different angles. `password_history` blocks a number of most recent passwords, and `password_reuse_interval` blocks any password used within a number of days. Either satisfies this check, and setting both is stronger.
+
+        **Why this matters**
+
+        - **Rotation becomes meaningful:** A forced change produces a genuinely new credential.
+        - **Two complementary controls:** Count-based and time-based limits cover different rotation patterns.
+        - **Defeats alternation:** Accounts cannot cycle between two familiar passwords.
+
+        **Risk mitigation**
+
+        - **Prevents restoring a leaked password:** A credential known to an attacker cannot be reinstated.
+        - **Makes expiry effective:** Rotation cannot be satisfied without changing the secret.
+      audit: |
+        ### Audit via CLI
+
+        1. Read both effective values:
+
+        ```bash
+        sudo mysql -e "SHOW VARIABLES WHERE Variable_name IN ('password_history','password_reuse_interval');"
+        ```
+
+        2. Confirm history is being recorded:
+
+        ```bash
+        sudo mysql -e "SELECT user, host, count(*) FROM mysql.password_history GROUP BY user, host;"
+        ```
+
+        A passing result reports a positive value for at least one option. A failing result reports 0 for both, meaning any previous password can be restored.
+      remediation:
+        - id: cli
+          desc: |
+            To restrict password reuse using the CLI:
+
+            1. Set both options in the server option file.
+            2. Restart MySQL.
+            3. Confirm the effective values.
+
+            ```bash
+            sudo tee -a /etc/mysql/mysql.conf.d/mysqld.cnf >/dev/null <<'EOF'
+            password_history = 5
+            password_reuse_interval = 365
+            EOF
+            sudo systemctl restart mysql
+            sudo mysql -e "SHOW VARIABLES WHERE Variable_name IN ('password_history','password_reuse_interval');"
+            ```
+        - id: script
+          desc: |
+            To restrict password reuse using a bash script:
+
+            1. Set both options, replacing any existing values.
+            2. Restart MySQL and report the effective values.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            MYCNF="/etc/mysql/mysql.conf.d/mysqld.cnf"
+
+            set_option() {
+              local key="$1" value="$2"
+              if grep -qE "^\s*${key}\b" "$MYCNF"; then
+                sed -i "s|^\s*${key}\b.*|${key} = ${value}|" "$MYCNF"
+              else
+                printf "%s = %s\n" "$key" "$value" >>"$MYCNF"
+              fi
+            }
+
+            set_option password_history 5
+            set_option password_reuse_interval 365
+
+            systemctl restart mysql
+            mysql -e "SHOW VARIABLES WHERE Variable_name IN ('password_history','password_reuse_interval');"
+            ```
+        - id: ansible
+          desc: |
+            To restrict password reuse using Ansible:
+
+            1. Set both options in the server option group.
+            2. Notify a handler that restarts the server.
+
+            ```yaml
+            - name: Restrict MySQL password reuse
+              hosts: mysql
+              become: true
+              vars:
+                mysql_conf: /etc/mysql/mysql.conf.d/mysqld.cnf
+              tasks:
+                - name: Set the reuse options
+                  community.general.ini_file:
+                    path: "{{ mysql_conf }}"
+                    section: mysqld
+                    option: "{{ item.option }}"
+                    value: "{{ item.value }}"
+                    mode: "0640"
+                  loop:
+                    - { option: "password_history", value: "5" }
+                    - { option: "password_reuse_interval", value: "365" }
+                  notify: Restart mysql
+              handlers:
+                - name: Restart mysql
+                  ansible.builtin.service:
+                    name: mysql
+                    state: restarted
+            ```
+
+  - uid: mondoo-mysql-security-password-require-current-enabled
+    title: Ensure password_require_current is enabled
+    impact: 55
+    mql: |
+      mysql.conf.passwordRequireCurrent == true
+    docs:
+      desc: |
+        This check ensures that `password_require_current` is enabled so an account must supply its existing password to set a new one. The option defaults to off, which means a session that has already authenticated can replace the account password without proving it knows the current value.
+
+        The distinction matters when a session is obtained without the password itself, for example through a hijacked application connection or an unattended client. Requiring the current password stops such a session from locking the legitimate owner out.
+
+        **Why this matters**
+
+        - **Proves ongoing possession:** Changing a credential requires knowing it, not merely holding a session.
+        - **Protects against session hijacking:** A stolen connection cannot be converted into permanent ownership.
+        - **Preserves owner access:** An attacker cannot silently lock out the legitimate account holder.
+
+        **Risk mitigation**
+
+        - **Blocks account takeover from a hijacked session:** The password cannot be rotated without the current one.
+        - **Limits damage from unattended clients:** An open client session cannot be used to seize the account.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective value:
+
+        ```bash
+        sudo mysql -e "SHOW VARIABLES LIKE 'password_require_current';"
+        ```
+
+        2. Identify accounts that override the server default:
+
+        ```bash
+        sudo mysql -e "SELECT user, host, Password_require_current FROM mysql.user WHERE Password_require_current <> 'N';"
+        ```
+
+        A passing result reports `ON`. A failing result reports `OFF`, meaning any authenticated session can replace its own password.
+      remediation:
+        - id: cli
+          desc: |
+            To require the current password for changes using the CLI:
+
+            1. Set `password_require_current` in the server option file.
+            2. Restart MySQL.
+            3. Confirm the effective value.
+
+            ```bash
+            sudo sed -i "s/^#*\s*password[-_]require[-_]current.*/password_require_current = ON/" \
+              /etc/mysql/mysql.conf.d/mysqld.cnf
+            sudo systemctl restart mysql
+            sudo mysql -e "SHOW VARIABLES LIKE 'password_require_current';"
+            ```
+        - id: script
+          desc: |
+            To require the current password for changes using a bash script:
+
+            1. Set the option, replacing any existing value.
+            2. Restart MySQL and report the effective value.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            MYCNF="/etc/mysql/mysql.conf.d/mysqld.cnf"
+
+            if grep -qE "^\s*password[-_]require[-_]current" "$MYCNF"; then
+              sed -i "s|^\s*password[-_]require[-_]current.*|password_require_current = ON|" "$MYCNF"
+            else
+              printf "password_require_current = ON\n" >>"$MYCNF"
+            fi
+
+            systemctl restart mysql
+            mysql -e "SHOW VARIABLES LIKE 'password_require_current';"
+            ```
+        - id: ansible
+          desc: |
+            To require the current password for changes using Ansible:
+
+            1. Set `password_require_current` in the server option group.
+            2. Notify a handler that restarts the server.
+
+            ```yaml
+            - name: Require the current MySQL password for changes
+              hosts: mysql
+              become: true
+              vars:
+                mysql_conf: /etc/mysql/mysql.conf.d/mysqld.cnf
+              tasks:
+                - name: Set password_require_current
+                  community.general.ini_file:
+                    path: "{{ mysql_conf }}"
+                    section: mysqld
+                    option: password_require_current
+                    value: "ON"
+                    mode: "0640"
+                  notify: Restart mysql
+              handlers:
+                - name: Restart mysql
+                  ansible.builtin.service:
+                    name: mysql
+                    state: restarted
+            ```
+
+  - uid: mondoo-mysql-security-runs-as-dedicated-account
+    title: Ensure the server does not run as the root account
+    impact: 85
+    mql: |
+      mysql.conf.serverOptions["user"] != empty && mysql.conf.serverOptions["user"].downcase != "root"
+    docs:
+      desc: |
+        This check ensures that the `user` option names a dedicated unprivileged account rather than `root`. The account named here is the identity the server drops to after binding its port, and it is the identity every file operation the server performs runs under.
+
+        A server running as `root` turns any file write primitive into full host compromise. MySQL exposes several such primitives to sufficiently privileged accounts, including `SELECT ... INTO OUTFILE` and user-defined function libraries, so the account boundary is what keeps a database compromise from becoming a host compromise. The check also fails when the option is unset, because the server then keeps the identity of whichever account started it.
+
+        **Why this matters**
+
+        - **Blast radius containment:** File writes are limited to what the database account can reach.
+        - **Data directory ownership is meaningful:** Files are owned by an account that owns nothing else.
+        - **Explicit rather than inherited:** Naming the account means the identity does not depend on how the service was started.
+
+        **Risk mitigation**
+
+        - **Prevents privilege escalation to the host:** A file write primitive cannot overwrite system files or authorized keys.
+        - **Limits damage from a UDF loaded by an attacker:** Library code executes without host administrative rights.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the account the server is configured to use:
+
+        ```bash
+        sudo grep -rniE "^\s*user\s*=" /etc/mysql/ /etc/my.cnf 2>/dev/null
+        ```
+
+        2. Confirm the identity the running process actually holds:
+
+        ```bash
+        ps -o user= -C mysqld
+        ```
+
+        3. Confirm the data directory is owned by that account:
+
+        ```bash
+        sudo ls -ld "$(sudo mysql -N -B -e 'SELECT @@datadir;')"
+        ```
+
+        A passing result names a dedicated account such as `mysql`, and the process runs as that account. A failing result names `root`, leaves the option unset, or shows the process running as `root`.
+      remediation:
+        - id: cli
+          desc: |
+            To run the server as a dedicated account using the CLI:
+
+            1. Create the account when it does not exist.
+            2. Transfer ownership of the data directory and log directory to it.
+            3. Set the `user` option, restart the server, and confirm the running identity.
+
+            ```bash
+            sudo useradd --system --no-create-home --shell /usr/sbin/nologin mysql || true
+            sudo chown -R mysql:mysql /var/lib/mysql /var/log/mysql
+            sudo sed -i "s/^#*\s*user\s*=.*/user = mysql/" /etc/mysql/mysql.conf.d/mysqld.cnf
+            sudo systemctl restart mysql
+            ps -o user= -C mysqld
+            ```
+        - id: script
+          desc: |
+            To run the server as a dedicated account using a bash script:
+
+            1. Create the account when it is missing.
+            2. Transfer ownership of the data directory reported by the server.
+            3. Set the option, restart, and fail if the process still runs as root.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            MYCNF="/etc/mysql/mysql.conf.d/mysqld.cnf"
+            ACCOUNT="mysql"
+
+            if ! id "$ACCOUNT" >/dev/null 2>&1; then
+              useradd --system --no-create-home --shell /usr/sbin/nologin "$ACCOUNT"
+            fi
+
+            datadir=$(mysql -N -B -e "SELECT @@datadir;")
+            chown -R "${ACCOUNT}:${ACCOUNT}" "$datadir"
+
+            if grep -qE "^\s*user\s*=" "$MYCNF"; then
+              sed -i "s|^\s*user\s*=.*|user = ${ACCOUNT}|" "$MYCNF"
+            else
+              printf "user = %s\n" "$ACCOUNT" >>"$MYCNF"
+            fi
+
+            systemctl restart mysql
+
+            running_as=$(ps -o user= -C mysqld | tr -d ' ' | head -n1)
+            if [ "$running_as" = "root" ]; then
+              echo "mysqld is still running as root" >&2
+              exit 1
+            fi
+            ```
+        - id: ansible
+          desc: |
+            To run the server as a dedicated account using Ansible:
+
+            1. Create the dedicated account.
+            2. Transfer ownership of the data directory.
+            3. Set the `user` option and restart the server.
+
+            ```yaml
+            - name: Run MySQL as a dedicated account
+              hosts: mysql
+              become: true
+              vars:
+                mysql_conf: /etc/mysql/mysql.conf.d/mysqld.cnf
+                mysql_account: mysql
+                mysql_datadir: /var/lib/mysql
+              tasks:
+                - name: Create the dedicated account
+                  ansible.builtin.user:
+                    name: "{{ mysql_account }}"
+                    system: true
+                    create_home: false
+                    shell: /usr/sbin/nologin
+
+                - name: Own the data directory
+                  ansible.builtin.file:
+                    path: "{{ mysql_datadir }}"
+                    owner: "{{ mysql_account }}"
+                    group: "{{ mysql_account }}"
+                    recurse: true
+
+                - name: Set the user option
+                  community.general.ini_file:
+                    path: "{{ mysql_conf }}"
+                    section: mysqld
+                    option: user
+                    value: "{{ mysql_account }}"
+                    mode: "0640"
+                  notify: Restart mysql
+              handlers:
+                - name: Restart mysql
+                  ansible.builtin.service:
+                    name: mysql
+                    state: restarted
+            ```
+
+  - uid: mondoo-mysql-security-local-infile-disabled
+    title: Ensure local_infile is disabled
+    impact: 80
+    mql: |
+      mysql.conf.localInfile == false
+    docs:
+      desc: |
+        This check ensures that `local_infile` is disabled so the server does not accept `LOAD DATA LOCAL INFILE` statements. That statement makes the server ask the connecting client to send the contents of a file from the client's own filesystem.
+
+        The direction of that transfer is what makes the option dangerous. A malicious or compromised server, or an attacker who can inject a statement into an application's connection, can request any file the client process can read, including application configuration holding credentials. The read happens on the client, so no privilege on the server is required.
+
+        **Why this matters**
+
+        - **Clients stop honoring file requests:** The server never asks a client to upload local files.
+        - **No server privilege is needed to abuse it:** Disabling the feature is the control, not restricting grants.
+        - **Bulk loading has safer alternatives:** Server-side `LOAD DATA INFILE` confined by `secure_file_priv` covers legitimate use.
+
+        **Risk mitigation**
+
+        - **Prevents client-side file disclosure:** An injected statement cannot exfiltrate files from application hosts.
+        - **Blocks a credential theft path:** Application configuration files cannot be read through the database connection.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective value:
+
+        ```bash
+        sudo mysql -e "SHOW VARIABLES LIKE 'local_infile';"
+        ```
+
+        2. Confirm the statement is refused:
+
+        ```bash
+        sudo mysql -e "LOAD DATA LOCAL INFILE '/etc/hostname' INTO TABLE mysql.help_topic;" 2>&1 | head -n 2
+        ```
+
+        A passing result reports `OFF` and the statement is rejected. A failing result reports `ON`.
+      remediation:
+        - id: cli
+          desc: |
+            To disable local file loading using the CLI:
+
+            1. Confirm no bulk load job depends on the client-side form.
+            2. Set `local_infile` in the server option file.
+            3. Restart MySQL and confirm the effective value.
+
+            ```bash
+            sudo sed -i "s/^#*\s*local[-_]infile.*/local_infile = OFF/" \
+              /etc/mysql/mysql.conf.d/mysqld.cnf
+            sudo systemctl restart mysql
+            sudo mysql -e "SHOW VARIABLES LIKE 'local_infile';"
+            ```
+        - id: script
+          desc: |
+            To disable local file loading using a bash script:
+
+            1. Set the option, replacing any existing value.
+            2. Restart MySQL and report the effective value.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            MYCNF="/etc/mysql/mysql.conf.d/mysqld.cnf"
+
+            if grep -qE "^\s*local[-_]infile" "$MYCNF"; then
+              sed -i "s|^\s*local[-_]infile.*|local_infile = OFF|" "$MYCNF"
+            else
+              printf "local_infile = OFF\n" >>"$MYCNF"
+            fi
+
+            systemctl restart mysql
+            mysql -e "SHOW VARIABLES LIKE 'local_infile';"
+            ```
+        - id: ansible
+          desc: |
+            To disable local file loading using Ansible:
+
+            1. Set `local_infile` in the server option group.
+            2. Notify a handler that restarts the server.
+
+            ```yaml
+            - name: Disable MySQL client-side file loading
+              hosts: mysql
+              become: true
+              vars:
+                mysql_conf: /etc/mysql/mysql.conf.d/mysqld.cnf
+              tasks:
+                - name: Set local_infile
+                  community.general.ini_file:
+                    path: "{{ mysql_conf }}"
+                    section: mysqld
+                    option: local_infile
+                    value: "OFF"
+                    mode: "0640"
+                  notify: Restart mysql
+              handlers:
+                - name: Restart mysql
+                  ansible.builtin.service:
+                    name: mysql
+                    state: restarted
+            ```
+
+  - uid: mondoo-mysql-security-secure-file-priv-restricted
+    title: Ensure secure_file_priv confines server-side file access
+    impact: 80
+    mql: |
+      mysql.conf.secureFilePriv != empty
+    docs:
+      desc: |
+        This check ensures that `secure_file_priv` is not set to an empty value. An empty value removes the restriction entirely, which lets `LOAD DATA INFILE` read and `SELECT ... INTO OUTFILE` write anywhere on the filesystem the server account can reach.
+
+        Set to a directory, the option confines both statements to that directory. Set to `NULL`, it disables the statements outright, which is the strongest setting where no bulk file exchange is needed. Either satisfies this check; only an empty value fails it.
+
+        **Why this matters**
+
+        - **File access is confined:** Reads and writes are limited to a directory you designate.
+        - **Sensitive files are unreachable:** Server configuration and key material fall outside the permitted path.
+        - **NULL is available:** Servers with no bulk load requirement can disable the statements completely.
+
+        **Risk mitigation**
+
+        - **Blocks arbitrary file read:** An attacker with `FILE` privilege cannot read files outside the directory.
+        - **Prevents arbitrary file write:** Writing a web shell or a cron entry through the database is not possible.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective value:
+
+        ```bash
+        sudo mysql -e "SHOW VARIABLES LIKE 'secure_file_priv';"
+        ```
+
+        2. Identify accounts holding the privilege the option constrains:
+
+        ```bash
+        sudo mysql -e "SELECT user, host FROM mysql.user WHERE File_priv = 'Y';"
+        ```
+
+        A passing result reports a directory path or `NULL`. A failing result reports an empty value, meaning file statements are unrestricted.
+      remediation:
+        - id: cli
+          desc: |
+            To confine server-side file access using the CLI:
+
+            1. Create a directory owned by the server account for file exchange, or choose `NULL` to disable the statements.
+            2. Set `secure_file_priv` in the server option file.
+            3. Restart MySQL and confirm the effective value.
+
+            ```bash
+            sudo install -d -o mysql -g mysql -m 0750 /var/lib/mysql-files
+            sudo sed -i "s|^#*\s*secure[-_]file[-_]priv.*|secure_file_priv = /var/lib/mysql-files|" \
+              /etc/mysql/mysql.conf.d/mysqld.cnf
+            sudo systemctl restart mysql
+            sudo mysql -e "SHOW VARIABLES LIKE 'secure_file_priv';"
+            ```
+        - id: script
+          desc: |
+            To confine server-side file access using a bash script:
+
+            1. Create the exchange directory with restrictive ownership.
+            2. Set the option, replacing any existing value.
+            3. Restart MySQL and fail if the value is still empty.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            MYCNF="/etc/mysql/mysql.conf.d/mysqld.cnf"
+            FILE_DIR="/var/lib/mysql-files"
+
+            install -d -o mysql -g mysql -m 0750 "$FILE_DIR"
+
+            if grep -qE "^\s*secure[-_]file[-_]priv" "$MYCNF"; then
+              sed -i "s|^\s*secure[-_]file[-_]priv.*|secure_file_priv = ${FILE_DIR}|" "$MYCNF"
+            else
+              printf "secure_file_priv = %s\n" "$FILE_DIR" >>"$MYCNF"
+            fi
+
+            systemctl restart mysql
+
+            value=$(mysql -N -B -e "SELECT @@secure_file_priv;")
+            if [ -z "$value" ]; then
+              echo "secure_file_priv is still unrestricted" >&2
+              exit 1
+            fi
+            ```
+        - id: ansible
+          desc: |
+            To confine server-side file access using Ansible:
+
+            1. Create the exchange directory owned by the server account.
+            2. Set `secure_file_priv` in the server option group.
+            3. Notify a handler that restarts the server.
+
+            ```yaml
+            - name: Confine MySQL server-side file access
+              hosts: mysql
+              become: true
+              vars:
+                mysql_conf: /etc/mysql/mysql.conf.d/mysqld.cnf
+                mysql_file_dir: /var/lib/mysql-files
+              tasks:
+                - name: Create the file exchange directory
+                  ansible.builtin.file:
+                    path: "{{ mysql_file_dir }}"
+                    state: directory
+                    owner: mysql
+                    group: mysql
+                    mode: "0750"
+
+                - name: Set secure_file_priv
+                  community.general.ini_file:
+                    path: "{{ mysql_conf }}"
+                    section: mysqld
+                    option: secure_file_priv
+                    value: "{{ mysql_file_dir }}"
+                    mode: "0640"
+                  notify: Restart mysql
+              handlers:
+                - name: Restart mysql
+                  ansible.builtin.service:
+                    name: mysql
+                    state: restarted
+            ```
+
+  - uid: mondoo-mysql-security-symbolic-links-disabled
+    title: Ensure symbolic_links is disabled
+    impact: 70
+    mql: |
+      mysql.conf.symbolicLinks == false
+    docs:
+      desc: |
+        This check ensures that `symbolic_links` is disabled so table files cannot be redirected outside the data directory. With the feature enabled, a `.frm` or data file may be a symbolic link pointing anywhere the server account can write.
+
+        That breaks the assumption that the data directory bounds where the server reads and writes. An account able to create a table with a `DATA DIRECTORY` clause, or an attacker who can place a link inside the data directory, can cause the server to write through it to a path of their choosing.
+
+        **Why this matters**
+
+        - **The data directory becomes a real boundary:** Table storage stays inside the directory the server owns.
+        - **Backups and snapshots stay complete:** Tools that copy the data directory capture everything.
+        - **Removes an indirection:** File paths cannot be redirected after a table is created.
+
+        **Risk mitigation**
+
+        - **Prevents writes outside the data directory:** A symbolic link cannot be used to overwrite unrelated files.
+        - **Blocks a privilege escalation path:** Table creation cannot be turned into an arbitrary file write.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective value:
+
+        ```bash
+        sudo mysql -e "SHOW VARIABLES LIKE 'have_symlink';"
+        ```
+
+        2. Look for existing links inside the data directory:
+
+        ```bash
+        sudo find "$(sudo mysql -N -B -e 'SELECT @@datadir;')" -type l -ls
+        ```
+
+        A passing result reports `DISABLED` and finds no links. A failing result reports `YES`, and any link found should be investigated before the option is changed.
+      remediation:
+        - id: cli
+          desc: |
+            To disable symbolic link support using the CLI:
+
+            1. Confirm no table currently relies on a link, because those tables become unreadable.
+            2. Set `symbolic_links` in the server option file.
+            3. Restart MySQL and confirm the effective value.
+
+            ```bash
+            sudo find "$(sudo mysql -N -B -e 'SELECT @@datadir;')" -type l -ls
+            sudo sed -i "s/^#*\s*symbolic[-_]links.*/symbolic_links = OFF/" \
+              /etc/mysql/mysql.conf.d/mysqld.cnf
+            sudo systemctl restart mysql
+            sudo mysql -e "SHOW VARIABLES LIKE 'have_symlink';"
+            ```
+        - id: script
+          desc: |
+            To disable symbolic link support using a bash script:
+
+            1. Refuse to proceed while links exist in the data directory.
+            2. Set the option, replacing any existing value.
+            3. Restart MySQL.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            MYCNF="/etc/mysql/mysql.conf.d/mysqld.cnf"
+
+            datadir=$(mysql -N -B -e "SELECT @@datadir;")
+            links=$(find "$datadir" -type l -print)
+
+            if [ -n "$links" ]; then
+              echo "symbolic links present in the data directory; relocate these tables first:" >&2
+              printf '%s\n' "$links" >&2
+              exit 1
+            fi
+
+            if grep -qE "^\s*symbolic[-_]links" "$MYCNF"; then
+              sed -i "s|^\s*symbolic[-_]links.*|symbolic_links = OFF|" "$MYCNF"
+            else
+              printf "symbolic_links = OFF\n" >>"$MYCNF"
+            fi
+
+            systemctl restart mysql
+            ```
+        - id: ansible
+          desc: |
+            To disable symbolic link support using Ansible:
+
+            1. Set `symbolic_links` in the server option group.
+            2. Notify a handler that restarts the server.
+
+            ```yaml
+            - name: Disable MySQL symbolic link support
+              hosts: mysql
+              become: true
+              vars:
+                mysql_conf: /etc/mysql/mysql.conf.d/mysqld.cnf
+              tasks:
+                - name: Set symbolic_links
+                  community.general.ini_file:
+                    path: "{{ mysql_conf }}"
+                    section: mysqld
+                    option: symbolic_links
+                    value: "OFF"
+                    mode: "0640"
+                  notify: Restart mysql
+              handlers:
+                - name: Restart mysql
+                  ansible.builtin.service:
+                    name: mysql
+                    state: restarted
+            ```
+
+  - uid: mondoo-mysql-security-allow-suspicious-udfs-disabled
+    title: Ensure allow_suspicious_udfs is disabled
+    impact: 80
+    mql: |
+      mysql.conf.allowSuspiciousUdfs == false
+    docs:
+      desc: |
+        This check ensures that `allow_suspicious_udfs` is disabled. The option controls whether the server accepts a user-defined function library that exports only the main function symbol, without the auxiliary initialization and deinitialization symbols a legitimate UDF provides.
+
+        A library exporting only that one symbol is characteristic of a shared object that was not written as a MySQL UDF at all, which is exactly the shape of a library repurposed to gain code execution inside the server process. Refusing such libraries removes a well-established post-exploitation technique.
+
+        **Why this matters**
+
+        - **Libraries must look like real UDFs:** The server rejects shared objects that lack the expected symbols.
+        - **Code runs in the server process:** A loaded library executes with the server account's full access.
+        - **Legitimate UDFs are unaffected:** Properly written functions export the required symbols.
+
+        **Risk mitigation**
+
+        - **Blocks a code execution technique:** An attacker with `INSERT` on `mysql.func` cannot load an arbitrary shared object.
+        - **Raises the bar after compromise:** Turning database access into host code execution requires more work.
+      audit: |
+        ### Audit via CLI
+
+        1. Search the option files for the option:
+
+        ```bash
+        sudo grep -rniE "^\s*allow[-_]suspicious[-_]udfs" /etc/mysql/ /etc/my.cnf /etc/my.cnf.d/ 2>/dev/null
+        ```
+
+        2. Review the functions currently registered and the plugin directory they load from:
+
+        ```bash
+        sudo mysql -e "SELECT * FROM mysql.func;"
+        sudo ls -l "$(sudo mysql -N -B -e 'SELECT @@plugin_dir;')"
+        ```
+
+        A passing result finds no matching line and shows only expected functions. A failing result finds the option enabled, in which case the registered functions and the plugin directory contents should be reviewed for unexpected libraries.
+      remediation:
+        - id: cli
+          desc: |
+            To reject suspicious function libraries using the CLI:
+
+            1. Remove the option from every option file that declares it.
+            2. Review the registered functions and the plugin directory for anything unexpected.
+            3. Restart MySQL.
+
+            ```bash
+            sudo sed -i -E "/^\s*allow[-_]suspicious[-_]udfs/d" /etc/mysql/mysql.conf.d/mysqld.cnf
+            sudo mysql -e "SELECT * FROM mysql.func;"
+            sudo systemctl restart mysql
+            ```
+        - id: script
+          desc: |
+            To reject suspicious function libraries using a bash script:
+
+            1. Remove the option from the main file and every include fragment.
+            2. Report the registered functions so unexpected entries are visible.
+            3. Restart MySQL.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            for dir in /etc/mysql /etc/my.cnf.d; do
+              [ -d "$dir" ] || continue
+              find "$dir" -type f -name "*.cnf" -exec \
+                sed -i -E "/^[[:space:]]*allow[-_]suspicious[-_]udfs/d" {} +
+            done
+
+            if [ -f /etc/my.cnf ]; then
+              sed -i -E "/^[[:space:]]*allow[-_]suspicious[-_]udfs/d" /etc/my.cnf
+            fi
+
+            echo "registered user-defined functions:"
+            mysql -N -B -e "SELECT name, dl FROM mysql.func;"
+
+            systemctl restart mysql
+            ```
+        - id: ansible
+          desc: |
+            To reject suspicious function libraries using Ansible:
+
+            1. Remove the option from every option file.
+            2. Notify a handler that restarts the server.
+
+            ```yaml
+            - name: Reject suspicious MySQL function libraries
+              hosts: mysql
+              become: true
+              tasks:
+                - name: Find option files
+                  ansible.builtin.find:
+                    paths:
+                      - /etc/mysql
+                      - /etc/my.cnf.d
+                    patterns: "*.cnf"
+                    recurse: true
+                  register: option_files
+                  failed_when: false
+
+                - name: Remove allow_suspicious_udfs
+                  ansible.builtin.lineinfile:
+                    path: "{{ item.path }}"
+                    regexp: '^\s*allow[-_]suspicious[-_]udfs'
+                    state: absent
+                  loop: "{{ option_files.files | default([]) }}"
+                  loop_control:
+                    label: "{{ item.path }}"
+                  notify: Restart mysql
+              handlers:
+                - name: Restart mysql
+                  ansible.builtin.service:
+                    name: mysql
+                    state: restarted
+            ```
+
+  - uid: mondoo-mysql-security-log-bin-trust-function-creators-disabled
+    title: Ensure log_bin_trust_function_creators is disabled
+    impact: 70
+    mql: |
+      mysql.conf.logBinTrustFunctionCreators == false
+    docs:
+      desc: |
+        This check ensures that `log_bin_trust_function_creators` is disabled so creating a stored function requires the `SUPER` privilege in addition to `CREATE ROUTINE` when binary logging is active. Enabling the option removes that additional requirement.
+
+        The safety check exists because stored functions can be nondeterministic, which makes statement-based replication diverge between a source and its replicas. Its security value is that it keeps routine creation, a form of persistent server-side code, behind a privilege that is granted sparingly.
+
+        **Why this matters**
+
+        - **Routine creation stays privileged:** Adding server-side code requires more than routine-level grants.
+        - **Replication consistency is preserved:** Nondeterministic routines cannot silently diverge replicas.
+        - **Fewer accounts can persist code:** The set of accounts able to install a routine stays small.
+
+        **Risk mitigation**
+
+        - **Limits persistence mechanisms:** A compromised application account cannot install a routine to maintain access.
+        - **Prevents replica divergence:** An attacker cannot use a nondeterministic routine to corrupt replicas.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective value:
+
+        ```bash
+        sudo mysql -e "SHOW VARIABLES LIKE 'log_bin_trust_function_creators';"
+        ```
+
+        2. Review the routines that exist and who defined them:
+
+        ```bash
+        sudo mysql -e "SELECT db, name, type, definer FROM mysql.proc;"
+        ```
+
+        A passing result reports `OFF`. A failing result reports `ON`, and the routine list should be reviewed for definers that are not administrative accounts.
+      remediation:
+        - id: cli
+          desc: |
+            To restore the routine creation safety check using the CLI:
+
+            1. Confirm no deployment process depends on creating routines without `SUPER`.
+            2. Set the option in the server option file.
+            3. Restart MySQL and confirm the effective value.
+
+            ```bash
+            sudo sed -i "s/^#*\s*log[-_]bin[-_]trust[-_]function[-_]creators.*/log_bin_trust_function_creators = OFF/" \
+              /etc/mysql/mysql.conf.d/mysqld.cnf
+            sudo systemctl restart mysql
+            sudo mysql -e "SHOW VARIABLES LIKE 'log_bin_trust_function_creators';"
+            ```
+        - id: script
+          desc: |
+            To restore the routine creation safety check using a bash script:
+
+            1. Set the option, replacing any existing value.
+            2. Restart MySQL and report the effective value.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            MYCNF="/etc/mysql/mysql.conf.d/mysqld.cnf"
+
+            if grep -qE "^\s*log[-_]bin[-_]trust[-_]function[-_]creators" "$MYCNF"; then
+              sed -i "s|^\s*log[-_]bin[-_]trust[-_]function[-_]creators.*|log_bin_trust_function_creators = OFF|" "$MYCNF"
+            else
+              printf "log_bin_trust_function_creators = OFF\n" >>"$MYCNF"
+            fi
+
+            systemctl restart mysql
+            mysql -e "SHOW VARIABLES LIKE 'log_bin_trust_function_creators';"
+            ```
+        - id: ansible
+          desc: |
+            To restore the routine creation safety check using Ansible:
+
+            1. Set `log_bin_trust_function_creators` in the server option group.
+            2. Notify a handler that restarts the server.
+
+            ```yaml
+            - name: Restore the MySQL routine creation safety check
+              hosts: mysql
+              become: true
+              vars:
+                mysql_conf: /etc/mysql/mysql.conf.d/mysqld.cnf
+              tasks:
+                - name: Set log_bin_trust_function_creators
+                  community.general.ini_file:
+                    path: "{{ mysql_conf }}"
+                    section: mysqld
+                    option: log_bin_trust_function_creators
+                    value: "OFF"
+                    mode: "0640"
+                  notify: Restart mysql
+              handlers:
+                - name: Restart mysql
+                  ansible.builtin.service:
+                    name: mysql
+                    state: restarted
+            ```
+
+  - uid: mondoo-mysql-security-automatic-sp-privileges-disabled
+    title: Ensure automatic_sp_privileges is disabled
+    impact: 60
+    mql: |
+      mysql.conf.automaticSpPrivileges == false
+    docs:
+      desc: |
+        This check ensures that `automatic_sp_privileges` is disabled so creating a stored routine does not automatically grant its creator `EXECUTE` and `ALTER ROUTINE` on it. The option is enabled by default, which means routine privileges appear without anyone granting them.
+
+        Automatic grants make the privilege model harder to reason about, because the grants recorded for an account no longer reflect only deliberate decisions. Disabling the option means every routine privilege is explicit and reviewable.
+
+        **Why this matters**
+
+        - **Privileges stay deliberate:** Every grant appears because someone issued it.
+        - **Reviews are meaningful:** The grant tables reflect intended access rather than side effects.
+        - **Separation of duties:** Creating a routine and being able to execute it can be split between accounts.
+
+        **Risk mitigation**
+
+        - **Prevents unintended privilege accumulation:** An account does not gain execute rights simply by creating routines.
+        - **Makes privilege audits reliable:** Unexpected routine access is visible rather than explained away as automatic.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective value:
+
+        ```bash
+        sudo mysql -e "SHOW VARIABLES LIKE 'automatic_sp_privileges';"
+        ```
+
+        2. Review the routine-level grants that currently exist:
+
+        ```bash
+        sudo mysql -e "SELECT user, host, db, routine_name, proc_priv FROM mysql.procs_priv;"
+        ```
+
+        A passing result reports `OFF`. A failing result reports `ON`, meaning routine creators receive privileges automatically.
+      remediation:
+        - id: cli
+          desc: |
+            To require explicit routine privileges using the CLI:
+
+            1. Grant `EXECUTE` explicitly to the accounts that need to call existing routines.
+            2. Set `automatic_sp_privileges` in the server option file.
+            3. Restart MySQL and confirm the effective value.
+
+            ```bash
+            sudo mysql -e "GRANT EXECUTE ON PROCEDURE appdb.sync_orders TO 'app'@'10.0.0.%';"
+            sudo sed -i "s/^#*\s*automatic[-_]sp[-_]privileges.*/automatic_sp_privileges = OFF/" \
+              /etc/mysql/mysql.conf.d/mysqld.cnf
+            sudo systemctl restart mysql
+            sudo mysql -e "SHOW VARIABLES LIKE 'automatic_sp_privileges';"
+            ```
+        - id: script
+          desc: |
+            To require explicit routine privileges using a bash script:
+
+            1. Set the option, replacing any existing value.
+            2. Restart MySQL and report the existing routine grants for review.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            MYCNF="/etc/mysql/mysql.conf.d/mysqld.cnf"
+
+            if grep -qE "^\s*automatic[-_]sp[-_]privileges" "$MYCNF"; then
+              sed -i "s|^\s*automatic[-_]sp[-_]privileges.*|automatic_sp_privileges = OFF|" "$MYCNF"
+            else
+              printf "automatic_sp_privileges = OFF\n" >>"$MYCNF"
+            fi
+
+            systemctl restart mysql
+
+            echo "existing routine-level grants:"
+            mysql -N -B -e "SELECT concat(user,'@',host), db, routine_name, proc_priv FROM mysql.procs_priv;"
+            ```
+        - id: ansible
+          desc: |
+            To require explicit routine privileges using Ansible:
+
+            1. Set `automatic_sp_privileges` in the server option group.
+            2. Notify a handler that restarts the server.
+
+            ```yaml
+            - name: Require explicit MySQL routine privileges
+              hosts: mysql
+              become: true
+              vars:
+                mysql_conf: /etc/mysql/mysql.conf.d/mysqld.cnf
+              tasks:
+                - name: Set automatic_sp_privileges
+                  community.general.ini_file:
+                    path: "{{ mysql_conf }}"
+                    section: mysqld
+                    option: automatic_sp_privileges
+                    value: "OFF"
+                    mode: "0640"
+                  notify: Restart mysql
+              handlers:
+                - name: Restart mysql
+                  ansible.builtin.service:
+                    name: mysql
+                    state: restarted
+            ```
+
+  - uid: mondoo-mysql-security-error-log-configured
+    title: Ensure log_error names a dedicated error log destination
+    impact: 70
+    mql: |
+      mysql.conf.logError != empty
+    docs:
+      desc: |
+        This check ensures that `log_error` names a destination for the error log. When the option is empty, the server writes diagnostics to its standard error stream, where they depend entirely on how the service was started and are frequently discarded.
+
+        The error log records startup and shutdown, failed connection attempts, and plugin or component load failures. It is the record that shows whether the security settings in this policy actually took effect, and it is usually the first artifact examined during an incident.
+
+        **Why this matters**
+
+        - **Durable diagnostics:** Messages are written to a file that survives a restart.
+        - **Failed authentication is recorded:** Repeated connection failures become visible.
+        - **Confirms configuration took effect:** Component and plugin load failures are reported rather than silent.
+
+        **Risk mitigation**
+
+        - **Preserves incident evidence:** Authentication failures and errors remain available for investigation.
+        - **Surfaces silent security failures:** A password validation component that failed to load is visible.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective destination:
+
+        ```bash
+        sudo mysql -e "SHOW VARIABLES LIKE 'log_error';"
+        ```
+
+        2. Confirm the file exists and is being written:
+
+        ```bash
+        sudo ls -l /var/log/mysql/error.log && sudo tail -n 20 /var/log/mysql/error.log
+        ```
+
+        A passing result names a path and shows recent entries. A failing result reports an empty value, meaning diagnostics go to the standard error stream.
+      remediation:
+        - id: cli
+          desc: |
+            To configure a dedicated error log using the CLI:
+
+            1. Create the log directory owned by the server account.
+            2. Set `log_error` in the server option file.
+            3. Restart MySQL and confirm the destination.
+
+            ```bash
+            sudo install -d -o mysql -g mysql -m 0750 /var/log/mysql
+            sudo sed -i "s|^#*\s*log[-_]error\b.*|log_error = /var/log/mysql/error.log|" \
+              /etc/mysql/mysql.conf.d/mysqld.cnf
+            sudo systemctl restart mysql
+            sudo mysql -e "SHOW VARIABLES LIKE 'log_error';"
+            ```
+        - id: script
+          desc: |
+            To configure a dedicated error log using a bash script:
+
+            1. Create the log directory with restrictive ownership.
+            2. Set the option, replacing any existing value.
+            3. Restart MySQL and fail if the destination is still empty.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            MYCNF="/etc/mysql/mysql.conf.d/mysqld.cnf"
+            LOG_FILE="/var/log/mysql/error.log"
+
+            install -d -o mysql -g mysql -m 0750 "$(dirname "$LOG_FILE")"
+
+            if grep -qE "^\s*log[-_]error\b" "$MYCNF"; then
+              sed -i "s|^\s*log[-_]error\b.*|log_error = ${LOG_FILE}|" "$MYCNF"
+            else
+              printf "log_error = %s\n" "$LOG_FILE" >>"$MYCNF"
+            fi
+
+            systemctl restart mysql
+
+            value=$(mysql -N -B -e "SELECT @@log_error;")
+            if [ -z "$value" ] || [ "$value" = "stderr" ]; then
+              echo "error log destination is still not a file" >&2
+              exit 1
+            fi
+            ```
+        - id: ansible
+          desc: |
+            To configure a dedicated error log using Ansible:
+
+            1. Create the log directory owned by the server account.
+            2. Set `log_error` in the server option group.
+            3. Notify a handler that restarts the server.
+
+            ```yaml
+            - name: Configure a dedicated MySQL error log
+              hosts: mysql
+              become: true
+              vars:
+                mysql_conf: /etc/mysql/mysql.conf.d/mysqld.cnf
+                mysql_log_dir: /var/log/mysql
+              tasks:
+                - name: Create the log directory
+                  ansible.builtin.file:
+                    path: "{{ mysql_log_dir }}"
+                    state: directory
+                    owner: mysql
+                    group: mysql
+                    mode: "0750"
+
+                - name: Set log_error
+                  community.general.ini_file:
+                    path: "{{ mysql_conf }}"
+                    section: mysqld
+                    option: log_error
+                    value: "{{ mysql_log_dir }}/error.log"
+                    mode: "0640"
+                  notify: Restart mysql
+              handlers:
+                - name: Restart mysql
+                  ansible.builtin.service:
+                    name: mysql
+                    state: restarted
+            ```
+
+  - uid: mondoo-mysql-security-log-error-verbosity-includes-warnings
+    title: Ensure log_error_verbosity records warnings
+    impact: 60
+    mql: |
+      mysql.conf.logErrorVerbosity >= 2
+    docs:
+      desc: |
+        This check ensures that `log_error_verbosity` is at least 2 so warnings are recorded alongside errors. At verbosity 1 only errors are logged, which suppresses the messages that report aborted connections, failed authentication attempts, and deprecated or ignored options.
+
+        Warnings are where most security-relevant signal lives. An attacker probing credentials produces aborted connection warnings rather than errors, so a server at verbosity 1 can be attacked continuously without the error log showing anything.
+
+        **Why this matters**
+
+        - **Failed authentication becomes visible:** Aborted connection warnings record unsuccessful attempts.
+        - **Configuration problems surface:** Options the server ignored are reported rather than silently dropped.
+        - **Small volume increase:** Warnings add far less volume than statement logging while carrying most of the signal.
+
+        **Risk mitigation**
+
+        - **Detects credential attacks:** Repeated aborted connections from one address become apparent.
+        - **Reveals ineffective hardening:** An option the server rejected is reported instead of assumed active.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective value:
+
+        ```bash
+        sudo mysql -e "SHOW VARIABLES LIKE 'log_error_verbosity';"
+        ```
+
+        2. Confirm warnings are present in the log:
+
+        ```bash
+        sudo grep -ci "warning" /var/log/mysql/error.log
+        ```
+
+        A passing result reports 2 or 3. A failing result reports 1, meaning only errors are recorded.
+      remediation:
+        - id: cli
+          desc: |
+            To record warnings in the error log using the CLI:
+
+            1. Set `log_error_verbosity` in the server option file.
+            2. Restart MySQL.
+            3. Confirm the effective value.
+
+            ```bash
+            sudo sed -i "s/^#*\s*log[-_]error[-_]verbosity.*/log_error_verbosity = 3/" \
+              /etc/mysql/mysql.conf.d/mysqld.cnf
+            sudo systemctl restart mysql
+            sudo mysql -e "SHOW VARIABLES LIKE 'log_error_verbosity';"
+            ```
+        - id: script
+          desc: |
+            To record warnings in the error log using a bash script:
+
+            1. Set the option, replacing any existing value.
+            2. Restart MySQL and report the effective value.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            MYCNF="/etc/mysql/mysql.conf.d/mysqld.cnf"
+            VERBOSITY=3
+
+            if grep -qE "^\s*log[-_]error[-_]verbosity" "$MYCNF"; then
+              sed -i "s|^\s*log[-_]error[-_]verbosity.*|log_error_verbosity = ${VERBOSITY}|" "$MYCNF"
+            else
+              printf "log_error_verbosity = %s\n" "$VERBOSITY" >>"$MYCNF"
+            fi
+
+            systemctl restart mysql
+            mysql -e "SHOW VARIABLES LIKE 'log_error_verbosity';"
+            ```
+        - id: ansible
+          desc: |
+            To record warnings in the error log using Ansible:
+
+            1. Set `log_error_verbosity` in the server option group.
+            2. Notify a handler that restarts the server.
+
+            ```yaml
+            - name: Record warnings in the MySQL error log
+              hosts: mysql
+              become: true
+              vars:
+                mysql_conf: /etc/mysql/mysql.conf.d/mysqld.cnf
+                mysql_log_error_verbosity: 3
+              tasks:
+                - name: Set log_error_verbosity
+                  community.general.ini_file:
+                    path: "{{ mysql_conf }}"
+                    section: mysqld
+                    option: log_error_verbosity
+                    value: "{{ mysql_log_error_verbosity }}"
+                    mode: "0640"
+                  notify: Restart mysql
+              handlers:
+                - name: Restart mysql
+                  ansible.builtin.service:
+                    name: mysql
+                    state: restarted
+            ```
+
+  - uid: mondoo-mysql-security-log-output-retained
+    title: Ensure log_output is not set to NONE
+    impact: 60
+    mql: |
+      mysql.conf.logOutput != empty
+      mysql.conf.logOutput.none(_.downcase == "none")
+    docs:
+      desc: |
+        This check ensures that `log_output` names a real destination rather than `NONE`. The option controls where the general and slow query logs are written, and setting it to `NONE` discards their contents even while the logs themselves are enabled.
+
+        That combination is misleading during a review, because `slow_query_log` reads as `ON` while nothing is retained anywhere. Naming `FILE` or `TABLE` explicitly means an enabled log actually produces records.
+
+        **Why this matters**
+
+        - **Enabled logs produce output:** A log that is on is written somewhere.
+        - **Removes a misleading configuration:** The log state and the retained data agree.
+        - **Slow query analysis stays possible:** Long-running statements are recorded for review.
+
+        **Risk mitigation**
+
+        - **Prevents silent loss of query records:** Statements are retained rather than discarded.
+        - **Avoids false assurance during audit:** An enabled log cannot appear compliant while retaining nothing.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective value:
+
+        ```bash
+        sudo mysql -e "SHOW VARIABLES LIKE 'log_output';"
+        ```
+
+        2. Confirm the slow query log is producing records:
+
+        ```bash
+        sudo mysql -e "SHOW VARIABLES WHERE Variable_name IN ('slow_query_log','slow_query_log_file');"
+        ```
+
+        A passing result names `FILE`, `TABLE`, or both. A failing result reports `NONE`, or is unset.
+      remediation:
+        - id: cli
+          desc: |
+            To retain query log output using the CLI:
+
+            1. Set `log_output` in the server option file.
+            2. Restart MySQL.
+            3. Confirm the effective value.
+
+            ```bash
+            sudo sed -i "s/^#*\s*log[-_]output.*/log_output = FILE/" \
+              /etc/mysql/mysql.conf.d/mysqld.cnf
+            sudo systemctl restart mysql
+            sudo mysql -e "SHOW VARIABLES LIKE 'log_output';"
+            ```
+        - id: script
+          desc: |
+            To retain query log output using a bash script:
+
+            1. Set the option, replacing any existing value.
+            2. Restart MySQL and fail if the value is still `NONE`.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            MYCNF="/etc/mysql/mysql.conf.d/mysqld.cnf"
+
+            if grep -qE "^\s*log[-_]output" "$MYCNF"; then
+              sed -i "s|^\s*log[-_]output.*|log_output = FILE|" "$MYCNF"
+            else
+              printf "log_output = FILE\n" >>"$MYCNF"
+            fi
+
+            systemctl restart mysql
+
+            value=$(mysql -N -B -e "SELECT @@log_output;")
+            if [ "$value" = "NONE" ]; then
+              echo "log output is still discarded" >&2
+              exit 1
+            fi
+            ```
+        - id: ansible
+          desc: |
+            To retain query log output using Ansible:
+
+            1. Set `log_output` in the server option group.
+            2. Notify a handler that restarts the server.
+
+            ```yaml
+            - name: Retain MySQL query log output
+              hosts: mysql
+              become: true
+              vars:
+                mysql_conf: /etc/mysql/mysql.conf.d/mysqld.cnf
+              tasks:
+                - name: Set log_output
+                  community.general.ini_file:
+                    path: "{{ mysql_conf }}"
+                    section: mysqld
+                    option: log_output
+                    value: FILE
+                    mode: "0640"
+                  notify: Restart mysql
+              handlers:
+                - name: Restart mysql
+                  ansible.builtin.service:
+                    name: mysql
+                    state: restarted
+            ```
+
+  - uid: mondoo-mysql-security-general-log-disabled
+    title: Ensure the general query log is disabled
+    impact: 60
+    mql: |
+      mysql.conf.generalLog == false
+    docs:
+      desc: |
+        This check ensures that `general_log` is disabled. Unlike the other logging checks in this policy, the secure state here is off, because the general query log records every statement the server receives in cleartext, including the statements that set passwords.
+
+        A `CREATE USER` or `ALTER USER ... IDENTIFIED BY` statement is written to the general log with the password in plain text, so an enabled general log turns the log file into a credential store. Use the audit log for a durable record of activity, since it redacts the arguments of password-setting statements.
+
+        **Why this matters**
+
+        - **Passwords are written in cleartext:** Statements that set a password are recorded verbatim.
+        - **Log readers become credential holders:** Anyone able to read the log obtains those passwords.
+        - **Purpose-built alternatives exist:** The audit log records activity without capturing password arguments.
+
+        **Risk mitigation**
+
+        - **Prevents credential disclosure through logs:** Passwords are not persisted to disk in readable form.
+        - **Limits damage from log exfiltration:** A copied log file does not yield working credentials.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective value:
+
+        ```bash
+        sudo mysql -e "SHOW VARIABLES WHERE Variable_name IN ('general_log','general_log_file');"
+        ```
+
+        2. When the log is enabled, check whether it already contains credentials:
+
+        ```bash
+        sudo grep -ciE "identified by|set password" "$(sudo mysql -N -B -e 'SELECT @@general_log_file;')"
+        ```
+
+        A passing result reports `OFF`. A failing result reports `ON`, and any existing log file should be treated as a credential exposure and rotated.
+      remediation:
+        - id: cli
+          desc: |
+            To disable the general query log using the CLI:
+
+            1. Set `general_log` in the server option file.
+            2. Restart MySQL.
+            3. Remove or rotate any existing general log, because it may contain passwords.
+
+            ```bash
+            sudo sed -i "s/^#*\s*general[-_]log\b.*/general_log = OFF/" \
+              /etc/mysql/mysql.conf.d/mysqld.cnf
+            sudo systemctl restart mysql
+            sudo shred -u /var/log/mysql/general.log
+            ```
+        - id: script
+          desc: |
+            To disable the general query log using a bash script:
+
+            1. Capture the current log path before changing the option.
+            2. Set the option and restart MySQL.
+            3. Securely remove the previous log, since it may hold cleartext passwords.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            MYCNF="/etc/mysql/mysql.conf.d/mysqld.cnf"
+
+            log_path=$(mysql -N -B -e "SELECT @@general_log_file;" 2>/dev/null || true)
+
+            if grep -qE "^\s*general[-_]log\b" "$MYCNF"; then
+              sed -i "s|^\s*general[-_]log\b.*|general_log = OFF|" "$MYCNF"
+            else
+              printf "general_log = OFF\n" >>"$MYCNF"
+            fi
+
+            systemctl restart mysql
+
+            if [ -n "$log_path" ] && [ -f "$log_path" ]; then
+              echo "removing previous general log, which may contain cleartext passwords: $log_path"
+              shred -u "$log_path"
+            fi
+            ```
+        - id: ansible
+          desc: |
+            To disable the general query log using Ansible:
+
+            1. Set `general_log` in the server option group.
+            2. Notify a handler that restarts the server.
+            3. Remove any existing general log file.
+
+            ```yaml
+            - name: Disable the MySQL general query log
+              hosts: mysql
+              become: true
+              vars:
+                mysql_conf: /etc/mysql/mysql.conf.d/mysqld.cnf
+                mysql_general_log_file: /var/log/mysql/general.log
+              tasks:
+                - name: Set general_log
+                  community.general.ini_file:
+                    path: "{{ mysql_conf }}"
+                    section: mysqld
+                    option: general_log
+                    value: "OFF"
+                    mode: "0640"
+                  notify: Restart mysql
+
+                - name: Remove the previous general log
+                  ansible.builtin.file:
+                    path: "{{ mysql_general_log_file }}"
+                    state: absent
+              handlers:
+                - name: Restart mysql
+                  ansible.builtin.service:
+                    name: mysql
+                    state: restarted
+            ```
+
+  - uid: mondoo-mysql-security-audit-log-enabled
+    title: Ensure audit_log_policy records server activity
+    impact: 75
+    mql: |
+      mysql.conf.auditLogPolicy != empty && mysql.conf.auditLogPolicy.downcase != "none"
+    docs:
+      desc: |
+        This check ensures that `audit_log_policy` names a class of activity to record. The audit log plugin produces a structured, durable record of connections and statements, and unlike the general query log it redacts the arguments of statements that set passwords.
+
+        That redaction is what makes the audit log the right mechanism for a permanent activity record. Setting the policy to `LOGINS` captures connection activity, `QUERIES` captures statements, and `ALL` captures both. An empty value or `NONE` means the plugin records nothing even when it is loaded.
+
+        **Why this matters**
+
+        - **Durable, structured record:** Activity is captured in a parseable format suited to a log pipeline.
+        - **Passwords are redacted:** Statements that set credentials are recorded without their arguments.
+        - **Attribution for every connection:** The `LOGINS` class records who connected and from where.
+
+        **Risk mitigation**
+
+        - **Supports incident reconstruction:** Responders can establish which accounts acted and when.
+        - **Detects credential misuse:** Connections from unexpected accounts or addresses are recorded.
+      audit: |
+        ### Audit via CLI
+
+        1. Confirm the plugin is loaded:
+
+        ```bash
+        sudo mysql -e "SELECT plugin_name, plugin_status FROM information_schema.plugins WHERE plugin_name LIKE 'audit%';"
+        ```
+
+        2. Read the policy, destination, and format:
+
+        ```bash
+        sudo mysql -e "SHOW VARIABLES WHERE Variable_name IN ('audit_log_policy','audit_log_file','audit_log_format');"
+        ```
+
+        3. Confirm records are being written:
+
+        ```bash
+        sudo tail -n 5 /var/log/mysql/audit.log
+        ```
+
+        A passing result reports `ALL`, `LOGINS`, or `QUERIES`. A failing result reports `NONE` or an empty value, meaning nothing is recorded.
+      remediation:
+        - id: cli
+          desc: |
+            To record server activity in the audit log using the CLI:
+
+            1. Load the audit log plugin, which is available in MySQL Enterprise and as an equivalent plugin in Percona Server.
+            2. Set the policy, destination, and format in the server option file.
+            3. Restart MySQL and confirm records are written.
+
+            ```bash
+            sudo mysql -e "INSTALL PLUGIN audit_log SONAME 'audit_log.so';"
+            sudo tee -a /etc/mysql/mysql.conf.d/mysqld.cnf >/dev/null <<'EOF'
+            plugin_load_add  = audit_log.so
+            audit_log_policy = ALL
+            audit_log_file   = /var/log/mysql/audit.log
+            audit_log_format = JSON
+            EOF
+            sudo systemctl restart mysql
+            sudo mysql -e "SHOW VARIABLES LIKE 'audit_log_policy';"
+            ```
+        - id: script
+          desc: |
+            To record server activity in the audit log using a bash script:
+
+            1. Refuse to proceed when no audit plugin is available, rather than writing options the server will ignore.
+            2. Set the policy, destination, and format.
+            3. Restart MySQL and confirm the policy took effect.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            MYCNF="/etc/mysql/mysql.conf.d/mysqld.cnf"
+            PLUGIN_DIR=$(mysql -N -B -e "SELECT @@plugin_dir;")
+
+            if [ ! -f "${PLUGIN_DIR}/audit_log.so" ]; then
+              echo "audit_log.so not present in ${PLUGIN_DIR}; install an audit plugin first" >&2
+              exit 1
+            fi
+
+            set_option() {
+              local key="$1" value="$2"
+              if grep -qE "^\s*${key}\b" "$MYCNF"; then
+                sed -i "s|^\s*${key}\b.*|${key} = ${value}|" "$MYCNF"
+              else
+                printf "%s = %s\n" "$key" "$value" >>"$MYCNF"
+              fi
+            }
+
+            install -d -o mysql -g mysql -m 0750 /var/log/mysql
+
+            set_option plugin_load_add "audit_log.so"
+            set_option audit_log_policy "ALL"
+            set_option audit_log_file "/var/log/mysql/audit.log"
+            set_option audit_log_format "JSON"
+
+            systemctl restart mysql
+            mysql -e "SHOW VARIABLES LIKE 'audit_log_policy';"
+            ```
+        - id: ansible
+          desc: |
+            To record server activity in the audit log using Ansible:
+
+            1. Set the plugin load option along with the policy, destination, and format.
+            2. Notify a handler that restarts the server.
+
+            ```yaml
+            - name: Record MySQL server activity in the audit log
+              hosts: mysql
+              become: true
+              vars:
+                mysql_conf: /etc/mysql/mysql.conf.d/mysqld.cnf
+                mysql_audit_log_file: /var/log/mysql/audit.log
+              tasks:
+                - name: Create the log directory
+                  ansible.builtin.file:
+                    path: "{{ mysql_audit_log_file | dirname }}"
+                    state: directory
+                    owner: mysql
+                    group: mysql
+                    mode: "0750"
+
+                - name: Configure the audit log
+                  community.general.ini_file:
+                    path: "{{ mysql_conf }}"
+                    section: mysqld
+                    option: "{{ item.option }}"
+                    value: "{{ item.value }}"
+                    mode: "0640"
+                  loop:
+                    - { option: "plugin_load_add", value: "audit_log.so" }
+                    - { option: "audit_log_policy", value: "ALL" }
+                    - { option: "audit_log_file", value: "{{ mysql_audit_log_file }}" }
+                    - { option: "audit_log_format", value: "JSON" }
+                  notify: Restart mysql
+              handlers:
+                - name: Restart mysql
+                  ansible.builtin.service:
+                    name: mysql
+                    state: restarted
+            ```
+
+  - uid: mondoo-mysql-security-default-table-encryption-enabled
+    title: Ensure default_table_encryption is enabled
+    impact: 70
+    mql: |
+      mysql.conf.defaultTableEncryption == true
+    docs:
+      desc: |
+        This check ensures that `default_table_encryption` is enabled so new schemas and general tablespaces are encrypted at rest unless a statement explicitly opts out. The option defaults to off, which means encryption depends on every `CREATE TABLE` remembering to request it.
+
+        Making encryption the default inverts that burden. A table created by a migration script or an application that knows nothing about the policy is still encrypted, and an unencrypted table becomes a deliberate exception rather than an oversight.
+
+        **Why this matters**
+
+        - **New tables are covered automatically:** Encryption does not depend on per-statement clauses.
+        - **Exceptions become visible:** An unencrypted table requires an explicit clause that shows up in review.
+        - **Protects data at rest:** Files copied from the data directory are unreadable without the keyring.
+
+        **Risk mitigation**
+
+        - **Limits exposure from stolen media:** A lost disk or backup does not disclose table contents.
+        - **Contains filesystem-level access:** An account able to read data files cannot read table data directly.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective value:
+
+        ```bash
+        sudo mysql -e "SHOW VARIABLES LIKE 'default_table_encryption';"
+        ```
+
+        2. Identify tablespaces that are not encrypted:
+
+        ```bash
+        sudo mysql -e "SELECT space, name, encryption FROM information_schema.innodb_tablespaces WHERE encryption <> 'Y';"
+        ```
+
+        A passing result reports `ON`. A failing result reports `OFF`, and the second query lists tablespaces that need converting.
+      remediation:
+        - id: cli
+          desc: |
+            To encrypt new tables by default using the CLI:
+
+            1. Confirm a keyring component is configured, because encryption cannot work without one.
+            2. Set `default_table_encryption` in the server option file.
+            3. Restart MySQL, then convert existing tablespaces.
+
+            ```bash
+            sudo mysql -e "SELECT * FROM performance_schema.keyring_component_status;"
+            sudo sed -i "s/^#*\s*default[-_]table[-_]encryption.*/default_table_encryption = ON/" \
+              /etc/mysql/mysql.conf.d/mysqld.cnf
+            sudo systemctl restart mysql
+            sudo mysql -e "ALTER TABLESPACE innodb_system ENCRYPTION = 'Y';"
+            ```
+        - id: script
+          desc: |
+            To encrypt new tables by default using a bash script:
+
+            1. Refuse to proceed when no keyring is active, because encryption would fail at table creation.
+            2. Set the option, replacing any existing value.
+            3. Restart MySQL and report tablespaces that remain unencrypted.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            MYCNF="/etc/mysql/mysql.conf.d/mysqld.cnf"
+
+            keyring=$(mysql -N -B -e \
+              "SELECT count(*) FROM performance_schema.keyring_component_status;" 2>/dev/null || echo 0)
+
+            if [ "$keyring" -eq 0 ]; then
+              echo "no keyring component is active; configure one before enabling encryption" >&2
+              exit 1
+            fi
+
+            if grep -qE "^\s*default[-_]table[-_]encryption" "$MYCNF"; then
+              sed -i "s|^\s*default[-_]table[-_]encryption.*|default_table_encryption = ON|" "$MYCNF"
+            else
+              printf "default_table_encryption = ON\n" >>"$MYCNF"
+            fi
+
+            systemctl restart mysql
+
+            echo "tablespaces still unencrypted:"
+            mysql -N -B -e \
+              "SELECT name FROM information_schema.innodb_tablespaces WHERE encryption <> 'Y';"
+            ```
+        - id: ansible
+          desc: |
+            To encrypt new tables by default using Ansible:
+
+            1. Set `default_table_encryption` in the server option group.
+            2. Notify a handler that restarts the server.
+
+            ```yaml
+            - name: Encrypt new MySQL tables by default
+              hosts: mysql
+              become: true
+              vars:
+                mysql_conf: /etc/mysql/mysql.conf.d/mysqld.cnf
+              tasks:
+                - name: Set default_table_encryption
+                  community.general.ini_file:
+                    path: "{{ mysql_conf }}"
+                    section: mysqld
+                    option: default_table_encryption
+                    value: "ON"
+                    mode: "0640"
+                  notify: Restart mysql
+              handlers:
+                - name: Restart mysql
+                  ansible.builtin.service:
+                    name: mysql
+                    state: restarted
+            ```
+
+  - uid: mondoo-mysql-security-binlog-encryption-enabled
+    title: Ensure binlog_encryption is enabled
+    impact: 70
+    mql: |
+      mysql.conf.binlogEncryption == true
+    docs:
+      desc: |
+        This check ensures that `binlog_encryption` is enabled so binary and relay log files are encrypted at rest. The binary log records the row images of every change, which means it contains the same data as the tables themselves.
+
+        Encrypting tables while leaving the binary log in cleartext leaves the data readable in a second location. Binary logs are also frequently retained longer than expected and copied to replicas and backup hosts, which widens the number of places the unencrypted content exists.
+
+        **Why this matters**
+
+        - **Closes a parallel copy of the data:** Row images in the log are protected like the tables.
+        - **Covers replicas and backups:** Log files copied elsewhere remain encrypted.
+        - **Consistent encryption posture:** Table encryption is not undermined by an unprotected log.
+
+        **Risk mitigation**
+
+        - **Prevents data recovery from log files:** A copied binary log does not disclose table contents.
+        - **Limits exposure from long retention:** Historical changes stay protected for as long as the log exists.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective value:
+
+        ```bash
+        sudo mysql -e "SHOW VARIABLES WHERE Variable_name IN ('binlog_encryption','log_bin');"
+        ```
+
+        2. Confirm the current log files are encrypted:
+
+        ```bash
+        sudo mysql -e "SHOW BINARY LOGS;"
+        sudo mysql -e "SELECT * FROM performance_schema.log_status\G"
+        ```
+
+        A passing result reports `ON`. A failing result reports `OFF` while binary logging is active, meaning the log files are readable.
+      remediation:
+        - id: cli
+          desc: |
+            To encrypt binary logs using the CLI:
+
+            1. Confirm a keyring component is active.
+            2. Set `binlog_encryption` in the server option file.
+            3. Restart MySQL, then rotate the logs so new files are encrypted.
+
+            ```bash
+            sudo sed -i "s/^#*\s*binlog[-_]encryption.*/binlog_encryption = ON/" \
+              /etc/mysql/mysql.conf.d/mysqld.cnf
+            sudo systemctl restart mysql
+            sudo mysql -e "FLUSH BINARY LOGS;"
+            sudo mysql -e "SHOW VARIABLES LIKE 'binlog_encryption';"
+            ```
+        - id: script
+          desc: |
+            To encrypt binary logs using a bash script:
+
+            1. Refuse to proceed when no keyring is active.
+            2. Set the option, replacing any existing value.
+            3. Restart MySQL and rotate the logs so new files are written encrypted.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            MYCNF="/etc/mysql/mysql.conf.d/mysqld.cnf"
+
+            keyring=$(mysql -N -B -e \
+              "SELECT count(*) FROM performance_schema.keyring_component_status;" 2>/dev/null || echo 0)
+
+            if [ "$keyring" -eq 0 ]; then
+              echo "no keyring component is active; configure one before enabling encryption" >&2
+              exit 1
+            fi
+
+            if grep -qE "^\s*binlog[-_]encryption" "$MYCNF"; then
+              sed -i "s|^\s*binlog[-_]encryption.*|binlog_encryption = ON|" "$MYCNF"
+            else
+              printf "binlog_encryption = ON\n" >>"$MYCNF"
+            fi
+
+            systemctl restart mysql
+            mysql -e "FLUSH BINARY LOGS;"
+            ```
+        - id: ansible
+          desc: |
+            To encrypt binary logs using Ansible:
+
+            1. Set `binlog_encryption` in the server option group.
+            2. Notify a handler that restarts the server.
+
+            ```yaml
+            - name: Encrypt MySQL binary logs
+              hosts: mysql
+              become: true
+              vars:
+                mysql_conf: /etc/mysql/mysql.conf.d/mysqld.cnf
+              tasks:
+                - name: Set binlog_encryption
+                  community.general.ini_file:
+                    path: "{{ mysql_conf }}"
+                    section: mysqld
+                    option: binlog_encryption
+                    value: "ON"
+                    mode: "0640"
+                  notify: Restart mysql
+              handlers:
+                - name: Restart mysql
+                  ansible.builtin.service:
+                    name: mysql
+                    state: restarted
+            ```
+
+  - uid: mondoo-mysql-security-innodb-redo-log-encryption-enabled
+    title: Ensure innodb_redo_log_encrypt is enabled
+    impact: 70
+    mql: |
+      mysql.conf.innodbRedoLogEncrypt == true
+    docs:
+      desc: |
+        This check ensures that `innodb_redo_log_encrypt` is enabled so the InnoDB redo log is encrypted at rest. The redo log holds recently modified page contents, so encrypted tables can still leave readable copies of their most recent data in it.
+
+        Table encryption alone therefore leaves a gap. The redo log is written continuously and lives inside the data directory, so anything able to read the data directory can recover recent changes to encrypted tables from it.
+
+        **Why this matters**
+
+        - **Closes a recent-data gap:** Modified page contents are protected as well as the tables.
+        - **Covers the whole data directory:** Encryption is consistent across the files InnoDB writes.
+        - **Protects crash recovery data:** Content retained for recovery is not readable.
+
+        **Risk mitigation**
+
+        - **Prevents recovery of recent changes:** The redo log cannot be read to reconstruct encrypted table data.
+        - **Limits exposure from filesystem access:** Reading the data directory does not reveal recent writes.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective value:
+
+        ```bash
+        sudo mysql -e "SHOW VARIABLES LIKE 'innodb_redo_log_encrypt';"
+        ```
+
+        2. Confirm the keyring backing the encryption is active:
+
+        ```bash
+        sudo mysql -e "SELECT * FROM performance_schema.keyring_component_status;"
+        ```
+
+        A passing result reports `ON`. A failing result reports `OFF`, meaning recent changes to encrypted tables remain readable in the redo log.
+      remediation:
+        - id: cli
+          desc: |
+            To encrypt the InnoDB redo log using the CLI:
+
+            1. Confirm a keyring component is active.
+            2. Set `innodb_redo_log_encrypt` in the server option file.
+            3. Restart MySQL and confirm the effective value.
+
+            ```bash
+            sudo sed -i "s/^#*\s*innodb[-_]redo[-_]log[-_]encrypt.*/innodb_redo_log_encrypt = ON/" \
+              /etc/mysql/mysql.conf.d/mysqld.cnf
+            sudo systemctl restart mysql
+            sudo mysql -e "SHOW VARIABLES LIKE 'innodb_redo_log_encrypt';"
+            ```
+        - id: script
+          desc: |
+            To encrypt the InnoDB redo log using a bash script:
+
+            1. Refuse to proceed when no keyring is active.
+            2. Set the option, replacing any existing value.
+            3. Restart MySQL and report the effective value.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            MYCNF="/etc/mysql/mysql.conf.d/mysqld.cnf"
+
+            keyring=$(mysql -N -B -e \
+              "SELECT count(*) FROM performance_schema.keyring_component_status;" 2>/dev/null || echo 0)
+
+            if [ "$keyring" -eq 0 ]; then
+              echo "no keyring component is active; configure one before enabling encryption" >&2
+              exit 1
+            fi
+
+            if grep -qE "^\s*innodb[-_]redo[-_]log[-_]encrypt" "$MYCNF"; then
+              sed -i "s|^\s*innodb[-_]redo[-_]log[-_]encrypt.*|innodb_redo_log_encrypt = ON|" "$MYCNF"
+            else
+              printf "innodb_redo_log_encrypt = ON\n" >>"$MYCNF"
+            fi
+
+            systemctl restart mysql
+            mysql -e "SHOW VARIABLES LIKE 'innodb_redo_log_encrypt';"
+            ```
+        - id: ansible
+          desc: |
+            To encrypt the InnoDB redo log using Ansible:
+
+            1. Set `innodb_redo_log_encrypt` in the server option group.
+            2. Notify a handler that restarts the server.
+
+            ```yaml
+            - name: Encrypt the InnoDB redo log
+              hosts: mysql
+              become: true
+              vars:
+                mysql_conf: /etc/mysql/mysql.conf.d/mysqld.cnf
+              tasks:
+                - name: Set innodb_redo_log_encrypt
+                  community.general.ini_file:
+                    path: "{{ mysql_conf }}"
+                    section: mysqld
+                    option: innodb_redo_log_encrypt
+                    value: "ON"
+                    mode: "0640"
+                  notify: Restart mysql
+              handlers:
+                - name: Restart mysql
+                  ansible.builtin.service:
+                    name: mysql
+                    state: restarted
+            ```
+
+  - uid: mondoo-mysql-security-innodb-undo-log-encryption-enabled
+    title: Ensure innodb_undo_log_encrypt is enabled
+    impact: 70
+    mql: |
+      mysql.conf.innodbUndoLogEncrypt == true
+    docs:
+      desc: |
+        This check ensures that `innodb_undo_log_encrypt` is enabled so InnoDB undo logs are encrypted at rest. Undo logs retain the previous versions of modified rows so transactions can be rolled back and so consistent reads can be served.
+
+        Those previous row versions are table data. An unencrypted undo log therefore holds readable copies of rows from encrypted tables, and it can retain them for as long as a transaction stays open.
+
+        **Why this matters**
+
+        - **Previous row versions are protected:** Historical values are covered by the same encryption as the tables.
+        - **Long-running transactions are handled:** Retained versions stay protected however long they persist.
+        - **Completes data directory coverage:** Undo, redo, and table files are all encrypted.
+
+        **Risk mitigation**
+
+        - **Prevents recovery of previous values:** Superseded row versions cannot be read from disk.
+        - **Closes a rollback data gap:** Data retained for transaction rollback is unreadable.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective value:
+
+        ```bash
+        sudo mysql -e "SHOW VARIABLES LIKE 'innodb_undo_log_encrypt';"
+        ```
+
+        2. Review the undo tablespaces and their encryption state:
+
+        ```bash
+        sudo mysql -e "SELECT space, name, encryption FROM information_schema.innodb_tablespaces WHERE name LIKE '%undo%';"
+        ```
+
+        A passing result reports `ON`. A failing result reports `OFF`, meaning previous row versions remain readable on disk.
+      remediation:
+        - id: cli
+          desc: |
+            To encrypt InnoDB undo logs using the CLI:
+
+            1. Confirm a keyring component is active.
+            2. Set `innodb_undo_log_encrypt` in the server option file.
+            3. Restart MySQL and confirm the effective value.
+
+            ```bash
+            sudo sed -i "s/^#*\s*innodb[-_]undo[-_]log[-_]encrypt.*/innodb_undo_log_encrypt = ON/" \
+              /etc/mysql/mysql.conf.d/mysqld.cnf
+            sudo systemctl restart mysql
+            sudo mysql -e "SHOW VARIABLES LIKE 'innodb_undo_log_encrypt';"
+            ```
+        - id: script
+          desc: |
+            To encrypt InnoDB undo logs using a bash script:
+
+            1. Refuse to proceed when no keyring is active.
+            2. Set the option, replacing any existing value.
+            3. Restart MySQL and report the effective value.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            MYCNF="/etc/mysql/mysql.conf.d/mysqld.cnf"
+
+            keyring=$(mysql -N -B -e \
+              "SELECT count(*) FROM performance_schema.keyring_component_status;" 2>/dev/null || echo 0)
+
+            if [ "$keyring" -eq 0 ]; then
+              echo "no keyring component is active; configure one before enabling encryption" >&2
+              exit 1
+            fi
+
+            if grep -qE "^\s*innodb[-_]undo[-_]log[-_]encrypt" "$MYCNF"; then
+              sed -i "s|^\s*innodb[-_]undo[-_]log[-_]encrypt.*|innodb_undo_log_encrypt = ON|" "$MYCNF"
+            else
+              printf "innodb_undo_log_encrypt = ON\n" >>"$MYCNF"
+            fi
+
+            systemctl restart mysql
+            mysql -e "SHOW VARIABLES LIKE 'innodb_undo_log_encrypt';"
+            ```
+        - id: ansible
+          desc: |
+            To encrypt InnoDB undo logs using Ansible:
+
+            1. Set `innodb_undo_log_encrypt` in the server option group.
+            2. Notify a handler that restarts the server.
+
+            ```yaml
+            - name: Encrypt InnoDB undo logs
+              hosts: mysql
+              become: true
+              vars:
+                mysql_conf: /etc/mysql/mysql.conf.d/mysqld.cnf
+              tasks:
+                - name: Set innodb_undo_log_encrypt
+                  community.general.ini_file:
+                    path: "{{ mysql_conf }}"
+                    section: mysqld
+                    option: innodb_undo_log_encrypt
+                    value: "ON"
+                    mode: "0640"
+                  notify: Restart mysql
+              handlers:
+                - name: Restart mysql
+                  ansible.builtin.service:
+                    name: mysql
+                    state: restarted
+            ```
+
+  - uid: mondoo-mysql-security-client-options-no-plaintext-password
+    title: Ensure no plaintext password is stored in the client option groups
+    impact: 85
+    mql: |
+      mysql.conf.clientOptions["password"] == empty
+    docs:
+      desc: |
+        This check ensures that no `password` option appears in the client option groups. The `[client]`, `[mysql]`, and `[client-server]` groups are read by every client program the server ships, so a password written there is available to every account that can read the option file.
+
+        A password in a system-wide option file is a durable credential in a file that is often more readable than intended and is frequently captured by configuration management, backups, and container images. Use a login path created with `mysql_config_editor`, which stores credentials in a per-user obfuscated file, or supply the credential from a secret store at run time.
+
+        **Why this matters**
+
+        - **Option files are widely readable:** System option files are commonly readable beyond the database account.
+        - **Credentials spread with copies:** Backups, images, and configuration repositories carry the password with them.
+        - **Better mechanisms exist:** Login paths and secret stores keep the credential out of a shared file.
+
+        **Risk mitigation**
+
+        - **Prevents credential harvesting:** A local account cannot read a database password from a shared file.
+        - **Limits exposure from leaked configuration:** A copied option file does not include a working credential.
+      audit: |
+        ### Audit via CLI
+
+        1. Search the option files for a password option:
+
+        ```bash
+        sudo grep -rniE "^\s*password\s*=" /etc/mysql/ /etc/my.cnf /etc/my.cnf.d/ 2>/dev/null
+        ```
+
+        2. Check the permissions on any file that declares one:
+
+        ```bash
+        sudo ls -l /etc/mysql/my.cnf
+        ```
+
+        3. List the login paths already configured for the current account:
+
+        ```bash
+        mysql_config_editor print --all
+        ```
+
+        A passing result finds no password option in the client groups. A failing result shows a `password` line, and that credential should be treated as exposed and rotated.
+      remediation:
+        - id: cli
+          desc: |
+            To remove plaintext client passwords using the CLI:
+
+            1. Create a login path so the credential is stored in a per-user obfuscated file.
+            2. Remove the password option from the shared option file.
+            3. Rotate the exposed password, because it must be assumed compromised.
+
+            ```bash
+            mysql_config_editor set --login-path=local --host=localhost --user=app --password
+            sudo sed -i -E "/^\s*password\s*=/d" /etc/mysql/my.cnf
+            sudo mysql -e "ALTER USER 'app'@'localhost' IDENTIFIED BY 'new-password';"
+            sudo grep -rniE "^\s*password\s*=" /etc/mysql/ || echo "no plaintext passwords remain"
+            ```
+        - id: script
+          desc: |
+            To remove plaintext client passwords using a bash script:
+
+            1. Report every file and line that declares a password before changing anything.
+            2. Remove the option from each file, keeping a backup.
+            3. Remind the operator to rotate the exposed credentials.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            found=0
+
+            for dir in /etc/mysql /etc/my.cnf.d; do
+              [ -d "$dir" ] || continue
+              while IFS= read -r file; do
+                if grep -qE "^[[:space:]]*password[[:space:]]*=" "$file"; then
+                  echo "removing plaintext password from $file"
+                  grep -nE "^[[:space:]]*password[[:space:]]*=" "$file"
+                  cp -a "$file" "${file}.bak"
+                  sed -i -E "/^[[:space:]]*password[[:space:]]*=/d" "$file"
+                  found=1
+                fi
+              done < <(find "$dir" -type f -name "*.cnf")
+            done
+
+            if [ "$found" -eq 1 ]; then
+              echo "rotate every password that was stored in these files; treat them as compromised" >&2
+            fi
+            ```
+        - id: ansible
+          desc: |
+            To remove plaintext client passwords using Ansible:
+
+            1. Find the option files.
+            2. Remove any password option they declare.
+            3. Report that the credentials need rotating.
+
+            ```yaml
+            - name: Remove plaintext MySQL client passwords
+              hosts: mysql
+              become: true
+              tasks:
+                - name: Find option files
+                  ansible.builtin.find:
+                    paths:
+                      - /etc/mysql
+                      - /etc/my.cnf.d
+                    patterns: "*.cnf"
+                    recurse: true
+                  register: option_files
+                  failed_when: false
+
+                - name: Remove password options
+                  ansible.builtin.lineinfile:
+                    path: "{{ item.path }}"
+                    regexp: '^\s*password\s*='
+                    state: absent
+                  loop: "{{ option_files.files | default([]) }}"
+                  loop_control:
+                    label: "{{ item.path }}"
+                  register: removed
+
+                - name: Report credentials that must be rotated
+                  ansible.builtin.debug:
+                    msg: "A stored password was removed. Rotate the affected accounts."
+                  when: removed is changed
+            ```
+
+  - uid: mondoo-mysql-security-option-files-restricted-permissions
+    title: Ensure option files are not group or world accessible
+    impact: 75
+    mql: |
+      mysql.conf.files != empty
+      mysql.conf.files.all(permissions.group_writeable == false && permissions.other_readable == false && permissions.other_writeable == false)
+    docs:
+      desc: |
+        This check ensures that every file in the option file chain is readable only by its owner and the server account. MySQL does not refuse to start when an option file is world readable, so a permissive mode goes unnoticed.
+
+        Include fragments deserve the same protection as the main file. Configuration management tooling frequently writes drop-in files under `mysql.conf.d` or `my.cnf.d` with default permissions, which leaves a fragment world readable even when the main file is correctly restricted. This check evaluates every contributing file rather than only the entry point.
+
+        **Why this matters**
+
+        - **Option files describe the server:** Data directory paths, TLS material locations, and plugin directories are all disclosed.
+        - **Write access is server control:** An account able to modify a fragment can disable authentication on the next restart.
+        - **Fragments are easy to overlook:** Drop-in files inherit whatever permissions wrote them.
+
+        **Risk mitigation**
+
+        - **Blocks local reconnaissance:** An unprivileged account cannot learn where keys and data live.
+        - **Prevents configuration tampering:** An attacker cannot add an option that weakens the server.
+      audit: |
+        ### Audit via CLI
+
+        1. List the option files the server actually read, in order:
+
+        ```bash
+        mysqld --verbose --help 2>/dev/null | grep -A1 "Default options are read from"
+        ```
+
+        2. Inspect the permissions on the main file and every fragment:
+
+        ```bash
+        sudo ls -l /etc/mysql/my.cnf
+        sudo ls -lR /etc/mysql/mysql.conf.d/ /etc/mysql/conf.d/ 2>/dev/null
+        ```
+
+        A passing result shows each file with no group write bit and no world access, which is `-rw-------` or `-rw-r-----`. A failing result shows a mode such as `-rw-r--r--` on the main file or any fragment.
+      remediation:
+        - id: cli
+          desc: |
+            To restrict option file permissions using the CLI:
+
+            1. Set ownership so the server account can read the files.
+            2. Remove group write and world access from every file in the chain.
+            3. Confirm the resulting permissions.
+
+            ```bash
+            sudo chown -R root:mysql /etc/mysql
+            sudo find /etc/mysql -type f -name "*.cnf" -exec chmod 0640 {} +
+            sudo find /etc/mysql -type d -exec chmod 0750 {} +
+            sudo ls -lR /etc/mysql
+            ```
+        - id: script
+          desc: |
+            To restrict option file permissions using a bash script:
+
+            1. Apply ownership and mode across the configuration directory.
+            2. Include the traditional single-file location when present.
+            3. Report any file that still allows world access.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            for target in /etc/mysql /etc/my.cnf.d; do
+              [ -d "$target" ] || continue
+              chown -R root:mysql "$target"
+              find "$target" -type f -name "*.cnf" -exec chmod 0640 {} +
+              find "$target" -type d -exec chmod 0750 {} +
+            done
+
+            if [ -f /etc/my.cnf ]; then
+              chown root:mysql /etc/my.cnf
+              chmod 0640 /etc/my.cnf
+            fi
+
+            remaining=$(find /etc/mysql /etc/my.cnf /etc/my.cnf.d -name "*.cnf" -perm /0007 -print 2>/dev/null || true)
+            if [ -n "$remaining" ]; then
+              echo "files still world accessible:" >&2
+              printf '%s\n' "$remaining" >&2
+              exit 1
+            fi
+            ```
+        - id: ansible
+          desc: |
+            To restrict option file permissions using Ansible:
+
+            1. Find every option file in the chain.
+            2. Apply ownership and mode to each of them.
+
+            ```yaml
+            - name: Restrict MySQL option file permissions
+              hosts: mysql
+              become: true
+              tasks:
+                - name: Find option files
+                  ansible.builtin.find:
+                    paths:
+                      - /etc/mysql
+                      - /etc/my.cnf.d
+                    patterns: "*.cnf"
+                    recurse: true
+                  register: option_files
+                  failed_when: false
+
+                - name: Protect option files
+                  ansible.builtin.file:
+                    path: "{{ item.path }}"
+                    owner: root
+                    group: mysql
+                    mode: "0640"
+                  loop: "{{ option_files.files | default([]) }}"
+                  loop_control:
+                    label: "{{ item.path }}"
+            ```
+
+  - uid: mondoo-mysql-security-user-option-files-protected
+    title: Ensure per-user option files are not readable by other accounts
+    impact: 85
+    mql: |
+      mysql.conf.userFiles.all(file.permissions.group_readable == false && file.permissions.other_readable == false)
+    docs:
+      desc: |
+        This check ensures that every per-user option file found in a home directory is readable only by its owner. These files are `.my.cnf` and the obfuscated `.mylogin.cnf` credential store written by `mysql_config_editor`, and both routinely hold the credentials a person or a service uses to reach the database.
+
+        A `.my.cnf` holds its password in plain text. A `.mylogin.cnf` is obfuscated rather than encrypted, so its contents can be recovered by anyone who can read the file. In both cases the file mode is the only thing separating the credential from other accounts on the host. Servers with no per-user option files pass this check, because there is nothing to protect.
+
+        **Why this matters**
+
+        - **These files hold working credentials:** Their contents authenticate directly to the database.
+        - **Obfuscation is not encryption:** A readable `.mylogin.cnf` can be decoded by any account that reads it.
+        - **File mode is the only boundary:** Nothing else prevents another local account from reading them.
+
+        **Risk mitigation**
+
+        - **Prevents local credential theft:** A compromised service account cannot read another user's database password.
+        - **Contains lateral movement:** A foothold on a shared host does not yield database credentials.
+      audit: |
+        ### Audit via CLI
+
+        1. Find per-user option files and check their permissions:
+
+        ```bash
+        sudo find /home /root -maxdepth 2 -name ".my.cnf" -o -maxdepth 2 -name ".mylogin.cnf" -ls 2>/dev/null
+        ```
+
+        2. Confirm which login paths are stored for a given account:
+
+        ```bash
+        sudo -u appuser mysql_config_editor print --all
+        ```
+
+        A passing result shows every file as `-rw-------`, or finds no such files. A failing result shows a mode such as `-rw-r--r--` or `-rw-r-----`, meaning other accounts can read the credential.
+      remediation:
+        - id: cli
+          desc: |
+            To protect per-user option files using the CLI:
+
+            1. Restrict every per-user option file to its owner.
+            2. Confirm the resulting permissions.
+            3. Rotate any credential that was readable, because it must be assumed exposed.
+
+            ```bash
+            sudo find /home /root -maxdepth 2 \( -name ".my.cnf" -o -name ".mylogin.cnf" \) \
+              -exec chmod 0600 {} +
+            sudo find /home /root -maxdepth 2 \( -name ".my.cnf" -o -name ".mylogin.cnf" \) -ls
+            sudo mysql -e "ALTER USER 'app'@'localhost' IDENTIFIED BY 'new-password';"
+            ```
+        - id: script
+          desc: |
+            To protect per-user option files using a bash script:
+
+            1. Report each file that is readable beyond its owner before changing it.
+            2. Restrict the mode and confirm the owner still matches the home directory.
+            3. Remind the operator to rotate credentials that were exposed.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            exposed=0
+
+            while IFS= read -r file; do
+              mode=$(stat -c "%a" "$file")
+              if [ "$mode" != "600" ]; then
+                echo "restricting $file (was mode $mode)"
+                chmod 0600 "$file"
+                exposed=1
+              fi
+            done < <(find /home /root -maxdepth 2 \( -name ".my.cnf" -o -name ".mylogin.cnf" \) 2>/dev/null)
+
+            if [ "$exposed" -eq 1 ]; then
+              echo "rotate the credentials stored in these files; treat them as compromised" >&2
+            fi
+            ```
+        - id: ansible
+          desc: |
+            To protect per-user option files using Ansible:
+
+            1. Find per-user option files under the home directories.
+            2. Restrict each of them to its owner.
+
+            ```yaml
+            - name: Protect per-user MySQL option files
+              hosts: mysql
+              become: true
+              tasks:
+                - name: Find per-user option files
+                  ansible.builtin.find:
+                    paths:
+                      - /home
+                      - /root
+                    patterns:
+                      - ".my.cnf"
+                      - ".mylogin.cnf"
+                    hidden: true
+                    recurse: true
+                    depth: 2
+                  register: user_option_files
+                  failed_when: false
+
+                - name: Restrict them to their owner
+                  ansible.builtin.file:
+                    path: "{{ item.path }}"
+                    mode: "0600"
+                  loop: "{{ user_option_files.files | default([]) }}"
+                  loop_control:
+                    label: "{{ item.path }}"
+            ```
