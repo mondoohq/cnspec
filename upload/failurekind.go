@@ -31,13 +31,21 @@ const (
 	FailureConnectionReset FailureKind = "connection_reset"
 	// FailureBrokenPipe is a local write to a connection the peer had already
 	// closed (EPIPE) — typically mid-body, after some bytes went out.
-	FailureBrokenPipe      FailureKind = "broken_pipe"
-	FailureDNS             FailureKind = "dns"
-	FailureTLS             FailureKind = "tls"
-	FailureContextCanceled FailureKind = "context_canceled"
-	FailureHTTPStatus      FailureKind = "http_status"
-	FailureReportRPC       FailureKind = "report_rpc_failed"
-	FailureURLRequest      FailureKind = "url_request_failed"
+	FailureBrokenPipe FailureKind = "broken_pipe"
+	// FailureConnectionAbortedLocally is Windows WSAECONNABORTED: "an
+	// established connection was aborted by the software in your host machine".
+	// Deliberately NOT folded into FailureConnectionReset — the peer did not
+	// drop this connection, something on the client host did, which in practice
+	// means antivirus, endpoint security, or a local proxy agent. "Our own
+	// machine killed it" and "the far end dropped it" lead to completely
+	// different investigations, so they get different kinds.
+	FailureConnectionAbortedLocally FailureKind = "connection_aborted_locally"
+	FailureDNS                      FailureKind = "dns"
+	FailureTLS                      FailureKind = "tls"
+	FailureContextCanceled          FailureKind = "context_canceled"
+	FailureHTTPStatus               FailureKind = "http_status"
+	FailureReportRPC                FailureKind = "report_rpc_failed"
+	FailureURLRequest               FailureKind = "url_request_failed"
 	// FailureOther is the catch-all. An unrecognised error is still reported —
 	// with its message intact — rather than dropped. A nil error also maps here;
 	// see ClassifyFailure.
@@ -90,6 +98,16 @@ func ClassifyFailure(err error) FailureKind {
 	}
 	if errors.Is(err, syscall.EPIPE) {
 		return FailureBrokenPipe
+	}
+
+	// Windows socket errors do NOT satisfy the checks above: Go defines
+	// syscall.ECONNRESET and friends on Windows as synthetic
+	// APPLICATION_ERROR+iota constants, while the kernel returns WSAE* values
+	// (WSAECONNRESET = 10054). errors.Is against the POSIX names therefore never
+	// matches there, and every Windows connection failure fell through to
+	// FailureOther until this hook existed. See failurekind_windows.go.
+	if kind, ok := classifyPlatform(err); ok {
+		return kind
 	}
 
 	// Checked after the specific cases above: a DNS or TLS failure is also a
