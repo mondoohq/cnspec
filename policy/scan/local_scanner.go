@@ -26,7 +26,6 @@ import (
 	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/cnspec/v13/policy/executor"
 	"go.mondoo.com/mql/v13"
-	"go.mondoo.com/mql/v13/cli/config"
 	"go.mondoo.com/mql/v13/cli/execruntime"
 	"go.mondoo.com/mql/v13/discovery"
 	"go.mondoo.com/mql/v13/llx"
@@ -41,7 +40,6 @@ import (
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/gql"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/health"
 	"go.mondoo.com/mql/v13/utils/multierr"
-	ranger "go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/codes"
 	"go.mondoo.com/ranger-rpc/status"
 	"google.golang.org/protobuf/proto"
@@ -497,11 +495,26 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	connSem := make(chan struct{}, maxConn)
 	var scannedAssets atomic.Int64
 
+	// scanRunCtx bounds every scan goroutine. Cancelling it lets assets that
+	// are still queued for a worker slot be dropped instead of scanned, so the
+	// dispatcher drains promptly when we bail out early.
+	scanRunCtx, cancelScanRun := context.WithCancel(ctx)
+
 	dispatcher := newScanDispatcher(
 		parallelism, connSem, s, explorer, job, upstream,
 		reporter, multiprogress, services, spaceMrn, &scannedAssets,
 	)
 	batcher := newSyncBatcher(dispatcher, services, spaceMrn, s.recording, multiprogress)
+
+	// Drain in-flight scans before returning. Registered after the
+	// explorer.Shutdown defer above so it runs before it (defers are LIFO):
+	// Shutdown closes every asset runtime and sets it to nil, which races with
+	// scans that are still queued or running whenever an early return — e.g. a
+	// failed upstream sync — skips the normal drain at the end of scanSubtree.
+	defer func() {
+		cancelScanRun()
+		dispatcher.Wait()
+	}()
 
 	scanCtx := &scanContext{
 		explorer:           explorer,
@@ -529,7 +542,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 			}
 		}
 
-		if err := scanCtx.scanSubtree(ctx, root); err != nil {
+		if err := scanCtx.scanSubtree(scanRunCtx, root); err != nil {
 			return nil, err
 		}
 	}
@@ -728,6 +741,21 @@ func (sc *scanContext) scanSubtree(ctx context.Context, node *discovery.TrackedA
 	return nil
 }
 
+// isPermanentUpstreamError reports whether an upstream RPC error will fail the
+// same way on every attempt — expired or rejected credentials, missing
+// permissions, or a request the server refuses outright — as opposed to a
+// transient network, timeout or backend fault that a retry can recover from.
+func isPermanentUpstreamError(err error) bool {
+	for e := err; e != nil; e = errors.Unwrap(e) {
+		switch status.Code(e) {
+		case codes.Unauthenticated, codes.PermissionDenied, codes.InvalidArgument,
+			codes.NotFound, codes.Unimplemented:
+			return true
+		}
+	}
+	return false
+}
+
 // syncBatchWithUpstream synchronizes a batch of connected assets with the
 // upstream Mondoo Platform, or assigns local MRNs when running in incognito mode.
 func syncBatchWithUpstream(
@@ -754,6 +782,13 @@ func syncBatchWithUpstream(
 			})
 			if err == nil {
 				break
+			}
+			// Bad credentials, missing permissions or a rejected request fail
+			// identically on every attempt. Retrying only burns the backoff
+			// before reporting the same error.
+			if isPermanentUpstreamError(err) {
+				log.Error().Err(err).Msg("SynchronizeAssets failed with a permanent error, not retrying")
+				return err
 			}
 			if attempt < maxSyncRetries {
 				backoff := time.Duration(attempt) * 2 * time.Second
@@ -1442,35 +1477,6 @@ func (s *localAssetScanner) UpdateFilters(filters *policy.Mqueries, timeout time
 	}
 
 	return queries, err
-}
-
-func sendErrorToMondooPlatform(serviceAccount *upstream.ServiceAccountCredentials, event *health.SendErrorReq) {
-	// 3. send error to mondoo platform
-	proxy, err := config.GetAPIProxy()
-	if err != nil {
-		log.Error().Err(err).Msg("failed to parse proxy setting")
-		return
-	}
-	httpClient := ranger.NewHttpClient(ranger.WithProxy(proxy))
-
-	plugins := []ranger.ClientPlugin{}
-	certAuth, err := upstream.NewServiceAccountRangerPlugin(serviceAccount)
-	if err != nil {
-		return
-	}
-	plugins = append(plugins, certAuth)
-
-	cl, err := health.NewErrorReportingClient(serviceAccount.ApiEndpoint, httpClient, plugins...)
-	if err != nil {
-		log.Error().Err(err).Msg("failed to create error reporting client")
-		return
-	}
-
-	_, err = cl.SendError(context.Background(), event)
-	if err != nil {
-		log.Error().Err(err).Msg("failed to send error to Mondoo Platform")
-		return
-	}
 }
 
 func WithServices(ctx context.Context, runtime llx.Runtime, asset *inventory.Asset, upstreamClient *upstream.UpstreamClient, f func(context.Context, *policy.LocalServices) error) error {
