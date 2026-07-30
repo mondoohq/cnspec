@@ -741,21 +741,6 @@ func (sc *scanContext) scanSubtree(ctx context.Context, node *discovery.TrackedA
 	return nil
 }
 
-// isPermanentUpstreamError reports whether an upstream RPC error will fail the
-// same way on every attempt — expired or rejected credentials, missing
-// permissions, or a request the server refuses outright — as opposed to a
-// transient network, timeout or backend fault that a retry can recover from.
-func isPermanentUpstreamError(err error) bool {
-	for e := err; e != nil; e = errors.Unwrap(e) {
-		switch status.Code(e) {
-		case codes.Unauthenticated, codes.PermissionDenied, codes.InvalidArgument,
-			codes.NotFound, codes.Unimplemented:
-			return true
-		}
-	}
-	return false
-}
-
 // syncBatchWithUpstream synchronizes a batch of connected assets with the
 // upstream Mondoo Platform, or assigns local MRNs when running in incognito mode.
 func syncBatchWithUpstream(
@@ -782,13 +767,6 @@ func syncBatchWithUpstream(
 			})
 			if err == nil {
 				break
-			}
-			// Bad credentials, missing permissions or a rejected request fail
-			// identically on every attempt. Retrying only burns the backoff
-			// before reporting the same error.
-			if isPermanentUpstreamError(err) {
-				log.Error().Err(err).Msg("SynchronizeAssets failed with a permanent error, not retrying")
-				return err
 			}
 			if attempt < maxSyncRetries {
 				backoff := time.Duration(attempt) * 2 * time.Second

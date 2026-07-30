@@ -7,14 +7,11 @@ import (
 	"context"
 	"testing"
 
-	"github.com/cockroachdb/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnspec/v13/cli/progress"
 	"go.mondoo.com/mql/v13/discovery"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
-	"go.mondoo.com/ranger-rpc/codes"
-	"go.mondoo.com/ranger-rpc/status"
 )
 
 // Assets are submitted to the dispatcher before a worker slot is free, so they
@@ -90,28 +87,4 @@ func TestRecoverAssetPanic(t *testing.T) {
 			defer d.recoverAssetPanic(nil)
 		})
 	})
-}
-
-func TestIsPermanentUpstreamError(t *testing.T) {
-	tests := []struct {
-		name      string
-		err       error
-		permanent bool
-	}{
-		{"nil", nil, false},
-		{"unauthenticated", status.Error(codes.Unauthenticated, "request permission unauthenticated"), true},
-		{"permission denied", status.Error(codes.PermissionDenied, "request permission denied"), true},
-		{"wrapped unauthenticated", errors.Wrap(status.Error(codes.Unauthenticated, "nope"), "sync failed"), true},
-		{"unavailable", status.Error(codes.Unavailable, "try again"), false},
-		{"deadline exceeded", status.Error(codes.DeadlineExceeded, "too slow"), false},
-		{"internal", status.Error(codes.Internal, "backend fault"), false},
-		{"plain error", errors.New("connection reset by peer"), false},
-		{"context canceled", context.Canceled, false},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			assert.Equal(t, test.permanent, isPermanentUpstreamError(test.err))
-		})
-	}
 }
