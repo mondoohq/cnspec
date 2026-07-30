@@ -81,6 +81,12 @@ func UploadFile(ctx context.Context, url string, headers map[string]string, file
 		req.Header.Set(key, value)
 	}
 
+	// This assignment is REQUIRED — do not drop it or move it above the request
+	// construction. net/http only infers ContentLength for *bytes.Buffer,
+	// *bytes.Reader and *strings.Reader; for anything else it leaves the length
+	// unset and falls back to chunked transfer encoding, which signed-URL
+	// endpoints commonly reject. countingReader also masks the concrete body
+	// type, so nothing downstream can recover the size on its own.
 	req.ContentLength = fileInfo.Size()
 	req.Header.Set("Content-Type", contentType)
 

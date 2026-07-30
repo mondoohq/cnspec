@@ -42,6 +42,12 @@ type Collector struct {
 func New() *Collector { return &Collector{} }
 
 func (c *Collector) add(m *policy.Metric) {
+	// Nil-tolerant, matching ToProto below: recording a metric should never
+	// panic a scan just because a caller had no collector. Metrics added to a
+	// nil collector are dropped.
+	if c == nil {
+		return
+	}
 	c.mu.Lock()
 	c.metrics = append(c.metrics, m)
 	c.mu.Unlock()

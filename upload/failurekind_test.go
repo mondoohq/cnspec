@@ -26,7 +26,10 @@ func TestClassifyFailure(t *testing.T) {
 		{"canceled", context.Canceled, FailureContextCanceled},
 		{"net timeout", &net.OpError{Op: "dial", Err: &timeoutErr{}}, FailureTimeout},
 		{"connection reset", &net.OpError{Op: "write", Err: syscall.ECONNRESET}, FailureConnectionReset},
-		{"connection refused", &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}, FailureConnectionReset},
+		// Distinct from reset on purpose: refused is the signature of a host
+		// that cannot reach the ingest destination at all.
+		{"connection refused", &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}, FailureConnectionRefused},
+		{"broken pipe", &net.OpError{Op: "write", Err: syscall.EPIPE}, FailureBrokenPipe},
 		{"dns", &net.DNSError{Err: "no such host", Name: "ingest.example.com"}, FailureDNS},
 		{"tls", &tls.CertificateVerificationError{}, FailureTLS},
 		{"unknown", errors.New("something odd"), FailureOther},

@@ -219,7 +219,7 @@ func uploadScanDataStore(ctx context.Context, services *policy.Services, assetMr
 		// No upload session exists yet, so the platform has nothing to
 		// correlate this with — but a client that cannot even obtain a URL is
 		// still worth surfacing.
-		reportUploadFailure("upload failed: could not get upload URL: "+err.Error(),
+		reportUploadFailure("upload failed: could not get upload URL: "+upload.RedactError(err),
 			uploadFailureTags("", assetMrn, upload.FailureURLRequest, 0, upload.Result{}, bytesTotal))
 		return err
 	}
@@ -240,7 +240,7 @@ func uploadScanDataStore(ctx context.Context, services *policy.Services, assetMr
 		// client that fails here invisible: the platform sees only an upload
 		// session that never completed, with no reason attached.
 		kind := upload.ClassifyFailure(err)
-		reportUploadFailure("upload failed: "+err.Error(),
+		reportUploadFailure("upload failed: "+upload.RedactError(err),
 			uploadFailureTags(urlResp.UploadSessionId, assetMrn, kind, 0, res, bytesTotal))
 		return err
 	}
@@ -279,7 +279,7 @@ func uploadScanDataStore(ctx context.Context, services *policy.Services, assetMr
 	if _, err = services.ReportUploadCompleted(ctx, req); err != nil {
 		// The PUT succeeded, so the object IS in the bucket: this upload is
 		// recoverable, unlike a failed PUT. Worth distinguishing.
-		reportUploadFailure("upload failed: could not report completion: "+err.Error(),
+		reportUploadFailure("upload failed: could not report completion: "+upload.RedactError(err),
 			uploadFailureTags(urlResp.UploadSessionId, assetMrn, upload.FailureReportRPC, 0, res, bytesTotal))
 		return err
 	}
