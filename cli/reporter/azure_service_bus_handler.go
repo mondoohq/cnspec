@@ -32,7 +32,7 @@ func (h *azureSbusHandler) WriteReport(ctx context.Context, report *policy.Repor
 	senderName := parts[len(parts)-1]
 	sbusUrl := strings.TrimSuffix(trimmedUrl, "/"+senderName)
 
-	cred, err := azauth.GetDefaultChainedToken(nil)
+	cred, err := azauth.GetDefaultChainedToken(&azauth.ChainedTokenOptions{Source: "azure-service-bus-reporter"})
 	if err != nil {
 		return err
 	}
