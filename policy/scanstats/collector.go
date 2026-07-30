@@ -17,6 +17,11 @@ import (
 const (
 	MetricScanDuration = "cnspec.scan.duration"    // unit: ms
 	MetricUploadSize   = "cnspec.scan.upload_size" // unit: bytes
+	// MetricUploadDuration / MetricUploadThroughput give the success-path
+	// baseline for upload latency. Without them a slow failing upload cannot
+	// be compared against the normal distribution.
+	MetricUploadDuration   = "cnspec.scan.upload_duration"       // unit: ms
+	MetricUploadThroughput = "cnspec.scan.upload_throughput_bps" // unit: bps
 
 	MetricChecks             = "cnspec.scan.checks"               // unit: count
 	MetricDataQueries        = "cnspec.scan.data_queries"         // unit: count
@@ -37,6 +42,12 @@ type Collector struct {
 func New() *Collector { return &Collector{} }
 
 func (c *Collector) add(m *policy.Metric) {
+	// Nil-tolerant, matching ToProto below: recording a metric should never
+	// panic a scan just because a caller had no collector. Metrics added to a
+	// nil collector are dropped.
+	if c == nil {
+		return
+	}
 	c.mu.Lock()
 	c.metrics = append(c.metrics, m)
 	c.mu.Unlock()

@@ -48,3 +48,15 @@ func TestCollector_ErroredAndUploadSizeConstants(t *testing.T) {
 	require.Equal(t, "cnspec.scan.upload_size", stats.Metrics[1].Name)
 	require.Equal(t, int64(4096), stats.Metrics[1].GetIntValue())
 }
+
+// A nil collector must not panic: add() is nil-tolerant like ToProto.
+func TestCollector_NilReceiverDoesNotPanic(t *testing.T) {
+	var c *Collector
+	require.NotPanics(t, func() {
+		c.AddInt(MetricUploadSize, "bytes", 1)
+		c.AddDuration(MetricUploadDuration, time.Second)
+		c.AddDouble(MetricUploadThroughput, "bps", 1.5)
+		c.AddBool("x", true)
+	})
+	require.Nil(t, c.ToProto())
+}
