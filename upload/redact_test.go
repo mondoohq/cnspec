@@ -47,6 +47,24 @@ func TestRedactError_StripsQueryFromEmbeddedURL(t *testing.T) {
 	assert.Contains(t, got, "storage.googleapis.com")
 }
 
+// TestRedactError_RedactsURLMidMessage guards signedURLQueryRe against being
+// "hardened" with ^/$ anchors, which static analysis periodically suggests for
+// unanchored hostname patterns. The URL is always mid-string in a real net/http
+// error, so anchoring matches nothing and ships the signature verbatim. This
+// exact string is what net/http produces for a failed PUT.
+func TestRedactError_RedactsURLMidMessage(t *testing.T) {
+	msg := `Put "` + signedURL + `": dial tcp 10.0.0.1:443: connect: connection refused`
+
+	got := RedactError(errors.New(msg))
+
+	require.NotContains(t, got, "X-Goog-Signature",
+		"signature survived redaction — is signedURLQueryRe anchored?")
+	require.NotContains(t, got, "8a1f3c9d2b7e4f60")
+	assert.Contains(t, got, "<redacted>")
+	// Surrounding diagnostic context is preserved.
+	assert.Contains(t, got, "connection refused")
+}
+
 func TestRedactError_Truncates(t *testing.T) {
 	got := RedactError(errors.New(strings.Repeat("a", redactedErrorMax*2)))
 

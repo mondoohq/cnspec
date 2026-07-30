@@ -18,6 +18,19 @@ const redactedErrorMax = 512
 // message. For a signed upload that query carries the signature — a
 // time-limited write credential for the object — so it must never leave the
 // host inside telemetry.
+//
+// DELIBERATELY NOT ANCHORED, and it must stay that way. Static analysis flags
+// unanchored hostname patterns because an unanchored regex is unsafe when it
+// *validates* a URL in a security decision — an attacker embeds the trusted
+// host in a longer string and slips past the check. This regex makes no such
+// decision: it is a redaction sweep over free-form error text, and the URL it
+// must find is always mid-string. net/http renders a failed request as
+//
+//	Put "https://host/obj?X-Goog-Signature=…": dial tcp …: connection refused
+//
+// so anchoring with ^/$ matches nothing, silently disables redaction, and ships
+// the signature to the platform — the exact leak this file exists to stop.
+// TestRedactError_RedactsURLMidMessage is the regression test for that.
 var signedURLQueryRe = regexp.MustCompile(`(https?://[^\s"?]*)\?[^\s"]*`)
 
 // RedactError renders err for reporting to the platform with any URL removed.
