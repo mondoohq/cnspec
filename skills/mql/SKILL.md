@@ -255,7 +255,87 @@ events.where(parameters.any(_['name'] == "NEW_VALUE"))    # Good
 # Always handle null values
 users.all(shell == "/bin/bash")                     # Bad
 users.where(shell != null).all(shell == "/bin/bash") # Good
+
+# Don't spell out a path that is also a resource name — prefer the accessor
+azure.subscription.aksService.cluster.autoUpgradeProfile.upgradeChannel  # Bad
+azure.subscription.aks.cluster.autoUpgradeProfile.upgradeChannel         # Good
 ```
+
+### Ambiguous paths: always prefer the accessor
+
+**If a dotted path can be read two ways — as a longer resource name, or as a
+field on a shorter one — do not write it. Reach the value through the
+accessor instead.**
+
+The compiler resolves the **longest matching resource name first**. It does
+not consider whether the resource you already have declares a field of that
+name, and it does not check whether the longer resource can stand on its own.
+When the longer name wins, you get a bare resource with no id and no fields —
+the parent's accessor never runs.
+
+Worked example. `azure.subscription.aksService.cluster` declares a field
+`autoUpgradeProfile()`, but `azure.subscription.aksService.cluster.autoUpgradeProfile`
+is *also* a resource name. So this:
+
+```mql
+azure.subscription.aksService.cluster.autoUpgradeProfile.upgradeChannel != "none"
+```
+
+compiles to a bare `…cluster.autoUpgradeProfile` resource — no cluster, no
+accessor, every field unset. The scan logs two anonymous errors per field:
+
+```
+provider returned no data and no error for a field ... field=upgradeChannel id=
+llx: encountered a primitive with no type information, coercing to null
+```
+
+and the assertion silently evaluates against `null`. Because `null != "none"`
+is **true** and `null == "x"` is **false**, the check does not come back
+inconclusive — it comes back confidently wrong. Four shipped Azure checks
+carried this bug; two of them (impact 70) passed on every cluster without
+reading anything.
+
+`aks()` and `web()` are accessors on `azure.subscription`, not resource names,
+so the greedy match stops at `azure.subscription` and the rest compiles as
+field reads:
+
+```mql
+azure.subscription.aks.cluster.autoUpgradeProfile.upgradeChannel != "none"   # resolves
+```
+
+A block also works, and is clearer when you assert on several fields:
+
+```mql
+azure.subscription.aks.cluster {
+  autoUpgradeProfile.upgradeChannel != null
+  autoUpgradeProfile.upgradeChannel != "none"
+}
+```
+
+**How to spot it.** The value is a sub-object of something else (a profile, a
+config, a settings block) *and* the full path appears in
+`cnspec providers resources <provider> --json` as a resource in its own right.
+If both are true, use the accessor.
+
+**How to confirm it.** A husk is silent in the result — the field just reads
+`null`. Run the query and watch the log:
+
+```bash
+cnspec run azure -c 'azure.subscription.aksService.cluster.autoUpgradeProfile.upgradeChannel'
+# x provider returned no data and no error for a field ... field=upgradeChannel id=
+# x llx: encountered a primitive with no type information, coercing to null
+```
+
+An **empty `id=`** in that error is the signature: the resource was built with
+no identity, which only happens when it was created bare. A populated `id=`
+means something else is wrong (usually the provider genuinely not setting the
+field).
+
+This is not Azure-specific — any provider can name a sub-resource after the
+path that reaches it. Cloudflare (`cloudflare.zone.settings.*`), GCP
+(`gcp.project.gkeService.cluster.networkPolicy.*`), AWS
+(`aws.emr.cluster.encryptionConfiguration.*`), vSphere, Arista and others all
+have resources shaped this way.
 
 ## Workflow
 
