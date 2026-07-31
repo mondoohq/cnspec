@@ -13,7 +13,7 @@ import (
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/mql/providers"
 	"go.mondoo.com/mql/providers-sdk/v1/testutils"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 type kyvernoMappingCatalog struct {

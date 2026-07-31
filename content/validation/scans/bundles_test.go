@@ -18,6 +18,7 @@ import (
 	"go.mondoo.com/cnspec/policy/scan"
 	"go.mondoo.com/mql/providers"
 	"go.mondoo.com/mql/providers-sdk/v1/inventory"
+	"go.mondoo.com/mql/providers-sdk/v1/testutils"
 )
 
 // bundleFixtures holds one sample project per expected whole-bundle score: a
@@ -116,7 +117,7 @@ func runBundle(policyBundlePath string, policyMrn string, asset *inventory.Asset
 func TestKyvernoMappedKubernetesChecks(t *testing.T) {
 	loader := policy.DefaultBundleLoader()
 
-	securityBundle, err := loader.BundleFromPaths("./mondoo-kubernetes-security.mql.yaml")
+	securityBundle, err := loader.BundleFromPaths(bundlePath("mondoo-kubernetes-security.mql.yaml"))
 	require.NoError(t, err)
 	securityQueries := bundleQueriesByUID(t, securityBundle)
 
@@ -137,7 +138,7 @@ func TestKyvernoMappedKubernetesChecks(t *testing.T) {
 	assert.Contains(t, nodesProxy, `_["resources"].containsNone(["nodes/proxy", "*"])`)
 	assert.Contains(t, nodesProxy, `_["apiGroups"].containsNone(["", "*"])`)
 
-	kyvernoBundle, err := loader.BundleFromPaths("./mondoo-kubernetes-kyverno.mql.yaml")
+	kyvernoBundle, err := loader.BundleFromPaths(bundlePath("mondoo-kubernetes-kyverno.mql.yaml"))
 	require.NoError(t, err)
 	kyvernoQueries := bundleQueriesByUID(t, kyvernoBundle)
 
@@ -159,7 +160,7 @@ func TestKyvernoMappedKubernetesChecks(t *testing.T) {
 	unmappedResults := kyvernoQueries["mondoo-kubernetes-kyverno-policyreports-no-unmapped-failing-results"]
 	assert.Contains(t, unmappedResults, `result == "warn"`)
 
-	bestPracticesBundle, err := loader.BundleFromPaths("./mondoo-kubernetes-best-practices.mql.yaml")
+	bestPracticesBundle, err := loader.BundleFromPaths(bundlePath("mondoo-kubernetes-best-practices.mql.yaml"))
 	require.NoError(t, err)
 	bestPracticesQueries := bundleQueriesByUID(t, bestPracticesBundle)
 
@@ -180,14 +181,14 @@ func TestKyvernoMappedKubernetesBundlesCompile(t *testing.T) {
 	loader := policy.DefaultBundleLoader()
 	ctx := context.Background()
 
-	runtime := providers.DefaultRuntime()
-	for _, path := range []string{
-		"./mondoo-kubernetes-kyverno.mql.yaml",
-		"./mondoo-kubernetes-security.mql.yaml",
-		"./mondoo-kubernetes-best-practices.mql.yaml",
+	runtime := kyvernoScanRuntime(t)
+	for _, bundleFile := range []string{
+		"mondoo-kubernetes-kyverno.mql.yaml",
+		"mondoo-kubernetes-security.mql.yaml",
+		"mondoo-kubernetes-best-practices.mql.yaml",
 	} {
-		t.Run(path, func(t *testing.T) {
-			bundle, err := loader.BundleFromPaths(path)
+		t.Run(bundleFile, func(t *testing.T) {
+			bundle, err := loader.BundleFromPaths(bundlePath(bundleFile))
 			require.NoError(t, err)
 
 			compiled, err := bundle.Compile(ctx, runtime.Schema(), nil)
@@ -195,6 +196,19 @@ func TestKyvernoMappedKubernetesBundlesCompile(t *testing.T) {
 			require.NotNil(t, compiled)
 		})
 	}
+}
+
+func kyvernoScanRuntime(t *testing.T) *providers.Runtime {
+	t.Helper()
+
+	runtime := providers.DefaultRuntime()
+	schema, ok := runtime.Schema().(providers.ExtensibleSchema)
+	require.True(t, ok, "provider runtime schema must support adding source schemas")
+	for _, provider := range []string{"core", "network", "os", "k8s"} {
+		path := filepath.Join(contentDir, "testdata", "schema", "providers", provider, "resources", provider+".lr")
+		schema.Add(provider, testutils.MustLoadSchema(testutils.SchemaProvider{Path: path}))
+	}
+	return runtime
 }
 
 func bundleQueriesByUID(t *testing.T, bundle *policy.Bundle) map[string]string {
@@ -221,13 +235,13 @@ func TestKubernetesBestPracticesIngressClassUsesEffectiveValue(t *testing.T) {
 	}{
 		{
 			name:      "legacy annotation accepted when spec class is absent",
-			dir:       "./testdata/mondoo-kubernetes-best-practices-ingress-pass",
+			dir:       filepath.Join(contentDir, "testdata", "mondoo-kubernetes-best-practices-ingress-pass"),
 			targets:   []string{"ingresses"},
 			wantScore: 100,
 		},
 		{
 			name:      "spec class wins over approved legacy annotation",
-			dir:       "./testdata/mondoo-kubernetes-best-practices-ingress-fail",
+			dir:       filepath.Join(contentDir, "testdata", "mondoo-kubernetes-best-practices-ingress-fail"),
 			targets:   []string{"ingresses"},
 			wantScore: 70,
 		},
@@ -237,7 +251,7 @@ func TestKubernetesBestPracticesIngressClassUsesEffectiveValue(t *testing.T) {
 		test := tests[i]
 		t.Run(test.name, func(t *testing.T) {
 			report, err := runBundle(
-				"./mondoo-kubernetes-best-practices.mql.yaml",
+				bundlePath("mondoo-kubernetes-best-practices.mql.yaml"),
 				policyMrn,
 				k8sAssetWithTargets(test.dir, test.targets...),
 			)
