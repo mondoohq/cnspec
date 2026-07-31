@@ -92,6 +92,11 @@ func sarifLinterRules() []Rule {
 		Name:        "Query uses deprecated MQL symbol",
 		Description: "Query references a resource or field annotated with @maturity('deprecated')",
 	})
+	rules = append(rules, Rule{
+		ID:          QueryShadowedAccessorRuleID,
+		Name:        "Query bypasses an accessor by spelling out a resource name",
+		Description: "Query reaches a sub-resource by its own dotted name instead of the accessor its parent declares, so the resource is created with no id and every field reads null",
+	})
 
 	return rules
 }
