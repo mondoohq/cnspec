@@ -80,14 +80,31 @@ func TestShadowedAccessor_DeduplicatesPerResource(t *testing.T) {
 	require.Len(t, entries, 1)
 }
 
-// A resource whose fields are all computed accessors fetches its own data, so
-// creating it bare is correct. `os.date` exposes only `time()`/`timezone()`.
-func TestShadowedAccessor_AllComputedFieldsNotFlagged(t *testing.T) {
+// Known over-reporting, pinned so the trade-off stays visible: `os.date`
+// exposes only `time()`/`timezone()` accessors and does resolve standalone,
+// but the schema cannot distinguish those from accessors that read cache
+// values the parent stored, so the rule reports it. This is the noise the
+// experimental label covers -- if the rule later learns to tell them apart,
+// this test should flip to Empty.
+func TestShadowedAccessor_SelfSufficientAccessorsStillReported(t *testing.T) {
 	q := &Mquery{
 		Uid:         "computed",
 		Mql:         "os.date.timezone != ''",
 		FileContext: FileContext{Line: 1, Column: 1},
 	}
 	entries := walkQueryForShadowedAccessors(schema, newConf(schema), "test.mql.yaml", q)
-	assert.Empty(t, entries, "a resource with only computed fields resolves itself")
+	require.Len(t, entries, 1)
+	assert.Contains(t, entries[0].Message, "[experimental]")
+}
+
+// A resource that declares init(...) resolves itself from args or the scanned
+// asset, so reaching it by name is correct.
+func TestShadowedAccessor_ResourceWithInitNotFlagged(t *testing.T) {
+	q := &Mquery{
+		Uid:         "has-init",
+		Mql:         "file(\"/etc/passwd\").exists",
+		FileContext: FileContext{Line: 1, Column: 1},
+	}
+	entries := walkQueryForShadowedAccessors(schema, newConf(schema), "test.mql.yaml", q)
+	assert.Empty(t, entries)
 }

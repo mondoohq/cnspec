@@ -94,8 +94,8 @@ func sarifLinterRules() []Rule {
 	})
 	rules = append(rules, Rule{
 		ID:          QueryShadowedAccessorRuleID,
-		Name:        "Query bypasses an accessor by spelling out a resource name",
-		Description: "Query reaches a sub-resource by its own dotted name instead of the accessor its parent declares, so the resource is created with no id and every field reads null",
+		Name:        "Experimental: query bypasses an accessor by spelling out a resource name",
+		Description: "Query reaches a sub-resource by its own dotted name instead of the accessor its parent declares, so the resource is created with no id and fields the parent would have populated read null. Experimental: the schema cannot tell whether the sub-resource can resolve itself standalone, so a resource of self-sufficient accessors may be reported too",
 	})
 
 	return rules

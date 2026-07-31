@@ -14,7 +14,10 @@ import (
 )
 
 const (
-	QueryShadowedAccessorRuleID = "query-shadowed-accessor"
+	// Experimental: the rule reports a shape the schema can prove, but it
+	// cannot prove the consequence. See shadowedAccessor for what it
+	// deliberately does not check, and expect some noise until it does.
+	QueryShadowedAccessorRuleID = "experimental-query-shadowed-accessor"
 )
 
 // lintShadowedAccessors reports queries that spell out a dotted path which is
@@ -125,9 +128,10 @@ func walkQueryForShadowedAccessors(schema resources.ResourcesSchema, conf mqlc.C
 			RuleID: QueryShadowedAccessorRuleID,
 			Level:  LevelWarning,
 			Message: fmt.Sprintf(
-				"query '%s' reaches '%s' as a resource, which shadows the '%s' accessor on '%s'. "+
-					"The resource is created with no id, so every field reads null and the check silently "+
-					"asserts against nothing. Reach it through the accessor instead, e.g. `%s { %s.<field> }`",
+				"[experimental] query '%s' reaches '%s' as a resource, which shadows the '%s' accessor on "+
+					"'%s'. The resource is created with no id, so fields the parent would have populated "+
+					"read null and the check silently asserts against nothing. Reach it through the accessor "+
+					"instead, e.g. `%s { %s.<field> }`",
 				display, name, field, parent, parent, field),
 			Location: loc,
 		})
@@ -175,12 +179,16 @@ func bareResourceName(chunk *llx.Chunk) (string, bool) {
 //     resources like `microsoft.users` and asset-scoped ones are meant to be
 //     reached bare.
 //
-//  3. At least one field is static (`IsMandatory`, which lrcore sets from
-//     BasicField.isStatic -- a field declared without accessor parens). Static
-//     fields have no source other than the creator, so a bare resource leaves
-//     them unset. A resource whose fields are all computed accessors, like
-//     `os.date` with `time()`/`timezone()`, fetches its own data and is
-//     perfectly fine to create bare.
+// Deliberately NOT a condition: whether the resource declares a static field.
+// Static fields are unquestionably unset on a bare resource, so requiring one
+// would be sound -- but it is not necessary. A computed accessor is only safe
+// standalone when it can fetch without the parent; one that reads `cache*`
+// values the parent stored on the Internal struct, or keys off an `Id` the
+// parent supplied, is just as broken and looks identical in the schema. Since
+// the schema cannot tell those apart, the rule reports the shape and accepts
+// that resources like `os.date` -- pure `time()`/`timezone()` accessors that
+// do resolve standalone -- come along as noise. This is why the rule is
+// experimental.
 func shadowedAccessor(schema resources.ResourcesSchema, name string) (parent string, field string, ok bool) {
 	idx := strings.LastIndex(name, ".")
 	if idx < 0 {
@@ -201,19 +209,5 @@ func shadowedAccessor(schema resources.ResourcesSchema, name string) (parent str
 	if rinfo == nil || rinfo.Init != nil {
 		return "", "", false
 	}
-	if !hasStaticField(rinfo) {
-		return "", "", false
-	}
 	return parent, field, true
-}
-
-// hasStaticField reports whether the resource declares at least one field that
-// only its creator can populate.
-func hasStaticField(r *resources.ResourceInfo) bool {
-	for _, f := range r.Fields {
-		if f.IsMandatory {
-			return true
-		}
-	}
-	return false
 }
