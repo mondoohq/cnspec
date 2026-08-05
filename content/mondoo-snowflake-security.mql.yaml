@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-snowflake-security
     name: Mondoo Snowflake Security
-    version: 2.0.0
+    version: 2.0.1
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -131,7 +131,7 @@ queries:
         ### Audit via Snowsight
 
         1. Sign in to Snowsight as a user with the ACCOUNTADMIN or SECURITYADMIN role.
-        2. Go to **Admin** > **Users & Roles** > **Users**.
+        2. Go to **Governance & security** » **Users & roles**.
         3. Review the **MFA** column for each active user that signs in with a password.
 
         A passing result shows every active password-based user marked as enrolled in MFA; a failing result shows one or more active password-based users with MFA not enrolled.
@@ -148,52 +148,59 @@ queries:
       remediation:
         - id: console
           desc: |
-            **Enroll MFA in Snowsight (per user)**
+            **Enroll MFA in Snowsight for each user**
 
-            Each Snowflake user must enroll in MFA from their own profile.
+            Each Snowflake user must enroll in MFA from their own settings.
             Have affected users:
 
-            1. Log in to the Snowflake web interface (Snowsight).
-            2. Select their username in the top-left corner and choose **Profile**.
-            3. In the **Multi-factor authentication** section, select **Enroll**.
-            4. Follow the Duo enrollment prompts.
+            1. Sign in to Snowsight.
+            2. Open the user menu and select **Settings**.
+            3. Select **Authentication**.
+            4. In the **Multi-factor authentication** section, select **Add new authentication method** and follow the prompts. Choose Duo if your organization standardizes on it; passkey and authenticator app enrollment satisfy Snowflake MFA but do not set the Duo enrollment flag that this check inspects.
 
-            Administrators can monitor enrollment from **Admin** → **Users & Roles** → **Users**, where the **MFA** column shows enrolled vs not enrolled.
+            Administrators can monitor enrollment from **Governance & security** » **Users & roles**, where the **MFA** column shows enrolled vs not enrolled.
 
             Note: this check reads the Duo MFA flag specifically, so a user who enrolls a non-Duo factor such as TOTP or a passkey still fails it. To enforce those factors and satisfy the check, pair this step with the SQL authentication-policy remediation, which requires MFA regardless of the enrollment method.
         - id: sql
           desc: |
             Run as `ACCOUNTADMIN` in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
 
-            **Recommended: enforce MFA via an authentication policy**
+            **Enforce MFA via an authentication policy**
 
-            Authentication policies are the modern way to require MFA. A Snowflake account attaches at most one authentication policy, so inspect existing policies first:
+            Authentication policies are the supported way to require MFA. A Snowflake account attaches at most one authentication policy, so inspect existing policies first:
 
             ```sql
             SHOW AUTHENTICATION POLICIES;
-            SHOW PARAMETERS LIKE 'AUTHENTICATION_POLICY' IN ACCOUNT;
             ```
 
-            Create (or update) a policy that requires MFA, then attach it at the account level:
+            Create or update a policy that requires MFA, then attach it at the account level:
 
             ```sql
             CREATE AUTHENTICATION POLICY IF NOT EXISTS require_mfa_policy
-              AUTHENTICATION_METHODS     = ('PASSWORD', 'SAML')
-              MFA_AUTHENTICATION_METHODS = ('PASSWORD', 'SAML')
-              MFA_ENROLLMENT             = 'REQUIRED'
-              COMMENT                    = 'Require MFA enrollment on every login';
+              AUTHENTICATION_METHODS = ('PASSWORD', 'SAML')
+              MFA_ENROLLMENT         = 'REQUIRED'
+              COMMENT                = 'Require MFA enrollment on every login';
 
             ALTER ACCOUNT SET AUTHENTICATION POLICY require_mfa_policy;
             ```
 
-            Snowflake has no account parameter that toggles MFA on its own. Enforcement comes entirely from the authentication policy above, so the `MFA_AUTHENTICATION_METHODS` and `MFA_ENROLLMENT` settings are what require users to register and use a second factor.
+            Snowflake has no account parameter that toggles MFA on its own. Enforcement comes entirely from the authentication policy above, so the `MFA_ENROLLMENT` setting is what requires users to register and use a second factor.
 
-            Note: the policy enforces MFA enrollment on the next login. It does not retroactively log out sessions that authenticated before the policy was attached.
+            When `MFA_ENROLLMENT = 'REQUIRED'` is set, the policy's `CLIENT_TYPES` must include `SNOWFLAKE_UI`, because Snowsight is where users complete enrollment. The default of `ALL` satisfies this.
+
+            The policy forces users to enroll at their next sign-in. It does not retroactively log out sessions that authenticated before the policy was attached. Users who enroll with a passkey or an authenticator app satisfy the policy but do not set the Duo enrollment flag that this check inspects, so confirm enrollment afterward with `SHOW USERS` and review the `ext_authn_duo` column.
         - id: terraform
           desc: |
-            The `snowflakedb/snowflake` provider cannot set a per-user Duo enrollment flag, but it can enforce MFA account-wide with an authentication policy. Define a `snowflake_authentication_policy` that requires MFA enrollment and attach it to the account:
+            The `snowflakedb/snowflake` provider cannot set a per-user Duo enrollment flag, but it can enforce MFA account-wide with an authentication policy. Both resources are preview features, so enable them in the provider configuration first:
 
             ```hcl
+            provider "snowflake" {
+              preview_features_enabled = [
+                "snowflake_authentication_policy_resource",
+                "snowflake_account_authentication_policy_attachment_resource",
+              ]
+            }
+
             resource "snowflake_authentication_policy" "require_mfa" {
               database               = "SECURITY"
               schema                 = "POLICIES"
@@ -250,7 +257,7 @@ queries:
         ### Audit via Snowsight
 
         1. Sign in to Snowsight as a user with the ACCOUNTADMIN or SECURITYADMIN role.
-        2. Go to **Admin** > **Users & Roles** > **Roles**.
+        2. Go to **Governance & security** » **Users & roles** and select the **Roles** tab.
         3. Open the `ACCOUNTADMIN` role and review the **Granted to** list of users.
 
         A passing result shows three or fewer users granted the role; a failing result shows four or more.
@@ -269,26 +276,32 @@ queries:
           desc: |
             **Using Snowsight**
 
-            1. In Snowsight, go to **Admin** → **Users & Roles** → **Roles**.
-            2. Open the `ACCOUNTADMIN` role and review the **Granted to** list.
-            3. For every user that does not need full account control, remove the grant and assign a least-privilege role (for example `SYSADMIN` or `SECURITYADMIN`) instead.
+            1. In Snowsight, go to **Governance & security** » **Users & roles**.
+            2. Select the **Roles** tab and open `ACCOUNTADMIN` to review which users hold the role.
+            3. Snowsight does not support revoking a role grant from the role page, so for every user that does not need full account control, revoke the grant in a worksheet and assign a least-privilege role such as `SYSADMIN` or `SECURITYADMIN` instead:
+
+                ```sql
+                REVOKE ROLE ACCOUNTADMIN FROM USER <user_name>;
+                GRANT ROLE SYSADMIN TO USER <user_name>;
+                ```
+
             4. Keep at least two named users with `ACCOUNTADMIN` so the account cannot be locked out if one break-glass account becomes unavailable.
         - id: sql
           desc: |
-            Run as `ACCOUNTADMIN` (or `SECURITYADMIN`) in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
+            Run as `ACCOUNTADMIN` or `SECURITYADMIN` in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
 
-            1. List both directions of `ACCOUNTADMIN` — who has been granted the role, and what privileges the role itself holds:
+            1. List both directions of `ACCOUNTADMIN`: who has been granted the role, and what privileges the role itself holds:
 
                 ```sql
                 SHOW GRANTS OF ROLE ACCOUNTADMIN;
                 SHOW GRANTS TO ROLE ACCOUNTADMIN;
                 ```
 
-            2. For each user that does not need full account control, revoke `ACCOUNTADMIN` and grant a least-privilege role instead. Common day-to-day roles are `SYSADMIN` (object/warehouse management) and `SECURITYADMIN` (user and role management):
+            2. For each user that does not need full account control, revoke `ACCOUNTADMIN` and grant a least-privilege role instead. Common day-to-day roles are `SYSADMIN` for object and warehouse management and `SECURITYADMIN` for user and role management:
 
                 ```sql
                 REVOKE ROLE ACCOUNTADMIN FROM USER <user_name>;
-                GRANT ROLE SYSADMIN TO USER <user_name>;        -- example
+                GRANT ROLE SYSADMIN TO USER <user_name>;
                 ```
 
             3. Keep at least two named users with `ACCOUNTADMIN` so the account cannot be locked out if one break-glass account becomes unavailable.
@@ -350,7 +363,7 @@ queries:
         ### Audit via Snowsight
 
         1. Sign in to Snowsight as a user with the ACCOUNTADMIN or SECURITYADMIN role.
-        2. Go to **Admin** > **Users & Roles** > **Users**.
+        2. Go to **Governance & security** » **Users & roles**.
         3. Open each active user and check whether the account is still flagged to require a password change.
 
         A passing result shows no active user with a pending forced password change; a failing result shows one or more active users still flagged.
@@ -369,15 +382,15 @@ queries:
           desc: |
             **Using Snowsight**
 
-            1. In Snowsight, go to **Admin** → **Users & Roles** → **Users**.
-            2. Identify users still flagged "must change password" (also visible in the user detail page).
+            1. In Snowsight, go to **Governance & security** » **Users & roles**.
+            2. Identify users still flagged "must change password", also visible on the user detail page.
             3. Notify each affected user to log in and complete their password change.
-            4. For accounts that have not logged in for an extended period, open the user and select **Disable user** instead of leaving the password change pending indefinitely.
+            4. For accounts that have not logged in for an extended period, open the user's more options menu and select **Disable User** instead of leaving the password change pending indefinitely.
         - id: sql
           desc: |
             Run as `ACCOUNTADMIN` or `SECURITYADMIN` in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
 
-            1. Identify the affected users — those still flagged "must change password" and not disabled:
+            1. Identify the affected users, those still flagged "must change password" and not disabled:
 
                 ```sql
                 SELECT NAME, CREATED_ON, LAST_SUCCESS_LOGIN, MUST_CHANGE_PASSWORD
@@ -386,7 +399,7 @@ queries:
                   AND DISABLED = FALSE;
                 ```
 
-                `ACCOUNT_USAGE` views can lag the live state by up to ~3 hours. For an authoritative snapshot, run `SHOW USERS;` and inspect the `must_change_password` column.
+                `ACCOUNT_USAGE` views can lag the live state by up to about 3 hours. For an authoritative snapshot, run `SHOW USERS;` and inspect the `must_change_password` column.
 
             2. Ask each affected user to log in and complete their password change. For accounts that have not logged in for an extended period, disable them instead:
 
@@ -394,15 +407,15 @@ queries:
                 ALTER USER <user_name> SET DISABLED = TRUE;
                 ```
 
-            3. After a rotation cycle, re-run the query in step 1 — the result should be empty.
+            3. After a rotation cycle, re-run the query in step 1. The result should be empty.
         - id: terraform
           desc: |
-            With the `snowflakedb/snowflake` provider, set `must_change_password` to `false` on every `snowflake_user` resource so a forced password change is not left pending. Once the user has completed initial setup, omitting or disabling the flag prevents Terraform from re-arming it on the next apply:
+            With the `snowflakedb/snowflake` provider, set `must_change_password` to `"false"` on every `snowflake_user` resource so a forced password change is not left pending. The provider models this field as a string. Once the user has completed initial setup, keeping the flag at `"false"` prevents Terraform from re-arming it on the next apply:
 
             ```hcl
             resource "snowflake_user" "analyst" {
               name                 = "ANALYST"
-              must_change_password = false
+              must_change_password = "false"
             }
             ```
     refs:
@@ -459,14 +472,6 @@ queries:
         - **Encourage passphrases:** Promote the use of passphrases so users can satisfy length requirements while keeping passwords memorable.
         - **Layer with MFA:** Combine length requirements with multi-factor authentication for defense in depth.
       audit: |
-        ### Audit via Snowsight
-
-        1. Sign in to Snowsight as a user with the ACCOUNTADMIN role.
-        2. Go to **Admin** > **Security** > **Password Policies**.
-        3. Open the password policy attached to the account and review the **Minimum length** setting.
-
-        A passing result shows a minimum length of 14 or greater; a failing result shows a value below 14 or no policy attached.
-
         ### Audit via SQL
 
         Run the query in a Snowsight worksheet or with SnowSQL:
@@ -475,21 +480,14 @@ queries:
         SHOW PASSWORD POLICIES;
         ```
 
-        For the policy attached to the account, run `DESC PASSWORD POLICY <policy_name>`: a passing result shows `PASSWORD_MIN_LENGTH` of 14 or greater, while a failing result shows a lower value.
+        For the policy attached to the account, run `DESC PASSWORD POLICY <policy_name>`: a passing result shows `PASSWORD_MIN_LENGTH` of 14 or greater, while a failing result shows a lower value or no password policy configured.
       remediation:
-        - id: console
-          desc: |
-            **Using Snowsight**
-
-            1. In Snowsight, go to **Admin** → **Security** → **Password Policies**.
-            2. If a policy is already attached to the account, open it; otherwise click **+ Password Policy** and create one.
-            3. Set **Minimum length** to at least `14`.
-            4. Save the policy and confirm it is attached at the account level.
+        # No console remediation: Snowsight has no password policy editor. Password policies are schema-level objects managed entirely through SQL; use the SQL method in a Snowsight worksheet.
         - id: sql
           desc: |
             Run as `ACCOUNTADMIN` in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
 
-            > **Important:** A Snowflake account attaches **at most one** password policy. Prefer `ALTER PASSWORD POLICY` on the existing policy. Do not blindly `CREATE OR REPLACE` — that will overwrite settings other policy checks may have already configured.
+            > **Important:** A Snowflake account attaches **at most one** password policy. Prefer `ALTER PASSWORD POLICY` on the existing policy. Do not blindly `CREATE OR REPLACE`, because that overwrites settings other policy checks may have already configured.
 
             1. Find the policy currently attached to the account:
 
@@ -513,9 +511,16 @@ queries:
                 ```
         - id: terraform
           desc: |
-            With the `snowflakedb/snowflake` provider, set `min_length` to at least `14` on the `snowflake_password_policy` resource, then attach the policy to the account:
+            With the `snowflakedb/snowflake` provider, set `min_length` to at least `14` on the `snowflake_password_policy` resource, then attach the policy to the account. Both resources are preview features, so enable them in the provider configuration first:
 
             ```hcl
+            provider "snowflake" {
+              preview_features_enabled = [
+                "snowflake_password_policy_resource",
+                "snowflake_account_password_policy_attachment_resource",
+              ]
+            }
+
             resource "snowflake_password_policy" "account" {
               database   = "SECURITY"
               schema     = "POLICIES"
@@ -566,7 +571,7 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every Snowflake password policy is configured to enforce account lockout, allowing between 1 and 10 failed sign-in attempts before locking the account. Lockout rate-limits password guessing so that brute-force attacks cannot run unchecked.
+        This check ensures that a password policy exists and that every Snowflake password policy allows no more than five failed sign-in attempts before locking the account for at least 15 minutes. Lockout rate-limits password guessing so that brute-force attacks cannot run unchecked.
 
         **Why this matters**
 
@@ -581,14 +586,6 @@ queries:
         - **Set a lockout duration:** Apply a reasonable lockout time, such as 15 to 30 minutes, and monitor lockout events for signs of attack.
         - **Layer with MFA:** Combine lockout with multi-factor authentication for defense in depth.
       audit: |
-        ### Audit via Snowsight
-
-        1. Sign in to Snowsight as a user with the ACCOUNTADMIN role.
-        2. Go to **Admin** > **Security** > **Password Policies**.
-        3. Open the password policy attached to the account and review the **Maximum retries** and **Lockout time** settings.
-
-        A passing result shows a maximum retries value between 1 and 10; a failing result shows 0, a value above 10, or no policy attached.
-
         ### Audit via SQL
 
         Run the query in a Snowsight worksheet or with SnowSQL:
@@ -597,21 +594,14 @@ queries:
         SHOW PASSWORD POLICIES;
         ```
 
-        For the policy attached to the account, run `DESC PASSWORD POLICY <policy_name>`: a passing result shows `PASSWORD_MAX_RETRIES` between 1 and 10, while a failing result shows 0 or a value above 10.
+        For the policy attached to the account, run `DESC PASSWORD POLICY <policy_name>`: a passing result shows `PASSWORD_MAX_RETRIES` of 5 or fewer and `PASSWORD_LOCKOUT_TIME_MINS` of 15 or greater, while a failing result shows a higher retry limit, a shorter lockout time, or no password policy configured.
       remediation:
-        - id: console
-          desc: |
-            **Using Snowsight**
-
-            1. In Snowsight, go to **Admin** → **Security** → **Password Policies**.
-            2. If a policy is already attached to the account, open it; otherwise click **+ Password Policy** and create one.
-            3. Set **Maximum retries** (e.g. `5`) and **Lockout time** (e.g. `15` minutes).
-            4. Save the policy and confirm it is attached at the account level.
+        # No console remediation: Snowsight has no password policy editor. Password policies are schema-level objects managed entirely through SQL; use the SQL method in a Snowsight worksheet.
         - id: sql
           desc: |
             Run as `ACCOUNTADMIN` in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
 
-            > **Important:** A Snowflake account attaches **at most one** password policy. Prefer `ALTER PASSWORD POLICY` on the existing policy. Do not blindly `CREATE OR REPLACE` — that will overwrite settings other policy checks may have already configured.
+            > **Important:** A Snowflake account attaches **at most one** password policy. Prefer `ALTER PASSWORD POLICY` on the existing policy. Do not blindly `CREATE OR REPLACE`, because that overwrites settings other policy checks may have already configured.
 
             1. Find the policy currently attached to the account:
 
@@ -638,9 +628,16 @@ queries:
                 ```
         - id: terraform
           desc: |
-            With the `snowflakedb/snowflake` provider, set `max_retries` on the `snowflake_password_policy` resource to a value between 1 and 10, and pair it with `lockout_time_mins`. Then attach the policy to the account:
+            With the `snowflakedb/snowflake` provider, set `max_retries` on the `snowflake_password_policy` resource and pair it with `lockout_time_mins`, then attach the policy to the account. Both resources are preview features, so enable them in the provider configuration first:
 
             ```hcl
+            provider "snowflake" {
+              preview_features_enabled = [
+                "snowflake_password_policy_resource",
+                "snowflake_account_password_policy_attachment_resource",
+              ]
+            }
+
             resource "snowflake_password_policy" "account" {
               database          = "SECURITY"
               schema            = "POLICIES"
@@ -714,10 +711,10 @@ queries:
         ### Audit via Snowsight
 
         1. Sign in to Snowsight as a user with the ACCOUNTADMIN or SECURITYADMIN role.
-        2. Open the user menu in the top-right corner and select **Account Details**.
-        3. Review the **Network policy** field to see which policy, if any, is attached to the account.
+        2. Go to **Governance & security** » **Network policies**.
+        3. Review the policy list to see which policy, if any, is marked as active for the account.
 
-        A passing result shows a network policy name listed; a failing result shows the field empty.
+        A passing result shows a network policy marked as active for the account; a failing result shows no active policy.
 
         ### Audit via SQL
 
@@ -733,17 +730,16 @@ queries:
           desc: |
             **Using Snowsight**
 
-            1. In Snowsight, go to **Admin** → **Security** → **Network Policies**.
-            2. Click **+ Network Policy**, give it a name, and add **Allowed IP addresses** as CIDR ranges representing your office, VPN, or data center egress.
-            3. Save the policy.
-            4. Open **Account Details** from the top-right user menu, then **Network policy**, and select the policy you just created so it is enforced account-wide.
-
-            > **Warning:** Attaching a network policy that omits your own current public IP locks you, and everyone else outside the allowed ranges, out of the account. Confirm your egress IP is covered before you attach the policy, because the lockout takes effect immediately.
+            1. In Snowsight, go to **Governance & security** » **Network policies**.
+            2. Select the **Network Rules** tab, then **+ Network Rule**. Name the rule and add the CIDR ranges your organization uses for office, VPN, and data center egress.
+            3. Select the **Network Policies** tab, then **+ Network Policy**. Name the policy, select **Allowed**, and add the rule you created.
+            4. Before activating, confirm the allowed ranges cover every administrator, ETL job, and BI tool that connects to Snowflake. Snowflake only verifies that your own current IP address is allowed; any other user or integration outside the ranges is locked out the moment the policy activates.
+            5. Find the policy in the list, select the **…** menu, then select **Activate** to enforce it account-wide.
         - id: sql
           desc: |
-            Run as `ACCOUNTADMIN` (or `SECURITYADMIN`) in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
+            Run as `ACCOUNTADMIN` or `SECURITYADMIN` in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
 
-            > **Important:** A Snowflake account attaches **at most one** network policy at a time. If one is already attached, prefer `ALTER NETWORK POLICY` on it (see the unrestricted-access check) instead of creating a new one.
+            > **Important:** A Snowflake account attaches **at most one** network policy at a time. If one is already attached, prefer `ALTER NETWORK POLICY` on it instead of creating a new one. Before attaching, inventory the egress ranges of every administrator, ETL job, and BI tool. Snowflake refuses the attachment if your own current IP is not allowed, but it does not validate anyone else's address, so an incomplete allowlist locks other users out immediately.
 
             1. Inspect existing network policies and what is attached:
 
@@ -752,12 +748,11 @@ queries:
                 SHOW PARAMETERS LIKE 'NETWORK_POLICY' IN ACCOUNT;
                 ```
 
-            2. Create the policy with the CIDR ranges your organization actually uses. The `203.0.113.0/24` and `198.51.100.0/24` values below are reserved documentation ranges from RFC 5737, so they are placeholders you must replace with your real egress ranges. Be sure the list includes your own current public IP, or attaching the policy will lock you out:
+            2. Create the policy with the CIDR ranges your organization actually uses. The `203.0.113.0/24` and `198.51.100.0/24` values below are reserved documentation ranges from RFC 5737, so they are placeholders you must replace with your real egress ranges:
 
                 ```sql
                 CREATE NETWORK POLICY <policy_name>
-                  ALLOWED_IP_LIST = ('203.0.113.0/24', '198.51.100.0/24')
-                  BLOCKED_IP_LIST = ();
+                  ALLOWED_IP_LIST = ('203.0.113.0/24', '198.51.100.0/24');
                 ```
 
             3. Attach it to the account. This takes effect immediately, so anyone connecting from outside the allowed ranges, including you, loses access at once:
@@ -773,7 +768,7 @@ queries:
                 ```
         - id: terraform
           desc: |
-            With the `snowflakedb/snowflake` provider, define a `snowflake_network_policy` and bind it account-wide by setting the `NETWORK_POLICY` account parameter with `snowflake_account_parameter`:
+            With the `snowflakedb/snowflake` provider, define a `snowflake_network_policy` and bind it account-wide by setting the `NETWORK_POLICY` account parameter with `snowflake_account_parameter`. Ensure the allowed list covers every administrator and integration before applying, because Terraform only validates the IP of the credentials it runs with:
 
             ```hcl
             resource "snowflake_network_policy" "corp" {
@@ -842,8 +837,8 @@ queries:
         ### Audit via Snowsight
 
         1. Sign in to Snowsight as a user with the ACCOUNTADMIN or SECURITYADMIN role.
-        2. Go to **Admin** > **Security** > **Network Policies**.
-        3. Open each policy and review the **Allowed IPs** entries.
+        2. Go to **Governance & security** » **Network policies**.
+        3. Open each policy and review its allowed IP entries.
 
         A passing result shows no policy listing `0.0.0.0/0` or `::/0` among its allowed IPs; a failing result shows at least one policy that does.
 
@@ -861,15 +856,17 @@ queries:
           desc: |
             **Using Snowsight**
 
-            1. In Snowsight, go to **Admin** → **Security** → **Network Policies**.
-            2. Open the policy whose **Allowed IPs** include `0.0.0.0/0` (or the IPv6 wildcard `::/0`).
-            3. Replace `0.0.0.0/0` with the specific CIDR ranges your organization actually uses, such as office, VPN, and data center egress.
+            1. In Snowsight, go to **Governance & security** » **Network policies**.
+            2. Open the policy whose allowed list includes `0.0.0.0/0` or the IPv6 wildcard `::/0`.
+            3. Replace the wildcard entry with the specific CIDR ranges your organization actually uses for office, VPN, and data center egress. If the policy is active for the account, confirm the replacement ranges cover every administrator and integration first, because the change takes effect immediately.
             4. Save the policy.
 
             > **Warning:** Removing the wildcard restricts access immediately. Confirm your own current public IP is one of the allowed ranges before you save, or you will lock yourself out of the account.
         - id: sql
           desc: |
-            Run as `ACCOUNTADMIN` (or `SECURITYADMIN`) in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
+            Run as `ACCOUNTADMIN` or `SECURITYADMIN` in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
+
+            > **Important:** If the policy is active for the account, the new list takes effect immediately. Snowflake verifies that your own current IP remains allowed, but it does not check anyone else's, so confirm the replacement ranges cover every administrator, ETL job, and BI tool before running the change.
 
             1. Find the offending policy and read its current IP list:
 
@@ -878,7 +875,7 @@ queries:
                 DESC NETWORK POLICY <policy_name>;
                 ```
 
-            2. Replace the open `0.0.0.0/0` (and/or IPv6 `::/0`) entry with the specific CIDR ranges your organization actually uses. The `203.0.113.0/24` and `198.51.100.0/24` values below are reserved documentation ranges from RFC 5737, so replace them with your real egress ranges. Removing the wildcard restricts access immediately, so make sure the new list includes your own current public IP or you will be locked out:
+            2. Replace the open `0.0.0.0/0` or IPv6 `::/0` entry with the specific CIDR ranges your organization actually uses. The `203.0.113.0/24` and `198.51.100.0/24` values below are reserved documentation ranges from RFC 5737, so replace them with your real egress ranges:
 
                 ```sql
                 ALTER NETWORK POLICY <policy_name>
@@ -957,7 +954,7 @@ queries:
         ### Audit via Snowsight
 
         1. Sign in to Snowsight as a user with the ACCOUNTADMIN or SECURITYADMIN role.
-        2. Go to **Admin** > **Users & Roles** > **Users**.
+        2. Go to **Governance & security** » **Users & roles**.
         3. Sort or filter the user list by **Default role** and review the entries.
 
         A passing result shows no active user with a default role of `ACCOUNTADMIN`; a failing result shows one or more active users whose default role is `ACCOUNTADMIN`.
@@ -976,9 +973,9 @@ queries:
           desc: |
             **Using Snowsight**
 
-            1. In Snowsight, go to **Admin** → **Users & Roles** → **Users**.
-            2. Filter or sort the user list by **Default role** and find users whose default role is `ACCOUNTADMIN`.
-            3. Open each user, change **Default role** to a least-privilege role (for example `SYSADMIN` or a project-specific role), and save.
+            1. In Snowsight, go to **Governance & security** » **Users & roles**.
+            2. Find users whose default role is `ACCOUNTADMIN`.
+            3. Open each user, expand **Advanced User Options**, change **Default role** to a least-privilege role such as `SYSADMIN` or a project-specific role, and save.
             4. Users can still `USE ROLE ACCOUNTADMIN` when explicit elevation is needed; this only changes which role is active at login.
         - id: sql
           desc: |
@@ -993,7 +990,9 @@ queries:
                   AND DISABLED = FALSE;
                 ```
 
-            2. For each affected user, change their default role to the least-privilege role they need day-to-day (`SYSADMIN`, `SECURITYADMIN`, or a custom role):
+                `ACCOUNT_USAGE` views can lag the live state by up to about 3 hours. For an authoritative snapshot, run `SHOW USERS;` and inspect the `default_role` column.
+
+            2. For each affected user, change their default role to the least-privilege role they need day-to-day, such as `SYSADMIN`, `SECURITYADMIN`, or a custom role:
 
                 ```sql
                 ALTER USER <user_name> SET DEFAULT_ROLE = SYSADMIN;
@@ -1063,14 +1062,6 @@ queries:
         - **Pair with length:** Combine complexity requirements with a strong minimum length for maximum protection.
         - **Layer with MFA:** Use multi-factor authentication as an additional layer of protection.
       audit: |
-        ### Audit via Snowsight
-
-        1. Sign in to Snowsight as a user with the ACCOUNTADMIN role.
-        2. Go to **Admin** > **Security** > **Password Policies**.
-        3. Open the password policy attached to the account and review the **Min upper case**, **Min lower case**, **Min numeric**, and **Min special** settings.
-
-        A passing result shows each of the four character-class minimums set to 1 or greater; a failing result shows any of them at 0 or no policy attached.
-
         ### Audit via SQL
 
         Run the query in a Snowsight worksheet or with SnowSQL:
@@ -1079,21 +1070,14 @@ queries:
         SHOW PASSWORD POLICIES;
         ```
 
-        For the policy attached to the account, run `DESC PASSWORD POLICY <policy_name>`: a passing result shows `PASSWORD_MIN_UPPER_CASE_CHARS`, `PASSWORD_MIN_LOWER_CASE_CHARS`, `PASSWORD_MIN_NUMERIC_CHARS`, and `PASSWORD_MIN_SPECIAL_CHARS` all set to 1 or greater, while a failing result shows any of them at 0.
+        For the policy attached to the account, run `DESC PASSWORD POLICY <policy_name>`: a passing result shows `PASSWORD_MIN_UPPER_CASE_CHARS`, `PASSWORD_MIN_LOWER_CASE_CHARS`, `PASSWORD_MIN_NUMERIC_CHARS`, and `PASSWORD_MIN_SPECIAL_CHARS` all set to 1 or greater, while a failing result shows any of them at 0 or no password policy configured.
       remediation:
-        - id: console
-          desc: |
-            **Using Snowsight**
-
-            1. In Snowsight, go to **Admin** → **Security** → **Password Policies**.
-            2. If a policy is already attached to the account, open it; otherwise click **+ Password Policy** and create one.
-            3. Set each character-class minimum to at least `1`: **Min upper case**, **Min lower case**, **Min numeric**, **Min special**.
-            4. Save the policy and confirm it is attached at the account level.
+        # No console remediation: Snowsight has no password policy editor. Password policies are schema-level objects managed entirely through SQL; use the SQL method in a Snowsight worksheet.
         - id: sql
           desc: |
             Run as `ACCOUNTADMIN` in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
 
-            > **Important:** A Snowflake account attaches **at most one** password policy. Prefer `ALTER PASSWORD POLICY` on the existing policy. Do not blindly `CREATE OR REPLACE` — that will overwrite settings other policy checks may have already configured.
+            > **Important:** A Snowflake account attaches **at most one** password policy. Prefer `ALTER PASSWORD POLICY` on the existing policy. Do not blindly `CREATE OR REPLACE`, because that overwrites settings other policy checks may have already configured.
 
             1. Find the policy currently attached to the account:
 
@@ -1124,9 +1108,16 @@ queries:
                 ```
         - id: terraform
           desc: |
-            With the `snowflakedb/snowflake` provider, set each character-class minimum to at least `1` on the `snowflake_password_policy` resource, then attach the policy to the account:
+            With the `snowflakedb/snowflake` provider, set each character-class minimum to at least `1` on the `snowflake_password_policy` resource, then attach the policy to the account. Both resources are preview features, so enable them in the provider configuration first:
 
             ```hcl
+            provider "snowflake" {
+              preview_features_enabled = [
+                "snowflake_password_policy_resource",
+                "snowflake_account_password_policy_attachment_resource",
+              ]
+            }
+
             resource "snowflake_password_policy" "account" {
               database             = "SECURITY"
               schema               = "POLICIES"
@@ -1194,14 +1185,6 @@ queries:
         - **Layer with MFA:** Combine password rotation with multi-factor authentication for defense in depth.
         - **Track rotation:** Notify users ahead of expiration and monitor for users who have not rotated passwords on schedule.
       audit: |
-        ### Audit via Snowsight
-
-        1. Sign in to Snowsight as a user with the ACCOUNTADMIN role.
-        2. Go to **Admin** > **Security** > **Password Policies**.
-        3. Open the password policy attached to the account and review the **Max age (days)** setting.
-
-        A passing result shows a maximum age between 1 and 90 days; a failing result shows 0, a value above 90, or no policy attached.
-
         ### Audit via SQL
 
         Run the query in a Snowsight worksheet or with SnowSQL:
@@ -1210,21 +1193,14 @@ queries:
         SHOW PASSWORD POLICIES;
         ```
 
-        For the policy attached to the account, run `DESC PASSWORD POLICY <policy_name>`: a passing result shows `PASSWORD_MAX_AGE_DAYS` between 1 and 90, while a failing result shows 0 or a value above 90.
+        For the policy attached to the account, run `DESC PASSWORD POLICY <policy_name>`: a passing result shows `PASSWORD_MAX_AGE_DAYS` between 1 and 90, while a failing result shows 0, a value above 90, or no password policy configured.
       remediation:
-        - id: console
-          desc: |
-            **Using Snowsight**
-
-            1. In Snowsight, go to **Admin** → **Security** → **Password Policies**.
-            2. If a policy is already attached to the account, open it; otherwise click **+ Password Policy** and create one.
-            3. Set **Max age (days)** to a value appropriate for your environment (commonly `90`).
-            4. Save the policy and confirm it is attached at the account level.
+        # No console remediation: Snowsight has no password policy editor. Password policies are schema-level objects managed entirely through SQL; use the SQL method in a Snowsight worksheet.
         - id: sql
           desc: |
             Run as `ACCOUNTADMIN` in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
 
-            > **Important:** A Snowflake account attaches **at most one** password policy. Prefer `ALTER PASSWORD POLICY` on the existing policy. Do not blindly `CREATE OR REPLACE` — that will overwrite settings other policy checks may have already configured.
+            > **Important:** A Snowflake account attaches **at most one** password policy. Prefer `ALTER PASSWORD POLICY` on the existing policy. Do not blindly `CREATE OR REPLACE`, because that overwrites settings other policy checks may have already configured.
 
             1. Find the policy currently attached to the account:
 
@@ -1248,9 +1224,16 @@ queries:
                 ```
         - id: terraform
           desc: |
-            With the `snowflakedb/snowflake` provider, set `max_age_days` to a value between 1 and 90 on the `snowflake_password_policy` resource, then attach the policy to the account:
+            With the `snowflakedb/snowflake` provider, set `max_age_days` to a value between 1 and 90 on the `snowflake_password_policy` resource, then attach the policy to the account. Both resources are preview features, so enable them in the provider configuration first:
 
             ```hcl
+            provider "snowflake" {
+              preview_features_enabled = [
+                "snowflake_password_policy_resource",
+                "snowflake_account_password_policy_attachment_resource",
+              ]
+            }
+
             resource "snowflake_password_policy" "account" {
               database     = "SECURITY"
               schema       = "POLICIES"
@@ -1315,14 +1298,6 @@ queries:
         - **Combine controls:** Pair password history with maximum age and complexity requirements.
         - **Educate users:** Explain to users why each new password must be genuinely unique.
       audit: |
-        ### Audit via Snowsight
-
-        1. Sign in to Snowsight as a user with the ACCOUNTADMIN role.
-        2. Go to **Admin** > **Security** > **Password Policies**.
-        3. Open the password policy attached to the account and review the **Password history** setting.
-
-        A passing result shows a history value of 5 or greater; a failing result shows a value below 5 or no policy attached.
-
         ### Audit via SQL
 
         Run the query in a Snowsight worksheet or with SnowSQL:
@@ -1331,21 +1306,14 @@ queries:
         SHOW PASSWORD POLICIES;
         ```
 
-        For the policy attached to the account, run `DESC PASSWORD POLICY <policy_name>`: a passing result shows `PASSWORD_HISTORY` of 5 or greater, while a failing result shows a lower value.
+        For the policy attached to the account, run `DESC PASSWORD POLICY <policy_name>`: a passing result shows `PASSWORD_HISTORY` of 5 or greater, while a failing result shows a lower value or no password policy configured.
       remediation:
-        - id: console
-          desc: |
-            **Using Snowsight**
-
-            1. In Snowsight, go to **Admin** → **Security** → **Password Policies**.
-            2. If a policy is already attached to the account, open it; otherwise click **+ Password Policy** and create one.
-            3. Set **Password history** to at least `5`.
-            4. Save the policy and confirm it is attached at the account level.
+        # No console remediation: Snowsight has no password policy editor. Password policies are schema-level objects managed entirely through SQL; use the SQL method in a Snowsight worksheet.
         - id: sql
           desc: |
             Run as `ACCOUNTADMIN` in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
 
-            > **Important:** A Snowflake account attaches **at most one** password policy. Prefer `ALTER PASSWORD POLICY` on the existing policy. Do not blindly `CREATE OR REPLACE` — that will overwrite settings other policy checks may have already configured.
+            > **Important:** A Snowflake account attaches **at most one** password policy. Prefer `ALTER PASSWORD POLICY` on the existing policy. Do not blindly `CREATE OR REPLACE`, because that overwrites settings other policy checks may have already configured.
 
             1. Find the policy currently attached to the account:
 
@@ -1369,9 +1337,16 @@ queries:
                 ```
         - id: terraform
           desc: |
-            With the `snowflakedb/snowflake` provider, set `history` to at least `5` on the `snowflake_password_policy` resource, then attach the policy to the account:
+            With the `snowflakedb/snowflake` provider, set `history` to at least `5` on the `snowflake_password_policy` resource, then attach the policy to the account. Both resources are preview features, so enable them in the provider configuration first:
 
             ```hcl
+            provider "snowflake" {
+              preview_features_enabled = [
+                "snowflake_password_policy_resource",
+                "snowflake_account_password_policy_attachment_resource",
+              ]
+            }
+
             resource "snowflake_password_policy" "account" {
               database = "SECURITY"
               schema   = "POLICIES"
@@ -1422,7 +1397,7 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that every Snowflake database is configured with Time Travel retention enabled, meaning a retention time greater than 0 days. Time Travel allows querying, cloning, and restoring historical data, protecting against accidental or malicious modifications and deletions.
+        This check ensures that every locally created Snowflake database is configured with Time Travel retention enabled, meaning a retention time greater than 0 days. Databases imported from shares are excluded because their retention cannot be changed. Time Travel allows querying, cloning, and restoring historical data, protecting against accidental or malicious modifications and deletions.
 
         **Why this matters**
 
@@ -1437,14 +1412,6 @@ queries:
         - **Extend for critical data:** Use longer retention periods, up to 90 days on Enterprise edition, for sensitive or critical databases.
         - **Set a safe default:** Raise the account-level default so newly created databases inherit a non-zero retention value.
       audit: |
-        ### Audit via Snowsight
-
-        1. Sign in to Snowsight as a user with the ACCOUNTADMIN role.
-        2. Go to **Data** > **Databases** and open each database.
-        3. Review the **Time Travel retention (days)** value on the database details.
-
-        A passing result shows every database with a retention value greater than 0; a failing result shows one or more databases with a retention of 0 days.
-
         ### Audit via SQL
 
         Run the query in a Snowsight worksheet or with SnowSQL:
@@ -1453,33 +1420,27 @@ queries:
         SHOW DATABASES;
         ```
 
-        A passing result shows a `retention_time` greater than 0 for every database; a failing result shows at least one database with a `retention_time` of 0.
+        A passing result shows a `retention_time` greater than 0 for every locally created database; a failing result shows at least one such database with a `retention_time` of 0. Databases imported from shares are excluded because their retention cannot be changed.
       remediation:
-        - id: console
-          desc: |
-            **Using Snowsight**
-
-            1. In Snowsight, go to **Data** → **Databases** and open the affected database.
-            2. Click the gear icon and select **Edit**.
-            3. Set **Time Travel retention (days)** to a value appropriate for your restore objectives. `1` is the minimum on Standard accounts; Enterprise and above support up to `90`. Most production workloads use `7` or higher.
-            4. Save.
+        # No console remediation: Snowsight's database editor supports only renaming and comments; Time Travel retention is set with SQL. Use the SQL method in a Snowsight worksheet.
         - id: sql
           desc: |
-            Run as `ACCOUNTADMIN` (or the database owner) in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
+            Run as `ACCOUNTADMIN` or the database owner in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
 
-            `1` is the minimum on Standard accounts; Enterprise and above support up to `90`. Production workloads typically want `7` or higher to give incident response a useful restore window.
+            On Standard edition the maximum retention is 1 day, so use `1` there. Enterprise edition and above support up to `90`; production workloads on those editions typically want `7` or higher to give incident response a useful restore window. Transient databases support at most 1 day regardless of edition. Imported databases from shares cannot be altered and are excluded below.
 
-            1. Find databases below the desired retention threshold:
+            1. Find local databases below the desired retention threshold:
 
                 ```sql
                 SHOW DATABASES;
-                SELECT DATABASE_NAME, RETENTION_TIME
+                SELECT DATABASE_NAME, RETENTION_TIME, TYPE
                 FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASES
                 WHERE DELETED IS NULL
+                  AND TYPE = 'STANDARD'
                   AND RETENTION_TIME < 1;
                 ```
 
-            2. Raise retention on each affected database:
+            2. Raise retention on each affected database. Use `1` on Standard edition and for transient databases:
 
                 ```sql
                 ALTER DATABASE <database_name> SET DATA_RETENTION_TIME_IN_DAYS = 7;
@@ -1492,7 +1453,7 @@ queries:
                 ```
         - id: terraform
           desc: |
-            With the `snowflakedb/snowflake` provider, set `data_retention_time_in_days` to a non-zero value on every `snowflake_database` resource. Most production workloads use `7` or higher:
+            With the `snowflakedb/snowflake` provider, set `data_retention_time_in_days` to a non-zero value on every `snowflake_database` resource. Use `1` on Standard edition; Enterprise edition and above support up to `90`:
 
             ```hcl
             resource "snowflake_database" "analytics" {
@@ -1511,26 +1472,27 @@ queries:
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'snowflake_user')
     mql: |
-      terraform.resources('snowflake_user').where(arguments['disabled'] != true).all(
-        arguments['must_change_password'] != true
+      terraform.resources('snowflake_user').where(arguments['disabled'] != true && arguments['disabled'] != "true").all(
+        arguments['must_change_password'] != true && arguments['must_change_password'] != "true"
       )
   - uid: mondoo-snowflake-security-no-users-pending-password-change-terraform-plan
     filters: |
       asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'snowflake_user')
     mql: |
-      terraform.plan.resourceChanges.where(type == 'snowflake_user').where(change.after['disabled'] != true).all(
-        change.after['must_change_password'] != true
+      terraform.plan.resourceChanges.where(type == 'snowflake_user').where(change.after['disabled'] != true && change.after['disabled'] != "true").all(
+        change.after['must_change_password'] != true && change.after['must_change_password'] != "true"
       )
   - uid: mondoo-snowflake-security-no-users-pending-password-change-terraform-state
     filters: |
       asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'snowflake_user')
     mql: |
-      terraform.state.resources.where(type == 'snowflake_user').where(values['disabled'] != true).all(
-        values['must_change_password'] != true
+      terraform.state.resources.where(type == 'snowflake_user').where(values['disabled'] != true && values['disabled'] != "true").all(
+        values['must_change_password'] != true && values['must_change_password'] != "true"
       )
   - uid: mondoo-snowflake-security-password-policy-minimum-length-snowflake
     filters: asset.platform == 'snowflake'
     mql: |
+      snowflake.account.passwordPolicies != empty
       snowflake.account.passwordPolicies.all(passwordMinLength >= 14)
   - uid: mondoo-snowflake-security-password-policy-minimum-length-terraform-hcl
     filters: |
@@ -1556,27 +1518,28 @@ queries:
   - uid: mondoo-snowflake-security-password-policy-lockout-configured-snowflake
     filters: asset.platform == 'snowflake'
     mql: |
-      snowflake.account.passwordPolicies.all(passwordMaxRetries > 0 && passwordMaxRetries <= 10)
+      snowflake.account.passwordPolicies != empty
+      snowflake.account.passwordPolicies.all(passwordMaxRetries > 0 && passwordMaxRetries <= 5 && passwordLockoutTimeMins >= 15)
   - uid: mondoo-snowflake-security-password-policy-lockout-configured-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'snowflake_password_policy')
     mql: |
       terraform.resources('snowflake_password_policy').all(
-        arguments['max_retries'] > 0 && arguments['max_retries'] <= 10
+        arguments['max_retries'] != null && arguments['max_retries'] > 0 && arguments['max_retries'] <= 5 && arguments['lockout_time_mins'] >= 15
       )
   - uid: mondoo-snowflake-security-password-policy-lockout-configured-terraform-plan
     filters: |
       asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'snowflake_password_policy')
     mql: |
       terraform.plan.resourceChanges.where(type == 'snowflake_password_policy').all(
-        change.after['max_retries'] > 0 && change.after['max_retries'] <= 10
+        change.after['max_retries'] != null && change.after['max_retries'] > 0 && change.after['max_retries'] <= 5 && change.after['lockout_time_mins'] >= 15
       )
   - uid: mondoo-snowflake-security-password-policy-lockout-configured-terraform-state
     filters: |
       asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'snowflake_password_policy')
     mql: |
       terraform.state.resources.where(type == 'snowflake_password_policy').all(
-        values['max_retries'] > 0 && values['max_retries'] <= 10
+        values['max_retries'] != null && values['max_retries'] > 0 && values['max_retries'] <= 5 && values['lockout_time_mins'] >= 15
       )
   - uid: mondoo-snowflake-security-network-policies-configured-snowflake
     filters: asset.platform == 'snowflake'
@@ -1643,19 +1606,20 @@ queries:
     filters: |
       asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'snowflake_user')
     mql: |
-      terraform.plan.resourceChanges.where(type == 'snowflake_user').where(change.after['disabled'] != true).all(
+      terraform.plan.resourceChanges.where(type == 'snowflake_user').where(change.after['disabled'] != true && change.after['disabled'] != "true").all(
         change.after['default_role'] != "ACCOUNTADMIN"
       )
   - uid: mondoo-snowflake-security-no-accountadmin-default-role-terraform-state
     filters: |
       asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'snowflake_user')
     mql: |
-      terraform.state.resources.where(type == 'snowflake_user').where(values['disabled'] != true).all(
+      terraform.state.resources.where(type == 'snowflake_user').where(values['disabled'] != true && values['disabled'] != "true").all(
         values['default_role'] != "ACCOUNTADMIN"
       )
   - uid: mondoo-snowflake-security-password-policy-complexity-configured-snowflake
     filters: asset.platform == 'snowflake'
     mql: |
+      snowflake.account.passwordPolicies != empty
       snowflake.account.passwordPolicies.all(passwordMinUpperCaseChars >= 1 && passwordMinLowerCaseChars >= 1 && passwordMinNumericChars >= 1 && passwordMinSpecialChars >= 1)
   - uid: mondoo-snowflake-security-password-policy-complexity-configured-terraform-hcl
     filters: |
@@ -1681,31 +1645,33 @@ queries:
   - uid: mondoo-snowflake-security-password-policy-max-age-configured-snowflake
     filters: asset.platform == 'snowflake'
     mql: |
+      snowflake.account.passwordPolicies != empty
       snowflake.account.passwordPolicies.all(passwordMaxAgeDays > 0 && passwordMaxAgeDays <= 90)
   - uid: mondoo-snowflake-security-password-policy-max-age-configured-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'snowflake_password_policy')
     mql: |
       terraform.resources('snowflake_password_policy').all(
-        arguments['max_age_days'] > 0 && arguments['max_age_days'] <= 90
+        arguments['max_age_days'] == null || arguments['max_age_days'] > 0 && arguments['max_age_days'] <= 90
       )
   - uid: mondoo-snowflake-security-password-policy-max-age-configured-terraform-plan
     filters: |
       asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'snowflake_password_policy')
     mql: |
       terraform.plan.resourceChanges.where(type == 'snowflake_password_policy').all(
-        change.after['max_age_days'] > 0 && change.after['max_age_days'] <= 90
+        change.after['max_age_days'] == null || change.after['max_age_days'] > 0 && change.after['max_age_days'] <= 90
       )
   - uid: mondoo-snowflake-security-password-policy-max-age-configured-terraform-state
     filters: |
       asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'snowflake_password_policy')
     mql: |
       terraform.state.resources.where(type == 'snowflake_password_policy').all(
-        values['max_age_days'] > 0 && values['max_age_days'] <= 90
+        values['max_age_days'] == null || values['max_age_days'] > 0 && values['max_age_days'] <= 90
       )
   - uid: mondoo-snowflake-security-password-policy-history-configured-snowflake
     filters: asset.platform == 'snowflake'
     mql: |
+      snowflake.account.passwordPolicies != empty
       snowflake.account.passwordPolicies.all(passwordHistory >= 5)
   - uid: mondoo-snowflake-security-password-policy-history-configured-terraform-hcl
     filters: |
@@ -1731,7 +1697,7 @@ queries:
   - uid: mondoo-snowflake-security-databases-retention-configured-snowflake
     filters: asset.platform == 'snowflake'
     mql: |
-      snowflake.account.databases.all(retentionTime > 0)
+      snowflake.account.databases.where(origin == "").all(retentionTime > 0)
   - uid: mondoo-snowflake-security-databases-retention-configured-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'snowflake_database')
