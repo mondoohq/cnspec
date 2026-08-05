@@ -1,0 +1,3826 @@
+# Copyright Mondoo, Inc. 2024, 2026
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: mondoo-postgresql-security
+    name: Mondoo PostgreSQL Security
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: linux,postgresql
+    require:
+      - provider: os
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Harden PostgreSQL server transport, host-based authentication, and audit logging
+    docs:
+      desc: |
+        The Mondoo PostgreSQL Security policy assesses the on-disk configuration of a self-managed PostgreSQL server. It inspects `postgresql.conf` together with the fragments pulled in by its `include`, `include_if_exists`, and `include_dir` directives, plus the `pg_hba.conf` host-based authentication rules and the `pg_ident.conf` identity mappings.
+
+        This policy provides security checks across four areas:
+
+        - Connection surface and TLS transport settings
+        - Host-based authentication rules and identity mapping
+        - Audit logging coverage and log file protection
+        - Ownership and permissions on the configuration files themselves
+
+        **Scope and limitations**
+
+        This policy reads configuration as it is written to disk. It does not open a SQL connection to the server, so it cannot assess roles, role attributes, object privileges, installed extensions, or the server version. Checks describe the configuration the server would load on its next start or reload.
+
+        Settings changed with `ALTER SYSTEM` are written to `postgresql.auto.conf` in the data directory rather than to `postgresql.conf`. PostgreSQL applies that file last, so it takes precedence over everything this policy reads. Remediation steps therefore edit `postgresql.conf` directly, which keeps the effective configuration and the audited configuration in agreement. Where a setting has already been overridden with `ALTER SYSTEM`, reset it with `ALTER SYSTEM RESET <parameter>` so the value in `postgresql.conf` takes effect again.
+
+        Learn more about scanning Linux in the [cnspec Linux documentation](https://mondoo.com/docs/cnspec/os/linux).
+
+        Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
+    groups:
+      - title: Connection and Transport Security
+        filters: |
+          asset.family.contains("linux") &&
+          postgresql.conf.file.exists
+        checks:
+          - uid: mondoo-postgresql-security-listen-addresses-restricted
+          - uid: mondoo-postgresql-security-tls-enabled
+          - uid: mondoo-postgresql-security-tls-min-protocol-version
+          - uid: mondoo-postgresql-security-tls-strong-ciphers
+          - uid: mondoo-postgresql-security-tls-prefer-server-ciphers
+          - uid: mondoo-postgresql-security-tls-client-ca-configured
+      - title: Authentication and Host-Based Access Control
+        filters: |
+          asset.family.contains("linux") &&
+          postgresql.conf.file.exists
+        checks:
+          - uid: mondoo-postgresql-security-password-encryption-scram
+          - uid: mondoo-postgresql-security-hba-no-trust-auth
+          - uid: mondoo-postgresql-security-hba-no-plaintext-password-auth
+          - uid: mondoo-postgresql-security-hba-no-md5-auth
+          - uid: mondoo-postgresql-security-hba-no-unrestricted-client-addresses
+          - uid: mondoo-postgresql-security-hba-remote-connections-require-tls
+          - uid: mondoo-postgresql-security-hba-replication-restricted
+          - uid: mondoo-postgresql-security-hba-cert-auth-requires-verify-full
+          - uid: mondoo-postgresql-security-ident-no-superuser-mappings
+          - uid: mondoo-postgresql-security-ident-no-catch-all-mappings
+          - uid: mondoo-postgresql-security-db-user-namespace-disabled
+      - title: Logging and Auditing
+        filters: |
+          asset.family.contains("linux") &&
+          postgresql.conf.file.exists
+        checks:
+          - uid: mondoo-postgresql-security-logging-collector-enabled
+          - uid: mondoo-postgresql-security-log-destination-configured
+          - uid: mondoo-postgresql-security-log-connections-enabled
+          - uid: mondoo-postgresql-security-log-disconnections-enabled
+          - uid: mondoo-postgresql-security-log-statement-captures-ddl
+          - uid: mondoo-postgresql-security-log-line-prefix-includes-context
+          - uid: mondoo-postgresql-security-log-error-verbosity-not-terse
+          - uid: mondoo-postgresql-security-log-file-mode-restricted
+          - uid: mondoo-postgresql-security-pgaudit-extension-enabled
+      - title: Configuration File Protection
+        filters: |
+          asset.family.contains("linux") &&
+          postgresql.conf.file.exists
+        checks:
+          - uid: mondoo-postgresql-security-conf-files-restricted-permissions
+          - uid: mondoo-postgresql-security-hba-file-restricted-permissions
+          - uid: mondoo-postgresql-security-local-preload-libraries-empty
+queries:
+  - uid: mondoo-postgresql-security-listen-addresses-restricted
+    title: Ensure listen_addresses does not bind PostgreSQL to every interface
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    mql: |
+      postgresql.conf.listenAddresses.none(_ == "*" || _ == "0.0.0.0" || _ == "::")
+    docs:
+      desc: |
+        This check ensures that `listen_addresses` names specific interfaces instead of binding the server to every address on the host. A value of `*`, `0.0.0.0`, or `::` makes the PostgreSQL port reachable from every network the host is attached to, including networks the database was never meant to serve.
+
+        PostgreSQL defaults to `localhost`, which is safe. Packaged installations and container images frequently widen this to `*` so the server is reachable during setup, and that widened value is rarely narrowed again afterwards.
+
+        **Why this matters**
+
+        - **Smaller network surface:** Only the interfaces you name can carry a connection attempt, so an unexpected management or public network cannot reach the port at all.
+        - **Defense in depth behind the firewall:** Host and network firewall rules change over time. Binding narrowly means a firewall mistake does not immediately expose the database.
+        - **Clear intent:** An explicit address list documents which networks the database is expected to serve, which makes later review straightforward.
+
+        **Risk mitigation**
+
+        - **Blocks opportunistic scanning:** Internet-wide scanners routinely probe port 5432 and fingerprint the server version from its response.
+        - **Contains credential attacks:** Brute-force and password-spraying attempts cannot start against an address that never accepts the connection.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective value from a running server:
+
+        ```bash
+        sudo -u postgres psql -c "SHOW listen_addresses;"
+        ```
+
+        2. Read the value as written to the configuration file:
+
+        ```bash
+        sudo -u postgres grep -E "^\s*listen_addresses" /etc/postgresql/16/main/postgresql.conf
+        ```
+
+        3. Confirm which addresses the server is actually bound to:
+
+        ```bash
+        sudo ss -lntp | grep postgres
+        ```
+
+        A passing result lists only loopback addresses or specific private addresses the database is meant to serve. A failing result shows `*`, `0.0.0.0`, or `::`, or shows the server listening on `0.0.0.0:5432`.
+      remediation:
+        - id: cli
+          desc: |
+            To bind PostgreSQL to specific interfaces using the CLI:
+
+            1. Edit `postgresql.conf` and set `listen_addresses` to the addresses the server must serve.
+            2. Reload PostgreSQL so the new value takes effect. Changing `listen_addresses` requires a restart rather than a reload.
+            3. Confirm the server is bound only to the intended addresses.
+
+            ```bash
+            sudo -u postgres sed -i "s/^#*\s*listen_addresses.*/listen_addresses = 'localhost,10.0.0.5'/" \
+              /etc/postgresql/16/main/postgresql.conf
+            sudo systemctl restart postgresql
+            sudo ss -lntp | grep postgres
+            ```
+        - id: script
+          desc: |
+            To bind PostgreSQL to specific interfaces using a bash script:
+
+            1. Set the addresses the server must serve.
+            2. Replace an existing `listen_addresses` directive or append one when none is present.
+            3. Restart PostgreSQL and report the resulting listeners.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            PGCONF="/etc/postgresql/16/main/postgresql.conf"
+            ADDRESSES="localhost,10.0.0.5"
+
+            if grep -qE "^\s*listen_addresses" "$PGCONF"; then
+              sed -i "s|^\s*listen_addresses.*|listen_addresses = '${ADDRESSES}'|" "$PGCONF"
+            else
+              printf "listen_addresses = '%s'\n" "$ADDRESSES" >>"$PGCONF"
+            fi
+
+            systemctl restart postgresql
+            ss -lntp | grep postgres
+            ```
+        - id: ansible
+          desc: |
+            To bind PostgreSQL to specific interfaces using Ansible:
+
+            1. Set `listen_addresses` in `postgresql.conf` with `lineinfile`.
+            2. Notify a handler that restarts the server, because this setting cannot be applied with a reload.
+
+            ```yaml
+            - name: Restrict PostgreSQL listen_addresses
+              hosts: postgresql
+              become: true
+              vars:
+                postgresql_conf: /etc/postgresql/16/main/postgresql.conf
+                postgresql_listen_addresses: "localhost,10.0.0.5"
+              tasks:
+                - name: Set listen_addresses
+                  ansible.builtin.lineinfile:
+                    path: "{{ postgresql_conf }}"
+                    regexp: '^\s*#?\s*listen_addresses'
+                    line: "listen_addresses = '{{ postgresql_listen_addresses }}'"
+                    state: present
+                  notify: Restart postgresql
+              handlers:
+                - name: Restart postgresql
+                  ansible.builtin.service:
+                    name: postgresql
+                    state: restarted
+            ```
+
+  - uid: mondoo-postgresql-security-tls-enabled
+    title: Ensure TLS is enabled for client connections
+    impact: 85
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    mql: |
+      postgresql.conf.sslEnabled == true
+    docs:
+      desc: |
+        This check ensures that the `ssl` directive is turned on so PostgreSQL can negotiate TLS with connecting clients. PostgreSQL ships with `ssl` set to off, and a server built that way carries every session in cleartext, including the authentication exchange.
+
+        Turning TLS on is a prerequisite for the rest of the transport controls in this policy. Minimum protocol version, cipher selection, and client certificate verification have no effect while `ssl` remains off.
+
+        **Why this matters**
+
+        - **Confidential query traffic:** Query text and result sets frequently contain the most sensitive data in an environment. TLS keeps that content unreadable in transit.
+        - **Credential protection:** Without TLS, password based authentication exchanges are observable by anything on the network path.
+        - **Tamper detection:** TLS integrity protection means an attacker cannot silently rewrite statements or results in flight.
+
+        **Risk mitigation**
+
+        - **Defeats passive interception:** A compromised switch, hypervisor, or cloud network tap yields no readable database traffic.
+        - **Defeats connection hijacking:** An active attacker cannot inject statements into an authenticated session.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective value from a running server:
+
+        ```bash
+        sudo -u postgres psql -c "SHOW ssl;"
+        ```
+
+        2. Confirm whether individual sessions actually negotiate TLS:
+
+        ```bash
+        sudo -u postgres psql -c "SELECT datname, usename, ssl, version FROM pg_stat_ssl JOIN pg_stat_activity USING (pid);"
+        ```
+
+        A passing result reports `on` for `SHOW ssl` and shows `t` in the `ssl` column for remote sessions. A failing result reports `off`.
+      remediation:
+        - id: cli
+          desc: |
+            To enable TLS using the CLI:
+
+            1. Install a server certificate and private key that PostgreSQL can read.
+            2. Set `ssl`, `ssl_cert_file`, and `ssl_key_file` in `postgresql.conf`.
+            3. Reload PostgreSQL and confirm the setting took effect.
+
+            ```bash
+            sudo install -o postgres -g postgres -m 0600 server.key /etc/ssl/private/postgresql.key
+            sudo install -o postgres -g postgres -m 0644 server.crt /etc/ssl/certs/postgresql.crt
+            sudo -u postgres tee -a /etc/postgresql/16/main/postgresql.conf >/dev/null <<'EOF'
+            ssl = on
+            ssl_cert_file = '/etc/ssl/certs/postgresql.crt'
+            ssl_key_file = '/etc/ssl/private/postgresql.key'
+            EOF
+            sudo systemctl reload postgresql
+            sudo -u postgres psql -c "SHOW ssl;"
+            ```
+        - id: script
+          desc: |
+            To enable TLS using a bash script:
+
+            1. Verify the certificate and key are present and readable by the server account.
+            2. Set the three TLS directives, replacing any existing values.
+            3. Reload PostgreSQL and report the effective setting.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            PGCONF="/etc/postgresql/16/main/postgresql.conf"
+            CERT="/etc/ssl/certs/postgresql.crt"
+            KEY="/etc/ssl/private/postgresql.key"
+
+            for f in "$CERT" "$KEY"; do
+              if [ ! -s "$f" ]; then
+                echo "missing TLS material: $f" >&2
+                exit 1
+              fi
+            done
+
+            chown postgres:postgres "$KEY"
+            chmod 0600 "$KEY"
+
+            set_directive() {
+              local key="$1" value="$2"
+              if grep -qE "^\s*#?\s*${key}\b" "$PGCONF"; then
+                sed -i "s|^\s*#\?\s*${key}\b.*|${key} = ${value}|" "$PGCONF"
+              else
+                printf "%s = %s\n" "$key" "$value" >>"$PGCONF"
+              fi
+            }
+
+            set_directive ssl "on"
+            set_directive ssl_cert_file "'${CERT}'"
+            set_directive ssl_key_file "'${KEY}'"
+
+            systemctl reload postgresql
+            su -s /bin/sh postgres -c "psql -c 'SHOW ssl;'"
+            ```
+        - id: ansible
+          desc: |
+            To enable TLS using Ansible:
+
+            1. Place the certificate and key with ownership and permissions the server accepts.
+            2. Set the TLS directives in `postgresql.conf`.
+            3. Notify a handler that reloads the server.
+
+            ```yaml
+            - name: Enable TLS for PostgreSQL
+              hosts: postgresql
+              become: true
+              vars:
+                postgresql_conf: /etc/postgresql/16/main/postgresql.conf
+                postgresql_cert: /etc/ssl/certs/postgresql.crt
+                postgresql_key: /etc/ssl/private/postgresql.key
+              tasks:
+                - name: Protect the private key
+                  ansible.builtin.file:
+                    path: "{{ postgresql_key }}"
+                    owner: postgres
+                    group: postgres
+                    mode: "0600"
+
+                - name: Enable TLS directives
+                  ansible.builtin.lineinfile:
+                    path: "{{ postgresql_conf }}"
+                    regexp: "^\\s*#?\\s*{{ item.key }}\\b"
+                    line: "{{ item.key }} = {{ item.value }}"
+                    state: present
+                  loop:
+                    - { key: "ssl", value: "on" }
+                    - { key: "ssl_cert_file", value: "'{{ postgresql_cert }}'" }
+                    - { key: "ssl_key_file", value: "'{{ postgresql_key }}'" }
+                  notify: Reload postgresql
+              handlers:
+                - name: Reload postgresql
+                  ansible.builtin.service:
+                    name: postgresql
+                    state: reloaded
+            ```
+
+  - uid: mondoo-postgresql-security-tls-min-protocol-version
+    title: Ensure ssl_min_protocol_version is set to TLSv1.2 or higher
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    mql: |
+      postgresql.conf.sslMinProtocolVersion == /^TLSv1\.[23]$/
+    docs:
+      desc: |
+        This check ensures that `ssl_min_protocol_version` explicitly pins the lowest TLS version the server will negotiate to `TLSv1.2` or `TLSv1.3`. TLS 1.0 and TLS 1.1 are deprecated, rely on obsolete hashing and cipher constructions, and are no longer considered adequate for protecting authentication material.
+
+        Recent PostgreSQL releases default to `TLSv1.2`, but the directive is frequently set to a lower value in configurations carried forward from older versions. Setting it explicitly keeps the floor from drifting downward when a configuration file is copied to a new host.
+
+        **Why this matters**
+
+        - **Removes downgrade room:** A client cannot negotiate a weak protocol version that the server refuses to offer.
+        - **Modern cipher suites only:** TLS 1.2 and above provide authenticated encryption modes that older versions lack.
+        - **Audit clarity:** An explicit floor is verifiable from the configuration file without inferring a version-specific default.
+
+        **Risk mitigation**
+
+        - **Blocks protocol downgrade attacks:** An attacker who can influence the handshake cannot force the session onto a deprecated version.
+        - **Prevents weak-cipher exposure:** Attacks against obsolete cipher constructions in TLS 1.0 and 1.1 no longer apply.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective value from a running server:
+
+        ```bash
+        sudo -u postgres psql -c "SHOW ssl_min_protocol_version;"
+        ```
+
+        2. Confirm which protocol versions active sessions negotiated:
+
+        ```bash
+        sudo -u postgres psql -c "SELECT DISTINCT version FROM pg_stat_ssl WHERE ssl;"
+        ```
+
+        A passing result reports `TLSv1.2` or `TLSv1.3`. A failing result reports `TLSv1`, `TLSv1.1`, or an empty value.
+      remediation:
+        - id: cli
+          desc: |
+            To pin the minimum TLS version using the CLI:
+
+            1. Set `ssl_min_protocol_version` in `postgresql.conf`.
+            2. Reload PostgreSQL so the new floor applies to subsequent connections.
+            3. Confirm the effective value.
+
+            ```bash
+            sudo -u postgres sed -i "s/^#*\s*ssl_min_protocol_version.*/ssl_min_protocol_version = 'TLSv1.2'/" \
+              /etc/postgresql/16/main/postgresql.conf
+            sudo systemctl reload postgresql
+            sudo -u postgres psql -c "SHOW ssl_min_protocol_version;"
+            ```
+        - id: script
+          desc: |
+            To pin the minimum TLS version using a bash script:
+
+            1. Choose the lowest protocol version your client fleet supports.
+            2. Replace an existing directive or append one when none is present.
+            3. Reload PostgreSQL and report the effective value.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            PGCONF="/etc/postgresql/16/main/postgresql.conf"
+            MIN_VERSION="TLSv1.2"
+
+            if grep -qE "^\s*#?\s*ssl_min_protocol_version" "$PGCONF"; then
+              sed -i "s|^\s*#\?\s*ssl_min_protocol_version.*|ssl_min_protocol_version = '${MIN_VERSION}'|" "$PGCONF"
+            else
+              printf "ssl_min_protocol_version = '%s'\n" "$MIN_VERSION" >>"$PGCONF"
+            fi
+
+            systemctl reload postgresql
+            su -s /bin/sh postgres -c "psql -c 'SHOW ssl_min_protocol_version;'"
+            ```
+        - id: ansible
+          desc: |
+            To pin the minimum TLS version using Ansible:
+
+            1. Set `ssl_min_protocol_version` in `postgresql.conf` with `lineinfile`.
+            2. Notify a handler that reloads the server.
+
+            ```yaml
+            - name: Pin the PostgreSQL minimum TLS version
+              hosts: postgresql
+              become: true
+              vars:
+                postgresql_conf: /etc/postgresql/16/main/postgresql.conf
+                postgresql_min_tls: TLSv1.2
+              tasks:
+                - name: Set ssl_min_protocol_version
+                  ansible.builtin.lineinfile:
+                    path: "{{ postgresql_conf }}"
+                    regexp: '^\s*#?\s*ssl_min_protocol_version'
+                    line: "ssl_min_protocol_version = '{{ postgresql_min_tls }}'"
+                    state: present
+                  notify: Reload postgresql
+              handlers:
+                - name: Reload postgresql
+                  ansible.builtin.service:
+                    name: postgresql
+                    state: reloaded
+            ```
+
+  - uid: mondoo-postgresql-security-tls-strong-ciphers
+    title: Ensure ssl_ciphers restricts negotiation to strong cipher suites
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    mql: |
+      postgresql.conf.sslCiphers != empty
+      postgresql.conf.sslCiphers == /HIGH/
+      postgresql.conf.sslCiphers == /!aNULL/
+    docs:
+      desc: |
+        This check ensures that `ssl_ciphers` is set to a list built on the `HIGH` cipher grouping and that it explicitly excludes the `aNULL` suites. The `aNULL` group performs key exchange without authenticating the server, which allows a machine-in-the-middle to terminate the session while the client still believes it reached the database.
+
+        The value is passed through to the TLS library, so a permissive list such as `ALL` silently re-admits export grade and unauthenticated suites that the library still carries for compatibility.
+
+        **Why this matters**
+
+        - **Server authenticity:** Excluding `aNULL` guarantees the server proves its identity during every handshake.
+        - **Adequate key strength:** The `HIGH` grouping restricts negotiation to suites with acceptable key lengths.
+        - **Predictable negotiation:** A narrow list means every client converges on a small, reviewed set of suites.
+
+        **Risk mitigation**
+
+        - **Prevents anonymous key exchange:** A machine-in-the-middle cannot present an unauthenticated session as a legitimate one.
+        - **Removes weak and export suites:** Cipher suites vulnerable to practical cryptanalysis are never offered.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective value from a running server:
+
+        ```bash
+        sudo -u postgres psql -c "SHOW ssl_ciphers;"
+        ```
+
+        2. Expand the value to see exactly which suites it admits:
+
+        ```bash
+        openssl ciphers -v "$(sudo -u postgres psql -tAc 'SHOW ssl_ciphers;')"
+        ```
+
+        A passing result is built on `HIGH` and contains `!aNULL`, and the expansion lists no suite whose authentication column reads `Au=None`. A failing result uses `ALL`, omits `!aNULL`, or is unset.
+      remediation:
+        - id: cli
+          desc: |
+            To restrict cipher negotiation using the CLI:
+
+            1. Set `ssl_ciphers` in `postgresql.conf` to a hardened list.
+            2. Reload PostgreSQL so subsequent handshakes use the new list.
+            3. Confirm the effective value.
+
+            ```bash
+            sudo -u postgres sed -i "s/^#*\s*ssl_ciphers.*/ssl_ciphers = 'HIGH:!aNULL:!eNULL:!MD5:!3DES:!RC4'/" \
+              /etc/postgresql/16/main/postgresql.conf
+            sudo systemctl reload postgresql
+            sudo -u postgres psql -c "SHOW ssl_ciphers;"
+            ```
+        - id: script
+          desc: |
+            To restrict cipher negotiation using a bash script:
+
+            1. Define the hardened cipher list.
+            2. Replace an existing directive or append one when none is present.
+            3. Reload PostgreSQL and expand the list to confirm no unauthenticated suites remain.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            PGCONF="/etc/postgresql/16/main/postgresql.conf"
+            CIPHERS="HIGH:!aNULL:!eNULL:!MD5:!3DES:!RC4"
+
+            if grep -qE "^\s*#?\s*ssl_ciphers" "$PGCONF"; then
+              sed -i "s|^\s*#\?\s*ssl_ciphers.*|ssl_ciphers = '${CIPHERS}'|" "$PGCONF"
+            else
+              printf "ssl_ciphers = '%s'\n" "$CIPHERS" >>"$PGCONF"
+            fi
+
+            systemctl reload postgresql
+            openssl ciphers -v "$CIPHERS" | awk '$0 ~ /Au=None/ { print "unauthenticated suite admitted: " $1; rc=1 } END { exit rc+0 }'
+            ```
+        - id: ansible
+          desc: |
+            To restrict cipher negotiation using Ansible:
+
+            1. Set `ssl_ciphers` in `postgresql.conf` with `lineinfile`.
+            2. Notify a handler that reloads the server.
+
+            ```yaml
+            - name: Harden PostgreSQL cipher selection
+              hosts: postgresql
+              become: true
+              vars:
+                postgresql_conf: /etc/postgresql/16/main/postgresql.conf
+                postgresql_ciphers: "HIGH:!aNULL:!eNULL:!MD5:!3DES:!RC4"
+              tasks:
+                - name: Set ssl_ciphers
+                  ansible.builtin.lineinfile:
+                    path: "{{ postgresql_conf }}"
+                    regexp: '^\s*#?\s*ssl_ciphers'
+                    line: "ssl_ciphers = '{{ postgresql_ciphers }}'"
+                    state: present
+                  notify: Reload postgresql
+              handlers:
+                - name: Reload postgresql
+                  ansible.builtin.service:
+                    name: postgresql
+                    state: reloaded
+            ```
+
+  - uid: mondoo-postgresql-security-tls-prefer-server-ciphers
+    title: Ensure ssl_prefer_server_ciphers is not disabled
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    mql: |
+      postgresql.conf.params["ssl_prefer_server_ciphers"] == empty || postgresql.conf.params["ssl_prefer_server_ciphers"].downcase == "on"
+    docs:
+      desc: |
+        This check ensures that `ssl_prefer_server_ciphers` is left at its secure default of on, so the server's cipher ordering decides the negotiated suite rather than the client's. PostgreSQL enables this by default, and the check treats an absent directive as compliant. It fails only when the setting has been explicitly turned off.
+
+        When the client's preference wins, a misconfigured or deliberately hostile client can steer every session onto the weakest suite the server still admits, which undermines the ordering established by `ssl_ciphers`.
+
+        **Why this matters**
+
+        - **Server controls strength:** The database operator decides which suite is preferred, not the connecting application.
+        - **Consistent posture:** Every client converges on the same preferred suite regardless of its own library defaults.
+        - **Makes cipher ordering meaningful:** The order expressed in `ssl_ciphers` only takes effect when the server's preference is honored.
+
+        **Risk mitigation**
+
+        - **Prevents client-driven downgrade:** A client cannot select the weakest mutually supported suite.
+        - **Limits legacy library impact:** Outdated client libraries cannot drag sessions onto obsolete suites.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective value from a running server:
+
+        ```bash
+        sudo -u postgres psql -c "SHOW ssl_prefer_server_ciphers;"
+        ```
+
+        2. Confirm the directive is not disabled in the configuration file:
+
+        ```bash
+        sudo -u postgres grep -rE "^\s*ssl_prefer_server_ciphers" /etc/postgresql/16/main/
+        ```
+
+        A passing result reports `on`, or shows no explicit setting at all. A failing result reports `off`.
+      remediation:
+        - id: cli
+          desc: |
+            To restore server cipher preference using the CLI:
+
+            1. Set `ssl_prefer_server_ciphers` to `on` in `postgresql.conf`.
+            2. Reload PostgreSQL.
+            3. Confirm the effective value.
+
+            ```bash
+            sudo -u postgres sed -i "s/^#*\s*ssl_prefer_server_ciphers.*/ssl_prefer_server_ciphers = on/" \
+              /etc/postgresql/16/main/postgresql.conf
+            sudo systemctl reload postgresql
+            sudo -u postgres psql -c "SHOW ssl_prefer_server_ciphers;"
+            ```
+        - id: script
+          desc: |
+            To restore server cipher preference using a bash script:
+
+            1. Replace an explicit `off` with `on`, or append the directive when none is present.
+            2. Reload PostgreSQL and report the effective value.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            PGCONF="/etc/postgresql/16/main/postgresql.conf"
+
+            if grep -qE "^\s*#?\s*ssl_prefer_server_ciphers" "$PGCONF"; then
+              sed -i "s|^\s*#\?\s*ssl_prefer_server_ciphers.*|ssl_prefer_server_ciphers = on|" "$PGCONF"
+            else
+              printf "ssl_prefer_server_ciphers = on\n" >>"$PGCONF"
+            fi
+
+            systemctl reload postgresql
+            su -s /bin/sh postgres -c "psql -c 'SHOW ssl_prefer_server_ciphers;'"
+            ```
+        - id: ansible
+          desc: |
+            To restore server cipher preference using Ansible:
+
+            1. Set `ssl_prefer_server_ciphers` to `on` in `postgresql.conf`.
+            2. Notify a handler that reloads the server.
+
+            ```yaml
+            - name: Prefer PostgreSQL server cipher ordering
+              hosts: postgresql
+              become: true
+              vars:
+                postgresql_conf: /etc/postgresql/16/main/postgresql.conf
+              tasks:
+                - name: Set ssl_prefer_server_ciphers
+                  ansible.builtin.lineinfile:
+                    path: "{{ postgresql_conf }}"
+                    regexp: '^\s*#?\s*ssl_prefer_server_ciphers'
+                    line: "ssl_prefer_server_ciphers = on"
+                    state: present
+                  notify: Reload postgresql
+              handlers:
+                - name: Reload postgresql
+                  ansible.builtin.service:
+                    name: postgresql
+                    state: reloaded
+            ```
+
+  - uid: mondoo-postgresql-security-tls-client-ca-configured
+    title: Ensure ssl_ca_file is set when client certificate authentication is used
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-14
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-2
+      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: vda-isa-5-4-1-2
+    mql: |
+      postgresql.hba.rules.none(authMethod.downcase == "cert") || postgresql.conf.sslCaFile != empty
+    docs:
+      desc: |
+        This check ensures that `ssl_ca_file` names a certificate authority bundle whenever `pg_hba.conf` contains a rule that authenticates clients with the `cert` method. Certificate authentication is only meaningful when the server has a trust anchor to validate the presented client certificate against.
+
+        Without `ssl_ca_file`, PostgreSQL has nothing to verify a client certificate chain against, so rules that appear to enforce certificate authentication cannot do so. The check applies only to servers that actually use the `cert` method, so a password authenticated deployment is not asked to configure a trust anchor it has no use for.
+
+        **Why this matters**
+
+        - **Makes certificate authentication real:** A trust anchor is what turns a presented certificate into a verified identity.
+        - **Controls who can issue identities:** Only certificates chaining to the configured authority are accepted.
+        - **Supports revocation:** A managed authority bundle gives you a place to distrust compromised client certificates.
+
+        **Risk mitigation**
+
+        - **Rejects untrusted certificates:** A self-issued client certificate cannot satisfy an authentication rule.
+        - **Prevents a false sense of assurance:** Certificate rules that could never validate anything are surfaced before they are relied upon.
+      audit: |
+        ### Audit via CLI
+
+        1. Determine whether any authentication rule uses the `cert` method:
+
+        ```bash
+        sudo -u postgres psql -c "SELECT type, database, user_name, address, auth_method FROM pg_hba_file_rules WHERE auth_method = 'cert';"
+        ```
+
+        2. Read the configured authority bundle:
+
+        ```bash
+        sudo -u postgres psql -c "SHOW ssl_ca_file;"
+        ```
+
+        3. Inspect the bundle contents when one is configured:
+
+        ```bash
+        sudo openssl crl2pkcs7 -nocrl -certfile /etc/ssl/certs/ca.crt | openssl pkcs7 -print_certs -noout
+        ```
+
+        A passing result either reports no `cert` rules, or reports a populated `ssl_ca_file` whose contents list the expected issuing authority. A failing result shows `cert` rules alongside an empty `ssl_ca_file`.
+      remediation:
+        - id: cli
+          desc: |
+            To configure a client certificate authority using the CLI:
+
+            1. Install the issuing authority bundle where the server account can read it.
+            2. Set `ssl_ca_file` in `postgresql.conf`.
+            3. Reload PostgreSQL and confirm the effective value.
+
+            ```bash
+            sudo install -o postgres -g postgres -m 0644 ca.crt /etc/ssl/certs/postgresql-ca.crt
+            sudo -u postgres sed -i "s|^#*\s*ssl_ca_file.*|ssl_ca_file = '/etc/ssl/certs/postgresql-ca.crt'|" \
+              /etc/postgresql/16/main/postgresql.conf
+            sudo systemctl reload postgresql
+            sudo -u postgres psql -c "SHOW ssl_ca_file;"
+            ```
+        - id: script
+          desc: |
+            To configure a client certificate authority using a bash script:
+
+            1. Verify the authority bundle is present and parseable.
+            2. Set `ssl_ca_file`, replacing any existing value.
+            3. Reload PostgreSQL and report the effective value.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            PGCONF="/etc/postgresql/16/main/postgresql.conf"
+            CA_FILE="/etc/ssl/certs/postgresql-ca.crt"
+
+            if ! openssl crl2pkcs7 -nocrl -certfile "$CA_FILE" >/dev/null 2>&1; then
+              echo "authority bundle missing or unparseable: $CA_FILE" >&2
+              exit 1
+            fi
+
+            chown postgres:postgres "$CA_FILE"
+            chmod 0644 "$CA_FILE"
+
+            if grep -qE "^\s*#?\s*ssl_ca_file" "$PGCONF"; then
+              sed -i "s|^\s*#\?\s*ssl_ca_file.*|ssl_ca_file = '${CA_FILE}'|" "$PGCONF"
+            else
+              printf "ssl_ca_file = '%s'\n" "$CA_FILE" >>"$PGCONF"
+            fi
+
+            systemctl reload postgresql
+            su -s /bin/sh postgres -c "psql -c 'SHOW ssl_ca_file;'"
+            ```
+        - id: ansible
+          desc: |
+            To configure a client certificate authority using Ansible:
+
+            1. Place the authority bundle with ownership the server can read.
+            2. Set `ssl_ca_file` in `postgresql.conf`.
+            3. Notify a handler that reloads the server.
+
+            ```yaml
+            - name: Configure the PostgreSQL client certificate authority
+              hosts: postgresql
+              become: true
+              vars:
+                postgresql_conf: /etc/postgresql/16/main/postgresql.conf
+                postgresql_ca_file: /etc/ssl/certs/postgresql-ca.crt
+              tasks:
+                - name: Install the authority bundle
+                  ansible.builtin.copy:
+                    src: ca.crt
+                    dest: "{{ postgresql_ca_file }}"
+                    owner: postgres
+                    group: postgres
+                    mode: "0644"
+
+                - name: Set ssl_ca_file
+                  ansible.builtin.lineinfile:
+                    path: "{{ postgresql_conf }}"
+                    regexp: '^\s*#?\s*ssl_ca_file'
+                    line: "ssl_ca_file = '{{ postgresql_ca_file }}'"
+                    state: present
+                  notify: Reload postgresql
+              handlers:
+                - name: Reload postgresql
+                  ansible.builtin.service:
+                    name: postgresql
+                    state: reloaded
+            ```
+
+  - uid: mondoo-postgresql-security-password-encryption-scram
+    title: Ensure password_encryption is set to scram-sha-256
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-15
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-10
+      compliance/pci-dss-4: pcidss-requirement-8-3-2
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    mql: |
+      postgresql.conf.passwordEncryption.downcase == "scram-sha-256"
+    docs:
+      desc: |
+        This check ensures that `password_encryption` is explicitly set to `scram-sha-256`, which is the salted challenge response mechanism PostgreSQL uses to store and verify passwords. The legacy `md5` scheme salts only with the role name, so the stored verifier is effectively a password equivalent: an attacker who reads `pg_authid` can authenticate as that role without ever recovering the password.
+
+        This directive governs how new and changed passwords are stored, so it must be set before passwords are rotated. Existing `md5` verifiers are not converted automatically and remain usable until each role's password is set again.
+
+        **Why this matters**
+
+        - **Stolen verifiers are not credentials:** A SCRAM verifier cannot be replayed against the server the way an MD5 hash can.
+        - **Per-password salting:** Random per-password salts defeat precomputed lookup tables across roles and servers.
+        - **Configurable work factor:** SCRAM applies iterated hashing, which raises the cost of offline guessing.
+
+        **Risk mitigation**
+
+        - **Blocks pass-the-hash against the database:** Reading the system catalog no longer yields directly replayable credentials.
+        - **Slows offline cracking:** Iterated, individually salted hashes make bulk recovery from a catalog dump impractical.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective value from a running server:
+
+        ```bash
+        sudo -u postgres psql -c "SHOW password_encryption;"
+        ```
+
+        2. Identify roles whose stored verifier is still the legacy format:
+
+        ```bash
+        sudo -u postgres psql -c "SELECT rolname FROM pg_authid WHERE rolpassword LIKE 'md5%';"
+        ```
+
+        A passing result reports `scram-sha-256` and returns no rows for the second query. A failing result reports `md5`, or reports `scram-sha-256` while roles still carry `md5` verifiers that need a password reset.
+      remediation:
+        - id: cli
+          desc: |
+            To require SCRAM password storage using the CLI:
+
+            1. Set `password_encryption` in `postgresql.conf`.
+            2. Reload PostgreSQL.
+            3. Reset each affected role's password so its verifier is rewritten in the new format.
+
+            ```bash
+            sudo -u postgres sed -i "s/^#*\s*password_encryption.*/password_encryption = scram-sha-256/" \
+              /etc/postgresql/16/main/postgresql.conf
+            sudo systemctl reload postgresql
+            sudo -u postgres psql -c "\password app_user"
+            sudo -u postgres psql -c "SELECT rolname FROM pg_authid WHERE rolpassword LIKE 'md5%';"
+            ```
+        - id: script
+          desc: |
+            To require SCRAM password storage using a bash script:
+
+            1. Set the directive, replacing any existing value.
+            2. Reload PostgreSQL.
+            3. Report every role that still holds a legacy verifier so its password can be rotated.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            PGCONF="/etc/postgresql/16/main/postgresql.conf"
+
+            if grep -qE "^\s*#?\s*password_encryption" "$PGCONF"; then
+              sed -i "s|^\s*#\?\s*password_encryption.*|password_encryption = scram-sha-256|" "$PGCONF"
+            else
+              printf "password_encryption = scram-sha-256\n" >>"$PGCONF"
+            fi
+
+            systemctl reload postgresql
+
+            echo "roles still holding a legacy md5 verifier:"
+            su -s /bin/sh postgres -c \
+              "psql -tAc \"SELECT rolname FROM pg_authid WHERE rolpassword LIKE 'md5%';\""
+            ```
+        - id: ansible
+          desc: |
+            To require SCRAM password storage using Ansible:
+
+            1. Set `password_encryption` in `postgresql.conf`.
+            2. Notify a handler that reloads the server.
+            3. Report roles that still carry a legacy verifier so passwords can be rotated.
+
+            ```yaml
+            - name: Require SCRAM password storage in PostgreSQL
+              hosts: postgresql
+              become: true
+              vars:
+                postgresql_conf: /etc/postgresql/16/main/postgresql.conf
+              tasks:
+                - name: Set password_encryption
+                  ansible.builtin.lineinfile:
+                    path: "{{ postgresql_conf }}"
+                    regexp: '^\s*#?\s*password_encryption'
+                    line: "password_encryption = scram-sha-256"
+                    state: present
+                  notify: Reload postgresql
+
+                - name: Flush handlers so the new setting applies
+                  ansible.builtin.meta: flush_handlers
+
+                - name: Find roles still holding a legacy verifier
+                  become_user: postgres
+                  ansible.builtin.command:
+                    cmd: psql -tAc "SELECT rolname FROM pg_authid WHERE rolpassword LIKE 'md5%';"
+                  changed_when: false
+                  register: legacy_roles
+
+                - name: Report roles needing a password reset
+                  ansible.builtin.debug:
+                    msg: "Reset the password for: {{ legacy_roles.stdout_lines }}"
+                  when: legacy_roles.stdout_lines | length > 0
+              handlers:
+                - name: Reload postgresql
+                  ansible.builtin.service:
+                    name: postgresql
+                    state: reloaded
+            ```
+
+  - uid: mondoo-postgresql-security-hba-no-trust-auth
+    title: Ensure no pg_hba.conf rule uses the trust authentication method
+    impact: 95
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-14
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-2
+      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-1-2
+    mql: |
+      postgresql.hba.rules != empty
+      postgresql.hba.rules.none(authMethod.downcase == "trust")
+    docs:
+      desc: |
+        This check ensures that no host-based authentication rule uses the `trust` method. A `trust` rule accepts any connection matching it without asking for a credential of any kind, so anyone who can reach the server on a matching address becomes the requested role, including a superuser.
+
+        Installation scripts and container entrypoints commonly write a `trust` rule so the first connection can create roles before any password exists. That bootstrap rule frequently survives into production. The check also asserts that rules were parsed at all, so a missing or unreadable `pg_hba.conf` is reported rather than passing silently.
+
+        **Why this matters**
+
+        - **Authentication is mandatory:** Every connection must present a credential before acting as a role.
+        - **Superuser is reachable through matching rules:** A `trust` rule that matches the `postgres` role hands over full control of the cluster.
+        - **Local rules matter too:** A `trust` rule scoped to local sockets grants the database to any account on the host, including compromised service accounts.
+
+        **Risk mitigation**
+
+        - **Prevents unauthenticated takeover:** An attacker who reaches the port cannot become a superuser without a credential.
+        - **Contains host compromise:** A foothold in an unrelated service on the same host does not extend into the database.
+      audit: |
+        ### Audit via CLI
+
+        1. List every rule the server parsed, together with any parse errors:
+
+        ```bash
+        sudo -u postgres psql -c "SELECT line_number, type, database, user_name, address, auth_method, error FROM pg_hba_file_rules ORDER BY line_number;"
+        ```
+
+        2. Isolate the rules that require no credential:
+
+        ```bash
+        sudo -u postgres psql -c "SELECT line_number, type, database, user_name, address FROM pg_hba_file_rules WHERE auth_method = 'trust';"
+        ```
+
+        A passing result returns no rows for the second query. A failing result lists one or more rules, and the reported `line_number` identifies the line to change.
+      remediation:
+        - id: cli
+          desc: |
+            To remove trust authentication using the CLI:
+
+            1. Set a password for every role that will authenticate with one.
+            2. Replace each `trust` method with `scram-sha-256` for network rules, or `peer` for local socket rules.
+            3. Reload PostgreSQL and confirm no `trust` rules remain.
+
+            ```bash
+            sudo -u postgres psql -c "\password postgres"
+            sudo sed -i -E "s/^(local\s+\S+\s+\S+\s+)trust\s*$/\1peer/" /etc/postgresql/16/main/pg_hba.conf
+            sudo sed -i -E "s/^(host\S*\s+\S+\s+\S+\s+\S+\s+)trust\s*$/\1scram-sha-256/" /etc/postgresql/16/main/pg_hba.conf
+            sudo systemctl reload postgresql
+            sudo -u postgres psql -c "SELECT count(*) FROM pg_hba_file_rules WHERE auth_method = 'trust';"
+            ```
+        - id: script
+          desc: |
+            To remove trust authentication using a bash script:
+
+            1. Back up `pg_hba.conf` before rewriting it.
+            2. Convert local `trust` rules to `peer` and network `trust` rules to `scram-sha-256`.
+            3. Reload PostgreSQL and fail loudly if any `trust` rule survives.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            HBA="/etc/postgresql/16/main/pg_hba.conf"
+
+            cp -a "$HBA" "${HBA}.bak"
+
+            sed -i -E "s/^(local[[:space:]]+\S+[[:space:]]+\S+[[:space:]]+)trust[[:space:]]*$/\1peer/" "$HBA"
+            sed -i -E "s/^(host\S*[[:space:]]+\S+[[:space:]]+\S+[[:space:]]+\S+[[:space:]]+)trust[[:space:]]*$/\1scram-sha-256/" "$HBA"
+
+            if grep -qE "^[^#]*[[:space:]]trust([[:space:]]|$)" "$HBA"; then
+              echo "trust rules remain in $HBA; review them manually" >&2
+              exit 1
+            fi
+
+            systemctl reload postgresql
+            ```
+        - id: ansible
+          desc: |
+            To remove trust authentication using Ansible:
+
+            1. Back up `pg_hba.conf`.
+            2. Rewrite local and network `trust` rules with credential-based methods.
+            3. Notify a handler that reloads the server.
+
+            ```yaml
+            - name: Remove trust authentication from PostgreSQL
+              hosts: postgresql
+              become: true
+              vars:
+                postgresql_hba: /etc/postgresql/16/main/pg_hba.conf
+              tasks:
+                - name: Back up pg_hba.conf
+                  ansible.builtin.copy:
+                    src: "{{ postgresql_hba }}"
+                    dest: "{{ postgresql_hba }}.bak"
+                    remote_src: true
+                    mode: "0640"
+
+                - name: Convert local trust rules to peer
+                  ansible.builtin.replace:
+                    path: "{{ postgresql_hba }}"
+                    regexp: '^(local\s+\S+\s+\S+\s+)trust\s*$'
+                    replace: '\1peer'
+                  notify: Reload postgresql
+
+                - name: Convert network trust rules to scram-sha-256
+                  ansible.builtin.replace:
+                    path: "{{ postgresql_hba }}"
+                    regexp: '^(host\S*\s+\S+\s+\S+\s+\S+\s+)trust\s*$'
+                    replace: '\1scram-sha-256'
+                  notify: Reload postgresql
+              handlers:
+                - name: Reload postgresql
+                  ansible.builtin.service:
+                    name: postgresql
+                    state: reloaded
+            ```
+
+  - uid: mondoo-postgresql-security-hba-no-plaintext-password-auth
+    title: Ensure no pg_hba.conf rule uses the password authentication method
+    impact: 85
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-15
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-10
+      compliance/pci-dss-4: pcidss-requirement-8-3-2
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    mql: |
+      postgresql.hba.rules != empty
+      postgresql.hba.rules.none(authMethod.downcase == "password")
+    docs:
+      desc: |
+        This check ensures that no host-based authentication rule uses the `password` method, which sends the password across the connection in cleartext. The similarly named `scram-sha-256` method performs a challenge response exchange instead, so the password itself never crosses the wire.
+
+        The `password` method is dangerous even on a TLS protected server, because a rule that permits it will still be used by clients that negotiate a plaintext connection through a `host` rule. Removing the method entirely closes that path rather than depending on every client to request TLS.
+
+        **Why this matters**
+
+        - **The password never transits:** A challenge response exchange gives an observer nothing to replay or reuse.
+        - **Independent of transport:** Removing the method protects the credential even when a session is established without TLS.
+        - **No credential in server memory:** SCRAM avoids handling the cleartext password on the server side.
+
+        **Risk mitigation**
+
+        - **Defeats network sniffing:** A captured session yields no usable password.
+        - **Limits credential reuse damage:** A password shared with other systems is not exposed by a database connection.
+      audit: |
+        ### Audit via CLI
+
+        1. Isolate rules that accept a cleartext password:
+
+        ```bash
+        sudo -u postgres psql -c "SELECT line_number, type, database, user_name, address FROM pg_hba_file_rules WHERE auth_method = 'password';"
+        ```
+
+        2. Confirm which method active sessions actually used:
+
+        ```bash
+        sudo -u postgres psql -c "SELECT usename, ssl, client_addr FROM pg_stat_ssl JOIN pg_stat_activity USING (pid);"
+        ```
+
+        A passing result returns no rows for the first query. A failing result lists rules whose `auth_method` is `password`.
+      remediation:
+        - id: cli
+          desc: |
+            To replace cleartext password authentication using the CLI:
+
+            1. Confirm `password_encryption` is `scram-sha-256` so verifiers exist in the right format.
+            2. Replace the `password` method with `scram-sha-256` in `pg_hba.conf`.
+            3. Reload PostgreSQL and confirm no such rules remain.
+
+            ```bash
+            sudo -u postgres psql -c "SHOW password_encryption;"
+            sudo sed -i -E "s/^([^#].*[[:space:]])password([[:space:]]*)$/\1scram-sha-256\2/" \
+              /etc/postgresql/16/main/pg_hba.conf
+            sudo systemctl reload postgresql
+            sudo -u postgres psql -c "SELECT count(*) FROM pg_hba_file_rules WHERE auth_method = 'password';"
+            ```
+        - id: script
+          desc: |
+            To replace cleartext password authentication using a bash script:
+
+            1. Back up `pg_hba.conf`.
+            2. Rewrite the `password` method as `scram-sha-256`.
+            3. Reload PostgreSQL and verify the rewrite removed every occurrence.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            HBA="/etc/postgresql/16/main/pg_hba.conf"
+
+            cp -a "$HBA" "${HBA}.bak"
+            sed -i -E "s/^([^#].*[[:space:]])password([[:space:]]*)$/\1scram-sha-256\2/" "$HBA"
+
+            if grep -qE "^[^#]*[[:space:]]password([[:space:]]|$)" "$HBA"; then
+              echo "cleartext password rules remain in $HBA; review them manually" >&2
+              exit 1
+            fi
+
+            systemctl reload postgresql
+            ```
+        - id: ansible
+          desc: |
+            To replace cleartext password authentication using Ansible:
+
+            1. Rewrite the `password` method as `scram-sha-256`.
+            2. Notify a handler that reloads the server.
+
+            ```yaml
+            - name: Replace cleartext password authentication in PostgreSQL
+              hosts: postgresql
+              become: true
+              vars:
+                postgresql_hba: /etc/postgresql/16/main/pg_hba.conf
+              tasks:
+                - name: Convert password rules to scram-sha-256
+                  ansible.builtin.replace:
+                    path: "{{ postgresql_hba }}"
+                    regexp: '^([^#].*\s)password(\s*)$'
+                    replace: '\1scram-sha-256\2'
+                  notify: Reload postgresql
+              handlers:
+                - name: Reload postgresql
+                  ansible.builtin.service:
+                    name: postgresql
+                    state: reloaded
+            ```
+
+  - uid: mondoo-postgresql-security-hba-no-md5-auth
+    title: Ensure no pg_hba.conf rule uses the md5 authentication method
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-15
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-10
+      compliance/pci-dss-4: pcidss-requirement-8-3-2
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    mql: |
+      postgresql.hba.rules != empty
+      postgresql.hba.rules.none(authMethod.downcase == "md5")
+    docs:
+      desc: |
+        This check ensures that no host-based authentication rule uses the legacy `md5` method. The MD5 scheme salts the stored verifier with the role name alone, so the value held in `pg_authid` is replayable: an attacker who reads it can authenticate as that role without recovering the password.
+
+        A rule set to `md5` also accepts SCRAM verifiers, which makes the rule appear harmless on a cluster that has already migrated its passwords. It still permits the weaker exchange for any role whose verifier remains in the legacy format, so the rule should be changed to `scram-sha-256` to close that path.
+
+        **Why this matters**
+
+        - **Verifier theft is not authentication:** SCRAM verifiers cannot be replayed against the server.
+        - **Per-password salting:** Role-name salting allows precomputation across servers that share role names such as `postgres`.
+        - **Completes the migration:** Changing the rule prevents new connections from negotiating the weaker exchange.
+
+        **Risk mitigation**
+
+        - **Blocks pass-the-hash:** A catalog dump no longer yields directly usable credentials.
+        - **Removes precomputation advantage:** Attackers cannot reuse tables built for common role names.
+      audit: |
+        ### Audit via CLI
+
+        1. Isolate rules still set to the legacy method:
+
+        ```bash
+        sudo -u postgres psql -c "SELECT line_number, type, database, user_name, address FROM pg_hba_file_rules WHERE auth_method = 'md5';"
+        ```
+
+        2. Confirm no role still holds a legacy verifier, which would break after the rule change:
+
+        ```bash
+        sudo -u postgres psql -c "SELECT rolname FROM pg_authid WHERE rolpassword LIKE 'md5%';"
+        ```
+
+        A passing result returns no rows for the first query. A failing result lists rules whose `auth_method` is `md5`.
+      remediation:
+        - id: cli
+          desc: |
+            To move authentication rules to SCRAM using the CLI:
+
+            1. Set `password_encryption` to `scram-sha-256` and reset any role that still holds a legacy verifier.
+            2. Replace the `md5` method with `scram-sha-256` in `pg_hba.conf`.
+            3. Reload PostgreSQL and confirm no `md5` rules remain.
+
+            ```bash
+            sudo -u postgres psql -c "SELECT rolname FROM pg_authid WHERE rolpassword LIKE 'md5%';"
+            sudo -u postgres psql -c "\password app_user"
+            sudo sed -i -E "s/^([^#].*[[:space:]])md5([[:space:]]*)$/\1scram-sha-256\2/" \
+              /etc/postgresql/16/main/pg_hba.conf
+            sudo systemctl reload postgresql
+            sudo -u postgres psql -c "SELECT count(*) FROM pg_hba_file_rules WHERE auth_method = 'md5';"
+            ```
+        - id: script
+          desc: |
+            To move authentication rules to SCRAM using a bash script:
+
+            1. Refuse to proceed while any role still holds a legacy verifier, because those roles would lose access.
+            2. Rewrite the `md5` method as `scram-sha-256`.
+            3. Reload PostgreSQL.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            HBA="/etc/postgresql/16/main/pg_hba.conf"
+
+            legacy=$(su -s /bin/sh postgres -c \
+              "psql -tAc \"SELECT count(*) FROM pg_authid WHERE rolpassword LIKE 'md5%';\"")
+
+            if [ "$legacy" -gt 0 ]; then
+              echo "$legacy role(s) still hold an md5 verifier; reset their passwords first" >&2
+              exit 1
+            fi
+
+            cp -a "$HBA" "${HBA}.bak"
+            sed -i -E "s/^([^#].*[[:space:]])md5([[:space:]]*)$/\1scram-sha-256\2/" "$HBA"
+
+            systemctl reload postgresql
+            ```
+        - id: ansible
+          desc: |
+            To move authentication rules to SCRAM using Ansible:
+
+            1. Verify no role still holds a legacy verifier.
+            2. Rewrite the `md5` method as `scram-sha-256`.
+            3. Notify a handler that reloads the server.
+
+            ```yaml
+            - name: Move PostgreSQL authentication rules to SCRAM
+              hosts: postgresql
+              become: true
+              vars:
+                postgresql_hba: /etc/postgresql/16/main/pg_hba.conf
+              tasks:
+                - name: Count roles still holding a legacy verifier
+                  become_user: postgres
+                  ansible.builtin.command:
+                    cmd: psql -tAc "SELECT count(*) FROM pg_authid WHERE rolpassword LIKE 'md5%';"
+                  changed_when: false
+                  register: legacy_count
+
+                - name: Fail while legacy verifiers remain
+                  ansible.builtin.fail:
+                    msg: "Reset passwords for {{ legacy_count.stdout | trim }} role(s) before changing the rules."
+                  when: legacy_count.stdout | trim | int > 0
+
+                - name: Convert md5 rules to scram-sha-256
+                  ansible.builtin.replace:
+                    path: "{{ postgresql_hba }}"
+                    regexp: '^([^#].*\s)md5(\s*)$'
+                    replace: '\1scram-sha-256\2'
+                  notify: Reload postgresql
+              handlers:
+                - name: Reload postgresql
+                  ansible.builtin.service:
+                    name: postgresql
+                    state: reloaded
+            ```
+
+  - uid: mondoo-postgresql-security-hba-no-unrestricted-client-addresses
+    title: Ensure no pg_hba.conf rule accepts connections from any address
+    impact: 85
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    mql: |
+      postgresql.hba.rules != empty
+      postgresql.hba.rules.none(address == "0.0.0.0/0" || address == "::/0" || address.downcase == "all")
+    docs:
+      desc: |
+        This check ensures that no host-based authentication rule matches every possible client address. A rule scoped to `0.0.0.0/0`, `::/0`, or `all` accepts connection attempts from any host that can route to the server, which turns the authentication method into the only remaining barrier.
+
+        Narrowing the client address is the most effective control in `pg_hba.conf` because it stops an attacker before any credential exchange begins. Rules should name the specific subnets that host the application tier, replication peers, or administrative jump hosts.
+
+        **Why this matters**
+
+        - **Fewer sources can attempt authentication:** Hosts outside the named ranges are rejected before a credential is offered.
+        - **Layered with the network controls:** Address scoping in the database survives a firewall change that unexpectedly opens the port.
+        - **Documents expected topology:** Explicit ranges record which systems are supposed to connect.
+
+        **Risk mitigation**
+
+        - **Stops credential stuffing at the door:** Password guessing cannot begin from an address the rule does not match.
+        - **Limits exposure after a network mistake:** An accidentally public port does not become an accessible database.
+      audit: |
+        ### Audit via CLI
+
+        1. List rules whose client address matches everything:
+
+        ```bash
+        sudo -u postgres psql -c "SELECT line_number, type, database, user_name, address, auth_method FROM pg_hba_file_rules WHERE address IN ('0.0.0.0/0', '::/0', 'all');"
+        ```
+
+        2. Review the full ordered rule set, because the first matching rule wins:
+
+        ```bash
+        sudo -u postgres psql -c "SELECT line_number, type, database, user_name, address, auth_method FROM pg_hba_file_rules ORDER BY line_number;"
+        ```
+
+        A passing result returns no rows for the first query. A failing result lists rules that accept every address.
+      remediation:
+        - id: cli
+          desc: |
+            To scope authentication rules to known networks using the CLI:
+
+            1. Identify the subnets that legitimately connect to the database.
+            2. Replace the wildcard address with those ranges, adding one rule per network.
+            3. Reload PostgreSQL and confirm no wildcard rules remain.
+
+            ```bash
+            sudo sed -i -E "s#^(host\S*\s+\S+\s+\S+\s+)(0\.0\.0\.0/0|::/0|all)(\s+)#\110.0.0.0/24\3#" \
+              /etc/postgresql/16/main/pg_hba.conf
+            sudo systemctl reload postgresql
+            sudo -u postgres psql -c "SELECT count(*) FROM pg_hba_file_rules WHERE address IN ('0.0.0.0/0', '::/0', 'all');"
+            ```
+        - id: script
+          desc: |
+            To scope authentication rules to known networks using a bash script:
+
+            1. Define the allowed client networks.
+            2. Replace wildcard addresses with the first allowed network and append rules for the remainder.
+            3. Reload PostgreSQL and fail if any wildcard remains.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            HBA="/etc/postgresql/16/main/pg_hba.conf"
+            NETWORKS=("10.0.0.0/24" "10.0.1.0/24")
+
+            cp -a "$HBA" "${HBA}.bak"
+
+            sed -i -E "s#^(host\S*[[:space:]]+\S+[[:space:]]+\S+[[:space:]]+)(0\.0\.0\.0/0|::/0|all)([[:space:]]+)#\1${NETWORKS[0]}\3#" "$HBA"
+
+            for net in "${NETWORKS[@]:1}"; do
+              printf "hostssl all all %s scram-sha-256\n" "$net" >>"$HBA"
+            done
+
+            if grep -qE "^[^#]*[[:space:]](0\.0\.0\.0/0|::/0)[[:space:]]" "$HBA"; then
+              echo "wildcard client addresses remain in $HBA; review them manually" >&2
+              exit 1
+            fi
+
+            systemctl reload postgresql
+            ```
+        - id: ansible
+          desc: |
+            To scope authentication rules to known networks using Ansible:
+
+            1. Remove rules that match every address.
+            2. Add one rule per allowed network.
+            3. Notify a handler that reloads the server.
+
+            ```yaml
+            - name: Scope PostgreSQL authentication rules to known networks
+              hosts: postgresql
+              become: true
+              vars:
+                postgresql_hba: /etc/postgresql/16/main/pg_hba.conf
+                postgresql_client_networks:
+                  - 10.0.0.0/24
+                  - 10.0.1.0/24
+              tasks:
+                - name: Remove rules matching every address
+                  ansible.builtin.lineinfile:
+                    path: "{{ postgresql_hba }}"
+                    regexp: '^host\S*\s+\S+\s+\S+\s+(0\.0\.0\.0/0|::/0|all)\s+'
+                    state: absent
+                  notify: Reload postgresql
+
+                - name: Allow only the named client networks
+                  ansible.builtin.lineinfile:
+                    path: "{{ postgresql_hba }}"
+                    line: "hostssl all all {{ item }} scram-sha-256"
+                    state: present
+                  loop: "{{ postgresql_client_networks }}"
+                  notify: Reload postgresql
+              handlers:
+                - name: Reload postgresql
+                  ansible.builtin.service:
+                    name: postgresql
+                    state: reloaded
+            ```
+
+  - uid: mondoo-postgresql-security-hba-remote-connections-require-tls
+    title: Ensure remote connections are only accepted through hostssl rules
+    impact: 85
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    mql: |
+      postgresql.hba.rules != empty
+      postgresql.hba.rules.where(address != "" && address.downcase != "samehost").none(type.downcase == "host" || type.downcase == "hostnossl")
+    docs:
+      desc: |
+        This check ensures that every rule carrying a remote client address uses the `hostssl` connection type. A `host` rule accepts both encrypted and unencrypted connections, so a client that simply omits TLS is still admitted. A `hostnossl` rule goes further and matches only unencrypted connections.
+
+        Enabling the `ssl` directive makes TLS available but does not make it mandatory. Requiring `hostssl` on remote rules is what actually forces encryption. Rules for local socket connections are excluded, because those never traverse a network and TLS does not apply to them.
+
+        **Why this matters**
+
+        - **Encryption becomes mandatory:** A client cannot reach the database by declining TLS.
+        - **Closes the optional-TLS gap:** Turning `ssl` on protects only the clients that ask for it, while `hostssl` protects all of them.
+        - **Local access stays workable:** Unix socket rules continue to function without certificates.
+
+        **Risk mitigation**
+
+        - **Prevents accidental cleartext sessions:** A misconfigured client library cannot silently fall back to an unencrypted connection.
+        - **Removes a downgrade path:** An active attacker cannot strip TLS and have the server accept the session anyway.
+      audit: |
+        ### Audit via CLI
+
+        1. List remote rules that do not require TLS:
+
+        ```bash
+        sudo -u postgres psql -c "SELECT line_number, type, database, user_name, address, auth_method FROM pg_hba_file_rules WHERE type IN ('host', 'hostnossl') AND address IS NOT NULL;"
+        ```
+
+        2. Confirm current sessions are encrypted:
+
+        ```bash
+        sudo -u postgres psql -c "SELECT client_addr, usename, ssl FROM pg_stat_ssl JOIN pg_stat_activity USING (pid) WHERE client_addr IS NOT NULL;"
+        ```
+
+        A passing result returns no rows for the first query, and every remote session in the second reports `t` in the `ssl` column. A failing result lists `host` or `hostnossl` rules that carry a client address.
+      remediation:
+        - id: cli
+          desc: |
+            To require TLS for remote connections using the CLI:
+
+            1. Confirm TLS is enabled and working, because `hostssl` rules reject every client once TLS is unavailable.
+            2. Change remote `host` and `hostnossl` rules to `hostssl`.
+            3. Reload PostgreSQL and confirm no unencrypted remote rules remain.
+
+            ```bash
+            sudo -u postgres psql -c "SHOW ssl;"
+            sudo sed -i -E "s/^host(nossl)?(\s+\S+\s+\S+\s+[0-9a-fA-F:.]+\/[0-9]+\s+)/hostssl\2/" \
+              /etc/postgresql/16/main/pg_hba.conf
+            sudo systemctl reload postgresql
+            sudo -u postgres psql -c "SELECT count(*) FROM pg_hba_file_rules WHERE type IN ('host', 'hostnossl') AND address IS NOT NULL;"
+            ```
+        - id: script
+          desc: |
+            To require TLS for remote connections using a bash script:
+
+            1. Refuse to proceed while TLS is off, because converting the rules would lock out every remote client.
+            2. Convert remote `host` and `hostnossl` rules to `hostssl`.
+            3. Reload PostgreSQL.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            HBA="/etc/postgresql/16/main/pg_hba.conf"
+
+            ssl_state=$(su -s /bin/sh postgres -c "psql -tAc 'SHOW ssl;'")
+            if [ "$ssl_state" != "on" ]; then
+              echo "TLS is $ssl_state; enable ssl before requiring hostssl rules" >&2
+              exit 1
+            fi
+
+            cp -a "$HBA" "${HBA}.bak"
+            sed -i -E "s/^host(nossl)?([[:space:]]+\S+[[:space:]]+\S+[[:space:]]+[0-9a-fA-F:.]+\/[0-9]+[[:space:]]+)/hostssl\2/" "$HBA"
+
+            systemctl reload postgresql
+            ```
+        - id: ansible
+          desc: |
+            To require TLS for remote connections using Ansible:
+
+            1. Verify TLS is enabled before changing the rules.
+            2. Convert remote rules to `hostssl`.
+            3. Notify a handler that reloads the server.
+
+            ```yaml
+            - name: Require TLS for remote PostgreSQL connections
+              hosts: postgresql
+              become: true
+              vars:
+                postgresql_hba: /etc/postgresql/16/main/pg_hba.conf
+              tasks:
+                - name: Read the effective ssl setting
+                  become_user: postgres
+                  ansible.builtin.command:
+                    cmd: psql -tAc "SHOW ssl;"
+                  changed_when: false
+                  register: ssl_state
+
+                - name: Fail when TLS is not enabled
+                  ansible.builtin.fail:
+                    msg: "Enable the ssl directive before converting rules to hostssl."
+                  when: ssl_state.stdout | trim != "on"
+
+                - name: Convert remote rules to hostssl
+                  ansible.builtin.replace:
+                    path: "{{ postgresql_hba }}"
+                    regexp: '^host(nossl)?(\s+\S+\s+\S+\s+[0-9a-fA-F:.]+/[0-9]+\s+)'
+                    replace: 'hostssl\2'
+                  notify: Reload postgresql
+              handlers:
+                - name: Reload postgresql
+                  ansible.builtin.service:
+                    name: postgresql
+                    state: reloaded
+            ```
+
+  - uid: mondoo-postgresql-security-hba-replication-restricted
+    title: Ensure replication rules name specific roles and client addresses
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    mql: |
+      postgresql.hba.rules.where(database.downcase == "replication").none(address == "0.0.0.0/0" || address == "::/0" || user.downcase == "all")
+    docs:
+      desc: |
+        This check ensures that rules granting access to the special `replication` database name a specific role and a specific client address. A replication connection streams the write-ahead log, which carries the contents of every table in the cluster, so a permissive replication rule is equivalent to granting a full copy of the database.
+
+        Replication rules deserve tighter scoping than ordinary client rules because a single successful connection exfiltrates everything rather than only what a role is granted to read. Name the dedicated replication role and the exact addresses of the standby servers.
+
+        **Why this matters**
+
+        - **Replication bypasses table privileges:** The log stream is not filtered by object level grants.
+        - **Standby addresses are known and stable:** There is no operational reason for a replication rule to accept arbitrary clients.
+        - **Dedicated role limits blast radius:** A purpose-built replication role cannot be reused for ordinary queries.
+
+        **Risk mitigation**
+
+        - **Prevents wholesale data exfiltration:** An attacker cannot attach as a standby and stream the cluster contents.
+        - **Blocks unauthorized standbys:** Only the named hosts can establish a replication session.
+      audit: |
+        ### Audit via CLI
+
+        1. List the replication rules and how they are scoped:
+
+        ```bash
+        sudo -u postgres psql -c "SELECT line_number, type, user_name, address, auth_method FROM pg_hba_file_rules WHERE 'replication' = ANY (database);"
+        ```
+
+        2. Review the roles that carry the replication attribute:
+
+        ```bash
+        sudo -u postgres psql -c "SELECT rolname FROM pg_roles WHERE rolreplication;"
+        ```
+
+        3. Review the standby connections that currently exist:
+
+        ```bash
+        sudo -u postgres psql -c "SELECT usename, client_addr, state FROM pg_stat_replication;"
+        ```
+
+        A passing result shows replication rules naming a specific role and a host-scoped address. A failing result shows a rule whose user is `all` or whose address is `0.0.0.0/0` or `::/0`.
+      remediation:
+        - id: cli
+          desc: |
+            To restrict replication access using the CLI:
+
+            1. Create a dedicated role that holds only the `REPLICATION` attribute.
+            2. Replace the permissive replication rule with one naming that role and the standby address.
+            3. Reload PostgreSQL and confirm the rule set.
+
+            ```bash
+            sudo -u postgres psql -c "CREATE ROLE replicator WITH REPLICATION LOGIN PASSWORD 'changeme';"
+            sudo sed -i -E "/^host\S*\s+replication\s+/d" /etc/postgresql/16/main/pg_hba.conf
+            echo "hostssl replication replicator 10.0.0.5/32 scram-sha-256 clientcert=verify-full" \
+              | sudo tee -a /etc/postgresql/16/main/pg_hba.conf >/dev/null
+            sudo systemctl reload postgresql
+            sudo -u postgres psql -c "SELECT line_number, user_name, address FROM pg_hba_file_rules WHERE 'replication' = ANY (database);"
+            ```
+        - id: script
+          desc: |
+            To restrict replication access using a bash script:
+
+            1. Define the replication role and the standby addresses.
+            2. Remove existing replication rules and write one rule per standby.
+            3. Reload PostgreSQL.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            HBA="/etc/postgresql/16/main/pg_hba.conf"
+            ROLE="replicator"
+            STANDBYS=("10.0.0.5/32" "10.0.0.6/32")
+
+            cp -a "$HBA" "${HBA}.bak"
+            sed -i -E "/^host\S*[[:space:]]+replication[[:space:]]+/d" "$HBA"
+
+            for host in "${STANDBYS[@]}"; do
+              printf "hostssl replication %s %s scram-sha-256 clientcert=verify-full\n" \
+                "$ROLE" "$host" >>"$HBA"
+            done
+
+            systemctl reload postgresql
+            ```
+        - id: ansible
+          desc: |
+            To restrict replication access using Ansible:
+
+            1. Remove permissive replication rules.
+            2. Add one narrowly scoped rule per standby.
+            3. Notify a handler that reloads the server.
+
+            ```yaml
+            - name: Restrict PostgreSQL replication access
+              hosts: postgresql
+              become: true
+              vars:
+                postgresql_hba: /etc/postgresql/16/main/pg_hba.conf
+                postgresql_replication_role: replicator
+                postgresql_standbys:
+                  - 10.0.0.5/32
+                  - 10.0.0.6/32
+              tasks:
+                - name: Remove existing replication rules
+                  ansible.builtin.lineinfile:
+                    path: "{{ postgresql_hba }}"
+                    regexp: '^host\S*\s+replication\s+'
+                    state: absent
+                  notify: Reload postgresql
+
+                - name: Allow only the named standbys
+                  ansible.builtin.lineinfile:
+                    path: "{{ postgresql_hba }}"
+                    line: >-
+                      hostssl replication {{ postgresql_replication_role }}
+                      {{ item }} scram-sha-256 clientcert=verify-full
+                    state: present
+                  loop: "{{ postgresql_standbys }}"
+                  notify: Reload postgresql
+              handlers:
+                - name: Reload postgresql
+                  ansible.builtin.service:
+                    name: postgresql
+                    state: reloaded
+            ```
+
+  - uid: mondoo-postgresql-security-hba-cert-auth-requires-verify-full
+    title: Ensure cert authentication rules set clientcert to verify-full
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-14
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-2
+      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: vda-isa-5-4-1-2
+    mql: |
+      postgresql.hba.rules.where(authMethod.downcase == "cert").all(options["clientcert"] == "verify-full")
+    docs:
+      desc: |
+        This check ensures that every rule using the `cert` authentication method also sets `clientcert=verify-full`. With `verify-ca`, PostgreSQL confirms only that the client certificate chains to a trusted authority. Any certificate that authority has ever issued then satisfies the rule, regardless of which identity it names.
+
+        The `verify-full` setting additionally requires that the certificate's common name match the PostgreSQL role the client is requesting. That binding is what turns a valid certificate into a specific, verified identity.
+
+        **Why this matters**
+
+        - **Certificates map to one identity:** A certificate issued for one service cannot be used to connect as another role.
+        - **Contains authority scope:** An internal authority that also issues certificates for other purposes cannot be used to reach any role.
+        - **Completes mutual authentication:** Both endpoints are identified rather than only the server.
+
+        **Risk mitigation**
+
+        - **Blocks cross-identity reuse:** A compromised service certificate cannot authenticate as a privileged role.
+        - **Limits the impact of broad authorities:** Certificates issued for unrelated systems are rejected.
+      audit: |
+        ### Audit via CLI
+
+        1. List certificate authentication rules and their options:
+
+        ```bash
+        sudo -u postgres psql -c "SELECT line_number, type, database, user_name, address, options FROM pg_hba_file_rules WHERE auth_method = 'cert';"
+        ```
+
+        2. Confirm the authority bundle used to validate client certificates:
+
+        ```bash
+        sudo -u postgres psql -c "SHOW ssl_ca_file;"
+        ```
+
+        A passing result shows `clientcert=verify-full` in the `options` column of every `cert` rule. A failing result shows an empty `options` column or `clientcert=verify-ca`.
+      remediation:
+        - id: cli
+          desc: |
+            To require full client certificate verification using the CLI:
+
+            1. Confirm each client certificate's common name matches the role it connects as.
+            2. Add or change `clientcert=verify-full` on every `cert` rule.
+            3. Reload PostgreSQL and confirm the options.
+
+            ```bash
+            sudo sed -i -E "s/^(host\S*\s+\S+\s+\S+\s+\S+\s+cert)(\s+clientcert=\S+)?\s*$/\1 clientcert=verify-full/" \
+              /etc/postgresql/16/main/pg_hba.conf
+            sudo systemctl reload postgresql
+            sudo -u postgres psql -c "SELECT line_number, options FROM pg_hba_file_rules WHERE auth_method = 'cert';"
+            ```
+        - id: script
+          desc: |
+            To require full client certificate verification using a bash script:
+
+            1. Back up `pg_hba.conf`.
+            2. Normalize every `cert` rule so it ends with `clientcert=verify-full`.
+            3. Reload PostgreSQL.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            HBA="/etc/postgresql/16/main/pg_hba.conf"
+
+            cp -a "$HBA" "${HBA}.bak"
+            sed -i -E "s/^(host\S*[[:space:]]+\S+[[:space:]]+\S+[[:space:]]+\S+[[:space:]]+cert)([[:space:]]+clientcert=\S+)?[[:space:]]*$/\1 clientcert=verify-full/" "$HBA"
+
+            systemctl reload postgresql
+            ```
+        - id: ansible
+          desc: |
+            To require full client certificate verification using Ansible:
+
+            1. Normalize every `cert` rule to set `clientcert=verify-full`.
+            2. Notify a handler that reloads the server.
+
+            ```yaml
+            - name: Require full client certificate verification in PostgreSQL
+              hosts: postgresql
+              become: true
+              vars:
+                postgresql_hba: /etc/postgresql/16/main/pg_hba.conf
+              tasks:
+                - name: Set clientcert=verify-full on cert rules
+                  ansible.builtin.replace:
+                    path: "{{ postgresql_hba }}"
+                    regexp: '^(host\S*\s+\S+\s+\S+\s+\S+\s+cert)(\s+clientcert=\S+)?\s*$'
+                    replace: '\1 clientcert=verify-full'
+                  notify: Reload postgresql
+              handlers:
+                - name: Reload postgresql
+                  ansible.builtin.service:
+                    name: postgresql
+                    state: reloaded
+            ```
+
+  - uid: mondoo-postgresql-security-ident-no-superuser-mappings
+    title: Ensure pg_ident.conf does not map external identities to superuser roles
+    impact: 90
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-4-i-information-access-management
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-1-2
+    mql: |
+      postgresql.ident.mappings.none(pgUsername.downcase == "postgres")
+    docs:
+      desc: |
+        This check ensures that no `pg_ident.conf` mapping resolves an external identity onto the `postgres` superuser role. Identity maps translate an authenticated operating system account, Kerberos principal, or certificate common name into a PostgreSQL role, and they are consulted by the `ident`, `peer`, `gss`, and `cert` methods.
+
+        A mapping that targets `postgres` grants cluster ownership to whoever controls the mapped external identity. Administrators should connect as a named role that holds only the privileges they need, and escalate deliberately, rather than being mapped straight onto the superuser.
+
+        **Why this matters**
+
+        - **Named accountability:** Actions taken in the database are attributable to a specific role rather than a shared superuser.
+        - **Least privilege by default:** Routine work happens without cluster-wide authority.
+        - **External identity compromise is contained:** Losing control of a mapped account does not immediately mean losing the cluster.
+
+        **Risk mitigation**
+
+        - **Prevents silent privilege escalation:** A mapped operating system or certificate identity cannot become a superuser implicitly.
+        - **Limits lateral movement:** A compromised host account cannot take ownership of the database.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the mappings as written on disk:
+
+        ```bash
+        sudo -u postgres grep -vE "^\s*(#|$)" /etc/postgresql/16/main/pg_ident.conf
+        ```
+
+        2. On PostgreSQL 15 and later, read the mappings the server parsed:
+
+        ```bash
+        sudo -u postgres psql -c "SELECT line_number, map_name, sys_name, pg_username, error FROM pg_ident_file_mappings ORDER BY line_number;"
+        ```
+
+        3. Confirm which roles actually hold superuser authority:
+
+        ```bash
+        sudo -u postgres psql -c "SELECT rolname FROM pg_roles WHERE rolsuper;"
+        ```
+
+        A passing result shows no mapping whose PostgreSQL role is `postgres`. A failing result shows one or more mappings targeting the superuser.
+      remediation:
+        - id: cli
+          desc: |
+            To remove superuser identity mappings using the CLI:
+
+            1. Create a named role for each administrator and grant only the privileges they need.
+            2. Repoint the mapping at that role instead of `postgres`.
+            3. Reload PostgreSQL and confirm the mappings.
+
+            ```bash
+            sudo -u postgres psql -c "CREATE ROLE dba_alice LOGIN;"
+            sudo -u postgres psql -c "GRANT pg_read_all_data, pg_monitor TO dba_alice;"
+            sudo sed -i -E "s/^(\S+\s+\S+\s+)postgres\s*$/\1dba_alice/" /etc/postgresql/16/main/pg_ident.conf
+            sudo systemctl reload postgresql
+            sudo -u postgres grep -vE "^\s*(#|$)" /etc/postgresql/16/main/pg_ident.conf
+            ```
+        - id: script
+          desc: |
+            To remove superuser identity mappings using a bash script:
+
+            1. Back up `pg_ident.conf`.
+            2. Report every mapping that targets the superuser so it can be repointed deliberately.
+            3. Fail rather than guessing which role should replace it.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            IDENT="/etc/postgresql/16/main/pg_ident.conf"
+
+            cp -a "$IDENT" "${IDENT}.bak"
+
+            if grep -qE "^[^#]*[[:space:]]postgres[[:space:]]*$" "$IDENT"; then
+              echo "mappings targeting the postgres superuser:" >&2
+              grep -nE "^[^#]*[[:space:]]postgres[[:space:]]*$" "$IDENT" >&2
+              echo "repoint each mapping at a named role, then reload postgresql" >&2
+              exit 1
+            fi
+
+            echo "no superuser mappings present in $IDENT"
+            ```
+        - id: ansible
+          desc: |
+            To remove superuser identity mappings using Ansible:
+
+            1. Create the named administrative role.
+            2. Repoint mappings that target `postgres` at that role.
+            3. Notify a handler that reloads the server.
+
+            ```yaml
+            - name: Remove PostgreSQL superuser identity mappings
+              hosts: postgresql
+              become: true
+              vars:
+                postgresql_ident: /etc/postgresql/16/main/pg_ident.conf
+                postgresql_admin_role: dba_alice
+              tasks:
+                - name: Create the named administrative role
+                  become_user: postgres
+                  ansible.builtin.command:
+                    cmd: >-
+                      psql -tAc "SELECT 1 FROM pg_roles WHERE rolname = '{{ postgresql_admin_role }}'"
+                  changed_when: false
+                  register: role_exists
+
+                - name: Add the role when it is missing
+                  become_user: postgres
+                  ansible.builtin.command:
+                    cmd: psql -c "CREATE ROLE {{ postgresql_admin_role }} LOGIN;"
+                  when: role_exists.stdout | trim == ""
+
+                - name: Repoint superuser mappings at the named role
+                  ansible.builtin.replace:
+                    path: "{{ postgresql_ident }}"
+                    regexp: '^(\S+\s+\S+\s+)postgres\s*$'
+                    replace: '\1{{ postgresql_admin_role }}'
+                  notify: Reload postgresql
+              handlers:
+                - name: Reload postgresql
+                  ansible.builtin.service:
+                    name: postgresql
+                    state: reloaded
+            ```
+
+  - uid: mondoo-postgresql-security-ident-no-catch-all-mappings
+    title: Ensure pg_ident.conf does not use catch-all system username patterns
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-4-i-information-access-management
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-1-2
+    mql: |
+      postgresql.ident.mappings.none(systemUsername == /\.\*/ || systemUsername == /\.\+/)
+    docs:
+      desc: |
+        This check ensures that no `pg_ident.conf` mapping uses a regular expression that matches every external identity. A system username entry beginning with a slash is treated as a regular expression, so a pattern such as `/^(.*)$` matches any authenticated account and hands each of them the mapped PostgreSQL role.
+
+        Catch-all patterns are usually introduced to save writing one mapping per user, but they remove the boundary the map is supposed to enforce. Any identity the authentication method accepts becomes the mapped role, which turns a specific grant into a broad one.
+
+        **Why this matters**
+
+        - **Explicit mappings are reviewable:** A finite list shows exactly who can assume which role.
+        - **New accounts are not implicitly granted:** Creating an operating system account does not silently create database access.
+        - **Patterns can capture more than intended:** A broad expression matches identities that were never considered.
+
+        **Risk mitigation**
+
+        - **Prevents unintended role assumption:** An unrelated account cannot connect as the mapped role.
+        - **Blocks escalation through account creation:** An attacker who can add a host account gains no database access from it.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the mappings and look for regular expression patterns:
+
+        ```bash
+        sudo -u postgres grep -vE "^\s*(#|$)" /etc/postgresql/16/main/pg_ident.conf
+        ```
+
+        2. On PostgreSQL 15 and later, read the parsed mappings:
+
+        ```bash
+        sudo -u postgres psql -c "SELECT line_number, map_name, sys_name, pg_username FROM pg_ident_file_mappings ORDER BY line_number;"
+        ```
+
+        3. Identify which authentication rules consult a map:
+
+        ```bash
+        sudo -u postgres psql -c "SELECT line_number, type, address, auth_method, options FROM pg_hba_file_rules WHERE options::text LIKE '%map=%';"
+        ```
+
+        A passing result shows literal system usernames, or narrowly anchored patterns that match a known set. A failing result shows a pattern containing `.*` or `.+`.
+      remediation:
+        - id: cli
+          desc: |
+            To replace catch-all identity mappings using the CLI:
+
+            1. Enumerate the external identities that legitimately need database access.
+            2. Remove the catch-all pattern and write one explicit mapping per identity.
+            3. Reload PostgreSQL and confirm the mappings.
+
+            ```bash
+            sudo sed -i -E "/^\S+\s+\/.*(\.\*|\.\+)/d" /etc/postgresql/16/main/pg_ident.conf
+            printf "mymap alice alice_pg\nmymap bob bob_pg\n" \
+              | sudo tee -a /etc/postgresql/16/main/pg_ident.conf >/dev/null
+            sudo systemctl reload postgresql
+            sudo -u postgres grep -vE "^\s*(#|$)" /etc/postgresql/16/main/pg_ident.conf
+            ```
+        - id: script
+          desc: |
+            To replace catch-all identity mappings using a bash script:
+
+            1. Define the map name and the explicit identity pairs.
+            2. Remove catch-all patterns and write the explicit mappings.
+            3. Reload PostgreSQL.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            IDENT="/etc/postgresql/16/main/pg_ident.conf"
+            MAP_NAME="mymap"
+            declare -A MAPPINGS=([alice]=alice_pg [bob]=bob_pg)
+
+            cp -a "$IDENT" "${IDENT}.bak"
+            sed -i -E "/^\S+[[:space:]]+\/.*(\.\*|\.\+)/d" "$IDENT"
+
+            for sys_user in "${!MAPPINGS[@]}"; do
+              printf "%s %s %s\n" "$MAP_NAME" "$sys_user" "${MAPPINGS[$sys_user]}" >>"$IDENT"
+            done
+
+            systemctl reload postgresql
+            ```
+        - id: ansible
+          desc: |
+            To replace catch-all identity mappings using Ansible:
+
+            1. Remove mappings whose system username is a catch-all pattern.
+            2. Add one explicit mapping per identity.
+            3. Notify a handler that reloads the server.
+
+            ```yaml
+            - name: Replace catch-all PostgreSQL identity mappings
+              hosts: postgresql
+              become: true
+              vars:
+                postgresql_ident: /etc/postgresql/16/main/pg_ident.conf
+                postgresql_map_name: mymap
+                postgresql_ident_mappings:
+                  - { sys_name: alice, pg_username: alice_pg }
+                  - { sys_name: bob, pg_username: bob_pg }
+              tasks:
+                - name: Remove catch-all patterns
+                  ansible.builtin.lineinfile:
+                    path: "{{ postgresql_ident }}"
+                    regexp: '^\S+\s+/.*(\.\*|\.\+)'
+                    state: absent
+                  notify: Reload postgresql
+
+                - name: Add explicit mappings
+                  ansible.builtin.lineinfile:
+                    path: "{{ postgresql_ident }}"
+                    line: "{{ postgresql_map_name }} {{ item.sys_name }} {{ item.pg_username }}"
+                    state: present
+                  loop: "{{ postgresql_ident_mappings }}"
+                  notify: Reload postgresql
+              handlers:
+                - name: Reload postgresql
+                  ansible.builtin.service:
+                    name: postgresql
+                    state: reloaded
+            ```
+
+  - uid: mondoo-postgresql-security-db-user-namespace-disabled
+    title: Ensure db_user_namespace is not enabled
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-5-16
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-4
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-1
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    mql: |
+      postgresql.conf.params["db_user_namespace"] == empty || postgresql.conf.params["db_user_namespace"].downcase == "off"
+    docs:
+      desc: |
+        This check ensures that `db_user_namespace` is left disabled. When enabled, PostgreSQL accepts per-database usernames written as `user@dbname`, and the client-supplied name is rewritten before authentication. The feature is off by default and the check treats an absent directive as compliant.
+
+        The rewriting behavior makes the effective role name depend on the database the client selected, so the same connection string can resolve to different roles. That indirection makes authentication rules and audit records harder to reason about, and the feature interacts poorly with SCRAM because clients must know whether to include the database suffix when computing their response.
+
+        **Why this matters**
+
+        - **Role names stay unambiguous:** A username in a log line or an authentication rule means exactly one role.
+        - **Authentication rules remain predictable:** Rule matching does not shift based on the selected database.
+        - **Avoids a deprecated mechanism:** The feature exists for backward compatibility and is not recommended for new deployments.
+
+        **Risk mitigation**
+
+        - **Prevents rule bypass through name rewriting:** An attacker cannot influence which role a rule matches by changing the database.
+        - **Keeps audit trails reliable:** Recorded usernames correspond directly to roles during investigation.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective value from a running server:
+
+        ```bash
+        sudo -u postgres psql -c "SHOW db_user_namespace;"
+        ```
+
+        2. Confirm whether the directive is set anywhere in the configuration:
+
+        ```bash
+        sudo -u postgres grep -rE "^\s*db_user_namespace" /etc/postgresql/16/main/
+        ```
+
+        A passing result reports `off`, or shows no explicit setting. A failing result reports `on`.
+      remediation:
+        - id: cli
+          desc: |
+            To disable per-database usernames using the CLI:
+
+            1. Confirm no role names contain an `@` suffix that depends on the feature.
+            2. Set `db_user_namespace` to `off` in `postgresql.conf`.
+            3. Reload PostgreSQL and confirm the effective value.
+
+            ```bash
+            sudo -u postgres psql -c "SELECT rolname FROM pg_roles WHERE rolname LIKE '%@%';"
+            sudo -u postgres sed -i "s/^#*\s*db_user_namespace.*/db_user_namespace = off/" \
+              /etc/postgresql/16/main/postgresql.conf
+            sudo systemctl reload postgresql
+            sudo -u postgres psql -c "SHOW db_user_namespace;"
+            ```
+        - id: script
+          desc: |
+            To disable per-database usernames using a bash script:
+
+            1. Refuse to proceed while roles depend on the suffixed naming.
+            2. Set the directive to `off`.
+            3. Reload PostgreSQL and report the effective value.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            PGCONF="/etc/postgresql/16/main/postgresql.conf"
+
+            suffixed=$(su -s /bin/sh postgres -c \
+              "psql -tAc \"SELECT count(*) FROM pg_roles WHERE rolname LIKE '%@%';\"")
+
+            if [ "$suffixed" -gt 0 ]; then
+              echo "$suffixed role(s) use per-database naming; rename them before disabling" >&2
+              exit 1
+            fi
+
+            if grep -qE "^\s*#?\s*db_user_namespace" "$PGCONF"; then
+              sed -i "s|^\s*#\?\s*db_user_namespace.*|db_user_namespace = off|" "$PGCONF"
+            else
+              printf "db_user_namespace = off\n" >>"$PGCONF"
+            fi
+
+            systemctl reload postgresql
+            su -s /bin/sh postgres -c "psql -c 'SHOW db_user_namespace;'"
+            ```
+        - id: ansible
+          desc: |
+            To disable per-database usernames using Ansible:
+
+            1. Set `db_user_namespace` to `off` in `postgresql.conf`.
+            2. Notify a handler that reloads the server.
+
+            ```yaml
+            - name: Disable PostgreSQL per-database usernames
+              hosts: postgresql
+              become: true
+              vars:
+                postgresql_conf: /etc/postgresql/16/main/postgresql.conf
+              tasks:
+                - name: Set db_user_namespace to off
+                  ansible.builtin.lineinfile:
+                    path: "{{ postgresql_conf }}"
+                    regexp: '^\s*#?\s*db_user_namespace'
+                    line: "db_user_namespace = off"
+                    state: present
+                  notify: Reload postgresql
+              handlers:
+                - name: Reload postgresql
+                  ansible.builtin.service:
+                    name: postgresql
+                    state: reloaded
+            ```
+
+  - uid: mondoo-postgresql-security-logging-collector-enabled
+    title: Ensure logging_collector is enabled
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
+      compliance/dora: dora-art-10
+      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
+      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-pt-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-04
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-12
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/pci-dss-4: pcidss-requirement-10-2-1
+      compliance/soc2-2017: soc2-control-cc7-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-4
+    mql: |
+      postgresql.conf.loggingCollector == true
+    docs:
+      desc: |
+        This check ensures that `logging_collector` is enabled so PostgreSQL captures server messages into log files it manages itself. Without the collector, messages go to the process standard error stream, where they depend entirely on how the service was started and are frequently discarded.
+
+        The collector is also a prerequisite for the log protection and rotation settings in this policy. Directives such as `log_file_mode`, `log_rotation_age`, and `log_filename` only take effect when the collector is running.
+
+        **Why this matters**
+
+        - **Durable records:** Messages are written to files that survive a client disconnect or a terminal closing.
+        - **Enables log protection:** File permissions on log output can only be controlled when PostgreSQL owns the files.
+        - **Supports rotation:** Predictable filenames and rotation keep log volume manageable without losing history.
+
+        **Risk mitigation**
+
+        - **Preserves incident evidence:** Authentication failures and errors remain available for investigation.
+        - **Prevents silent loss of audit data:** Messages are not discarded because no one captured the output stream.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective value from a running server:
+
+        ```bash
+        sudo -u postgres psql -c "SHOW logging_collector;"
+        ```
+
+        2. Confirm the server is writing to a log file and where it lives:
+
+        ```bash
+        sudo -u postgres psql -c "SELECT pg_current_logfile();"
+        ```
+
+        A passing result reports `on` and returns a log file path. A failing result reports `off`, and `pg_current_logfile()` returns an empty value.
+      remediation:
+        - id: cli
+          desc: |
+            To enable the logging collector using the CLI:
+
+            1. Set `logging_collector` in `postgresql.conf`.
+            2. Restart PostgreSQL, because this setting cannot be applied with a reload.
+            3. Confirm the server is writing to a log file.
+
+            ```bash
+            sudo -u postgres sed -i "s/^#*\s*logging_collector.*/logging_collector = on/" \
+              /etc/postgresql/16/main/postgresql.conf
+            sudo systemctl restart postgresql
+            sudo -u postgres psql -c "SELECT pg_current_logfile();"
+            ```
+        - id: script
+          desc: |
+            To enable the logging collector using a bash script:
+
+            1. Set the directive, replacing any existing value.
+            2. Restart PostgreSQL.
+            3. Report the active log file so the change can be confirmed.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            PGCONF="/etc/postgresql/16/main/postgresql.conf"
+
+            if grep -qE "^\s*#?\s*logging_collector" "$PGCONF"; then
+              sed -i "s|^\s*#\?\s*logging_collector.*|logging_collector = on|" "$PGCONF"
+            else
+              printf "logging_collector = on\n" >>"$PGCONF"
+            fi
+
+            systemctl restart postgresql
+            su -s /bin/sh postgres -c "psql -tAc 'SELECT pg_current_logfile();'"
+            ```
+        - id: ansible
+          desc: |
+            To enable the logging collector using Ansible:
+
+            1. Set `logging_collector` in `postgresql.conf`.
+            2. Notify a handler that restarts the server, because a reload is not sufficient.
+
+            ```yaml
+            - name: Enable the PostgreSQL logging collector
+              hosts: postgresql
+              become: true
+              vars:
+                postgresql_conf: /etc/postgresql/16/main/postgresql.conf
+              tasks:
+                - name: Set logging_collector to on
+                  ansible.builtin.lineinfile:
+                    path: "{{ postgresql_conf }}"
+                    regexp: '^\s*#?\s*logging_collector'
+                    line: "logging_collector = on"
+                    state: present
+                  notify: Restart postgresql
+              handlers:
+                - name: Restart postgresql
+                  ansible.builtin.service:
+                    name: postgresql
+                    state: restarted
+            ```
+
+  - uid: mondoo-postgresql-security-log-destination-configured
+    title: Ensure log_destination uses a structured or centralized format
+    impact: 55
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
+      compliance/dora: dora-art-10
+      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
+      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-pt-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-04
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-12
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/pci-dss-4: pcidss-requirement-10-2-1
+      compliance/soc2-2017: soc2-control-cc7-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-4
+    mql: |
+      postgresql.conf.logDestination == /csvlog|jsonlog|syslog/
+    docs:
+      desc: |
+        This check ensures that `log_destination` includes `csvlog`, `jsonlog`, or `syslog` rather than relying on the default freeform `stderr` output. Structured formats emit one record per event with stable fields, and `syslog` forwards records to a collector off the host.
+
+        Freeform output is readable by a person but awkward for automated analysis, because message text and field boundaries vary by event type. Structured output lets a log pipeline parse authentication failures, connection records, and statement logs reliably.
+
+        **Why this matters**
+
+        - **Reliable parsing:** Fixed fields let detection rules match events without fragile text matching.
+        - **Off-host retention:** Forwarding records to a collector preserves them when the host is lost or compromised.
+        - **Consistent correlation:** Structured fields align database events with records from other systems.
+
+        **Risk mitigation**
+
+        - **Resists local log tampering:** Records already forwarded cannot be edited by an attacker on the host.
+        - **Improves detection coverage:** Authentication anomalies are matched dependably rather than missed by text patterns.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective value from a running server:
+
+        ```bash
+        sudo -u postgres psql -c "SHOW log_destination;"
+        ```
+
+        2. Confirm records are arriving in the configured format:
+
+        ```bash
+        sudo -u postgres psql -c "SELECT pg_current_logfile('csvlog');"
+        ```
+
+        A passing result includes `csvlog`, `jsonlog`, or `syslog`. A failing result reports only `stderr`.
+      remediation:
+        - id: cli
+          desc: |
+            To configure a structured log destination using the CLI:
+
+            1. Set `log_destination` in `postgresql.conf`.
+            2. Reload PostgreSQL.
+            3. Confirm the structured log file is being written.
+
+            ```bash
+            sudo -u postgres sed -i "s/^#*\s*log_destination.*/log_destination = 'csvlog'/" \
+              /etc/postgresql/16/main/postgresql.conf
+            sudo systemctl reload postgresql
+            sudo -u postgres psql -c "SELECT pg_current_logfile('csvlog');"
+            ```
+        - id: script
+          desc: |
+            To configure a structured log destination using a bash script:
+
+            1. Choose the destination your log pipeline consumes.
+            2. Set the directive, replacing any existing value.
+            3. Reload PostgreSQL and report the active structured log file.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            PGCONF="/etc/postgresql/16/main/postgresql.conf"
+            DESTINATION="csvlog"
+
+            if grep -qE "^\s*#?\s*log_destination" "$PGCONF"; then
+              sed -i "s|^\s*#\?\s*log_destination.*|log_destination = '${DESTINATION}'|" "$PGCONF"
+            else
+              printf "log_destination = '%s'\n" "$DESTINATION" >>"$PGCONF"
+            fi
+
+            systemctl reload postgresql
+            su -s /bin/sh postgres -c "psql -tAc \"SELECT pg_current_logfile('${DESTINATION}');\""
+            ```
+        - id: ansible
+          desc: |
+            To configure a structured log destination using Ansible:
+
+            1. Set `log_destination` in `postgresql.conf`.
+            2. Notify a handler that reloads the server.
+
+            ```yaml
+            - name: Configure a structured PostgreSQL log destination
+              hosts: postgresql
+              become: true
+              vars:
+                postgresql_conf: /etc/postgresql/16/main/postgresql.conf
+                postgresql_log_destination: csvlog
+              tasks:
+                - name: Set log_destination
+                  ansible.builtin.lineinfile:
+                    path: "{{ postgresql_conf }}"
+                    regexp: '^\s*#?\s*log_destination'
+                    line: "log_destination = '{{ postgresql_log_destination }}'"
+                    state: present
+                  notify: Reload postgresql
+              handlers:
+                - name: Reload postgresql
+                  ansible.builtin.service:
+                    name: postgresql
+                    state: reloaded
+            ```
+
+  - uid: mondoo-postgresql-security-log-connections-enabled
+    title: Ensure log_connections is enabled
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
+      compliance/dora: dora-art-10
+      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
+      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-pt-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-04
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-12
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/pci-dss-4: pcidss-requirement-10-2-1
+      compliance/soc2-2017: soc2-control-cc7-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-4
+    mql: |
+      postgresql.conf.logConnections == true
+    docs:
+      desc: |
+        This check ensures that `log_connections` is enabled so every successful connection attempt is recorded together with the authenticated role and the client address. PostgreSQL leaves this off by default, which means a cluster can be accessed repeatedly without producing any record of who connected.
+
+        Connection records are the foundation of database access monitoring. They establish which identities reached the server, from where, and when, and they provide the baseline that makes unusual access visible.
+
+        **Why this matters**
+
+        - **Attribution:** Each session is tied to a role and a source address.
+        - **Baseline for anomaly detection:** Normal access patterns become measurable, so deviations stand out.
+        - **Investigation timeline:** Responders can establish when an identity first appeared.
+
+        **Risk mitigation**
+
+        - **Reveals credential misuse:** Access from an unexpected address or at an unusual time becomes visible.
+        - **Detects reconnaissance:** Repeated connection attempts across roles are recorded rather than invisible.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective value from a running server:
+
+        ```bash
+        sudo -u postgres psql -c "SHOW log_connections;"
+        ```
+
+        2. Confirm connection records are actually being written:
+
+        ```bash
+        sudo grep -c "connection authorized" "$(sudo -u postgres psql -tAc 'SELECT pg_current_logfile();')"
+        ```
+
+        A passing result reports `on` and a nonzero count of authorization records. A failing result reports `off`.
+      remediation:
+        - id: cli
+          desc: |
+            To record connections using the CLI:
+
+            1. Set `log_connections` in `postgresql.conf`.
+            2. Reload PostgreSQL.
+            3. Confirm the effective value.
+
+            ```bash
+            sudo -u postgres sed -i "s/^#*\s*log_connections.*/log_connections = on/" \
+              /etc/postgresql/16/main/postgresql.conf
+            sudo systemctl reload postgresql
+            sudo -u postgres psql -c "SHOW log_connections;"
+            ```
+        - id: script
+          desc: |
+            To record connections using a bash script:
+
+            1. Set the directive, replacing any existing value.
+            2. Reload PostgreSQL and report the effective value.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            PGCONF="/etc/postgresql/16/main/postgresql.conf"
+
+            if grep -qE "^\s*#?\s*log_connections" "$PGCONF"; then
+              sed -i "s|^\s*#\?\s*log_connections.*|log_connections = on|" "$PGCONF"
+            else
+              printf "log_connections = on\n" >>"$PGCONF"
+            fi
+
+            systemctl reload postgresql
+            su -s /bin/sh postgres -c "psql -c 'SHOW log_connections;'"
+            ```
+        - id: ansible
+          desc: |
+            To record connections using Ansible:
+
+            1. Set `log_connections` in `postgresql.conf`.
+            2. Notify a handler that reloads the server.
+
+            ```yaml
+            - name: Record PostgreSQL connections
+              hosts: postgresql
+              become: true
+              vars:
+                postgresql_conf: /etc/postgresql/16/main/postgresql.conf
+              tasks:
+                - name: Set log_connections to on
+                  ansible.builtin.lineinfile:
+                    path: "{{ postgresql_conf }}"
+                    regexp: '^\s*#?\s*log_connections'
+                    line: "log_connections = on"
+                    state: present
+                  notify: Reload postgresql
+              handlers:
+                - name: Reload postgresql
+                  ansible.builtin.service:
+                    name: postgresql
+                    state: reloaded
+            ```
+
+  - uid: mondoo-postgresql-security-log-disconnections-enabled
+    title: Ensure log_disconnections is enabled
+    impact: 65
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
+      compliance/dora: dora-art-10
+      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
+      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-pt-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-04
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-12
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/pci-dss-4: pcidss-requirement-10-2-1
+      compliance/soc2-2017: soc2-control-cc7-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-4
+    mql: |
+      postgresql.conf.logDisconnections == true
+    docs:
+      desc: |
+        This check ensures that `log_disconnections` is enabled so the end of each session is recorded along with its duration. Paired with connection records, this closes the session out and shows how long an identity held access to the database.
+
+        Session duration is frequently the most informative signal in a database log. A connection that stays open far longer than the application's normal pattern, or one that ends immediately after connecting, both stand out only when the disconnect is recorded.
+
+        **Why this matters**
+
+        - **Complete session records:** Every connection has a matching close with an elapsed time.
+        - **Duration as a signal:** Unusually long or short sessions become measurable.
+        - **Accurate concurrency history:** Reconstructing who held sessions at a given moment becomes possible.
+
+        **Risk mitigation**
+
+        - **Exposes long-lived unauthorized sessions:** A session held open for data collection is visible in the record.
+        - **Supports scope assessment:** Responders can bound how long an attacker had access.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective value from a running server:
+
+        ```bash
+        sudo -u postgres psql -c "SHOW log_disconnections;"
+        ```
+
+        2. Confirm disconnection records with session duration are present:
+
+        ```bash
+        sudo grep -c "disconnection: session time" "$(sudo -u postgres psql -tAc 'SELECT pg_current_logfile();')"
+        ```
+
+        A passing result reports `on` and a nonzero count of disconnection records. A failing result reports `off`.
+      remediation:
+        - id: cli
+          desc: |
+            To record disconnections using the CLI:
+
+            1. Set `log_disconnections` in `postgresql.conf`.
+            2. Reload PostgreSQL.
+            3. Confirm the effective value.
+
+            ```bash
+            sudo -u postgres sed -i "s/^#*\s*log_disconnections.*/log_disconnections = on/" \
+              /etc/postgresql/16/main/postgresql.conf
+            sudo systemctl reload postgresql
+            sudo -u postgres psql -c "SHOW log_disconnections;"
+            ```
+        - id: script
+          desc: |
+            To record disconnections using a bash script:
+
+            1. Set the directive, replacing any existing value.
+            2. Reload PostgreSQL and report the effective value.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            PGCONF="/etc/postgresql/16/main/postgresql.conf"
+
+            if grep -qE "^\s*#?\s*log_disconnections" "$PGCONF"; then
+              sed -i "s|^\s*#\?\s*log_disconnections.*|log_disconnections = on|" "$PGCONF"
+            else
+              printf "log_disconnections = on\n" >>"$PGCONF"
+            fi
+
+            systemctl reload postgresql
+            su -s /bin/sh postgres -c "psql -c 'SHOW log_disconnections;'"
+            ```
+        - id: ansible
+          desc: |
+            To record disconnections using Ansible:
+
+            1. Set `log_disconnections` in `postgresql.conf`.
+            2. Notify a handler that reloads the server.
+
+            ```yaml
+            - name: Record PostgreSQL disconnections
+              hosts: postgresql
+              become: true
+              vars:
+                postgresql_conf: /etc/postgresql/16/main/postgresql.conf
+              tasks:
+                - name: Set log_disconnections to on
+                  ansible.builtin.lineinfile:
+                    path: "{{ postgresql_conf }}"
+                    regexp: '^\s*#?\s*log_disconnections'
+                    line: "log_disconnections = on"
+                    state: present
+                  notify: Reload postgresql
+              handlers:
+                - name: Reload postgresql
+                  ansible.builtin.service:
+                    name: postgresql
+                    state: reloaded
+            ```
+
+  - uid: mondoo-postgresql-security-log-statement-captures-ddl
+    title: Ensure log_statement records at least data definition statements
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
+      compliance/dora: dora-art-10
+      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
+      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-pt-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-04
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-12
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/pci-dss-4: pcidss-requirement-10-2-1
+      compliance/soc2-2017: soc2-control-cc7-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-4
+    mql: |
+      postgresql.conf.logStatement.downcase == "ddl" || postgresql.conf.logStatement.downcase == "mod" || postgresql.conf.logStatement.downcase == "all"
+    docs:
+      desc: |
+        This check ensures that `log_statement` is set to `ddl`, `mod`, or `all` so schema changing statements are recorded. PostgreSQL defaults to `none`, which means statements that create roles, grant privileges, drop tables, or alter the schema leave no record of the statement text.
+
+        The `ddl` setting captures data definition statements including `CREATE`, `ALTER`, `DROP`, and `GRANT`. The `mod` setting adds data modifying statements, and `all` records every statement at a substantially higher log volume. Choose the level that matches your retention capacity, but record at least data definition.
+
+        **Why this matters**
+
+        - **Privilege changes are recorded:** `GRANT` and `CREATE ROLE` statements leave an auditable trail.
+        - **Schema tampering is visible:** Added functions, triggers, or dropped tables are attributable.
+        - **Change reconstruction:** Responders can determine exactly what an attacker altered.
+
+        **Risk mitigation**
+
+        - **Detects persistence mechanisms:** A trigger or function installed to maintain access is logged when it is created.
+        - **Reveals privilege escalation:** A role granted membership in a privileged group is recorded.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective value from a running server:
+
+        ```bash
+        sudo -u postgres psql -c "SHOW log_statement;"
+        ```
+
+        2. Confirm statement records are present in the log:
+
+        ```bash
+        sudo grep -c "statement:" "$(sudo -u postgres psql -tAc 'SELECT pg_current_logfile();')"
+        ```
+
+        A passing result reports `ddl`, `mod`, or `all`. A failing result reports `none`.
+      remediation:
+        - id: cli
+          desc: |
+            To record schema changing statements using the CLI:
+
+            1. Set `log_statement` in `postgresql.conf`.
+            2. Reload PostgreSQL.
+            3. Confirm the effective value.
+
+            ```bash
+            sudo -u postgres sed -i "s/^#*\s*log_statement.*/log_statement = 'ddl'/" \
+              /etc/postgresql/16/main/postgresql.conf
+            sudo systemctl reload postgresql
+            sudo -u postgres psql -c "SHOW log_statement;"
+            ```
+        - id: script
+          desc: |
+            To record schema changing statements using a bash script:
+
+            1. Choose the statement class to record based on retention capacity.
+            2. Set the directive, replacing any existing value.
+            3. Reload PostgreSQL and report the effective value.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            PGCONF="/etc/postgresql/16/main/postgresql.conf"
+            LEVEL="ddl"
+
+            if grep -qE "^\s*#?\s*log_statement" "$PGCONF"; then
+              sed -i "s|^\s*#\?\s*log_statement.*|log_statement = '${LEVEL}'|" "$PGCONF"
+            else
+              printf "log_statement = '%s'\n" "$LEVEL" >>"$PGCONF"
+            fi
+
+            systemctl reload postgresql
+            su -s /bin/sh postgres -c "psql -c 'SHOW log_statement;'"
+            ```
+        - id: ansible
+          desc: |
+            To record schema changing statements using Ansible:
+
+            1. Set `log_statement` in `postgresql.conf`.
+            2. Notify a handler that reloads the server.
+
+            ```yaml
+            - name: Record PostgreSQL schema changing statements
+              hosts: postgresql
+              become: true
+              vars:
+                postgresql_conf: /etc/postgresql/16/main/postgresql.conf
+                postgresql_log_statement: ddl
+              tasks:
+                - name: Set log_statement
+                  ansible.builtin.lineinfile:
+                    path: "{{ postgresql_conf }}"
+                    regexp: '^\s*#?\s*log_statement'
+                    line: "log_statement = '{{ postgresql_log_statement }}'"
+                    state: present
+                  notify: Reload postgresql
+              handlers:
+                - name: Reload postgresql
+                  ansible.builtin.service:
+                    name: postgresql
+                    state: reloaded
+            ```
+
+  - uid: mondoo-postgresql-security-log-line-prefix-includes-context
+    title: Ensure log_line_prefix records timestamp, user, and database
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
+      compliance/dora: dora-art-10
+      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
+      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-pt-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-04
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-2
+      compliance/pci-dss-4: pcidss-requirement-10-2-2
+      compliance/soc2-2017: soc2-control-cc7-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-4
+    mql: |
+      postgresql.conf.params["log_line_prefix"] != empty
+      postgresql.conf.params["log_line_prefix"] == /%m/
+      postgresql.conf.params["log_line_prefix"] == /%u/
+      postgresql.conf.params["log_line_prefix"] == /%d/
+    docs:
+      desc: |
+        This check ensures that `log_line_prefix` includes the timestamp with milliseconds as `%m`, the connecting role as `%u`, and the database as `%d`. Without these fields, log records describe what happened but not who did it or where, which makes them nearly unusable for investigation.
+
+        Every message the server writes carries this prefix, so it determines whether an error or a logged statement can be attributed to a session. Adding `%h` for the client host and `%p` for the process identifier makes correlation across records straightforward.
+
+        **Why this matters**
+
+        - **Attribution per record:** Each line identifies the role and database it belongs to.
+        - **Accurate ordering:** Millisecond timestamps allow events to be sequenced reliably.
+        - **Cross-record correlation:** Process identifiers tie together the statements of a single session.
+
+        **Risk mitigation**
+
+        - **Makes logs usable during response:** Malicious activity can be attributed to an identity rather than merely observed.
+        - **Prevents anonymous errors:** Repeated authentication failures can be traced to a source.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective value from a running server:
+
+        ```bash
+        sudo -u postgres psql -c "SHOW log_line_prefix;"
+        ```
+
+        2. Inspect recent lines to confirm the fields are populated:
+
+        ```bash
+        sudo tail -n 20 "$(sudo -u postgres psql -tAc 'SELECT pg_current_logfile();')"
+        ```
+
+        A passing result contains `%m`, `%u`, and `%d`. A failing result omits any of them, or is unset so the server uses a minimal prefix.
+      remediation:
+        - id: cli
+          desc: |
+            To record session context in every log line using the CLI:
+
+            1. Set `log_line_prefix` in `postgresql.conf`.
+            2. Reload PostgreSQL.
+            3. Confirm the effective value.
+
+            ```bash
+            sudo -u postgres sed -i "s/^#*\s*log_line_prefix.*/log_line_prefix = '%m [%p] %q%u@%d %h '/" \
+              /etc/postgresql/16/main/postgresql.conf
+            sudo systemctl reload postgresql
+            sudo -u postgres psql -c "SHOW log_line_prefix;"
+            ```
+        - id: script
+          desc: |
+            To record session context in every log line using a bash script:
+
+            1. Define a prefix carrying timestamp, process, role, database, and client host.
+            2. Set the directive, replacing any existing value.
+            3. Reload PostgreSQL and report the effective value.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            PGCONF="/etc/postgresql/16/main/postgresql.conf"
+            PREFIX='%m [%p] %q%u@%d %h '
+
+            if grep -qE "^\s*#?\s*log_line_prefix" "$PGCONF"; then
+              sed -i "s|^\s*#\?\s*log_line_prefix.*|log_line_prefix = '${PREFIX}'|" "$PGCONF"
+            else
+              printf "log_line_prefix = '%s'\n" "$PREFIX" >>"$PGCONF"
+            fi
+
+            systemctl reload postgresql
+            su -s /bin/sh postgres -c "psql -c 'SHOW log_line_prefix;'"
+            ```
+        - id: ansible
+          desc: |
+            To record session context in every log line using Ansible:
+
+            1. Set `log_line_prefix` in `postgresql.conf`.
+            2. Notify a handler that reloads the server.
+
+            ```yaml
+            - name: Record session context in PostgreSQL log lines
+              hosts: postgresql
+              become: true
+              vars:
+                postgresql_conf: /etc/postgresql/16/main/postgresql.conf
+                postgresql_log_line_prefix: "%m [%p] %q%u@%d %h "
+              tasks:
+                - name: Set log_line_prefix
+                  ansible.builtin.lineinfile:
+                    path: "{{ postgresql_conf }}"
+                    regexp: '^\s*#?\s*log_line_prefix'
+                    line: "log_line_prefix = '{{ postgresql_log_line_prefix }}'"
+                    state: present
+                  notify: Reload postgresql
+              handlers:
+                - name: Reload postgresql
+                  ansible.builtin.service:
+                    name: postgresql
+                    state: reloaded
+            ```
+
+  - uid: mondoo-postgresql-security-log-error-verbosity-not-terse
+    title: Ensure log_error_verbosity is not set to terse
+    impact: 40
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
+      compliance/dora: dora-art-10
+      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
+      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-pt-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-04
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-2
+      compliance/pci-dss-4: pcidss-requirement-10-2-2
+      compliance/soc2-2017: soc2-control-cc7-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-4
+    mql: |
+      postgresql.conf.params["log_error_verbosity"] == empty || postgresql.conf.params["log_error_verbosity"].downcase != "terse"
+    docs:
+      desc: |
+        This check ensures that `log_error_verbosity` is not set to `terse`. The `terse` setting strips the detail, hint, and context fields from logged errors, leaving only the primary message. PostgreSQL defaults to `default`, and the check treats an absent directive as compliant.
+
+        The suppressed fields carry the information that makes an error actionable, including which constraint was violated and the statement context in which the failure occurred. During an investigation, that context often distinguishes an application bug from an injection attempt.
+
+        **Why this matters**
+
+        - **Errors stay diagnosable:** Detail and hint fields explain why a statement failed.
+        - **Context identifies the source:** The context field shows the function or statement that raised the error.
+        - **Better failure triage:** Recurring errors can be classified without reproducing them.
+
+        **Risk mitigation**
+
+        - **Preserves attack indicators:** Malformed statements characteristic of injection attempts retain their diagnostic detail.
+        - **Speeds investigation:** Responders do not have to reproduce a failure to learn what it was.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective value from a running server:
+
+        ```bash
+        sudo -u postgres psql -c "SHOW log_error_verbosity;"
+        ```
+
+        2. Confirm logged errors carry their detail fields:
+
+        ```bash
+        sudo grep -A2 "ERROR:" "$(sudo -u postgres psql -tAc 'SELECT pg_current_logfile();')" | tail -n 20
+        ```
+
+        A passing result reports `default` or `verbose`, or shows no explicit setting. A failing result reports `terse`.
+      remediation:
+        - id: cli
+          desc: |
+            To restore error detail in logs using the CLI:
+
+            1. Set `log_error_verbosity` in `postgresql.conf`.
+            2. Reload PostgreSQL.
+            3. Confirm the effective value.
+
+            ```bash
+            sudo -u postgres sed -i "s/^#*\s*log_error_verbosity.*/log_error_verbosity = default/" \
+              /etc/postgresql/16/main/postgresql.conf
+            sudo systemctl reload postgresql
+            sudo -u postgres psql -c "SHOW log_error_verbosity;"
+            ```
+        - id: script
+          desc: |
+            To restore error detail in logs using a bash script:
+
+            1. Set the directive, replacing any existing value.
+            2. Reload PostgreSQL and report the effective value.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            PGCONF="/etc/postgresql/16/main/postgresql.conf"
+
+            if grep -qE "^\s*#?\s*log_error_verbosity" "$PGCONF"; then
+              sed -i "s|^\s*#\?\s*log_error_verbosity.*|log_error_verbosity = default|" "$PGCONF"
+            else
+              printf "log_error_verbosity = default\n" >>"$PGCONF"
+            fi
+
+            systemctl reload postgresql
+            su -s /bin/sh postgres -c "psql -c 'SHOW log_error_verbosity;'"
+            ```
+        - id: ansible
+          desc: |
+            To restore error detail in logs using Ansible:
+
+            1. Set `log_error_verbosity` in `postgresql.conf`.
+            2. Notify a handler that reloads the server.
+
+            ```yaml
+            - name: Restore PostgreSQL error detail in logs
+              hosts: postgresql
+              become: true
+              vars:
+                postgresql_conf: /etc/postgresql/16/main/postgresql.conf
+              tasks:
+                - name: Set log_error_verbosity
+                  ansible.builtin.lineinfile:
+                    path: "{{ postgresql_conf }}"
+                    regexp: '^\s*#?\s*log_error_verbosity'
+                    line: "log_error_verbosity = default"
+                    state: present
+                  notify: Reload postgresql
+              handlers:
+                - name: Reload postgresql
+                  ansible.builtin.service:
+                    name: postgresql
+                    state: reloaded
+            ```
+
+  - uid: mondoo-postgresql-security-log-file-mode-restricted
+    title: Ensure log_file_mode restricts log files to the server account
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-02
+      compliance/dora: dora-art-10
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-9
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-8
+      compliance/pci-dss-4: pcidss-requirement-10-3-1
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: vda-isa-5-5-2-4
+    mql: |
+      postgresql.conf.params["log_file_mode"] == empty || postgresql.conf.params["log_file_mode"] == /^0?600$/
+    docs:
+      desc: |
+        This check ensures that `log_file_mode` keeps PostgreSQL log files readable only by the account that owns the server. PostgreSQL defaults to `0600`, and the check treats an absent directive as compliant. It fails when the mode has been widened to allow group or world access.
+
+        Log files hold the material that makes logging valuable and also makes it sensitive. With `log_statement` recording data definition statements, log files contain role names, granted privileges, and schema structure. With `log_line_prefix` populated they also record client addresses and database names.
+
+        **Why this matters**
+
+        - **Logs are sensitive output:** Recorded statements and identities should not be world readable.
+        - **Limits reconnaissance:** An unprivileged local account cannot enumerate roles and schema from the logs.
+        - **Protects audit integrity:** Restricting access reduces the number of accounts able to read the audit trail.
+
+        **Risk mitigation**
+
+        - **Blocks local information disclosure:** A compromised unrelated service on the host cannot read database logs.
+        - **Prevents credential leakage through logs:** Connection strings or statements that embed sensitive values stay protected.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective value from a running server:
+
+        ```bash
+        sudo -u postgres psql -c "SHOW log_file_mode;"
+        ```
+
+        2. Confirm the permissions actually applied to the log files:
+
+        ```bash
+        sudo ls -l "$(sudo -u postgres psql -tAc 'SELECT pg_current_logfile();')"
+        ```
+
+        A passing result reports `0600`, or shows no explicit setting, and the log files show `-rw-------`. A failing result reports a wider mode such as `0640` or `0644`.
+      remediation:
+        - id: cli
+          desc: |
+            To restrict log file permissions using the CLI:
+
+            1. Set `log_file_mode` in `postgresql.conf`.
+            2. Reload PostgreSQL so new log files use the mode.
+            3. Tighten the permissions on existing log files.
+
+            ```bash
+            sudo -u postgres sed -i "s/^#*\s*log_file_mode.*/log_file_mode = 0600/" \
+              /etc/postgresql/16/main/postgresql.conf
+            sudo systemctl reload postgresql
+            sudo find /var/log/postgresql -type f -name "*.log" -exec chmod 0600 {} +
+            ```
+        - id: script
+          desc: |
+            To restrict log file permissions using a bash script:
+
+            1. Set the directive, replacing any existing value.
+            2. Reload PostgreSQL.
+            3. Correct the permissions on log files already written.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            PGCONF="/etc/postgresql/16/main/postgresql.conf"
+            LOG_DIR="/var/log/postgresql"
+
+            if grep -qE "^\s*#?\s*log_file_mode" "$PGCONF"; then
+              sed -i "s|^\s*#\?\s*log_file_mode.*|log_file_mode = 0600|" "$PGCONF"
+            else
+              printf "log_file_mode = 0600\n" >>"$PGCONF"
+            fi
+
+            systemctl reload postgresql
+
+            if [ -d "$LOG_DIR" ]; then
+              find "$LOG_DIR" -type f -name "*.log" -exec chmod 0600 {} +
+            fi
+            ```
+        - id: ansible
+          desc: |
+            To restrict log file permissions using Ansible:
+
+            1. Set `log_file_mode` in `postgresql.conf`.
+            2. Notify a handler that reloads the server.
+            3. Correct permissions on existing log files.
+
+            ```yaml
+            - name: Restrict PostgreSQL log file permissions
+              hosts: postgresql
+              become: true
+              vars:
+                postgresql_conf: /etc/postgresql/16/main/postgresql.conf
+                postgresql_log_dir: /var/log/postgresql
+              tasks:
+                - name: Set log_file_mode
+                  ansible.builtin.lineinfile:
+                    path: "{{ postgresql_conf }}"
+                    regexp: '^\s*#?\s*log_file_mode'
+                    line: "log_file_mode = 0600"
+                    state: present
+                  notify: Reload postgresql
+
+                - name: Find existing log files
+                  ansible.builtin.find:
+                    paths: "{{ postgresql_log_dir }}"
+                    patterns: "*.log"
+                  register: existing_logs
+
+                - name: Restrict existing log files
+                  ansible.builtin.file:
+                    path: "{{ item.path }}"
+                    mode: "0600"
+                  loop: "{{ existing_logs.files }}"
+                  loop_control:
+                    label: "{{ item.path }}"
+              handlers:
+                - name: Reload postgresql
+                  ansible.builtin.service:
+                    name: postgresql
+                    state: reloaded
+            ```
+
+  - uid: mondoo-postgresql-security-pgaudit-extension-enabled
+    title: Ensure pgaudit is loaded through shared_preload_libraries
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
+      compliance/dora: dora-art-10
+      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
+      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-pt-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-04
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-12
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/pci-dss-4: pcidss-requirement-10-2-1
+      compliance/soc2-2017: soc2-control-cc7-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-4
+    mql: |
+      postgresql.conf.sharedPreloadLibraries.any(_ == "pgaudit")
+    docs:
+      desc: |
+        This check ensures that `pgaudit` appears in `shared_preload_libraries` so the extension is loaded at server start. The built-in `log_statement` setting records statement text but not which objects a statement touched, and it cannot record read access at the object level.
+
+        The pgaudit extension adds session and object level auditing, so reads of specific tables can be recorded and audit entries are emitted in a consistent, parseable format. Because the extension must be preloaded, it cannot be enabled with a reload and requires a restart.
+
+        **Why this matters**
+
+        - **Read access is auditable:** `SELECT` against sensitive tables can be recorded, which `log_statement` cannot do.
+        - **Object level granularity:** Auditing can target specific tables rather than entire statement classes.
+        - **Consistent audit format:** Entries are structured for downstream analysis rather than freeform.
+
+        **Risk mitigation**
+
+        - **Detects data exfiltration:** Bulk reads of sensitive tables leave an audit record.
+        - **Supports regulatory evidence:** Object level access records demonstrate who read protected data.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective preload list from a running server:
+
+        ```bash
+        sudo -u postgres psql -c "SHOW shared_preload_libraries;"
+        ```
+
+        2. Confirm the extension is installed in the database:
+
+        ```bash
+        sudo -u postgres psql -c "SELECT extname, extversion FROM pg_extension WHERE extname = 'pgaudit';"
+        ```
+
+        3. Review what the extension is configured to record:
+
+        ```bash
+        sudo -u postgres psql -c "SHOW pgaudit.log;"
+        ```
+
+        A passing result lists `pgaudit` in the preload list. A failing result omits it, in which case the extension cannot be active regardless of any other setting.
+      remediation:
+        - id: cli
+          desc: |
+            To enable pgaudit using the CLI:
+
+            1. Install the extension package matching the server version.
+            2. Add `pgaudit` to `shared_preload_libraries` and restart the server.
+            3. Create the extension and select what it records.
+
+            ```bash
+            sudo apt-get install -y postgresql-16-pgaudit
+            sudo -u postgres sed -i "s/^#*\s*shared_preload_libraries.*/shared_preload_libraries = 'pgaudit'/" \
+              /etc/postgresql/16/main/postgresql.conf
+            sudo systemctl restart postgresql
+            sudo -u postgres psql -c "CREATE EXTENSION IF NOT EXISTS pgaudit;"
+            sudo -u postgres psql -c "ALTER SYSTEM SET pgaudit.log = 'ddl, role, write';"
+            sudo systemctl reload postgresql
+            ```
+        - id: script
+          desc: |
+            To enable pgaudit using a bash script:
+
+            1. Preserve any libraries already listed instead of overwriting them.
+            2. Restart the server so the library loads.
+            3. Create the extension and confirm it is present.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            PGCONF="/etc/postgresql/16/main/postgresql.conf"
+
+            current=$(su -s /bin/sh postgres -c "psql -tAc 'SHOW shared_preload_libraries;'" | tr -d ' ')
+
+            if printf '%s' "$current" | tr ',' '\n' | grep -qx "pgaudit"; then
+              echo "pgaudit already present in shared_preload_libraries"
+            else
+              if [ -n "$current" ]; then
+                libraries="${current},pgaudit"
+              else
+                libraries="pgaudit"
+              fi
+
+              if grep -qE "^\s*#?\s*shared_preload_libraries" "$PGCONF"; then
+                sed -i "s|^\s*#\?\s*shared_preload_libraries.*|shared_preload_libraries = '${libraries}'|" "$PGCONF"
+              else
+                printf "shared_preload_libraries = '%s'\n" "$libraries" >>"$PGCONF"
+              fi
+
+              systemctl restart postgresql
+            fi
+
+            su -s /bin/sh postgres -c "psql -c 'CREATE EXTENSION IF NOT EXISTS pgaudit;'"
+            ```
+        - id: ansible
+          desc: |
+            To enable pgaudit using Ansible:
+
+            1. Install the extension package.
+            2. Add the library to `shared_preload_libraries` and restart the server.
+            3. Create the extension in the target database.
+
+            ```yaml
+            - name: Enable pgaudit for PostgreSQL
+              hosts: postgresql
+              become: true
+              vars:
+                postgresql_conf: /etc/postgresql/16/main/postgresql.conf
+                postgresql_preload_libraries: pgaudit
+              tasks:
+                - name: Install the pgaudit package
+                  ansible.builtin.package:
+                    name: postgresql-16-pgaudit
+                    state: present
+
+                - name: Add pgaudit to shared_preload_libraries
+                  ansible.builtin.lineinfile:
+                    path: "{{ postgresql_conf }}"
+                    regexp: '^\s*#?\s*shared_preload_libraries'
+                    line: "shared_preload_libraries = '{{ postgresql_preload_libraries }}'"
+                    state: present
+                  notify: Restart postgresql
+
+                - name: Flush handlers so the library is loaded
+                  ansible.builtin.meta: flush_handlers
+
+                - name: Create the extension
+                  become_user: postgres
+                  ansible.builtin.command:
+                    cmd: psql -c "CREATE EXTENSION IF NOT EXISTS pgaudit;"
+                  register: create_extension
+                  changed_when: "'CREATE EXTENSION' in create_extension.stdout"
+              handlers:
+                - name: Restart postgresql
+                  ansible.builtin.service:
+                    name: postgresql
+                    state: restarted
+            ```
+
+  - uid: mondoo-postgresql-security-conf-files-restricted-permissions
+    title: Ensure postgresql.conf and its includes are not group or world accessible
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ip-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-5
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    mql: |
+      postgresql.conf.files != empty
+      postgresql.conf.files.all(permissions.group_writeable == false && permissions.other_readable == false && permissions.other_writeable == false)
+    docs:
+      desc: |
+        This check ensures that `postgresql.conf` and every fragment it pulls in through `include`, `include_if_exists`, and `include_dir` are readable only by the server account. PostgreSQL does not enforce permissions on its own configuration files the way it does for TLS key material, so a widened mode goes unnoticed at start up.
+
+        Include fragments deserve the same protection as the main file. Configuration management tooling frequently writes drop-in files under a `conf.d` directory with default permissions, which leaves a fragment world readable even when the main file is correctly restricted. This check evaluates every contributing file rather than only the entry point.
+
+        **Why this matters**
+
+        - **Configuration reveals architecture:** Listen addresses, data directory paths, and TLS material locations describe how to reach and attack the server.
+        - **Write access is server control:** An account able to modify a fragment can point the server at different authentication rules.
+        - **Fragments are easy to overlook:** Drop-in files inherit the permissions of whatever wrote them.
+
+        **Risk mitigation**
+
+        - **Blocks local reconnaissance:** An unprivileged account cannot read where keys and data live.
+        - **Prevents configuration tampering:** An attacker cannot weaken authentication by editing an included fragment.
+      audit: |
+        ### Audit via CLI
+
+        1. List every file that contributes to the configuration:
+
+        ```bash
+        sudo -u postgres psql -c "SELECT DISTINCT sourcefile FROM pg_settings WHERE sourcefile IS NOT NULL;"
+        ```
+
+        2. Inspect the permissions on the main file and any include directory:
+
+        ```bash
+        sudo ls -l /etc/postgresql/16/main/postgresql.conf
+        sudo ls -lR /etc/postgresql/16/main/conf.d/
+        ```
+
+        A passing result shows each file owned by the server account with no group write bit and no world access, which is `-rw-------` or `-rw-r-----`. A failing result shows a mode such as `-rw-r--r--` on the main file or on any fragment.
+      remediation:
+        - id: cli
+          desc: |
+            To restrict configuration file permissions using the CLI:
+
+            1. Set ownership to the server account on the main file and any include directory.
+            2. Remove group write and world access from every contributing file.
+            3. Confirm the resulting permissions.
+
+            ```bash
+            sudo chown -R postgres:postgres /etc/postgresql/16/main/
+            sudo chmod 0600 /etc/postgresql/16/main/postgresql.conf
+            sudo find /etc/postgresql/16/main/conf.d -type f -name "*.conf" -exec chmod 0600 {} +
+            sudo ls -l /etc/postgresql/16/main/postgresql.conf
+            ```
+        - id: script
+          desc: |
+            To restrict configuration file permissions using a bash script:
+
+            1. Locate the main configuration file and its include directory.
+            2. Apply ownership and mode to the main file and every fragment.
+            3. Report any file that still allows group or world access.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            PGDIR="/etc/postgresql/16/main"
+            PGCONF="${PGDIR}/postgresql.conf"
+
+            chown postgres:postgres "$PGCONF"
+            chmod 0600 "$PGCONF"
+
+            if [ -d "${PGDIR}/conf.d" ]; then
+              chown -R postgres:postgres "${PGDIR}/conf.d"
+              find "${PGDIR}/conf.d" -type f -name "*.conf" -exec chmod 0600 {} +
+            fi
+
+            remaining=$(find "$PGDIR" -name "*.conf" -perm /0077 -print)
+            if [ -n "$remaining" ]; then
+              echo "files still allowing group or world access:" >&2
+              printf '%s\n' "$remaining" >&2
+              exit 1
+            fi
+            ```
+        - id: ansible
+          desc: |
+            To restrict configuration file permissions using Ansible:
+
+            1. Set ownership and mode on the main configuration file.
+            2. Apply the same protection to every include fragment.
+
+            ```yaml
+            - name: Restrict PostgreSQL configuration file permissions
+              hosts: postgresql
+              become: true
+              vars:
+                postgresql_dir: /etc/postgresql/16/main
+              tasks:
+                - name: Protect the main configuration file
+                  ansible.builtin.file:
+                    path: "{{ postgresql_dir }}/postgresql.conf"
+                    owner: postgres
+                    group: postgres
+                    mode: "0600"
+
+                - name: Find include fragments
+                  ansible.builtin.find:
+                    paths: "{{ postgresql_dir }}/conf.d"
+                    patterns: "*.conf"
+                  register: conf_fragments
+                  failed_when: false
+
+                - name: Protect include fragments
+                  ansible.builtin.file:
+                    path: "{{ item.path }}"
+                    owner: postgres
+                    group: postgres
+                    mode: "0600"
+                  loop: "{{ conf_fragments.files | default([]) }}"
+                  loop_control:
+                    label: "{{ item.path }}"
+            ```
+
+  - uid: mondoo-postgresql-security-hba-file-restricted-permissions
+    title: Ensure pg_hba.conf is not group or world accessible
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ip-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-5
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    mql: |
+      postgresql.hba.file.permissions.group_writeable == false
+      postgresql.hba.file.permissions.other_readable == false
+      postgresql.hba.file.permissions.other_writeable == false
+    docs:
+      desc: |
+        This check ensures that `pg_hba.conf` is readable only by the account that owns the server. This file is the complete authorization policy for the cluster: it records which roles may connect, from which networks, and with which authentication method.
+
+        Read access alone is valuable to an attacker, because the file shows exactly which network ranges are trusted and which roles use weaker authentication methods. Write access is equivalent to controlling the database, since a new rule can grant unauthenticated superuser access on the next reload.
+
+        **Why this matters**
+
+        - **The file is the access control policy:** Its contents describe every path into the cluster.
+        - **Write access defeats authentication:** An added rule can bypass every credential requirement.
+        - **Reveals the weakest path:** An attacker learns which roles and networks to target first.
+
+        **Risk mitigation**
+
+        - **Prevents authentication bypass:** An attacker cannot insert a permissive rule.
+        - **Blocks targeted attacks:** Trusted ranges and weak methods are not disclosed to local accounts.
+      audit: |
+        ### Audit via CLI
+
+        1. Locate the file the server is actually using:
+
+        ```bash
+        sudo -u postgres psql -c "SHOW hba_file;"
+        ```
+
+        2. Inspect its ownership and permissions:
+
+        ```bash
+        sudo ls -l "$(sudo -u postgres psql -tAc 'SHOW hba_file;')"
+        ```
+
+        A passing result shows the file owned by the server account with no group write bit and no world access, which is `-rw-------` or `-rw-r-----`. A failing result shows a mode such as `-rw-r--r--` or `-rw-rw-r--`.
+      remediation:
+        - id: cli
+          desc: |
+            To restrict the authentication file permissions using the CLI:
+
+            1. Read the path the server uses so the correct file is changed.
+            2. Set ownership to the server account and remove group and world access.
+            3. Confirm the resulting permissions.
+
+            ```bash
+            HBA=$(sudo -u postgres psql -tAc 'SHOW hba_file;')
+            sudo chown postgres:postgres "$HBA"
+            sudo chmod 0600 "$HBA"
+            sudo ls -l "$HBA"
+            ```
+        - id: script
+          desc: |
+            To restrict the authentication file permissions using a bash script:
+
+            1. Resolve the active file path from the server rather than assuming a location.
+            2. Apply ownership and mode.
+            3. Verify no group or world bits remain.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            HBA=$(su -s /bin/sh postgres -c "psql -tAc 'SHOW hba_file;'")
+
+            if [ ! -f "$HBA" ]; then
+              echo "could not resolve pg_hba.conf path: $HBA" >&2
+              exit 1
+            fi
+
+            chown postgres:postgres "$HBA"
+            chmod 0600 "$HBA"
+
+            if find "$HBA" -perm /0077 | grep -q .; then
+              echo "group or world access remains on $HBA" >&2
+              exit 1
+            fi
+
+            ls -l "$HBA"
+            ```
+        - id: ansible
+          desc: |
+            To restrict the authentication file permissions using Ansible:
+
+            1. Resolve the active file path from the server.
+            2. Set ownership and mode on that file.
+
+            ```yaml
+            - name: Restrict PostgreSQL pg_hba.conf permissions
+              hosts: postgresql
+              become: true
+              tasks:
+                - name: Resolve the active hba_file path
+                  become_user: postgres
+                  ansible.builtin.command:
+                    cmd: psql -tAc "SHOW hba_file;"
+                  changed_when: false
+                  register: hba_path
+
+                - name: Protect pg_hba.conf
+                  ansible.builtin.file:
+                    path: "{{ hba_path.stdout | trim }}"
+                    owner: postgres
+                    group: postgres
+                    mode: "0600"
+            ```
+
+  - uid: mondoo-postgresql-security-local-preload-libraries-empty
+    title: Ensure local_preload_libraries does not load unexpected libraries
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-19
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-pt-3
+      compliance/nist-csf-2: nist-csf-2-pr-ps-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-6
+      compliance/pci-dss-4: pcidss-requirement-2-2-4
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    mql: |
+      postgresql.conf.params["local_preload_libraries"] == empty
+    docs:
+      desc: |
+        This check ensures that `local_preload_libraries` is unset. Unlike `shared_preload_libraries`, this directive can be set by an ordinary role on a per-session basis, and the libraries it names are loaded into the backend process at connection time.
+
+        Because it is settable without special privileges, the directive is a recognized route for loading code into the server. A server-wide value in `postgresql.conf` should be empty so that any library loaded into a backend is deliberate and traceable to the preload list an administrator controls.
+
+        **Why this matters**
+
+        - **Loaded code runs with server privileges:** A library in a backend process has the access of the server account.
+        - **Unprivileged roles can set it:** The directive does not require superuser, so a server-wide default deserves scrutiny.
+        - **Deliberate extension loading:** Extensions belong in `shared_preload_libraries`, where they are visible and reviewed.
+
+        **Risk mitigation**
+
+        - **Blocks a code loading path:** An attacker who can write to the plugin directory cannot rely on a preconfigured load.
+        - **Preserves an auditable extension list:** All loaded libraries remain visible in the administrator-controlled setting.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the effective value from a running server:
+
+        ```bash
+        sudo -u postgres psql -c "SHOW local_preload_libraries;"
+        ```
+
+        2. Confirm the directive is not set anywhere in the configuration:
+
+        ```bash
+        sudo -u postgres grep -rE "^\s*local_preload_libraries" /etc/postgresql/16/main/
+        ```
+
+        3. Review the libraries that are deliberately preloaded server-wide:
+
+        ```bash
+        sudo -u postgres psql -c "SHOW shared_preload_libraries;"
+        ```
+
+        A passing result reports an empty value and no explicit setting in the configuration. A failing result names one or more libraries.
+      remediation:
+        - id: cli
+          desc: |
+            To clear the local preload list using the CLI:
+
+            1. Confirm which libraries are named and whether any are genuinely required.
+            2. Move any required extension into `shared_preload_libraries` and clear the local directive.
+            3. Reload PostgreSQL and confirm the effective value.
+
+            ```bash
+            sudo -u postgres psql -c "SHOW local_preload_libraries;"
+            sudo -u postgres sed -i "s/^\s*local_preload_libraries.*/local_preload_libraries = ''/" \
+              /etc/postgresql/16/main/postgresql.conf
+            sudo systemctl reload postgresql
+            sudo -u postgres psql -c "SHOW local_preload_libraries;"
+            ```
+        - id: script
+          desc: |
+            To clear the local preload list using a bash script:
+
+            1. Report the current value so a required library is not removed silently.
+            2. Clear the directive across the main file and any include fragments.
+            3. Reload PostgreSQL and report the effective value.
+
+            ```bash
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            PGDIR="/etc/postgresql/16/main"
+
+            current=$(su -s /bin/sh postgres -c "psql -tAc 'SHOW local_preload_libraries;'")
+            if [ -n "$current" ]; then
+              echo "clearing local_preload_libraries, currently: $current"
+            fi
+
+            find "$PGDIR" -name "*.conf" -type f -exec \
+              sed -i "s|^\s*local_preload_libraries.*|local_preload_libraries = ''|" {} +
+
+            systemctl reload postgresql
+            su -s /bin/sh postgres -c "psql -c 'SHOW local_preload_libraries;'"
+            ```
+        - id: ansible
+          desc: |
+            To clear the local preload list using Ansible:
+
+            1. Clear `local_preload_libraries` in `postgresql.conf`.
+            2. Notify a handler that reloads the server.
+
+            ```yaml
+            - name: Clear the PostgreSQL local preload library list
+              hosts: postgresql
+              become: true
+              vars:
+                postgresql_conf: /etc/postgresql/16/main/postgresql.conf
+              tasks:
+                - name: Clear local_preload_libraries
+                  ansible.builtin.lineinfile:
+                    path: "{{ postgresql_conf }}"
+                    regexp: '^\s*local_preload_libraries'
+                    line: "local_preload_libraries = ''"
+                    state: present
+                  notify: Reload postgresql
+              handlers:
+                - name: Reload postgresql
+                  ansible.builtin.service:
+                    name: postgresql
+                    state: reloaded
+            ```
