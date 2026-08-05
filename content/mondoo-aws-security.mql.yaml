@@ -197,6 +197,7 @@ policies:
           - uid: mondoo-aws-security-rds-instance-public-access-check
           - uid: mondoo-aws-security-rds-instance-encryption-at-rest
           - uid: mondoo-aws-security-rds-instance-no-pending-os-upgrades
+          - uid: mondoo-aws-security-rds-instance-no-active-security-recommendations
           - uid: mondoo-aws-security-rds-snapshot-encrypted
           - uid: mondoo-aws-security-rds-instance-iam-auth
           - uid: mondoo-aws-security-rds-backup-retention
@@ -216,6 +217,7 @@ policies:
           - uid: mondoo-aws-security-rds-cluster-public-access-check
           - uid: mondoo-aws-security-rds-cluster-encryption-at-rest
           - uid: mondoo-aws-security-rds-cluster-no-pending-os-upgrades
+          - uid: mondoo-aws-security-rds-cluster-no-active-security-recommendations
           - uid: mondoo-aws-security-rds-cluster-parameter-group-ssl
           - uid: mondoo-aws-security-rds-cluster-deletion-protection
           - uid: mondoo-aws-security-rds-cluster-cmk-encryption
@@ -6099,9 +6101,9 @@ queries:
       terraform.state.resources.where(type == "aws_lambda_permission").where(values.principal == "*" && values.principal_org_id != empty).all(
         values.principal_org_id != "*"
       )
-  # No Terraform variants: Pending OS upgrades are runtime telemetry on the live instance (`pendingMaintenanceActions`), not configuration. There is no Terraform attribute that represents pending maintenance actions.
+  # No Terraform variants: Pending OS updates are runtime telemetry on the live instance (`pendingMaintenanceActions`), not configuration. There is no Terraform attribute that represents pending maintenance actions.
   - uid: mondoo-aws-security-rds-instance-no-pending-os-upgrades
-    title: Ensure no pending OS upgrades are available for RDS instances
+    title: Ensure no pending OS updates are available for RDS instances
     impact: 90
     filters: asset.platform == "aws-rds-dbinstance"
     tags:
@@ -6118,21 +6120,21 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-6-3-3
       compliance/soc2-2017: soc2-control-cc7-1-2
       compliance/vda-isa-5: vda-isa-5-5-2-5
-    mql: aws.rds.dbinstance.pendingMaintenanceActions == empty
+    mql: aws.rds.dbinstance.pendingMaintenanceActions.where(action == "system-update") == empty
     docs:
       desc: |
-        This check ensures that Amazon RDS instances have no pending OS-level maintenance actions waiting to be applied. AWS manages the underlying operating system for RDS instances and queues security patches and updates as pending maintenance; customer accounts are responsible for scheduling when those updates are applied within their maintenance windows.
+        This check ensures that Amazon RDS instances have no pending `system-update` maintenance actions waiting to be applied. AWS manages the underlying operating system for RDS instances and uses these actions for OS updates, which commonly include security and reliability fixes. Customer accounts are responsible for choosing when optional updates are applied and scheduling mandatory updates before their apply date.
 
         **Why this matters**
 
-        - **Vulnerability exposure window:** Each day a known OS patch remains unapplied is an additional day that a known CVE can be exploited against the database host.
+        - **Vulnerability exposure window:** Delaying an available OS update can leave security fixes unapplied on the database host.
         - **Managed responsibility boundary:** Although AWS owns the underlying infrastructure, AWS explicitly delegates patch scheduling to the account owner, making pending maintenance a customer accountability item.
         - **Cascading risk:** Database hosts are high-value targets; an OS-level exploit on an unpatched RDS instance can give an attacker access to data in memory, bypass encryption, or pivot to other VPC resources.
         - **Compliance expectations:** Patch management controls in multiple security frameworks require that critical and high-severity patches be applied within defined timeframes after availability.
 
         **Risk mitigation**
 
-        - **Attack surface reduction:** Applying pending OS patches closes known vulnerabilities before they can be exploited against database infrastructure.
+        - **Attack surface reduction:** Applying pending OS updates keeps the managed host current with AWS security and reliability fixes.
         - **Audit evidence:** A clean pending-maintenance state provides auditors with evidence that patch management obligations are being met on a continuous basis.
         - **Operational stability:** OS-level updates include stability and performance fixes that reduce the risk of unexpected database host behavior in production.
       audit: |
@@ -6151,7 +6153,7 @@ queries:
 
         ```bash
         aws rds describe-pending-maintenance-actions \
-          --query "PendingMaintenanceActions[?ResourceIdentifier!=null].{Resource:ResourceIdentifier,Action:PendingMaintenanceActionDetails[0].Action,ApplyDate:PendingMaintenanceActionDetails[0].AutoAppliedAfterDate}" \
+          --query "PendingMaintenanceActions[?PendingMaintenanceActionDetails[?Action=='system-update']].{Resource:ResourceIdentifier,Actions:PendingMaintenanceActionDetails[?Action=='system-update']}" \
           --output table
         ```
 
@@ -6221,6 +6223,56 @@ queries:
     refs:
       - url: https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.html
         title: Amazon RDS Security
+  - uid: mondoo-aws-security-rds-instance-no-active-security-recommendations
+    title: Ensure RDS instances have no active security recommendations
+    impact: 90
+    filters: asset.platform == "aws-rds-dbinstance"
+    mql: aws.rds.dbinstance.recommendations.where(category == "security" && status == "active") == empty
+    docs:
+      desc: |
+        This check ensures that an Amazon RDS database instance has no active recommendations in the AWS `security` category. RDS recommendations identify conditions such as an instance running an older minor database engine version whose replacement includes current security and functionality fixes.
+
+        **Why this matters**
+
+        - **AWS-managed security analysis:** The recommendation is generated from the instance's current engine and configuration rather than from a static version rule.
+        - **Prioritized remediation:** Recommendation severity, impact, and recommended actions provide the context needed to schedule the most important work first.
+        - **Continuous coverage:** Active recommendations reveal security work that can exist independently of a currently scheduled maintenance action.
+
+        Resolve or dismiss a recommendation only after verifying that its risk has been remediated or formally accepted. A dismissed recommendation no longer has `active` status and is therefore outside the scope of this check.
+      audit: |
+        ### Audit via Console
+
+        1. Open the Amazon RDS console and select **Databases**.
+        2. Select the DB instance and open its **Recommendations** tab.
+        3. Review recommendations whose category is **Security** and status is **Active**.
+
+        The instance passes when no active security recommendations remain.
+
+        ### Audit via CLI
+
+        1. Obtain the instance's immutable resource ID from `DbiResourceId` in `describe-db-instances`.
+        2. List its active recommendations and select the security category:
+
+        ```bash
+        aws rds describe-db-recommendations \
+          --filters Name=status,Values=active Name=dbi-resource-id,Values=<dbi-resource-id> \
+          --query "DBRecommendations[?Category=='security'].{Severity:Severity,Detection:Detection,Recommendation:Recommendation,Actions:RecommendedActions}" \
+          --output table
+        ```
+
+        An empty result passes. Any returned recommendation requires review.
+      remediation:
+        - id: console
+          desc: |
+            Open the active security recommendation in the RDS console, review its impact and recommended actions, and apply the appropriate action. AWS may offer immediate, next-maintenance-window, or manual apply modes depending on the recommendation.
+        - id: cli
+          desc: |
+            Inspect `RecommendedActions` from `describe-db-recommendations`. Use the returned operation, parameters, and supported apply mode to remediate the finding, then confirm that the recommendation transitions out of `active` status.
+    refs:
+      - url: https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UserRecommendationsView.html
+        title: Viewing Amazon RDS recommendations
+      - url: https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_DescribeDBRecommendations.html
+        title: DescribeDBRecommendations API
   - uid: mondoo-aws-security-rds-instance-encryption-at-rest
     title: Ensure all RDS instances are enabled for encryption-at-rest
     impact: 90
@@ -6707,9 +6759,9 @@ queries:
       cloudformation.template.resources.where(type == "AWS::RDS::DBClusterParameterGroup" && properties['Family'] == /postgres/).all(
         properties['Parameters']['ssl'] == 1 || properties['Parameters']['ssl'] == "1"
       )
-  # No Terraform variants: Pending OS upgrades are runtime telemetry queried from the AWS API (`aws.rds.allPendingMaintenanceActions`), not configuration. There is no Terraform attribute that represents pending maintenance actions.
+  # No Terraform variants: Pending OS updates are runtime telemetry queried from the AWS API (`aws.rds.dbcluster.pendingMaintenanceActions`), not configuration. There is no Terraform attribute that represents pending maintenance actions.
   - uid: mondoo-aws-security-rds-cluster-no-pending-os-upgrades
-    title: Ensure no pending OS upgrades are available for RDS clusters
+    title: Ensure no pending OS updates are available for RDS clusters
     impact: 90
     filters: asset.platform == "aws-rds-dbcluster"
     tags:
@@ -6726,23 +6778,21 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-6-3-3
       compliance/soc2-2017: soc2-control-cc7-1-2
       compliance/vda-isa-5: vda-isa-5-5-2-5
-    mql: |
-      rdsArn = asset.ids.where(_ == /^arn/).first
-      aws.rds.allPendingMaintenanceActions.where(resourceArn == rdsArn) == empty
+    mql: aws.rds.dbcluster.pendingMaintenanceActions.where(action == "system-update") == empty
     docs:
       desc: |
-        This check ensures that Amazon RDS clusters, including Aurora clusters, have no pending OS-level maintenance actions waiting to be applied. AWS queues critical security patches and updates as pending maintenance for the underlying host infrastructure; scheduling and applying those updates within the maintenance window is the account owner's responsibility.
+        This check ensures that Amazon RDS clusters, including Aurora clusters, have no pending `system-update` maintenance actions waiting to be applied. AWS uses these actions for OS updates that commonly include security and reliability fixes; scheduling optional updates and applying mandatory updates before their apply date is the account owner's responsibility.
 
         **Why this matters**
 
         - **Multi-instance blast radius:** An unpatched OS vulnerability in an Aurora cluster can affect the writer and all reader instances simultaneously, amplifying the risk compared to a single-instance deployment.
-        - **Known CVE exposure:** Pending OS patches address published vulnerabilities; the longer they remain unapplied, the longer attackers with knowledge of those CVEs have an actionable target.
+        - **Security-fix exposure:** Delaying an available OS update can leave security fixes unapplied across the cluster's managed hosts.
         - **High-value target profile:** Database clusters are among the most attractive targets in a cloud environment because they concentrate large amounts of sensitive data behind a single reachable endpoint.
         - **Compliance patch cadence:** Security frameworks commonly require that high-severity patches be applied within a defined window; unapplied pending maintenance is direct evidence of non-compliance.
 
         **Risk mitigation**
 
-        - **Reduced vulnerability window:** Applying pending maintenance actions closes known OS-level vulnerabilities across all instances in the cluster, shrinking the exploitable attack surface.
+        - **Reduced vulnerability window:** Applying pending OS updates keeps the cluster's managed hosts current with AWS security and reliability fixes.
         - **Audit readiness:** A cluster with no pending maintenance actions provides clean evidence that patch management obligations are being honored during each maintenance window cycle.
       audit: |
         ### Audit via Console
@@ -6760,7 +6810,7 @@ queries:
 
         ```bash
         aws rds describe-pending-maintenance-actions \
-          --query "PendingMaintenanceActions[?contains(ResourceIdentifier, ':cluster:')].{Resource:ResourceIdentifier,Action:PendingMaintenanceActionDetails[0].Action,ApplyDate:PendingMaintenanceActionDetails[0].AutoAppliedAfterDate}" \
+          --query "PendingMaintenanceActions[?contains(ResourceIdentifier, ':cluster:') && PendingMaintenanceActionDetails[?Action=='system-update']].{Resource:ResourceIdentifier,Actions:PendingMaintenanceActionDetails[?Action=='system-update']}" \
           --output table
         ```
 
@@ -6831,6 +6881,56 @@ queries:
     refs:
       - url: https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.html
         title: Amazon RDS Security
+  - uid: mondoo-aws-security-rds-cluster-no-active-security-recommendations
+    title: Ensure RDS clusters have no active security recommendations
+    impact: 90
+    filters: asset.platform == "aws-rds-dbcluster"
+    mql: aws.rds.dbcluster.recommendations.where(category == "security" && status == "active") == empty
+    docs:
+      desc: |
+        This check ensures that an Amazon RDS database cluster has no active recommendations in the AWS `security` category. RDS evaluates the cluster's current engine and configuration and returns security findings with severity, impact, and recommended remediation actions.
+
+        **Why this matters**
+
+        - **Cluster-wide exposure:** A security issue in a database cluster can affect its writer, readers, and the data plane they share.
+        - **AWS-managed security analysis:** Recommendations account for the cluster's current state instead of relying only on a static engine-version comparison.
+        - **Actionable remediation:** Recommended actions identify the API operation, parameters, and supported apply modes when AWS can automate the resolution.
+
+        Resolve or dismiss a recommendation only after verifying that its risk has been remediated or formally accepted. A dismissed recommendation no longer has `active` status and is therefore outside the scope of this check.
+      audit: |
+        ### Audit via Console
+
+        1. Open the Amazon RDS console and select **Databases**.
+        2. Select the DB cluster and open its **Recommendations** tab.
+        3. Review recommendations whose category is **Security** and status is **Active**.
+
+        The cluster passes when no active security recommendations remain.
+
+        ### Audit via CLI
+
+        1. Obtain the cluster's immutable resource ID from `DbClusterResourceId` in `describe-db-clusters`.
+        2. List its active recommendations and select the security category:
+
+        ```bash
+        aws rds describe-db-recommendations \
+          --filters Name=status,Values=active Name=cluster-resource-id,Values=<cluster-resource-id> \
+          --query "DBRecommendations[?Category=='security'].{Severity:Severity,Detection:Detection,Recommendation:Recommendation,Actions:RecommendedActions}" \
+          --output table
+        ```
+
+        An empty result passes. Any returned recommendation requires review.
+      remediation:
+        - id: console
+          desc: |
+            Open the active security recommendation in the RDS console, review its impact and recommended actions, and apply the appropriate action. AWS may offer immediate, next-maintenance-window, or manual apply modes depending on the recommendation.
+        - id: cli
+          desc: |
+            Inspect `RecommendedActions` from `describe-db-recommendations`. Use the returned operation, parameters, and supported apply mode to remediate the finding, then confirm that the recommendation transitions out of `active` status.
+    refs:
+      - url: https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UserRecommendationsView.html
+        title: Viewing Amazon RDS recommendations
+      - url: https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_DescribeDBRecommendations.html
+        title: DescribeDBRecommendations API
   - uid: mondoo-aws-security-rds-cluster-encryption-at-rest
     title: Ensure all RDS clusters are set to be encrypted-at-rest
     impact: 90
