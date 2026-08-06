@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-gcp-security
     name: Mondoo Google Cloud (GCP) Security
-    version: 9.7.0
+    version: 9.8.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -66,6 +66,7 @@ policies:
         - Network Security
         - Organization Policies
         - Pub/Sub
+        - Resource Manager
         - Secret Manager
         - Security Command Center
         - Spanner
@@ -194,6 +195,7 @@ policies:
           - uid: mondoo-gcp-security-gke-notification-topic-same-project
           - uid: mondoo-gcp-security-gke-backup-plan-exists
           - uid: mondoo-gcp-security-gke-rbac-no-insecure-system-bindings
+          - uid: mondoo-gcp-security-gke-binary-authorization-enabled
       - title: Cloud SQL
         checks:
           - uid: mondoo-gcp-security-cloud-sql-mysql-connections-require-ssl-tls
@@ -259,6 +261,7 @@ policies:
           - uid: mondoo-gcp-security-iam-project-no-public-members
           - uid: mondoo-gcp-security-iam-project-no-service-account-impersonation
           - uid: mondoo-gcp-security-iam-custom-roles-no-service-account-impersonation
+          - uid: mondoo-gcp-security-iam-project-no-primitive-roles
       - title: Cloud Logging
         checks:
           - uid: mondoo-gcp-security-logging-bucket-retention-30-days
@@ -388,6 +391,9 @@ policies:
           - uid: mondoo-gcp-security-org-policy-vm-external-ip-restricted
           - uid: mondoo-gcp-security-org-policy-serial-port-disabled
           - uid: mondoo-gcp-security-org-policy-uniform-bucket-level-access
+      - title: Resource Manager
+        checks:
+          - uid: mondoo-gcp-security-project-deletion-lien
       - title: Firestore
         checks:
           - uid: mondoo-gcp-security-firestore-cmek-encryption
@@ -9539,6 +9545,162 @@ queries:
           _['enable_insecure_binding_system_unauthenticated'] != true
         )
       )
+  - uid: mondoo-gcp-security-gke-binary-authorization-enabled
+    title: Ensure Binary Authorization is enabled on GKE clusters
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ais-06
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-19
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ds-6
+      compliance/nist-csf-2: nist-csf-2-pr-ps-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-14
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-3
+      compliance/pci-dss-4: pcidss-requirement-2-2-1
+      compliance/soc2-2017: soc2-control-cc6-8-1
+      compliance/vda-isa-5: vda-isa-5-5-3-1
+    variants:
+      - uid: mondoo-gcp-security-gke-binary-authorization-enabled-gcp
+        tags:
+          mondoo.com/filter-title: GCP GKE Cluster
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-gke-binary-authorization-enabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-gke-binary-authorization-enabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-gke-binary-authorization-enabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that each GKE cluster enables Binary Authorization, the admission controller that rejects container images which do not satisfy the project's deploy policy. GKE reports this through the cluster's Binary Authorization evaluation mode, which must be `PROJECT_SINGLETON_POLICY_ENFORCE` rather than `DISABLED`. Binary Authorization is disabled on new clusters by default, so a cluster accepts any image its nodes can pull, from any registry, signed or not.
+
+        A Binary Authorization policy has no effect on workloads until a cluster is configured to enforce it. A project can therefore hold a correctly configured policy while every cluster continues to admit arbitrary images.
+
+        **Why this matters**
+
+        - **Untrusted images reach production:** Without admission control, anyone who can create a Pod can run an image from a public registry that never passed a build pipeline or a vulnerability scan.
+        - **Closes the supply chain loop:** Build-time scanning and attestation only reduce risk if something at deploy time refuses images that lack an attestation.
+        - **Blocks the tampering path:** An attacker with Kubernetes write access commonly deploys their own image rather than modifying an existing one, and admission control is what stops that.
+        - **Policy without enforcement is invisible:** Because the policy object looks correct, the gap between a configured policy and an enforcing cluster is easy to miss during review.
+
+        **Risk mitigation**
+
+        - **Attested images only:** Enforcing the project singleton policy admits only images carrying the attestations your pipeline produces.
+        - **Registry allowlisting:** Admission whitelist patterns restrict deployments to repositories you control.
+        - **Auditable deploy decisions:** Binary Authorization records admission decisions, so blocked deployments are visible rather than silently retried.
+      audit: |
+        ### Audit via Console
+
+        1. In the Google Cloud console, open **Kubernetes Engine** and choose **Clusters**.
+        2. Select a cluster and open the **Details** tab.
+        3. Under **Security**, review **Binary authorization**.
+
+        A passing cluster shows Binary Authorization enabled with an evaluation mode that enforces the project policy. A failing cluster shows it as disabled.
+
+        ### Audit via CLI
+
+        1. Read the Binary Authorization configuration for a cluster:
+
+        ```bash
+        gcloud container clusters describe <cluster-name> \
+          --region=<region> \
+          --format="value(binaryAuthorization.evaluationMode)"
+        ```
+
+        A passing cluster returns `PROJECT_SINGLETON_POLICY_ENFORCE`. A failing cluster returns `DISABLED` or an empty value.
+      remediation:
+        - id: console
+          desc: |
+            To ensure Binary Authorization is enabled on GKE clusters using the Google Cloud console:
+
+            1. Open **Kubernetes Engine** and choose **Clusters**, then select the cluster.
+            2. Next to **Binary authorization** under **Security**, choose the edit icon.
+            3. Select **Enable Binary Authorization** and choose to enforce the project singleton policy.
+            4. Save the change.
+            5. Open **Security** and then **Binary Authorization** to confirm the project policy default rule requires attestations before relying on enforcement.
+        - id: cli
+          desc: |
+            To ensure Binary Authorization is enabled on GKE clusters using the gcloud CLI, set the evaluation mode to enforce the project policy:
+
+            ```bash
+            gcloud container clusters update <cluster-name> \
+              --region=<region> \
+              --binauthz-evaluation-mode=PROJECT_SINGLETON_POLICY_ENFORCE
+            ```
+
+            Verify the result:
+
+            ```bash
+            gcloud container clusters describe <cluster-name> \
+              --region=<region> \
+              --format="value(binaryAuthorization.evaluationMode)"
+            ```
+        - id: terraform
+          desc: |
+            To ensure Binary Authorization is enabled on GKE clusters in Terraform, add a `binary_authorization` block that enforces the project policy:
+
+            ```hcl
+            resource "google_container_cluster" "example" {
+              name     = "example"
+              location = "us-central1"
+
+              binary_authorization {
+                evaluation_mode = "PROJECT_SINGLETON_POLICY_ENFORCE"
+              }
+            }
+            ```
+    refs:
+      - url: https://cloud.google.com/binary-authorization/docs/overview
+        title: Binary Authorization overview
+      - url: https://cloud.google.com/binary-authorization/docs/enabling-binauthz-gke
+        title: Enabling Binary Authorization for GKE
+
+  - uid: mondoo-gcp-security-gke-binary-authorization-enabled-gcp
+    filters: asset.platform == 'gcp-gke-cluster'
+    mql: |
+      gcp.project.gkeService.cluster.binaryAuthorizationEvaluationMode == "PROJECT_SINGLETON_POLICY_ENFORCE"
+
+  # The `binary_authorization` block is optional and absent by default, so the variants
+  # require the block to be present as well as set to an enforcing evaluation mode.
+  - uid: mondoo-gcp-security-gke-binary-authorization-enabled-terraform-hcl
+    filters: asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_container_cluster')
+    mql: |
+      terraform.resources('google_container_cluster').all(
+        blocks.where(type == 'binary_authorization') != empty &&
+        blocks.where(type == 'binary_authorization').all(
+          arguments.evaluation_mode == 'PROJECT_SINGLETON_POLICY_ENFORCE'
+        )
+      )
+
+  - uid: mondoo-gcp-security-gke-binary-authorization-enabled-terraform-plan
+    filters: asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_container_cluster').all(
+        change.after['binary_authorization'] != empty &&
+        change.after['binary_authorization'].all(
+          _['evaluation_mode'] == 'PROJECT_SINGLETON_POLICY_ENFORCE'
+        )
+      )
+
+  - uid: mondoo-gcp-security-gke-binary-authorization-enabled-terraform-state
+    filters: asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_container_cluster')
+    mql: |
+      terraform.state.resources.where(type == 'google_container_cluster').all(
+        values['binary_authorization'] != empty &&
+        values['binary_authorization'].all(
+          _['evaluation_mode'] == 'PROJECT_SINGLETON_POLICY_ENFORCE'
+        )
+      )
+
   - uid: mondoo-gcp-security-gke-release-channel-configured
     title: Ensure GKE clusters use a release channel for version management
     impact: 60
@@ -14318,7 +14480,7 @@ queries:
       compliance/nis-2: nis-2-21-2-e
       compliance/nist-csf-1: nist-csf-1-pr-ds-6
       compliance/nist-csf-2: nist-csf-2-pr-ps-05
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-3
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-14
       compliance/nist-sp-800-171: nist-sp-800-171--3-4-3
       compliance/pci-dss-4: pcidss-requirement-2-2-1
       compliance/soc2-2017: soc2-control-cc6-8-1
@@ -14461,7 +14623,7 @@ queries:
       compliance/nis-2: nis-2-21-2-e
       compliance/nist-csf-1: nist-csf-1-pr-ds-6
       compliance/nist-csf-2: nist-csf-2-pr-ps-05
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-3
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-14
       compliance/nist-sp-800-171: nist-sp-800-171--3-4-3
       compliance/pci-dss-4: pcidss-requirement-2-2-1
       compliance/soc2-2017: soc2-control-cc6-8-1
@@ -19811,6 +19973,125 @@ queries:
         values['spec'] != empty &&
         values['spec'].any(_['rules'] != empty && _['rules'].any(_['enforce'] == "TRUE"))
       )
+  # No Terraform variants: the assertion is that a lien exists for the scanned project, and no
+  # Terraform asset can establish the absence of one. A configuration that declares no
+  # google_resource_manager_lien is indistinguishable from a configuration that does not manage
+  # the project's liens at all, so a variant would either never run or pass vacuously.
+  - uid: mondoo-gcp-security-project-deletion-lien
+    title: Ensure projects have a lien that blocks deletion
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ccc-04
+      compliance/dora: dora-art-12
+      compliance/hipaa: hipaa-security-ss164-308-a-7-ii-a-contingency-plan-data-backup-plan
+      compliance/iso-27001-2022: iso-27001-2022-a-8-14
+      compliance/nis-2: nis-2-21-2-c
+      compliance/nist-csf-1: nist-csf-1-pr-ip-4
+      compliance/nist-csf-2: nist-csf-2-pr-ds-11
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cp-9
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc9-1-1
+      compliance/vda-isa-5: vda-isa-5-3-1-2
+    variants:
+      - uid: mondoo-gcp-security-project-deletion-lien-gcp
+        tags:
+          mondoo.com/filter-title: GCP Project
+          mondoo.com/filter-icon: gcp
+    docs:
+      desc: |
+        This check ensures that a Resource Manager lien is attached to the project. A lien blocks the `resourcemanager.projects.delete` operation, which is the only restriction liens currently support, so any attempt to delete the project fails until the lien is removed by a principal holding `resourcemanager.projects.updateLiens`.
+
+        Project deletion is the single most destructive operation in Google Cloud. It removes every resource the project contains at once, and after the recovery window elapses the data is unrecoverable by both the customer and Google.
+
+        **Why this matters**
+
+        - **One action destroys everything:** Deleting a project takes every VM, bucket, database, key, and log sink with it, without the per-resource confirmations that make individual deletions survivable.
+        - **Unrecoverable after the grace period:** Once the shutdown window passes, no support request restores the project, so there is no operational recovery path.
+        - **Owner is a wide role:** Anyone holding `roles/owner` can delete the project, and a lien adds a second, separately held permission that a single compromised or mistaken owner does not have.
+        - **Automation and scripts:** Infrastructure tooling that iterates over projects can delete the wrong one, and a lien turns that mistake into a failed API call rather than an outage.
+
+        **Risk mitigation**
+
+        - **Separation of duties:** Removing the lien requires `resourcemanager.projects.updateLiens`, which can be held by a different principal than project Owner.
+        - **Deliberate teardown:** Decommissioning becomes a two-step operation, so the destructive step cannot happen by accident or in a single compromised session.
+        - **Documented intent:** A lien carries `reason` and `origin` fields, so the record of why the project is protected travels with the protection.
+      audit: |
+        ### Audit via Console
+
+        Liens are not shown in the Google Cloud console. Verify them with the gcloud CLI below, or query the Resource Manager API directly.
+
+        ### Audit via CLI
+
+        1. List the liens attached to a project:
+
+        ```bash
+        gcloud alpha resource-manager liens list --project=<project-id>
+        ```
+
+        2. Inspect the restrictions on each lien:
+
+        ```bash
+        gcloud alpha resource-manager liens list --project=<project-id> --format=json
+        ```
+
+        A passing project returns at least one lien whose `restrictions` include `resourcemanager.projects.delete`. A failing project returns an empty list.
+      remediation:
+        - id: console
+          desc: |
+            To ensure projects have a lien that blocks deletion using the Google Cloud console:
+
+            1. Liens cannot be created from the console, so open **Cloud Shell** from the console header.
+            2. Confirm you hold `resourcemanager.projects.updateLiens` on the project, granted by `roles/owner` or `roles/resourcemanager.lienModifier`.
+            3. Run the `gcloud alpha resource-manager liens create` command shown in the CLI remediation.
+            4. Re-run `gcloud alpha resource-manager liens list` to confirm the lien is attached.
+        - id: cli
+          desc: |
+            To ensure projects have a lien that blocks deletion using the gcloud CLI, create a lien carrying the delete restriction. Liens are managed through the alpha command group, which requires the `alpha` component:
+
+            ```bash
+            gcloud alpha resource-manager liens create \
+              --project=<project-id> \
+              --restrictions=resourcemanager.projects.delete \
+              --reason="Production project protected against accidental deletion" \
+              --origin=platform-team
+            ```
+
+            Verify the lien:
+
+            ```bash
+            gcloud alpha resource-manager liens list --project=<project-id>
+            ```
+
+            To decommission the project later, remove the lien first:
+
+            ```bash
+            gcloud alpha resource-manager liens delete <lien-id>
+            ```
+        - id: terraform
+          desc: |
+            To ensure projects have a lien that blocks deletion in Terraform, declare a `google_resource_manager_lien`:
+
+            ```hcl
+            resource "google_resource_manager_lien" "project_deletion" {
+              parent       = "projects/${data.google_project.current.number}"
+              restrictions = ["resourcemanager.projects.delete"]
+              origin       = "platform-team"
+              reason       = "Production project protected against accidental deletion"
+            }
+            ```
+    refs:
+      - url: https://cloud.google.com/resource-manager/docs/project-liens
+        title: Preventing accidental project deletion
+      - url: https://cloud.google.com/resource-manager/reference/rest/v1/liens
+        title: Resource Manager API - Liens
+
+  - uid: mondoo-gcp-security-project-deletion-lien-gcp
+    filters: asset.platform == 'gcp-project'
+    mql: |
+      gcp.project.liens != empty
+
   - uid: mondoo-gcp-security-firestore-cmek-encryption
     title: Ensure Firestore databases are encrypted with CMEK
     impact: 60
@@ -42269,6 +42550,187 @@ queries:
           _ == 'iam.serviceAccounts.signJwt'
         )
       )
+  - uid: mondoo-gcp-security-iam-project-no-primitive-roles
+    title: Ensure the project IAM policy grants no primitive roles
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-3-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-gcp-security-iam-project-no-primitive-roles-gcp
+        tags:
+          mondoo.com/filter-title: GCP Project
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-iam-project-no-primitive-roles-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-iam-project-no-primitive-roles-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-iam-project-no-primitive-roles-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that the project IAM policy does not grant the primitive roles `roles/owner`, `roles/editor`, or `roles/viewer`. Primitive roles predate IAM's predefined roles and span thousands of permissions across every enabled API, so they cannot express the access a principal actually needs.
+
+        The project IAM policy contains only the bindings set on the project itself, so a primitive role granted at the folder or organization level and inherited downward is not reported here. Granting broad roles once at a higher level and keeping project-level bindings scoped is the pattern this check is designed to reward.
+
+        Google Cloud grants `roles/editor` automatically to some default service agents, including the App Engine and Cloud Build default service accounts. Those bindings are reported by this check because they are a documented privilege escalation path and Google recommends replacing them with scoped roles.
+
+        **Why this matters**
+
+        - **Editor is close to Owner:** `roles/editor` can create service accounts, mint keys, alter firewall rules, and disable Cloud Logging sinks, so it can both reach the data and remove the evidence.
+        - **Permissions grow silently:** A primitive role automatically covers every API enabled later in the project, so the grant widens over time with no IAM change to review.
+        - **Unreviewable by design:** Because a primitive role covers everything, an access review cannot determine which of its permissions the principal actually relies on.
+        - **Viewer reads everything:** `roles/viewer` grants read access across every service, which for most projects includes the data the project exists to protect.
+
+        **Risk mitigation**
+
+        - **Scoped predefined roles:** Per-service predefined roles grant only the operations a principal performs, so a compromised identity reaches one service rather than the project.
+        - **Reviewable grants:** Narrow roles make it possible to tell from the IAM policy alone what a principal can do.
+        - **Contained service agents:** Replacing the automatic `roles/editor` grants on default service accounts removes a path from a build or deploy pipeline to project-wide control.
+      audit: |
+        ### Audit via Console
+
+        1. In the Google Cloud console, open **IAM & Admin** and choose **IAM**.
+        2. Select the project from the resource selector.
+        3. Enable **Include Google-provided role grants**.
+        4. Review the **Role** column for **Owner**, **Editor**, and **Viewer**.
+
+        A passing project lists only predefined or custom roles. A failing project lists one or more of Owner, Editor, or Viewer.
+
+        ### Audit via CLI
+
+        1. Print the project IAM policy and look for primitive role bindings:
+
+        ```bash
+        gcloud projects get-iam-policy <project-id> --format=json
+        ```
+
+        A passing project returns no binding whose `role` is `roles/owner`, `roles/editor`, or `roles/viewer`. A failing project returns at least one.
+      remediation:
+        - id: console
+          desc: |
+            To ensure the project IAM policy grants no primitive roles using the Google Cloud console:
+
+            1. Open **IAM & Admin** and choose **IAM**, then select the project.
+            2. For each principal holding Owner, Editor, or Viewer, choose the edit icon.
+            3. Add the predefined roles that cover the principal's actual tasks, such as `roles/compute.viewer` or `roles/storage.objectAdmin`.
+            4. Remove the primitive role from the principal and save.
+            5. Repeat for the App Engine and Cloud Build default service accounts, which receive `roles/editor` automatically.
+        - id: cli
+          desc: |
+            To ensure the project IAM policy grants no primitive roles using the gcloud CLI, grant a scoped role and then remove the primitive one.
+
+            Add the narrower role first so access is not interrupted:
+
+            ```bash
+            gcloud projects add-iam-policy-binding <project-id> \
+              --member=user:alice@example.com \
+              --role=roles/compute.viewer
+            ```
+
+            Remove the primitive role:
+
+            ```bash
+            gcloud projects remove-iam-policy-binding <project-id> \
+              --member=user:alice@example.com \
+              --role=roles/editor
+            ```
+
+            Verify the resulting policy:
+
+            ```bash
+            gcloud projects get-iam-policy <project-id> --format=json
+            ```
+        - id: terraform
+          desc: |
+            To ensure the project IAM policy grants no primitive roles in Terraform, bind predefined roles instead of `roles/owner`, `roles/editor`, or `roles/viewer`:
+
+            ```hcl
+            resource "google_project_iam_member" "compute_viewer" {
+              project = var.project_id
+              role    = "roles/compute.viewer"
+              member  = "user:alice@example.com"
+            }
+
+            resource "google_project_iam_binding" "storage_admins" {
+              project = var.project_id
+              role    = "roles/storage.objectAdmin"
+
+              members = [
+                "group:platform@example.com",
+              ]
+            }
+            ```
+    refs:
+      - url: https://cloud.google.com/iam/docs/understanding-roles#basic
+        title: IAM basic roles
+      - url: https://cloud.google.com/iam/docs/best-practices-for-using-and-managing-service-accounts
+        title: Best practices for using and managing service accounts
+
+  - uid: mondoo-gcp-security-iam-project-no-primitive-roles-gcp
+    filters: asset.platform == 'gcp-project'
+    mql: |
+      gcp.project.primitiveRoleBindings == empty
+
+  - uid: mondoo-gcp-security-iam-project-no-primitive-roles-terraform-hcl
+    filters: asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_project_iam_member') || asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_project_iam_binding')
+    mql: |
+      terraform.resources('google_project_iam_member').all(
+        arguments['role'] != 'roles/owner' &&
+        arguments['role'] != 'roles/editor' &&
+        arguments['role'] != 'roles/viewer'
+      )
+      terraform.resources('google_project_iam_binding').all(
+        arguments['role'] != 'roles/owner' &&
+        arguments['role'] != 'roles/editor' &&
+        arguments['role'] != 'roles/viewer'
+      )
+
+  - uid: mondoo-gcp-security-iam-project-no-primitive-roles-terraform-plan
+    filters: asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_project_iam_member') || asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_project_iam_binding')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_project_iam_member').all(
+        change.after['role'] != 'roles/owner' &&
+        change.after['role'] != 'roles/editor' &&
+        change.after['role'] != 'roles/viewer'
+      )
+      terraform.plan.resourceChanges.where(type == 'google_project_iam_binding').all(
+        change.after['role'] != 'roles/owner' &&
+        change.after['role'] != 'roles/editor' &&
+        change.after['role'] != 'roles/viewer'
+      )
+
+  - uid: mondoo-gcp-security-iam-project-no-primitive-roles-terraform-state
+    filters: asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_project_iam_member') || asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_project_iam_binding')
+    mql: |
+      terraform.state.resources.where(type == 'google_project_iam_member').all(
+        values['role'] != 'roles/owner' &&
+        values['role'] != 'roles/editor' &&
+        values['role'] != 'roles/viewer'
+      )
+      terraform.state.resources.where(type == 'google_project_iam_binding').all(
+        values['role'] != 'roles/owner' &&
+        values['role'] != 'roles/editor' &&
+        values['role'] != 'roles/viewer'
+      )
+
   - uid: mondoo-gcp-security-cloud-domains-registration-transfer-lock-enabled
     title: Ensure Cloud Domains registrations enable the transfer lock
     impact: 75
