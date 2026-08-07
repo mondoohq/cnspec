@@ -213,3 +213,16 @@ func TestPullsFromRegistry(t *testing.T) {
 	assert.False(t, pullsFromRegistry(&inventory.Asset{Connections: []*inventory.Config{{Type: "aws"}}}))
 	assert.False(t, pullsFromRegistry(&inventory.Asset{}))
 }
+
+func TestAggregateReporterSnapshotsAssets(t *testing.T) {
+	r := NewAggregateReporter()
+	asset := &inventory.Asset{Mrn: "//assets/1", Name: "target", Labels: map[string]string{"env": "prod"}, Connections: []*inventory.Config{{Type: "ssh", Options: map[string]string{"key": strings.Repeat("k", 2048)}}}}
+	r.AddReport(asset, &AssetReport{ResolvedPolicy: &policy.ResolvedPolicy{}, Report: &policy.Report{Score: &policy.Score{Value: 100}}})
+	asset.Name = "mutated"
+	asset.Labels["env"] = "dev"
+	got := r.Reports().GetFull().Assets[asset.Mrn]
+	require.NotNil(t, got)
+	assert.Equal(t, "target", got.Name)
+	assert.Equal(t, "prod", got.Labels["env"])
+	assert.Nil(t, got.Connections)
+}
