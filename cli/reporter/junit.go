@@ -12,10 +12,8 @@ import (
 	"github.com/jstemmer/go-junit-report/v2/junit"
 	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/mql/v13/cli/printer"
-	"go.mondoo.com/mql/v13/llx"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
 	"go.mondoo.com/mql/v13/utils/iox"
-	"go.mondoo.com/mql/v13/utils/stringx"
 )
 
 // ConvertToJunit maps the ReportCollection to Junit. Each asset becomes its own Suite.
@@ -59,7 +57,7 @@ func ConvertToJunit(r *policy.ReportCollection, out iox.OutputHelper, detailed b
 		}
 
 		bundle := r.Bundle.ToMap()
-		queries := bundle.QueryMap()
+		queries := reporterQueryMap(bundle)
 
 		// iterate over asset mrns
 		for assetMrn, assetObj := range r.Assets {
@@ -268,7 +266,7 @@ func detailedCheckBody(resolved *policy.ResolvedPolicy, report *policy.Report, q
 	}
 
 	if mql := queryMql(query); mql != "" {
-		writeJunitSection(&b, "Query", mql)
+		writeDetailSection(&b, "Query", mql)
 	}
 
 	// The assessment (expected vs actual) is only available for assertion checks
@@ -281,10 +279,10 @@ func detailedCheckBody(resolved *policy.ResolvedPolicy, report *policy.Report, q
 		if cb := resolved.GetCodeBundle(query); cb != nil {
 			if assessment := policy.Query2Assessment(cb, report); assessment != nil {
 				if text := strings.TrimSpace(printer.PlainNoColorPrinter.Assessment(cb, assessment)); text != "" {
-					writeJunitSection(&b, "Result", text)
+					writeDetailSection(&b, "Result", text)
 				}
 				if locs := failingResourceLocations(cb, assessment); locs != "" {
-					writeJunitSection(&b, "Failing resources", locs)
+					writeDetailSection(&b, "Failing resources", locs)
 				}
 			}
 		}
@@ -293,142 +291,14 @@ func detailedCheckBody(resolved *policy.ResolvedPolicy, report *policy.Report, q
 	// For errored checks the score message carries the failure reason.
 	if score != nil && score.Type == policy.ScoreType_Error {
 		if msg := score.MessageLine(); msg != "" {
-			writeJunitSection(&b, "Error", msg)
+			writeDetailSection(&b, "Error", msg)
 		}
 	}
 
-	if rem := queryRemediation(query, platformKeys); rem != "" {
-		writeJunitSection(&b, "Remediation", rem)
-	}
-
-	if refs := queryReferences(query); refs != "" {
-		writeJunitSection(&b, "References", refs)
-	}
+	writeDetailSection(&b, "Remediation", queryRemediation(query, platformKeys))
+	writeDetailSection(&b, "References", queryReferences(query))
 
 	return strings.TrimSpace(b.String())
-}
-
-// writeJunitSection appends an indented "Title:\n  body" section to b.
-func writeJunitSection(b *strings.Builder, title, body string) {
-	if b.Len() > 0 {
-		b.WriteString("\n")
-	}
-	b.WriteString(title)
-	b.WriteString(":\n")
-	b.WriteString(stringx.Indent(2, strings.TrimSpace(body)))
-	b.WriteString("\n")
-}
-
-// queryMql returns the MQL source for a query, preferring the current field and
-// falling back to the deprecated one (which the compact reporter still reads).
-func queryMql(query *policy.Mquery) string {
-	if query.Mql != "" {
-		return query.Mql
-	}
-	return query.Query
-}
-
-// platformRemediationKeys returns the set of remediation ids relevant to an
-// asset's platform: the platform name, its family entries (e.g. "terraform" for
-// the "terraform-hcl" platform), and the platform-agnostic "default"/"" ids. It
-// is used to filter remediation down to the platform being scanned so a Terraform
-// scan shows Terraform remediation rather than every IaC/tool variant.
-func platformRemediationKeys(platform *inventory.Platform) map[string]bool {
-	keys := map[string]bool{"": true, "default": true}
-	if platform != nil {
-		if platform.Name != "" {
-			keys[strings.ToLower(platform.Name)] = true
-		}
-		for _, f := range platform.Family {
-			if f != "" {
-				keys[strings.ToLower(f)] = true
-			}
-		}
-	}
-	return keys
-}
-
-// queryRemediation renders the remediation for a query, labeling each item with
-// its platform/tool id (e.g. "[terraform]") when present. Items are filtered to
-// those matching the asset's platform (name/family) or that are platform-agnostic;
-// if none match, all items are shown so remediation is never dropped entirely.
-func queryRemediation(query *policy.Mquery, platformKeys map[string]bool) string {
-	if query.Docs == nil || query.Docs.Remediation == nil {
-		return ""
-	}
-
-	// Collect non-empty items, splitting into platform matches and the rest.
-	var matched, all []*policy.TypedDoc
-	for _, item := range query.Docs.Remediation.Items {
-		if item == nil || strings.TrimSpace(item.Desc) == "" {
-			continue
-		}
-		all = append(all, item)
-		if platformKeys[strings.ToLower(item.Id)] {
-			matched = append(matched, item)
-		}
-	}
-
-	items := matched
-	if len(items) == 0 {
-		items = all // fallback: no platform-specific match, show everything
-	}
-
-	var b strings.Builder
-	for _, item := range items {
-		if b.Len() > 0 {
-			b.WriteString("\n")
-		}
-		if item.Id != "" && item.Id != "default" {
-			b.WriteString("[" + item.Id + "] ")
-		}
-		b.WriteString(strings.TrimSpace(item.Desc))
-	}
-	return b.String()
-}
-
-// queryReferences renders a query's references as "Title: URL" lines. It prefers
-// docs.refs (the canonical location) and falls back to the deprecated refs field.
-func queryReferences(query *policy.Mquery) string {
-	refs := query.Refs
-	if query.Docs != nil && len(query.Docs.Refs) > 0 {
-		refs = query.Docs.Refs
-	}
-	var b strings.Builder
-	for _, ref := range refs {
-		if ref == nil || ref.Url == "" {
-			continue
-		}
-		if b.Len() > 0 {
-			b.WriteString("\n")
-		}
-		if ref.Title != "" {
-			b.WriteString(ref.Title + ": ")
-		}
-		b.WriteString(ref.Url)
-	}
-	return b.String()
-}
-
-// failingResourceLocations lists the source locations (path:line) of the resources
-// that caused a check to fail. It is populated for resources that carry source
-// context (e.g. Terraform/HCL) and empty for scalar checks.
-func failingResourceLocations(cb *llx.CodeBundle, assessment *llx.Assessment) string {
-	var b strings.Builder
-	for _, sc := range cb.FailingResourceContexts(assessment) {
-		if sc.Path == "" {
-			continue
-		}
-		loc := sc.Path
-		if startLine, _, _, _, _, ok := sc.Range.Bounds(); ok && startLine >= 1 {
-			loc += ":" + strconv.FormatInt(int64(startLine), 10)
-		}
-		if b.Len() > 0 {
-			b.WriteString("\n")
-		}
-		b.WriteString(loc)
-	}
-	return b.String()
 }
 
 func iota32(i int32) string {
