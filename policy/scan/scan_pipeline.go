@@ -5,7 +5,6 @@ package scan
 
 import (
 	"context"
-	"fmt"
 	"os"
 	goruntime "runtime"
 	"runtime/debug"
@@ -14,11 +13,11 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/cockroachdb/errors"
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnspec/v13"
 	"go.mondoo.com/cnspec/v13/cli/progress"
 	"go.mondoo.com/cnspec/v13/policy"
-	"go.mondoo.com/mql/v13/cli/config"
 	"go.mondoo.com/mql/v13/discovery"
 	"go.mondoo.com/mql/v13/llx"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
@@ -189,21 +188,22 @@ func (d *scanDispatcher) Submit(ctx context.Context, tracked *discovery.TrackedA
 	go func() {
 		defer d.wg.Done()
 		defer func() { <-d.connSem }()
-		defer d.reportPanic(tracked)
+		defer d.recoverAssetPanic(tracked)
 
 		// Acquire worker slot, respecting context cancellation.
 		select {
 		case d.scanSem <- struct{}{}:
 			defer func() { <-d.scanSem }()
 		case <-ctx.Done():
-			assetName := ""
-			if tracked.Asset != nil {
-				assetName = tracked.Asset.Name
-			}
-			if err := d.explorer.CloseAsset(tracked); err != nil {
-				log.Error().Err(err).Str("asset", assetName).Msg("failed to close asset")
-			}
-			tracked.Asset = nil
+			d.abandon(tracked)
+			return
+		}
+
+		// The scan run can be cancelled while we wait for a slot, and select
+		// picks at random when both cases are ready — so check again before
+		// starting work whose results we are about to throw away.
+		if ctx.Err() != nil {
+			d.abandon(tracked)
 			return
 		}
 
@@ -222,11 +222,45 @@ func (d *scanDispatcher) Wait() {
 	d.wg.Wait()
 }
 
+// abandon releases an asset that will not be scanned because the scan run was
+// cancelled before a worker slot came free. It resolves the asset's progress
+// task so the TODO list does not wait on it, and closes the connection.
+func (d *scanDispatcher) abandon(tracked *discovery.TrackedAsset) {
+	assetName := ""
+	if tracked.Asset != nil {
+		assetName = tracked.Asset.Name
+		if len(tracked.Asset.PlatformIds) > 0 {
+			d.multiprogress.Errored(tracked.Asset.PlatformIds[0])
+		}
+	}
+	if err := d.explorer.CloseAsset(tracked); err != nil {
+		log.Debug().Err(err).Str("asset", assetName).Msg("could not close abandoned asset")
+	}
+	tracked.Asset = nil
+}
+
 // scanSingleAsset handles the full lifecycle of scanning one asset: delayed
 // discovery, validation, scanning, error reporting, and closing.
 func (d *scanDispatcher) scanSingleAsset(ctx context.Context, tracked *discovery.TrackedAsset) {
 	asset := tracked.Asset
 	runtime := tracked.Runtime
+
+	// The asset can be closed between Submit and the moment a worker slot
+	// frees up: the explorer shuts down when the scan returns early, and
+	// dedup evicts assets whose platform IDs turn out to be a subset of a
+	// newly connected asset. Both clear Runtime, so there is nothing left
+	// to scan here.
+	if asset == nil || runtime == nil {
+		assetName := ""
+		if asset != nil {
+			assetName = asset.Name
+			if len(asset.PlatformIds) > 0 {
+				d.multiprogress.Errored(asset.PlatformIds[0])
+			}
+		}
+		log.Debug().Str("asset", assetName).Msg("asset was closed before its scan started, skipping")
+		return
+	}
 
 	if err := runtime.EnsureProvidersConnected(); err != nil {
 		log.Error().Err(err).Msg("could not connect to providers")
@@ -356,53 +390,67 @@ func (d *scanDispatcher) logMemoryStats(asset *inventory.Asset) {
 	}
 }
 
-// reportPanic captures panics from scan goroutines and reports them.
-func (d *scanDispatcher) reportPanic(tracked *discovery.TrackedAsset) {
-	health.ReportPanic("cnspec", cnspec.Version, cnspec.Build, func(product, version, build string, r any, stacktrace []byte) {
-		opts, err := config.Read()
-		if err != nil {
-			log.Error().Err(err).Msg("failed to read config")
-			return
-		}
+// recoverAssetPanic recovers a panic raised while scanning a single asset,
+// reports it to the Mondoo Platform with asset context, and records it as a
+// scan error so the asset is reported as failed instead of silently missing.
+// One bad asset no longer takes the whole scan process down with it.
+//
+// It must be deferred directly. recover() only takes effect in the deferred
+// function itself, which is why this cannot delegate to health.ReportPanic:
+// that function's recover() would sit one frame too deep, catch nothing, and
+// the panic would kill the process before any report was sent.
+func (d *scanDispatcher) recoverAssetPanic(tracked *discovery.TrackedAsset) {
+	r := recover()
+	if r == nil {
+		return
+	}
+	stacktrace := debug.Stack()
 
-		serviceAccount := opts.GetServiceCredential()
-		if serviceAccount == nil {
-			log.Error().Msg("no service account configured")
-			return
-		}
+	var asset *inventory.Asset
+	if tracked != nil {
+		asset = tracked.Asset
+	}
 
-		tags := map[string]string{
-			"spaceMrn": d.spaceMrn,
+	// Send asset identification as structured tags so the platform can
+	// attribute the panic to a specific asset, rather than burying the map
+	// in the message string.
+	tags := map[string]string{
+		"spaceMrn": d.spaceMrn,
+	}
+	assetName := ""
+	if asset != nil {
+		assetName = asset.Name
+		tags["assetMrn"] = asset.Mrn
+		tags["assetName"] = asset.Name
+		tags["platformIDs"] = strings.Join(asset.PlatformIds, ",")
+		if asset.Platform != nil {
+			tags["assetPlatform"] = asset.Platform.Name
+			tags["assetPlatformVersion"] = asset.Platform.Version
 		}
-		if tracked != nil && tracked.Asset != nil {
-			tags["assetMrn"] = tracked.Asset.Mrn
-			tags["assetName"] = tracked.Asset.Name
-			tags["platformIDs"] = strings.Join(tracked.Asset.PlatformIds, ",")
-			if tracked.Asset.Platform != nil {
-				tags["assetPlatform"] = tracked.Asset.Platform.Name
-				tags["assetPlatformVersion"] = tracked.Asset.Platform.Version
-			}
-		}
+	}
 
-		event := &health.SendErrorReq{
-			ServiceAccountMrn: opts.ServiceAccountMrn,
-			AgentMrn:          opts.AgentMrn,
-			Product: &health.ProductInfo{
-				Name:    product,
-				Version: version,
-				Build:   build,
-			},
-			Error: &health.ErrorInfo{
-				Message:    "panic: " + fmt.Sprintf("%v", r),
-				Stacktrace: string(stacktrace),
-			},
-			// Send asset identification as structured tags so the platform
-			// can attribute the panic to a specific asset, rather than
-			// burying the map in the message string.
-			Tags: tags,
-		}
+	log.Error().
+		Interface("panic", r).
+		Str("asset", assetName).
+		Str("stacktrace", string(stacktrace)).
+		Msg("recovered panic while scanning asset")
 
-		sendErrorToMondooPlatform(serviceAccount, event)
-		log.Info().Msg("reported panic to Mondoo Platform")
-	})
+	health.ReportRecoveredPanic("cnspec", cnspec.Version, cnspec.Build, r, stacktrace, tags)
+
+	if asset == nil {
+		return
+	}
+
+	d.reporter.AddScanError(asset, errors.Newf("panic while scanning asset: %v", r))
+	if len(asset.PlatformIds) > 0 {
+		d.multiprogress.Errored(asset.PlatformIds[0])
+	}
+
+	// Release the connection the panicking scan left open. The asset may
+	// already be closed (a panic after CloseAsset), which is not an error
+	// worth surfacing here.
+	if err := d.explorer.CloseAsset(tracked); err != nil {
+		log.Debug().Err(err).Str("asset", assetName).Msg("could not close asset after panic")
+	}
+	tracked.Asset = nil
 }
