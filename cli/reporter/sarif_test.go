@@ -621,7 +621,9 @@ func TestSarifMatchesDetailedJunitContent(t *testing.T) {
 				continue
 			}
 			// the JUnit body is only rendered for failed and errored checks
-			if score == nil || (score.Type != policy.ScoreType_Error && !(score.Type == policy.ScoreType_Result && score.Value != 100)) {
+			failed := score != nil && (score.Type == policy.ScoreType_Error ||
+				(score.Type == policy.ScoreType_Result && score.Value != 100))
+			if !failed {
 				continue
 			}
 			if detailedCheckBody(resolved, policyReport, query, score, platformKeys) == "" {

@@ -311,11 +311,8 @@ func checkRuleTags(query *policy.Mquery, ctx *sarifRunContext) []string {
 	for _, title := range ctx.policyTitles[query.Mrn] {
 		tags = append(tags, "policy/"+title)
 	}
-	compliance := queryComplianceTags(query)
-	for _, framework := range sortedKeys(compliance) {
-		tags = append(tags, framework)
-	}
-	return tags
+	// the compliance tag keys are already namespaced, e.g. "compliance/iso-27001-2022"
+	return append(tags, sortedKeys(queryComplianceTags(query))...)
 }
 
 // checkHelp renders the static documentation of a check as plain text and as
