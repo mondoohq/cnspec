@@ -8,18 +8,25 @@ import (
 	"encoding/hex"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/owenrumney/go-sarif/v2/sarif"
+	"go.mondoo.com/cnspec/v13"
 	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/mql/v13/cli/printer"
 	"go.mondoo.com/mql/v13/llx"
 	"go.mondoo.com/mql/v13/mrn"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
+	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/mvd"
 	"go.mondoo.com/mql/v13/utils/iox"
 )
 
-const sarifAssetErrorRuleID = "asset-error"
+const (
+	sarifAssetErrorRuleID  = "asset-error"
+	sarifVulnPackageRuleID = "vulnerable-package"
+	sarifInformationURI    = "https://cnspec.io"
+)
 
 // sarifFingerprintKey is the key under which cnspec stores its stable
 // per-finding fingerprint in SARIF partialFingerprints. It uses a URI-style
@@ -27,6 +34,35 @@ const sarifAssetErrorRuleID = "asset-error"
 // tooling (e.g. GitHub code scanning's primaryLocationLineHash). The trailing
 // version lets us evolve the fingerprint algorithm without remapping old runs.
 const sarifFingerprintKey = "https://cnspec.io/fingerprint/v1"
+
+// The SARIF report carries the same content as the detailed JUnit report, split
+// along the lines the SARIF spec (and its consumers) expect:
+//
+//	rule.shortDescription   check title
+//	rule.fullDescription    check description
+//	rule.help               description, MQL, audit steps, remediation, references,
+//	                        compliance mappings — as text and as markdown
+//	rule.helpUri            first reference of the check
+//	rule.properties         severity, impact, security-severity, tags, policies,
+//	                        compliance mappings, MQL
+//	result.message          title, status, score, assessment (expected vs actual)
+//	result.locations        source location of each failing resource, plus the
+//	                        asset as a logical location
+//	result.properties       score, risk, severity, status, asset
+//
+// Vulnerabilities from the scan's vulnerability report are emitted alongside the
+// policy findings, one result per affected package (per advisory when the report
+// carries advisories), which mirrors the JUnit vulnerability test suite.
+
+// sarifRunContext carries everything a single asset's run needs while its rules
+// and results are built.
+type sarifRunContext struct {
+	assetMrn     string
+	asset        *inventory.Asset
+	logicalLoc   *sarif.LogicalLocation
+	platformKeys map[string]bool
+	policyTitles map[string][]string
+}
 
 // ConvertToSarif converts a ReportCollection into a SARIF 2.1.0 report.
 // Each scanned asset is represented as a separate SARIF run.
@@ -45,27 +81,42 @@ func ConvertToSarif(r *policy.ReportCollection, out iox.OutputHelper) error {
 	}
 
 	bundle := r.Bundle.ToMap()
-	queries := bundle.QueryMap()
+	queries := reporterQueryMap(bundle)
+	policyTitles := policyTitlesByQuery(bundle)
 
 	// Create one run per asset (deterministic order via sorted keys)
 	assetMrns := sortedKeys(r.Assets)
 	for _, assetMrn := range assetMrns {
 		assetObj := r.Assets[assetMrn]
-		run := newAssetRun(assetObj)
+		ctx := &sarifRunContext{
+			assetMrn:     assetMrn,
+			asset:        assetObj,
+			logicalLoc:   assetLogicalLocation(assetObj),
+			platformKeys: platformRemediationKeys(assetObj.Platform),
+			policyTitles: policyTitles,
+		}
+		run := newAssetRun(r, ctx)
 
 		// Register the asset-error rule if this asset has an error
 		if _, hasErr := r.Errors[assetMrn]; hasErr {
 			run.AddRule(sarifAssetErrorRuleID).
 				WithName("Asset scan error").
-				WithDescription("The asset could not be scanned successfully")
+				WithDescription("The asset could not be scanned successfully").
+				WithFullDescription(sarif.NewMultiformatMessageString(
+					"cnspec could not complete the scan of this asset. No policy results are available for it.")).
+				WithDefaultConfiguration(sarif.NewReportingConfiguration().WithLevel("error")).
+				WithProperties(sarif.Properties{
+					"tags": []string{"cnspec", "scan"},
+				})
 		}
 
 		// Register reporting queries applicable to this asset as SARIF rules
-		registerAssetRules(run, r, assetMrn, queries)
+		registerAssetRules(run, r, ctx, queries)
 
 		// Emit results for this asset
-		addAssetErrors(run, r, assetMrn, assetObj)
-		addAssetResults(run, r, assetMrn, assetObj, queries)
+		addAssetErrors(run, r, ctx)
+		addAssetResults(run, r, ctx, queries)
+		addAssetVulnerabilities(run, r.VulnReports[assetMrn], ctx)
 
 		report.AddRun(run)
 	}
@@ -74,23 +125,119 @@ func ConvertToSarif(r *policy.ReportCollection, out iox.OutputHelper) error {
 }
 
 // newAssetRun creates a new SARIF run for a given asset
-func newAssetRun(asset *inventory.Asset) *sarif.Run {
-	run := sarif.NewRunWithInformationURI("cnspec", "https://cnspec.io")
-	// Tag the run with asset metadata so consumers can identify which asset it covers
-	props := sarif.Properties{"asset": asset.Name}
-	if asset.Platform != nil {
-		platformName := getPlatformNameForAsset(asset)
-		if platformName != "" {
+func newAssetRun(r *policy.ReportCollection, ctx *sarifRunContext) *sarif.Run {
+	run := sarif.NewRunWithInformationURI("cnspec", sarifInformationURI)
+	run.Tool.Driver.
+		WithVersion(cnspec.GetVersion()).
+		WithFullName("cnspec " + cnspec.GetVersion()).
+		WithShortDescription(sarif.NewMultiformatMessageString(
+			"cnspec is an open source, cloud-native security and policy scanner"))
+	run.Tool.Driver.Organization = strPtr("Mondoo")
+	// cnspec reports 1-based line and column numbers on source locations.
+	run.ColumnKind = "utf16CodeUnits"
+
+	// Tag the run with asset metadata so consumers can identify which asset it
+	// covers, and correlate re-scans of the same asset across uploads.
+	run.AutomationDetails = sarif.NewRunAutomationDetails().
+		WithID("cnspec/" + ctx.asset.Name).
+		WithDescriptionText("cnspec scan of " + ctx.asset.Name)
+
+	props := sarif.Properties{"asset": ctx.asset.Name}
+	if ctx.assetMrn != "" {
+		props["assetMrn"] = ctx.assetMrn
+	}
+	if ctx.asset.Platform != nil {
+		if platformName := getPlatformNameForAsset(ctx.asset); platformName != "" {
 			props["platform"] = platformName
 		}
+		if ctx.asset.Platform.Version != "" {
+			props["platformVersion"] = ctx.asset.Platform.Version
+		}
+		if ctx.asset.Platform.Arch != "" {
+			props["platformArch"] = ctx.asset.Platform.Arch
+		}
 	}
+	addRunScoreProperties(props, r, ctx.assetMrn)
+	addRunVulnProperties(props, r.VulnReports[ctx.assetMrn])
 	run.Properties = props
+
 	return run
 }
 
-// registerAssetRules registers the reporting queries for a single asset as SARIF rules on the run
-func registerAssetRules(run *sarif.Run, r *policy.ReportCollection, assetMrn string, queries map[string]*policy.Mquery) {
+// addRunScoreProperties summarizes the asset's policy results (overall score and
+// per-status counts) into the run's property bag.
+func addRunScoreProperties(props sarif.Properties, r *policy.ReportCollection, assetMrn string) {
+	report, ok := r.Reports[assetMrn]
+	if !ok || report == nil {
+		return
+	}
+
+	if report.Score != nil {
+		props["score"] = report.Score.Value
+		props["grade"] = report.Score.Rating().Letter()
+	}
+
 	resolved, ok := r.ResolvedPolicies[assetMrn]
+	if !ok || resolved == nil || resolved.CollectorJob == nil {
+		return
+	}
+
+	var total, passed, failed, errored, skipped int
+	for id, score := range report.Scores {
+		if _, ok := resolved.CollectorJob.ReportingQueries[id]; !ok {
+			continue
+		}
+		total++
+		switch scoreToSarifKind(score) {
+		case "pass":
+			passed++
+		case "fail":
+			if score != nil && score.Type == policy.ScoreType_Error {
+				errored++
+			} else {
+				failed++
+			}
+		case "notApplicable":
+			skipped++
+		}
+	}
+
+	props["checksTotal"] = total
+	props["checksPassed"] = passed
+	props["checksFailed"] = failed
+	props["checksErrored"] = errored
+	props["checksSkipped"] = skipped
+}
+
+// addRunVulnProperties summarizes the asset's vulnerability report into the run's
+// property bag, mirroring the properties of the JUnit vulnerability test suite.
+func addRunVulnProperties(props sarif.Properties, vulnReport *mvd.VulnReport) {
+	if vulnReport == nil || vulnReport.Stats == nil {
+		return
+	}
+
+	// Platforms without a package inventory (Terraform, cloud APIs, ...) report
+	// empty stats; don't clutter their runs with zeros.
+	if pkgs := vulnReport.Stats.Packages; pkgs != nil && pkgs.Total > 0 {
+		props["packagesTotal"] = pkgs.Total
+		props["packagesAffected"] = pkgs.Affected
+		props["packagesCritical"] = pkgs.Critical
+		props["packagesHigh"] = pkgs.High
+		props["packagesMedium"] = pkgs.Medium
+		props["packagesLow"] = pkgs.Low
+		props["packagesNone"] = pkgs.None
+	}
+	if advisories := vulnReport.Stats.Advisories; advisories != nil && advisories.Total > 0 {
+		props["advisoriesTotal"] = advisories.Total
+	}
+	if cves := vulnReport.Stats.Cves; cves != nil && cves.Total > 0 {
+		props["cvesTotal"] = cves.Total
+	}
+}
+
+// registerAssetRules registers the reporting queries for a single asset as SARIF rules on the run
+func registerAssetRules(run *sarif.Run, r *policy.ReportCollection, ctx *sarifRunContext, queries map[string]*policy.Mquery) {
+	resolved, ok := r.ResolvedPolicies[ctx.assetMrn]
 	if !ok || resolved.CollectorJob == nil {
 		return
 	}
@@ -100,49 +247,158 @@ func registerAssetRules(run *sarif.Run, r *policy.ReportCollection, assetMrn str
 		if !ok {
 			continue
 		}
-
-		ruleID := queryRuleID(query)
-		rb := run.AddRule(ruleID)
-		if query.Title != "" {
-			rb.WithName(query.Title)
-		}
-		desc := queryDescription(query)
-		if desc != "" {
-			rb.WithDescription(desc)
-		}
-		if query.Impact != nil && query.Impact.Value != nil {
-			rb.WithProperties(sarif.Properties{
-				"impact": query.Impact.Value.GetValue(),
-			})
-		}
+		registerCheckRule(run, query, ctx)
 	}
 }
 
-func addAssetErrors(run *sarif.Run, r *policy.ReportCollection, assetMrn string, assetObj *inventory.Asset) {
-	errMsg, ok := r.Errors[assetMrn]
+// registerCheckRule turns a check into a SARIF rule that carries everything a
+// consumer needs to render and act on the finding: title, description, help
+// (query, audit steps, remediation, references, compliance mappings), severity
+// and the policies it belongs to.
+func registerCheckRule(run *sarif.Run, query *policy.Mquery, ctx *sarifRunContext) {
+	ruleID := queryRuleID(query)
+	rb := run.AddRule(ruleID)
+
+	title := query.Title
+	if title == "" {
+		title = ruleID
+	}
+	rb.WithName(title).WithDescription(title)
+
+	if desc := strings.TrimSpace(queryDescription(query)); desc != "" {
+		rb.WithFullDescription(sarif.NewMultiformatMessageString(desc).WithMarkdown(desc))
+	}
+
+	if text, markdown := checkHelp(query, ctx); text != "" {
+		rb.WithHelp(sarif.NewMultiformatMessageString(text).WithMarkdown(markdown))
+	}
+
+	if refs := queryRefs(query); len(refs) > 0 {
+		rb.WithHelpURI(refs[0].Url)
+	}
+
+	props := sarif.Properties{"tags": checkRuleTags(query, ctx)}
+	if impact, ok := queryImpact(query); ok {
+		props["impact"] = impact
+		props["severity"] = riskSeverityLabel(impact)
+		// GitHub code scanning reads the alert severity from this property.
+		props["security-severity"] = securitySeverity(impact)
+		rb.WithDefaultConfiguration(sarif.NewReportingConfiguration().WithLevel(riskSarifLevel(impact)))
+	}
+	if query.Mrn != "" {
+		props["queryMrn"] = query.Mrn
+	}
+	if mql := strings.TrimSpace(queryMql(query)); mql != "" {
+		props["mql"] = mql
+	}
+	if titles := ctx.policyTitles[query.Mrn]; len(titles) > 0 {
+		props["policies"] = titles
+	}
+	if compliance := queryComplianceTags(query); len(compliance) > 0 {
+		props["compliance"] = compliance
+	}
+	if rem := queryRemediation(query, ctx.platformKeys); rem != "" {
+		props["remediation"] = rem
+	}
+	rb.WithProperties(props)
+}
+
+// checkRuleTags builds the rule tags. Consumers use them to group and filter
+// findings; "security" in particular is what makes GitHub code scanning treat the
+// rule as a security alert.
+func checkRuleTags(query *policy.Mquery, ctx *sarifRunContext) []string {
+	tags := []string{"security", "cnspec"}
+	for _, title := range ctx.policyTitles[query.Mrn] {
+		tags = append(tags, "policy/"+title)
+	}
+	compliance := queryComplianceTags(query)
+	for _, framework := range sortedKeys(compliance) {
+		tags = append(tags, framework)
+	}
+	return tags
+}
+
+// checkHelp renders the static documentation of a check as plain text and as
+// markdown. SARIF consumers show this next to every finding of the rule, so it
+// carries the same sections as the detailed JUnit failure body.
+func checkHelp(query *policy.Mquery, ctx *sarifRunContext) (string, string) {
+	var text, md strings.Builder
+
+	desc := strings.TrimSpace(queryDescription(query))
+	if desc != "" {
+		text.WriteString(desc + "\n")
+		md.WriteString(desc + "\n")
+	}
+
+	if impact, ok := queryImpact(query); ok {
+		severity := riskSeverityLabel(impact) + " (impact " + strconv.Itoa(int(impact)) + ")"
+		writeDetailSection(&text, "Severity", severity)
+		writeMarkdownSection(&md, "Severity", severity)
+	}
+
+	if titles := ctx.policyTitles[query.Mrn]; len(titles) > 0 {
+		writeDetailSection(&text, "Policies", strings.Join(titles, "\n"))
+		writeMarkdownSection(&md, "Policies", markdownList(titles))
+	}
+
+	if mql := strings.TrimSpace(queryMql(query)); mql != "" {
+		writeDetailSection(&text, "Query", mql)
+		writeMarkdownSection(&md, "Query", markdownCode(mql))
+	}
+
+	if audit := queryAudit(query); audit != "" {
+		writeDetailSection(&text, "Audit", audit)
+		writeMarkdownSection(&md, "Audit", audit)
+	}
+
+	writeDetailSection(&text, "Remediation", queryRemediation(query, ctx.platformKeys))
+	writeMarkdownSection(&md, "Remediation", markdownRemediation(query, ctx.platformKeys))
+
+	writeDetailSection(&text, "References", queryReferences(query))
+	writeMarkdownSection(&md, "References", markdownReferences(query))
+
+	if compliance := queryComplianceTags(query); len(compliance) > 0 {
+		var lines []string
+		for _, framework := range sortedKeys(compliance) {
+			lines = append(lines, strings.TrimPrefix(framework, "compliance/")+": "+compliance[framework])
+		}
+		writeDetailSection(&text, "Compliance", strings.Join(lines, "\n"))
+		writeMarkdownSection(&md, "Compliance", markdownList(lines))
+	}
+
+	return strings.TrimSpace(text.String()), strings.TrimSpace(md.String())
+}
+
+func addAssetErrors(run *sarif.Run, r *policy.ReportCollection, ctx *sarifRunContext) {
+	errMsg, ok := r.Errors[ctx.assetMrn]
 	if !ok {
 		return
 	}
+	text := fmt.Sprintf("Asset %s: %s", ctx.asset.Name, errMsg)
+	markdown := "**" + ctx.asset.Name + "** could not be scanned\n\n" + markdownCode(errMsg)
 	result := sarif.NewRuleResult(sarifAssetErrorRuleID).
 		WithLevel("error").
-		WithMessage(sarif.NewTextMessage(fmt.Sprintf("Asset %s: %s", assetObj.Name, errMsg)))
+		WithKind("fail").
+		WithMessage(sarif.NewTextMessage(text).WithMarkdown(markdown)).
+		WithLocations([]*sarif.Location{
+			sarif.NewLocation().WithLogicalLocations([]*sarif.LogicalLocation{ctx.logicalLoc}),
+		}).
+		WithPartialFingerPrints(map[string]interface{}{
+			sarifFingerprintKey: sarifFingerprint(sarifAssetErrorRuleID, ctx.assetMrn),
+		})
 	run.AddResult(result)
 }
 
-func addAssetResults(run *sarif.Run, r *policy.ReportCollection, assetMrn string, assetObj *inventory.Asset, queries map[string]*policy.Mquery) {
-	report, ok := r.Reports[assetMrn]
+func addAssetResults(run *sarif.Run, r *policy.ReportCollection, ctx *sarifRunContext, queries map[string]*policy.Mquery) {
+	report, ok := r.Reports[ctx.assetMrn]
 	if !ok {
 		return
 	}
 
-	resolved, ok := r.ResolvedPolicies[assetMrn]
+	resolved, ok := r.ResolvedPolicies[ctx.assetMrn]
 	if !ok || resolved.CollectorJob == nil {
 		return
 	}
-
-	// The asset is recorded as a logical location on every result so consumers
-	// can still tell which asset a finding belongs to.
-	logicalLoc := assetLogicalLocation(assetObj)
 
 	// Sort score IDs for deterministic output
 	scoreIDs := sortedKeys(report.Scores)
@@ -160,14 +416,7 @@ func addAssetResults(run *sarif.Run, r *policy.ReportCollection, assetMrn string
 
 		ruleID := queryRuleID(query)
 		level := scoreToSarifLevel(score)
-
-		msg := query.Title
-		if msg == "" {
-			msg = ruleID
-		}
-		if score != nil && score.Message != "" {
-			msg += ": " + score.MessageLine()
-		}
+		kind := scoreToSarifKind(score)
 
 		// Build the assessment once and reuse it for both the human-readable
 		// detail and the structured source locations.
@@ -179,6 +428,12 @@ func addAssetResults(run *sarif.Run, r *policy.ReportCollection, assetMrn string
 				assessment = policy.Query2Assessment(codeBundle, report)
 			}
 		}
+
+		var detail string
+		if assessment != nil && codeBundle != nil {
+			detail = strings.TrimSpace(printer.PlainNoColorPrinter.Assessment(codeBundle, assessment))
+		}
+		props := checkResultProperties(query, score, ctx)
 
 		// Source locations of the failing resources. This covers terraform and
 		// any resource that carries @context data; it is empty for scalar checks
@@ -192,40 +447,394 @@ func addAssetResults(run *sarif.Run, r *policy.ReportCollection, assetMrn string
 			}
 		}
 
+		// The assessment covers all failing resources at once, so repeating it on
+		// every location of a check that fails on many resources would grow the
+		// report quadratically. Those results carry the offending source snippet in
+		// their own region instead.
+		if len(locations) > 1 {
+			detail = ""
+		}
+		text, markdown := checkResultMessage(query, score, detail)
+
 		if len(locations) == 0 {
-			// No source context: anchor a single result to the asset and keep the
-			// full assessment detail (expected vs actual) in the message.
-			detail := msg
-			if assessment != nil {
-				if text := strings.TrimSpace(printer.PlainNoColorPrinter.Assessment(codeBundle, assessment)); text != "" {
-					detail += "\n\n" + text
-				}
-			}
+			// No source context: anchor a single result to the asset. The full
+			// assessment detail (expected vs actual) travels in the message.
 			result := sarif.NewRuleResult(ruleID).
 				WithLevel(level).
-				WithMessage(sarif.NewTextMessage(detail)).
+				WithKind(kind).
+				WithMessage(sarif.NewTextMessage(text).WithMarkdown(markdown)).
 				WithLocations([]*sarif.Location{
-					sarif.NewLocation().WithLogicalLocations([]*sarif.LogicalLocation{logicalLoc}),
+					sarif.NewLocation().WithLogicalLocations([]*sarif.LogicalLocation{ctx.logicalLoc}),
+				}).
+				WithPartialFingerPrints(map[string]interface{}{
+					sarifFingerprintKey: sarifFingerprint(ruleID, ctx.assetMrn),
 				})
+			result.Properties = props
+			withRiskRank(result, score)
 			run.AddResult(result)
 			continue
 		}
 
 		// One result per failing resource, each pointing at its exact source.
-		// The code snippet travels in the region; the message stays concise.
+		// The code snippet travels in the region.
 		for i := range locations {
 			loc := sarif.NewLocationWithPhysicalLocation(physicalLocationFromContext(locations[i])).
-				WithLogicalLocations([]*sarif.LogicalLocation{logicalLoc})
+				WithLogicalLocations([]*sarif.LogicalLocation{ctx.logicalLoc})
 			result := sarif.NewRuleResult(ruleID).
 				WithLevel(level).
-				WithMessage(sarif.NewTextMessage(msg)).
+				WithKind(kind).
+				WithMessage(sarif.NewTextMessage(text).WithMarkdown(markdown)).
 				WithLocations([]*sarif.Location{loc}).
 				WithPartialFingerPrints(map[string]interface{}{
 					sarifFingerprintKey: sarifLocationFingerprint(ruleID, locations[i]),
 				})
+			result.Properties = props
+			withRiskRank(result, score)
 			run.AddResult(result)
 		}
 	}
+}
+
+// checkResultMessage renders the dynamic part of a finding — what the check is,
+// whether it passed, and how the actual state differed from the expected one — as
+// plain text and as markdown.
+func checkResultMessage(query *policy.Mquery, score *policy.Score, detail string) (string, string) {
+	title := query.Title
+	if title == "" {
+		title = queryRuleID(query)
+	}
+
+	// "FAIL · CRITICAL · score 0/100 · <what the check reported>"
+	status := scoreStatusLabel(score)
+	var details string
+	if score != nil && score.Type == policy.ScoreType_Result {
+		details += " · " + riskSeverityLabel(scoreRisk(score)) + " · score " + strconv.Itoa(int(score.Value)) + "/100"
+	}
+	if msg := score.MessageLine(); msg != "" {
+		details += " · " + msg
+	}
+
+	text := title + ": " + status + details
+	markdown := "**" + title + "**\n\n" + scoreStatusIcon(score) + " **" + status + "**" + details
+
+	if detail != "" {
+		text += "\n\n" + detail
+		markdown += "\n\n" + markdownCode(detail)
+	}
+
+	return text, markdown
+}
+
+// checkResultProperties captures the scoring outcome of a single check so
+// consumers can filter and sort findings without re-deriving it from the level.
+func checkResultProperties(query *policy.Mquery, score *policy.Score, ctx *sarifRunContext) sarif.Properties {
+	props := sarif.Properties{
+		"asset":  ctx.asset.Name,
+		"status": strings.ToLower(scoreStatusLabel(score)),
+	}
+	if ctx.assetMrn != "" {
+		props["assetMrn"] = ctx.assetMrn
+	}
+	if score != nil {
+		props["scoreType"] = score.TypeLabel()
+		props["completion"] = score.Completion()
+		if score.Type == policy.ScoreType_Result {
+			props["score"] = score.Value
+			props["risk"] = scoreRisk(score)
+			props["severity"] = riskSeverityLabel(scoreRisk(score))
+		}
+	}
+	if titles := ctx.policyTitles[query.Mrn]; len(titles) > 0 {
+		props["policies"] = titles
+	}
+	return props
+}
+
+// withRiskRank sets the SARIF rank (0-100, higher is more important) of failing
+// results to the check's risk, so viewers that sort by rank show the most
+// dangerous findings first.
+func withRiskRank(result *sarif.Result, score *policy.Score) {
+	if score == nil || score.Type != policy.ScoreType_Result || score.Value == 100 {
+		return
+	}
+	result.WithRank(float32(scoreRisk(score)))
+}
+
+// addAssetVulnerabilities emits the asset's vulnerability findings: one result per
+// affected package and advisory, falling back to a single rule for affected
+// packages that no advisory in the report accounts for.
+func addAssetVulnerabilities(run *sarif.Run, vulnReport *mvd.VulnReport, ctx *sarifRunContext) {
+	if vulnReport == nil {
+		return
+	}
+
+	// Index the packages the asset is actually affected by. Advisories carry
+	// their own package lists, which we intersect with this set.
+	affected := map[string]*mvd.Package{}
+	byName := map[string]*mvd.Package{}
+	for _, pkg := range vulnReport.Packages {
+		if pkg == nil || !pkg.Affected {
+			continue
+		}
+		affected[vulnPackageKey(pkg)] = pkg
+		byName[pkg.Name] = pkg
+	}
+	if len(affected) == 0 {
+		return
+	}
+
+	covered := map[string]bool{}
+
+	advisories := make([]*mvd.Advisory, 0, len(vulnReport.Advisories))
+	for _, advisory := range vulnReport.Advisories {
+		if advisory != nil && advisory.ID != "" {
+			advisories = append(advisories, advisory)
+		}
+	}
+	sort.Slice(advisories, func(i, j int) bool { return advisories[i].ID < advisories[j].ID })
+
+	for _, advisory := range advisories {
+		pkgs := advisoryPackages(advisory, affected, byName)
+		if len(pkgs) == 0 {
+			continue
+		}
+
+		registerAdvisoryRule(run, advisory)
+		for _, pkg := range pkgs {
+			covered[vulnPackageKey(pkg)] = true
+			run.AddResult(vulnResult(advisory.ID, advisory, pkg, ctx))
+		}
+	}
+
+	// Affected packages that no advisory in this report accounts for.
+	var remaining []string
+	for key := range affected {
+		if !covered[key] {
+			remaining = append(remaining, key)
+		}
+	}
+	if len(remaining) == 0 {
+		return
+	}
+	sort.Strings(remaining)
+
+	run.AddRule(sarifVulnPackageRuleID).
+		WithName("Vulnerable package").
+		WithDescription("An installed package has known vulnerabilities").
+		WithFullDescription(sarif.NewMultiformatMessageString(
+			"An installed package is affected by known vulnerabilities. Update it to a fixed version.")).
+		WithProperties(sarif.Properties{"tags": []string{"security", "cnspec", "vulnerability"}})
+
+	for _, key := range remaining {
+		run.AddResult(vulnResult(sarifVulnPackageRuleID, nil, affected[key], ctx))
+	}
+}
+
+// advisoryPackages returns the packages of an advisory that the asset is actually
+// affected by, in deterministic order.
+func advisoryPackages(advisory *mvd.Advisory, affected, byName map[string]*mvd.Package) []*mvd.Package {
+	var res []*mvd.Package
+	seen := map[string]bool{}
+	for _, pkg := range advisory.Affected {
+		if pkg == nil {
+			continue
+		}
+		match, ok := affected[vulnPackageKey(pkg)]
+		if !ok {
+			// the advisory may carry a different version than the installed one
+			match, ok = byName[pkg.Name]
+			if !ok {
+				continue
+			}
+		}
+		key := vulnPackageKey(match)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		res = append(res, match)
+	}
+	sort.Slice(res, func(i, j int) bool { return vulnPackageKey(res[i]) < vulnPackageKey(res[j]) })
+	return res
+}
+
+// registerAdvisoryRule registers an advisory (e.g. USN-5825-1) as a SARIF rule,
+// carrying its description, CVEs and references.
+func registerAdvisoryRule(run *sarif.Run, advisory *mvd.Advisory) {
+	title := advisory.Title
+	if title == "" {
+		title = advisory.ID
+	}
+
+	rb := run.AddRule(advisory.ID).WithName(title).WithDescription(title)
+	if desc := strings.TrimSpace(advisory.Description); desc != "" {
+		rb.WithFullDescription(sarif.NewMultiformatMessageString(desc).WithMarkdown(desc))
+	}
+
+	var text, md strings.Builder
+	if desc := strings.TrimSpace(advisory.Description); desc != "" {
+		text.WriteString(desc + "\n")
+		md.WriteString(desc + "\n")
+	}
+
+	severity := riskSeverityLabel(advisory.Score) + " (score " + securitySeverity(advisory.Score) + ")"
+	writeDetailSection(&text, "Severity", severity)
+	writeMarkdownSection(&md, "Severity", severity)
+
+	cves := advisoryCves(advisory)
+	if len(cves) > 0 {
+		var textLines, mdLines []string
+		for _, cve := range cves {
+			line := cve.ID
+			if cve.Score > 0 {
+				line += " (CVSS " + strconv.FormatFloat(float64(cve.Score), 'f', 1, 32) + ")"
+			}
+			textLines = append(textLines, strings.TrimSpace(line+" "+cve.Url))
+			if cve.Url != "" {
+				line = "[" + line + "](" + cve.Url + ")"
+			}
+			mdLines = append(mdLines, line)
+		}
+		writeDetailSection(&text, "CVEs", strings.Join(textLines, "\n"))
+		writeMarkdownSection(&md, "CVEs", markdownList(mdLines))
+	}
+
+	var refLines, refMdLines []string
+	for _, ref := range advisory.Refs {
+		if ref == nil || ref.Url == "" {
+			continue
+		}
+		refTitle := ref.Title
+		if refTitle == "" {
+			refTitle = ref.Url
+		}
+		refLines = append(refLines, refTitle+": "+ref.Url)
+		refMdLines = append(refMdLines, "["+refTitle+"]("+ref.Url+")")
+	}
+	writeDetailSection(&text, "References", strings.Join(refLines, "\n"))
+	writeMarkdownSection(&md, "References", markdownList(refMdLines))
+
+	if help := strings.TrimSpace(text.String()); help != "" {
+		rb.WithHelp(sarif.NewMultiformatMessageString(help).WithMarkdown(strings.TrimSpace(md.String())))
+	}
+	if len(advisory.Refs) > 0 && advisory.Refs[0] != nil && advisory.Refs[0].Url != "" {
+		rb.WithHelpURI(advisory.Refs[0].Url)
+	} else if len(cves) > 0 && cves[0].Url != "" {
+		rb.WithHelpURI(cves[0].Url)
+	}
+
+	props := sarif.Properties{
+		"tags":              []string{"security", "cnspec", "vulnerability", "advisory"},
+		"security-severity": securitySeverity(advisory.Score),
+		"severity":          riskSeverityLabel(advisory.Score),
+		"advisory":          advisory.ID,
+	}
+	if len(cves) > 0 {
+		ids := make([]string, 0, len(cves))
+		for _, cve := range cves {
+			ids = append(ids, cve.ID)
+		}
+		props["cves"] = ids
+	}
+	if advisory.Published != "" {
+		props["published"] = advisory.Published
+	}
+	if advisory.Modified != "" {
+		props["modified"] = advisory.Modified
+	}
+	rb.WithProperties(props)
+	rb.WithDefaultConfiguration(sarif.NewReportingConfiguration().WithLevel(riskSarifLevel(advisory.Score)))
+}
+
+// advisoryCves returns the CVEs of an advisory in deterministic order.
+func advisoryCves(advisory *mvd.Advisory) []*mvd.CVE {
+	res := make([]*mvd.CVE, 0, len(advisory.Cves))
+	for _, cve := range advisory.Cves {
+		if cve != nil && cve.ID != "" {
+			res = append(res, cve)
+		}
+	}
+	sort.Slice(res, func(i, j int) bool { return res[i].ID < res[j].ID })
+	return res
+}
+
+// vulnResult builds the finding for one affected package. When advisory is set the
+// finding is attributed to it, otherwise it reports the package on its own.
+func vulnResult(ruleID string, advisory *mvd.Advisory, pkg *mvd.Package, ctx *sarifRunContext) *sarif.Result {
+	score := pkg.Score
+	if advisory != nil && advisory.Score > 0 {
+		score = advisory.Score
+	}
+
+	update := "No fixed version is available yet."
+	if pkg.Available != "" {
+		update = "Update to " + pkg.Available + "."
+	}
+
+	text := pkg.Name + " " + pkg.Version + " has known vulnerabilities"
+	markdown := "**" + pkg.Name + "** " + pkg.Version + " has known vulnerabilities"
+	if advisory != nil {
+		title := advisory.Title
+		if title == "" {
+			title = advisory.ID
+		}
+		text = pkg.Name + " " + pkg.Version + " is affected by " + advisory.ID + " (" + title + ")"
+		markdown = "**" + pkg.Name + "** " + pkg.Version + " is affected by **" + advisory.ID + "** — " + title
+	}
+	text += " · " + riskSeverityLabel(score) + " (score " + securitySeverity(score) + ") · " + update
+	markdown += "\n\n" + scoreIcon(score) + " **" + riskSeverityLabel(score) + "**" +
+		" · score " + securitySeverity(score) + " · " + update
+
+	logicalLocs := []*sarif.LogicalLocation{
+		ctx.logicalLoc,
+		sarif.NewLogicalLocation().WithName(pkg.Name).WithKind("package").
+			WithFullyQualifiedName(pkg.Name + "@" + pkg.Version),
+	}
+
+	props := sarif.Properties{
+		"asset":             ctx.asset.Name,
+		"package":           pkg.Name,
+		"installedVersion":  pkg.Version,
+		"severity":          riskSeverityLabel(score),
+		"security-severity": securitySeverity(score),
+		"status":            "fail",
+	}
+	if ctx.assetMrn != "" {
+		props["assetMrn"] = ctx.assetMrn
+	}
+	if pkg.Available != "" {
+		props["fixedVersion"] = pkg.Available
+	}
+	if pkg.Arch != "" {
+		props["arch"] = pkg.Arch
+	}
+	if pkg.Format != "" {
+		props["format"] = pkg.Format
+	}
+	if pkg.Namespace != "" {
+		props["namespace"] = pkg.Namespace
+	}
+	if advisory != nil {
+		props["advisory"] = advisory.ID
+	}
+
+	result := sarif.NewRuleResult(ruleID).
+		WithLevel(riskSarifLevel(score)).
+		WithKind("fail").
+		WithMessage(sarif.NewTextMessage(text).WithMarkdown(markdown)).
+		WithLocations([]*sarif.Location{
+			sarif.NewLocation().WithLogicalLocations(logicalLocs),
+		}).
+		WithPartialFingerPrints(map[string]interface{}{
+			sarifFingerprintKey: sarifFingerprint(ruleID, ctx.assetMrn, vulnPackageKey(pkg)),
+		}).
+		WithRank(float32(score))
+	result.Properties = props
+	return result
+}
+
+func vulnPackageKey(pkg *mvd.Package) string {
+	return pkg.Name + "@" + pkg.Version
 }
 
 // assetLogicalLocation builds the SARIF logical location that identifies an asset.
@@ -273,8 +882,22 @@ func physicalLocationFromContext(ctx llx.SourceContext) *sarif.PhysicalLocation 
 // sarifLocationFingerprint produces a stable fingerprint for a (rule, location)
 // pair so code-scanning consumers can dedup the same finding across runs.
 func sarifLocationFingerprint(ruleID string, ctx llx.SourceContext) string {
-	h := sha256.Sum256([]byte(ruleID + "\n" + ctx.Path + "#" + ctx.Range.String()))
+	return sarifFingerprint(ruleID, ctx.Path+"#"+ctx.Range.String())
+}
+
+// sarifFingerprint hashes the parts that identify a finding into a stable
+// fingerprint. Callers must pass the parts in a fixed order.
+func sarifFingerprint(parts ...string) string {
+	h := sha256.Sum256([]byte(strings.Join(parts, "\n")))
 	return hex.EncodeToString(h[:])
+}
+
+// scoreRisk is the inverse of a score value: 0 (no risk) to 100 (critical).
+func scoreRisk(score *policy.Score) int32 {
+	if score == nil {
+		return 0
+	}
+	return 100 - int32(score.Value)
 }
 
 // scoreToSarifLevel maps a cnspec Score to a SARIF level using cnspec's
@@ -300,16 +923,83 @@ func scoreToSarifLevel(score *policy.Score) string {
 		if score.Value == 100 {
 			return "none" // pass
 		}
-		if score.Value >= 61 {
-			return "note" // Low severity
-		}
-		if score.Value >= 31 {
-			return "warning" // Medium severity
-		}
-		return "error" // High/Critical severity
+		return riskSarifLevel(scoreRisk(score))
 	default:
 		return "none"
 	}
+}
+
+// scoreToSarifKind maps a cnspec Score to a SARIF result kind. The kind tells
+// consumers what the result means; the level only says how loud it is. SARIF
+// requires the level to be "none" for every kind other than "fail", which
+// scoreToSarifLevel guarantees.
+func scoreToSarifKind(score *policy.Score) string {
+	if score == nil {
+		return "review"
+	}
+
+	switch score.Type {
+	case policy.ScoreType_Error:
+		return "fail"
+	case policy.ScoreType_Skip, policy.ScoreType_OutOfScope, policy.ScoreType_Disabled:
+		return "notApplicable"
+	case policy.ScoreType_Unscored:
+		return "informational"
+	case policy.ScoreType_Unknown:
+		return "review"
+	case policy.ScoreType_Result:
+		if score.Value == 100 {
+			return "pass"
+		}
+		return "fail"
+	default:
+		return "review"
+	}
+}
+
+// scoreStatusLabel is the human-readable outcome of a check.
+func scoreStatusLabel(score *policy.Score) string {
+	switch scoreToSarifKind(score) {
+	case "pass":
+		return "PASS"
+	case "fail":
+		if score != nil && score.Type == policy.ScoreType_Error {
+			return "ERROR"
+		}
+		return "FAIL"
+	case "notApplicable":
+		return "SKIPPED"
+	case "informational":
+		return "UNSCORED"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+func scoreStatusIcon(score *policy.Score) string {
+	switch scoreToSarifKind(score) {
+	case "pass":
+		return "✅"
+	case "fail":
+		if score != nil && score.Type == policy.ScoreType_Error {
+			return "⚠️"
+		}
+		return "❌"
+	case "notApplicable":
+		return "⏭️"
+	default:
+		return "ℹ️"
+	}
+}
+
+func scoreIcon(risk int32) string {
+	if risk >= 70 {
+		return "❌"
+	}
+	if risk >= 40 {
+		return "⚠️"
+	}
+	return "ℹ️"
 }
 
 // queryRuleID returns a stable, human-readable rule ID for a query.
@@ -329,15 +1019,71 @@ func queryRuleID(query *policy.Mquery) string {
 	return query.CodeId
 }
 
-// queryDescription extracts a description from a query
-func queryDescription(query *policy.Mquery) string {
-	if query.Docs != nil && query.Docs.Desc != "" {
-		return query.Docs.Desc
+// writeMarkdownSection appends a "**Title**\n\nbody" section to b.
+func writeMarkdownSection(b *strings.Builder, title, body string) {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return
 	}
-	if query.Desc != "" {
-		return query.Desc
+	if b.Len() > 0 {
+		b.WriteString("\n")
 	}
-	return ""
+	b.WriteString("**" + title + "**\n\n")
+	b.WriteString(body)
+	b.WriteString("\n")
+}
+
+func markdownList(items []string) string {
+	var b strings.Builder
+	for _, item := range items {
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString("- " + item)
+	}
+	return b.String()
+}
+
+// markdownCode wraps content in a fenced block, growing the fence if the content
+// itself contains one.
+func markdownCode(content string) string {
+	fence := "```"
+	for strings.Contains(content, fence) {
+		fence += "`"
+	}
+	return fence + "\n" + strings.TrimSpace(content) + "\n" + fence
+}
+
+// markdownRemediation renders the platform-relevant remediation of a check, with
+// each variant introduced by its platform/tool id.
+func markdownRemediation(query *policy.Mquery, platformKeys map[string]bool) string {
+	var b strings.Builder
+	for _, item := range remediationItems(query, platformKeys) {
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		if item.Id != "" && item.Id != "default" {
+			b.WriteString("_" + item.Id + "_\n\n")
+		}
+		b.WriteString(strings.TrimSpace(item.Desc))
+	}
+	return b.String()
+}
+
+func markdownReferences(query *policy.Mquery) string {
+	var items []string
+	for _, ref := range queryRefs(query) {
+		title := ref.Title
+		if title == "" {
+			title = ref.Url
+		}
+		items = append(items, "["+title+"]("+ref.Url+")")
+	}
+	return markdownList(items)
+}
+
+func strPtr(s string) *string {
+	return &s
 }
 
 func writeSarif(report *sarif.Report, out iox.OutputHelper) error {
