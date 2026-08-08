@@ -55,10 +55,10 @@ type failureReporter struct {
 	// health.ReportError.
 	send func(msg string, tags map[string]string)
 
-	sem       chan struct{}
-	wg        sync.WaitGroup
-	submitted atomic.Int64
-	dropped   atomic.Int64
+	sem      chan struct{}
+	wg       sync.WaitGroup
+	admitted atomic.Int64
+	dropped  atomic.Int64
 }
 
 // newFailureReporter returns a reporter for upstream scans, or nil (a no-op)
@@ -117,18 +117,23 @@ func (fr *failureReporter) report(asset *inventory.Asset, err error) {
 // when the cap is reached or all slots are busy. On success the caller owns the
 // slot and must release it via <-fr.sem (the report goroutine does this).
 func (fr *failureReporter) tryAdmit() bool {
-	if fr.submitted.Add(1) > maxFailureReportsPerScan {
-		fr.dropped.Add(1)
-		return false
-	}
+	// Acquire a concurrency slot first, then charge the per-scan cap. Only
+	// reports we can actually dispatch count against the cap, so a burst that
+	// briefly saturates the slots doesn't burn through the quota with drops.
 	select {
 	case fr.sem <- struct{}{}:
-		return true
 	default:
 		// All report slots are busy — drop rather than stall the scan.
 		fr.dropped.Add(1)
 		return false
 	}
+	if fr.admitted.Add(1) > maxFailureReportsPerScan {
+		fr.admitted.Add(-1)
+		<-fr.sem
+		fr.dropped.Add(1)
+		return false
+	}
+	return true
 }
 
 // close waits (up to failureReportDrainTimeout) for outstanding reports to
@@ -150,7 +155,7 @@ func (fr *failureReporter) close() {
 	if d := fr.dropped.Load(); d > 0 {
 		log.Warn().
 			Int64("suppressed", d).
-			Int("reported", maxFailureReportsPerScan).
+			Int64("reported", fr.admitted.Load()).
 			Msg("some scan failure reports were suppressed to avoid overloading the platform")
 	}
 }
