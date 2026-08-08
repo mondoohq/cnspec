@@ -6,7 +6,6 @@ package scan
 import (
 	"testing"
 
-	"github.com/cockroachdb/errors"
 	"github.com/stretchr/testify/assert"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream"
@@ -51,21 +50,52 @@ func TestAssetErrorTags(t *testing.T) {
 	})
 }
 
-// TestReportScanFailure_Noop verifies the gates that keep cnspec from attempting
-// an upstream failure report when there is no upstream to report to. These paths
-// must return before touching the network so they are safe to call for every
-// asset error, including in incognito and offline scans.
-func TestReportScanFailure_Noop(t *testing.T) {
-	s := NewLocalScanner()
-	asset := &inventory.Asset{Mrn: "//assets/1", Name: "x"}
-	err := errors.New("boom")
+// TestNewFailureReporter_Gating verifies that no reporter (a no-op) is created
+// when there is no upstream to report to, so incognito/offline scans never
+// attempt failure telemetry.
+func TestNewFailureReporter_Gating(t *testing.T) {
+	assert.Nil(t, newFailureReporter(nil, ""), "nil upstream")
+	assert.Nil(t, newFailureReporter(&upstream.UpstreamConfig{Incognito: true, ApiEndpoint: "https://x"}, ""), "incognito")
+	assert.Nil(t, newFailureReporter(&upstream.UpstreamConfig{ApiEndpoint: ""}, ""), "no endpoint")
 
-	// None of these should panic or block; they must return via an early gate.
+	fr := newFailureReporter(&upstream.UpstreamConfig{ApiEndpoint: "https://x", SpaceMrn: "//spaces/abc"}, "")
+	if assert.NotNil(t, fr, "valid upstream should produce a reporter") {
+		assert.Equal(t, "//spaces/abc", fr.spaceMrn, "spaceMrn falls back to upstream config")
+	}
+}
+
+// TestFailureReporter_NilSafe ensures a nil reporter (the incognito/offline
+// case) is safe to use everywhere.
+func TestFailureReporter_NilSafe(t *testing.T) {
+	var fr *failureReporter
 	assert.NotPanics(t, func() {
-		s.reportScanFailure(nil, "", asset, err)                                                         // nil upstream
-		s.reportScanFailure(&upstream.UpstreamConfig{Incognito: true, ApiEndpoint: "x"}, "", asset, err) // incognito
-		s.reportScanFailure(&upstream.UpstreamConfig{ApiEndpoint: ""}, "", asset, err)                   // no endpoint
-		s.reportScanFailure(&upstream.UpstreamConfig{ApiEndpoint: "x"}, "", nil, err)                    // nil asset
-		s.reportScanFailure(&upstream.UpstreamConfig{ApiEndpoint: "x"}, "", asset, nil)                  // nil error
+		fr.report(&inventory.Asset{Mrn: "//assets/1"}, assert.AnError)
+		fr.close()
 	})
+}
+
+// TestFailureReporter_AdmissionBounds checks that admission is bounded by both
+// the in-flight concurrency limit and the per-scan total cap, dropping the rest
+// instead of blocking. Slots are never released here, so exactly
+// maxConcurrentFailureReports admissions succeed and everything else is dropped.
+func TestFailureReporter_AdmissionBounds(t *testing.T) {
+	fr := newFailureReporter(&upstream.UpstreamConfig{ApiEndpoint: "https://x"}, "//spaces/abc")
+	if !assert.NotNil(t, fr) {
+		return
+	}
+
+	attempts := maxFailureReportsPerScan + 50
+	admitted := 0
+	for i := 0; i < attempts; i++ {
+		if fr.tryAdmit() {
+			admitted++
+		}
+	}
+
+	// Only the concurrency slots can be admitted since none are ever released.
+	assert.Equal(t, maxConcurrentFailureReports, admitted)
+	assert.Equal(t, int64(attempts), fr.submitted.Load())
+	assert.Equal(t, int64(attempts-maxConcurrentFailureReports), fr.dropped.Load())
+	// At least the calls beyond the per-scan cap must have been dropped.
+	assert.GreaterOrEqual(t, fr.dropped.Load(), int64(attempts-maxFailureReportsPerScan))
 }

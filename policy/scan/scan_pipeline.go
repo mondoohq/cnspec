@@ -16,6 +16,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"go.mondoo.com/cnspec/v13"
 	"go.mondoo.com/cnspec/v13/cli/progress"
+	"go.mondoo.com/cnspec/v13/internal/syslimits"
 	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/cnspec/v13/policy/scanstats"
 	"go.mondoo.com/mql/v13/discovery"
@@ -28,15 +29,48 @@ import (
 const (
 	defaultMaxConnections = 50
 	syncBatchSize         = 5 // how many assets to batch for upstream sync calls
+
+	// estimatedMemoryPerConnectionBytes is a conservative estimate of the memory
+	// a single concurrent provider connection can consume — the provider
+	// subprocess plus cnspec-side per-asset data. Provider memory lives in
+	// separate processes, outside the Go heap that GOMEMLIMIT governs, so in a
+	// memory-limited cgroup we use this to bound how many providers run at once
+	// and keep the whole process group under the limit. It is deliberately
+	// rough; operators can always override the result via
+	// MONDOO_MAX_PROVIDER_CONNECTIONS.
+	estimatedMemoryPerConnectionBytes = 200 * 1024 * 1024
 )
 
+// getMaxConnections returns the cap on simultaneously connected assets (and
+// therefore concurrent provider subprocesses). An explicit
+// MONDOO_MAX_PROVIDER_CONNECTIONS always wins. Otherwise it starts from
+// defaultMaxConnections and, when running under a cgroup memory limit, reduces
+// the cap so the aggregate memory of the provider subprocesses is unlikely to
+// exceed the limit — GOMEMLIMIT only bounds cnspec's own heap, not the
+// providers.
 func getMaxConnections() int {
 	if v := os.Getenv("MONDOO_MAX_PROVIDER_CONNECTIONS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			return n
 		}
 	}
-	return defaultMaxConnections
+
+	maxConn := defaultMaxConnections
+	if limit := syslimits.Detect().MemoryLimitBytes; limit > 0 {
+		budget := int(limit / estimatedMemoryPerConnectionBytes)
+		if budget < 1 {
+			budget = 1
+		}
+		if budget < maxConn {
+			log.Info().
+				Uint64("memory_limit_bytes", limit).
+				Int("max_connections", budget).
+				Int("default", defaultMaxConnections).
+				Msg("reducing max provider connections to fit cgroup memory limit")
+			maxConn = budget
+		}
+	}
+	return maxConn
 }
 
 // ---------------------------------------------------------------------------
@@ -149,6 +183,7 @@ type scanDispatcher struct {
 	spaceMrn      string
 	scannedAssets *atomic.Int64
 	memTracker    *scanstats.MemTracker
+	failures      *failureReporter
 }
 
 func newScanDispatcher(
@@ -164,6 +199,7 @@ func newScanDispatcher(
 	spaceMrn string,
 	scannedAssets *atomic.Int64,
 	memTracker *scanstats.MemTracker,
+	failures *failureReporter,
 ) *scanDispatcher {
 	return &scanDispatcher{
 		scanSem:       make(chan struct{}, parallelism),
@@ -178,6 +214,7 @@ func newScanDispatcher(
 		spaceMrn:      spaceMrn,
 		scannedAssets: scannedAssets,
 		memTracker:    memTracker,
+		failures:      failures,
 	}
 }
 
@@ -251,7 +288,7 @@ func (d *scanDispatcher) scanSingleAsset(ctx context.Context, tracked *discovery
 		updatedAsset, err := discovery.HandleDelayedDiscovery(ctx, asset, runtime)
 		if err != nil {
 			d.reporter.AddScanError(asset, err)
-			d.scanner.reportScanFailure(d.upstream, d.spaceMrn, asset, err)
+			d.failures.report(asset, err)
 			if err := d.explorer.CloseAsset(tracked); err != nil {
 				log.Error().Err(err).Str("asset", asset.Name).Msg("failed to close asset")
 			}
@@ -266,7 +303,7 @@ func (d *scanDispatcher) scanSingleAsset(ctx context.Context, tracked *discovery
 		}
 		if syncErr := syncBatchWithUpstream(ctx, []*discovery.TrackedAsset{tracked}, d.services, d.spaceMrn, d.scanner.recording); syncErr != nil {
 			d.reporter.AddScanError(asset, syncErr)
-			d.scanner.reportScanFailure(d.upstream, d.spaceMrn, asset, syncErr)
+			d.failures.report(asset, syncErr)
 			if len(asset.PlatformIds) > 0 {
 				d.multiprogress.Errored(asset.PlatformIds[0])
 			}
@@ -300,6 +337,7 @@ func (d *scanDispatcher) scanSingleAsset(ctx context.Context, tracked *discovery
 		Reporter:         d.reporter,
 		ProgressReporter: p,
 		runtime:          runtime,
+		failures:         d.failures,
 	})
 
 	// Report any recovered provider panics to the Mondoo Platform.
@@ -407,10 +445,13 @@ func (d *scanDispatcher) recoverAssetPanic(tracked *discovery.TrackedAsset, r an
 	}
 
 	// Best-effort close so the provider connection and its goroutines are
-	// released; the connSem slot itself is released by Submit's defer.
+	// released; the connSem slot itself is released by Submit's defer. Guard the
+	// explorer: this is a crash handler, so it must not itself nil-panic.
 	if tracked != nil && tracked.Asset != nil {
-		if err := d.explorer.CloseAsset(tracked); err != nil {
-			log.Error().Err(err).Str("asset", assetName).Msg("failed to close asset after panic")
+		if d.explorer != nil {
+			if err := d.explorer.CloseAsset(tracked); err != nil {
+				log.Error().Err(err).Str("asset", assetName).Msg("failed to close asset after panic")
+			}
 		}
 		tracked.Asset = nil
 	}
