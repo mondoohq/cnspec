@@ -91,27 +91,6 @@ func TestParseMemoryLimit(t *testing.T) {
 	}
 }
 
-func TestProcsForQuota(t *testing.T) {
-	tests := []struct {
-		name   string
-		quota  float64
-		numCPU int
-		want   int
-	}{
-		{"exactly two", 2.0, 8, 2},
-		{"floors 2.9 to 2", 2.9, 8, 2},
-		{"floors 1.5 to 1", 1.5, 8, 1},
-		{"sub-cpu clamps to 1", 0.25, 8, 1},
-		{"never exceeds host cpus", 16.0, 4, 4},
-		{"zero host cpu ignored", 3.0, 0, 3},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, procsForQuota(tt.quota, tt.numCPU))
-		})
-	}
-}
-
 func TestMemLimitWithHeadroom(t *testing.T) {
 	gib := float64(uint64(1) << 30)
 	tests := []struct {

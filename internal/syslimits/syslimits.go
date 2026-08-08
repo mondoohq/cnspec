@@ -76,22 +76,30 @@ type Limits struct {
 type Result struct {
 	Limits Limits
 
-	GOMAXPROCSChanged bool
-	GOMAXPROCS        int
-
 	MemoryLimitChanged bool
 	MemoryLimitBytes   int64
 }
 
-// Apply detects cgroup CPU/memory limits and constrains the Go runtime to match
-// them by setting GOMAXPROCS and GOMEMLIMIT. It is safe to call once at startup
-// and is a no-op when:
+// Apply detects the cgroup memory limit and constrains the Go runtime to match
+// it by setting GOMEMLIMIT. It is safe to call once at startup and is a no-op
+// when:
 //   - MONDOO_DISABLE_AUTO_RESOURCE_LIMITS is truthy,
 //   - the platform is not Linux, or
-//   - no cgroup limits are detected.
+//   - no cgroup memory limit is detected.
 //
-// Operator-provided GOMAXPROCS / GOMEMLIMIT settings always win; Apply never
-// raises a limit above what the host or operator allows.
+// CPU is intentionally NOT touched here: since Go 1.25 (this module builds with
+// a go 1.26 directive) the runtime already derives GOMAXPROCS from the cgroup
+// CPU quota AND keeps it in sync as the quota changes. Calling
+// runtime.GOMAXPROCS ourselves would only pin that value and defeat the
+// runtime's dynamic tracking, so we leave CPU to the runtime and just log the
+// detected quota for visibility.
+//
+// Note GOMEMLIMIT bounds only cnspec's own Go heap. Provider plugins run as
+// separate subprocesses whose memory the Go GC cannot see, so GOMEMLIMIT alone
+// does not guarantee the process group stays under the cgroup limit — the
+// number of concurrent provider connections is bounded separately (see
+// getMaxConnections). Operator-provided GOMEMLIMIT always wins; Apply never
+// raises the limit.
 func Apply() Result {
 	var res Result
 
@@ -103,39 +111,16 @@ func Apply() Result {
 	limits := Detect()
 	res.Limits = limits
 
-	applyCPU(limits, &res)
+	if limits.CPUQuota > 0 {
+		log.Debug().
+			Float64("cpu_quota", limits.CPUQuota).
+			Str("source", limits.CPUSource).
+			Msg("cgroup CPU quota detected; GOMAXPROCS is managed by the Go runtime")
+	}
+
 	applyMemory(limits, &res)
 
 	return res
-}
-
-func applyCPU(limits Limits, res *Result) {
-	if limits.CPUQuota <= 0 {
-		return
-	}
-	// Respect an explicit operator override.
-	if _, ok := os.LookupEnv("GOMAXPROCS"); ok {
-		log.Debug().Msg("GOMAXPROCS set by operator, not overriding")
-		return
-	}
-
-	procs := procsForQuota(limits.CPUQuota, runtime.NumCPU())
-	current := runtime.GOMAXPROCS(0)
-	if procs >= current {
-		// Never raise GOMAXPROCS above the host default — we only ever want to
-		// shrink our footprint to fit the cgroup.
-		return
-	}
-
-	runtime.GOMAXPROCS(procs)
-	res.GOMAXPROCSChanged = true
-	res.GOMAXPROCS = procs
-	log.Info().
-		Int("gomaxprocs", procs).
-		Int("previous", current).
-		Float64("cpu_quota", limits.CPUQuota).
-		Str("source", limits.CPUSource).
-		Msg("limiting CPU usage to cgroup quota")
 }
 
 func applyMemory(limits Limits, res *Result) {
@@ -192,20 +177,6 @@ func Detect() Limits {
 		l.MemorySource = source
 	}
 	return l
-}
-
-// procsForQuota converts a fractional CPU quota into a GOMAXPROCS value. It
-// floors the quota (so we never claim more CPU than granted), enforces a
-// minimum of 1, and never exceeds the number of host CPUs.
-func procsForQuota(quota float64, numCPU int) int {
-	procs := int(math.Floor(quota))
-	if procs < 1 {
-		procs = 1
-	}
-	if numCPU > 0 && procs > numCPU {
-		procs = numCPU
-	}
-	return procs
 }
 
 // memLimitWithHeadroom applies the headroom fraction to a cgroup memory limit,

@@ -28,6 +28,7 @@ import (
 const (
 	defaultMaxConnections = 50
 	syncBatchSize         = 5 // how many assets to batch for upstream sync calls
+
 )
 
 func getMaxConnections() int {
@@ -149,6 +150,7 @@ type scanDispatcher struct {
 	spaceMrn        string
 	scannedAssets   *atomic.Int64
 	resourceTracker *scanstats.ResourceTracker
+	failures        *failureReporter
 }
 
 func newScanDispatcher(
@@ -164,6 +166,7 @@ func newScanDispatcher(
 	spaceMrn string,
 	scannedAssets *atomic.Int64,
 	resourceTracker *scanstats.ResourceTracker,
+	failures *failureReporter,
 ) *scanDispatcher {
 	return &scanDispatcher{
 		scanSem:         make(chan struct{}, parallelism),
@@ -178,6 +181,7 @@ func newScanDispatcher(
 		spaceMrn:        spaceMrn,
 		scannedAssets:   scannedAssets,
 		resourceTracker: resourceTracker,
+		failures:        failures,
 	}
 }
 
@@ -251,7 +255,7 @@ func (d *scanDispatcher) scanSingleAsset(ctx context.Context, tracked *discovery
 		updatedAsset, err := discovery.HandleDelayedDiscovery(ctx, asset, runtime)
 		if err != nil {
 			d.reporter.AddScanError(asset, err)
-			d.scanner.reportScanFailure(d.upstream, d.spaceMrn, asset, err)
+			d.failures.report(asset, err)
 			if err := d.explorer.CloseAsset(tracked); err != nil {
 				log.Error().Err(err).Str("asset", asset.Name).Msg("failed to close asset")
 			}
@@ -266,7 +270,7 @@ func (d *scanDispatcher) scanSingleAsset(ctx context.Context, tracked *discovery
 		}
 		if syncErr := syncBatchWithUpstream(ctx, []*discovery.TrackedAsset{tracked}, d.services, d.spaceMrn, d.scanner.recording); syncErr != nil {
 			d.reporter.AddScanError(asset, syncErr)
-			d.scanner.reportScanFailure(d.upstream, d.spaceMrn, asset, syncErr)
+			d.failures.report(asset, syncErr)
 			if len(asset.PlatformIds) > 0 {
 				d.multiprogress.Errored(asset.PlatformIds[0])
 			}
@@ -300,6 +304,7 @@ func (d *scanDispatcher) scanSingleAsset(ctx context.Context, tracked *discovery
 		Reporter:         d.reporter,
 		ProgressReporter: p,
 		runtime:          runtime,
+		failures:         d.failures,
 	})
 
 	// Report any recovered provider panics to the Mondoo Platform.
@@ -410,10 +415,13 @@ func (d *scanDispatcher) recoverAssetPanic(tracked *discovery.TrackedAsset, r an
 	}
 
 	// Best-effort close so the provider connection and its goroutines are
-	// released; the connSem slot itself is released by Submit's defer.
+	// released; the connSem slot itself is released by Submit's defer. Guard the
+	// explorer: this is a crash handler, so it must not itself nil-panic.
 	if tracked != nil && tracked.Asset != nil {
-		if err := d.explorer.CloseAsset(tracked); err != nil {
-			log.Error().Err(err).Str("asset", assetName).Msg("failed to close asset after panic")
+		if d.explorer != nil {
+			if err := d.explorer.CloseAsset(tracked); err != nil {
+				log.Error().Err(err).Str("asset", assetName).Msg("failed to close asset after panic")
+			}
 		}
 		tracked.Asset = nil
 	}
