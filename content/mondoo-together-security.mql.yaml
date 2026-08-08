@@ -1,0 +1,149 @@
+# Copyright Mondoo, Inc. 2024, 2026
+# SPDX-License-Identifier: BUSL-1.1
+
+# PROTOTYPE - AI service coverage concept (Wave 1)
+# ML/inference platform archetype. Provider providers/together v13.0.11 (@maturity preview).
+# Field references from providers/together/resources/together.lr. Ships as
+# preview (0.x) until the together provider graduates. SaaS settings have no
+# Terraform resource, so no IaC variants apply.
+
+policies:
+  - uid: mondoo-together-security
+    name: Mondoo Together AI Security
+    version: 0.1.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: together,ai
+    require:
+      - provider: together
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Harden Together AI cluster identity federation, secret attribution, and endpoint ownership
+    docs:
+      desc: |
+        The Mondoo Together AI Security policy assesses the security posture of a
+        Together AI organization, focusing on the surfaces the provider exposes:
+        identity federation on GPU clusters, ownership attribution of stored
+        secrets, and ownership of inference endpoints.
+
+        ## Scan a Together AI organization
+
+        ```bash
+        cnspec scan together -f mondoo-together-security.mql.yaml
+        ```
+
+        Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
+    groups:
+      - title: Identity Federation
+        filters: asset.platform == "together"
+        checks:
+          - uid: mondoo-together-security-clusters-use-oidc
+      - title: Credential Hygiene
+        filters: asset.platform == "together"
+        checks:
+          - uid: mondoo-together-security-secrets-attributable
+      - title: Endpoint Ownership
+        filters: asset.platform == "together"
+        checks:
+          - uid: mondoo-together-security-endpoints-have-owner
+    scoring_system: highest impact
+
+queries:
+  - uid: mondoo-together-security-clusters-use-oidc
+    title: Ensure GPU clusters use OIDC identity federation
+    impact: 60
+    mql: |
+      together.clusters.all(oidcIssuer != empty)
+    docs:
+      desc: |
+        This check ensures GPU clusters federate identity through OIDC. Federation
+        delegates authentication to the organization's identity provider,
+        inheriting MFA and lifecycle deprovisioning. Clusters without an OIDC
+        issuer rely on static credentials that are harder to rotate and govern.
+
+        **Why this matters**
+
+        - **Central identity:** Cluster access follows the IdP's controls.
+
+        **Risk mitigation**
+
+        - **Fewer static keys:** Workloads authenticate through federation.
+      audit: |
+        ### Audit via Console
+
+        1. Open the Together AI console and review each cluster's authentication settings.
+        2. Confirm an OIDC issuer and client are configured.
+
+        A passing result shows every cluster with an OIDC issuer; a failing result shows a cluster without one.
+      remediation:
+        - id: console
+          desc: |
+            To federate cluster identity:
+
+            1. Open each cluster's settings in the Together AI console.
+            2. Configure an OIDC issuer and client so workloads authenticate through your identity provider.
+
+  - uid: mondoo-together-security-secrets-attributable
+    title: Ensure stored secrets are attributable to a creator
+    impact: 40
+    mql: |
+      together.secrets.all(createdBy != empty)
+    docs:
+      desc: |
+        This check ensures every stored secret traces back to a responsible
+        identity. A secret with no recorded creator is unowned material that no
+        one is accountable for rotating or removing.
+
+        **Why this matters**
+
+        - **Accountability:** Every secret needs a named owner.
+      audit: |
+        ### Audit via Console
+
+        1. Open the Together AI console and review the stored secrets list.
+        2. Confirm each secret shows a creator.
+
+        A passing result shows every secret attributed to a creator; a failing result shows an unattributed secret.
+      remediation:
+        - id: console
+          desc: |
+            To resolve unattributed secrets:
+
+            1. Review secrets without a recorded owner in the Together AI console.
+            2. Confirm they are still needed, rotate them under a named identity, and delete any that cannot be accounted for.
+
+  - uid: mondoo-together-security-endpoints-have-owner
+    title: Ensure inference endpoints have a recorded owner
+    impact: 40
+    mql: |
+      together.endpoints.all(owner != empty)
+    docs:
+      desc: |
+        This check ensures dedicated inference endpoints have a recorded owner.
+        Endpoints consume GPU capacity and expose a model over the network; an
+        endpoint with no owner is unaccounted-for infrastructure that may be
+        forgotten, left running, or left exposed.
+
+        **Why this matters**
+
+        - **Accountability:** Every exposed model surface needs an owner.
+
+        **Risk mitigation**
+
+        - **Lifecycle control:** Owned endpoints get decommissioned when no longer needed.
+      audit: |
+        ### Audit via Console
+
+        1. Open the Together AI console and review the inference endpoints list.
+        2. Confirm each endpoint shows an owner.
+
+        A passing result shows every endpoint with an owner; a failing result shows an unowned endpoint.
+      remediation:
+        - id: console
+          desc: |
+            To attribute and clean up endpoints:
+
+            1. Assign an owner to each endpoint in the Together AI console.
+            2. Decommission endpoints that are no longer needed so idle model surfaces are not left running.
