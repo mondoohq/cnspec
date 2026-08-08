@@ -4,6 +4,7 @@
 package internal
 
 import (
+	"sort"
 	"strings"
 	"sync"
 
@@ -461,6 +462,33 @@ func (nodeData *ReportingQueryNodeData) recalculate() *envelope {
 	}
 }
 
+// deterministicMessage renders the aggregated errors with duplicates removed
+// and sub-errors sorted by message, so the rendered string is identical on
+// every run. multierr.Errors.Deduplicate cannot be used here: it dedups
+// through a map and rebuilds the slice in map-iteration order, which
+// re-randomizes the message each run.
+func deterministicMessage(errs multierr.Errors) string {
+	if len(errs.Errors) == 0 {
+		return ""
+	}
+	seen := make(map[string]error, len(errs.Errors))
+	msgs := make([]string, 0, len(errs.Errors))
+	for _, e := range errs.Errors {
+		msg := e.Error()
+		if _, ok := seen[msg]; ok {
+			continue
+		}
+		seen[msg] = e
+		msgs = append(msgs, msg)
+	}
+	sort.Strings(msgs)
+	res := make([]error, len(msgs))
+	for i, msg := range msgs {
+		res[i] = seen[msg]
+	}
+	return (&multierr.Errors{Errors: res}).Error()
+}
+
 func (nodeData *ReportingQueryNodeData) score() *policy.Score {
 	allFound := true
 	allSkipped := true
@@ -477,7 +505,22 @@ func (nodeData *ReportingQueryNodeData) score() *policy.Score {
 	// errors of its own.
 	var err multierr.Errors
 	var foreignErr multierr.Errors
-	for _, dr := range nodeData.results {
+
+	// Iterate the results in sorted-checksum order, NOT map order: everything
+	// this loop accumulates positionally — the sub-error order inside the
+	// score's message, and which datapoint wins scoreFound when several carry
+	// a score — must come out identical on every run. Ranging over the map
+	// directly made the message of a multi-error check (e.g. three failing
+	// fdesetup calls) a per-run dice roll, which churns stored score rows and
+	// scan history on content that didn't change.
+	checksums := make([]string, 0, len(nodeData.results))
+	for checksum := range nodeData.results {
+		checksums = append(checksums, checksum)
+	}
+	sort.Strings(checksums)
+
+	for _, checksum := range checksums {
+		dr := nodeData.results[checksum]
 		cur := dr.value
 		if cur == nil {
 			allFound = false
@@ -536,7 +579,7 @@ func (nodeData *ReportingQueryNodeData) score() *policy.Score {
 				Value:           0,
 				ScoreCompletion: 100,
 				Weight:          1,
-				Message:         err.Deduplicate().Error(),
+				Message:         deterministicMessage(err),
 			}
 		} else if foundError {
 			return &policy.Score{
@@ -545,7 +588,7 @@ func (nodeData *ReportingQueryNodeData) score() *policy.Score {
 				Value:           0,
 				ScoreCompletion: 100,
 				Weight:          1,
-				Message:         err.Deduplicate().Error(),
+				Message:         deterministicMessage(err),
 			}
 		} else if allSkipped {
 			return &policy.Score{
