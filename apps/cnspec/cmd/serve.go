@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/viper"
 	"go.mondoo.com/mql/v13"
 	"go.mondoo.com/mql/v13/cli/config"
+	"go.mondoo.com/mql/v13/cli/selfupdate"
 	"go.mondoo.com/mql/v13/logger"
 
 	"go.mondoo.com/cnspec/v13"
@@ -137,10 +138,25 @@ var serveCmd = &cobra.Command{
 			autoUpdate = viper.GetBool("auto_update")
 		}
 
+		// Apply verification policy and version pin/floor from the update
+		// config, and decide whether the binary itself may self-update.
+		updateCfg := applyUpdateConfig(cliConfig, scanConf.runtime)
+		binaryAutoUpdate := cliConfig.BinaryAutoUpdate
+
+		firstScanDone := false
+
 		_ = bj.Run(func() error {
-			// Try to update the os provider before each scan
+			// Opportunistically self-update the binary between scans. This is
+			// opt-in (binary_auto_update) and fully verified + health-checked +
+			// crash-loop-guarded by the selfupdate package; on success it
+			// re-execs into the new binary (replacing this process on Unix).
+			if binaryAutoUpdate {
+				maybeSelfUpdateBinary()
+			}
+
+			// Try to update providers before each scan, honoring pin/floor.
 			if autoUpdate {
-				err = updateProviders()
+				err = updateProviders(updateCfg)
 				if err != nil {
 					log.Error().Err(err).Msg("could not update providers")
 				}
@@ -166,10 +182,77 @@ var serveCmd = &cobra.Command{
 					log.Error().Err(errors.New(err)).Str("asset", a).Msg("could not connect to asset")
 				}
 			}
+
+			// A completed scan cycle proves this binary is healthy under the
+			// real serve workload. Confirm the running version so the
+			// self-update crash-loop guard never mistakes it for a bad update
+			// and rolls it back on the next restart.
+			if !firstScanDone {
+				firstScanDone = true
+				selfupdate.ConfirmRunningVersion(cnspec.GetVersion())
+			}
 			return nil
 		})
 		return nil
 	},
+}
+
+// applyUpdateConfig applies the mondoo.yml `update:` block: the signature
+// verification policy (shared by provider and binary updates), the per-provider
+// version pin/floor, and the retention count. It returns the resulting provider
+// UpdateProvidersConfig for use by the provider updater.
+func applyUpdateConfig(cliConfig *cnspec_config.CliConfig, runtime *providers.Runtime) providers.UpdateProvidersConfig {
+	cfg := runtime.AutoUpdate
+
+	uc := cliConfig.Update
+	if uc == nil {
+		return cfg
+	}
+
+	// Signature policy + retention (shared with the startup path in main).
+	ApplyUpdateVerification(uc)
+
+	if len(uc.Providers) > 0 {
+		pin := map[string]string{}
+		floor := map[string]string{}
+		for name, p := range uc.Providers {
+			if p.Pin != "" {
+				pin[name] = p.Pin
+			}
+			if p.Min != "" {
+				floor[name] = p.Min
+			}
+		}
+		cfg.Pin = pin
+		cfg.Floor = floor
+	}
+
+	// Write the resolved policy back so it also governs the per-provider update
+	// path taken when a provider is started (TryProviderUpdate), not just the
+	// serve-loop updater.
+	runtime.AutoUpdate = cfg
+	return cfg
+}
+
+// maybeSelfUpdateBinary runs one verified, health-checked, crash-loop-guarded
+// binary self-update pass. On success it re-execs into the new binary (which
+// replaces this process on Unix); on any failure it logs and returns so serving
+// continues on the current binary.
+func maybeSelfUpdateBinary() {
+	releaseURL := "https://releases.mondoo.com/cnspec/latest.json"
+	if updatesURL := config.GetUpdatesURL(); updatesURL != "" {
+		releaseURL = updatesURL + "/cnspec/latest.json"
+	}
+	cfg := selfupdate.Config{
+		Enabled:         true,
+		RefreshInterval: selfupdate.DefaultRefreshInterval,
+		ReleaseURL:      releaseURL,
+		BinaryName:      "cnspec",
+		CurrentVersion:  cnspec.GetVersion(),
+	}
+	if _, err := selfupdate.CheckAndUpdate(cfg); err != nil {
+		log.Warn().Err(err).Msg("binary self-update check failed; continuing on current binary")
+	}
 }
 
 func getServeConfig() (*scanConfig, *cnspec_config.CliConfig, error) {
@@ -272,7 +355,7 @@ func logClientInfo(spaceMrn string, clientMrn string, serviceAccountMrn string) 
 	log.Info().Str("version", version).Str("space", spaceMrn).Str("service_account", serviceAccountMrn).Str("client", clientMrn).Msg("start cnspec")
 }
 
-func updateProviders() error {
+func updateProviders(updateCfg providers.UpdateProvidersConfig) error {
 	log.Debug().Msg("checking for provider updates")
 	// force re-load from disk, in case it got updated outside the serve mode
 	providers.CachedProviders = nil
@@ -290,8 +373,17 @@ func updateProviders() error {
 		if err != nil {
 			return err
 		}
-		if latestVersion != provider.Version {
-			installed, err := providers.Install(provider.Name, "")
+
+		// Honor the pin/floor policy rather than blindly installing latest, so
+		// a pinned fleet holds its version and a bad "latest" below the floor is
+		// refused. The install itself is verified, health-checked, and
+		// rolled back on failure by the mql provider installer.
+		target, doUpdate, err := providers.ResolveUpdateTarget(provider.Name, provider.Version, latestVersion, updateCfg)
+		if err != nil {
+			return err
+		}
+		if doUpdate {
+			installed, err := providers.Install(provider.Name, target)
 			if err != nil {
 				return err
 			}
