@@ -55,6 +55,12 @@ const (
 	// math.MaxInt64 (commonly 0x7FFFFFFFFFFFF000); anything at or above 2^62
 	// bytes (4 EiB) is not a real budget.
 	unlimitedThreshold uint64 = 1 << 62
+
+	// minMemoryLimitBytes is the floor below which we do not set GOMEMLIMIT.
+	// On very small containers a soft limit near the live heap makes the GC
+	// thrash (run back-to-back) instead of doing useful work; below this
+	// threshold that risk outweighs the OOM protection GOMEMLIMIT provides.
+	minMemoryLimitBytes uint64 = 64 * 1024 * 1024 // 64 MiB
 )
 
 // Limits describes the CPU and memory budget detected for the current process.
@@ -125,6 +131,19 @@ func Apply() Result {
 
 func applyMemory(limits Limits, res *Result) {
 	if limits.MemoryLimitBytes == 0 {
+		return
+	}
+	// Don't set GOMEMLIMIT on very small containers. GOMEMLIMIT is a soft limit:
+	// if the live heap approaches it, the GC runs continuously trying to stay
+	// under it (a "GC death spiral") — burning CPU instead of doing work. Below
+	// this floor the risk of thrashing outweighs the OOM protection, so we leave
+	// the GC on its default behavior. Operators can still set GOMEMLIMIT
+	// explicitly if they want a limit here anyway.
+	if limits.MemoryLimitBytes < minMemoryLimitBytes {
+		log.Debug().
+			Uint64("cgroup_limit_bytes", limits.MemoryLimitBytes).
+			Uint64("floor_bytes", minMemoryLimitBytes).
+			Msg("cgroup memory limit below floor; not setting GOMEMLIMIT to avoid GC thrashing")
 		return
 	}
 	// Respect an explicit operator override. GOMEMLIMIT set via the environment
