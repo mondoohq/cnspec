@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/cobra/doc"
 	"github.com/spf13/viper"
 	"go.mondoo.com/cnspec/v13"
+	"go.mondoo.com/cnspec/v13/internal/syslimits"
 	cnquery_app "go.mondoo.com/mql/v13/apps/mql/cmd"
 	"go.mondoo.com/mql/v13/cli/config"
 	cli_errors "go.mondoo.com/mql/v13/cli/errors"
@@ -65,6 +66,10 @@ var rootCmd = &cobra.Command{
 	Long: landing() + "\n\n" + rootCmdDesc,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		initLogger(cmd)
+		// Constrain the Go runtime to any cgroup CPU/memory limits so cnspec
+		// stays within the budget it was given and cannot destabilize
+		// resource-limited, critical environments. No-op when unconstrained.
+		syslimits.Apply()
 	},
 }
 
