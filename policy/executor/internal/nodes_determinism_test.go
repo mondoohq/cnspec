@@ -1,10 +1,9 @@
-// Copyright Mondoo, Inc. 2026
+// Copyright Mondoo, Inc. 2024, 2026
 // SPDX-License-Identifier: BUSL-1.1
 
 package internal
 
 import (
-	"errors"
 	"fmt"
 	"testing"
 
@@ -39,7 +38,7 @@ func TestReportingQueryNode_DeterministicErrorMessage(t *testing.T) {
 					CodeID: ep,
 					Data: &llx.RawData{
 						Type:  types.Bool,
-						Error: errors.New(fmt.Sprintf("fdesetup call %d failed: requires root", i+1)),
+						Error: fmt.Errorf("fdesetup call %d failed: requires root", i+1),
 					},
 				},
 			})
