@@ -456,10 +456,15 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	}
 	defer explorer.Shutdown()
 
+	// Failure reports are sent upstream asynchronously so a large, degraded
+	// fleet (many unreachable assets) can't stall the scan on telemetry.
+	failures := newFailureReporter(upstream, spaceMrn)
+	defer failures.close()
+
 	// Report initial discovery errors
 	for _, assetErr := range explorer.Errors() {
 		reporter.AddScanError(assetErr.Asset, assetErr.Err)
-		s.reportScanFailure(upstream, spaceMrn, assetErr.Asset, assetErr.Err)
+		failures.report(assetErr.Asset, assetErr.Err)
 	}
 
 	if len(explorer.Connected()) == 0 {
@@ -498,7 +503,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 
 	dispatcher := newScanDispatcher(
 		parallelism, connSem, s, explorer, job, upstream,
-		reporter, multiprogress, services, spaceMrn, &scannedAssets,
+		reporter, multiprogress, services, spaceMrn, &scannedAssets, failures,
 	)
 	batcher := newSyncBatcher(dispatcher, services, spaceMrn, s.recording, multiprogress)
 
@@ -510,6 +515,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		platformIdsExclude: platformIdsExcludeSet(job.Inventory),
 		batcher:            batcher,
 		dispatcher:         dispatcher,
+		failures:           failures,
 	}
 
 	// Process each root asset's subtree. The root is already connected by
@@ -562,6 +568,9 @@ type scanContext struct {
 	// Pipeline stages.
 	batcher    *syncBatcher
 	dispatcher *scanDispatcher
+
+	// failures reports asset failures upstream asynchronously (may be nil).
+	failures *failureReporter
 }
 
 func (sc *scanContext) skipAsset(asset *discovery.TrackedAsset) {
@@ -632,7 +641,7 @@ func (sc *scanContext) scanSubtree(ctx context.Context, node *discovery.TrackedA
 			<-sc.connSem
 			if !errors.Is(err, discovery.ErrDuplicateAsset) {
 				sc.reporter.AddScanError(child.Asset, err)
-				sc.dispatcher.scanner.reportScanFailure(sc.dispatcher.upstream, sc.dispatcher.spaceMrn, child.Asset, err)
+				sc.failures.report(child.Asset, err)
 			}
 			continue
 		}
@@ -857,9 +866,9 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 	if err != nil {
 		log.Debug().Str("asset", job.Asset.Name).Msg("could not complete scan for asset")
 		job.Reporter.AddScanError(job.Asset, err)
-		// Send a failure report upstream so operators can see that this asset
-		// failed to scan even when the local report isn't collected.
-		s.reportScanFailure(job.UpstreamConfig, "", job.Asset, err)
+		// Send a failure report upstream (async) so operators can see that this
+		// asset failed to scan even when the local report isn't collected.
+		job.failures.report(job.Asset, err)
 		job.ProgressReporter.Score(policy.ScoreRatingTextError)
 		job.ProgressReporter.Errored()
 		return
@@ -1468,26 +1477,6 @@ func assetErrorTags(spaceMrn string, asset *inventory.Asset) map[string]string {
 		}
 	}
 	return tags
-}
-
-// reportScanFailure sends a per-asset scan failure upstream to the Mondoo
-// Platform as a failure report. It is a no-op in incognito mode, when no
-// upstream is configured, or when there is nothing to report. The underlying
-// health client additionally no-ops when no service account is configured, so
-// this is always safe to call.
-func (s *LocalScanner) reportScanFailure(up *upstream.UpstreamConfig, spaceMrn string, asset *inventory.Asset, err error) {
-	if err == nil || asset == nil {
-		return
-	}
-	if up == nil || up.Incognito || up.ApiEndpoint == "" {
-		return
-	}
-	if spaceMrn == "" {
-		spaceMrn = up.SpaceMrn
-	}
-	tags := assetErrorTags(spaceMrn, asset)
-	health.ReportError("cnspec", cnspec.Version, cnspec.Build,
-		"scan failure: "+err.Error(), health.WithTags(tags))
 }
 
 func WithServices(ctx context.Context, runtime llx.Runtime, asset *inventory.Asset, upstreamClient *upstream.UpstreamClient, f func(context.Context, *policy.LocalServices) error) error {

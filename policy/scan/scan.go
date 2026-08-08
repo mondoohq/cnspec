@@ -29,4 +29,6 @@ type AssetJob struct {
 	Reporter         Reporter
 	runtime          *providers.Runtime
 	ProgressReporter progress.Progress
+	// failures reports scan failures upstream asynchronously (may be nil).
+	failures *failureReporter
 }
