@@ -82,25 +82,46 @@ func TestFailureReporter_NilSafe(t *testing.T) {
 // instead of blocking. Slots are never released here, so exactly
 // maxConcurrentFailureReports admissions succeed and everything else is dropped.
 func TestFailureReporter_AdmissionBounds(t *testing.T) {
-	fr := newFailureReporter(&upstream.UpstreamConfig{ApiEndpoint: "https://x"}, "//spaces/abc")
-	if !assert.NotNil(t, fr) {
-		return
-	}
-
-	attempts := maxFailureReportsPerScan + 50
-	admitted := 0
-	for i := 0; i < attempts; i++ {
-		if fr.tryAdmit() {
-			admitted++
+	t.Run("bounded by concurrency when slots are held", func(t *testing.T) {
+		fr := newFailureReporter(&upstream.UpstreamConfig{ApiEndpoint: "https://x"}, "//spaces/abc")
+		if !assert.NotNil(t, fr) {
+			return
 		}
-	}
 
-	// Only the concurrency slots can be admitted since none are ever released.
-	assert.Equal(t, maxConcurrentFailureReports, admitted)
-	assert.Equal(t, int64(attempts), fr.submitted.Load())
-	assert.Equal(t, int64(attempts-maxConcurrentFailureReports), fr.dropped.Load())
-	// At least the calls beyond the per-scan cap must have been dropped.
-	assert.GreaterOrEqual(t, fr.dropped.Load(), int64(attempts-maxFailureReportsPerScan))
+		attempts := maxFailureReportsPerScan + 50
+		admitted := 0
+		for i := 0; i < attempts; i++ {
+			if fr.tryAdmit() {
+				admitted++ // never release the slot
+			}
+		}
+
+		// Only the concurrency slots can be admitted since none are released.
+		assert.Equal(t, maxConcurrentFailureReports, admitted)
+		assert.Equal(t, int64(maxConcurrentFailureReports), fr.admitted.Load())
+		assert.Equal(t, int64(attempts-maxConcurrentFailureReports), fr.dropped.Load())
+	})
+
+	t.Run("bounded by per-scan cap when slots free up", func(t *testing.T) {
+		fr := newFailureReporter(&upstream.UpstreamConfig{ApiEndpoint: "https://x"}, "//spaces/abc")
+		if !assert.NotNil(t, fr) {
+			return
+		}
+
+		attempts := maxFailureReportsPerScan + 50
+		admitted := 0
+		for i := 0; i < attempts; i++ {
+			if fr.tryAdmit() {
+				admitted++
+				<-fr.sem // release immediately, simulating a fast dispatch
+			}
+		}
+
+		// With slots always free, the per-scan cap is the binding limit.
+		assert.Equal(t, maxFailureReportsPerScan, admitted)
+		assert.Equal(t, int64(maxFailureReportsPerScan), fr.admitted.Load())
+		assert.Equal(t, int64(attempts-maxFailureReportsPerScan), fr.dropped.Load())
+	})
 }
 
 // TestFailureReporter_DispatchesAsync verifies that report() delivers the
