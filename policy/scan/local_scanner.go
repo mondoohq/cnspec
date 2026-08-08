@@ -28,7 +28,6 @@ import (
 	"go.mondoo.com/cnspec/v13/policy/executor"
 	"go.mondoo.com/cnspec/v13/policy/scanstats"
 	"go.mondoo.com/mql/v13"
-	"go.mondoo.com/mql/v13/cli/config"
 	"go.mondoo.com/mql/v13/cli/execruntime"
 	"go.mondoo.com/mql/v13/discovery"
 	"go.mondoo.com/mql/v13/llx"
@@ -43,7 +42,6 @@ import (
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/gql"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/health"
 	"go.mondoo.com/mql/v13/utils/multierr"
-	ranger "go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/codes"
 	"go.mondoo.com/ranger-rpc/status"
 	"google.golang.org/protobuf/proto"
@@ -468,6 +466,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	// Report initial discovery errors
 	for _, assetErr := range explorer.Errors() {
 		reporter.AddScanError(assetErr.Asset, assetErr.Err)
+		s.reportScanFailure(upstream, spaceMrn, assetErr.Asset, assetErr.Err)
 	}
 
 	if len(explorer.Connected()) == 0 {
@@ -666,6 +665,7 @@ func (sc *scanContext) scanSubtree(ctx context.Context, node *discovery.TrackedA
 			<-sc.connSem
 			if !errors.Is(err, discovery.ErrDuplicateAsset) {
 				sc.reporter.AddScanError(child.Asset, err)
+				sc.dispatcher.scanner.reportScanFailure(sc.dispatcher.upstream, sc.dispatcher.spaceMrn, child.Asset, err)
 			}
 			continue
 		}
@@ -890,6 +890,9 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 	if err != nil {
 		log.Debug().Str("asset", job.Asset.Name).Msg("could not complete scan for asset")
 		job.Reporter.AddScanError(job.Asset, err)
+		// Send a failure report upstream so operators can see that this asset
+		// failed to scan even when the local report isn't collected.
+		s.reportScanFailure(job.UpstreamConfig, "", job.Asset, err)
 		job.ProgressReporter.Score(policy.ScoreRatingTextError)
 		job.ProgressReporter.Errored()
 		return
@@ -1477,33 +1480,47 @@ func (s *localAssetScanner) UpdateFilters(filters *policy.Mqueries, timeout time
 	return queries, err
 }
 
-func sendErrorToMondooPlatform(serviceAccount *upstream.ServiceAccountCredentials, event *health.SendErrorReq) {
-	// 3. send error to mondoo platform
-	proxy, err := config.GetAPIProxy()
-	if err != nil {
-		log.Error().Err(err).Msg("failed to parse proxy setting")
-		return
+// assetErrorTags builds the structured tags attached to an upstream error or
+// panic report so the platform can attribute the failure to a specific asset
+// and space. It is shared by the scan-failure, critical-error, and panic
+// reporting paths.
+func assetErrorTags(spaceMrn string, asset *inventory.Asset) map[string]string {
+	tags := map[string]string{}
+	if spaceMrn != "" {
+		tags["spaceMrn"] = spaceMrn
 	}
-	httpClient := ranger.NewHttpClient(ranger.WithProxy(proxy))
+	if asset != nil {
+		tags["assetMrn"] = asset.Mrn
+		tags["assetName"] = asset.Name
+		if len(asset.PlatformIds) > 0 {
+			tags["platformIDs"] = strings.Join(asset.PlatformIds, ",")
+		}
+		if asset.Platform != nil {
+			tags["assetPlatform"] = asset.Platform.Name
+			tags["assetPlatformVersion"] = asset.Platform.Version
+		}
+	}
+	return tags
+}
 
-	plugins := []ranger.ClientPlugin{}
-	certAuth, err := upstream.NewServiceAccountRangerPlugin(serviceAccount)
-	if err != nil {
+// reportScanFailure sends a per-asset scan failure upstream to the Mondoo
+// Platform as a failure report. It is a no-op in incognito mode, when no
+// upstream is configured, or when there is nothing to report. The underlying
+// health client additionally no-ops when no service account is configured, so
+// this is always safe to call.
+func (s *LocalScanner) reportScanFailure(up *upstream.UpstreamConfig, spaceMrn string, asset *inventory.Asset, err error) {
+	if err == nil || asset == nil {
 		return
 	}
-	plugins = append(plugins, certAuth)
-
-	cl, err := health.NewErrorReportingClient(serviceAccount.ApiEndpoint, httpClient, plugins...)
-	if err != nil {
-		log.Error().Err(err).Msg("failed to create error reporting client")
+	if up == nil || up.Incognito || up.ApiEndpoint == "" {
 		return
 	}
-
-	_, err = cl.SendError(context.Background(), event)
-	if err != nil {
-		log.Error().Err(err).Msg("failed to send error to Mondoo Platform")
-		return
+	if spaceMrn == "" {
+		spaceMrn = up.SpaceMrn
 	}
+	tags := assetErrorTags(spaceMrn, asset)
+	health.ReportError("cnspec", cnspec.Version, cnspec.Build,
+		"scan failure: "+err.Error(), health.WithTags(tags))
 }
 
 func WithServices(ctx context.Context, runtime llx.Runtime, asset *inventory.Asset, upstreamClient *upstream.UpstreamClient, f func(context.Context, *policy.LocalServices) error) error {
