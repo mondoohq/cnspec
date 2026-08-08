@@ -4,9 +4,12 @@
 package scan
 
 import (
+	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/inventory"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream"
 )
@@ -98,4 +101,49 @@ func TestFailureReporter_AdmissionBounds(t *testing.T) {
 	assert.Equal(t, int64(attempts-maxConcurrentFailureReports), fr.dropped.Load())
 	// At least the calls beyond the per-scan cap must have been dropped.
 	assert.GreaterOrEqual(t, fr.dropped.Load(), int64(attempts-maxFailureReportsPerScan))
+}
+
+// TestFailureReporter_DispatchesAsync verifies that report() delivers the
+// failure through the send hook off the caller's goroutine, with the expected
+// message and asset/space tags, and that close() drains outstanding sends.
+func TestFailureReporter_DispatchesAsync(t *testing.T) {
+	fr := newFailureReporter(&upstream.UpstreamConfig{ApiEndpoint: "https://x"}, "//spaces/abc")
+	require.NotNil(t, fr)
+
+	type call struct {
+		msg  string
+		tags map[string]string
+	}
+	var mu sync.Mutex
+	var calls []call
+	fr.send = func(msg string, tags map[string]string) {
+		mu.Lock()
+		defer mu.Unlock()
+		calls = append(calls, call{msg: msg, tags: tags})
+	}
+
+	asset := &inventory.Asset{
+		Mrn:         "//assets/1",
+		Name:        "web",
+		PlatformIds: []string{"//p/1"},
+		Platform:    &inventory.Platform{Name: "ubuntu", Version: "22.04"},
+	}
+	fr.report(asset, fmt.Errorf("boom"))
+	fr.report(asset, fmt.Errorf("bang"))
+
+	fr.close() // drains outstanding sends
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, calls, 2)
+	msgs := map[string]bool{}
+	for _, c := range calls {
+		msgs[c.msg] = true
+		assert.Equal(t, "//assets/1", c.tags["assetMrn"])
+		assert.Equal(t, "//spaces/abc", c.tags["spaceMrn"])
+		assert.Equal(t, "ubuntu", c.tags["assetPlatform"])
+	}
+	assert.True(t, msgs["scan failure: boom"], "expected boom message")
+	assert.True(t, msgs["scan failure: bang"], "expected bang message")
+	assert.Zero(t, fr.dropped.Load())
 }

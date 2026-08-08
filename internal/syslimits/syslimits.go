@@ -163,16 +163,22 @@ func applyMemory(limits Limits, res *Result) {
 // configured. Detection never fails — unreadable or malformed cgroup files are
 // treated as "no limit".
 func Detect() Limits {
-	var l Limits
 	if runtime.GOOS != "linux" {
-		return l
+		return Limits{}
 	}
+	return detectFrom(defaultCgroupRoot, defaultProcSelfCgroup)
+}
 
-	if quota, source, ok := detectCPU(); ok {
+// detectFrom reads cgroup limits from an explicit mount root and
+// /proc/self/cgroup path. It has no OS guard so tests can point it at fixture
+// directories on any platform.
+func detectFrom(root, procPath string) Limits {
+	var l Limits
+	if quota, source, ok := detectCPU(root, procPath); ok {
 		l.CPUQuota = quota
 		l.CPUSource = source
 	}
-	if bytes, source, ok := detectMemory(); ok {
+	if bytes, source, ok := detectMemory(root, procPath); ok {
 		l.MemoryLimitBytes = bytes
 		l.MemorySource = source
 	}
