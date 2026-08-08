@@ -50,6 +50,11 @@ const (
 type failureReporter struct {
 	spaceMrn string
 
+	// send performs the actual upstream delivery. It is a field so tests can
+	// substitute a hook instead of hitting the network; production uses
+	// health.ReportError.
+	send func(msg string, tags map[string]string)
+
 	sem       chan struct{}
 	wg        sync.WaitGroup
 	submitted atomic.Int64
@@ -70,6 +75,9 @@ func newFailureReporter(up *upstream.UpstreamConfig, spaceMrn string) *failureRe
 	return &failureReporter{
 		spaceMrn: spaceMrn,
 		sem:      make(chan struct{}, maxConcurrentFailureReports),
+		send: func(msg string, tags map[string]string) {
+			health.ReportError("cnspec", cnspec.Version, cnspec.Build, msg, health.WithTags(tags))
+		},
 	}
 }
 
@@ -100,7 +108,7 @@ func (fr *failureReporter) report(asset *inventory.Asset, err error) {
 				log.Error().Interface("panic", r).Msg("recovered panic while reporting scan failure upstream")
 			}
 		}()
-		health.ReportError("cnspec", cnspec.Version, cnspec.Build, msg, health.WithTags(tags))
+		fr.send(msg, tags)
 	}()
 }
 
