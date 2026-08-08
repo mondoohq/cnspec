@@ -12,32 +12,40 @@ import (
 	"github.com/mattn/go-isatty"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+	"github.com/spf13/cobra"
 	"go.mondoo.com/cnspec/v13/apps/cnspec/cmd/interactive"
 )
 
-// shouldLaunchInteractive decides whether a bare `cnspec` invocation should
-// open the interactive launcher instead of printing help. We only do this when:
-//   - there are no arguments at all (just the binary name),
-//   - both stdin and stdout are real terminals (so the TUI can draw and read
-//     keys, and we are not being piped/redirected), and
-//   - the user has not opted out via CNSPEC_NO_TUI.
-func shouldLaunchInteractive() bool {
-	if len(os.Args) != 1 {
-		return false
-	}
-	if os.Getenv("CNSPEC_NO_TUI") != "" {
-		return false
-	}
+func init() {
+	rootCmd.AddCommand(uiCmd)
+}
+
+// uiCmd is the interactive launcher: a searchable, categorized picker over
+// every provider/connector cnspec supports, plus the action to run against it.
+//
+// It is intentionally Hidden for now so we can ship and dogfood it as an
+// explicit `cnspec ui` without changing what a bare `cnspec` does. Once it is
+// stable, the plan is to make a bare `cnspec` in a terminal open this launcher.
+var uiCmd = &cobra.Command{
+	Use:     "ui",
+	Aliases: []string{"menu", "interactive", "launch"},
+	Short:   "Interactive launcher to discover providers and actions (experimental)",
+	Hidden:  true,
+	Args:    cobra.NoArgs,
+	Run: func(cmd *cobra.Command, args []string) {
+		runInteractiveLauncher()
+	},
+}
+
+// isInteractiveTerminal reports whether both stdin and stdout are real
+// terminals, so the TUI can draw and read keys.
+func isInteractiveTerminal() bool {
 	if os.Getenv("TERM") == "dumb" {
 		return false
 	}
-	if !isatty.IsTerminal(os.Stdout.Fd()) && !isatty.IsCygwinTerminal(os.Stdout.Fd()) {
-		return false
-	}
-	if !isatty.IsTerminal(os.Stdin.Fd()) && !isatty.IsCygwinTerminal(os.Stdin.Fd()) {
-		return false
-	}
-	return true
+	stdoutTTY := isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsCygwinTerminal(os.Stdout.Fd())
+	stdinTTY := isatty.IsTerminal(os.Stdin.Fd()) || isatty.IsCygwinTerminal(os.Stdin.Fd())
+	return stdoutTTY && stdinTTY
 }
 
 // runInteractiveLauncher shows the provider/action picker and, once the user
@@ -46,6 +54,11 @@ func shouldLaunchInteractive() bool {
 // chosen command goes through the exact same startup path as if the user had
 // typed it: provider auto-install, flag parsing, discovery, and all.
 func runInteractiveLauncher() {
+	if !isInteractiveTerminal() {
+		log.Error().Msg("the interactive launcher needs a terminal; try `cnspec scan local` or `cnspec --help`")
+		os.Exit(1)
+	}
+
 	// The launcher owns the screen; keep the logger from scribbling on the
 	// alt-screen while the catalog loads.
 	prev := zerolog.GlobalLevel()

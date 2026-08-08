@@ -116,14 +116,6 @@ func BuildRootCmd() (*cobra.Command, error) {
 // Execute adds all child commands to the root command and sets flags appropriately.
 // This is called by main.main(). It only needs to happen once to the rootCmd.
 func Execute() {
-	// A bare `cnspec` in a terminal opens the interactive launcher, which helps
-	// users discover the many providers and actions cnspec supports. Any
-	// arguments, a non-TTY, or CNSPEC_NO_TUI fall through to normal CLI handling.
-	if shouldLaunchInteractive() {
-		runInteractiveLauncher()
-		return
-	}
-
 	_, err := BuildRootCmd()
 	if err != nil {
 		log.Error().Msg(err.Error())
