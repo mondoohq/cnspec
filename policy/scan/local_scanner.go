@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"sync"
@@ -488,11 +489,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	scanGroups.Add(1)
 	go func() {
 		defer scanGroups.Done()
-		defer health.ReportPanic("cnspec", cnspec.Version, cnspec.Build)
-
-		if err := multiprogress.Open(); err != nil {
-			log.Error().Err(err).Msg("failed to open progress bar")
-		}
+		runProgressBar(multiprogress)
 	}()
 	// Make sure the progress bar is closed when we exit early. Calling this multiple times
 	// is safe
@@ -1536,4 +1533,28 @@ func createProgressBar(disableProgressBar bool) (progress.MultiProgress, error) 
 		return progress.NewTodoList(progress.WithScore())
 	}
 	return progress.NoopMultiProgress{}, nil
+}
+
+// runProgressBar opens the progress bar and contains any panic from the UI so a
+// bug in the progress renderer can never crash the scan process. The panic is
+// reported upstream WITHOUT re-raising it (unlike health.ReportPanic), and the
+// scan continues without the progress bar — subsequent progress updates become
+// safe no-ops because the underlying tea.Program stops accepting sends once its
+// context is done. This is the progress-bar counterpart to the per-asset panic
+// containment in scanDispatcher.
+func runProgressBar(mp progress.MultiProgress) {
+	defer func() {
+		if r := recover(); r != nil {
+			stack := debug.Stack()
+			health.ReportRecoveredPanic("cnspec", cnspec.Version, cnspec.Build, r, stack,
+				map[string]string{"component": "progressbar"})
+			log.Error().
+				Interface("panic", r).
+				Bytes("stacktrace", stack).
+				Msg("recovered from panic in progress bar; continuing scan without it")
+		}
+	}()
+	if err := mp.Open(); err != nil {
+		log.Error().Err(err).Msg("failed to open progress bar")
+	}
 }
