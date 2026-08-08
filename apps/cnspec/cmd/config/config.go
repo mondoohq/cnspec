@@ -60,9 +60,47 @@ type CliConfig struct {
 
 	// Configure scan interval
 	ScanInterval *ScanInterval `json:"scan_interval,omitempty" mapstructure:"scan_interval"`
+
+	// BinaryAutoUpdate enables self-update of the cnspec binary itself in serve
+	// mode. It is off by default: provider plugins auto-update via the separate
+	// auto_update key, but replacing the running binary is opt-in per fleet.
+	BinaryAutoUpdate bool `json:"binary_auto_update,omitempty" mapstructure:"binary_auto_update"`
+
+	// Update configures download verification and version policy for both
+	// provider and binary updates.
+	Update *UpdateConfig `json:"update,omitempty" mapstructure:"update"`
 }
 
 type ScanInterval struct {
 	Timer int `json:"timer,omitempty" mapstructure:"timer"`
 	Splay int `json:"splay,omitempty" mapstructure:"splay"`
+}
+
+// UpdateConfig captures the `update:` block in mondoo.yml. Zero values mean
+// "use the secure defaults": checksum verification on, signature verification
+// in auto mode, and the built-in retention count.
+type UpdateConfig struct {
+	// VerifySignature is the signature-enforcement policy: "auto" (default,
+	// verify when a signature is available), "require" (fail closed when no
+	// valid signature), or "off".
+	VerifySignature string `json:"verify_signature,omitempty" mapstructure:"verify_signature"`
+
+	// Channel selects the release channel to pull from ("stable" default, or
+	// "edge"). Reserved for release-channel routing.
+	Channel string `json:"channel,omitempty" mapstructure:"channel"`
+
+	// KeepVersions is how many installed versions to retain per provider/binary
+	// for rollback. Zero uses the built-in default.
+	KeepVersions int `json:"keep_versions,omitempty" mapstructure:"keep_versions"`
+
+	// Providers holds per-provider version policy, keyed by provider name.
+	Providers map[string]ProviderVersionPolicy `json:"providers,omitempty" mapstructure:"providers"`
+}
+
+// ProviderVersionPolicy pins or floors a single provider's version.
+type ProviderVersionPolicy struct {
+	// Pin holds the provider at exactly this version.
+	Pin string `json:"pin,omitempty" mapstructure:"pin"`
+	// Min refuses any published version below this floor.
+	Min string `json:"min,omitempty" mapstructure:"min"`
 }

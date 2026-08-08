@@ -37,6 +37,11 @@ func main() {
 
 	// Check for self-update before anything else
 	if shouldTrySelfUpdate() {
+		// Apply the download-verification policy from config before updating, so
+		// a fleet configured with verify_signature: require rejects an unsigned
+		// binary here at startup, not only inside serve.
+		cmd.LoadUpdateVerification()
+
 		releaseURL := "https://releases.mondoo.com/cnspec/latest.json"
 		if updatesURL := config.GetUpdatesURL(); updatesURL != "" {
 			releaseURL = updatesURL + "/cnspec/latest.json"
@@ -62,6 +67,13 @@ func main() {
 
 	go metrics.Start()
 	cmd.Execute()
+
+	// Reaching here means the command completed without a fatal error (Execute
+	// calls os.Exit on failure). If this process is a freshly staged binary,
+	// confirm it healthy so the self-update crash-loop guard never rolls it
+	// back. serve confirms itself after its first scan cycle instead, since
+	// Execute does not return there.
+	selfupdate.ConfirmRunningVersion(cnspec.GetVersion())
 }
 
 // checkDeprecatedBinaryName checks if the tool is being run as 'cnquery' (via symlink,
