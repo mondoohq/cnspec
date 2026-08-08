@@ -1,0 +1,290 @@
+# Copyright Mondoo, Inc. 2024, 2026
+# SPDX-License-Identifier: BUSL-1.1
+
+# PROTOTYPE - AI service coverage concept (Wave 1)
+# Foundation-model SaaS (Anthropic Claude). Provider providers/claude v13.0.12 (GA).
+# Field references from providers/claude/resources/claude.lr. Organization
+# resources require an admin API key. SaaS admin settings have no Terraform
+# resource, so no IaC variants apply. Add verified compliance/* tags before GA.
+
+policies:
+  - uid: mondoo-anthropic-security
+    name: Mondoo Anthropic Claude Security
+    version: 0.1.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: claude,ai
+    require:
+      - provider: claude
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Harden Anthropic Claude organization identity, API keys, data residency, and audit visibility
+    docs:
+      desc: |
+        The Mondoo Anthropic Claude Security policy assesses the security posture
+        of an Anthropic organization through the Claude admin API: organization
+        membership and least privilege, API key lifecycle, workspace data
+        residency, and audit activity visibility. The organization checks require
+        an **admin API key**.
+
+        ## Scan an Anthropic organization
+
+        ```bash
+        cnspec scan claude -f mondoo-anthropic-security.mql.yaml
+        ```
+
+        Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
+    props:
+      - uid: mondooAnthropicMaxAdmins
+        title: Maximum number of organization admins permitted
+        mql: |
+          return 3
+    groups:
+      - title: Identity and Access Management
+        filters: asset.platform == "claude"
+        checks:
+          - uid: mondoo-anthropic-security-limit-org-admins
+          - uid: mondoo-anthropic-security-no-pending-admin-invites
+          - uid: mondoo-anthropic-security-no-expired-pending-invites
+      - title: Credential Hygiene
+        filters: asset.platform == "claude"
+        checks:
+          - uid: mondoo-anthropic-security-api-keys-expire
+          - uid: mondoo-anthropic-security-no-orphaned-active-keys
+      - title: Data Residency
+        filters: asset.platform == "claude"
+        checks:
+          - uid: mondoo-anthropic-security-workspace-inference-geo-pinned
+      - title: Audit and Monitoring
+        filters: asset.platform == "claude"
+        checks:
+          - uid: mondoo-anthropic-security-activity-log-available
+    scoring_system: highest impact
+
+queries:
+  - uid: mondoo-anthropic-security-limit-org-admins
+    title: Ensure the number of organization admins is limited
+    impact: 70
+    props:
+      - uid: mondooAnthropicMaxAdmins
+    mql: |
+      claude.organization.members.where(role == "admin").length <= props.mondooAnthropicMaxAdmins
+    docs:
+      desc: |
+        This check ensures the Anthropic organization keeps the number of admins
+        small. The admin role grants full control over members, workspaces, and
+        API keys, so a large admin set widens the blast radius of a compromised
+        or careless privileged account.
+
+        **Why this matters**
+
+        - **Least privilege:** Admin is the highest privilege level and should be rare.
+        - **Blast radius:** Each admin is another full-control path.
+      audit: |
+        ### Audit via Console
+
+        1. Open the Anthropic Console and go to **Settings > Members**.
+        2. Count the members whose role is **Admin**.
+
+        A passing result shows the admin count at or below the approved threshold; a failing result shows more.
+      remediation:
+        - id: console
+          desc: |
+            To reduce organization admins:
+
+            1. Open **Settings > Members** in the Anthropic Console.
+            2. Downgrade admins who do not need full control to `developer`, `billing`, or `user`.
+
+  - uid: mondoo-anthropic-security-no-pending-admin-invites
+    title: Ensure no pending invitations grant admin access
+    impact: 60
+    mql: |
+      claude.organization.invites.where(status == "pending" && role == "admin").length == 0
+    docs:
+      desc: |
+        This check ensures no outstanding invitation would grant the admin role
+        on acceptance. Unclaimed admin invites are an easily overlooked
+        privilege-escalation path.
+
+        **Why this matters**
+
+        - **Latent privilege:** A pending admin invite becomes full control the moment it is accepted.
+
+        **Risk mitigation**
+
+        - **Deferred elevation:** Invite at a low role and elevate after verification.
+      audit: |
+        ### Audit via Console
+
+        1. Open **Settings > Members** in the Anthropic Console.
+        2. Review pending invitations for any with the **Admin** role.
+
+        A passing result shows no pending admin invitations; a failing result shows one or more.
+      remediation:
+        - id: console
+          desc: |
+            To remove pending admin invitations:
+
+            1. Open **Settings > Members** in the Anthropic Console.
+            2. Revoke each pending invitation with the **Admin** role, or reissue it at a lower role.
+
+  - uid: mondoo-anthropic-security-no-expired-pending-invites
+    title: Ensure stale pending invitations are cleaned up
+    impact: 30
+    mql: |
+      claude.organization.invites.where(status == "pending").all(expiresAt > time.now)
+    docs:
+      desc: |
+        This check ensures pending invitations have not passed their expiration.
+        Expired-but-present invites are dead weight in the access model and blur
+        the true membership surface.
+
+        **Why this matters**
+
+        - **Accurate inventory:** Cleared invites keep the membership picture honest.
+      audit: |
+        ### Audit via Console
+
+        1. Open **Settings > Members** in the Anthropic Console.
+        2. Review pending invitations for any past their expiration date.
+
+        A passing result shows no expired pending invitations; a failing result shows one or more.
+      remediation:
+        - id: console
+          desc: |
+            To clean up stale invitations:
+
+            1. Open **Settings > Members** in the Anthropic Console.
+            2. Remove expired pending invitations and resend fresh ones where still needed.
+
+  - uid: mondoo-anthropic-security-api-keys-expire
+    title: Ensure active API keys have an expiration date
+    impact: 60
+    mql: |
+      claude.organization.apiKeys.where(status == "active").all(expiresAt != empty)
+    docs:
+      desc: |
+        This check ensures active API keys have an expiration date. Keys without
+        one remain valid indefinitely, extending the window in which a leaked
+        credential can be abused.
+
+        **Why this matters**
+
+        - **Exposure window:** Non-expiring keys never force re-issuance or review.
+
+        **Risk mitigation**
+
+        - **Forced rotation:** An expiration date guarantees periodic renewal.
+      audit: |
+        ### Audit via Console
+
+        1. Open **Settings > API keys** in the Anthropic Console.
+        2. For each active key, confirm an expiration date is set.
+
+        A passing result shows every active key with an expiration; a failing result shows a non-expiring active key.
+      remediation:
+        - id: console
+          desc: |
+            To add expirations to keys:
+
+            1. Create a replacement key with an expiration date in **Settings > API keys**.
+            2. Migrate consumers, then deactivate the non-expiring key.
+
+  - uid: mondoo-anthropic-security-no-orphaned-active-keys
+    title: Ensure active API keys have a known creator
+    impact: 40
+    mql: |
+      claude.organization.apiKeys.where(status == "active").all(createdBy != empty)
+    docs:
+      desc: |
+        This check ensures every active API key is attributable to a member. A
+        key whose creator cannot be resolved is unowned credential material that
+        no one is accountable for rotating or revoking.
+
+        **Why this matters**
+
+        - **Accountability:** Every credential needs an owner responsible for it.
+      audit: |
+        ### Audit via Console
+
+        1. Open **Settings > API keys** in the Anthropic Console.
+        2. Confirm each active key shows a creating member.
+
+        A passing result shows every active key attributed to a member; a failing result shows an unattributed key.
+      remediation:
+        - id: console
+          desc: |
+            To resolve unattributed keys:
+
+            1. Identify keys with no known creator in **Settings > API keys**.
+            2. Confirm whether they are still needed, then rotate them under a named owner or deactivate them.
+
+  - uid: mondoo-anthropic-security-workspace-inference-geo-pinned
+    title: Ensure workspaces pin a default inference region
+    impact: 40
+    mql: |
+      claude.organization.workspaces.where(archivedAt == empty).all(defaultInferenceGeo != empty)
+    docs:
+      desc: |
+        This check ensures each active workspace pins a default inference region.
+        Pinning constrains where prompts and completions are processed, enforcing
+        data-residency requirements. Workspaces without a pinned region may
+        process data outside an approved jurisdiction.
+
+        **Why this matters**
+
+        - **Data residency:** Regulated data must stay in approved regions.
+
+        **Risk mitigation**
+
+        - **Explicit geo:** A pinned region removes ambiguity about where data flows.
+      audit: |
+        ### Audit via Console
+
+        1. Open each workspace's settings in the Anthropic Console.
+        2. Confirm a default inference region is configured.
+
+        A passing result shows every active workspace with a pinned region; a failing result shows one without.
+      remediation:
+        - id: console
+          desc: |
+            To pin inference regions:
+
+            1. Open each active workspace's settings in the Anthropic Console.
+            2. Set a default inference region consistent with your data-residency obligations and restrict the allowed regions.
+
+  - uid: mondoo-anthropic-security-activity-log-available
+    title: Ensure organization activity logs are accessible
+    impact: 50
+    mql: |
+      claude.organization.activities.length > 0
+    docs:
+      desc: |
+        This check ensures the organization activity feed is reachable. The feed
+        records security-relevant events such as logins, permission changes, and
+        API key changes. An empty result indicates no privileged monitoring
+        identity is configured or activity is not being collected.
+
+        **Why this matters**
+
+        - **Detection:** Investigations depend on a retained activity record.
+
+        **Risk mitigation**
+
+        - **Central ingestion:** Shipping activity to a SIEM preserves it for review.
+      audit: |
+        ### Audit via Console
+
+        1. Open the organization's activity/audit view in the Anthropic Console.
+        2. Confirm activity events are present and an admin key exists for retrieval.
+
+        A passing result shows activity events available; a failing result shows none or no admin access.
+      remediation:
+        - id: console
+          desc: |
+            To enable activity visibility:
+
+            1. Provision an **admin API key** scoped for security monitoring.
+            2. Ingest the organization activity feed into your SIEM for retention and review.
