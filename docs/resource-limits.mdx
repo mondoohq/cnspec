@@ -1,0 +1,64 @@
+---
+title: Run cnspec in Resource-Limited Environments
+sidebar_label: Resource limits
+displayed_sidebar: cnspec
+description: How cnspec respects cgroup CPU and memory limits so it stays a good citizen in critical, resource-constrained environments
+image: /img/cnspec/mondoo-feature.jpg
+---
+
+When you run cnspec inside a resource-limited container (for example a
+Kubernetes pod with CPU and memory limits), it automatically constrains itself
+to the budget it was given so it can't destabilize the host or crowd out other
+workloads on the node.
+
+## CPU
+
+cnspec relies on the Go runtime, which already reads the cgroup CPU quota and
+sizes its scheduler (`GOMAXPROCS`) to match — and keeps it in sync if the quota
+changes at runtime. You don't need to configure anything. To pin it yourself,
+set the standard `GOMAXPROCS` environment variable.
+
+## Memory
+
+The Go garbage collector, on its own, only reacts to heap growth — not to the
+container's memory limit — which can lead to out-of-memory (OOM) kills. cnspec
+detects the cgroup memory limit and sets a soft memory target (`GOMEMLIMIT`) at
+about 90% of it, so the GC works to keep memory under the limit before the
+kernel steps in.
+
+Two caveats worth knowing:
+
+- **`GOMEMLIMIT` bounds only cnspec's own memory**, not the provider plugins,
+  which run as separate processes. To keep the whole group within budget, cnspec
+  also reduces how many providers it runs concurrently based on the detected
+  memory limit (see [Concurrency](#concurrency) below).
+- **On very small containers (under 64 MiB) cnspec does not set `GOMEMLIMIT`**,
+  because a soft limit that close to the live heap makes the GC thrash. Set
+  `GOMEMLIMIT` yourself if you want a limit there anyway.
+
+## Concurrency
+
+By default cnspec connects to up to 50 assets (and therefore provider
+subprocesses) at once. In a memory-limited cgroup it reduces this cap to fit the
+detected limit. Override it with `MONDOO_MAX_PROVIDER_CONNECTIONS`.
+
+The `--parallelism` flag on `cnspec scan` separately controls how many assets
+are *scanned* in parallel (default 1).
+
+## Failure reporting
+
+When individual assets fail to scan, connect, or be discovered — common when
+scanning a large or degraded fleet — cnspec records the failure locally and,
+when connected to Mondoo Platform, also reports it upstream. These upstream
+reports are sent in the background with a bounded rate, so failure telemetry
+never slows or stalls the scan itself, even when many assets fail at once.
+
+## Environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `MONDOO_DISABLE_AUTO_RESOURCE_LIMITS` | unset | Set to `1`/`true` to disable automatic `GOMEMLIMIT` tuning. |
+| `MONDOO_MEMORY_LIMIT_HEADROOM` | `0.9` | Fraction of the cgroup memory limit used as the `GOMEMLIMIT` target. Accepts a value in `(0, 1]`. |
+| `MONDOO_MAX_PROVIDER_CONNECTIONS` | `50` (scaled down by memory) | Maximum number of assets connected at once. An explicit value always wins. |
+| `GOMEMLIMIT` | unset | Standard Go soft memory limit. When set, cnspec does not override it. |
+| `GOMAXPROCS` | unset | Standard Go CPU limit. When set, the runtime does not override it. |

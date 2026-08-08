@@ -28,6 +28,23 @@ func clearGomemlimit(t *testing.T) {
 	})
 }
 
+func TestMemoryHeadroom(t *testing.T) {
+	t.Run("valid override", func(t *testing.T) {
+		t.Setenv(EnvMemoryHeadroom, "0.75")
+		assert.Equal(t, 0.75, memoryHeadroom())
+	})
+	t.Run("full at 1.0", func(t *testing.T) {
+		t.Setenv(EnvMemoryHeadroom, "1.0")
+		assert.Equal(t, 1.0, memoryHeadroom())
+	})
+	for _, bad := range []string{"0", "-0.5", "1.5", "abc", ""} {
+		t.Run("invalid falls back: "+bad, func(t *testing.T) {
+			t.Setenv(EnvMemoryHeadroom, bad)
+			assert.Equal(t, defaultMemoryHeadroom, memoryHeadroom())
+		})
+	}
+}
+
 func TestApplyMemory(t *testing.T) {
 	const gib = int64(1) << 30
 
