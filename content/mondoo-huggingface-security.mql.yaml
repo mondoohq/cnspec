@@ -1,0 +1,190 @@
+# Copyright Mondoo, Inc. 2024, 2026
+# SPDX-License-Identifier: BUSL-1.1
+
+# PROTOTYPE - AI service coverage concept (Wave 1)
+# Model hub / ML platform archetype. Provider providers/huggingface v13.1.12 (GA).
+# Field references from providers/huggingface/resources/huggingface.lr. The
+# provider exposes only the current auth token (huggingface.user.accessToken).
+# SaaS settings have no Terraform resource, so no IaC variants apply.
+
+policies:
+  - uid: mondoo-huggingface-security
+    name: Mondoo Hugging Face Security
+    version: 0.1.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: huggingface,ai
+    require:
+      - provider: huggingface
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Harden Hugging Face access tokens, organization governance, webhooks, and model supply chain
+    docs:
+      desc: |
+        The Mondoo Hugging Face Security policy assesses the security posture of a
+        Hugging Face account and its organizations: credential scoping of the
+        access token in use, organization governance (Enterprise controls),
+        webhook transport security, and model supply-chain hygiene.
+
+        ## Scan a Hugging Face account
+
+        ```bash
+        cnspec scan huggingface -f mondoo-huggingface-security.mql.yaml
+        ```
+
+        Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
+    groups:
+      - title: Credential Hygiene
+        filters: asset.family.contains("huggingface")
+        checks:
+          - uid: mondoo-huggingface-security-access-token-fine-grained
+      - title: Organization Governance
+        filters: asset.family.contains("huggingface")
+        checks:
+          - uid: mondoo-huggingface-security-org-enterprise
+      - title: Integrations
+        filters: asset.family.contains("huggingface")
+        checks:
+          - uid: mondoo-huggingface-security-webhooks-use-https
+      - title: Model Supply Chain
+        filters: asset.family.contains("huggingface")
+        checks:
+          - uid: mondoo-huggingface-security-no-disabled-models
+    scoring_system: highest impact
+
+queries:
+  - uid: mondoo-huggingface-security-access-token-fine-grained
+    title: Ensure the access token uses fine-grained permissions
+    impact: 70
+    mql: |
+      huggingface.user.accessToken.role == "fineGrained"
+    docs:
+      desc: |
+        This check ensures the access token in use is fine-grained. Classic
+        `read` and especially `write` tokens grant broad, account-wide access;
+        fine-grained tokens scope access to specific repositories and actions, so
+        a leaked token exposes far less.
+
+        **Why this matters**
+
+        - **Least privilege:** Fine-grained scoping limits what a leaked token can do.
+
+        **Risk mitigation**
+
+        - **Narrow blast radius:** A compromised scoped token cannot touch unrelated repos.
+      audit: |
+        ### Audit via Console
+
+        1. Open **Settings > Access Tokens** on the Hugging Face website.
+        2. Confirm the token used for automation is a **Fine-grained** token, not a classic read/write token.
+
+        A passing result shows a fine-grained token; a failing result shows a classic read or write token.
+      remediation:
+        - id: console
+          desc: |
+            To move to a fine-grained token:
+
+            1. In **Settings > Access Tokens**, create a fine-grained token limited to the repositories and permissions the workload needs.
+            2. Migrate consumers to it and revoke the broad classic token.
+    refs:
+      - url: https://huggingface.co/docs/hub/security-tokens
+        title: Hugging Face user access tokens
+
+  - uid: mondoo-huggingface-security-org-enterprise
+    title: Ensure organizations use Enterprise governance controls
+    impact: 40
+    mql: |
+      huggingface.organizations.all(isEnterprise == true)
+    docs:
+      desc: |
+        This check ensures organizations are on the Enterprise tier, which
+        unlocks governance controls such as SSO, audit logging, and resource-group
+        access management. Lower tiers lack the centralized identity and audit
+        capabilities expected for proprietary models and datasets.
+
+        **Why this matters**
+
+        - **Governance:** SSO and audit logging require the Enterprise tier.
+      audit: |
+        ### Audit via Console
+
+        1. Open each organization's **Settings** on the Hugging Face website.
+        2. Confirm the organization is on the **Enterprise** plan with SSO and audit logging enabled.
+
+        A passing result shows Enterprise governance; a failing result shows a lower tier.
+      remediation:
+        - id: console
+          desc: |
+            To enable Enterprise governance:
+
+            1. Upgrade organizations that host proprietary or regulated assets to the **Enterprise** tier.
+            2. Enable SSO and audit logging in the organization settings.
+
+  - uid: mondoo-huggingface-security-webhooks-use-https
+    title: Ensure webhooks deliver over HTTPS
+    impact: 50
+    mql: |
+      huggingface.webhooks.all(webhookUrl == /^https/)
+    docs:
+      desc: |
+        This check ensures webhooks deliver over HTTPS. Webhooks carry repository
+        events and can include secrets in headers; a plaintext HTTP target
+        exposes that traffic to interception and tampering.
+
+        **Why this matters**
+
+        - **Confidentiality:** HTTP delivery leaks event payloads and secrets.
+
+        **Risk mitigation**
+
+        - **Encrypted transport:** HTTPS protects webhook traffic in transit.
+      audit: |
+        ### Audit via Console
+
+        1. Open **Settings > Webhooks** on the Hugging Face website.
+        2. Confirm each webhook target URL begins with `https://`.
+
+        A passing result shows only HTTPS targets; a failing result shows an HTTP target.
+      remediation:
+        - id: console
+          desc: |
+            To secure webhook delivery:
+
+            1. Reconfigure each webhook to an HTTPS endpoint in **Settings > Webhooks**.
+            2. Rotate any webhook secret previously transmitted over HTTP.
+
+  - uid: mondoo-huggingface-security-no-disabled-models
+    title: Ensure no account models have been disabled by Hugging Face
+    impact: 60
+    mql: |
+      huggingface.models.where(disabled == true).length == 0
+    docs:
+      desc: |
+        This check ensures no models in the account have been disabled by Hugging
+        Face. Hugging Face disables repositories that violate policy or are
+        flagged for malware or abuse; a disabled model signals a supply-chain or
+        compliance problem to investigate before the artifact is used downstream.
+
+        **Why this matters**
+
+        - **Supply chain:** A disabled model may be malicious or non-compliant.
+
+        **Risk mitigation**
+
+        - **Early containment:** Investigating promptly prevents downstream reuse.
+      audit: |
+        ### Audit via Console
+
+        1. Open the account's or organization's model repositories on the Hugging Face website.
+        2. Look for any repository marked **disabled**.
+
+        A passing result shows no disabled models; a failing result shows one or more.
+      remediation:
+        - id: console
+          desc: |
+            To handle a disabled model:
+
+            1. Investigate why Hugging Face disabled the repository.
+            2. Remove it from any pipelines that reference it and confirm no downstream system pulled the artifact while it was live.
