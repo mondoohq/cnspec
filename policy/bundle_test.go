@@ -870,9 +870,17 @@ queries:
 	require.Len(t, policyProp.For, 2)
 
 	require.Len(t, b.Queries, 2)
-	for i, query := range b.Queries {
+	// policyProp.For (built from group declaration order) and b.Queries (the
+	// compiled bundle's query slice) are not guaranteed to share an order, so
+	// compare the referenced property MRNs as a set rather than positionally.
+	forMrns := map[string]bool{}
+	for _, ref := range policyProp.For {
+		forMrns[ref.Mrn] = true
+	}
+	for _, query := range b.Queries {
 		require.Len(t, query.Props, 1, "query %s has no property", query.Mrn)
-		require.Equal(t, policyProp.For[i].Mrn, query.Props[0].Mrn)
 		require.Equal(t, string(llxtypes.String), query.Props[0].Type)
+		require.True(t, forMrns[query.Props[0].Mrn],
+			"query %s prop %s not referenced by policy prop.For", query.Mrn, query.Props[0].Mrn)
 	}
 }
