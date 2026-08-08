@@ -36,22 +36,68 @@ func key(m Model, t tea.KeyType) Model {
 	return nm.(Model)
 }
 
+// openSearch selects the "Search all connectors" home tile so the connector
+// picker sees the whole catalog, mirroring what a user does from the landing
+// screen.
+func openSearch(m Model) Model {
+	for i, t := range m.homeTiles {
+		if t.key == tileSearch {
+			m.homeCursor = i
+			break
+		}
+	}
+	return key(m, tea.KeyEnter)
+}
+
 func TestFilterNarrowsResults(t *testing.T) {
-	m := NewModel(sampleCatalog())
+	m := openSearch(NewModel(sampleCatalog()))
 	m = typeString(m, "aws")
 	if len(m.filtered) != 1 || m.filtered[0].Name != "aws" {
 		t.Fatalf("expected only aws to match, got %d results", len(m.filtered))
 	}
 
-	m2 := NewModel(sampleCatalog())
+	m2 := openSearch(NewModel(sampleCatalog()))
 	m2 = typeString(m2, "database")
 	if len(m2.filtered) != 1 || m2.filtered[0].Name != "mongo" {
 		t.Fatalf("expected category search to find mongo, got %d results", len(m2.filtered))
 	}
 }
 
-func TestFullFlowProducesArgs(t *testing.T) {
+func TestHomeCategoryTileFiltersCatalog(t *testing.T) {
 	m := NewModel(sampleCatalog())
+	for i, tile := range m.homeTiles {
+		if tile.key == catCloud {
+			m.homeCursor = i
+		}
+	}
+	m = key(m, tea.KeyEnter)
+	if m.step != stepConnector || m.categoryFilter != catCloud {
+		t.Fatalf("expected cloud-filtered connector step, got step=%d filter=%q", m.step, m.categoryFilter)
+	}
+	if len(m.filtered) != 1 || m.filtered[0].Name != "aws" {
+		t.Fatalf("expected only cloud connectors, got %d", len(m.filtered))
+	}
+}
+
+func TestSkillsTileOpensSkills(t *testing.T) {
+	m := NewModel(sampleCatalog())
+	for i, tile := range m.homeTiles {
+		if tile.key == tileSkills {
+			m.homeCursor = i
+		}
+	}
+	m = key(m, tea.KeyEnter)
+	if m.step != stepSkills {
+		t.Fatalf("expected skills step, got %d", m.step)
+	}
+	m = key(m, tea.KeyEsc)
+	if m.step != stepHome {
+		t.Fatalf("expected esc to return home, got %d", m.step)
+	}
+}
+
+func TestFullFlowProducesArgs(t *testing.T) {
+	m := openSearch(NewModel(sampleCatalog()))
 	m = typeString(m, "aws")
 	m = key(m, tea.KeyEnter) // select connector -> action step
 	if m.step != stepAction {
@@ -91,7 +137,7 @@ func TestActionFilteringForConnector(t *testing.T) {
 }
 
 func TestExtraArgsTokenized(t *testing.T) {
-	m := NewModel(sampleCatalog())
+	m := openSearch(NewModel(sampleCatalog()))
 	m = typeString(m, "ssh")
 	m = key(m, tea.KeyEnter) // -> action
 	m = key(m, tea.KeyEnter) // scan -> confirm
@@ -110,11 +156,15 @@ func TestTokenizeQuotes(t *testing.T) {
 }
 
 func TestBackNavigation(t *testing.T) {
-	m := NewModel(sampleCatalog())
+	m := openSearch(NewModel(sampleCatalog()))
 	m = typeString(m, "aws")
 	m = key(m, tea.KeyEnter) // action
 	m = key(m, tea.KeyEsc)   // back to connector
 	if m.step != stepConnector {
 		t.Fatalf("expected to return to connector step, got %d", m.step)
+	}
+	m = key(m, tea.KeyEsc) // back to home
+	if m.step != stepHome {
+		t.Fatalf("expected to return to home, got %d", m.step)
 	}
 }

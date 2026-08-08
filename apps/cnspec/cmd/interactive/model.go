@@ -8,42 +8,56 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // step is the current screen in the launcher wizard.
 type step int
 
 const (
-	stepConnector step = iota // pick what to connect to
+	stepHome      step = iota // use-case landing screen
+	stepConnector             // pick what to connect to
 	stepAction                // pick what to do with it
 	stepConfirm               // review + optional extra args, then launch
+	stepSkills                // AI-agent skills highlight
 )
 
-// Palette lifted from cli/theme/colors (ANSI-256) so the launcher matches the
-// rest of the cnspec CLI without pulling termenv into lipgloss.
-var (
-	colPrimary   = lipgloss.Color("75")  // blue
-	colSecondary = lipgloss.Color("170") // purple/pink (matches list selection)
-	colDisabled  = lipgloss.Color("248") // gray
-	colSuccess   = lipgloss.Color("78")  // green
-	colCommand   = lipgloss.Color("44")  // cyan
-	colWarn      = lipgloss.Color("214") // amber
+type Model struct {
+	catalog   []Connector
+	homeTiles []homeTile
 
-	styleTitle    = lipgloss.NewStyle().Bold(true).Foreground(colPrimary)
-	styleTagline  = lipgloss.NewStyle().Foreground(colDisabled)
-	styleHeader   = lipgloss.NewStyle().Bold(true).Foreground(colSecondary).MarginTop(1)
-	styleCursor   = lipgloss.NewStyle().Bold(true).Foreground(colSecondary)
-	styleItem     = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	styleItemDesc = lipgloss.NewStyle().Foreground(colDisabled)
-	styleSelName  = lipgloss.NewStyle().Bold(true).Foreground(colSecondary)
-	styleBadge    = lipgloss.NewStyle().Foreground(colSuccess)
-	styleBadgeOff = lipgloss.NewStyle().Foreground(colDisabled)
-	styleHelp     = lipgloss.NewStyle().Foreground(colDisabled).MarginTop(1)
-	styleCommand  = lipgloss.NewStyle().Bold(true).Foreground(colCommand)
-	styleCount    = lipgloss.NewStyle().Foreground(colDisabled)
-	styleWarn     = lipgloss.NewStyle().Foreground(colWarn)
-)
+	step   step
+	search textinput.Model
+
+	// home
+	homeCursor int
+
+	// derived list state (stepConnector)
+	categoryFilter string // when navigating in from a use-case tile
+	filtered       []Connector
+	rows           []displayRow
+	selectable     []int
+	cursor         int
+	offset         int
+
+	// selection
+	connector Connector
+	actions   []Action
+	actionCur int
+
+	// confirm step
+	extra textinput.Model
+
+	// skills step
+	skillCursor int
+
+	width  int
+	height int
+
+	// output
+	result   []string
+	launched bool
+	aborted  bool
+}
 
 type rowKind int
 
@@ -54,59 +68,28 @@ const (
 
 type displayRow struct {
 	kind    rowKind
-	text    string // header title
-	connIdx int    // index into model.filtered, for rowItem
-}
-
-// Model is the bubbletea model for the interactive launcher.
-type Model struct {
-	catalog []Connector
-
-	step   step
-	search textinput.Model
-
-	// derived list state (stepConnector)
-	filtered   []Connector
-	rows       []displayRow // header + item rows for rendering
-	selectable []int        // indices into rows that are selectable items
-	cursor     int          // index into selectable
-	offset     int          // first visible row index (windowing)
-
-	// selection
-	connector Connector
-	actions   []Action
-	actionCur int
-
-	// confirm step
-	extra textinput.Model
-
-	width  int
-	height int
-
-	// output
-	result   []string // final args, e.g. ["scan", "aws", "..."]
-	launched bool
-	aborted  bool
+	text    string
+	connIdx int
 }
 
 // NewModel builds a launcher model over the given catalog.
 func NewModel(catalog []Connector) Model {
 	s := textinput.New()
-	s.Placeholder = "type to filter (e.g. aws, ssh, kubernetes, database)"
-	s.Prompt = "  search: "
-	s.Focus()
+	s.Placeholder = "type to filter (e.g. aws, ssh, kubernetes, openai)"
+	s.Prompt = "  ⌕ "
 	s.CharLimit = 64
 
 	e := textinput.New()
-	e.Prompt = "  args: "
+	e.Prompt = "  ❯ "
 	e.CharLimit = 256
 
 	m := Model{
-		catalog: catalog,
-		search:  s,
-		extra:   e,
-		width:   80,
-		height:  24,
+		catalog:   catalog,
+		homeTiles: buildHomeTiles(catalog),
+		search:    s,
+		extra:     e,
+		width:     84,
+		height:    30,
 	}
 	m.refilter()
 	return m
@@ -114,19 +97,22 @@ func NewModel(catalog []Connector) Model {
 
 func (m Model) Init() tea.Cmd { return textinput.Blink }
 
-// refilter recomputes the filtered list and display rows from the search text.
+// refilter recomputes the filtered list and display rows from the search text
+// and the active category filter.
 func (m *Model) refilter() {
 	query := strings.ToLower(strings.TrimSpace(m.search.Value()))
 	tokens := strings.Fields(query)
 
 	m.filtered = m.filtered[:0]
 	for _, c := range m.catalog {
+		if m.categoryFilter != "" && c.Category != m.categoryFilter {
+			continue
+		}
 		if matchesTokens(c.searchText(), tokens) {
 			m.filtered = append(m.filtered, c)
 		}
 	}
 
-	// Build header + item rows grouped by category in canonical order.
 	m.rows = m.rows[:0]
 	m.selectable = m.selectable[:0]
 	for _, cat := range categoryOrder {
@@ -164,10 +150,8 @@ func matchesTokens(haystack string, tokens []string) bool {
 	return true
 }
 
-// visibleRows is how many list rows fit given the terminal height, leaving
-// room for header, search, details and help.
 func (m Model) visibleRows() int {
-	v := m.height - 11
+	v := m.height - 12
 	if v < 4 {
 		return 4
 	}
@@ -188,7 +172,6 @@ func (m *Model) moveCursor(delta int) {
 	m.ensureVisible()
 }
 
-// ensureVisible scrolls the window so the current selection is on screen.
 func (m *Model) ensureVisible() {
 	if len(m.selectable) == 0 {
 		return
@@ -197,7 +180,6 @@ func (m *Model) ensureVisible() {
 	vis := m.visibleRows()
 	if sel < m.offset {
 		m.offset = sel
-		// pull in the category header just above, if any
 		if m.offset > 0 && m.rows[m.offset-1].kind == rowHeader {
 			m.offset--
 		}
@@ -228,22 +210,75 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch m.step {
+		case stepHome:
+			return m.updateHome(msg)
 		case stepConnector:
 			return m.updateConnector(msg)
 		case stepAction:
 			return m.updateAction(msg)
 		case stepConfirm:
 			return m.updateConfirm(msg)
+		case stepSkills:
+			return m.updateSkills(msg)
 		}
 	}
 	return m, nil
 }
 
-func (m Model) updateConnector(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updateHome(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "ctrl+c", "esc":
+	case "ctrl+c", "esc", "q":
 		m.aborted = true
 		return m, tea.Quit
+	case "up", "k", "ctrl+p":
+		if m.homeCursor > 0 {
+			m.homeCursor--
+		}
+		return m, nil
+	case "down", "j", "ctrl+n":
+		if m.homeCursor < len(m.homeTiles)-1 {
+			m.homeCursor++
+		}
+		return m, nil
+	case "enter", "right", "l":
+		return m.selectHomeTile()
+	}
+	return m, nil
+}
+
+func (m Model) selectHomeTile() (tea.Model, tea.Cmd) {
+	if m.homeCursor < 0 || m.homeCursor >= len(m.homeTiles) {
+		return m, nil
+	}
+	tile := m.homeTiles[m.homeCursor]
+	switch tile.key {
+	case tileSkills:
+		m.step = stepSkills
+		m.skillCursor = 0
+		return m, nil
+	case tileSearch:
+		m.categoryFilter = ""
+	default:
+		m.categoryFilter = tile.key
+	}
+	m.step = stepConnector
+	m.search.SetValue("")
+	m.search.Focus()
+	m.cursor = 0
+	m.refilter()
+	m.ensureVisible()
+	return m, textinput.Blink
+}
+
+func (m Model) updateConnector(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		m.aborted = true
+		return m, tea.Quit
+	case "esc":
+		m.step = stepHome
+		m.search.Blur()
+		return m, nil
 	case "up", "ctrl+p":
 		m.moveCursor(-1)
 		return m, nil
@@ -282,7 +317,8 @@ func (m Model) updateAction(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "esc", "left", "h":
 		m.step = stepConnector
-		return m, nil
+		m.search.Focus()
+		return m, textinput.Blink
 	case "up", "k", "ctrl+p":
 		if m.actionCur > 0 {
 			m.actionCur--
@@ -322,11 +358,30 @@ func (m Model) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// argPlaceholder derives a helpful placeholder for the extra-args input from
-// the connector's usage hint and the chosen action.
+func (m Model) updateSkills(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		m.aborted = true
+		return m, tea.Quit
+	case "esc", "left", "h":
+		m.step = stepHome
+		return m, nil
+	case "up", "k", "ctrl+p":
+		if m.skillCursor > 0 {
+			m.skillCursor--
+		}
+		return m, nil
+	case "down", "j", "ctrl+n":
+		if m.skillCursor < len(Skills)-1 {
+			m.skillCursor++
+		}
+		return m, nil
+	}
+	return m, nil
+}
+
+// argPlaceholder derives a helpful placeholder for the extra-args input.
 func argPlaceholder(c Connector, a Action) string {
-	// The part of Use after the connector word is the argument hint, e.g.
-	// "ssh user@host" -> "user@host".
 	hint := strings.TrimSpace(strings.TrimPrefix(c.Use, c.Name))
 	switch a.Name {
 	case "run":
