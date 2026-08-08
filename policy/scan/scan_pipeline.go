@@ -57,11 +57,7 @@ func getMaxConnections() int {
 
 	maxConn := defaultMaxConnections
 	if limit := syslimits.Detect().MemoryLimitBytes; limit > 0 {
-		budget := int(limit / estimatedMemoryPerConnectionBytes)
-		if budget < 1 {
-			budget = 1
-		}
-		if budget < maxConn {
+		if budget := connectionsForMemory(limit); budget < maxConn {
 			log.Info().
 				Uint64("memory_limit_bytes", limit).
 				Int("max_connections", budget).
@@ -71,6 +67,24 @@ func getMaxConnections() int {
 		}
 	}
 	return maxConn
+}
+
+// connectionsForMemory converts a cgroup memory limit into the number of
+// concurrent provider connections that should fit within it, using a
+// conservative per-connection estimate. It never returns less than 1 and never
+// more than defaultMaxConnections. A limit of 0 (unlimited) yields the default.
+func connectionsForMemory(limitBytes uint64) int {
+	if limitBytes == 0 {
+		return defaultMaxConnections
+	}
+	budget := int(limitBytes / estimatedMemoryPerConnectionBytes)
+	if budget < 1 {
+		budget = 1
+	}
+	if budget > defaultMaxConnections {
+		budget = defaultMaxConnections
+	}
+	return budget
 }
 
 // ---------------------------------------------------------------------------

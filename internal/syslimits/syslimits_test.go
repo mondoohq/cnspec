@@ -113,6 +113,43 @@ func TestMemLimitWithHeadroom(t *testing.T) {
 	}
 }
 
+func TestDetectFrom(t *testing.T) {
+	const mib = 1024 * 1024
+	tests := []struct {
+		fixture   string
+		wantCPU   float64 // 0 => no CPU limit expected
+		wantBytes uint64  // 0 => no memory limit expected
+	}{
+		{"v2-quota", 2.0, 512 * mib},
+		{"v2-unlimited", 0, 0},
+		{"v2-nested", 1.0, 256 * mib}, // tightest limit is on the ancestor cgroup
+		{"v1-quota", 1.5, 1024 * mib},
+		{"v1-unlimited", 0, 0},
+		{"empty", 0, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.fixture, func(t *testing.T) {
+			root := filepath.Join("testdata", tt.fixture)
+			proc := filepath.Join(root, "proc.cgroup")
+			got := detectFrom(root, proc)
+
+			if tt.wantCPU == 0 {
+				assert.Zero(t, got.CPUQuota, "expected no CPU limit")
+			} else {
+				assert.InDelta(t, tt.wantCPU, got.CPUQuota, 0.0001)
+				assert.NotEmpty(t, got.CPUSource)
+			}
+
+			if tt.wantBytes == 0 {
+				assert.Zero(t, got.MemoryLimitBytes, "expected no memory limit")
+			} else {
+				assert.Equal(t, tt.wantBytes, got.MemoryLimitBytes)
+				assert.NotEmpty(t, got.MemorySource)
+			}
+		})
+	}
+}
+
 func TestCandidateDirs(t *testing.T) {
 	got := candidateDirs("/sys/fs/cgroup", "/kubepods/pod123/container456")
 	want := []string{

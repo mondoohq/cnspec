@@ -11,41 +11,39 @@ import (
 )
 
 const (
-	cgroupV2Mount        = "/sys/fs/cgroup"
-	cgroupV1CPUMount     = "/sys/fs/cgroup/cpu"
-	cgroupV1CPUAcctMount = "/sys/fs/cgroup/cpu,cpuacct"
-	cgroupV1MemoryMount  = "/sys/fs/cgroup/memory"
-	procSelfCgroup       = "/proc/self/cgroup"
+	defaultCgroupRoot     = "/sys/fs/cgroup"
+	defaultProcSelfCgroup = "/proc/self/cgroup"
 )
 
-// isCgroupV2 reports whether the host uses the cgroup v2 unified hierarchy.
-// The presence of cgroup.controllers at the mount root is the canonical signal.
-func isCgroupV2() bool {
-	_, err := os.Stat(filepath.Join(cgroupV2Mount, "cgroup.controllers"))
+// isCgroupV2 reports whether the cgroup mount at root uses the v2 unified
+// hierarchy. The presence of cgroup.controllers at the root is the canonical
+// signal.
+func isCgroupV2(root string) bool {
+	_, err := os.Stat(filepath.Join(root, "cgroup.controllers"))
 	return err == nil
 }
 
-func detectCPU() (float64, string, bool) {
-	if isCgroupV2() {
-		if q, ok := detectCPUV2(); ok {
+func detectCPU(root, procPath string) (float64, string, bool) {
+	if isCgroupV2(root) {
+		if q, ok := detectCPUV2(root, procPath); ok {
 			return q, "cgroupv2 cpu.max", true
 		}
 		return 0, "", false
 	}
-	if q, ok := detectCPUV1(); ok {
+	if q, ok := detectCPUV1(root, procPath); ok {
 		return q, "cgroupv1 cpu.cfs_quota_us", true
 	}
 	return 0, "", false
 }
 
-func detectMemory() (uint64, string, bool) {
-	if isCgroupV2() {
-		if b, ok := detectMemoryV2(); ok {
+func detectMemory(root, procPath string) (uint64, string, bool) {
+	if isCgroupV2(root) {
+		if b, ok := detectMemoryV2(root, procPath); ok {
 			return b, "cgroupv2 memory.max", true
 		}
 		return 0, "", false
 	}
-	if b, ok := detectMemoryV1(); ok {
+	if b, ok := detectMemoryV1(root, procPath); ok {
 		return b, "cgroupv1 memory.limit_in_bytes", true
 	}
 	return 0, "", false
@@ -78,10 +76,11 @@ func candidateDirs(mount, relPath string) []string {
 
 // ---- cgroup v2 ----
 
-// cgroupV2RelPath reads the process's cgroup v2 path from /proc/self/cgroup.
-// The v2 entry has the form "0::/some/path". Falls back to the root.
-func cgroupV2RelPath() string {
-	data, err := os.ReadFile(procSelfCgroup)
+// cgroupV2RelPath reads the process's cgroup v2 path from procPath
+// (/proc/self/cgroup). The v2 entry has the form "0::/some/path". Falls back to
+// the root.
+func cgroupV2RelPath(procPath string) string {
+	data, err := os.ReadFile(procPath)
 	if err != nil {
 		return "/"
 	}
@@ -94,10 +93,10 @@ func cgroupV2RelPath() string {
 	return "/"
 }
 
-func detectCPUV2() (float64, bool) {
+func detectCPUV2(root, procPath string) (float64, bool) {
 	var best float64
 	found := false
-	for _, dir := range candidateDirs(cgroupV2Mount, cgroupV2RelPath()) {
+	for _, dir := range candidateDirs(root, cgroupV2RelPath(procPath)) {
 		content, err := os.ReadFile(filepath.Join(dir, "cpu.max"))
 		if err != nil {
 			continue
@@ -133,10 +132,10 @@ func parseCPUMaxV2(content string) (float64, bool) {
 	return quota / period, true
 }
 
-func detectMemoryV2() (uint64, bool) {
+func detectMemoryV2(root, procPath string) (uint64, bool) {
 	var best uint64
 	found := false
-	for _, dir := range candidateDirs(cgroupV2Mount, cgroupV2RelPath()) {
+	for _, dir := range candidateDirs(root, cgroupV2RelPath(procPath)) {
 		content, err := os.ReadFile(filepath.Join(dir, "memory.max"))
 		if err != nil {
 			continue
@@ -154,9 +153,9 @@ func detectMemoryV2() (uint64, bool) {
 // ---- cgroup v1 ----
 
 // cgroupV1RelPath reads the process's cgroup path for a given v1 controller
-// from /proc/self/cgroup. Entries have the form "N:controller-list:/path".
-func cgroupV1RelPath(controller string) string {
-	data, err := os.ReadFile(procSelfCgroup)
+// from procPath. Entries have the form "N:controller-list:/path".
+func cgroupV1RelPath(procPath, controller string) string {
+	data, err := os.ReadFile(procPath)
 	if err != nil {
 		return "/"
 	}
@@ -174,12 +173,12 @@ func cgroupV1RelPath(controller string) string {
 	return "/"
 }
 
-func detectCPUV1() (float64, bool) {
-	mount := cgroupV1CPUMount
+func detectCPUV1(root, procPath string) (float64, bool) {
+	mount := filepath.Join(root, "cpu")
 	if _, err := os.Stat(mount); err != nil {
-		mount = cgroupV1CPUAcctMount
+		mount = filepath.Join(root, "cpu,cpuacct")
 	}
-	relPath := cgroupV1RelPath("cpu")
+	relPath := cgroupV1RelPath(procPath, "cpu")
 	var best float64
 	found := false
 	for _, dir := range candidateDirs(mount, relPath) {
@@ -212,11 +211,12 @@ func parseCPUV1(quotaStr, periodStr string) (float64, bool) {
 	return float64(quota) / float64(period), true
 }
 
-func detectMemoryV1() (uint64, bool) {
-	relPath := cgroupV1RelPath("memory")
+func detectMemoryV1(root, procPath string) (uint64, bool) {
+	mount := filepath.Join(root, "memory")
+	relPath := cgroupV1RelPath(procPath, "memory")
 	var best uint64
 	found := false
-	for _, dir := range candidateDirs(cgroupV1MemoryMount, relPath) {
+	for _, dir := range candidateDirs(mount, relPath) {
 		content, err := os.ReadFile(filepath.Join(dir, "memory.limit_in_bytes"))
 		if err != nil {
 			continue
