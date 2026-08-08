@@ -706,10 +706,17 @@ func topologicalSortQueries(queries []*Mquery) ([]*Mquery, error) {
 		queriesMap[q.Mrn] = q
 	}
 
-	// Topologically sort the queries
+	// Topologically sort the queries. Seed the DFS from the input slice, NOT
+	// the map: map iteration would make the compile order — and everything
+	// that accumulates in compile order, like a shared property's For list
+	// built by QueryPropsResolver — a per-run dice roll. The slice keeps the
+	// bundle's own order wherever the topology doesn't force otherwise.
 	sorted := &Mqueries{}
 	visited := map[string]struct{}{}
-	for _, q := range queriesMap {
+	for _, q := range queries {
+		if q == nil {
+			continue
+		}
 		err := topologicalSortQueriesDFS(q.Mrn, queriesMap, visited, sorted)
 		if err != nil {
 			return nil, err
