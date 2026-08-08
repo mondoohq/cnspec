@@ -82,4 +82,26 @@ func TestApplyMemory(t *testing.T) {
 		assert.False(t, res.MemoryLimitChanged)
 		assert.Equal(t, int64(math.MaxInt64), debug.SetMemoryLimit(-1))
 	})
+
+	t.Run("limit below floor is skipped to avoid GC thrash", func(t *testing.T) {
+		clearGomemlimit(t)
+		debug.SetMemoryLimit(math.MaxInt64)
+
+		var res Result
+		applyMemory(Limits{MemoryLimitBytes: minMemoryLimitBytes - 1, MemorySource: "test"}, &res)
+
+		assert.False(t, res.MemoryLimitChanged)
+		assert.Equal(t, int64(math.MaxInt64), debug.SetMemoryLimit(-1))
+	})
+
+	t.Run("limit at floor is applied", func(t *testing.T) {
+		clearGomemlimit(t)
+		debug.SetMemoryLimit(math.MaxInt64)
+
+		var res Result
+		applyMemory(Limits{MemoryLimitBytes: minMemoryLimitBytes, MemorySource: "test"}, &res)
+
+		assert.True(t, res.MemoryLimitChanged)
+		assert.Equal(t, memLimitWithHeadroom(minMemoryLimitBytes, defaultMemoryHeadroom), debug.SetMemoryLimit(-1))
+	})
 }
