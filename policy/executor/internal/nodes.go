@@ -4,6 +4,7 @@
 package internal
 
 import (
+	"sort"
 	"strings"
 	"sync"
 
@@ -477,7 +478,23 @@ func (nodeData *ReportingQueryNodeData) score() *policy.Score {
 	// errors of its own.
 	var err multierr.Errors
 	var foreignErr multierr.Errors
-	for _, dr := range nodeData.results {
+
+	// Iterate the results in sorted-checksum order, NOT map order: everything
+	// this loop accumulates positionally — the sub-error order inside the
+	// score's message (Deduplicate preserves input order), and which datapoint
+	// wins scoreFound when several carry a score — must come out identical on
+	// every run. Ranging over the map directly made the message of a
+	// multi-error check (e.g. three failing fdesetup calls) a per-run dice
+	// roll, which churns stored score rows and scan history on content that
+	// didn't change.
+	checksums := make([]string, 0, len(nodeData.results))
+	for checksum := range nodeData.results {
+		checksums = append(checksums, checksum)
+	}
+	sort.Strings(checksums)
+
+	for _, checksum := range checksums {
+		dr := nodeData.results[checksum]
 		cur := dr.value
 		if cur == nil {
 			allFound = false
