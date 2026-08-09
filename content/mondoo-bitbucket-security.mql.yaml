@@ -1,0 +1,465 @@
+# Copyright Mondoo, Inc. 2024, 2026
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: mondoo-bitbucket-security
+    name: Mondoo Bitbucket Security
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: bitbucket,saas
+    require:
+      - provider: bitbucket
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Secure Bitbucket Cloud workspace access, repository visibility, and branch protection settings
+    docs:
+      desc: |
+        The Mondoo Bitbucket Security policy identifies misconfigurations in Bitbucket Cloud workspaces that could expose source code to unauthorized access or leave critical branches unprotected against unreviewed or destructive changes. This policy helps organizations detect and remediate weaknesses before attackers can exploit them to read private source code, push unreviewed changes, or retain standing access through forgotten credentials.
+
+        This policy provides security checks across key Bitbucket Cloud areas:
+
+        - Workspace two-step verification and IP allowlisting
+        - Repository privacy settings
+        - Branch restrictions on the main branch (required approvals and force-push prevention)
+        - Deploy key hygiene
+        - Workspace administrator access
+
+        Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
+    groups:
+      - title: Bitbucket
+        filters: asset.platform == "bitbucket"
+        checks:
+          - uid: mondoo-bitbucket-security-workspace-two-step-verification-enforced
+          - uid: mondoo-bitbucket-security-workspace-ip-allowlist-enabled
+          - uid: mondoo-bitbucket-security-repository-restrict-public-access
+          - uid: mondoo-bitbucket-security-repository-branch-restriction-require-approvals
+          - uid: mondoo-bitbucket-security-repository-branch-restriction-block-force-push
+          - uid: mondoo-bitbucket-security-repository-deploykey-stale-reviewed
+          - uid: mondoo-bitbucket-security-workspace-admin-access-minimal
+queries:
+  # No Terraform remediation: two-step verification enforcement is a workspace-wide
+  # security setting managed through the Bitbucket UI or the workspace settings API.
+  # DrFaust92/terraform-provider-bitbucket does not expose a workspace resource
+  # attribute for it, so HCL cannot declare or enforce this setting.
+  - uid: mondoo-bitbucket-security-workspace-two-step-verification-enforced
+    title: Ensure the workspace enforces two-step verification for all members
+    impact: 85
+    mql: |
+      bitbucket.workspace.enforceTwoStepVerification == true
+    docs:
+      desc: |
+        This check ensures that the Bitbucket Cloud workspace requires two-step verification (2FA) for every member. Bitbucket lets individual members enable two-step verification on their own account, but leaves it optional workspace-wide unless a workspace owner turns on enforcement.
+
+        **Why this matters**
+
+        - **Credential stuffing resistance:** Passwords leaked from other services cannot be reused to access Bitbucket when a second factor is required.
+        - **Phishing protection:** Even if a member enters credentials on a fake login page, an attacker cannot complete sign-in without the second factor.
+        - **Source code protection:** Workspace members can read and clone private repositories, so a compromised account without 2FA is a direct path to source code exposure.
+        - **Compliance alignment:** Many frameworks require or recommend multi-factor authentication for accounts with access to source code and build systems.
+
+        **Risk mitigation**
+
+        - **Workspace-wide enforcement:** Requiring two-step verification at the workspace level protects every member instead of only those who opt in individually.
+        - **Reduced account takeover risk:** A mandatory second factor closes the most common path attackers use to convert a stolen password into repository access.
+      audit: |
+        ### Audit via Workspace Settings
+
+        1. Sign in to Bitbucket Cloud as a workspace owner.
+        2. Open **Workspace settings > Security** for the workspace.
+        3. Review the **Require two-step verification** setting.
+
+        A passing result shows two-step verification required for the workspace; a failing result shows the setting turned off.
+
+        ### Audit via API
+
+        Query the Bitbucket Cloud REST API and inspect the result:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $BITBUCKET_TOKEN" \
+          "https://api.bitbucket.org/2.0/workspaces/{workspace}"
+        ```
+
+        A passing response shows the workspace's two-step verification enforcement setting turned on; a failing response shows it turned off.
+      remediation:
+        - id: console
+          desc: |
+            To require two-step verification for the workspace using the Bitbucket Cloud console:
+
+            1. Sign in to Bitbucket Cloud as a workspace owner.
+            2. Click the workspace name and open **Settings**.
+            3. Under **Security**, select **Require two-step verification**.
+            4. Save the setting. Members who have not enabled two-step verification on their own account are prompted to set it up the next time they sign in.
+          # No Terraform remediation: DrFaust92/terraform-provider-bitbucket has no
+          # workspace resource that exposes two-step verification enforcement.
+    refs:
+      - url: https://support.atlassian.com/bitbucket-cloud/docs/enable-two-step-verification/
+        title: Enable two-step verification (workspace enforcement)
+  # No Terraform remediation: the IP allowlist is a workspace-wide security setting
+  # managed through the Bitbucket UI or the workspace settings API.
+  # DrFaust92/terraform-provider-bitbucket has no workspace resource attribute for it.
+  - uid: mondoo-bitbucket-security-workspace-ip-allowlist-enabled
+    title: Ensure the workspace restricts access with an IP allowlist
+    impact: 70
+    mql: |
+      bitbucket.workspace.ipAllowlistEnabled == true
+    docs:
+      desc: |
+        This check ensures that the Bitbucket Cloud workspace restricts access to a defined set of CIDR ranges through an IP allowlist. Bitbucket allows access from any network by default, so a workspace with sensitive repositories can be reached from anywhere a valid credential is used.
+
+        **Why this matters**
+
+        - **Stolen credential containment:** An IP allowlist blocks sign-in attempts from outside approved networks even when a valid password or token has been compromised.
+        - **Reduced attack surface:** Restricting the workspace to known office, VPN, or CI/CD egress ranges removes most of the internet as a viable attack path.
+        - **Defense in depth:** IP allowlisting complements two-step verification and API token controls rather than replacing them.
+        - **Source code protection:** Limiting network access reduces the exposure window for private repositories and build configuration.
+
+        **Risk mitigation**
+
+        - **Network-level enforcement:** Requiring connections to originate from approved CIDR ranges stops unauthorized access before authentication is even attempted.
+        - **Predictable access patterns:** A documented allowlist makes it straightforward to review which networks are trusted and to remove ranges that are no longer needed.
+      audit: |
+        ### Audit via Workspace Settings
+
+        1. Sign in to Bitbucket Cloud as a workspace owner.
+        2. Open **Workspace settings > Security > IP allowlist**.
+        3. Review whether the IP allowlist is enabled and which CIDR ranges are listed.
+
+        A passing result shows the IP allowlist enabled with the expected CIDR ranges; a failing result shows the allowlist disabled.
+
+        ### Audit via API
+
+        Query the Bitbucket Cloud REST API and inspect the result:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $BITBUCKET_TOKEN" \
+          "https://api.bitbucket.org/2.0/workspaces/{workspace}"
+        ```
+
+        A passing response shows the workspace's IP allowlist enforcement setting turned on; a failing response shows it turned off.
+      remediation:
+        - id: console
+          desc: |
+            To restrict workspace access with an IP allowlist using the Bitbucket Cloud console:
+
+            1. Sign in to Bitbucket Cloud as a workspace owner.
+            2. Click the workspace name and open **Settings > Security > IP allowlist**.
+            3. Add the CIDR ranges your organization connects from (office networks, VPN egress, CI/CD runners).
+            4. Enable the IP allowlist.
+          # No Terraform remediation: DrFaust92/terraform-provider-bitbucket has no
+          # workspace resource attribute for the IP allowlist.
+    refs:
+      - url: https://support.atlassian.com/bitbucket-cloud/docs/configure-ip-allowlist-for-requests/
+        title: Configure an IP allowlist for a workspace
+  - uid: mondoo-bitbucket-security-repository-restrict-public-access
+    title: Ensure repositories are private unless public access is intended
+    impact: 85
+    mql: |
+      bitbucket.workspace.repositories.all(isPrivate == true)
+    docs:
+      desc: |
+        This check ensures that every repository in the workspace is private rather than publicly readable. Bitbucket lets any workspace member create a public repository, so source code, configuration, and history can become visible to the entire internet without an explicit organizational decision.
+
+        **Why this matters**
+
+        - **Source code confidentiality:** A public repository can be cloned by anyone, exposing proprietary logic, internal tooling, and business context.
+        - **Secret exposure:** Public repository history can reveal accidentally committed credentials, API keys, or internal hostnames to anyone who searches or scans it.
+        - **Attack surface mapping:** Public code and issue trackers give attackers a detailed view of the technology stack and known weaknesses.
+        - **Unintended default:** Because privacy is set per repository, a single misconfigured repository can undo the protection applied everywhere else.
+
+        **Risk mitigation**
+
+        - **Default to private:** Treating every repository as private unless there is a documented reason for public access closes the most common accidental-exposure path.
+        - **Periodic review:** Regularly listing public repositories against an approved list catches repositories that were made public by mistake or should be reverted.
+      audit: |
+        ### Audit via Repository Settings
+
+        1. Sign in to Bitbucket Cloud as a workspace owner or admin.
+        2. Open **Workspace settings > Repositories** to list all repositories.
+        3. Review the privacy indicator for each repository.
+
+        A passing result shows every repository marked private; a failing result shows a repository marked public that is not on your approved public-repository list.
+
+        ### Audit via API
+
+        Query the Bitbucket Cloud REST API and inspect the result:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $BITBUCKET_TOKEN" \
+          "https://api.bitbucket.org/2.0/repositories/{workspace}"
+        ```
+
+        A passing response shows `is_private` set to `true` for every repository; a failing response shows a repository with `is_private` set to `false` that is not intentionally public.
+      remediation:
+        - id: console
+          desc: |
+            To make a repository private using the Bitbucket Cloud console:
+
+            1. Open the repository and select **Repository settings**.
+            2. Under **General**, enable **This is a private repository**.
+            3. Save the change.
+        - id: terraform
+          desc: |
+            To enforce repository privacy using Terraform with the `bitbucket_repository` resource:
+
+            ```hcl
+            resource "bitbucket_repository" "example" {
+              owner      = "acme-corp"
+              name       = "api-service"
+              is_private = true
+            }
+            ```
+    refs:
+      - url: https://support.atlassian.com/bitbucket-cloud/docs/set-repository-privacy-and-forking-options/
+        title: Set repository privacy and forking options
+  - uid: mondoo-bitbucket-security-repository-branch-restriction-require-approvals
+    title: Ensure the main branch requires approvals before merging
+    impact: 75
+    mql: |
+      bitbucket.workspace.repositories.all(
+        branchRestrictions.where(pattern == repository.mainBranch).any(kind == "require_approvals_to_merge" && minApprovals >= 1)
+      )
+    docs:
+      desc: |
+        This check ensures that the main branch of every repository has a branch restriction of kind `require_approvals_to_merge` with at least one required approval. Bitbucket allows pull requests to merge without any review unless a branch restriction explicitly requires approvals.
+
+        **Why this matters**
+
+        - **Peer review:** Requiring at least one approval ensures a second person reviews code before it reaches the main branch.
+        - **Malicious or accidental change detection:** A required reviewer is positioned to catch a harmful commit, whether introduced by a compromised account or an honest mistake, before it merges.
+        - **Change accountability:** An approval requirement creates a record of who reviewed and endorsed a change.
+        - **Consistent quality bar:** Enforcing review at the branch level applies to every contributor rather than relying on individual discipline.
+
+        **Risk mitigation**
+
+        - **Compromised account containment:** A required approval limits the damage an attacker with a stolen credential can do, since their changes cannot merge unreviewed.
+        - **Supply chain integrity:** Reviewed merges to the main branch reduce the chance that an unreviewed change reaches production or downstream consumers.
+      audit: |
+        ### Audit via Branch Restrictions
+
+        1. Sign in to Bitbucket Cloud as a workspace owner or repository admin.
+        2. Open the repository and go to **Repository settings > Branch restrictions**.
+        3. Review the restrictions applied to the main branch.
+
+        A passing result shows a restriction of kind **Require approval before merging** on the main branch with a minimum of one approval; a failing result shows no such restriction.
+
+        ### Audit via API
+
+        Query the Bitbucket Cloud REST API and inspect the result:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $BITBUCKET_TOKEN" \
+          "https://api.bitbucket.org/2.0/repositories/{workspace}/{repo_slug}/branch-restrictions"
+        ```
+
+        A passing response includes an entry with `kind` set to `require_approvals_to_merge`, `pattern` matching the main branch, and `value` (the minimum approval count) of `1` or more; a failing response has no such entry.
+      remediation:
+        - id: console
+          desc: |
+            To require approvals on the main branch using the Bitbucket Cloud console:
+
+            1. Open the repository and go to **Repository settings > Branch restrictions**.
+            2. Click **Add branch restriction**.
+            3. Set **Branch** to the repository's main branch and **Restriction** to **Require approval before merging**.
+            4. Set the minimum number of approvals to at least 1 and save.
+        - id: terraform
+          desc: |
+            To require approvals on the main branch using Terraform with the `bitbucket_branch_restriction` resource:
+
+            ```hcl
+            resource "bitbucket_branch_restriction" "require_approvals" {
+              owner      = "acme-corp"
+              repository = "api-service"
+              kind       = "require_approvals_to_merge"
+              pattern    = "main"
+              value      = 1
+            }
+            ```
+    refs:
+      - url: https://support.atlassian.com/bitbucket-cloud/kb/how-to-create-edit-branch-restrictions-in-bitbucket-cloud-repositories-via-api/
+        title: Create or edit branch restrictions via the API
+  - uid: mondoo-bitbucket-security-repository-branch-restriction-block-force-push
+    title: Ensure force pushes are blocked on the main branch
+    impact: 75
+    mql: |
+      bitbucket.workspace.repositories.all(
+        branchRestrictions.where(pattern == repository.mainBranch).any(kind == "force")
+      )
+    docs:
+      desc: |
+        This check ensures that the main branch of every repository has a branch restriction of kind `force` that prevents force pushes. Without this restriction, anyone with push access can rewrite the main branch's history, silently discarding commits that others depend on.
+
+        **Why this matters**
+
+        - **History integrity:** A force push can overwrite commits, hide evidence of a change, or remove commits other people have already based work on.
+        - **Audit trail preservation:** Rewritten history breaks the ability to trust commit logs during incident response or compliance review.
+        - **Compromised account containment:** An attacker with push access to the main branch could use a force push to remove security fixes or cover tracks.
+        - **Collaboration stability:** Force pushes to a shared branch can silently break other contributors' local clones and in-flight pull requests.
+
+        **Risk mitigation**
+
+        - **Non-destructive history:** Blocking force pushes on the main branch ensures changes can only be added, never used to erase prior commits.
+        - **Reliable rollback:** An append-only main branch history keeps rollback and audit procedures dependable.
+      audit: |
+        ### Audit via Branch Restrictions
+
+        1. Sign in to Bitbucket Cloud as a workspace owner or repository admin.
+        2. Open the repository and go to **Repository settings > Branch restrictions**.
+        3. Review the restrictions applied to the main branch.
+
+        A passing result shows a restriction of kind **Force push** on the main branch; a failing result shows no such restriction.
+
+        ### Audit via API
+
+        Query the Bitbucket Cloud REST API and inspect the result:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $BITBUCKET_TOKEN" \
+          "https://api.bitbucket.org/2.0/repositories/{workspace}/{repo_slug}/branch-restrictions"
+        ```
+
+        A passing response includes an entry with `kind` set to `force` and `pattern` matching the main branch; a failing response has no such entry.
+      remediation:
+        - id: console
+          desc: |
+            To block force pushes to the main branch using the Bitbucket Cloud console:
+
+            1. Open the repository and go to **Repository settings > Branch restrictions**.
+            2. Click **Add branch restriction**.
+            3. Set **Branch** to the repository's main branch and **Restriction** to **Force push**.
+            4. Save the restriction so no one can force push to that branch.
+        - id: terraform
+          desc: |
+            To block force pushes to the main branch using Terraform with the `bitbucket_branch_restriction` resource:
+
+            ```hcl
+            resource "bitbucket_branch_restriction" "block_force_push" {
+              owner      = "acme-corp"
+              repository = "api-service"
+              kind       = "force"
+              pattern    = "main"
+            }
+            ```
+    refs:
+      - url: https://support.atlassian.com/bitbucket-cloud/kb/how-to-create-edit-branch-restrictions-in-bitbucket-cloud-repositories-via-api/
+        title: Create or edit branch restrictions via the API
+  # No Terraform remediation: deploy key usage recency (lastUsed) is runtime API state
+  # reported by Bitbucket, not a Terraform-managed attribute. DrFaust92/terraform-provider-bitbucket
+  # can declare a deploy key's public key material but has no way to express or act on
+  # how recently it was used, so HCL/plan/state cannot evaluate or fix staleness.
+  - uid: mondoo-bitbucket-security-repository-deploykey-stale-reviewed
+    title: Ensure deploy keys are actively used or reviewed for removal
+    impact: 60
+    mql: |
+      bitbucket.workspace.repositories.all(
+        deployKeys.all(lastUsed != empty && time.now - lastUsed < 90 * time.day || lastUsed == empty && time.now - createdOn < 90 * time.day)
+      )
+    docs:
+      desc: |
+        This check ensures that every deploy key registered on a repository has been used within the last 90 days, or was added within the last 90 days if it has never been used. Deploy keys grant standing clone access to a repository without a full user account, and Bitbucket does not automatically expire or flag them when the integration that added them is decommissioned.
+
+        **Why this matters**
+
+        - **Standing access review:** A deploy key with no recent activity often belongs to a retired pipeline, migrated service, or decommissioned integration that no longer needs access.
+        - **Reduced credential sprawl:** Every unused deploy key is an additional private key that, if leaked, can clone the repository without triggering a user-level alert.
+        - **Attribution:** Deploy keys are not tied to an individual user, so a forgotten key makes it harder to determine why a system has access.
+        - **Blast radius reduction:** Removing keys that are no longer in active use shrinks the set of standing credentials an attacker could target.
+
+        **Risk mitigation**
+
+        - **Regular review:** Periodically listing deploy keys and their last-used timestamps surfaces credentials that should be revoked.
+        - **Prompt removal:** Deleting a stale deploy key as soon as it is identified prevents it from being rediscovered and reused later.
+      audit: |
+        ### Audit via Repository Settings
+
+        1. Sign in to Bitbucket Cloud as a workspace owner or repository admin.
+        2. Open the repository and go to **Repository settings > Deploy keys**.
+        3. Review each key's label and last-used information.
+
+        A passing result shows every deploy key used within the last 90 days, or added within the last 90 days if never used; a failing result shows a key with no activity beyond that window.
+
+        ### Audit via API
+
+        Query the Bitbucket Cloud REST API and inspect the result:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $BITBUCKET_TOKEN" \
+          "https://api.bitbucket.org/2.0/repositories/{workspace}/{repo_slug}/deploy-keys"
+        ```
+
+        A passing response shows every key's `last_used` timestamp (or `created_on` when never used) within the last 90 days; a failing response shows a key beyond that window.
+      remediation:
+        - id: console
+          desc: |
+            To review and remove a stale deploy key using the Bitbucket Cloud console:
+
+            1. Open the repository and go to **Repository settings > Deploy keys**.
+            2. Identify the integration or pipeline the key's label refers to and confirm whether it is still in use.
+            3. If the key is no longer needed, click **Delete** next to it.
+            4. If the key is still needed but stale, rotate it by adding a new key from the integration and deleting the old one.
+          # No Terraform remediation: deploy key staleness is runtime usage state, not a
+          # Terraform-managed attribute.
+    refs:
+      - url: https://developer.atlassian.com/cloud/bitbucket/rest/api-group-deployments/
+        title: Bitbucket Cloud Deployments and deploy keys API
+  # No Terraform variants and remediation: the number of workspace members and groups
+  # currently holding admin permission is runtime access state queried from the
+  # workspace's permission API. DrFaust92/terraform-provider-bitbucket can declare a
+  # single member's or group's permission level but has no resource that counts or
+  # caps how many principals hold admin across the workspace, so HCL/plan/state cannot
+  # evaluate this control.
+  - uid: mondoo-bitbucket-security-workspace-admin-access-minimal
+    title: Ensure workspace admin permission is limited to necessary principals
+    impact: 60
+    mql: |
+      bitbucket.workspace.members.where(permission == "admin").length <= 5
+      bitbucket.workspace.groups.where(permission == "admin").length <= 2
+    docs:
+      desc: |
+        This check ensures that the number of members and groups holding admin permission on the Bitbucket Cloud workspace stays small. Bitbucket does not cap how many members or groups can hold admin permission, so workspaces tend to accumulate privileged grants over time as people change roles or groups are created for one-off tasks.
+
+        **Why this matters**
+
+        - **Reduced attack surface:** Each admin-level member or group is a high-value target, so a small privileged set means fewer accounts an attacker can compromise to gain full workspace control.
+        - **Accountability:** A limited set of administrators keeps it clear who can change repository visibility, branch restrictions, and workspace security settings.
+        - **Privilege creep prevention:** Regularly reviewing admin grants stops former project leads or one-off contributors from retaining standing access.
+        - **Group grant visibility:** Admin permission granted through a group can silently expand as members are added to that group later, so group-level admin grants deserve the same scrutiny as individual ones.
+
+        **Risk mitigation**
+
+        - **Containment:** A small admin group limits the blast radius if a privileged credential is phished or stolen.
+        - **Periodic access review:** Comparing the current admin list against a documented list of roles that require admin access catches grants that should have been revoked.
+      audit: |
+        ### Audit via Workspace Settings
+
+        1. Sign in to Bitbucket Cloud as a workspace owner.
+        2. Open **Workspace settings > User and group access**.
+        3. Filter by permission level and review members and groups holding **Admin**.
+
+        A passing result shows a small, documented set of members and groups with admin permission; a failing result shows an unexpectedly large or undocumented set.
+
+        ### Audit via API
+
+        Query the Bitbucket Cloud REST API and inspect the result:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $BITBUCKET_TOKEN" \
+          "https://api.bitbucket.org/2.0/workspaces/{workspace}/permissions"
+        ```
+
+        A passing response shows a small number of entries with `permission` set to `admin`; a failing response shows a large or growing number of such entries.
+      remediation:
+        - id: console
+          desc: |
+            To reduce the number of workspace admins using the Bitbucket Cloud console:
+
+            1. Sign in to Bitbucket Cloud as a workspace owner.
+            2. Open **Workspace settings > User and group access**.
+            3. For each member or group whose admin permission is no longer needed, change their permission level to **Write** or **Read**, or remove them from the workspace.
+            4. If admin permission is granted through a group, review the group's membership and remove members who do not need admin-level access.
+          # No Terraform remediation: the count of principals holding admin permission
+          # is a runtime state query, not a value Terraform can declare or enforce.
+    refs:
+      - url: https://support.atlassian.com/bitbucket-cloud/docs/grant-workspace-permissions/
+        title: Grant workspace permissions
