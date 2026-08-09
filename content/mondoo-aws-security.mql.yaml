@@ -13352,7 +13352,7 @@ queries:
       }
       }
   - uid: mondoo-aws-security-iam-no-wildcards-policies
-    title: Ensure IAM policies do not use wildcards and apply least privilege
+    title: Ensure IAM managed and inline policies do not use wildcards
     impact: 80
     tags:
       compliance/bsi-sys-1-5: false
@@ -13387,7 +13387,7 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that IAM policies do not grant wildcard resource access in Allow statements, enforcing the principle of least privilege. By default, AWS provides managed policies such as AdministratorAccess and PowerUserAccess that use wildcard actions and resources, and custom policies are often written with wildcards for convenience during development, where they can remain indefinitely.
+        This check ensures that IAM policies do not grant wildcard access in Allow statements, enforcing the principle of least privilege. It inspects both customer-managed policies and the inline policies embedded directly in IAM roles, users, and groups. Inline policies have no ARN and no attachment count, so they are invisible to policy-level reporting and are a common hiding spot for over-broad grants that never surface in a managed-policy review. By default, AWS provides managed policies such as AdministratorAccess and PowerUserAccess that use wildcard actions and resources, and custom or inline policies are often written with wildcards for convenience during development, where they can remain indefinitely.
 
         **Why this matters**
 
@@ -13519,6 +13519,9 @@ queries:
           )
         }
       }
+      aws.iam.roles.all(inlinePolicyDetails.none(hasWildcardAllow))
+      aws.iam.users.all(inlinePolicyDetails.none(hasWildcardAllow))
+      aws.iam.groups.all(inlinePolicyDetails.none(hasWildcardAllow))
   # [_["Resource"]].flat.any(_.contains("*")) handles both string and list values (.toString() returns "[]" for a list). Any "*" is treated as a wildcard — including sub-resource/path-scoped ARNs like "arn:aws:s3:::bucket/*" — which is intentional and matches the aws variant's contains("*") behavior; tightening to == "*" would only catch the full wildcard and diverge from the runtime check.
   - uid: mondoo-aws-security-iam-no-wildcards-policies-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_iam_policy" || nameLabel == "aws_iam_user_policy" || nameLabel == "aws_iam_role_policy" || nameLabel == "aws_iam_group_policy")
@@ -17799,7 +17802,7 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check ensures that Amazon EKS clusters with public API server endpoint access enabled restrict the CIDR ranges allowed to reach that endpoint, rather than allowing access from any IP address. By default, when public endpoint access is enabled, the Kubernetes API server is reachable from `0.0.0.0/0`, exposing it to authentication attempts from the entire internet.
+        This check ensures that Amazon EKS clusters with public API server endpoint access enabled restrict the CIDR ranges allowed to reach that endpoint, rather than allowing access from any IP address. It also confirms the API server endpoint is not internet-reachable once the public-endpoint setting and the cluster security groups are evaluated together, so a cluster left open through its security groups is caught even when the CIDR allow-list looks scoped. By default, when public endpoint access is enabled, the Kubernetes API server is reachable from `0.0.0.0/0`, exposing it to authentication attempts from the entire internet.
 
         **Why this matters**
 
@@ -17903,7 +17906,9 @@ queries:
         title: AWS Documentation - EKS controls
   - uid: mondoo-aws-security-eks-cluster-restrict-public-access-aws
     filters: asset.platform == "aws-eks-cluster"
-    mql: aws.eks.cluster.publicAccessCidrs.none(_ == "0.0.0.0/0")
+    mql: |
+      aws.eks.cluster.publicAccessCidrs.none(_ == "0.0.0.0/0")
+      aws.eks.cluster.exposure.internetReachable == false
   - uid: mondoo-aws-security-eks-cluster-restrict-public-access-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_eks_cluster")
     mql: |
@@ -56003,11 +56008,11 @@ queries:
   # representation. Terraform remediation is still provided because the fix lives in
   # the ECS service network configuration.
   - uid: mondoo-aws-security-ecs-container-no-public-ip
-    title: Ensure ECS containers are not assigned public IP addresses
+    title: Ensure ECS service tasks are not reachable from the internet
     impact: 80
     filters: asset.platform == "aws"
     mql: |
-      aws.ecs.containers.all(publicIp == empty)
+      aws.ecs.clusters.all(services.all(exposure == null || exposure.internetReachable == false))
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-06
@@ -56024,7 +56029,7 @@ queries:
       compliance/vda-isa-5: vda-isa-5-5-2-7
     docs:
       desc: |
-        This check ensures that running Amazon ECS containers are not reachable through a directly attached public IP address. When a task's `awsvpcConfiguration` sets `assignPublicIp` to `ENABLED`, the task's elastic network interface receives a public IP and becomes directly addressable from the internet, bypassing the protection of private subnets and NAT.
+        This check ensures that Amazon ECS services do not run tasks that are reachable from the internet. Rather than flagging a public IP address alone, it evaluates each service's effective internet exposure — the `awsvpcConfiguration` public-IP assignment combined with the security groups the tasks launch behind — so a service is flagged only when a task both carries a public address *and* an attached security group permits inbound traffic from the internet. Services that use host or bridge networking are out of scope, because the container instance rather than the task decides reachability there. When a task's `awsvpcConfiguration` sets `assignPublicIp` to `ENABLED` and its security group opens a listening port to `0.0.0.0/0`, the task's elastic network interface becomes directly addressable from the internet, bypassing the protection of private subnets and NAT.
 
         **Why this matters**
 
@@ -56041,11 +56046,11 @@ queries:
         ### Audit via Console
 
         1. Sign in to the AWS Management Console and navigate to **Amazon ECS**.
-        2. Select a cluster, then open the **Tasks** tab and select a running task.
-        3. In the **Configuration** section, review the **Network** details for the task's public IP.
-        4. Repeat for each running task in every cluster.
+        2. Select a cluster, then open the **Services** tab and select a service that uses the `awsvpc` network mode.
+        3. On the **Configuration and networking** tab, note whether **Public IP** is turned on, and open each attached security group's **Inbound rules**.
+        4. Repeat for each service in every cluster.
 
-        A passing task shows no public IP assigned. A failing task shows a public IPv4 address attached to its elastic network interface.
+        A passing service either does not assign public IPs to its tasks, or its security groups permit no inbound traffic from `0.0.0.0/0` or `::/0`. A failing service assigns a public IP *and* has a security group opening a listening port to the internet.
 
         ### Audit via CLI
 
@@ -56058,14 +56063,21 @@ queries:
           --query "tasks[].attachments[].details[?name=='networkInterfaceId'].value"
         ```
 
-        2. For each returned network interface ID, check whether a public IP is associated:
+        2. For each returned network interface ID, check whether a public IP is associated and which security groups are attached:
 
         ```bash
         aws ec2 describe-network-interfaces --network-interface-ids <eni-id> \
-          --query "NetworkInterfaces[].Association.PublicIp"
+          --query "NetworkInterfaces[].{PublicIp:Association.PublicIp,SecurityGroups:Groups[*].GroupId}"
         ```
 
-        A passing task returns no public IP. A failing task returns a public IPv4 address.
+        3. For any interface that has a public IP, confirm whether its security groups open a listening port to the internet:
+
+        ```bash
+        aws ec2 describe-security-groups --group-ids <security-group-id> \
+          --query "SecurityGroups[?IpPermissions[?IpRanges[?CidrIp=='0.0.0.0/0'] || Ipv6Ranges[?CidrIpv6=='::/0']]].GroupId"
+        ```
+
+        A passing service returns no public IP, or returns a public IP whose security groups do not permit inbound traffic from `0.0.0.0/0` or `::/0`. A failing service returns a public IP together with a security group that opens a port to the internet.
 
       remediation:
         - id: console
@@ -66253,7 +66265,7 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that security groups attached to internet-facing resources do not permit unrestricted inbound access on the SSH (port 22) or RDP (port 3389) administrative ports. A security group is only flagged when it is actually attached to a network interface that holds a public IP address — whether that interface belongs to an EC2 instance, a load balancer, a database, or another service — so the finding represents a directly reachable management port rather than a rule that exists on paper but protects nothing.
+        This check ensures that security groups attached to internet-facing resources do not permit unrestricted inbound access on the SSH (port 22) or RDP (port 3389) administrative ports. A security group is only flagged when it is actually attached to a network interface that holds a public IP address — whether that interface belongs to an EC2 instance, a load balancer, a database, or another service — and the traffic is still reachable after the subnet network ACL is applied. Evaluating the security group rule together with the network ACL's verdict means a port the network ACL blocks is not reported as exposed, so the finding represents a directly reachable management port rather than a rule that exists on paper but protects nothing.
 
         **Why this matters**
 
@@ -66370,8 +66382,10 @@ queries:
     filters: asset.platform == "aws-security-group"
     mql: |
       aws.ec2.securitygroup.networkInterfaces.none(publicIp != empty) ||
-      aws.ec2.securitygroup.ipPermissions.where(fromPort <= 22 && toPort >= 22 && toPort != 0).none(includesPublicSource) &&
-      aws.ec2.securitygroup.ipPermissions.where(fromPort <= 3389 && toPort >= 3389 && toPort != 0).none(includesPublicSource)
+      aws.ec2.securitygroup.networkInterfaces.where(publicIp != empty).all(
+        effectiveIngress.where(securityGroup.id == aws.ec2.securitygroup.id).where(source == "0.0.0.0/0" || source == "::/0").where(fromPort <= 22 && toPort >= 22 && toPort != 0).none(reachable) &&
+        effectiveIngress.where(securityGroup.id == aws.ec2.securitygroup.id).where(source == "0.0.0.0/0" || source == "::/0").where(fromPort <= 3389 && toPort >= 3389 && toPort != 0).none(reachable)
+      )
   - uid: mondoo-aws-security-secgroup-internet-facing-restrict-admin-ports-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
     mql: |
@@ -66420,7 +66434,7 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that security groups attached to internet-facing resources do not permit unrestricted inbound access on common database engine ports — PostgreSQL (5432), MySQL/MariaDB (3306), Microsoft SQL Server (1433), Oracle (1521), MongoDB (27017), and Redis (6379). A security group is only flagged when it is actually attached to a network interface that holds a public IP address, so the finding represents a database port that is directly reachable from the internet rather than a rule that exists on paper but protects nothing.
+        This check ensures that security groups attached to internet-facing resources do not permit unrestricted inbound access on common database engine ports — PostgreSQL (5432), MySQL/MariaDB (3306), Microsoft SQL Server (1433), Oracle (1521), MongoDB (27017), and Redis (6379). A security group is only flagged when it is actually attached to a network interface that holds a public IP address and the traffic is still reachable after the subnet network ACL is applied. Evaluating the security group rule together with the network ACL's verdict means a port the network ACL blocks is not reported as exposed, so the finding represents a database port that is directly reachable from the internet rather than a rule that exists on paper but protects nothing.
 
         **Why this matters**
 
@@ -66524,12 +66538,14 @@ queries:
     filters: asset.platform == "aws-security-group"
     mql: |
       aws.ec2.securitygroup.networkInterfaces.none(publicIp != empty) ||
-      aws.ec2.securitygroup.ipPermissions.where(fromPort <= 5432 && toPort >= 5432 && toPort != 0).none(includesPublicSource) &&
-      aws.ec2.securitygroup.ipPermissions.where(fromPort <= 3306 && toPort >= 3306 && toPort != 0).none(includesPublicSource) &&
-      aws.ec2.securitygroup.ipPermissions.where(fromPort <= 1433 && toPort >= 1433 && toPort != 0).none(includesPublicSource) &&
-      aws.ec2.securitygroup.ipPermissions.where(fromPort <= 1521 && toPort >= 1521 && toPort != 0).none(includesPublicSource) &&
-      aws.ec2.securitygroup.ipPermissions.where(fromPort <= 27017 && toPort >= 27017 && toPort != 0).none(includesPublicSource) &&
-      aws.ec2.securitygroup.ipPermissions.where(fromPort <= 6379 && toPort >= 6379 && toPort != 0).none(includesPublicSource)
+      aws.ec2.securitygroup.networkInterfaces.where(publicIp != empty).all(
+        effectiveIngress.where(securityGroup.id == aws.ec2.securitygroup.id).where(source == "0.0.0.0/0" || source == "::/0").where(fromPort <= 5432 && toPort >= 5432 && toPort != 0).none(reachable) &&
+        effectiveIngress.where(securityGroup.id == aws.ec2.securitygroup.id).where(source == "0.0.0.0/0" || source == "::/0").where(fromPort <= 3306 && toPort >= 3306 && toPort != 0).none(reachable) &&
+        effectiveIngress.where(securityGroup.id == aws.ec2.securitygroup.id).where(source == "0.0.0.0/0" || source == "::/0").where(fromPort <= 1433 && toPort >= 1433 && toPort != 0).none(reachable) &&
+        effectiveIngress.where(securityGroup.id == aws.ec2.securitygroup.id).where(source == "0.0.0.0/0" || source == "::/0").where(fromPort <= 1521 && toPort >= 1521 && toPort != 0).none(reachable) &&
+        effectiveIngress.where(securityGroup.id == aws.ec2.securitygroup.id).where(source == "0.0.0.0/0" || source == "::/0").where(fromPort <= 27017 && toPort >= 27017 && toPort != 0).none(reachable) &&
+        effectiveIngress.where(securityGroup.id == aws.ec2.securitygroup.id).where(source == "0.0.0.0/0" || source == "::/0").where(fromPort <= 6379 && toPort >= 6379 && toPort != 0).none(reachable)
+      )
   - uid: mondoo-aws-security-secgroup-internet-facing-restrict-database-ports-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
     mql: |
