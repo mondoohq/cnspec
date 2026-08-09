@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-aws-security
     name: Mondoo AWS Security
-    version: 12.8.0
+    version: 12.9.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -183,6 +183,7 @@ policies:
           - uid: mondoo-aws-security-vpc-endpoint-security-groups
           - uid: mondoo-aws-security-vpc-endpoint-service-acceptance-required
           - uid: mondoo-aws-security-vpc-endpoint-service-restrict-principals
+          - uid: mondoo-aws-security-vpc-endpoint-no-wildcard-policy
           - uid: mondoo-aws-security-vpc-subnet-flow-logs-enabled
           - uid: mondoo-aws-security-vpc-flow-logs-iam-role
           - uid: mondoo-aws-security-client-vpn-security-groups
@@ -211,6 +212,7 @@ policies:
           - uid: mondoo-aws-security-rds-snapshot-not-shared
           - uid: mondoo-aws-security-rds-instance-auto-minor-version-upgrade
           - uid: mondoo-aws-security-rds-instance-log-exports-enabled
+          - uid: mondoo-aws-security-rds-instance-no-active-security-recommendation
       - title: Amazon RDS Proxy
         checks:
           - uid: mondoo-aws-security-rds-proxy-tls-required
@@ -7545,6 +7547,97 @@ queries:
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::RDS::DBInstance")
     mql: |
       cloudformation.template.resources.where(type == "AWS::RDS::DBInstance").all( properties['PubliclyAccessible'] != true )
+  # No Terraform variants: recommendations are operational findings that Amazon RDS generates by observing a running instance; they have no static Terraform, plan, or state configuration analog.
+  - uid: mondoo-aws-security-rds-instance-no-active-security-recommendation
+    title: Ensure RDS instances have no active security recommendations
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: false
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: false
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-aws-security-rds-instance-no-active-security-recommendation-aws
+        tags:
+          mondoo.com/filter-title: AWS RDS DB Instance
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that an RDS database instance has no active recommendation in the security category. Amazon RDS continuously analyzes each instance and raises recommendations when it detects a security-relevant issue, such as a missing control or a risky configuration, together with the action it advises to resolve it. An active security recommendation is AWS's own signal that the instance is currently misconfigured in a way worth addressing.
+
+        **Why this matters**
+
+        - **Vendor-detected weakness:** A security recommendation is raised by AWS after observing the running instance, so it reflects a concrete, currently-present issue rather than a theoretical one.
+        - **Actionable and specific:** Each recommendation names the detected problem and a recommended remediation, so an active one is an unaddressed fix that an attacker could exploit while it remains open.
+        - **Drift detection:** Recommendations surface security regressions that appear after provisioning, catching issues that a one-time configuration review would miss.
+
+        **Risk mitigation**
+
+        - **Timely remediation:** Resolving each security recommendation closes the specific weakness AWS identified before it can be exploited.
+        - **Continuous review:** Treating active security recommendations as findings keeps instance posture aligned with AWS guidance as the service evolves.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the AWS Management Console and open the **RDS** console at https://console.aws.amazon.com/rds/.
+        2. In the left navigation pane, choose **Recommendations**.
+        3. Filter by the affected database instance and by the **Security** category.
+        4. Review any recommendation whose status is **Active**.
+
+        A passing instance has no active recommendation in the Security category. A failing instance has at least one active security recommendation.
+
+        ### Audit via CLI
+
+        1. List active security recommendations for the instance:
+
+        ```bash
+        aws rds describe-db-recommendations \
+          --filters "Name=status,Values=active" "Name=category,Values=security" \
+          --query "DBRecommendations[*].{Id:RecommendationId,Severity:Severity,Detection:Detection}"
+        ```
+
+        A passing instance returns an empty list `[]`. A failing instance returns one or more active security recommendations.
+      remediation:
+        - id: console
+          desc: |
+            To resolve an active security recommendation using the AWS Console:
+
+            1. Open the **RDS** console and choose **Recommendations**.
+            2. Select the active security recommendation for the affected instance.
+            3. Review the detected issue and the recommended action, then choose **Apply** where AWS offers an automated fix, or follow the manual steps described.
+            4. Confirm the recommendation moves to a resolved state.
+        - id: cli
+          desc: |
+            To resolve an active security recommendation using the AWS CLI, review it and apply the advised action:
+
+            ```bash
+            aws rds describe-db-recommendations \
+              --filters "Name=status,Values=active" "Name=category,Values=security"
+            ```
+
+            After applying the remediation the recommendation names, mark it as resolved:
+
+            ```bash
+            aws rds modify-db-recommendation \
+              --recommendation-id <recommendation-id> \
+              --status resolved
+            ```
+        # No Terraform remediation: an active security recommendation is an operational finding resolved per-issue through the RDS recommendations workflow; the specific fix varies by recommendation and has no single Terraform resource analog.
+    refs:
+      - url: https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/monitoring-recommendations.html
+        title: Using Amazon RDS recommendations
+  - uid: mondoo-aws-security-rds-instance-no-active-security-recommendation-aws
+    filters: asset.platform == "aws-rds-dbinstance"
+    mql: |
+      aws.rds.dbinstance.recommendations.where(category == "security" && status == "active") == empty
   # Security-only check (compliance mapping intentionally omitted per maintainer).
   # No Terraform variants: internetReachable is a runtime-computed exposure signal with no static config analog.
   - uid: mondoo-aws-security-rds-instance-not-internet-reachable
@@ -57936,6 +58029,131 @@ queries:
         values["domain_name_servers"] == null ||
         values["domain_name_servers"].none(_ == "AmazonProvidedDNS")
       )
+  # No Terraform variants: hasWildcardPolicy is a runtime-computed verdict that parses the endpoint's effective policy document and expands wildcard actions/resources; Terraform HCL, plan, and state assets carry the raw policy JSON with no equivalent resolved field. The Terraform remediation still shows how to attach a scoped policy.
+  - uid: mondoo-aws-security-vpc-endpoint-no-wildcard-policy
+    title: Ensure VPC endpoint policies do not grant unrestricted access
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: false
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: false
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-aws-security-vpc-endpoint-no-wildcard-policy-aws
+        tags:
+          mondoo.com/filter-title: AWS VPC
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that VPC endpoint policies do not leave access unrestricted through a wildcard Allow statement. The default endpoint policy grants a wildcard action on a wildcard resource, so an endpoint created without an explicit policy lets anything in the VPC that can route to it reach any resource the service exposes, including buckets and tables in other accounts.
+
+        **Why this matters**
+
+        - **Uncontrolled egress path:** A wildcard endpoint policy turns the endpoint from a boundary into an open channel to the whole service, so a compromised workload can read from or write to arbitrary resources, including data stores in accounts you do not control.
+        - **Cross-account data movement:** Because the wildcard resource is not scoped to your own account's ARNs, the endpoint can be used to exfiltrate data to an attacker-controlled bucket or table in another account.
+        - **Defeated segmentation:** VPC endpoints are frequently deployed specifically to constrain which resources private subnets may reach; a wildcard policy silently removes that control while leaving the appearance of a boundary in place.
+
+        **Risk mitigation**
+
+        - **Least-privilege policy:** Attaching a policy that names the specific resources, principals, and actions the workload needs restores the endpoint as an access control.
+        - **Scoped resources:** Limiting the `Resource` element to your own account's ARNs prevents the endpoint from being used to reach or exfiltrate data across account boundaries.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the AWS Management Console and open the **VPC** console at https://console.aws.amazon.com/vpc/.
+        2. In the left navigation pane, choose **Endpoints**.
+        3. Select each endpoint and open the **Policy** tab.
+        4. Review the policy document for any `Allow` statement whose `Action` is `*` (or a service-wide wildcard such as `s3:*`) or whose `Resource` is `*`.
+
+        A passing endpoint has a policy that names specific actions and resources. A failing endpoint uses the default full-access policy or any Allow statement with a wildcard action or resource.
+
+        ### Audit via CLI
+
+        1. List endpoints and their policy documents:
+
+        ```bash
+        aws ec2 describe-vpc-endpoints \
+          --query "VpcEndpoints[*].{Id:VpcEndpointId,Policy:PolicyDocument}"
+        ```
+
+        2. Inspect each returned policy document for an `Allow` statement with `"Action": "*"` or `"Resource": "*"`.
+
+        A passing endpoint returns a policy scoped to specific actions and resources. A failing endpoint returns a policy containing a wildcard Allow statement.
+      remediation:
+        - id: console
+          desc: |
+            To restrict a VPC endpoint policy using the AWS Console:
+
+            1. Open the **VPC** console and choose **Endpoints**.
+            2. Select the endpoint and choose **Actions** > **Manage policy**.
+            3. Choose **Custom** and replace the full-access policy with one that grants only the specific actions on the specific resource ARNs the workload requires.
+            4. Save the policy.
+        - id: cli
+          desc: |
+            To restrict a VPC endpoint policy using the AWS CLI, apply a scoped policy document:
+
+            ```bash
+            aws ec2 modify-vpc-endpoint \
+              --vpc-endpoint-id <vpc-endpoint-id> \
+              --policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":["s3:GetObject"],"Resource":["arn:aws:s3:::my-bucket/*"]}]}'
+            ```
+        - id: terraform
+          desc: |
+            To restrict a VPC endpoint policy in Terraform, set a scoped `policy` on the `aws_vpc_endpoint` resource:
+
+            ```hcl
+            resource "aws_vpc_endpoint" "s3" {
+              vpc_id       = aws_vpc.main.id
+              service_name = "com.amazonaws.us-east-1.s3"
+
+              policy = jsonencode({
+                Version = "2012-10-17"
+                Statement = [{
+                  Effect    = "Allow"
+                  Principal = "*"
+                  Action    = ["s3:GetObject"]
+                  Resource  = ["arn:aws:s3:::my-bucket/*"]
+                }]
+              })
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To restrict a VPC endpoint policy in CloudFormation, set a scoped `PolicyDocument` on the endpoint:
+
+            ```yaml
+            Resources:
+              S3Endpoint:
+                Type: "AWS::EC2::VPCEndpoint"
+                Properties:
+                  VpcId: !Ref VPC
+                  ServiceName: "com.amazonaws.us-east-1.s3"
+                  PolicyDocument:
+                    Version: "2012-10-17"
+                    Statement:
+                      - Effect: "Allow"
+                        Principal: "*"
+                        Action:
+                          - "s3:GetObject"
+                        Resource:
+                          - "arn:aws:s3:::my-bucket/*"
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/vpc/latest/privatelink/vpc-endpoints-access.html
+        title: Control access to VPC endpoints using endpoint policies
+  - uid: mondoo-aws-security-vpc-endpoint-no-wildcard-policy-aws
+    filters: asset.platform == "aws-vpc"
+    mql: |
+      aws.vpc.endpoints.all(hasWildcardPolicy == false)
   - uid: mondoo-aws-security-vpc-endpoint-security-groups
     title: Ensure VPC endpoints have security groups attached
     impact: 80
