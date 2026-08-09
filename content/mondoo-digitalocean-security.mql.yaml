@@ -1821,7 +1821,7 @@ queries:
     filters: asset.platform == "digitalocean-loadbalancer"
     mql: |
       digitalocean.loadBalancer {
-        forwardingRules.none(_["entry_protocol"] == "http") || redirectHttpToHttps == true
+        listeners.none(entryProtocol == "http") || redirectHttpToHttps == true
       }
   - uid: mondoo-digitalocean-security-lb-http-redirected-to-https-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "digitalocean_loadbalancer")
@@ -1857,7 +1857,7 @@ queries:
     filters: asset.platform == "digitalocean-loadbalancer"
     mql: |
       digitalocean.loadBalancer {
-        forwardingRules.none(_["entry_protocol"] == "https" || _["entry_protocol"] == "tls") || tlsCipherPolicy == "STRONG"
+        listeners.none(entryProtocol == "https" || entryProtocol == "tls") || tlsCipherPolicy == "STRONG"
       }
     tags:
       compliance/bsi-sys-1-5: false
@@ -2616,8 +2616,7 @@ queries:
     impact: 90
     filters: asset.platform == "digitalocean-kubernetes-cluster"
     mql: |
-      digitalocean.kubernetes.cluster.controlPlaneFirewallEnabled == true
-      digitalocean.kubernetes.cluster.controlPlaneFirewallAllowedAddresses == empty || digitalocean.kubernetes.cluster.controlPlaneFirewallAllowedAddresses.containsNone(["0.0.0.0/0", "::/0"])
+      digitalocean.kubernetes.cluster.exposure.internetReachable == false
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-06
@@ -2634,7 +2633,7 @@ queries:
       compliance/vda-isa-5: vda-isa-5-5-2-7
     docs:
       desc: |
-        This check ensures that every DigitalOcean Kubernetes (DOKS) cluster enables the control-plane firewall and does not list `0.0.0.0/0` or `::/0` among its allowed addresses. The control-plane firewall restricts which source addresses can reach the cluster's Kubernetes API server. When it is disabled, the API server accepts connections from any internet host; when it is enabled but allows any address, the restriction is effectively removed.
+        This check ensures that no DigitalOcean Kubernetes (DOKS) cluster leaves its Kubernetes API server reachable from the public internet. The verdict combines the cluster's published control-plane endpoint with the control-plane firewall: the API server is internet-reachable unless the firewall is enabled and its allowed source addresses exclude `0.0.0.0/0` and `::/0`. When the firewall is disabled, the API server accepts connections from any internet host; when it is enabled but allows any address, the restriction is effectively removed. Correlating the endpoint with the firewall in a single reachability signal reports a cluster as exposed only when the API server is genuinely open, rather than flagging the firewall settings in isolation.
 
         **Why this matters**
 
@@ -3070,7 +3069,7 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check ensures that no Spaces bucket grants the `READ` permission to the `AllUsers` group, which would make every object in the bucket readable by anyone on the internet without authentication. DigitalOcean Spaces is S3-compatible, so the same `public-read` ACL semantics as Amazon S3 apply: a single grant turns the bucket into an open object store.
+        This check ensures that no Spaces bucket is publicly reachable. The runtime verdict combines every path to public access into one signal: an ACL grant to the `AllUsers` or `AuthenticatedUsers` group, a bucket policy that allows the wildcard `*` principal, and whether block-public-access actually neutralizes those grants. A bucket is reported public only when a grant exists and public access is not fully blocked, so a bucket made public through its policy is caught even when its ACL looks private. DigitalOcean Spaces is S3-compatible, so the same `public-read` ACL and wildcard-policy semantics as Amazon S3 apply, and the `AuthenticatedUsers` group covers every account on the platform rather than only this one, which is why it counts as public.
 
         **Why this matters**
 
@@ -3156,7 +3155,7 @@ queries:
   - uid: mondoo-digitalocean-security-spaces-bucket-not-publicly-readable-digitalocean
     filters: asset.platform == "digitalocean-spaces-bucket"
     mql: |
-      digitalocean.spacesBucket.publicReadAcl == false
+      digitalocean.spacesBucket.isPublic == false
   - uid: mondoo-digitalocean-security-spaces-bucket-not-publicly-readable-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "digitalocean_spaces_bucket")
     mql: |
@@ -3676,8 +3675,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-3
       compliance/vda-isa-5: vda-isa-5-4-2-1
     mql: |
-      digitalocean.spacesBucket.policy == null ||
-      digitalocean.spacesBucket.policy["Statement"].where(_["Effect"] == "Allow").all(_["Principal"] != "*")
+      digitalocean.spacesBucket.hasWildcardPolicy == false
     docs:
       desc: |
         This check ensures that no Spaces bucket policy contains an `Allow` statement whose `Principal` is the anonymous wildcard `"*"`. A bucket policy is evaluated independently of the bucket ACL, so a policy that allows `"*"` grants unauthenticated access to every caller even when the ACL is private. This is the bucket-policy counterpart to the ACL-based public-read and public-write checks.
