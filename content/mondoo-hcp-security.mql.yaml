@@ -1,0 +1,537 @@
+# Copyright Mondoo, Inc. 2024, 2026
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: mondoo-hcp-security
+    name: Mondoo HashiCorp Cloud Platform Security
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: hcp,saas
+    require:
+      - provider: hcp
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Secure HCP Vault, Consul, and Boundary clusters, and rotate service principal credentials
+    docs:
+      desc: |
+        The Mondoo HashiCorp Cloud Platform (HCP) Security policy identifies critical misconfigurations across the managed Vault, Consul, and Boundary clusters provisioned in an HCP organization. HCP clusters can be deployed with public endpoints reachable from the internet, run outdated versions, or leave audit logging disabled, and this policy helps organizations detect and remediate those weaknesses before attackers can exploit them to reach a secrets engine, a service mesh control plane, or a privileged access gateway directly from the public internet.
+
+        This policy provides security checks across key HCP control-plane areas:
+
+        - Public network exposure of Vault and Consul Dedicated clusters
+        - Audit-log streaming for Vault clusters
+        - Vault and Consul version currency
+        - Cluster lifecycle health across Vault, Consul, and Boundary
+        - Service principal key rotation
+
+        Each check evaluates the projects and clusters visible to the connected HCP service principal, so when scanning an HCP organization with asset discovery enabled every project's clusters are assessed together.
+
+        Learn more about HCP in the [HCP documentation](https://developer.hashicorp.com/hcp/docs).
+
+        Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
+    groups:
+      - title: HashiCorp Cloud Platform
+        filters: asset.platform == "hcp"
+        checks:
+          - uid: mondoo-hcp-security-vault-cluster-no-public-endpoint
+          - uid: mondoo-hcp-security-consul-cluster-no-public-endpoint
+          - uid: mondoo-hcp-security-vault-cluster-audit-log-export-enabled
+          - uid: mondoo-hcp-security-vault-cluster-supported-version
+          - uid: mondoo-hcp-security-consul-cluster-supported-version
+          - uid: mondoo-hcp-security-cluster-healthy-state
+          - uid: mondoo-hcp-security-iam-service-principal-key-rotation
+queries:
+  - uid: mondoo-hcp-security-vault-cluster-no-public-endpoint
+    title: Ensure HCP Vault clusters do not expose a public endpoint
+    impact: 90
+    mql: |
+      hcp.projects.all(vaultClusters.all(publicEndpoint == false))
+    docs:
+      desc: |
+        This check ensures that every HCP Vault Dedicated cluster is reachable only through its private endpoint, with the public endpoint disabled. HCP allows a Vault cluster to be created with a public endpoint, which places the Vault API directly on the internet in addition to (or instead of) the private HVN peering or transit gateway connection.
+
+        **Why this matters**
+
+        - **Reduced attack surface:** A Vault cluster with a public endpoint can be probed, fingerprinted, and attacked by anyone on the internet, not just clients inside the peered network.
+        - **Secrets engine protection:** Vault holds the encryption keys, dynamic credentials, and secrets that other systems depend on, so it is one of the highest-value targets an internet-facing endpoint can expose.
+        - **Defense in depth:** Keeping Vault reachable only over private networking means a stolen or misconfigured credential is still one network hop away from being usable by an external attacker.
+        - **Consistent trust boundary:** Private-only access keeps Vault inside the same network perimeter as the workloads it serves, avoiding a mismatch between the intended architecture and the actual exposure.
+
+        **Risk mitigation**
+
+        - **Credential-stuffing and brute-force resistance:** Removing the public endpoint blocks unauthenticated internet traffic from reaching Vault's authentication endpoints at all.
+        - **Exploit-chain shortening:** Without a public endpoint, exploiting a Vault vulnerability requires prior access to the peered network, adding a step that most opportunistic attackers cannot take.
+      audit: |
+        ### Audit via HCP Portal
+
+        1. Sign in to the [HCP portal](https://portal.cloud.hashicorp.com/).
+        2. Open **Vault Dedicated** and select a project.
+        3. Select the cluster you want to review.
+        4. Open the **Overview** tab and review the **Public endpoint** field.
+
+        A passing result shows **Public endpoint** disabled for every Vault cluster; a failing result shows a cluster with the public endpoint enabled.
+
+        ### Audit via HCP CLI
+
+        List the clusters in a project and inspect each one:
+
+        ```bash
+        hcp vault-clusters list --project <project_id>
+        hcp vault-clusters read <cluster_id> --project <project_id> --format=json
+        ```
+
+        A passing response shows `public_endpoint` set to `false` for every cluster; a failing response shows a cluster with `public_endpoint` set to `true`.
+      remediation:
+        - id: console
+          desc: |
+            The public endpoint setting is fixed when a Vault cluster is created and cannot be toggled afterward from the portal. To remove public exposure:
+
+            1. Sign in to the [HCP portal](https://portal.cloud.hashicorp.com/) and open **Vault Dedicated**.
+            2. Create a replacement cluster in the same HVN with **Public endpoint** left disabled, and connect it to the private network path your clients already use (HVN peering or a transit gateway attachment).
+            3. Migrate clients, secrets engines, and auth methods to the new cluster.
+            4. Delete the original cluster once traffic has fully cut over.
+        - id: terraform
+          desc: |
+            To provision a Vault cluster without a public endpoint using Terraform:
+
+            ```hcl
+            resource "hcp_vault_cluster" "example" {
+              cluster_id      = "example-vault-cluster"
+              hvn_id          = hcp_hvn.example.hvn_id
+              tier            = "plus_small"
+              public_endpoint = false
+            }
+            ```
+
+            `public_endpoint` forces replacement of the cluster when changed, so applying this on an existing cluster with `public_endpoint = true` recreates it. Plan the migration window accordingly and update client configuration to use the new private endpoint URL.
+    refs:
+      - url: https://developer.hashicorp.com/hcp/docs/vault/architecture-fundamentals/network
+        title: HCP Vault Dedicated networking fundamentals
+      - url: https://registry.terraform.io/providers/hashicorp/hcp/latest/docs/resources/vault_cluster
+        title: Terraform hcp_vault_cluster resource
+  - uid: mondoo-hcp-security-consul-cluster-no-public-endpoint
+    title: Ensure HCP Consul clusters do not expose a public endpoint
+    impact: 88
+    mql: |
+      hcp.projects.all(consulClusters.all(publicEndpoint == false))
+    docs:
+      desc: |
+        This check ensures that every HCP Consul Dedicated cluster is reachable only through its private endpoint, with the public endpoint disabled. HCP allows a Consul cluster to be created with a public endpoint, which exposes the Consul UI and API directly on the internet in addition to the private HVN peering or transit gateway connection.
+
+        **Why this matters**
+
+        - **Service mesh control-plane protection:** Consul stores service catalog data, intentions, and mesh configuration; internet reachability lets an attacker enumerate the mesh topology without first compromising a workload on the private network.
+        - **Reduced attack surface:** A public endpoint can be probed and attacked by anyone on the internet, not just clients inside the peered network the cluster was designed to serve.
+        - **Defense in depth:** Keeping Consul reachable only over private networking preserves the same network trust boundary as the services it connects.
+        - **ACL token protection:** An internet-reachable API surface increases the chance that a leaked or brute-forced ACL token can be used before it is revoked.
+
+        **Risk mitigation**
+
+        - **Reduced reconnaissance surface:** Removing the public endpoint prevents unauthenticated internet scanning of the Consul UI and HTTP API.
+        - **Exploit-chain shortening:** Without a public endpoint, reaching Consul requires prior access to the peered network, removing the most direct path an external attacker could take.
+      audit: |
+        ### Audit via HCP Portal
+
+        1. Sign in to the [HCP portal](https://portal.cloud.hashicorp.com/).
+        2. Open **Consul Dedicated** and select a project.
+        3. Select the cluster you want to review.
+        4. Open the **Overview** tab and review the **Public endpoint** field.
+
+        A passing result shows **Public endpoint** disabled for every Consul cluster; a failing result shows a cluster with the public endpoint enabled.
+
+        ### Audit via HCP CLI
+
+        List the clusters in a project and inspect each one:
+
+        ```bash
+        hcp consul-clusters list --project <project_id>
+        hcp consul-clusters read <cluster_id> --project <project_id> --format=json
+        ```
+
+        A passing response shows `public_endpoint` set to `false` for every cluster; a failing response shows a cluster with `public_endpoint` set to `true`.
+      remediation:
+        - id: console
+          desc: |
+            The public endpoint setting is fixed when a Consul cluster is created and cannot be toggled afterward from the portal. To remove public exposure:
+
+            1. Sign in to the [HCP portal](https://portal.cloud.hashicorp.com/) and open **Consul Dedicated**.
+            2. Create a replacement cluster in the same HVN with **Public endpoint** left disabled, and connect it to the private network path your clients already use (HVN peering or a transit gateway attachment).
+            3. Rejoin agents and dependent services to the new cluster.
+            4. Delete the original cluster once traffic has fully cut over.
+        - id: terraform
+          desc: |
+            To provision a Consul cluster without a public endpoint using Terraform:
+
+            ```hcl
+            resource "hcp_consul_cluster" "example" {
+              cluster_id      = "example-consul-cluster"
+              hvn_id          = hcp_hvn.example.hvn_id
+              tier            = "standard"
+              public_endpoint = false
+            }
+            ```
+
+            `public_endpoint` forces replacement of the cluster when changed, so applying this on an existing cluster with `public_endpoint = true` recreates it. Plan the migration window accordingly and update agent configuration to use the new private endpoint URL.
+    refs:
+      - url: https://developer.hashicorp.com/hcp/docs/consul/architecture-fundamentals/network
+        title: HCP Consul Dedicated networking fundamentals
+      - url: https://registry.terraform.io/providers/hashicorp/hcp/latest/docs/resources/consul_cluster
+        title: Terraform hcp_consul_cluster resource
+  - uid: mondoo-hcp-security-vault-cluster-audit-log-export-enabled
+    title: Ensure HCP Vault clusters export audit logs
+    impact: 75
+    mql: |
+      hcp.projects.all(vaultClusters.all(auditLogExport != null))
+    docs:
+      desc: |
+        This check ensures that every HCP Vault Dedicated cluster streams its audit logs to an external destination. Audit logging is a core Vault security control that records every request and response, including authentication attempts and secret reads, but HCP does not stream those logs anywhere until log export is explicitly configured.
+
+        **Why this matters**
+
+        - **Incident investigation:** Audit logs are often the only record of which identity read, wrote, or deleted a given secret, and they must be exported before an incident to be useful during one.
+        - **Tamper resistance:** Streaming logs off the cluster to a destination the Vault operator does not control protects the audit trail even if the cluster itself is later compromised or deleted.
+        - **Compliance evidence:** Many frameworks require a retained, centralized audit trail for privileged secret access, which HCP cannot provide unless export is enabled.
+        - **Anomaly detection:** Centralized audit logs can feed alerting pipelines that flag unusual authentication patterns or bulk secret reads.
+
+        **Risk mitigation**
+
+        - **Faster containment:** Continuous export of audit events shortens the time it takes to determine the scope of a compromised token or leaked secret.
+        - **Retained evidence:** Log export ensures audit history survives cluster deletion, scaling events, or an attacker attempting to cover their tracks.
+      audit: |
+        ### Audit via HCP Portal
+
+        1. Sign in to the [HCP portal](https://portal.cloud.hashicorp.com/).
+        2. Open **Vault Dedicated**, select a project, and select the cluster you want to review.
+        3. Open the **Monitoring** tab and review the **Log streaming** section.
+
+        A passing result shows an active log streaming destination configured; a failing result shows log streaming not configured.
+
+        ### Audit via HCP CLI
+
+        Inspect the cluster's audit log configuration:
+
+        ```bash
+        hcp vault-clusters read <cluster_id> --project <project_id> --format=json
+        ```
+
+        A passing response includes a populated `audit_log_export` configuration; a failing response shows it absent or null.
+      remediation:
+        - id: console
+          desc: |
+            To enable audit log export using the HCP portal:
+
+            1. Sign in to the [HCP portal](https://portal.cloud.hashicorp.com/) and open **Vault Dedicated**.
+            2. Select the project and cluster you want to configure.
+            3. Open the **Monitoring** tab and select **Log streaming**.
+            4. Choose a log destination (for example Splunk, Datadog, or an HTTP endpoint) and provide the required connection details.
+            5. Save the configuration and confirm log events begin arriving at the destination.
+
+            Log streaming requires a Plus-tier Vault cluster.
+        - id: terraform
+          desc: |
+            To configure audit log export on a Plus-tier cluster using Terraform:
+
+            ```hcl
+            resource "hcp_vault_cluster" "example" {
+              cluster_id      = "example-vault-cluster"
+              hvn_id          = hcp_hvn.example.hvn_id
+              tier            = "plus_small"
+              public_endpoint = false
+
+              audit_log_config {
+                datadog_api_key = var.datadog_api_key
+                datadog_region  = "us1"
+              }
+            }
+            ```
+
+            Replace the `datadog_*` arguments with the block matching your chosen destination (Splunk Cloud, HTTP, or another supported provider) and store the credential in a Terraform variable or secret store rather than inline.
+    refs:
+      - url: https://developer.hashicorp.com/hcp/docs/vault/monitoring/log-streaming
+        title: HCP Vault Dedicated log streaming
+      - url: https://registry.terraform.io/providers/hashicorp/hcp/latest/docs/resources/vault_cluster
+        title: Terraform hcp_vault_cluster resource
+  - uid: mondoo-hcp-security-vault-cluster-supported-version
+    title: Ensure HCP Vault clusters run a currently supported version
+    impact: 70
+    props:
+      - uid: mondooHcpSecurityMinimumVaultVersion
+        title: Enter the minimum Vault version your HCP Vault clusters must run
+        mql: |
+          return "1.15.0"
+    mql: |
+      hcp.projects.all(vaultClusters.all(vaultVersion != empty && semver(vaultVersion) >= semver(props.mondooHcpSecurityMinimumVaultVersion)))
+    docs:
+      desc: |
+        This check ensures that every HCP Vault Dedicated cluster runs at least the minimum Vault version your organization has standardized on. HCP periodically retires support for old Vault releases, and clusters left on an older minor version miss security fixes and hardening improvements shipped in later releases.
+
+        **Why this matters**
+
+        - **Security patch currency:** Each Vault release can carry fixes for authentication bypasses, denial-of-service conditions, or plugin vulnerabilities that an outdated cluster never receives.
+        - **Feature parity with hardening guides:** Newer Vault versions add security-relevant capabilities (for example improved namespace isolation and audit fields) that older clusters cannot use.
+        - **Predictable upgrade posture:** Tracking a minimum supported version keeps every cluster within a known, tested range instead of drifting further from the latest release over time.
+
+        **Risk mitigation**
+
+        - **Reduced exploit window:** Keeping clusters current shortens the time a known Vault vulnerability remains exploitable on your infrastructure after a fix ships.
+        - **Simplified incident response:** A consistent version baseline makes it faster to determine whether a newly disclosed Vault CVE applies to your fleet.
+      audit: |
+        ### Audit via HCP Portal
+
+        1. Sign in to the [HCP portal](https://portal.cloud.hashicorp.com/).
+        2. Open **Vault Dedicated**, select a project, and select the cluster you want to review.
+        3. Review the **Vault version** shown on the cluster's **Overview** tab.
+
+        A passing result shows a version at or above your organization's minimum supported version; a failing result shows a cluster below that minimum.
+
+        ### Audit via HCP CLI
+
+        List the clusters in a project and inspect each one:
+
+        ```bash
+        hcp vault-clusters list --project <project_id>
+        hcp vault-clusters read <cluster_id> --project <project_id> --format=json
+        ```
+
+        A passing response shows `vault_version` at or above your minimum supported version for every cluster; a failing response shows a cluster below it.
+      remediation:
+        - id: console
+          desc: |
+            To upgrade a Vault cluster using the HCP portal:
+
+            1. Sign in to the [HCP portal](https://portal.cloud.hashicorp.com/) and open **Vault Dedicated**.
+            2. Select the project and cluster you want to upgrade.
+            3. Open the **Overview** tab and select **Update version** (shown when a newer version is available).
+            4. Choose the target Vault version and confirm the upgrade.
+            5. Monitor the cluster status until it returns to **Running**.
+        - id: terraform
+          desc: |
+            To pin and upgrade the minimum Vault version using Terraform:
+
+            ```hcl
+            resource "hcp_vault_cluster" "example" {
+              cluster_id        = "example-vault-cluster"
+              hvn_id            = hcp_hvn.example.hvn_id
+              tier              = "plus_small"
+              public_endpoint   = false
+              min_vault_version = "1.15.6"
+            }
+            ```
+
+            Raising `min_vault_version` and applying triggers an in-place upgrade of the cluster to the specified version.
+    refs:
+      - url: https://developer.hashicorp.com/hcp/docs/vault/upgrades
+        title: HCP Vault Dedicated upgrades
+      - url: https://registry.terraform.io/providers/hashicorp/hcp/latest/docs/resources/vault_cluster
+        title: Terraform hcp_vault_cluster resource
+  - uid: mondoo-hcp-security-consul-cluster-supported-version
+    title: Ensure HCP Consul clusters run a currently supported version
+    impact: 70
+    props:
+      - uid: mondooHcpSecurityMinimumConsulVersion
+        title: Enter the minimum Consul version your HCP Consul clusters must run
+        mql: |
+          return "1.15.0"
+    mql: |
+      hcp.projects.all(consulClusters.all(consulVersion != empty && semver(consulVersion) >= semver(props.mondooHcpSecurityMinimumConsulVersion)))
+    docs:
+      desc: |
+        This check ensures that every HCP Consul Dedicated cluster runs at least the minimum Consul version your organization has standardized on. HCP periodically retires support for old Consul releases, and clusters left on an older minor version miss security fixes and hardening improvements shipped in later releases.
+
+        **Why this matters**
+
+        - **Security patch currency:** Each Consul release can carry fixes for ACL bypasses, denial-of-service conditions, or gateway vulnerabilities that an outdated cluster never receives.
+        - **Mesh security parity:** Newer Consul versions add security-relevant capabilities to the service mesh and gateway components that older clusters cannot use.
+        - **Predictable upgrade posture:** Tracking a minimum supported version keeps every cluster within a known, tested range instead of drifting further from the latest release over time.
+
+        **Risk mitigation**
+
+        - **Reduced exploit window:** Keeping clusters current shortens the time a known Consul vulnerability remains exploitable on your infrastructure after a fix ships.
+        - **Simplified incident response:** A consistent version baseline makes it faster to determine whether a newly disclosed Consul CVE applies to your fleet.
+      audit: |
+        ### Audit via HCP Portal
+
+        1. Sign in to the [HCP portal](https://portal.cloud.hashicorp.com/).
+        2. Open **Consul Dedicated**, select a project, and select the cluster you want to review.
+        3. Review the **Consul version** shown on the cluster's **Overview** tab.
+
+        A passing result shows a version at or above your organization's minimum supported version; a failing result shows a cluster below that minimum.
+
+        ### Audit via HCP CLI
+
+        List the clusters in a project and inspect each one:
+
+        ```bash
+        hcp consul-clusters list --project <project_id>
+        hcp consul-clusters read <cluster_id> --project <project_id> --format=json
+        ```
+
+        A passing response shows `consul_version` at or above your minimum supported version for every cluster; a failing response shows a cluster below it.
+      remediation:
+        - id: console
+          desc: |
+            To upgrade a Consul cluster using the HCP portal:
+
+            1. Sign in to the [HCP portal](https://portal.cloud.hashicorp.com/) and open **Consul Dedicated**.
+            2. Select the project and cluster you want to upgrade.
+            3. Open the **Overview** tab and select **Update version** (shown when a newer version is available).
+            4. Choose the target Consul version and confirm the upgrade.
+            5. Monitor the cluster status until it returns to **Running**.
+        - id: terraform
+          desc: |
+            To pin and upgrade the minimum Consul version using Terraform:
+
+            ```hcl
+            resource "hcp_consul_cluster" "example" {
+              cluster_id         = "example-consul-cluster"
+              hvn_id             = hcp_hvn.example.hvn_id
+              tier               = "standard"
+              public_endpoint    = false
+              min_consul_version = "1.17.1"
+            }
+            ```
+
+            Raising `min_consul_version` and applying triggers an in-place upgrade of the cluster to the specified version.
+    refs:
+      - url: https://developer.hashicorp.com/hcp/docs/consul/upgrades
+        title: HCP Consul Dedicated upgrades
+      - url: https://registry.terraform.io/providers/hashicorp/hcp/latest/docs/resources/consul_cluster
+        title: Terraform hcp_consul_cluster resource
+  # No Terraform variants: cluster lifecycle state is operational telemetry reported by
+  # HCP (RUNNING, PENDING, UPDATING, and similar) and has no Terraform configuration
+  # analog. It reflects the live status of a cluster that may already be fully and
+  # correctly declared in HCL, so no HCL/plan/state check can evaluate it.
+  - uid: mondoo-hcp-security-cluster-healthy-state
+    title: Ensure HCP Vault, Consul, and Boundary clusters are running
+    impact: 60
+    mql: |
+      hcp.projects.all(vaultClusters.all(state == "RUNNING"))
+      hcp.projects.all(consulClusters.all(state == "RUNNING"))
+      hcp.projects.all(boundaryClusters.all(state == "RUNNING"))
+    docs:
+      desc: |
+        This check ensures that every HCP Vault, Consul, and Boundary cluster reports a healthy `RUNNING` lifecycle state. HCP clusters can remain stuck in states such as `PENDING`, `UPDATING`, or a failure state well after an operation was expected to complete, which is often the first visible signal of a failed upgrade, an exhausted quota, or a misconfigured network attachment.
+
+        **Why this matters**
+
+        - **Availability assurance:** A cluster stuck outside `RUNNING` may be serving traffic inconsistently or not at all, directly affecting the applications and pipelines that depend on it.
+        - **Change validation:** An unhealthy state after a resize, upgrade, or network change indicates the operation did not complete as expected and needs investigation before it is trusted.
+        - **Early failure detection:** Clusters rarely fail silently; a non-running state is frequently the earliest observable signal of an underlying problem.
+        - **Security-relevant drift:** A cluster stuck mid-upgrade may be running with partially applied configuration, including network or version settings that differ from what was intended.
+
+        **Risk mitigation**
+
+        - **Faster remediation:** Alerting on non-running clusters shortens the time between a failed operation and an operator intervening.
+        - **Reduced blast radius:** Catching a stuck cluster before it is relied upon in production avoids compounding the failure with new traffic or dependent deployments.
+      audit: |
+        ### Audit via HCP Portal
+
+        1. Sign in to the [HCP portal](https://portal.cloud.hashicorp.com/).
+        2. Open **Vault Dedicated**, **Consul Dedicated**, or **Boundary** and select a project.
+        3. Review the **Status** column for each cluster listed.
+
+        A passing result shows every cluster with a status of **Running**; a failing result shows a cluster in any other state.
+
+        ### Audit via HCP CLI
+
+        List and inspect each cluster type:
+
+        ```bash
+        hcp vault-clusters list --project <project_id>
+        hcp consul-clusters list --project <project_id>
+        hcp boundary-clusters list --project <project_id>
+        ```
+
+        A passing response shows `state` set to `RUNNING` for every cluster; a failing response shows a cluster in any other state.
+      remediation:
+        - id: console
+          desc: |
+            To investigate and recover a cluster that is not running:
+
+            1. Sign in to the [HCP portal](https://portal.cloud.hashicorp.com/) and open the affected cluster.
+            2. Review the **Activity** or **Audit log** tab for the most recent operation (upgrade, resize, or network change) and any associated error.
+            3. Retry the failed operation once the underlying cause (for example an exhausted quota or a network attachment problem) is resolved.
+            4. If the cluster remains stuck, open a support case with HashiCorp support from the portal.
+          # No Terraform remediation: RUNNING/PENDING/UPDATING is a computed status
+          # reported by HCP for a cluster's current operation, not a Terraform-managed
+          # attribute. Applying HCL again does not change a cluster's lifecycle state;
+          # the underlying stuck operation or quota issue must be resolved with HCP first.
+    refs:
+      - url: https://developer.hashicorp.com/hcp/docs/vault
+        title: HCP Vault Dedicated documentation
+      - url: https://developer.hashicorp.com/hcp/docs/consul
+        title: HCP Consul Dedicated documentation
+      - url: https://developer.hashicorp.com/hcp/docs/boundary
+        title: HCP Boundary documentation
+  - uid: mondoo-hcp-security-iam-service-principal-key-rotation
+    title: Ensure HCP service principal keys are rotated regularly
+    impact: 70
+    props:
+      - uid: mondooHcpSecurityMaxServicePrincipalKeyAgeDays
+        title: Enter the maximum number of days an HCP service principal key is allowed to exist before rotation
+        mql: |
+          return 180
+    mql: |
+      hcp.organization.servicePrincipals.all(keys.all(state != "ACTIVE" || time.now - createdAt < props.mondooHcpSecurityMaxServicePrincipalKeyAgeDays * time.day))
+      hcp.projects.all(servicePrincipals.all(keys.all(state != "ACTIVE" || time.now - createdAt < props.mondooHcpSecurityMaxServicePrincipalKeyAgeDays * time.day)))
+    docs:
+      desc: |
+        This check ensures that active HCP service principal keys are rotated within a defined maximum age. A service principal key is a long-lived client ID and secret pair used by automation (CI/CD pipelines, Terraform runs, and scripts) to authenticate to HCP APIs, and HCP does not expire or rotate these keys automatically once issued.
+
+        **Why this matters**
+
+        - **Credential exposure window:** The longer a service principal key exists without rotation, the greater the chance it has leaked through a build log, a committed `.tfvars` file, or a misconfigured secret store.
+        - **Automation account hygiene:** Regular rotation forces a review of which pipelines and scripts still use a given key, surfacing forgotten or orphaned automation.
+        - **Organization and project scope:** Service principals can be scoped to an entire organization, so a stale, unreviewed key at that scope carries broad reach across every project.
+        - **Incident response clarity:** Knowing that all active keys are recent narrows the credential search space when investigating suspicious API activity.
+
+        **Risk mitigation**
+
+        - **Compromised credential invalidation:** Rotating keys on a schedule ensures a key leaked before the last rotation is no longer valid, limiting the damage from past exposures.
+        - **Stale credential cleanup:** The rotation process surfaces keys that are no longer in active use, prompting their deletion rather than letting them linger indefinitely.
+      audit: |
+        ### Audit via HCP Portal
+
+        1. Sign in to the [HCP portal](https://portal.cloud.hashicorp.com/).
+        2. Open **Access control (IAM)** at the organization level, or **Project settings > Access control (IAM)** within a project.
+        3. Select the **Service principals** tab and open a service principal.
+        4. Review the **Created** date for each key listed.
+
+        A passing result shows every active key created within your rotation window; a failing result shows an active key older than that window.
+
+        ### Audit via HCP CLI
+
+        List service principals and their keys:
+
+        ```bash
+        hcp iam service-principals list
+        hcp iam service-principals keys list --principal <service_principal_resource_name>
+        ```
+
+        A passing response shows every key's `create_time` within your rotation window; a failing response shows a key older than that window.
+      remediation:
+        - id: console
+          desc: |
+            To rotate a service principal key using the HCP portal:
+
+            1. Sign in to the [HCP portal](https://portal.cloud.hashicorp.com/) and open **Access control (IAM)** at the organization or project level.
+            2. Select the **Service principals** tab and open the service principal with an aging key.
+            3. Select **Create key** to generate a new client ID and secret.
+            4. Update every pipeline, script, or Terraform backend that authenticates with the old key to use the new credentials.
+            5. Once the new key is confirmed working, select the old key and choose **Delete**.
+        - id: terraform
+          desc: |
+            Terraform cannot enforce a rotation deadline directly, but a key managed as an `hcp_service_principal_key` resource can be rotated by replacing it:
+
+            ```bash
+            terraform apply -replace="hcp_service_principal_key.example"
+            ```
+
+            This destroys the old key and creates a new one, resetting its creation time. Update every consumer of the key with the new client ID and secret after the apply completes.
+    refs:
+      - url: https://developer.hashicorp.com/hcp/docs/hcp/iam/service-principal
+        title: HCP service principals
+      - url: https://registry.terraform.io/providers/hashicorp/hcp/latest/docs/resources/service_principal_key
+        title: Terraform hcp_service_principal_key resource
