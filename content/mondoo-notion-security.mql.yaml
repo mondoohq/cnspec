@@ -1,0 +1,296 @@
+# Copyright Mondoo, Inc. 2024, 2026
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: mondoo-notion-security
+    name: Mondoo Notion Security
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: notion,saas
+    require:
+      - provider: notion
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Detect public sharing exposure and orphaned bot ownership in Notion workspaces
+    docs:
+      desc: |
+        The Mondoo Notion Security policy identifies critical misconfigurations in Notion workspaces that could expose content to unauthorized access or leave integrations dependent on a single person's account. This policy helps organizations detect and remediate weaknesses before attackers can exploit them to reach content published outside workspace controls or ride along on an orphaned integration after its owner leaves.
+
+        This policy provides security checks across two areas:
+
+        - Public sharing exposure of pages and databases through Notion Sites
+        - Ownership of the scanning integration's own bot identity and of other bots visible in the workspace
+
+        **Scope note:** Notion's public REST API is a content-integration API, not a workspace administration API. An internal integration token can only see pages and databases it has been explicitly connected to, and the base API exposes no member/guest role, no granted integration capabilities (read, insert, update, comment), no SSO enforcement, and no allowed-domain restriction. Distinguishing guest from full-member workspace users and auditing an integration's granted capabilities require Notion's separate Enterprise SCIM and Audit Log APIs, or a manual review of the integration's settings page, and are not represented as automated checks here. This policy only asserts on data the base internal-integration token can actually see.
+
+        Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
+    groups:
+      - title: Notion
+        filters: asset.platform == "notion"
+        checks:
+          - uid: mondoo-notion-security-page-restrict-public-sharing
+          - uid: mondoo-notion-security-database-restrict-public-sharing
+          - uid: mondoo-notion-security-bot-owned-by-workspace
+          - uid: mondoo-notion-security-workspace-bots-owned-by-workspace
+queries:
+  # No check: guest vs. full-member distinction across notion.users requires Notion's
+  # Enterprise SCIM Users API. The base /v1/users response returned by the internal
+  # integration token has no role field, so a guest cannot be distinguished from a full
+  # workspace member through this provider. Revisit once mql gains an Enterprise SCIM
+  # connection mode.
+  #
+  # No check: integration capability review (read/insert/update/comment scopes granted to
+  # this or any other integration) has no REST equivalent at any token tier. Those
+  # capabilities are configured on the integration's settings page and must be reviewed
+  # there manually; there is no field to assert on, so this stays a documentation-only
+  # item rather than a faked mql: check.
+  #
+  # No Terraform variants: Notion has no official Terraform provider. Terraform Registry
+  # lists only third-party, community-published providers (ketion-so/notion,
+  # theostanton/notion, delize/notion), none under a notion or makenotion namespace, and
+  # none model page/database publish state or integration ownership. Every check below is
+  # runtime-only.
+  - uid: mondoo-notion-security-page-restrict-public-sharing
+    title: Ensure Notion pages are not published to the web
+    impact: 80
+    mql: |
+      notion.pages.where(archived == false).all(publicUrl == empty)
+    docs:
+      desc: |
+        This check ensures that Notion pages visible to the integration have not been published to the web through Notion Sites. When a page is published, anyone with the link can view its content without a Notion account or workspace membership, regardless of the page's internal sharing and permission settings.
+
+        **Why this matters**
+
+        - **Uncontrolled exposure:** A published page bypasses every workspace-level permission and becomes reachable to anyone who finds its public URL.
+        - **Search engine indexing:** Notion Sites can be indexed by search engines, turning an internal document into a publicly discoverable one.
+        - **Credential and secret leakage:** Pages never intended for external audiences often accumulate internal links, API keys, or customer data pasted in during collaboration.
+        - **Persistent exposure:** The publish setting does not expire on its own, so a page shared once can remain public indefinitely if nobody remembers to unpublish it.
+        - **Hard to audit at scale:** Without periodic review, publish state accumulates unnoticed across a growing number of pages.
+
+        **Risk mitigation**
+
+        - **Default to private:** Treat publishing to the web as an explicit, reviewed exception rather than a routine sharing option.
+        - **Regular review:** Periodically auditing every page's public URL status catches pages published temporarily and never turned back off.
+      audit: |
+        ### Audit via Notion
+
+        1. Open the page in Notion.
+        2. Click **Share** in the top-right corner of the page.
+        3. Check whether **Publish to web** shows as active and note the displayed public URL.
+
+        A passing result shows **Publish to web** turned off with no public URL; a failing result shows an active public URL.
+
+        ### Audit via API
+
+        Query the Notion API and inspect the result:
+
+        ```bash
+        curl -s -X POST https://api.notion.com/v1/search \
+          -H "Authorization: Bearer $NOTION_TOKEN" \
+          -H "Notion-Version: 2022-06-28" \
+          -H "Content-Type: application/json" \
+          -d '{"filter": {"property": "object", "value": "page"}}'
+        ```
+
+        A passing response shows `public_url` as `null` for every returned page; a failing response shows a non-null `public_url`.
+      remediation:
+        - id: console
+          desc: |
+            To unpublish a Notion page using the Notion web app:
+
+            1. Open the page that should not be publicly reachable.
+            2. Click **Share** in the top-right corner.
+            3. Under **Publish to web**, click **Unpublish** (or turn the **Publish** toggle off).
+            4. Confirm the public URL no longer resolves by opening it in a private browser window.
+        # No Terraform remediation: Notion has no official Terraform provider; the
+        # community providers (ketion-so/notion, theostanton/notion, delize/notion) are
+        # third-party and unsupported, and none expose a resource for page publish state,
+        # so this setting cannot be enforced as code.
+    refs:
+      - url: https://www.notion.so/help/public-pages-and-web-publishing
+        title: Notion Public Pages and Web Publishing
+      - url: https://developers.notion.com/reference/page
+        title: Notion API Page Reference
+  # No Terraform variants: see comment above mondoo-notion-security-page-restrict-public-sharing.
+  - uid: mondoo-notion-security-database-restrict-public-sharing
+    title: Ensure Notion databases are not published to the web
+    impact: 80
+    mql: |
+      notion.databases.where(archived == false).all(publicUrl == empty)
+    docs:
+      desc: |
+        This check ensures that Notion databases visible to the integration have not been published to the web through Notion Sites. A published database exposes every visible row and property to anyone with the link, without requiring a Notion account or workspace membership.
+
+        **Why this matters**
+
+        - **Bulk data exposure:** Unlike a single page, a published database can expose an entire structured dataset, rows, properties, and any attached files, in one place.
+        - **Uncontrolled exposure:** Publishing bypasses workspace-level sharing and permission settings entirely.
+        - **Search engine indexing:** A published database's web view can be indexed by search engines, making rows discoverable well beyond the intended audience.
+        - **Persistent exposure:** The publish setting does not expire, so a database shared once can remain public indefinitely if nobody remembers to unpublish it.
+        - **Sensitive columns:** Databases used for tracking customers, incidents, or internal operations frequently contain properties never meant for a public audience.
+
+        **Risk mitigation**
+
+        - **Default to private:** Treat publishing a database to the web as an explicit, reviewed exception rather than a routine sharing option.
+        - **Regular review:** Periodically auditing every database's public URL status catches ones published temporarily and never turned back off.
+      audit: |
+        ### Audit via Notion
+
+        1. Open the database in Notion.
+        2. Click **Share** in the top-right corner.
+        3. Check whether **Publish to web** shows as active and note the displayed public URL.
+
+        A passing result shows **Publish to web** turned off with no public URL; a failing result shows an active public URL.
+
+        ### Audit via API
+
+        Query the Notion API and inspect the result:
+
+        ```bash
+        curl -s -X POST https://api.notion.com/v1/search \
+          -H "Authorization: Bearer $NOTION_TOKEN" \
+          -H "Notion-Version: 2022-06-28" \
+          -H "Content-Type: application/json" \
+          -d '{"filter": {"property": "object", "value": "database"}}'
+        ```
+
+        A passing response shows `public_url` as `null` for every returned database; a failing response shows a non-null `public_url`.
+      remediation:
+        - id: console
+          desc: |
+            To unpublish a Notion database using the Notion web app:
+
+            1. Open the database that should not be publicly reachable.
+            2. Click **Share** in the top-right corner.
+            3. Under **Publish to web**, click **Unpublish** (or turn the **Publish** toggle off).
+            4. Confirm the public URL no longer resolves by opening it in a private browser window.
+        # No Terraform remediation: Notion has no official Terraform provider; the
+        # community providers (ketion-so/notion, theostanton/notion, delize/notion) are
+        # third-party and unsupported, and none expose a resource for database publish
+        # state, so this setting cannot be enforced as code.
+    refs:
+      - url: https://www.notion.so/help/public-pages-and-web-publishing
+        title: Notion Public Pages and Web Publishing
+      - url: https://developers.notion.com/reference/database
+        title: Notion API Database Reference
+  # No Terraform variants: see comment above mondoo-notion-security-page-restrict-public-sharing.
+  - uid: mondoo-notion-security-bot-owned-by-workspace
+    title: Ensure the integration's bot is owned by the workspace
+    impact: 70
+    mql: |
+      notion.bot.ownerType == "workspace"
+    docs:
+      desc: |
+        This check ensures that the scanning integration's own bot identity is owned by the workspace rather than an individual user. Notion internal integrations are normally created directly under a workspace, but an integration set up under a personal developer account before being connected can retain individual ownership.
+
+        **Why this matters**
+
+        - **Continuity of access:** A workspace-owned integration keeps working after the person who created it leaves the organization or has their account deactivated.
+        - **Clear accountability:** Workspace ownership ties the integration to the organization rather than to a single employee's personal Notion account.
+        - **Reduced single point of failure:** If a user-owned integration's owner account is suspended or deleted, every automation and connected page relying on that integration's token can silently break.
+        - **Consistent offboarding:** Security teams reviewing a departing employee's access do not need to separately track integrations tied to that person's account.
+
+        **Risk mitigation**
+
+        - **Workspace-scoped credentials:** Recreating a user-owned integration as an internal integration scoped to the workspace removes the dependency on any one person's account.
+        - **Ownership review at creation:** Confirming an integration's owner at setup time prevents this gap from appearing later.
+      audit: |
+        ### Audit via Notion
+
+        1. Sign in to Notion as a workspace owner.
+        2. Go to **Settings & members > Connections**, or open [My integrations](https://www.notion.so/my-integrations) directly.
+        3. Select the integration and review whether it is associated with the workspace or with an individual account.
+
+        A passing result shows the integration owned by the workspace; a failing result shows it owned by an individual user account.
+
+        ### Audit via API
+
+        Query the Notion API and inspect the result:
+
+        ```bash
+        curl -s https://api.notion.com/v1/users/me \
+          -H "Authorization: Bearer $NOTION_TOKEN" \
+          -H "Notion-Version: 2022-06-28"
+        ```
+
+        A passing response shows `bot.owner.type` set to `workspace`; a failing response shows it set to `user`.
+      remediation:
+        - id: console
+          desc: |
+            To move a user-owned integration to workspace ownership using the Notion web app:
+
+            1. Sign in to Notion as a workspace owner and open [My integrations](https://www.notion.so/my-integrations).
+            2. Create a new internal integration, making sure the workspace picker shown at creation is set to the correct workspace rather than a personal account.
+            3. Share the same pages and databases with the new integration that were shared with the old one, using each page or database's **Share** menu.
+            4. Update any automation or application that used the old integration's token to use the new integration's token.
+            5. Remove the old, user-owned integration's access, or delete it entirely from **Settings & members > Connections**, once the migration is verified.
+        # No Terraform remediation: Notion has no official Terraform provider; the
+        # community providers (ketion-so/notion, theostanton/notion, delize/notion) are
+        # third-party and unsupported, and none expose a resource for integration
+        # ownership, so this setting cannot be enforced as code.
+    refs:
+      - url: https://developers.notion.com/reference/authentication
+        title: Notion API Authentication
+      - url: https://developers.notion.com/reference/user
+        title: Notion API User Reference
+  # No Terraform variants: see comment above mondoo-notion-security-page-restrict-public-sharing.
+  - uid: mondoo-notion-security-workspace-bots-owned-by-workspace
+    title: Ensure other workspace bots are owned by the workspace
+    impact: 60
+    mql: |
+      notion.users.where(type == "bot").all(botOwnerType == "workspace")
+    docs:
+      desc: |
+        This check ensures that every bot user visible in the workspace, representing another integration installed alongside this one, is owned by the workspace rather than an individual. A workspace accumulates bot users over time as more integrations are connected, and a bot left owned by a former employee's personal account is a common source of orphaned, unmonitored access.
+
+        **Why this matters**
+
+        - **Orphaned access risk:** A bot owned by a departed employee's account can keep operating with whatever permissions it was granted, unnoticed by anyone still at the organization.
+        - **Shadow integrations:** User-owned bots are often created ad hoc by individuals rather than provisioned through a reviewed process, so they receive less scrutiny than workspace-managed integrations.
+        - **Attribution gaps:** When an integration is tied to a person rather than the workspace, it is harder for administrators to determine who is responsible for its behavior after that person moves on.
+        - **Fleet-wide blast radius:** A workspace with many user-owned bots has many independent points of potential compromise, each tied to a different personal account's security posture.
+
+        **Risk mitigation**
+
+        - **Periodic inventory:** Regularly reviewing every bot user surfaces integrations that were never migrated to workspace ownership.
+        - **Standardized provisioning:** Requiring new integrations to be created as workspace-owned from the start prevents this gap from recurring.
+      audit: |
+        ### Audit via Notion
+
+        1. Sign in to Notion as a workspace owner.
+        2. Go to **Settings & members > Connections** and review each connected integration's owner.
+
+        A passing result shows every listed integration owned by the workspace; a failing result shows an integration owned by an individual user.
+
+        ### Audit via API
+
+        Query the Notion API and inspect the result:
+
+        ```bash
+        curl -s https://api.notion.com/v1/users \
+          -H "Authorization: Bearer $NOTION_TOKEN" \
+          -H "Notion-Version: 2022-06-28"
+        ```
+
+        A passing response shows every result with `type` set to `bot` having `bot.owner.type` set to `workspace`; a failing response shows a bot user with `bot.owner.type` set to `user`.
+      remediation:
+        - id: console
+          desc: |
+            To move a user-owned bot to workspace ownership using the Notion web app:
+
+            1. Sign in to Notion as a workspace owner and open **Settings & members > Connections** to identify user-owned integrations.
+            2. For each one, create a replacement internal integration at [My integrations](https://www.notion.so/my-integrations), making sure the workspace picker is set to the workspace rather than a personal account.
+            3. Share the same pages and databases with the replacement integration using each page or database's **Share** menu.
+            4. Update any automation or application that used the old integration's token to use the new one.
+            5. Remove or delete the old, user-owned integration from **Settings & members > Connections** once the migration is verified.
+        # No Terraform remediation: Notion has no official Terraform provider; the
+        # community providers (ketion-so/notion, theostanton/notion, delize/notion) are
+        # third-party and unsupported, and none expose a resource for integration
+        # ownership, so this setting cannot be enforced as code.
+    refs:
+      - url: https://developers.notion.com/reference/authentication
+        title: Notion API Authentication
+      - url: https://developers.notion.com/reference/user
+        title: Notion API User Reference
