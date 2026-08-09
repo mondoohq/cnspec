@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-alibaba-security
     name: Mondoo Alibaba Cloud Security
-    version: 1.0.0
+    version: 1.1.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -59,6 +59,7 @@ policies:
           - uid: mondoo-alibaba-security-ecs-security-group-no-public-all-ports
           - uid: mondoo-alibaba-security-ecs-security-group-no-public-ipv6-admin
           - uid: mondoo-alibaba-security-ecs-instance-no-public-ip
+          - uid: mondoo-alibaba-security-ecs-imds-v2-required
           - uid: mondoo-alibaba-security-ecs-disk-encryption-enabled
           - uid: mondoo-alibaba-security-ecs-disk-kms-encryption
       - title: ApsaraDB (RDS and PolarDB)
@@ -2197,6 +2198,79 @@ queries:
       asset.platform == "terraform-state" && terraform.state.resources.contains(type == "alicloud_ecs_disk")
     mql: |
       terraform.state.resources.where(type == "alicloud_ecs_disk").map(values).where(_["encrypted"] == true).all(_["kms_key_id"] != empty)
+
+  # No Terraform variants: instance metadata options (HttpTokens/HttpEndpoint) are not exposed as attributes of the alicloud_instance resource, so the token-required posture cannot be asserted from Terraform HCL, plan, or state.
+  - uid: mondoo-alibaba-security-ecs-imds-v2-required
+    title: Ensure ECS instances require a session token for metadata (IMDSv2)
+    impact: 80
+    docs:
+      desc: |
+        This check ensures that every ECS instance with the metadata service enabled requires a session token to read instance metadata, the hardened access mode Alibaba Cloud provides in place of the default token-optional behavior. When tokens are optional, a plain HTTP GET to the metadata endpoint returns the credentials of the instance RAM role, so any server-side request forgery (SSRF) flaw in a workload on the instance can read those credentials. Requiring a token forces the caller to first obtain one with a separate request, which an SSRF payload generally cannot perform.
+
+        **Why this matters**
+
+        - **SSRF-to-credential path:** With optional tokens, a single SSRF bug in an application on the instance hands an attacker the instance RAM role credentials with no authentication.
+        - **Inherited blast radius:** Those credentials carry whatever the attached instance RAM role grants, extending a single application flaw into account-wide access.
+        - **Defense independent of the application:** Requiring a token blocks the read at the metadata service itself, regardless of whether the application-layer SSRF is ever fixed.
+
+        **Risk mitigation**
+
+        - **Closes the credential path:** A token-first handshake defeats the simple GET-based metadata read that SSRF relies on.
+        - **Limits credential theft:** Even a reachable metadata endpoint no longer yields credentials to an unauthenticated forged request.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the [ECS console](https://ecs.console.aliyun.com/).
+        2. Open each instance and review its instance metadata access mode under the instance security or metadata settings.
+
+        A passing instance has the metadata endpoint enabled with token access required (the hardened mode). A failing instance has the endpoint enabled while token access is still optional.
+
+        ### Audit via CLI
+
+        1. Inspect the metadata options of each instance:
+
+        ```bash
+        aliyun ecs DescribeInstances --output cols=InstanceId,HttpEndpoint,HttpTokens
+        ```
+
+        A passing instance returns `HttpEndpoint` enabled with `HttpTokens` set to `required`. A failing instance returns `HttpTokens` set to `optional` while `HttpEndpoint` is enabled.
+      remediation:
+        - id: console
+          desc: |
+            To require a metadata token on an ECS instance in the console:
+
+            1. Sign in to the [ECS console](https://ecs.console.aliyun.com/).
+            2. Open the instance and go to its instance metadata / security settings.
+            3. Set the instance metadata access mode to require a token (the hardened mode) and save.
+        - id: cli
+          desc: |
+            To require a metadata token on an instance with the `aliyun` CLI:
+
+            ```bash
+            aliyun ecs ModifyInstanceMetadataOptions --InstanceId <instance-id> --HttpTokens required
+            ```
+        # No Terraform remediation: instance metadata options are not exposed as an attribute of the alicloud_instance resource, so the token-required posture cannot be set through Terraform.
+    variants:
+      - uid: mondoo-alibaba-security-ecs-imds-v2-required-alicloud
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: false
+      compliance/nis-2: false
+      compliance/nist-ai-100-1: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-171: false
+      compliance/nist-sp-800-53-rev5: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+  - uid: mondoo-alibaba-security-ecs-imds-v2-required-alicloud
+    filters: asset.platform == "alicloud-account"
+    mql: |
+      alicloud.ecs.instances.where(metadataEndpointEnabled == true).all(metadataHttpTokens == "required")
 
   # ===========================================================================
   # ApsaraDB for RDS
