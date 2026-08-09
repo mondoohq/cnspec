@@ -1,0 +1,407 @@
+# Copyright Mondoo, Inc. 2024, 2026
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: mondoo-dropbox-security
+    name: Mondoo Dropbox Business Security
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: dropbox,saas
+    require:
+      - provider: dropbox
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Secure Dropbox Business team sharing, admin privileges, and third-party access
+    docs:
+      desc: |
+        The Mondoo Dropbox Business Security policy identifies critical misconfigurations in a Dropbox Business team that could expose company files to unauthorized access. This policy helps organizations detect and remediate weaknesses before attackers can exploit them to exfiltrate data through unrestricted sharing, retain access through stale or unreviewed accounts, or pivot into team content through a compromised third-party app or an unattended device session.
+
+        This policy provides security checks across key Dropbox Business team areas:
+
+        - External and public sharing exposure
+        - Suspended and pending-invite member accounts
+        - Team administrator privilege sprawl
+        - Linked third-party app access
+        - Linked device session hygiene
+
+        This policy uses two configurable properties, `mondooDropboxSecurityMaxTeamAdmins` and `mondooDropboxSecurityMaxDeviceInactivityDays`, so you can match the admin headcount and session-staleness thresholds your organization expects.
+
+        Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
+    groups:
+      - title: Dropbox Business
+        filters: asset.platform == "dropbox"
+        checks:
+          - uid: mondoo-dropbox-security-team-external-sharing-restricted
+          - uid: mondoo-dropbox-security-team-public-links-restricted
+          - uid: mondoo-dropbox-security-member-no-stale-accounts
+          - uid: mondoo-dropbox-security-member-admin-count-bounded
+          - uid: mondoo-dropbox-security-linkedapp-full-access-reviewed
+          - uid: mondoo-dropbox-security-device-stale-sessions-reviewed
+queries:
+  # No Terraform remediation: external sharing is a Dropbox Business team-wide setting
+  # managed through team/get_info and team/features/get_values. There is no mainstream
+  # Terraform provider for the Dropbox Business admin API (the only public listing,
+  # callensm/dropbox, is an independently maintained personal-Dropbox provider with no
+  # team-settings resource), so this can only be remediated through the admin console.
+  - uid: mondoo-dropbox-security-team-external-sharing-restricted
+    title: Restrict external sharing of files and folders
+    impact: 75
+    mql: |
+      dropbox.team.externalSharingAllowed == false
+    docs:
+      desc: |
+        This check ensures that the Dropbox Business team is configured to prevent members from sharing folders with people outside the team. When external sharing is allowed, any member can add an outside collaborator to a shared folder without administrator review.
+
+        **Why this matters**
+
+        - **Data boundary enforcement:** Restricting external sharing keeps company files inside the organization unless an administrator deliberately grants an exception.
+        - **Reduced exfiltration surface:** A member account that is phished or compromised cannot be used to hand off entire shared folders to an outside party.
+        - **Vendor and contractor scope control:** Without a restriction, temporary collaborations can leave folders permanently accessible to people who no longer need them.
+        - **Compliance alignment:** Many data-handling frameworks require that access to sensitive files stay within the organization by default.
+
+        **Risk mitigation**
+
+        - **Default-deny sharing posture:** Turning off unrestricted external sharing forces exceptions to go through an administrator-approved path.
+        - **Smaller blast radius:** Limiting who can extend folder access outside the team reduces how far a single compromised account can spread company data.
+      audit: |
+        ### Audit via Admin Console
+
+        1. Sign in to the [Dropbox Admin Console](https://www.dropbox.com/team/admin) as a team admin.
+        2. Open **Settings > Sharing**.
+        3. Review the **Shared folders** section for the setting that controls sharing with people outside the team.
+
+        A passing result shows external sharing restricted to team-approved exceptions or fully disabled; a failing result shows external sharing allowed for all members.
+
+        ### Audit via API
+
+        Query the Dropbox Business API and inspect the result:
+
+        ```bash
+        curl -s -X POST "https://api.dropboxapi.com/2/team/get_info" \
+          -H "Authorization: Bearer $DROPBOX_TEAM_TOKEN"
+        ```
+
+        A passing response shows the team's sharing policy set to team-only (no external sharing); a failing response shows external sharing allowed.
+      remediation:
+        - id: console
+          desc: |
+            To restrict external sharing using the Dropbox Admin Console:
+
+            1. Sign in to the [Dropbox Admin Console](https://www.dropbox.com/team/admin) as a team admin.
+            2. Open **Settings > Sharing**.
+            3. Under **Shared folders**, set sharing outside the team to **Disabled** or restrict it to specific approved members.
+            4. Save the change and notify members that new external shares require an exception.
+          # No Terraform remediation: no mainstream Dropbox Business Terraform provider
+          # exposes team sharing settings as a manageable resource.
+    refs:
+      - url: https://help.dropbox.com/security/team-sharing-permissions
+        title: Team sharing permissions
+      - url: https://www.dropbox.com/business/trust
+        title: Dropbox Business Trust Center
+  # No Terraform remediation: default shared-link visibility is a Dropbox Business
+  # team-wide setting with no corresponding resource in any mainstream Terraform
+  # provider for the Business admin API.
+  - uid: mondoo-dropbox-security-team-public-links-restricted
+    title: Restrict shared links from defaulting to public access
+    impact: 70
+    mql: |
+      dropbox.team.publicSharingAllowed == false
+    docs:
+      desc: |
+        This check ensures that the Dropbox Business team does not default new shared links to a publicly accessible audience. When public sharing is allowed, a link created by any member can be opened by anyone who has the URL, with no authentication required.
+
+        **Why this matters**
+
+        - **Link leakage risk:** A publicly accessible link that is forwarded, indexed, or accidentally pasted somewhere public grants access to anyone who finds it.
+        - **No access accountability:** Public links do not require the visitor to sign in, so there is no record of who actually viewed or downloaded the file.
+        - **Unintended default exposure:** Members creating a quick link for internal use may not realize the default audience is public rather than team-only.
+        - **Search engine exposure:** Publicly accessible links can end up cached or indexed outside the organization's control.
+
+        **Risk mitigation**
+
+        - **Team-only default:** Requiring new shared links to default to team-only access ensures a link is exposed publicly only when a member deliberately chooses that setting.
+        - **Reduced accidental disclosure:** Removing the public default closes the most common path by which sensitive files end up reachable without authentication.
+      audit: |
+        ### Audit via Admin Console
+
+        1. Sign in to the [Dropbox Admin Console](https://www.dropbox.com/team/admin) as a team admin.
+        2. Open **Settings > Sharing**.
+        3. Review the **Shared links** section for the default visibility applied to new links.
+
+        A passing result shows the default link visibility set to team-only; a failing result shows new links defaulting to public.
+
+        ### Audit via API
+
+        Query the Dropbox Business API and inspect the result:
+
+        ```bash
+        curl -s -X POST "https://api.dropboxapi.com/2/team/get_info" \
+          -H "Authorization: Bearer $DROPBOX_TEAM_TOKEN"
+        ```
+
+        A passing response shows the default shared-link policy set to team-only; a failing response shows the default set to public.
+      remediation:
+        - id: console
+          desc: |
+            To restrict the default shared-link audience using the Dropbox Admin Console:
+
+            1. Sign in to the [Dropbox Admin Console](https://www.dropbox.com/team/admin) as a team admin.
+            2. Open **Settings > Sharing**.
+            3. Under **Shared links**, set the default link audience to **Team only**.
+            4. Save the change so new links no longer default to public access.
+          # No Terraform remediation: no mainstream Dropbox Business Terraform provider
+          # exposes the shared-link default-visibility setting as a manageable resource.
+    refs:
+      - url: https://help.dropbox.com/share/link-permissions
+        title: Shared link permissions
+      - url: https://www.dropbox.com/business/trust
+        title: Dropbox Business Trust Center
+  # No Terraform remediation: member account lifecycle state (suspended, invited) is
+  # runtime team-membership data returned by team/members/list_v2. No mainstream
+  # Dropbox Business Terraform provider models team membership as a resource.
+  - uid: mondoo-dropbox-security-member-no-stale-accounts
+    title: Ensure no members remain suspended or pending invite
+    impact: 50
+    mql: |
+      dropbox.members.where(status == "suspended" || status == "invited").length == 0
+    docs:
+      desc: |
+        This check ensures that the Dropbox Business team has no member accounts left in a suspended or pending-invite state. Dropbox does not automatically clean up these accounts, so they tend to accumulate as members leave the organization or never complete onboarding.
+
+        **Why this matters**
+
+        - **Offboarding gaps:** A suspended account still consumes a license slot and retains its historical folder memberships, so it is easy to overlook during an access review.
+        - **Reactivation risk:** A suspended account can be reactivated by an admin, so unreviewed suspensions represent latent access that was never formally revoked.
+        - **Stale invitations:** A pending invite left open indefinitely is a standing entry point if the invited email address is later compromised or reassigned.
+        - **Accurate headcount:** Suspended and pending accounts distort license usage and member-count reporting used for other security decisions.
+
+        **Risk mitigation**
+
+        - **Regular membership review:** Periodically reviewing suspended and invited accounts ensures each one is either completed, reactivated deliberately, or permanently removed.
+        - **Prompt removal:** Deleting accounts that no longer need access, rather than leaving them suspended, prevents silent reactivation later.
+      audit: |
+        ### Audit via Admin Console
+
+        1. Sign in to the [Dropbox Admin Console](https://www.dropbox.com/team/admin) as a team admin.
+        2. Open **Members**.
+        3. Filter the member list by status and review any members shown as **Suspended** or **Invited**.
+
+        A passing result shows no members in a suspended or pending-invite state; a failing result shows one or more members with either status.
+
+        ### Audit via API
+
+        Query the Dropbox Business API and inspect the result:
+
+        ```bash
+        curl -s -X POST "https://api.dropboxapi.com/2/team/members/list_v2" \
+          -H "Authorization: Bearer $DROPBOX_TEAM_TOKEN" \
+          -H "Content-Type: application/json" \
+          --data '{"limit": 100}'
+        ```
+
+        A passing response shows every member's `profile.status` set to `active`; a failing response shows a member with `profile.status` set to `suspended` or `invited`.
+      remediation:
+        - id: console
+          desc: |
+            To resolve suspended and pending-invite accounts using the Dropbox Admin Console:
+
+            1. Sign in to the [Dropbox Admin Console](https://www.dropbox.com/team/admin) as a team admin.
+            2. Open **Members** and filter by **Suspended** or **Invited** status.
+            3. For each suspended member who should no longer have access, select the member and choose **Remove from team**. For a member who should regain access, choose **Reactivate**.
+            4. For each stale pending invite, resend the invitation if it is still needed, or select **Remove from team** to revoke it.
+          # No Terraform remediation: no mainstream Dropbox Business Terraform provider
+          # models team membership lifecycle as a resource.
+    refs:
+      - url: https://help.dropbox.com/teams-admins/admin/remove-team-member
+        title: Remove a team member
+      - url: https://help.dropbox.com/teams-admins/admin/add-team-member
+        title: Add and invite team members
+  # No Terraform remediation: role assignment is runtime team-membership data returned
+  # by team/members/list_v2. No mainstream Dropbox Business Terraform provider models
+  # team member roles as a resource.
+  - uid: mondoo-dropbox-security-member-admin-count-bounded
+    title: Limit the number of team admin accounts
+    impact: 60
+    props:
+      - uid: mondooDropboxSecurityMaxTeamAdmins
+        title: Maximum number of members allowed to hold the team_admin role
+        mql: |
+          return 3
+    mql: |
+      dropbox.members.where(role != empty && role.contains("team_admin")).length <= props.mondooDropboxSecurityMaxTeamAdmins
+    docs:
+      desc: |
+        This check ensures that the number of Dropbox Business members holding the team_admin role stays at or below a defined limit. The team_admin role can change every team-wide security setting, so an unreviewed number of holders widens the organization's most sensitive attack surface.
+
+        **Why this matters**
+
+        - **Reduced attack surface:** Each team_admin account is a high-value target, so a small, reviewed group limits how many accounts an attacker can compromise to reach full administrative control.
+        - **Accountability:** Keeping the admin group small makes it clear who can disable sharing restrictions, remove members, or export team data.
+        - **Privilege creep prevention:** Admin roles tend to accumulate over time as members change responsibilities; a bound forces periodic review.
+        - **Least privilege:** Most day-to-day administrative tasks can be delegated to narrower roles, such as user_management_admin or support_admin, instead of full team_admin.
+
+        **Risk mitigation**
+
+        - **Periodic access review:** Regularly reviewing who holds the team_admin role catches accounts that no longer need it.
+        - **Containment:** A small admin group limits the blast radius if a privileged credential is phished or stolen.
+      audit: |
+        ### Audit via Admin Console
+
+        1. Sign in to the [Dropbox Admin Console](https://www.dropbox.com/team/admin) as a team admin.
+        2. Open **Members**.
+        3. Filter the member list by role and select **Team admin**.
+        4. Count the members shown.
+
+        A passing result shows the number of team admins at or below your organization's limit; a failing result shows more team admins than the limit allows.
+
+        ### Audit via API
+
+        Query the Dropbox Business API and inspect the result:
+
+        ```bash
+        curl -s -X POST "https://api.dropboxapi.com/2/team/members/list_v2" \
+          -H "Authorization: Bearer $DROPBOX_TEAM_TOKEN" \
+          -H "Content-Type: application/json" \
+          --data '{"limit": 100}'
+        ```
+
+        A passing response shows the count of members with a `team_admin` role at or below your limit; a failing response shows more members holding that role.
+      remediation:
+        - id: console
+          desc: |
+            To reduce the number of team admin accounts using the Dropbox Admin Console:
+
+            1. Sign in to the [Dropbox Admin Console](https://www.dropbox.com/team/admin) as a team admin.
+            2. Open **Members** and filter by the **Team admin** role.
+            3. For each admin who no longer needs full administrative access, select the member, open their role setting, and change it to a narrower role such as **User management admin** or **Support admin**, or to **Member** if no administrative access is needed.
+            4. Confirm the remaining team admin count is at or below your organization's limit.
+          # No Terraform remediation: no mainstream Dropbox Business Terraform provider
+          # models team member role assignment as a resource.
+    refs:
+      - url: https://help.dropbox.com/teams-admins/admin/team-roles-permissions
+        title: Team roles and permissions
+  # No Terraform remediation: linked third-party app authorizations are runtime OAuth
+  # grants returned by team/linked_apps/list_members_linked_apps. No mainstream Dropbox
+  # Business Terraform provider models linked apps as a resource.
+  - uid: mondoo-dropbox-security-linkedapp-full-access-reviewed
+    title: Ensure linked apps do not have full account access
+    impact: 65
+    mql: |
+      dropbox.linkedApps.where(isAppFolder == false).length == 0
+    docs:
+      desc: |
+        This check ensures that no third-party application linked to a team member's Dropbox account has been granted access to the member's entire Dropbox rather than a scoped app folder. Dropbox lets members authorize third-party apps individually, and full-account access gives an app the same reach as the member.
+
+        **Why this matters**
+
+        - **Blast radius of a compromised app:** An app with full-account access can read, modify, or delete every file the member can, not just a dedicated folder.
+        - **Unreviewed authorizations:** Members can link apps on their own, so full-access grants can accumulate without administrator awareness.
+        - **Supply chain exposure:** A vulnerability or malicious update in a linked app becomes a path to the member's entire Dropbox content.
+        - **Data governance:** Regulations that scope which systems may hold certain data are undermined when a third-party app has unrestricted access to team content.
+
+        **Risk mitigation**
+
+        - **Scoped authorization:** Favor apps that request app-folder access instead of full-account access whenever the app's functionality allows it.
+        - **Periodic app review:** Regularly reviewing linked apps across the team surfaces authorizations that are no longer needed or were never appropriate.
+      audit: |
+        ### Audit via Admin Console
+
+        1. Sign in to the [Dropbox Admin Console](https://www.dropbox.com/team/admin) as a team admin.
+        2. Open **Apps**.
+        3. Review the linked third-party apps and their access scope for each member.
+
+        A passing result shows every linked app scoped to an app folder; a failing result shows one or more apps with full-account access.
+
+        ### Audit via API
+
+        Query the Dropbox Business API and inspect the result:
+
+        ```bash
+        curl -s -X POST "https://api.dropboxapi.com/2/team/linked_apps/list_members_linked_apps" \
+          -H "Authorization: Bearer $DROPBOX_TEAM_TOKEN" \
+          -H "Content-Type: application/json" \
+          --data '{}'
+        ```
+
+        A passing response shows every linked app with `is_app_folder` set to `true`; a failing response shows an app with `is_app_folder` set to `false`.
+      remediation:
+        - id: console
+          desc: |
+            To remove or replace full-access linked apps using the Dropbox Admin Console:
+
+            1. Sign in to the [Dropbox Admin Console](https://www.dropbox.com/team/admin) as a team admin.
+            2. Open **Apps** and review each app with full-account access.
+            3. For apps that are not needed, select **Unlink** to revoke their access immediately.
+            4. For apps that are needed, check whether the app offers an app-folder-scoped authorization mode and have the member re-authorize using that mode.
+          # No Terraform remediation: no mainstream Dropbox Business Terraform provider
+          # models linked third-party app authorizations as a resource.
+    refs:
+      - url: https://help.dropbox.com/installs-integrations/third-party/third-party-apps
+        title: Manage third-party app access
+  # No Terraform remediation: linked device sessions are runtime data returned by
+  # team/devices/list_members_devices. No mainstream Dropbox Business Terraform
+  # provider models linked devices or sessions as a resource.
+  - uid: mondoo-dropbox-security-device-stale-sessions-reviewed
+    title: Ensure linked devices have no stale, unreviewed sessions
+    impact: 55
+    props:
+      - uid: mondooDropboxSecurityMaxDeviceInactivityDays
+        title: Maximum number of days a linked device or session may go unused before it is considered stale
+        mql: |
+          return 90
+    mql: |
+      dropbox.devices.where(lastActivity != empty).all(
+        time.now - lastActivity < props.mondooDropboxSecurityMaxDeviceInactivityDays * time.day
+      )
+    docs:
+      desc: |
+        This check ensures that every device or session linked to a team member's Dropbox account has recorded activity within a defined staleness threshold. Dropbox keeps a linked device or web session active until it is explicitly unlinked or signed out, even if it has not been used in a long time.
+
+        **Why this matters**
+
+        - **Lost or retired hardware:** A device that was lost, sold, or retired without being unlinked still has standing access to the member's Dropbox content.
+        - **Stale browser sessions:** A web session left open on a shared or public computer remains valid until it is manually revoked or times out.
+        - **Reduced detection window:** Sessions that nobody reviews can be reused by an attacker for an extended period without drawing attention.
+        - **Offboarding completeness:** Reviewing linked devices helps confirm that a departing member's devices were unlinked along with their account.
+
+        **Risk mitigation**
+
+        - **Regular session review:** Periodically reviewing linked devices and sessions surfaces ones that should be unlinked.
+        - **Prompt revocation:** Unlinking stale devices and signing out inactive sessions closes access paths that no longer serve a legitimate purpose.
+      audit: |
+        ### Audit via Admin Console
+
+        1. Sign in to the [Dropbox Admin Console](https://www.dropbox.com/team/admin) as a team admin.
+        2. Open **Members**, select a member, and review their linked devices and sessions.
+        3. Compare the **Last activity** timestamp for each device or session against your organization's staleness threshold.
+
+        A passing result shows every linked device or session with recent activity within the threshold; a failing result shows one or more devices or sessions inactive beyond the threshold.
+
+        ### Audit via API
+
+        Query the Dropbox Business API and inspect the result:
+
+        ```bash
+        curl -s -X POST "https://api.dropboxapi.com/2/team/devices/list_members_devices" \
+          -H "Authorization: Bearer $DROPBOX_TEAM_TOKEN" \
+          -H "Content-Type: application/json" \
+          --data '{}'
+        ```
+
+        A passing response shows every device or session with a `last_activity` timestamp within your staleness threshold; a failing response shows one older than the threshold.
+      remediation:
+        - id: console
+          desc: |
+            To revoke stale linked devices and sessions using the Dropbox Admin Console:
+
+            1. Sign in to the [Dropbox Admin Console](https://www.dropbox.com/team/admin) as a team admin.
+            2. Open **Members**, select the member with the stale device or session, and open their device list.
+            3. For each device or session inactive beyond your staleness threshold, select **Unlink** to end its access.
+            4. Confirm with the member that the retired device or session is no longer needed before unlinking.
+          # No Terraform remediation: no mainstream Dropbox Business Terraform provider
+          # models linked devices or sessions as a resource.
+    refs:
+      - url: https://help.dropbox.com/security/devices-web-sessions-linked-apps
+        title: Manage devices, web sessions, and linked apps
