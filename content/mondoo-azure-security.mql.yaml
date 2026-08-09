@@ -729,6 +729,10 @@ queries:
         tags:
           mondoo.com/filter-title: Azure Network Security Group
           mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-ssh-access-restricted-from-internet-effective-azure
+        tags:
+          mondoo.com/filter-title: Azure Subscription
+          mondoo.com/filter-icon: azure
       - uid: mondoo-azure-security-ssh-access-restricted-from-internet-terraform-hcl
         tags:
           mondoo.com/filter-title: Terraform HCL
@@ -757,6 +761,8 @@ queries:
         This check verifies that remote shell access to your Azure workloads requires network position, by rejecting network security group rules that admit SSH from the open internet.
 
         The check examines inbound allow rules for TCP whose source address prefix is a wildcard, `0.0.0.0/0`, `Internet`, or `Any`, and fails when any of them reaches TCP port `22`. Rules of that shape with a destination port range of `*` also fail, because a wildcard range covers `22` along with everything else. In the portal these are the Inbound security rules on a network security group. From the CLI, narrow the offending rule with `az network nsg rule update --source-address-prefixes`, or delete it with `az network nsg rule delete`. In Terraform and Bicep the field to change is `source_address_prefix`, or `sourceAddressPrefix` respectively, on the security rule.
+
+        Against a live subscription this is evaluated two ways. Each network security group's own rules are inspected in isolation, and — more authoritatively — the *effective* rules on each network interface are inspected. The effective rule set is the merged result of the NSG on the interface, the NSG on its subnet, and any application security group rules, which is what actually decides whether port 22 reaches the interface. A single NSG rule is not the whole answer, because another NSG in the chain can allow what one denies, and the effective set also resolves service tags such as `Internet` into their concrete address ranges, so an allow rule written against a tag rather than `0.0.0.0/0` is still caught.
 
         **Why this matters**
 
@@ -897,6 +903,16 @@ queries:
         disallowedPortSSH
         allNsgTCP.none(destinationPortRange.any(fromPort <= disallowedPortSSH && toPort >= disallowedPortSSH))
       }
+  - uid: mondoo-azure-security-ssh-access-restricted-from-internet-effective-azure
+    filters: |
+      asset.platform == "azure"
+    mql: |
+      azure.subscription.network.interfaces.all(
+        effectiveRules
+          .where(direction == "Inbound" && access == "Allow" && protocol == /TCP|All|\*/i)
+          .where(destinationPortRange == "22" || destinationPortRange == "*" || destinationPortRanges.any(_ == "22"))
+          .none(sourceAddressPrefix == /\*|0\.0\.0\.0|Internet|\/0|internet|any/ || sourceAddressPrefixes.any(_ == /\*|0\.0\.0\.0\/0|Internet|\/0/) || expandedSourceAddressPrefix.any(_ == /0\.0\.0\.0\/0/))
+      )
   - uid: mondoo-azure-security-ssh-access-restricted-from-internet-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_network_security_group")
     mql: |
@@ -970,6 +986,10 @@ queries:
         tags:
           mondoo.com/filter-title: Azure Network Security Group
           mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-rdp-access-restricted-from-internet-effective-azure
+        tags:
+          mondoo.com/filter-title: Azure Subscription
+          mondoo.com/filter-icon: azure
       - uid: mondoo-azure-security-rdp-access-restricted-from-internet-terraform-hcl
         tags:
           mondoo.com/filter-title: Terraform HCL
@@ -998,6 +1018,8 @@ queries:
         This check verifies that interactive Windows desktop access is not reachable from the open internet, by rejecting network security group rules that admit RDP from any source.
 
         The check examines inbound allow rules for TCP whose source address prefix is a wildcard, `0.0.0.0/0`, `Internet`, or `Any`, and fails when any of them reaches TCP port `3389`. A rule of that shape with a destination port range of `*` fails too, since a wildcard range includes `3389`. In the portal these appear under Inbound security rules on the network security group. From the CLI, narrow the rule with `az network nsg rule update --source-address-prefixes` or remove it with `az network nsg rule delete`. In Terraform and Bicep the field is `source_address_prefix`, or `sourceAddressPrefix`, on the security rule.
+
+        Against a live subscription this is evaluated two ways. Each network security group's own rules are inspected in isolation, and — more authoritatively — the *effective* rules on each network interface are inspected. The effective rule set is the merged result of the NSG on the interface, the NSG on its subnet, and any application security group rules, which is what actually decides whether port 3389 reaches the interface. A single NSG rule is not the whole answer, because another NSG in the chain can allow what one denies, and the effective set also resolves service tags such as `Internet` into their concrete address ranges, so an allow rule written against a tag rather than `0.0.0.0/0` is still caught.
 
         **Why this matters**
 
@@ -1137,6 +1159,16 @@ queries:
         disallowedPortRDP
         allNsgTCP.none(destinationPortRange.any(fromPort <= disallowedPortRDP && toPort >= disallowedPortRDP))
       }
+  - uid: mondoo-azure-security-rdp-access-restricted-from-internet-effective-azure
+    filters: |
+      asset.platform == "azure"
+    mql: |
+      azure.subscription.network.interfaces.all(
+        effectiveRules
+          .where(direction == "Inbound" && access == "Allow" && protocol == /TCP|All|\*/i)
+          .where(destinationPortRange == "3389" || destinationPortRange == "*" || destinationPortRanges.any(_ == "3389"))
+          .none(sourceAddressPrefix == /\*|0\.0\.0\.0|Internet|\/0|internet|any/ || sourceAddressPrefixes.any(_ == /\*|0\.0\.0\.0\/0|Internet|\/0/) || expandedSourceAddressPrefix.any(_ == /0\.0\.0\.0\/0/))
+      )
   - uid: mondoo-azure-security-rdp-access-restricted-from-internet-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_network_security_group")
     mql: |
@@ -28862,13 +28894,13 @@ queries:
           mondoo.com/filter-icon: bicep
     docs:
       desc: |
-        This check verifies that custom Azure RBAC role definitions enumerate the operations they need instead of granting the `*` wildcard action.
+        This check verifies that custom Azure RBAC role definitions enumerate the operations they need instead of granting a wildcard action.
 
-        A custom role exists to grant a narrow, purpose-built set of permissions. A custom role whose actions list contains `*` provides the same effective access as the built-in Owner or Contributor roles, which defeats the reason for creating it. Review the definitions under Subscriptions, Access control (IAM), Roles, filtered to Type: CustomRole, or list the offenders with `az role definition list --custom-role-only` and apply a corrected definition using `az role definition update --role-definition @role.json`.
+        A custom role exists to grant a narrow, purpose-built set of permissions. The check rejects a bare `*`, which provides the same effective access as the built-in Owner or Contributor roles, and it equally rejects a namespace-scoped wildcard such as `Microsoft.Compute/*` or `Microsoft.Storage/*`, which grants every action in that resource provider. Either form defeats the reason for creating the role. Review the definitions under Subscriptions, Access control (IAM), Roles, filtered to Type: CustomRole, or list the offenders with `az role definition list --custom-role-only` and apply a corrected definition using `az role definition update --role-definition @role.json`.
 
         **Why this matters**
 
-        A wildcard action grants access to every current and future Azure operation within the assigned scope, including destructive ones such as deleting resources or rewriting security settings. Any new resource provider Microsoft ships is automatically covered by that role from the day it appears, with no review.
+        A wildcard action grants access to every current and future Azure operation it covers, including destructive ones such as deleting resources or rewriting security settings. A bare `*` picks up any new resource provider Microsoft ships from the day it appears, and a namespace wildcard absorbs every new action added to that provider, so the role gains privilege over time with no review and no edit to its definition.
 
         The wildcard also expands the blast radius of any credential compromise: a principal that was supposed to be able to restart virtual machines can instead reassign roles, delete backups, or disable logging using the same token.
 
@@ -28882,21 +28914,21 @@ queries:
         2. Go to **Access control (IAM)**.
         3. Select the **Roles** tab and filter by **Type: CustomRole**.
         4. Select each custom role and review the **Permissions** tab.
-        5. Check whether any **Actions** entry contains `*`.
+        5. Check whether any **Actions** entry contains a `*`, including a bare `*` and namespace-scoped wildcards such as `Microsoft.Compute/*`.
 
-        A passing resource shows no wildcard `*` in any custom role's actions list. A failing resource shows one or more custom roles with `*` in the actions list.
+        A passing resource shows no wildcard in any custom role's actions list. A failing resource shows one or more custom roles with a `*` in any actions entry.
 
         ### Audit via CLI
 
-        1. Run the following command to list custom roles and identify any with wildcard actions:
+        1. Run the following command to list every custom role's actions so any entry containing a wildcard (bare `*` or a namespace wildcard such as `Microsoft.Compute/*`) can be reviewed:
 
         ```bash
         az role definition list --custom-role-only \
-          --query "[?contains(permissions[0].actions, '*')].{Name:roleName, Actions:permissions[0].actions}" \
-          -o table
+          --query "[].{Name:roleName, Actions:permissions[0].actions}" \
+          -o json
         ```
 
-        A passing resource returns no rows. A failing resource returns one or more custom roles with `*` in the actions column.
+        A passing resource shows no actions entry containing a `*`. A failing resource shows one or more custom roles with a wildcard in any actions entry.
       remediation:
         - id: cli
           desc: |
@@ -28985,9 +29017,7 @@ queries:
     filters: |
       asset.platform == "azure"
     mql: |
-      azure.subscription.iam.roles.where(type == "CustomRole").all(
-        permissions.none(allowedActions.any(_ == "*"))
-      )
+      azure.subscription.iam.roles.where(type == "CustomRole").none(hasWildcardActions)
   - uid: mondoo-azure-security-rbac-custom-roles-least-privilege-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_role_definition")
     mql: |
@@ -29017,7 +29047,7 @@ queries:
         properties["permissions"].all(_["actions"].none(_ == "*"))
       )
   - uid: mondoo-azure-security-rbac-no-custom-role-creation
-    title: Ensure custom roles do not allow role creation
+    title: Ensure custom roles cannot escalate their own privileges
     impact: 60
     tags:
       compliance/bsi-sys-1-5: false
@@ -29057,19 +29087,19 @@ queries:
           mondoo.com/filter-icon: bicep
     docs:
       desc: |
-        This check verifies that no custom Azure RBAC role grants `Microsoft.Authorization/roleDefinitions/write`, the permission to create and modify role definitions.
+        This check verifies that no custom Azure RBAC role can escalate its own privileges by reaching `Microsoft.Authorization/roleAssignments/write`, `Microsoft.Authorization/roleDefinitions/write`, or `Microsoft.Authorization/elevateAccess/action`.
 
-        Role definition management belongs to subscription owners and privileged administrators using built-in roles, not to purpose-scoped custom roles. Inspect the actions list under Subscriptions, Access control (IAM), Roles, filtered to Type: CustomRole, or find offenders with `az role definition list --custom-role-only` and remove the action before reapplying the definition with `az role definition update --role-definition @role.json`.
+        Role and assignment management belongs to subscription owners and privileged administrators using built-in roles, not to purpose-scoped custom roles. A role reaches these actions directly or through a wildcard such as `Microsoft.Authorization/*` or a bare `*`, so matching only the literal action string misses the grant. The verdict is taken on the effective actions, meaning an action counts as granted only when no `notActions` entry subtracts it again. Inspect the actions list under Subscriptions, Access control (IAM), Roles, filtered to Type: CustomRole, or find offenders with `az role definition list --custom-role-only` and remove the action before reapplying the definition with `az role definition update --role-definition @role.json`.
 
         **Why this matters**
 
-        This single action is a complete privilege escalation path. A principal that can write role definitions can author a new role containing any set of permissions and assign it to itself or to an account it controls, arriving at unlimited access without ever touching an existing assignment.
+        Any one of these actions is a complete privilege escalation path. A principal that can write role definitions can author a new role containing any set of permissions and assign it to itself or to an account it controls, and a principal that can write role assignments reaches the same place using roles that already exist. Either way the principal arrives at unlimited access at that scope, so the role's effective privilege is Owner regardless of what it is named.
 
         That indirection is also what makes the escalation hard to see. Creating a role definition does not modify any existing role assignment, so change monitoring focused on assignments registers nothing unusual while the attacker builds the role they intend to use.
 
         The result is durable. An attacker who reaches an account holding this permission can leave behind a privileged role definition that survives password resets, credential rotation, and most other remediation steps, because those actions address the compromised identity rather than the artifact it created.
 
-        Configure Azure activity log alerts on `Microsoft.Authorization/roleDefinitions/write` so that any new role definition becomes immediately visible to the security team, and apply the same scrutiny to `Microsoft.Authorization/roleAssignments/write`, since a principal that cannot create roles but can assign existing ones reaches a comparable outcome. This check reads only definitions whose type is `CustomRole`.
+        Replace `Microsoft.Authorization/*` and bare `*` grants with the specific actions a role needs, so the role cannot silently reach escalation actions Azure adds later. Configure Azure activity log alerts on `Microsoft.Authorization/roleDefinitions/write`, `Microsoft.Authorization/roleAssignments/write`, and `Microsoft.Authorization/elevateAccess/action` so that any escalation attempt becomes immediately visible to the security team. This check reads only definitions whose type is `CustomRole`.
       audit: |
         ### Audit via Portal
 
@@ -29077,21 +29107,21 @@ queries:
         2. Go to **Access control (IAM)**.
         3. Select the **Roles** tab and filter by **Type: CustomRole**.
         4. Select each custom role and review the **Permissions** tab.
-        5. Check whether `Microsoft.Authorization/roleDefinitions/write` appears in the **Actions** list.
+        5. Check whether the **Actions** list reaches `Microsoft.Authorization/roleAssignments/write`, `Microsoft.Authorization/roleDefinitions/write`, or `Microsoft.Authorization/elevateAccess/action`, either directly or through a wildcard such as `Microsoft.Authorization/*` or `*`, and confirm no `notActions` entry excludes it again.
 
-        A passing resource shows no custom role with `Microsoft.Authorization/roleDefinitions/write` in its actions. A failing resource shows at least one custom role that includes this permission.
+        A passing resource shows no custom role whose effective actions reach any of those escalation actions. A failing resource shows at least one custom role that grants one of them (directly or via a wildcard) without excluding it in `notActions`.
 
         ### Audit via CLI
 
-        1. Run the following command to identify custom roles that include the role creation permission:
+        1. Run the following command to list every custom role's actions and notActions so escalation grants (including wildcards) can be reviewed:
 
         ```bash
         az role definition list --custom-role-only \
-          --query "[?contains(permissions[0].actions, 'Microsoft.Authorization/roleDefinitions/write')].{Name:roleName, Actions:permissions[0].actions}" \
-          -o table
+          --query "[].{Name:roleName, Actions:permissions[0].actions, NotActions:permissions[0].notActions}" \
+          -o json
         ```
 
-        A passing resource returns no rows. A failing resource returns one or more custom roles that include `Microsoft.Authorization/roleDefinitions/write` in their actions.
+        A passing resource has no custom role whose actions reach `roleAssignments/write`, `roleDefinitions/write`, or `elevateAccess/action` (directly or via a wildcard) that survives its `notActions`. A failing resource has one or more that do.
       remediation:
         - id: cli
           desc: |
@@ -29175,11 +29205,7 @@ queries:
     filters: |
       asset.platform == "azure"
     mql: |
-      azure.subscription.iam.roles.where(type == "CustomRole").all(
-        permissions.none(
-          allowedActions.any(_ == "Microsoft.Authorization/roleDefinitions/write")
-        )
-      )
+      azure.subscription.iam.roles.where(type == "CustomRole").none(isPrivilegeEscalating)
   - uid: mondoo-azure-security-rbac-no-custom-role-creation-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_role_definition")
     mql: |
@@ -42862,7 +42888,7 @@ queries:
         properties["recurringScans"]["isEnabled"] == true
       )
   - uid: mondoo-azure-security-appgw-waf-prevention-mode
-    title: Ensure Application Gateway WAF is attached and set to Prevention mode
+    title: Ensure Application Gateway WAF is in Prevention mode and enforcing
     impact: 80
     tags:
       compliance/bsi-sys-1-5: false
@@ -42902,13 +42928,15 @@ queries:
           mondoo.com/filter-icon: bicep
     docs:
       desc: |
-        This check verifies that the web application firewall in front of an Application Gateway blocks matching requests rather than logging them.
+        This check verifies that the web application firewall in front of an Application Gateway blocks matching requests rather than logging them, and that its managed rules are still enforcing.
 
         A WAF policy is attached from **Web Application Firewall** under **Settings** on the gateway, which must use the `WAF_v2` SKU, and its mode is set in **Policy settings** on the policy itself, as `mode` in the `policy_settings` block or `policySettings.mode` in ARM and Bicep. The check requires `Prevention`. Without a policy the gateway forwards everything to its backends uninspected, and an attached policy commonly defaults to `Detection`.
 
+        Prevention mode alone is not proof of protection. A managed rule set can report a current version while individual rules inside it are neutralized by a rule group override: an override that lists no rules disables the entire group, and a per-rule override can downgrade a rule's action from Block to `Log`, so the rule still matches and records but no longer blocks. Either change leaves the policy reporting Prevention mode while a whole attack class passes through, so the check also requires that no managed rule group is wholesale-disabled and no rule action has been downgraded to `Log`.
+
         **Why this matters**
 
-        In Prevention mode the firewall terminates requests that match its managed and custom rule sets, so SQL injection, cross-site scripting, and the rest of the OWASP Top 10 never reach the backend. Detection mode writes a log entry and forwards the same request, which gives teams the impression of coverage while the attack proceeds.
+        In Prevention mode the firewall terminates requests that match its managed and custom rule sets, so SQL injection, cross-site scripting, and the rest of the OWASP Top 10 never reach the backend. Detection mode writes a log entry and forwards the same request, which gives teams the impression of coverage while the attack proceeds. A disabled rule group or a rule downgraded to `Log` produces the same illusion for one attack class without changing the policy's mode or its rule set version, so a review that stops at the mode misses it.
 
         Blocking at the edge shrinks the window in which an unpatched or poorly coded backend can be probed and exploited. Managed rule sets and custom rate-limiting rules also throttle brute-force and enumeration attempts at the gateway rather than leaving the application tier to absorb them.
 
@@ -42922,18 +42950,19 @@ queries:
         2. Select the Application Gateway.
         3. Under **Settings**, select **Web Application Firewall**.
         4. Confirm that a WAF policy is associated and that **Mode** is set to **Prevention**.
+        5. Open the associated policy's **Managed rules** and confirm no rule group is fully disabled and no rule's action has been overridden to **Log**.
 
-        A passing gateway has a policy attached with the mode shown as Prevention. A failing gateway has no WAF policy, or a policy whose mode is Detection.
+        A passing gateway has a policy attached with the mode shown as Prevention and no managed rule group disabled or downgraded to Log. A failing gateway has no WAF policy, a policy whose mode is Detection, or a policy with a disabled rule group or a rule overridden to Log.
 
         ### Audit via Azure CLI
 
-        List every WAF policy and its mode:
+        List every WAF policy with its mode and its managed rule overrides:
 
         ```bash
-        az network application-gateway waf-policy list --query "[].{Name:name, Mode:policySettings.mode, State:policySettings.state}" -o table
+        az network application-gateway waf-policy list --query "[].{Name:name, Mode:policySettings.mode, State:policySettings.state, Overrides:managedRules.managedRuleSets[].ruleGroupOverrides[].{Group:ruleGroupName, Rules:rules[].{Id:ruleId, State:state, Action:action}}}" -o json
         ```
 
-        Any policy whose `Mode` is not `Prevention` fails this check.
+        Any policy whose `Mode` is not `Prevention`, or that has a rule group with every rule disabled, or a rule whose `Action` is `Log`, fails this check.
       remediation:
         - id: portal
           desc: |
@@ -43081,6 +43110,8 @@ queries:
       asset.platform == "azure-application-gateway"
     mql: |
       azure.subscription.networkService.applicationGateway.policy != null && azure.subscription.networkService.applicationGateway.policy.mode == "Prevention"
+      azure.subscription.networkService.applicationGateway.policy == null || azure.subscription.networkService.applicationGateway.policy.managedRules.all(ruleGroupOverrides.none(disablesEntireGroup))
+      azure.subscription.networkService.applicationGateway.policy == null || azure.subscription.networkService.applicationGateway.policy.managedRules.all(ruleGroupOverrides.all(rules.none(action == "Log")))
   - uid: mondoo-azure-security-appgw-waf-prevention-mode-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_web_application_firewall_policy")
     mql: |
@@ -49125,7 +49156,7 @@ queries:
         )
       )
   - uid: mondoo-azure-security-appgw-waf-policy-enabled
-    title: Ensure Application Gateway WAF policy is in the enabled state
+    title: Ensure Application Gateway WAF policy is enabled and enforcing
     impact: 85
     tags:
       compliance/bsi-sys-1-5: false
@@ -49165,9 +49196,11 @@ queries:
           mondoo.com/filter-icon: bicep
     docs:
       desc: |
-        This check verifies that the web application firewall policy attached to an Application Gateway is actually switched on.
+        This check verifies that the web application firewall policy attached to an Application Gateway is actually switched on and that its managed rules are still enforcing.
 
         A policy carries two independent switches. The enabled state, shown in **Policy settings** on the policy and written as `enabled` in the `policy_settings` block or `policySettings.state` in ARM and Bicep, decides whether the firewall evaluates traffic at all. The mode decides whether matches are logged or blocked. The check requires the enabled state, because a policy in `Prevention` mode inspects nothing while its state is `Disabled`.
+
+        The enabled state is not the whole picture either. On an enabled policy a managed rule set can report a current version while individual rules inside it are neutralized by a rule group override: an override that lists no rules disables the entire group, and a per-rule override can downgrade a rule's action from Block to `Log`. The check therefore also requires that no managed rule group is wholesale-disabled and no rule action has been downgraded to `Log`.
 
         **Why this matters**
 
@@ -49175,9 +49208,9 @@ queries:
 
         It happens through ordinary operations rather than sabotage. A policy gets disabled to unblock an incident or a deployment and is never re-enabled, and nothing in the resulting configuration stands out during a later review.
 
-        Everything the policy carries goes with it. Managed rule sets covering injection, cross-site scripting, and known CVE exploitation are evaluated only while the policy is enabled, so a carefully curated rule set contributes nothing.
+        Everything the policy carries goes with it. Managed rule sets covering injection, cross-site scripting, and known CVE exploitation are evaluated only while the policy is enabled, so a carefully curated rule set contributes nothing, and the same is true of any rule that a group override has disabled or downgraded to logging.
 
-        Asserting the enabled state alongside the mode closes the gap between a policy that appears hardened and one that is doing work. A companion check in this policy covers the mode itself, and the two together are what make the control real.
+        Asserting the enabled state alongside rule enforcement closes the gap between a policy that appears hardened and one that is doing work. A companion check in this policy covers the mode itself, and the two together are what make the control real.
       audit: |
         ### Audit via Azure Portal
 
@@ -49185,14 +49218,15 @@ queries:
         2. Select the policy associated with the Application Gateway.
         3. Open **Policy settings** and review the state.
         4. A passing policy shows the state as **Enabled**.
+        5. Open **Managed rules** and confirm no rule group is fully disabled and no rule's action has been overridden to **Log**.
 
         ### Audit via Azure CLI
 
         ```bash
-        az network application-gateway waf-policy show --name <PolicyName> --resource-group <ResourceGroupName> --query "policySettings.{State:state, Mode:mode}"
+        az network application-gateway waf-policy show --name <PolicyName> --resource-group <ResourceGroupName> --query "{State:policySettings.state, Mode:policySettings.mode, Overrides:managedRules.managedRuleSets[].ruleGroupOverrides[].{Group:ruleGroupName, Rules:rules[].{Id:ruleId, State:state, Action:action}}}"
         ```
 
-        A passing policy returns a state of `Enabled`.
+        A passing policy returns a state of `Enabled` with no managed rule group fully disabled and no rule whose `Action` is `Log`.
       remediation:
         - id: portal
           desc: |
@@ -49266,6 +49300,8 @@ queries:
     mql: |
       azure.subscription.networkService.applicationGateway.policy != empty
       azure.subscription.networkService.applicationGateway.policy.enabled == true
+      azure.subscription.networkService.applicationGateway.policy == empty || azure.subscription.networkService.applicationGateway.policy.managedRules.all(ruleGroupOverrides.none(disablesEntireGroup))
+      azure.subscription.networkService.applicationGateway.policy == empty || azure.subscription.networkService.applicationGateway.policy.managedRules.all(ruleGroupOverrides.all(rules.none(action == "Log")))
   - uid: mondoo-azure-security-appgw-waf-policy-enabled-terraform-hcl
     filters: |
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_web_application_firewall_policy")
