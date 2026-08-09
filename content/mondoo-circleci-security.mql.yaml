@@ -1,0 +1,232 @@
+# Copyright Mondoo, Inc. 2024, 2026
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: mondoo-circleci-security
+    name: Mondoo CircleCI Security
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: circleci,saas
+    require:
+      - provider: circleci
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Secure CircleCI projects, checkout keys, and contexts against fork PR secret exposure and weak credential hygiene
+    docs:
+      desc: |
+        The Mondoo CircleCI Security policy identifies misconfigurations in CircleCI organizations that could expose pipeline secrets or repository access to untrusted code. CircleCI pipelines hold long-lived cloud credentials in contexts and project environment variables, can be configured to run builds triggered by forked pull requests, and use checkout keys to clone repository source. Each of these is a path an attacker can use to exfiltrate secrets or gain write access to a repository if it is left in its riskiest configuration.
+
+        This policy provides security checks across key CircleCI areas:
+
+        - Whether forked pull request builds can access a project's secret environment variables and context values
+        - Whether building pull requests from forked repositories is enabled at all
+        - Whether the checkout keys used to clone a repository are repo-scoped deploy keys or broader user keys
+        - Whether projects store credentials as project-level environment variables instead of in a context that supports security-group restriction
+
+        **Guidance beyond automated checks**
+
+        CircleCI API v2 does not expose every security-relevant setting, so the following are documented here as guidance rather than scored checks:
+
+        - **Prefer OIDC over long-lived cloud credentials.** Where a context stores AWS, GCP, or Azure credentials, prefer workload identity federation (OIDC) over long-lived access keys or service account keys. API v2 does not report whether a given context variable is an OIDC configuration value or a static credential, so this cannot be evaluated automatically; review context contents manually against this preference.
+        - **Organization SSO enforcement.** Single sign-on and other identity-provider settings are configured in CircleCI's organization-level UI and are not exposed by API v2, so this policy cannot confirm SSO is enforced for an organization. Treat SSO enforcement as a manual control to verify directly in the CircleCI web app until CircleCI exposes it through the API.
+
+        Learn more about scanning CircleCI in the [CircleCI API v2 documentation](https://circleci.com/docs/api/v2/).
+
+        Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
+    groups:
+      - title: CircleCI
+        filters: asset.platform == "circleci"
+        checks:
+          - uid: mondoo-circleci-security-project-no-fork-pr-secrets
+          - uid: mondoo-circleci-security-project-restrict-fork-pr-builds
+          - uid: mondoo-circleci-security-checkout-key-deploy-key-not-user-key
+          - uid: mondoo-circleci-security-project-prefer-contexts-for-secrets
+queries:
+  # No Terraform variants: forksReceiveSecretEnvVars reflects a project advanced
+  # setting ("Pass secrets to builds from forked pull requests") returned inline on
+  # the CircleCI project detail response. The official CircleCI-Public/terraform-
+  # provider-circleci exposes only `circleci_project` with `name` and
+  # `organization_id` arguments; it has no attribute for this setting, so HCL/plan/
+  # state cannot express it.
+  - uid: mondoo-circleci-security-project-no-fork-pr-secrets
+    title: Ensure forked pull request builds never receive project secrets
+    impact: 90
+    mql: |
+      circleci.projects.all(forksReceiveSecretEnvVars == false)
+    docs:
+      desc: |
+        This check ensures that CircleCI projects never pass their secret environment variables or context values to builds triggered by pull requests from forked repositories. CircleCI allows an org member to enable this on a per-project basis, and once enabled, any pull request from any fork, including ones opened by unknown external contributors, receives the project's full set of secrets during the build.
+
+        **Why this matters**
+
+        - **Untrusted code runs with secrets present:** A forked pull request can contain arbitrary CI configuration changes, so an attacker who opens a fork PR can add a step that exfiltrates every secret the build has access to.
+        - **No code review gate exists before execution:** CircleCI begins the build as soon as the pull request is opened, before a maintainer has necessarily reviewed the diff.
+        - **Blast radius includes cloud credentials:** Contexts and project environment variables commonly hold cloud access keys, deployment tokens, and third-party API keys, so exposure here often escalates to infrastructure compromise.
+        - **Public repositories are especially exposed:** Anyone can fork a public repository and open a pull request, so this setting effectively grants secret access to any internet user.
+
+        **Risk mitigation**
+
+        - **Withhold secrets from fork builds:** Leaving this setting disabled ensures forked pull request builds run without access to the project's secrets, regardless of who opened the pull request.
+        - **Review before granting access:** If a forked contribution genuinely needs to run against real credentials, merge it into a trusted branch first and let the resulting build use secrets normally.
+      audit: |
+        1. Sign in to the CircleCI web app and select the organization that owns the project.
+        2. Open **Project Settings** for the project, then go to **Advanced**.
+        3. Review the **Pass secrets to builds from forked pull requests** toggle.
+
+        A passing result shows the toggle turned off; a failing result shows it turned on.
+      remediation:
+        - id: console
+          desc: |
+            To stop passing secrets to forked pull request builds using the CircleCI web app:
+
+            1. Sign in to the CircleCI web app and select the organization that owns the project.
+            2. Open the project, click the gear icon or **Project Settings**, then select **Advanced**.
+            3. Turn off **Pass secrets to builds from forked pull requests**.
+            4. Repeat for every project in the organization that has this setting enabled.
+        # No Terraform remediation: the official terraform-provider-circleci's
+        # `circleci_project` resource only manages `name` and `organization_id`; it
+        # has no attribute for the forked-PR secrets setting.
+    refs:
+      - url: https://support.circleci.com/hc/en-us/articles/360049841151-Trigger-Pipelines-on-Forked-Pull-Requests-with-CircleCI-API-v2
+        title: CircleCI Trigger Pipelines on Forked Pull Requests
+      - url: https://support.circleci.com/hc/en-us/articles/14992602955675-Setting-Project-API-Features
+        title: CircleCI Setting Project API Features
+  # No Terraform variants: buildForkPrs reflects the project advanced setting
+  # ("Build forked pull requests") returned inline on the CircleCI project detail
+  # response. terraform-provider-circleci's `circleci_project` resource has no
+  # attribute for it, so HCL/plan/state cannot express whether fork PR builds are
+  # enabled.
+  - uid: mondoo-circleci-security-project-restrict-fork-pr-builds
+    title: Ensure pull requests from forked repositories are not built automatically
+    impact: 65
+    mql: |
+      circleci.projects.all(buildForkPrs == false)
+    docs:
+      desc: |
+        This check ensures that CircleCI projects do not automatically build pull requests opened from forked repositories. Building a fork's code means executing whatever configuration and commands the fork author wrote inside your CI environment, regardless of whether that build also receives project secrets.
+
+        **Why this matters**
+
+        - **Untrusted code executes in your infrastructure:** A fork build runs arbitrary CI configuration and commands from a repository you don't control, inside the same build environment used for trusted builds.
+        - **Resource abuse:** An attacker can open forked pull requests purely to consume build minutes and compute resources at the project owner's expense.
+        - **Lateral exposure within the build:** Even without secrets, a fork build can reach the internal network the runner has access to, cached dependencies, and other artifacts of the build environment.
+        - **Compounds with other misconfigurations:** If this setting is enabled alongside secret exposure to fork builds, the two combine into a direct path from an anonymous pull request to full secret disclosure.
+
+        **Risk mitigation**
+
+        - **Disable fork PR builds by default:** Projects that don't need to validate external contributions automatically should leave this setting off and build forks manually after a maintainer reviews the diff.
+        - **Pair with the sibling secrets check:** If your workflow genuinely requires building forked pull requests, keep the forked pull request builds from receiving project secrets so untrusted code cannot access them, and treat the exception as an approved, reviewed choice rather than a default.
+      audit: |
+        1. Sign in to the CircleCI web app and select the organization that owns the project.
+        2. Open **Project Settings** for the project, then go to **Advanced**.
+        3. Review the **Build forked pull requests** toggle.
+
+        A passing result shows the toggle turned off; a failing result shows it turned on.
+      remediation:
+        - id: console
+          desc: |
+            To stop automatically building forked pull requests using the CircleCI web app:
+
+            1. Sign in to the CircleCI web app and select the organization that owns the project.
+            2. Open the project, click the gear icon or **Project Settings**, then select **Advanced**.
+            3. Turn off **Build forked pull requests**.
+            4. If external contributions must be validated, review the pull request diff first, then trigger a build manually or merge into a trusted branch.
+        # No Terraform remediation: the official terraform-provider-circleci's
+        # `circleci_project` resource only manages `name` and `organization_id`; it
+        # has no attribute for the fork PR build setting.
+    refs:
+      - url: https://support.circleci.com/hc/en-us/articles/360049841151-Trigger-Pipelines-on-Forked-Pull-Requests-with-CircleCI-API-v2
+        title: CircleCI Trigger Pipelines on Forked Pull Requests
+  # No Terraform variants: checkout key type (deploy-key vs user-key) is returned by
+  # the CircleCI checkout keys API. terraform-provider-circleci exposes no resource
+  # for checkout keys at all (only `circleci_project` for name/organization_id), so
+  # HCL/plan/state cannot express which key type a project uses.
+  - uid: mondoo-circleci-security-checkout-key-deploy-key-not-user-key
+    title: Ensure checkout keys are deploy keys, not user keys
+    impact: 75
+    mql: |
+      circleci.projects.all(checkoutKeys.all(type == "deploy-key"))
+    docs:
+      desc: |
+        This check ensures that every checkout key CircleCI uses to clone a project's source code is a repo-scoped deploy key rather than a user key. CircleCI supports both: a deploy key is generated for and scoped to that single repository, while a user key is generated from the credentials of the CircleCI user who added it and inherits that user's full access to every repository they can reach.
+
+        **Why this matters**
+
+        - **Blast radius of a compromised build:** If a build environment is compromised while a checkout key is present, a deploy key only exposes the one repository it was scoped to, while a user key exposes every repository the creating user can access.
+        - **Access outlives project need:** A user key ties a project's source access to an individual's personal permissions, so the project's effective access grows or shrinks with that person's unrelated repository access, and lingers if they leave the organization without the key being rotated.
+        - **Least privilege:** A deploy key is purpose-built to grant exactly the access a single project's checkout requires and nothing more.
+
+        **Risk mitigation**
+
+        - **Standardize on deploy keys:** Configuring every project to check out source with a project-scoped deploy key contains the impact of a leaked or misused key to that project's repository.
+        - **Remove unnecessary user keys:** Replacing a user key with a deploy key removes the dependency on an individual account's ongoing access.
+      audit: |
+        1. Sign in to the CircleCI web app and select the organization that owns the project.
+        2. Open **Project Settings** for the project, then go to **SSH Keys**.
+        3. Review the **Checkout SSH Keys** list and the type shown for each key.
+
+        A passing result shows every checkout key listed as a deploy key; a failing result shows a checkout key listed as a user key.
+      remediation:
+        - id: console
+          desc: |
+            To replace a user key with a deploy key using the CircleCI web app:
+
+            1. Sign in to the CircleCI web app and select the organization that owns the project.
+            2. Open the project, click the gear icon or **Project Settings**, then select **SSH Keys**.
+            3. Under **Checkout SSH Keys**, locate the key listed as a user key and remove it.
+            4. Use the **Authorize With GitHub** (or **Authorize With Bitbucket**) control, or the **Create deploy key** option where available, to generate a new repo-scoped deploy key for the project.
+            5. Confirm the checkout key list now shows a deploy key for the project.
+        # No Terraform remediation: terraform-provider-circleci exposes no resource
+        # for checkout keys; only `circleci_project` (name, organization_id) exists
+        # today.
+    refs:
+      - url: https://circleci.com/docs/api/v2/
+        title: CircleCI API v2 Documentation
+  # No Terraform variants: environmentVariables reflects project-level environment
+  # variables returned by the CircleCI project environment variables API.
+  # terraform-provider-circleci exposes no resource for project environment
+  # variables (only `circleci_project` for name/organization_id), so HCL/plan/state
+  # cannot express whether a project defines its own environment variables.
+  - uid: mondoo-circleci-security-project-prefer-contexts-for-secrets
+    title: Ensure projects use contexts instead of project environment variables
+    impact: 60
+    mql: |
+      circleci.projects.all(environmentVariables.length == 0)
+    docs:
+      desc: |
+        This check ensures that CircleCI projects do not define their own project-level environment variables and instead source credentials from contexts. CircleCI's API never returns environment variable values, masked or otherwise, from either location, so this check evaluates configuration hygiene, not the secret values themselves.
+
+        **Why this matters**
+
+        - **No security-group restriction on project variables:** Any collaborator with access to a project can use its project-level environment variables in a build. Contexts, by contrast, can be restricted to specific security groups, so only members of an approved group can trigger a build that uses the context's values.
+        - **Sprawl across projects:** The same credential is often copied into multiple projects' environment variables over time, multiplying the number of places it must be rotated and the number of collaborators who can use it.
+        - **Weaker audit trail:** Reviewing who can use a credential stored as a project environment variable means reviewing project collaborator lists one project at a time, rather than reviewing a single context's security-group membership.
+
+        **Risk mitigation**
+
+        - **Centralize in contexts:** Moving credentials into an organization context and granting access only to the security groups that need it narrows who can use the credential in a build.
+        - **Reduce duplication:** A single context shared by multiple projects removes the need to copy the same credential into each project's own environment variables.
+      audit: |
+        1. Sign in to the CircleCI web app and select the organization that owns the project.
+        2. Open **Project Settings** for the project, then go to **Environment Variables**.
+        3. Review whether any environment variables are defined directly on the project.
+
+        A passing result shows no project-level environment variables defined; a failing result shows one or more, indicating the project should migrate that credential into a context instead.
+      remediation:
+        - id: console
+          desc: |
+            To move a project's credentials into a context using the CircleCI web app:
+
+            1. Sign in to the CircleCI web app and select the organization that owns the project.
+            2. Open **Organization Settings**, then **Contexts**, and create a context if one does not already exist for this credential.
+            3. Add the environment variable to the context, and restrict the context to the security group that should be able to use it.
+            4. Update the project's `.circleci/config.yml` to reference the context instead of relying on the project-level variable.
+            5. Open the project's **Project Settings > Environment Variables** and remove the now-redundant project-level variable.
+        # No Terraform remediation: terraform-provider-circleci exposes no resource
+        # for contexts or project environment variables; only `circleci_project`
+        # (name, organization_id) exists today.
+    refs:
+      - url: https://circleci.com/docs/guides/security/contexts/
+        title: CircleCI Using Contexts
