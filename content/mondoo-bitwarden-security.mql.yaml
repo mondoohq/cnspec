@@ -1,0 +1,525 @@
+# Copyright Mondoo, Inc. 2024, 2026
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: mondoo-bitwarden-security
+    name: Mondoo Bitwarden Security
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: bitwarden,saas
+    require:
+      - provider: bitwarden
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Secure Bitwarden organization policies, authentication requirements, and member hygiene
+    docs:
+      desc: |
+        The Mondoo Bitwarden Security policy identifies critical misconfigurations in a Bitwarden Teams or Enterprise organization that could expose shared vault items to unauthorized access. This policy helps organizations detect and remediate weaknesses before attackers can exploit a compromised member account, an unmanaged personal vault, or a weak master password to reach credentials, secrets, and other sensitive data shared across the organization.
+
+        This policy provides security checks across key Bitwarden organization areas:
+
+        - Two-step login (2FA) and single sign-on enforcement at the organization level
+        - Master password strength requirements
+        - Single-organization and personal vault ownership restrictions
+        - Member two-factor authentication and onboarding hygiene
+        - The size of the privileged owner and admin group
+
+        Learn more about scanning Bitwarden in the [cnspec documentation](https://mondoo.com/docs/cnspec).
+
+        Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
+    groups:
+      - title: Bitwarden Organization
+        filters: asset.platform == "bitwarden"
+        checks:
+          - uid: mondoo-bitwarden-security-policy-two-step-login-required
+          - uid: mondoo-bitwarden-security-policy-sso-required
+          - uid: mondoo-bitwarden-security-policy-master-password-strength-enforced
+          - uid: mondoo-bitwarden-security-policy-single-organization-enabled
+          - uid: mondoo-bitwarden-security-policy-personal-ownership-disabled
+          - uid: mondoo-bitwarden-security-member-2fa-enabled
+          - uid: mondoo-bitwarden-security-member-no-stale-invitations
+          - uid: mondoo-bitwarden-security-member-limit-privileged-roles
+queries:
+  # No Terraform remediation: Bitwarden organization policies are only exposed through the
+  # Bitwarden Public API. Neither community Terraform provider (OneSignal/terraform-provider-bitwarden,
+  # scoped to users/groups; maxlaverse/terraform-provider-bitwarden, scoped to the CLI-driven vault)
+  # exposes a policy resource, and there is no official Bitwarden Terraform provider, so there is no
+  # HCL resource to target for enforcement policies.
+  - uid: mondoo-bitwarden-security-policy-two-step-login-required
+    title: Ensure two-step login is required for the organization
+    impact: 88
+    mql: |
+      bitwarden.policies.where(policyType == "twoFactorAuthentication").any(enabled == true)
+    docs:
+      desc: |
+        This check ensures that the Bitwarden organization has the two-step login policy enabled, requiring every member to set up two-factor authentication before they can access organization vault items. Bitwarden leaves two-step login optional for individual members unless an organization owner enforces it as a policy.
+
+        **Why this matters**
+
+        - **Credential stuffing resistance:** Passwords leaked from other services cannot be reused to access the vault when a second factor is required.
+        - **Phishing protection:** Even if a member enters their master password on a fake login page, an attacker cannot complete sign-in without the second factor.
+        - **Shared secret protection:** A compromised member account in an organization can expose every collection and item that member can reach, not just their personal vault.
+        - **Consistent enforcement:** A policy-level requirement protects every member instead of relying on individual members to opt in.
+
+        **Risk mitigation**
+
+        - **Account takeover prevention:** Enforcing two-step login at the organization level closes the most common path attackers use to convert a stolen master password into vault access.
+        - **Automatic enrollment:** Members who have not enrolled in two-step login are removed from the organization when the policy takes effect, ensuring no gap in coverage.
+      audit: |
+        ### Audit via Admin Console
+
+        1. Sign in to the [Bitwarden web vault](https://vault.bitwarden.com) as an organization owner or admin (or your self-hosted server's equivalent URL).
+        2. Open **Admin Console** and select your organization.
+        3. Navigate to **Organization settings > Policies**.
+        4. Open **Require two-step login** and confirm its status.
+
+        A passing result shows the policy **Enabled**; a failing result shows it **Disabled**.
+
+        ### Audit via Public API
+
+        Query the Bitwarden Public API and inspect the result:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $BITWARDEN_ACCESS_TOKEN" \
+          "https://api.bitwarden.com/public/policies"
+        ```
+
+        A passing response includes an entry with `"type": 0` (two-factor authentication) and `"enabled": true`; a failing response shows that entry with `"enabled": false` or missing entirely.
+      remediation:
+        - id: console
+          desc: |
+            To require two-step login for every organization member using the Bitwarden admin console:
+
+            1. Sign in to the [Bitwarden web vault](https://vault.bitwarden.com) as an organization owner or admin.
+            2. Open **Admin Console** and select your organization.
+            3. Navigate to **Organization settings > Policies**.
+            4. Select **Require two-step login**, click **Edit**, and toggle the policy on.
+            5. Click **Save**.
+
+            Members who have not set up two-step login are removed from the organization when this policy takes effect. Notify members in advance so they can enroll before enforcement.
+
+            To learn more, read [Policies: Two-step login](https://bitwarden.com/help/policies/#require-two-step-login) in the Bitwarden documentation.
+        # No Terraform remediation: see the comment above the check UID.
+    refs:
+      - url: https://bitwarden.com/help/policies/
+        title: Bitwarden Organization Policies
+      - url: https://bitwarden.com/help/setup-two-step-login/
+        title: Bitwarden Two-Step Login Setup
+  # No Terraform remediation: see the comment above mondoo-bitwarden-security-policy-two-step-login-required.
+  - uid: mondoo-bitwarden-security-policy-sso-required
+    title: Ensure single sign-on is required for the organization
+    impact: 85
+    mql: |
+      bitwarden.policies.where(policyType == "requireSso").any(enabled == true)
+    docs:
+      desc: |
+        This check ensures that the Bitwarden organization has the single sign-on authentication policy enabled, requiring every member to sign in through the organization's identity provider rather than a Bitwarden master password. Bitwarden allows members to keep signing in with a master password even after SSO is configured, unless an owner enforces the policy.
+
+        **Why this matters**
+
+        - **Centralized authentication control:** Requiring SSO means access to the vault follows the same authentication strength, conditional access, and session policies as the rest of the organization's identity provider.
+        - **Immediate deprovisioning:** When a member is disabled in the identity provider, requiring SSO ensures they lose vault access at the same time instead of retaining a working master password.
+        - **Reduced credential sprawl:** Members no longer need a separate master password to remember and protect, removing one more credential an attacker could target.
+        - **Consistent enforcement:** A policy-level requirement protects every member instead of leaving master password sign-in available as a fallback.
+
+        **Risk mitigation**
+
+        - **Offboarding assurance:** Enforcing SSO closes the gap where a disabled directory account still has a working Bitwarden master password.
+        - **Phishing-resistant sign-in:** Routing authentication through the identity provider lets the organization apply its strongest available authentication method to vault access.
+      audit: |
+        ### Audit via Admin Console
+
+        1. Sign in to the [Bitwarden web vault](https://vault.bitwarden.com) as an organization owner or admin.
+        2. Open **Admin Console** and select your organization.
+        3. Navigate to **Organization settings > Policies**.
+        4. Open **Require single sign-on authentication** and confirm its status.
+
+        A passing result shows the policy **Enabled**; a failing result shows it **Disabled**, or the policy absent because single sign-on is not configured for the organization.
+
+        ### Audit via Public API
+
+        Query the Bitwarden Public API and inspect the result:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $BITWARDEN_ACCESS_TOKEN" \
+          "https://api.bitwarden.com/public/policies"
+        ```
+
+        A passing response includes an entry with `"type": 8` (require SSO) and `"enabled": true`; a failing response shows that entry with `"enabled": false` or missing entirely.
+      remediation:
+        - id: console
+          desc: |
+            To require single sign-on authentication for every organization member using the Bitwarden admin console:
+
+            1. Configure single sign-on for the organization first. Sign in to the [Bitwarden web vault](https://vault.bitwarden.com) as an organization owner and open **Admin Console > Single sign-on**, then complete the setup for your identity provider.
+            2. Navigate to **Organization settings > Policies**.
+            3. Select **Require single sign-on authentication**, click **Edit**, and toggle the policy on.
+            4. Click **Save**.
+
+            To learn more, read [Policies: Single sign-on authentication](https://bitwarden.com/help/policies/#require-single-sign-on-authentication) in the Bitwarden documentation.
+        # No Terraform remediation: see the comment above mondoo-bitwarden-security-policy-two-step-login-required.
+    refs:
+      - url: https://bitwarden.com/help/policies/
+        title: Bitwarden Organization Policies
+      - url: https://bitwarden.com/help/about-sso/
+        title: Bitwarden Single Sign-On
+  # No Terraform remediation: see the comment above mondoo-bitwarden-security-policy-two-step-login-required.
+  - uid: mondoo-bitwarden-security-policy-master-password-strength-enforced
+    title: Ensure master password strength is enforced
+    impact: 75
+    mql: |
+      bitwarden.policies.where(policyType == "masterPassword").any(
+        enabled == true && data['minComplexity'] != empty && data['minComplexity'] >= 3
+      )
+    docs:
+      desc: |
+        This check ensures that the Bitwarden organization enforces a minimum master password complexity score for members who have not yet set up single sign-on or two-step login exclusively. Bitwarden lets each member choose their own master password strength unless an owner sets a minimum complexity requirement through the master password policy.
+
+        **Why this matters**
+
+        - **Brute-force resistance:** A weak master password can be guessed or cracked far faster than a high-complexity one, and the master password is the single key protecting a member's entire vault.
+        - **Consistent baseline:** Without a policy, master password strength varies by member habit, leaving the organization's overall exposure only as strong as its weakest password.
+        - **Downstream impact:** Because the master password decrypts the vault locally, a weak one undermines every other control layered on top of it, including two-step login on the account itself.
+        - **Zero-knowledge model awareness:** Bitwarden cannot recover or reset a forgotten or compromised master password on the member's behalf, which makes preventing weak choices upfront more important than in a typical password-reset-capable system.
+
+        **Risk mitigation**
+
+        - **Minimum complexity requirement:** Setting a minimum complexity score rejects master passwords that are too easily guessed when a member sets or changes their master password.
+        - **Length and character requirements:** Combining a complexity score with minimum length and character-class requirements narrows the range of weak passwords the policy allows through.
+      audit: |
+        ### Audit via Admin Console
+
+        1. Sign in to the [Bitwarden web vault](https://vault.bitwarden.com) as an organization owner or admin.
+        2. Open **Admin Console** and select your organization.
+        3. Navigate to **Organization settings > Policies**.
+        4. Open **Master password requirements** and review the configured minimum complexity score, length, and character requirements.
+
+        A passing result shows the policy **Enabled** with a minimum complexity score of 3 or higher; a failing result shows the policy **Disabled** or a minimum complexity score below 3.
+
+        ### Audit via Public API
+
+        Query the Bitwarden Public API and inspect the result:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $BITWARDEN_ACCESS_TOKEN" \
+          "https://api.bitwarden.com/public/policies"
+        ```
+
+        A passing response includes an entry with `"type": 1` (master password), `"enabled": true`, and `"data.minComplexity"` set to 3 or higher; a failing response shows that entry with `"enabled": false` or a lower (or absent) `minComplexity`.
+      remediation:
+        - id: console
+          desc: |
+            To enforce a minimum master password strength using the Bitwarden admin console:
+
+            1. Sign in to the [Bitwarden web vault](https://vault.bitwarden.com) as an organization owner or admin.
+            2. Open **Admin Console** and select your organization.
+            3. Navigate to **Organization settings > Policies**.
+            4. Select **Master password requirements**, click **Edit**, and toggle the policy on.
+            5. Set **Minimum complexity score** to 3 or higher, and configure minimum length and character-class requirements as needed.
+            6. Click **Save**.
+
+            To learn more, read [Policies: Master password requirements](https://bitwarden.com/help/policies/#master-password-requirements) in the Bitwarden documentation.
+        # No Terraform remediation: see the comment above mondoo-bitwarden-security-policy-two-step-login-required.
+    refs:
+      - url: https://bitwarden.com/help/policies/
+        title: Bitwarden Organization Policies
+      - url: https://bitwarden.com/help/master-password/
+        title: Bitwarden Master Password
+  # No Terraform remediation: see the comment above mondoo-bitwarden-security-policy-two-step-login-required.
+  - uid: mondoo-bitwarden-security-policy-single-organization-enabled
+    title: Ensure the single organization policy is enabled
+    impact: 75
+    mql: |
+      bitwarden.policies.where(policyType == "singleOrg").any(enabled == true)
+    docs:
+      desc: |
+        This check ensures that the Bitwarden organization has the single organization policy enabled, preventing members from also belonging to other, unmanaged Bitwarden organizations. Without this policy, a member can accept an invitation to an outside organization and move shared items there, or belong to an organization whose administrators the security team has no visibility into.
+
+        **Why this matters**
+
+        - **Data exfiltration path:** A member belonging to a second, unmanaged organization has a ready-made destination for moving shared vault items outside the organization's control.
+        - **Shadow IT visibility:** Membership in outside organizations is invisible to the organization's own admin console, so the security team cannot review or audit that access.
+        - **Policy consistency:** Other organization policies, such as two-step login and master password requirements, only govern what happens inside the organization; a second membership sidesteps them entirely.
+        - **Offboarding completeness:** When a member leaves, removing them from the managed organization does nothing to their access in an outside organization they also joined.
+
+        **Risk mitigation**
+
+        - **Single membership enforcement:** Requiring members to leave any other organization before joining, or automatically removing them if they join one afterward, keeps vault access inside a single governed boundary.
+        - **Reduced attack surface:** Fewer organizations a member can move shared data through means fewer places a security review has to check.
+      audit: |
+        ### Audit via Admin Console
+
+        1. Sign in to the [Bitwarden web vault](https://vault.bitwarden.com) as an organization owner or admin.
+        2. Open **Admin Console** and select your organization.
+        3. Navigate to **Organization settings > Policies**.
+        4. Open **Single organization** and confirm its status.
+
+        A passing result shows the policy **Enabled**; a failing result shows it **Disabled**.
+
+        ### Audit via Public API
+
+        Query the Bitwarden Public API and inspect the result:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $BITWARDEN_ACCESS_TOKEN" \
+          "https://api.bitwarden.com/public/policies"
+        ```
+
+        A passing response includes an entry with `"type": 5` (single organization) and `"enabled": true`; a failing response shows that entry with `"enabled": false` or missing entirely.
+      remediation:
+        - id: console
+          desc: |
+            To restrict members to a single organization using the Bitwarden admin console:
+
+            1. Sign in to the [Bitwarden web vault](https://vault.bitwarden.com) as an organization owner or admin.
+            2. Open **Admin Console** and select your organization.
+            3. Navigate to **Organization settings > Policies**.
+            4. Select **Single organization**, click **Edit**, and toggle the policy on.
+            5. Click **Save**.
+
+            Members who currently belong to another organization are removed from this organization when the policy takes effect, unless they leave the other organization first. Notify members in advance.
+
+            To learn more, read [Policies: Single organization](https://bitwarden.com/help/policies/#single-organization) in the Bitwarden documentation.
+        # No Terraform remediation: see the comment above mondoo-bitwarden-security-policy-two-step-login-required.
+    refs:
+      - url: https://bitwarden.com/help/policies/
+        title: Bitwarden Organization Policies
+  # No Terraform remediation: see the comment above mondoo-bitwarden-security-policy-two-step-login-required.
+  - uid: mondoo-bitwarden-security-policy-personal-ownership-disabled
+    title: Ensure personal vault ownership is disabled
+    impact: 80
+    mql: |
+      bitwarden.policies.where(policyType == "organizationDataOwnership").any(enabled == true)
+    docs:
+      desc: |
+        This check ensures that the Bitwarden organization has the personal ownership policy enabled, requiring members to save new items directly to an organization vault instead of their individual personal vault. Without this policy, a member can save credentials meant for organization use in their personal vault, where the organization has no visibility, sharing controls, or offboarding recovery.
+
+        **Why this matters**
+
+        - **Ownership clarity:** Items saved to a personal vault belong to the member, not the organization, so the organization loses access, audit visibility, and control over that data.
+        - **Offboarding gap:** When a member with items in their personal vault leaves, any organization-relevant credentials they stored there leave with them.
+        - **Sharing control bypass:** Collections, groups, and access reviews only govern organization vault items; anything in a personal vault sits outside every one of those controls.
+        - **Shadow storage of secrets:** Members without this restriction can informally use their personal vault to store shared credentials, creating an untracked copy the security team cannot rotate or revoke centrally.
+
+        **Risk mitigation**
+
+        - **Forced organizational ownership:** Enabling the policy makes the organization vault the only destination for new items a member creates while a member of the organization, keeping shared secrets under organizational control from creation.
+        - **Consistent access reviews:** Keeping all organization-relevant items in the organization vault ensures collection- and group-based access reviews actually cover everything that matters.
+      audit: |
+        ### Audit via Admin Console
+
+        1. Sign in to the [Bitwarden web vault](https://vault.bitwarden.com) as an organization owner or admin.
+        2. Open **Admin Console** and select your organization.
+        3. Navigate to **Organization settings > Policies**.
+        4. Open **Personal ownership** and confirm its status.
+
+        A passing result shows the policy **Enabled**; a failing result shows it **Disabled**.
+
+        ### Audit via Public API
+
+        Query the Bitwarden Public API and inspect the result:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $BITWARDEN_ACCESS_TOKEN" \
+          "https://api.bitwarden.com/public/policies"
+        ```
+
+        A passing response includes an entry with `"type": 4` (organization data ownership, labeled "Personal ownership" in the admin console) and `"enabled": true`; a failing response shows that entry with `"enabled": false` or missing entirely.
+      remediation:
+        - id: console
+          desc: |
+            To require organization ownership for new vault items using the Bitwarden admin console:
+
+            1. Sign in to the [Bitwarden web vault](https://vault.bitwarden.com) as an organization owner or admin.
+            2. Open **Admin Console** and select your organization.
+            3. Navigate to **Organization settings > Policies**.
+            4. Select **Personal ownership**, click **Edit**, and toggle the policy on.
+            5. Click **Save**.
+
+            To learn more, read [Policies: Personal ownership](https://bitwarden.com/help/policies/#personal-ownership) in the Bitwarden documentation.
+        # No Terraform remediation: see the comment above mondoo-bitwarden-security-policy-two-step-login-required.
+    refs:
+      - url: https://bitwarden.com/help/policies/
+        title: Bitwarden Organization Policies
+  # No Terraform remediation: per-member two-factor enrollment (has_2fa) is runtime account
+  # state set when a member enables two-factor authentication on their own account. It is
+  # not a Terraform-managed attribute in any community Bitwarden provider.
+  - uid: mondoo-bitwarden-security-member-2fa-enabled
+    title: Ensure confirmed members have two-factor authentication enabled
+    impact: 82
+    mql: |
+      bitwarden.members.where(status == "confirmed").all(twoFactorEnabled == true)
+    docs:
+      desc: |
+        This check ensures that every confirmed Bitwarden organization member has two-factor authentication enabled on their account. Even when the organization's two-step login policy is enabled, a review of actual enrollment status catches members whose enrollment lapsed, was reset, or was granted an exception before removal was enforced.
+
+        **Why this matters**
+
+        - **Verified enforcement:** Confirming actual enrollment, not just policy configuration, catches gaps such as a member who disabled two-factor authentication after enrolling once.
+        - **Credential stuffing resistance:** Passwords leaked from other services cannot be reused to access the vault when a second factor is required.
+        - **Shared secret protection:** A compromised confirmed member's account can expose every collection and item that member can reach.
+        - **Confirmed-member scope:** Restricting this check to confirmed members avoids flagging invited or accepted members who have not yet completed enrollment as part of normal onboarding.
+
+        **Risk mitigation**
+
+        - **Account takeover prevention:** Two-factor authentication closes the most common path attackers use to convert a stolen master password into vault access.
+        - **Ongoing verification:** Periodically reviewing enrollment status, rather than relying solely on the policy, surfaces members who fell out of compliance.
+      audit: |
+        ### Audit via Admin Console
+
+        1. Sign in to the [Bitwarden web vault](https://vault.bitwarden.com) as an organization owner or admin.
+        2. Open **Admin Console** and select your organization.
+        3. Navigate to **Members**.
+        4. Review the **Two-step login** column for each confirmed member.
+
+        A passing result shows two-factor authentication enabled for every confirmed member; a failing result shows a confirmed member without it.
+
+        ### Audit via Public API
+
+        Query the Bitwarden Public API and inspect the result:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $BITWARDEN_ACCESS_TOKEN" \
+          "https://api.bitwarden.com/public/members"
+        ```
+
+        A passing response shows every member with `"status": 2` (confirmed) also having `"twoFactorEnabled": true`; a failing response shows a confirmed member with `"twoFactorEnabled": false`.
+      remediation:
+        - id: console
+          desc: |
+            To bring every confirmed member into compliance using the Bitwarden admin console:
+
+            1. Sign in to the [Bitwarden web vault](https://vault.bitwarden.com) as an organization owner or admin.
+            2. Open **Admin Console** and select your organization.
+            3. Navigate to **Members** and identify confirmed members without two-step login enabled.
+            4. Ask each affected member to sign in to their account, open **Account settings > Security > Two-step login**, and enable an authenticator app or security key.
+            5. Enable the organization's **Require two-step login** policy so members without it are removed automatically going forward.
+
+            To learn more, read [Setup two-step login](https://bitwarden.com/help/setup-two-step-login/) in the Bitwarden documentation.
+        # No Terraform remediation: see the comment above the check UID.
+    refs:
+      - url: https://bitwarden.com/help/setup-two-step-login/
+        title: Bitwarden Two-Step Login Setup
+      - url: https://bitwarden.com/help/policies/
+        title: Bitwarden Organization Policies
+  # No Terraform remediation: invitation and confirmation status (status) is runtime
+  # membership state that changes as a member accepts an email invite and an admin confirms
+  # them. It is not a Terraform-managed attribute in any community Bitwarden provider.
+  - uid: mondoo-bitwarden-security-member-no-stale-invitations
+    title: Ensure no members remain in invited or accepted status
+    impact: 40
+    mql: |
+      bitwarden.members.where(status == "invited" || status == "accepted").length == 0
+    docs:
+      desc: |
+        This check ensures that the Bitwarden organization has no members stuck in the `invited` or `accepted` status, which sit between sending an invitation and an administrator confirming the member's access. A member lingering in one of these states for an extended period usually signals an onboarding step that was never finished, rather than an active mid-onboarding member.
+
+        **Why this matters**
+
+        - **Stale access requests:** An invitation left pending indefinitely can still be accepted by whoever controls that email address, long after the original business justification expired.
+        - **Incomplete offboarding review:** Members are sometimes invited for a role that never materialized, leaving an unconfirmed invitation that never gets cleaned up.
+        - **Confirmation gatekeeping bypass:** The `accepted` status exists so an administrator can verify a new member's public key fingerprint before confirming them; a large backlog of accepted-but-unconfirmed members suggests that verification step is being skipped rather than performed.
+        - **Visibility gap:** Invited and accepted members do not yet appear with working vault access, so they are easy to overlook during routine access reviews focused on confirmed members.
+
+        **Risk mitigation**
+
+        - **Regular invitation cleanup:** Periodically reviewing and revoking invitations that were never accepted, or accepted memberships that were never confirmed, keeps the membership list an accurate reflection of who has or is actively gaining access.
+        - **Confirmation discipline:** Treating the accepted-to-confirmed step as a deliberate verification gate, rather than a formality, prevents unverified members from silently accumulating access.
+      audit: |
+        ### Audit via Admin Console
+
+        1. Sign in to the [Bitwarden web vault](https://vault.bitwarden.com) as an organization owner or admin.
+        2. Open **Admin Console** and select your organization.
+        3. Navigate to **Members**.
+        4. Filter or review the member list for accounts showing the **Invited** or **Needs confirmation** status.
+
+        A passing result shows no members in either status; a failing result shows one or more members stuck in `invited` or `accepted`.
+
+        ### Audit via Public API
+
+        Query the Bitwarden Public API and inspect the result:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $BITWARDEN_ACCESS_TOKEN" \
+          "https://api.bitwarden.com/public/members"
+        ```
+
+        A passing response shows no member with `"status": 0` (invited) or `"status": 1` (accepted); a failing response shows one or more members in either state.
+      remediation:
+        - id: console
+          desc: |
+            To clear stale invitations and unconfirmed members using the Bitwarden admin console:
+
+            1. Sign in to the [Bitwarden web vault](https://vault.bitwarden.com) as an organization owner or admin.
+            2. Open **Admin Console** and select your organization.
+            3. Navigate to **Members** and identify members with **Invited** or **Needs confirmation** status.
+            4. For a legitimate pending member, resend the invitation or confirm their fingerprint to move them to **Confirmed**.
+            5. For an invitation that is no longer needed, select the member and click **Revoke access**.
+
+            To learn more, read [Understanding member statuses](https://bitwarden.com/help/user-types-access-control/) in the Bitwarden documentation.
+        # No Terraform remediation: see the comment above the check UID.
+    refs:
+      - url: https://bitwarden.com/help/user-types-access-control/
+        title: Bitwarden Member Types and Access Control
+  # No Terraform remediation: organization role assignment (owner/admin) is runtime
+  # membership state that a Bitwarden owner sets from the admin console or Public API. It is
+  # not a Terraform-managed attribute in any community Bitwarden provider.
+  - uid: mondoo-bitwarden-security-member-limit-privileged-roles
+    title: Limit the number of organization owners and admins
+    impact: 60
+    mql: |
+      bitwarden.members.where(role == "owner" || role == "admin").length > 0 &&
+        bitwarden.members.where(role == "owner" || role == "admin").length <= 5
+    docs:
+      desc: |
+        This check ensures that the Bitwarden organization keeps the number of members holding the owner or admin role between 1 and 5. Bitwarden does not cap how many members can hold either privileged role, so organizations tend to accumulate privileged accounts over time as responsibilities shift.
+
+        **Why this matters**
+
+        - **Reduced attack surface:** Owners and admins can manage policies, collections, and every member's access, so each privileged account is a high-value target for attackers.
+        - **Accountability:** A limited set of owners and admins keeps it clear who can make security-sensitive changes to the organization.
+        - **Operational resilience:** At least one active owner or admin avoids a single point of failure if a privileged member is unavailable or leaves.
+        - **Privilege creep prevention:** Without a ceiling, admin rights granted for a past project or migration tend to remain long after the need ends.
+
+        **Risk mitigation**
+
+        - **Periodic privilege review:** Regularly reviewing whether each owner or admin still needs that level of access stops former or inactive privileged members from retaining it.
+        - **Containment:** A small privileged group limits the blast radius if an owner or admin credential is phished or otherwise compromised.
+      audit: |
+        ### Audit via Admin Console
+
+        1. Sign in to the [Bitwarden web vault](https://vault.bitwarden.com) as an organization owner or admin.
+        2. Open **Admin Console** and select your organization.
+        3. Navigate to **Members**.
+        4. Filter the member list by **Role** and select **Owner** and **Admin**.
+        5. Count the members shown.
+
+        A passing result shows between 1 and 5 members holding the owner or admin role; a failing result shows 0 members or more than 5.
+
+        ### Audit via Public API
+
+        Query the Bitwarden Public API and inspect the result:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $BITWARDEN_ACCESS_TOKEN" \
+          "https://api.bitwarden.com/public/members"
+        ```
+
+        A passing response lists between 1 and 5 members with `"type": 0` (owner) or `"type": 1` (admin); a failing response shows 0 or more than 5 such members.
+      remediation:
+        - id: console
+          desc: |
+            To adjust the number of members holding the owner or admin role using the Bitwarden admin console:
+
+            1. Sign in to the [Bitwarden web vault](https://vault.bitwarden.com) as an organization owner.
+            2. Open **Admin Console** and select your organization, then navigate to **Members**.
+            3. For each owner or admin who no longer needs that level of access, select the member, click **Edit**, and change their role to **User** or a custom role.
+            4. If no member holds the owner or admin role, promote a trusted member to admin using the same menu.
+
+            To learn more, read [Member roles](https://bitwarden.com/help/user-types-access-control/#member-roles) in the Bitwarden documentation.
+        # No Terraform remediation: see the comment above the check UID.
+    refs:
+      - url: https://bitwarden.com/help/user-types-access-control/
+        title: Bitwarden Member Types and Access Control

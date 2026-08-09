@@ -1,0 +1,340 @@
+# Copyright Mondoo, Inc. 2024, 2026
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: mondoo-zoom-security
+    name: Mondoo Zoom Security
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: zoom,saas
+    require:
+      - provider: zoom
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Secure Zoom account meeting, recording, and identity settings
+    docs:
+      desc: |
+        The Mondoo Zoom Security policy identifies critical misconfigurations in Zoom account settings that could expose meetings, recordings, and the workforce identity model to unauthorized access. Zoom has no IAM hierarchy or resource graph to model, so this policy focuses on the account-level and role-level security posture that governs every meeting hosted on the account: whether uninvited participants can join, whether meeting content and recordings are protected from access outside the meeting, whether sign-in is anchored to a managed identity provider, and whether administrator-equivalent access is kept to a small, reviewable group.
+
+        This policy provides security checks across key Zoom account areas:
+
+        - Meeting security defaults (waiting room, passcodes, end-to-end encryption)
+        - Cloud recording encryption
+        - Single sign-on enforcement
+        - Restriction of meeting participation to authenticated account users
+        - Size of the privileged Owner and Admin role membership
+
+        Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
+    groups:
+      - title: Zoom Account Security
+        filters: asset.platform == "zoom"
+        checks:
+          - uid: mondoo-zoom-security-account-meeting-encryption-enabled
+          - uid: mondoo-zoom-security-account-waiting-room-enabled
+          - uid: mondoo-zoom-security-account-passcode-required
+          - uid: mondoo-zoom-security-account-cloud-recording-encryption-enabled
+          - uid: mondoo-zoom-security-account-sso-enforced
+          - uid: mondoo-zoom-security-account-restrict-external-participants
+          - uid: mondoo-zoom-security-role-limit-admin-owner-members
+queries:
+  # No Terraform variants: Zoom publishes no official Terraform provider, and the
+  # community providers surveyed (folio-sec/zoom, CleverTap/zoom, fceller/zoom) expose no
+  # resource for account-level meeting encryption. This setting is only configurable
+  # through the Zoom web portal or the Zoom REST API, so HCL/plan/state cannot assert it.
+  - uid: mondoo-zoom-security-account-meeting-encryption-enabled
+    title: Ensure end-to-end encryption is available for meetings
+    impact: 85
+    mql: |
+      zoom.account.meetingE2eeAvailable == true
+    docs:
+      desc: |
+        This check ensures that end-to-end encryption (E2EE) is available to hosts for meetings on the Zoom account. By default, Zoom protects meeting content with enhanced encryption between each client and Zoom's cloud, but end-to-end encryption goes further: only the meeting participants hold the decryption keys, so Zoom's own infrastructure never has access to the meeting content.
+
+        **Why this matters**
+
+        - **Content confidentiality:** End-to-end encryption keeps meeting audio, video, and chat unreadable to anyone other than the participants, including the service provider.
+        - **Insider risk reduction:** Without E2EE, a compromised or malicious insider with cloud infrastructure access could theoretically intercept meeting content in transit through Zoom's servers.
+        - **Regulatory alignment:** Organizations handling regulated data (health records, financial data, legal privilege) often require the strongest available transport protection for sensitive discussions.
+
+        **Risk mitigation**
+
+        - **Sensitive-meeting protection:** Hosts of confidential or regulated meetings can select E2EE only when it is available as an account-level option.
+        - **Reduced blast radius:** Limiting what the service provider can technically access reduces the impact of a compromise anywhere in the provider's own infrastructure.
+      audit: |
+        ### Audit via Account Settings
+
+        1. Sign in to the Zoom web portal as an account owner or admin.
+        2. Navigate to **Admin > Account Management > Account Settings**.
+        3. Select the **Meeting** tab and locate the **Security** section.
+        4. Confirm that **Allow use of end-to-end encryption** is turned on.
+
+        A passing result shows end-to-end encryption available to meeting hosts; a failing result shows only enhanced encryption available with no option to enable E2EE.
+      remediation:
+        - id: console
+          desc: |
+            To make end-to-end encryption available to hosts using the Zoom web portal:
+
+            1. Sign in to the Zoom web portal as an account owner or admin.
+            2. Navigate to **Admin > Account Management > Account Settings**.
+            3. Select the **Meeting** tab and locate the **Security** section.
+            4. Turn on **Allow use of end-to-end encryption**, then choose whether hosts select the encryption type per meeting or whether end-to-end encryption is required for every meeting.
+            5. Click **Save** to apply the change account-wide.
+          # No Terraform remediation: Zoom has no official Terraform provider, and no
+          # surveyed community provider exposes a resource for this setting.
+  # No Terraform variants: the waiting room default is only configurable through the Zoom
+  # web portal or REST API. No official or community Terraform provider exposes an
+  # account-settings resource for it.
+  - uid: mondoo-zoom-security-account-waiting-room-enabled
+    title: Ensure the waiting room is enabled by default
+    impact: 75
+    mql: |
+      zoom.account.meetingWaitingRoomEnabled == true
+    docs:
+      desc: |
+        This check ensures that the waiting room is enabled by default for new meetings on the Zoom account. When enabled, participants wait in a virtual staging area until the host explicitly admits them instead of joining the meeting directly.
+
+        **Why this matters**
+
+        - **Uninvited-guest prevention:** A waiting room stops anyone with a meeting link or ID from entering a meeting unannounced.
+        - **Meeting-bombing mitigation:** Screening participants before admission blocks the most common technique used to disrupt or eavesdrop on meetings.
+        - **Host control:** Hosts can verify each participant's identity before granting access to sensitive discussions.
+
+        **Risk mitigation**
+
+        - **Layered access control:** The waiting room adds a manual checkpoint on top of passcodes and authentication requirements.
+        - **Reduced disruption:** Screening participants before they join reduces the chance of unwanted interruptions during active meetings.
+      audit: |
+        ### Audit via Account Settings
+
+        1. Sign in to the Zoom web portal as an account owner or admin.
+        2. Navigate to **Admin > Account Management > Account Settings**.
+        3. Select the **Meeting** tab and locate the **Security** section.
+        4. Confirm that **Waiting Room** is turned on.
+
+        A passing result shows the waiting room enabled by default for the account; a failing result shows it turned off.
+      remediation:
+        - id: console
+          desc: |
+            To enable the waiting room by default using the Zoom web portal:
+
+            1. Sign in to the Zoom web portal as an account owner or admin.
+            2. Navigate to **Admin > Account Management > Account Settings**.
+            3. Select the **Meeting** tab and locate the **Security** section.
+            4. Turn on **Waiting Room**, and click the lock icon if you want to prevent individual users or groups from disabling it.
+            5. Click **Save** to apply the change account-wide.
+          # No Terraform remediation: Zoom has no official Terraform provider, and no
+          # surveyed community provider exposes a resource for this setting.
+  # No Terraform variants: the account-wide passcode requirement is only configurable
+  # through the Zoom web portal or REST API. No official or community Terraform provider
+  # exposes an account-settings resource for it.
+  - uid: mondoo-zoom-security-account-passcode-required
+    title: Ensure a passcode is required to join meetings
+    impact: 75
+    mql: |
+      zoom.account.meetingPasscodeRequired == true
+    docs:
+      desc: |
+        This check ensures that a passcode is required by default to join meetings on the Zoom account. Without a required passcode, anyone who obtains or guesses a meeting ID can attempt to join, since meeting IDs are not treated as secrets and are often shared over email, chat, or calendar invites that can be forwarded or intercepted.
+
+        **Why this matters**
+
+        - **Meeting-ID guessing resistance:** Zoom meeting IDs follow a predictable numeric format, so a passcode is the control that actually prevents unauthorized entry.
+        - **Shared-link exposure:** Meeting invitations are frequently forwarded, posted in shared channels, or leaked, and a passcode limits what an unintended recipient can do with the link alone.
+        - **Consistent enforcement:** Requiring passcodes at the account level ensures no individually scheduled meeting is left without one.
+
+        **Risk mitigation**
+
+        - **Unauthorized-join prevention:** A required passcode blocks entry even when the meeting ID has been exposed.
+        - **Defense in depth:** Combined with the waiting room, a passcode adds a second independent barrier to unauthorized meeting access.
+      audit: |
+        ### Audit via Account Settings
+
+        1. Sign in to the Zoom web portal as an account owner or admin.
+        2. Navigate to **Admin > Account Management > Account Settings**.
+        3. Select the **Meeting** tab and locate the **Security** section.
+        4. Confirm that **Require a passcode when scheduling new meetings** (or the equivalent account-wide passcode requirement) is turned on.
+
+        A passing result shows a passcode required by default for meetings; a failing result shows the requirement turned off.
+      remediation:
+        - id: console
+          desc: |
+            To require a passcode for meetings using the Zoom web portal:
+
+            1. Sign in to the Zoom web portal as an account owner or admin.
+            2. Navigate to **Admin > Account Management > Account Settings**.
+            3. Select the **Meeting** tab and locate the **Security** section.
+            4. Turn on **Require a passcode when scheduling new meetings**, and click the lock icon if you want to prevent individual users or groups from disabling it.
+            5. Click **Save** to apply the change account-wide.
+          # No Terraform remediation: Zoom has no official Terraform provider, and no
+          # surveyed community provider exposes a resource for this setting.
+  # No Terraform variants: cloud recording encryption is only configurable through the
+  # Zoom web portal or REST API. No official or community Terraform provider exposes an
+  # account-settings resource for it.
+  - uid: mondoo-zoom-security-account-cloud-recording-encryption-enabled
+    title: Ensure cloud recordings are encrypted at rest
+    impact: 85
+    mql: |
+      zoom.account.cloudRecordingEncryptionEnabled == true
+    docs:
+      desc: |
+        This check ensures that cloud recordings stored on the Zoom account are encrypted at rest. Cloud recordings can capture screen shares, chat transcripts, and audio/video from meetings that include confidential business information, and they persist in storage long after the meeting ends, unlike the live meeting itself.
+
+        **Why this matters**
+
+        - **Long-lived exposure window:** A recording sits in storage indefinitely (subject to retention settings), so an attacker who reaches the storage layer has far more time to find and exfiltrate it than they would during a live meeting.
+        - **Aggregated sensitive content:** A single recording can concentrate hours of confidential discussion, screen shares of internal systems, and chat messages into one file.
+        - **Compliance alignment:** Frameworks that require encryption of data at rest treat stored recordings the same as any other sensitive data store.
+
+        **Risk mitigation**
+
+        - **Storage-layer compromise containment:** Encryption at rest limits what an attacker can read even if they gain access to the underlying recording storage.
+        - **Consistent protection:** Enforcing encryption at the account level ensures no individually configured recording is left unencrypted.
+      audit: |
+        ### Audit via Account Settings
+
+        1. Sign in to the Zoom web portal as an account owner or admin.
+        2. Navigate to **Admin > Account Management > Account Settings**.
+        3. Select the **Recording** tab and open the **Advanced cloud recording settings** section.
+        4. Confirm that the cloud recording encryption option is turned on.
+
+        A passing result shows cloud recordings encrypted at rest; a failing result shows encryption turned off.
+      remediation:
+        - id: console
+          desc: |
+            To enable cloud recording encryption using the Zoom web portal:
+
+            1. Sign in to the Zoom web portal as an account owner or admin.
+            2. Navigate to **Admin > Account Management > Account Settings**.
+            3. Select the **Recording** tab and open the **Advanced cloud recording settings** section.
+            4. Turn on the cloud recording encryption option, and click the lock icon if you want to prevent individual users or groups from disabling it.
+            5. Click **Save** to apply the change account-wide.
+          # No Terraform remediation: Zoom has no official Terraform provider, and no
+          # surveyed community provider exposes a resource for this setting.
+  # No Terraform variants: the account's single sign-on configuration is only manageable
+  # through the Zoom web portal or REST API. No official or community Terraform provider
+  # exposes an SSO resource.
+  - uid: mondoo-zoom-security-account-sso-enforced
+    title: Ensure single sign-on is enabled for the account
+    impact: 80
+    mql: |
+      zoom.account.sso.enabled == true
+    docs:
+      desc: |
+        This check ensures that single sign-on (SSO) is enabled for the Zoom account. Without SSO, users sign in with a Zoom-managed password or a third-party social login, both of which sit outside your organization's central identity provider and its conditional access, multi-factor authentication, and offboarding controls.
+
+        **Why this matters**
+
+        - **Centralized identity control:** SSO ties Zoom sign-in to the same identity provider that governs the rest of your organization's access, so policy changes apply everywhere at once.
+        - **Consistent offboarding:** Disabling a user in the identity provider immediately cuts off their Zoom access, rather than requiring a separate deactivation step.
+        - **Stronger authentication inheritance:** Zoom sign-in inherits whatever multi-factor authentication and conditional access policies the identity provider enforces.
+
+        **Risk mitigation**
+
+        - **Credential sprawl reduction:** Eliminating a Zoom-specific password removes one more credential that can be phished, reused, or leaked.
+        - **Faster incident response:** A compromised identity can be locked out of Zoom the same way it is locked out of every other SSO-connected application.
+      audit: |
+        ### Audit via Account Settings
+
+        1. Sign in to the Zoom web portal as an account owner or admin.
+        2. Navigate to **Admin > Advanced > Single Sign-On**.
+        3. Confirm that SSO is configured and shown as enabled for the account.
+
+        A passing result shows SSO enabled with an active identity provider configuration; a failing result shows SSO not configured or disabled.
+      remediation:
+        - id: console
+          desc: |
+            To enable single sign-on using the Zoom web portal:
+
+            1. Sign in to the Zoom web portal as an account owner or admin.
+            2. Navigate to **Admin > Advanced > Single Sign-On**.
+            3. Follow the setup wizard to configure your identity provider's issuer URL, single sign-on URL, and certificate.
+            4. Enable SSO for the account once the configuration test succeeds.
+            5. Migrate existing users to SSO-linked sign-in and disable Zoom-managed passwords where your identity provider setup allows it.
+          # No Terraform remediation: Zoom has no official Terraform provider, and no
+          # surveyed community provider exposes an SSO resource.
+  # No Terraform variants: the account-wide authenticated-users-only meeting restriction
+  # is only configurable through the Zoom web portal or REST API. No official or community
+  # Terraform provider exposes an account-settings resource for it.
+  - uid: mondoo-zoom-security-account-restrict-external-participants
+    title: Restrict meeting participation to authenticated account users
+    impact: 80
+    mql: |
+      zoom.account.meetingOnlyAccountUsersCanJoin == true
+    docs:
+      desc: |
+        This check ensures that meeting participation on the Zoom account is restricted to users who are authenticated and signed in on the account, blocking external and guest participants from joining. Without this restriction, anyone with a meeting link, including people outside the organization, can attempt to join without ever proving who they are.
+
+        **Why this matters**
+
+        - **External-participant control:** Restricting meetings to account users prevents unauthenticated outsiders from joining internal discussions.
+        - **Identity accountability:** Every participant is tied to a known, authenticated account identity, making it possible to attribute meeting activity to a real person.
+        - **Leakage prevention:** Sensitive internal meetings stay closed to guest or anonymous participants who were never meant to attend.
+
+        **Risk mitigation**
+
+        - **Reduced attack surface:** Requiring account authentication removes the anonymous-join path that meeting-bombing and eavesdropping attacks depend on.
+        - **Scoped exceptions:** Meetings that genuinely need external guests can be configured individually, while the account default stays restrictive.
+      audit: |
+        ### Audit via Account Settings
+
+        1. Sign in to the Zoom web portal as an account owner or admin.
+        2. Navigate to **Admin > Account Management > Account Settings**.
+        3. Select the **Meeting** tab and locate the **Security** section.
+        4. Confirm that **Only authenticated users can join meetings** is turned on and scoped to users signed in on your account.
+
+        A passing result shows meeting participation restricted to authenticated account users; a failing result shows unauthenticated or external participants able to join.
+      remediation:
+        - id: console
+          desc: |
+            To restrict meeting participation to authenticated account users using the Zoom web portal:
+
+            1. Sign in to the Zoom web portal as an account owner or admin.
+            2. Navigate to **Admin > Account Management > Account Settings**.
+            3. Select the **Meeting** tab and locate the **Security** section.
+            4. Turn on **Only authenticated users can join meetings**, and set the authentication option to your account's own users.
+            5. Click the lock icon if you want to prevent individual users or groups from disabling it, then click **Save**.
+          # No Terraform remediation: Zoom has no official Terraform provider, and no
+          # surveyed community provider exposes a resource for this setting.
+  # No Terraform variants: role membership is runtime account state (which users hold the
+  # Owner or Admin role), not a Terraform-managed configuration attribute. No official or
+  # community Terraform provider models Zoom role assignments.
+  - uid: mondoo-zoom-security-role-limit-admin-owner-members
+    title: Limit membership in the Owner and Admin roles
+    impact: 60
+    mql: |
+      zoom.roles.where(name == "Owner" || name == "Admin").all(totalMembers <= 3)
+    docs:
+      desc: |
+        This check ensures that the built-in Owner and Admin roles on the Zoom account are held by no more than a small number of users. These roles carry full account privileges, including the ability to change every security setting this policy checks, so Zoom does not cap how many members can hold them and accounts tend to accumulate privileged users over time.
+
+        **Why this matters**
+
+        - **Reduced attack surface:** Each Owner or Admin account is a high-value target, so keeping the group small limits how many accounts an attacker can compromise to reach full administrative control.
+        - **Accountability:** A small, well-known set of privileged users keeps it clear who can make security-sensitive changes to the account.
+        - **Privilege creep prevention:** Regularly reviewing Owner and Admin membership stops former or inactive privileged users from retaining access.
+
+        **Risk mitigation**
+
+        - **Containment:** A small admin group limits the blast radius if a privileged credential is phished or stolen.
+        - **Operational resilience:** Keeping at least one Owner and a small Admin group avoids both a single point of failure and unnecessary privilege sprawl.
+      audit: |
+        ### Audit via Account Settings
+
+        1. Sign in to the Zoom web portal as an account owner or admin.
+        2. Navigate to **Admin > User Management > Roles**.
+        3. Open the **Owner** role and the **Admin** role and note the number of members assigned to each.
+
+        A passing result shows 3 or fewer members holding the Owner or Admin role; a failing result shows more than 3 members holding either role.
+      remediation:
+        - id: console
+          desc: |
+            To reduce membership in the Owner and Admin roles using the Zoom web portal:
+
+            1. Sign in to the Zoom web portal as an account owner or admin.
+            2. Navigate to **Admin > User Management > Users**.
+            3. For each user who no longer needs privileged access, click their role and change it to **Member** or an appropriately scoped custom role.
+            4. Navigate to **Admin > User Management > Roles** to confirm the Owner and Admin roles now show 3 or fewer members.
+          # No Terraform remediation: Zoom has no official Terraform provider, and no
+          # surveyed community provider models Zoom role assignments.

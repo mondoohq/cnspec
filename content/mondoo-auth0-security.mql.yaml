@@ -1,0 +1,645 @@
+# Copyright Mondoo, Inc. 2024, 2026
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: mondoo-auth0-security
+    name: Mondoo Auth0 Security
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: auth0,saas
+    require:
+      - provider: auth0
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Secure Auth0 tenant authentication, application, and administrative access
+    docs:
+      desc: |
+        The Mondoo Auth0 Security policy identifies critical misconfigurations in an Auth0 tenant that could let attackers bypass authentication, exhaust brute-force defenses, or abuse over-privileged applications and administrative roles. Auth0 mediates authentication for every application registered against the tenant, so a weakness here (a disabled credential check, a public client with a dangerous grant type, an unbounded refresh token) can expose every downstream application that relies on it.
+
+        This policy provides security checks across key Auth0 tenant areas:
+
+        - Multi-factor authentication on database (username/password) connections
+        - Breached-password detection, brute-force protection, and suspicious-IP throttling
+        - Application (client) grant types, callback URLs, and token endpoint authentication
+        - Refresh token rotation and expiration
+        - Membership in administrative roles
+        - Log stream export for security event monitoring
+        - Tenant session and idle-session lifetimes
+
+        Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
+    groups:
+      - title: Auth0
+        filters: asset.platform == "auth0"
+        checks:
+          - uid: mondoo-auth0-security-connection-database-mfa-active
+          - uid: mondoo-auth0-security-attack-protection-breached-password-detection-enabled
+          - uid: mondoo-auth0-security-attack-protection-brute-force-suspicious-ip-enabled
+          - uid: mondoo-auth0-security-client-no-implicit-grant-wildcard-callback
+          - uid: mondoo-auth0-security-client-confidential-auth-method-required
+          - uid: mondoo-auth0-security-client-refresh-token-rotation-required
+          - uid: mondoo-auth0-security-role-admin-membership-bounded
+          - uid: mondoo-auth0-security-logstream-active-required
+          - uid: mondoo-auth0-security-tenant-session-lifetime-bounded
+queries:
+  - uid: mondoo-auth0-security-connection-database-mfa-active
+    title: Require MFA on database connections
+    impact: 85
+    mql: |
+      auth0.connections.where(strategy == "auth0").all(mfaActive == true)
+    docs:
+      desc: |
+        This check ensures that every database (username/password) connection in the Auth0 tenant has multi-factor authentication active. Auth0 lets a database connection accept a password alone unless an administrator turns MFA on for that connection, so new connections default to single-factor authentication.
+
+        **Why this matters**
+
+        - **Credential stuffing resistance:** Passwords leaked from unrelated breaches cannot be replayed against Auth0-managed accounts when a second factor is required.
+        - **Phishing containment:** A stolen or phished password alone is not enough to complete a sign-in when MFA is active.
+        - **Consistent enforcement:** Database connections are Auth0's own credential store, so leaving MFA off here removes the strongest control Auth0 offers for password-based accounts.
+
+        **Risk mitigation**
+
+        - **Account takeover prevention:** Requiring a second factor closes the most common path from a leaked or guessed password to full account access.
+        - **Blast radius reduction:** Enabling MFA tenant-wide on every database connection avoids a single unprotected connection becoming the easiest way in.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Sign in to the [Auth0 Dashboard](https://manage.auth0.com/) for your tenant.
+        2. Open **Authentication > Database** and select a connection.
+        3. Review the connection's **Multi-factor Authentication** setting under its security options.
+
+        A passing result shows MFA active for every database connection; a failing result shows a database connection with MFA turned off.
+
+        ### Audit via CLI
+
+        Query the Auth0 Management API through the `auth0` CLI and inspect the result:
+
+        ```bash
+        auth0 api get "connections" --query "strategy=auth0"
+        ```
+
+        A passing response shows every returned connection with `options.mfa.active` set to `true`; a failing response shows a connection missing that setting or with it set to `false`.
+      remediation:
+        - id: console
+          desc: |
+            To enable MFA on a database connection using the Auth0 Dashboard:
+
+            1. Sign in to the [Auth0 Dashboard](https://manage.auth0.com/).
+            2. Open **Authentication > Database** and select the connection.
+            3. Enable the **Multi-factor Authentication** option for the connection and save.
+            4. Open **Security > Multi-factor Auth** and confirm at least one factor (an authenticator app or push notification) is enabled tenant-wide.
+        - id: terraform
+          desc: |
+            To enable MFA on a database connection using the `auth0` Terraform provider:
+
+            ```hcl
+            resource "auth0_connection" "database" {
+              name     = "Username-Password-Authentication"
+              strategy = "auth0"
+
+              options {
+                mfa {
+                  active                 = true
+                  return_enroll_settings = true
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://auth0.com/docs/secure/multi-factor-authentication
+        title: Auth0 Multi-Factor Authentication
+      - url: https://auth0.com/docs/authenticate/database-connections
+        title: Auth0 Database Connections
+
+  - uid: mondoo-auth0-security-attack-protection-breached-password-detection-enabled
+    title: Enable breached password detection tenant-wide
+    impact: 85
+    mql: |
+      auth0.attackProtection.breachedPasswordDetectionEnabled == true
+    docs:
+      desc: |
+        This check ensures that the Auth0 tenant has breached-password detection enabled. When enabled, Auth0 checks credentials used at login or signup against a continuously updated list of credentials known to be exposed in third-party data breaches, and can block, notify, or flag the affected account.
+
+        **Why this matters**
+
+        - **Credential stuffing defense:** Attackers rely on reusing passwords leaked from unrelated services. Breached-password detection catches these logins even when the password is otherwise correct.
+        - **Proactive account protection:** Users routinely reuse passwords across services without knowing a given password has already been exposed elsewhere.
+        - **Early warning:** Admin notifications surface accounts at risk before an attacker successfully logs in with the breached credential.
+
+        **Risk mitigation**
+
+        - **Account takeover prevention:** Blocking or challenging logins that use a known-breached password stops one of the most common automated attack techniques.
+        - **Method strength:** Preferring the `enhanced` detection method over `standard` checks credentials continuously against new breaches, not only at the moment of login or signup.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Sign in to the [Auth0 Dashboard](https://manage.auth0.com/).
+        2. Open **Security > Attack Protection > Breached Password Detection**.
+        3. Review whether the toggle is enabled and which detection method and shields are configured.
+
+        A passing result shows breached-password detection enabled; a failing result shows it disabled.
+
+        ### Audit via CLI
+
+        Query the Auth0 Management API through the `auth0` CLI and inspect the result:
+
+        ```bash
+        auth0 api get "attack-protection/breached-password-detection"
+        ```
+
+        A passing response shows `"enabled": true`; a failing response shows `"enabled": false`.
+      remediation:
+        - id: console
+          desc: |
+            To enable breached password detection using the Auth0 Dashboard:
+
+            1. Sign in to the [Auth0 Dashboard](https://manage.auth0.com/).
+            2. Open **Security > Attack Protection > Breached Password Detection**.
+            3. Turn the feature on, select the **Enhanced** detection method, and enable the **Block** shield.
+            4. Save your changes.
+        - id: terraform
+          desc: |
+            To enable breached password detection using the `auth0` Terraform provider:
+
+            ```hcl
+            resource "auth0_attack_protection" "tenant" {
+              breached_password_detection {
+                enabled                     = true
+                method                      = "enhanced"
+                shields                     = ["block", "admin_notification"]
+                admin_notification_frequency = ["daily"]
+              }
+            }
+            ```
+    refs:
+      - url: https://auth0.com/docs/secure/attack-protection/breached-password-detection
+        title: Auth0 Breached Password Detection
+
+  - uid: mondoo-auth0-security-attack-protection-brute-force-suspicious-ip-enabled
+    title: Enable brute-force and suspicious-IP throttling
+    impact: 80
+    mql: |
+      auth0.attackProtection.bruteForceEnabled == true
+      auth0.attackProtection.suspiciousIpThrottlingEnabled == true
+    docs:
+      desc: |
+        This check ensures that the Auth0 tenant has both brute-force protection and suspicious-IP throttling enabled. Brute-force protection locks out an identifier after repeated failed login attempts, and suspicious-IP throttling slows down traffic from a single IP address that is hitting many different accounts, a pattern typical of credential-stuffing tools rather than a real user mistyping a password.
+
+        **Why this matters**
+
+        - **Automated attack resistance:** Both defenses target scripted login attempts rather than the occasional legitimate failed attempt.
+        - **Complementary coverage:** Brute-force protection catches repeated attempts against one account; suspicious-IP throttling catches one source spraying attempts across many accounts, a gap brute-force protection alone does not close.
+        - **Default-on posture:** Auth0 enables both protections by default, so a tenant with either disabled has had a control actively turned off.
+
+        **Risk mitigation**
+
+        - **Lockout enforcement:** A bounded number of failed attempts before lockout limits how many passwords an attacker can try against a given account.
+        - **Distributed attack detection:** Throttling by source IP catches credential-stuffing traffic that spreads attempts thin across accounts specifically to avoid per-account lockouts.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Sign in to the [Auth0 Dashboard](https://manage.auth0.com/).
+        2. Open **Security > Attack Protection > Brute-force Protection** and confirm it is enabled.
+        3. Open **Security > Attack Protection > Suspicious IP Throttling** and confirm it is enabled.
+
+        A passing result shows both protections enabled; a failing result shows either one disabled.
+
+        ### Audit via CLI
+
+        Query the Auth0 Management API through the `auth0` CLI and inspect the result:
+
+        ```bash
+        auth0 api get "attack-protection/brute-force-protection"
+        auth0 api get "attack-protection/suspicious-ip-throttling"
+        ```
+
+        A passing response shows `"enabled": true` from both calls; a failing response shows `"enabled": false` from either.
+      remediation:
+        - id: console
+          desc: |
+            To enable brute-force protection and suspicious-IP throttling using the Auth0 Dashboard:
+
+            1. Sign in to the [Auth0 Dashboard](https://manage.auth0.com/).
+            2. Open **Security > Attack Protection > Brute-force Protection**, turn it on, and review the maximum attempts and lockout mode.
+            3. Open **Security > Attack Protection > Suspicious IP Throttling** and turn it on.
+            4. Save your changes.
+        - id: terraform
+          desc: |
+            To enable both protections using the `auth0` Terraform provider:
+
+            ```hcl
+            resource "auth0_attack_protection" "tenant" {
+              brute_force_protection {
+                enabled      = true
+                mode         = "count_per_identifier_and_ip"
+                max_attempts = 10
+              }
+
+              suspicious_ip_throttling {
+                enabled = true
+              }
+            }
+            ```
+    refs:
+      - url: https://auth0.com/docs/secure/attack-protection/brute-force-protection
+        title: Auth0 Brute-Force Protection
+      - url: https://auth0.com/docs/secure/attack-protection/suspicious-ip-throttling
+        title: Auth0 Suspicious IP Throttling
+
+  - uid: mondoo-auth0-security-client-no-implicit-grant-wildcard-callback
+    title: Block implicit grant type and wildcard callback URLs
+    impact: 80
+    mql: |
+      auth0.clients.all(grantTypes == empty || grantTypes.none(_ == "implicit"))
+      auth0.clients.all(callbacks == empty || callbacks.none(_ == "*"))
+    docs:
+      desc: |
+        This check ensures that no application registered in the Auth0 tenant is permitted to use the legacy `implicit` OAuth grant type or a bare `*` wildcard callback URL. The implicit grant returns access and ID tokens directly in the browser's URL fragment with no client authentication step, and a wildcard callback accepts a redirect to any URL an attacker chooses.
+
+        **Why this matters**
+
+        - **Token leakage:** Tokens returned in a URL fragment under the implicit grant can end up in browser history, referrer headers, and server logs.
+        - **No refresh capability:** The implicit grant does not support refresh tokens, which historically pushed applications toward long-lived access tokens as a workaround, widening the exposure window.
+        - **Open redirect risk:** A wildcard callback URL lets an attacker redirect a victim's authorization code or token to an attacker-controlled domain after a successful login.
+
+        **Risk mitigation**
+
+        - **Modern flow adoption:** Authorization Code with PKCE replaces the implicit grant for browser-based and native applications without the fragment-leakage risk.
+        - **Explicit redirect allowlisting:** Listing exact callback URLs instead of a wildcard prevents an attacker from supplying an arbitrary redirect target during the OAuth flow.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Sign in to the [Auth0 Dashboard](https://manage.auth0.com/).
+        2. Open **Applications > Applications** and select an application.
+        3. Under **Advanced Settings > Grant Types**, confirm **Implicit** is not checked.
+        4. Under **Application URIs > Allowed Callback URLs**, confirm no entry is a bare `*`.
+
+        A passing result shows no application with the implicit grant enabled or a bare wildcard callback; a failing result shows either condition on any application.
+
+        ### Audit via CLI
+
+        Query the Auth0 Management API through the `auth0` CLI and inspect the result:
+
+        ```bash
+        auth0 api get "clients" --query "fields=client_id,name,grant_types,callbacks"
+        ```
+
+        A passing response shows every application's `grant_types` omitting `implicit` and no entry in `callbacks` equal to `*`; a failing response shows either value present.
+      remediation:
+        - id: console
+          desc: |
+            To remove the implicit grant and wildcard callbacks using the Auth0 Dashboard:
+
+            1. Sign in to the [Auth0 Dashboard](https://manage.auth0.com/).
+            2. Open **Applications > Applications** and select the affected application.
+            3. Under **Advanced Settings > Grant Types**, uncheck **Implicit** and check **Authorization Code** and, for browser-based or native apps, ensure PKCE is used.
+            4. Under **Application URIs > Allowed Callback URLs**, replace any `*` entry with the application's exact redirect URLs.
+            5. Save your changes.
+        - id: terraform
+          desc: |
+            To restrict grant types and callback URLs using the `auth0` Terraform provider:
+
+            ```hcl
+            resource "auth0_client" "app" {
+              name = "my-application"
+
+              grant_types = ["authorization_code", "refresh_token"]
+              callbacks   = ["https://app.example.com/callback"]
+            }
+            ```
+    refs:
+      - url: https://auth0.com/docs/get-started/applications/application-grant-types
+        title: Auth0 Application Grant Types
+      - url: https://auth0.com/docs/get-started/applications/application-settings#application-uris
+        title: Auth0 Application URIs
+
+  - uid: mondoo-auth0-security-client-confidential-auth-method-required
+    title: Require token endpoint authentication for confidential apps
+    impact: 75
+    mql: |
+      auth0.clients.where(appType != "spa" && appType != "native").all(tokenEndpointAuthMethod != empty && tokenEndpointAuthMethod != "none")
+    docs:
+      desc: |
+        This check ensures that confidential applications, those with an `appType` other than `spa` or `native`, authenticate to the token endpoint with a client secret rather than `none`. A public client (a single-page app or native app) legitimately uses `none` because it cannot safely hold a shared secret, but a regular web application or a machine-to-machine application runs on a server that can.
+
+        **Why this matters**
+
+        - **Client impersonation:** Without a token endpoint authentication method, any party that obtains the `client_id` can attempt to exchange an authorization code or make a token request as if it were the application.
+        - **Confused deployments:** Setting `none` on a server-side application is usually a leftover from copying a public-client configuration, not a deliberate choice.
+        - **Credential-backed requests:** `client_secret_post` or `client_secret_basic` ties every token request to a secret only the legitimate application holds.
+
+        **Risk mitigation**
+
+        - **Server-side secret storage:** Confidential applications run in an environment that can protect a client secret, so requiring one closes an unnecessary gap.
+        - **Consistent classification:** Auditing `appType` against `tokenEndpointAuthMethod` catches applications misclassified during setup.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Sign in to the [Auth0 Dashboard](https://manage.auth0.com/).
+        2. Open **Applications > Applications** and select an application whose type is **Regular Web Application** or **Machine to Machine**.
+        3. Under **Advanced Settings > OAuth**, review the **Token Endpoint Authentication Method** field.
+
+        A passing result shows a confidential application with authentication set to **Post** or **Basic**; a failing result shows it set to **None**.
+
+        ### Audit via CLI
+
+        Query the Auth0 Management API through the `auth0` CLI and inspect the result:
+
+        ```bash
+        auth0 api get "clients" --query "fields=client_id,name,app_type,token_endpoint_auth_method"
+        ```
+
+        A passing response shows every client with `app_type` other than `spa` or `native` having `token_endpoint_auth_method` set to `client_secret_post` or `client_secret_basic`; a failing response shows such a client with `token_endpoint_auth_method` set to `none` or missing.
+      remediation:
+        - id: console
+          desc: |
+            To require client authentication using the Auth0 Dashboard:
+
+            1. Sign in to the [Auth0 Dashboard](https://manage.auth0.com/).
+            2. Open **Applications > Applications** and select the confidential application.
+            3. Under **Advanced Settings > OAuth**, set **Token Endpoint Authentication Method** to **Post** or **Basic**.
+            4. Save your changes and rotate the application's client secret if you suspect it was previously exposed.
+        - id: terraform
+          desc: |
+            To set the token endpoint authentication method using the `auth0` Terraform provider:
+
+            ```hcl
+            resource "auth0_client" "server_app" {
+              name     = "server-side-application"
+              app_type = "regular_web"
+
+              token_endpoint_auth_method = "client_secret_post"
+            }
+            ```
+    refs:
+      - url: https://auth0.com/docs/get-started/applications/confidential-and-public-applications
+        title: Auth0 Confidential and Public Applications
+
+  - uid: mondoo-auth0-security-client-refresh-token-rotation-required
+    title: Require rotating, expiring refresh tokens
+    impact: 75
+    mql: |
+      auth0.clients.where(grantTypes != empty && grantTypes.contains("refresh_token")).all(
+        refreshTokenRotationType != empty &&
+        refreshTokenExpirationType != empty &&
+        refreshTokenRotationType == "rotating" &&
+        refreshTokenExpirationType == "expiring" &&
+        refreshTokenLifetime != empty &&
+        refreshTokenLifetime > 0 &&
+        refreshTokenLifetime <= 2592000
+      )
+    docs:
+      desc: |
+        This check ensures that every application using the `refresh_token` grant rotates its refresh tokens on each use, has expiration enabled, and keeps the absolute refresh token lifetime bounded to 30 days (2,592,000 seconds) or less. Without rotation, a single refresh token that is exfiltrated (from a compromised device, an intercepted request, or a logging pipeline) stays valid for its entire lifetime and can mint fresh access tokens indefinitely.
+
+        **Why this matters**
+
+        - **Replay window reduction:** Rotation invalidates a refresh token the moment it is used, so a stolen token is only useful once before the theft is detectable.
+        - **Non-expiring tokens never lapse:** An application with `refreshTokenExpirationType` set to `non-expiring` keeps a valid credential alive forever unless it is revoked manually.
+        - **Unbounded lifetimes widen exposure:** Even with expiration enabled, a very long absolute lifetime gives an attacker a long window to use a stolen token before it lapses on its own.
+
+        **Risk mitigation**
+
+        - **Automatic reuse detection:** Rotating refresh tokens lets Auth0 detect and revoke a token family when a previously rotated-out token is replayed, a strong signal of theft.
+        - **Time-bounded exposure:** Capping the absolute lifetime ensures a leaked token cannot be used past a known, short window even if reuse detection is bypassed.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Sign in to the [Auth0 Dashboard](https://manage.auth0.com/).
+        2. Open **Applications > Applications** and select an application that uses the **Refresh Token** grant.
+        3. Under **Advanced Settings > Grant Types > Refresh Token**, review **Rotation**, **Expiration**, and the absolute expiration lifetime.
+
+        A passing result shows **Rotation** set to **Rotating**, **Expiration** set to **Expiring**, and an absolute lifetime of 30 days or less; a failing result shows non-rotating tokens, non-expiring tokens, or a longer absolute lifetime.
+
+        ### Audit via CLI
+
+        Query the Auth0 Management API through the `auth0` CLI and inspect the result:
+
+        ```bash
+        auth0 api get "clients" --query "fields=client_id,name,grant_types,refresh_token"
+        ```
+
+        A passing response shows every client with `refresh_token` in `grant_types` having `refresh_token.rotation_type` set to `rotating`, `refresh_token.expiration_type` set to `expiring`, and `refresh_token.token_lifetime` at or below `2592000`; a failing response shows any of those conditions unmet.
+      remediation:
+        - id: console
+          desc: |
+            To enable refresh token rotation and bound its lifetime using the Auth0 Dashboard:
+
+            1. Sign in to the [Auth0 Dashboard](https://manage.auth0.com/).
+            2. Open **Applications > Applications** and select the application.
+            3. Under **Advanced Settings > Grant Types > Refresh Token**, set **Rotation** to **Rotating** and **Expiration** to **Expiring**.
+            4. Set **Absolute Expiration** to 30 days (2,592,000 seconds) or less, and set a reasonable **Inactivity Expiration**.
+            5. Save your changes.
+        - id: terraform
+          desc: |
+            To configure refresh token rotation and expiration using the `auth0` Terraform provider:
+
+            ```hcl
+            resource "auth0_client" "app" {
+              name        = "my-application"
+              grant_types = ["authorization_code", "refresh_token"]
+
+              refresh_token {
+                rotation_type   = "rotating"
+                expiration_type = "expiring"
+                leeway          = 0
+                token_lifetime  = 2592000
+                idle_token_lifetime = 1296000
+              }
+            }
+            ```
+    refs:
+      - url: https://auth0.com/docs/secure/tokens/refresh-tokens/refresh-token-rotation
+        title: Auth0 Refresh Token Rotation
+
+  # No Terraform remediation: administrative role membership count is operational
+  # account-assignment state, not a configuration attribute. The auth0 Terraform
+  # provider's auth0_user_roles resource can assign a role to a specific named user,
+  # but there is no resource or attribute that bounds or asserts how many users hold
+  # a given role, so HCL cannot express this control (same pattern as
+  # mondoo-slack-security-limit-admin-accounts).
+  - uid: mondoo-auth0-security-role-admin-membership-bounded
+    title: Limit membership in the Admin role
+    impact: 60
+    mql: |
+      auth0.roles.where(name == "Admin").all(users.length <= 5)
+    docs:
+      desc: |
+        This check ensures that the tenant's `Admin` role, when defined, is held by a bounded number of users. Auth0 does not cap how many users can be assigned any role, including one used for tenant or application administration, so privileged role membership tends to accumulate over time as staff change responsibilities.
+
+        **Why this matters**
+
+        - **Reduced attack surface:** Each user holding an administrative role is a viable target for phishing or credential theft that leads to privileged access.
+        - **Accountability:** A small, reviewed set of administrators makes it clear who can perform sensitive actions and simplifies audit reviews.
+        - **Privilege creep detection:** Auth0 does not automatically remove role assignments when responsibilities change, so the role's membership only shrinks through active review.
+
+        **Risk mitigation**
+
+        - **Periodic access review:** Regularly reviewing role membership against current staffing catches accounts that should have been removed.
+        - **Containment:** Keeping the administrative group small limits how many accounts an attacker gains value from compromising.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Sign in to the [Auth0 Dashboard](https://manage.auth0.com/).
+        2. Open **User Management > Roles** and select the `Admin` role (or your tenant's equivalent administrative role).
+        3. Open the role's **Users** tab and count the assigned users.
+
+        A passing result shows the role assigned to a small, expected number of users; a failing result shows the count has grown beyond what your organization expects (this policy checks for more than 5).
+
+        ### Audit via CLI
+
+        Query the Auth0 Management API through the `auth0` CLI and inspect the result:
+
+        ```bash
+        auth0 api get "roles" --query "name_filter=Admin"
+        auth0 api get "roles/<role_id>/users"
+        ```
+
+        A passing response shows 5 or fewer users returned for the role; a failing response shows more.
+      remediation:
+        - id: console
+          desc: |
+            To reduce membership in the Admin role using the Auth0 Dashboard:
+
+            1. Sign in to the [Auth0 Dashboard](https://manage.auth0.com/).
+            2. Open **User Management > Roles** and select the `Admin` role.
+            3. Open the **Users** tab and review each assigned user.
+            4. For each user who no longer needs administrative access, click the menu next to their name and remove the role assignment.
+        # No Terraform remediation: administrative role membership count is
+        # operational account-assignment state, not a Terraform-managed attribute.
+        # See the comment above this check's uid for details.
+    refs:
+      - url: https://auth0.com/docs/manage-users/access-control/rbac
+        title: Auth0 Role-Based Access Control
+
+  - uid: mondoo-auth0-security-logstream-active-required
+    title: Require at least one active log stream
+    impact: 70
+    mql: |
+      auth0.logStreams.where(status == "active").length > 0
+      auth0.logStreams.where(status == "suspended").length == 0
+    docs:
+      desc: |
+        This check ensures that the Auth0 tenant has at least one log stream actively exporting events to an external destination, and that no configured log stream sits in a `suspended` state. A log stream moves to `suspended` when Auth0 gives up retrying delivery after repeated failures, which silently stops authentication events from reaching a SIEM or audit pipeline without the underlying configuration having visibly changed.
+
+        **Why this matters**
+
+        - **Incident investigation:** Login, failed-login, and administrative event history is only available through a log stream once Auth0's built-in log retention window has passed.
+        - **Continuous monitoring:** A SIEM or alerting pipeline can only act on Auth0 events it actually receives, which requires an active stream.
+        - **Silent failure risk:** A suspended stream produces no error visible to end users, so the gap in log coverage can go unnoticed until it is needed during an investigation.
+
+        **Risk mitigation**
+
+        - **Delivery health checks:** Regularly confirming stream status catches a suspended stream before a security incident requires the missing data.
+        - **Redundant export paths:** Configuring more than one log stream reduces the chance that a single destination outage removes all visibility into tenant activity.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Sign in to the [Auth0 Dashboard](https://manage.auth0.com/).
+        2. Open **Monitoring > Streams**.
+        3. Review the **Status** column for each configured log stream.
+
+        A passing result shows at least one stream with status **Active** and none with status **Suspended**; a failing result shows no active stream, or any stream marked **Suspended**.
+
+        ### Audit via CLI
+
+        Query the Auth0 Management API through the `auth0` CLI and inspect the result:
+
+        ```bash
+        auth0 api get "log-streams"
+        ```
+
+        A passing response includes at least one entry with `status` set to `active` and none with `status` set to `suspended`; a failing response shows the opposite.
+      remediation:
+        - id: console
+          desc: |
+            To restore or create an active log stream using the Auth0 Dashboard:
+
+            1. Sign in to the [Auth0 Dashboard](https://manage.auth0.com/).
+            2. Open **Monitoring > Streams**.
+            3. For a suspended stream, open it, resolve the underlying delivery issue (invalid endpoint, expired credentials, and so on) with your destination, and re-enable it.
+            4. If no active stream exists, click **Create Stream**, choose a destination (for example a generic HTTP endpoint, Datadog, or Splunk), and complete the setup.
+        - id: terraform
+          desc: |
+            To create a log stream using the `auth0` Terraform provider:
+
+            ```hcl
+            resource "auth0_log_stream" "audit_export" {
+              name = "siem-export"
+              type = "http"
+
+              sink {
+                http_endpoint       = "https://siem.example.com/auth0/logs"
+                http_content_type   = "application/json"
+                http_content_format = "JSONLINES"
+              }
+            }
+            ```
+
+            Note: Terraform manages a log stream's destination configuration; the `active`/`paused`/`suspended` delivery status is runtime state reported by Auth0 and is not a Terraform-managed attribute.
+    refs:
+      - url: https://auth0.com/docs/monitor-auth0/streams
+        title: Auth0 Log Streams
+
+  - uid: mondoo-auth0-security-tenant-session-lifetime-bounded
+    title: Bound tenant session and idle session lifetimes
+    impact: 75
+    mql: |
+      auth0.tenant.sessionLifetime != empty && auth0.tenant.sessionLifetime <= 720
+      auth0.tenant.idleSessionLifetime != empty && auth0.tenant.idleSessionLifetime <= 72
+    docs:
+      desc: |
+        This check ensures that the Auth0 tenant's authenticated session lifetime is 720 hours (30 days) or less and its idle session lifetime is 72 hours (3 days) or less. `sessionLifetime` bounds how long a session can remain valid overall, and `idleSessionLifetime` bounds how long a session can go without activity before Auth0 requires re-authentication regardless of the overall session lifetime.
+
+        **Why this matters**
+
+        - **Stolen session containment:** A hijacked session cookie or token is only useful for as long as the session it belongs to remains valid.
+        - **Abandoned session risk:** A long idle timeout keeps a session valid on a device the user has walked away from, including shared or unattended machines.
+        - **Vendor defaults may be permissive:** Auth0's out-of-the-box session lifetime settings can exceed what many security baselines expect for privileged or sensitive applications.
+
+        **Risk mitigation**
+
+        - **Forced re-authentication:** Bounded lifetimes ensure every session periodically requires the user to prove their identity again, limiting how long a compromised session stays usable.
+        - **Idle device protection:** A short idle timeout reduces the window during which an unattended, still-logged-in device can be misused by someone with physical access.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Sign in to the [Auth0 Dashboard](https://manage.auth0.com/).
+        2. Open **Settings > Advanced** and locate the **Login Session Management** section.
+        3. Review **Session Expiration** and **Require Login After** (idle timeout) values.
+
+        A passing result shows a session lifetime of 720 hours or less and an idle session lifetime of 72 hours or less; a failing result shows either value exceeding those bounds.
+
+        ### Audit via CLI
+
+        Query the Auth0 Management API through the `auth0` CLI and inspect the result:
+
+        ```bash
+        auth0 api get "tenants/settings" --query "fields=session_lifetime,idle_session_lifetime"
+        ```
+
+        A passing response shows `session_lifetime` at or below `720` and `idle_session_lifetime` at or below `72`; a failing response shows either value higher, or the field missing.
+      remediation:
+        - id: console
+          desc: |
+            To bound session lifetimes using the Auth0 Dashboard:
+
+            1. Sign in to the [Auth0 Dashboard](https://manage.auth0.com/).
+            2. Open **Settings > Advanced** and locate the **Login Session Management** section.
+            3. Set **Session Expiration** to 720 hours (30 days) or less.
+            4. Set **Require Login After** (idle timeout) to 72 hours (3 days) or less.
+            5. Save your changes.
+        - id: terraform
+          desc: |
+            To bound session lifetimes using the `auth0` Terraform provider:
+
+            ```hcl
+            resource "auth0_tenant" "tenant" {
+              session_lifetime      = 720
+              idle_session_lifetime = 72
+            }
+            ```
+    refs:
+      - url: https://auth0.com/docs/authenticate/login/session-lifetime
+        title: Auth0 Session Lifetime Management

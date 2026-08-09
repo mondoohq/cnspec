@@ -1,0 +1,604 @@
+# Copyright Mondoo, Inc. 2024, 2026
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: mondoo-jenkins-security
+    name: Mondoo Jenkins Security
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: jenkins
+    require:
+      - provider: jenkins
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Secure Jenkins controller access, plugin currency, agent connections, and credential scope
+    docs:
+      desc: |
+        The Mondoo Jenkins Security policy identifies critical misconfigurations in a self-hosted Jenkins controller that could let an attacker take over the build system, forge administrative requests, or use a compromised agent to reach the controller. Jenkins coordinates the software supply chain for most organizations that run it, so a controller-level compromise typically cascades into every pipeline, artifact, and deployment credential it touches.
+
+        This policy provides security checks across key Jenkins controller areas:
+
+        - CSRF protection (the crumb issuer)
+        - Authentication and authorization posture, including anonymous access
+        - Agent-to-controller access control
+        - Plugin currency
+        - Stored credential scope and documentation
+        - Build isolation on the controller node
+
+        Learn more about scanning Jenkins in the [Jenkins Remote Access API documentation](https://www.jenkins.io/doc/book/using/remote-access-api/).
+
+        Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
+    groups:
+      - title: Jenkins
+        filters: asset.platform == "jenkins"
+        checks:
+          - uid: mondoo-jenkins-security-security-csrf-protection-enabled
+          - uid: mondoo-jenkins-security-security-restrict-anonymous-admin
+          - uid: mondoo-jenkins-security-security-realm-enabled
+          - uid: mondoo-jenkins-security-security-agent-to-controller-access-control-enabled
+          - uid: mondoo-jenkins-security-plugin-no-available-updates
+          - uid: mondoo-jenkins-security-credential-document-global-scope
+          - uid: mondoo-jenkins-security-node-controller-no-executors
+queries:
+  # No Terraform remediation: Jenkins instance security (the crumb issuer) is
+  # controller-wide runtime configuration set through the Jenkins UI, Script
+  # Console, or JCasC, not a resource exposed by the
+  # taiidani/terraform-provider-jenkins provider.
+  - uid: mondoo-jenkins-security-security-csrf-protection-enabled
+    title: Ensure CSRF protection is enabled
+    impact: 90
+    mql: |
+      jenkins.security.csrfProtectionEnabled == true
+    docs:
+      desc: |
+        This check ensures that Jenkins CSRF protection is enabled through an active crumb issuer. Without a crumb issuer, Jenkins accepts state-changing HTTP requests without verifying that they originated from the Jenkins UI, so an attacker who lures an authenticated user to a malicious page can trigger Jenkins actions using that user's active session.
+
+        **Why this matters**
+
+        - **Session riding protection:** A crumb issuer stops attacker-controlled pages from forging authenticated requests to Jenkins on a logged-in user's behalf.
+        - **Admin account protection:** Administrators carry the most powerful session tokens, so CSRF protection blocks the highest-impact forgery targets, such as creating jobs or installing plugins.
+        - **Script and API client coverage:** Once enabled, the crumb requirement applies uniformly to the UI, the Remote Access API, and CLI-driven requests alike.
+
+        **Risk mitigation**
+
+        - **Consistent enforcement:** A controller-wide crumb issuer protects every endpoint, not only ones individual plugins remember to guard.
+        - **Low operational cost:** Enabling the default crumb issuer requires no application changes; only scripted API clients need to fetch and resend a crumb header.
+      audit: |
+        ### Audit via Jenkins UI
+
+        1. Sign in to Jenkins as an administrator.
+        2. Open **Manage Jenkins > Security**.
+        3. Locate the **CSRF Protection** section and confirm **Prevent Cross Site Request Forgery exploits** is checked with a crumb issuer selected, for example **Default Crumb Issuer**.
+
+        A passing result shows CSRF protection enabled with a crumb issuer configured; a failing result shows the checkbox cleared or no crumb issuer selected.
+
+        ### Audit via Remote Access API
+
+        Query the Jenkins root API tree and inspect the result:
+
+        ```bash
+        curl -s -u "$JENKINS_USER:$JENKINS_TOKEN" "$JENKINS_URL/api/json?tree=useCrumbs"
+        ```
+
+        A passing response shows `useCrumbs` set to `true`; a failing response shows `useCrumbs` set to `false`.
+      remediation:
+        - id: gui
+          desc: |
+            To enable CSRF protection using the Jenkins UI:
+
+            1. Sign in to Jenkins as an administrator.
+            2. Open **Manage Jenkins > Security**.
+            3. Under **CSRF Protection**, check **Prevent Cross Site Request Forgery exploits** and select **Default Crumb Issuer**.
+            4. Click **Save**.
+        - id: script
+          desc: |
+            To enable the default crumb issuer using the Script Console (**Manage Jenkins > Script Console**):
+
+            ```groovy
+            import jenkins.model.Jenkins
+            import hudson.security.csrf.DefaultCrumbIssuer
+
+            def instance = Jenkins.get()
+            instance.setCrumbIssuer(new DefaultCrumbIssuer(true))
+            instance.save()
+            ```
+        - id: manifest
+          desc: |
+            To enable the default crumb issuer using Configuration as Code (JCasC):
+
+            ```yaml
+            jenkins:
+              crumbIssuer:
+                standard:
+                  excludeClientIPFromCrumb: false
+            ```
+        # No Terraform remediation: see comment above the check.
+    refs:
+      - url: https://www.jenkins.io/doc/book/system-administration/security/
+        title: Jenkins Standard Security Setup
+      - url: https://www.jenkins.io/doc/book/using/remote-access-api/#csrf-protection
+        title: Jenkins Remote Access API CSRF Protection
+  # No Terraform remediation: the authorization strategy and security realm
+  # are controller-wide runtime configuration set through the Jenkins UI,
+  # Script Console, or JCasC, not a resource exposed by the
+  # taiidani/terraform-provider-jenkins provider.
+  - uid: mondoo-jenkins-security-security-restrict-anonymous-admin
+    title: Ensure anonymous users cannot administer Jenkins
+    impact: 90
+    mql: |
+      jenkins.security.allowsAnonymousAdmin == false
+    docs:
+      desc: |
+        This check ensures that Jenkins does not grant anonymous, unauthenticated users administrative rights. Jenkins can run with security disabled entirely, or with the legacy "anyone can do anything" authorization strategy, and either configuration leaves every action, including creating jobs, running arbitrary build steps, and reading credential metadata, open to anyone who can reach the Jenkins URL.
+
+        **Why this matters**
+
+        - **Full compromise risk:** An unauthenticated visitor with administrative rights can install plugins, alter system configuration, or use the Script Console to execute arbitrary code on the controller.
+        - **Secrets exposure:** Administrative access lets a visitor enumerate stored credential metadata and any secrets a misconfigured plugin exposes.
+        - **Supply chain integrity:** Anyone reaching the instance could modify job definitions, poisoning pipelines that deploy to production.
+
+        **Risk mitigation**
+
+        - **Authenticated access only:** Requiring a real security realm and authorization strategy ties every administrative action to an identified account.
+        - **Least privilege enforcement:** Moving off the legacy unsecured strategy lets you assign the administer permission to specific accounts instead of granting every visitor full control.
+      audit: |
+        ### Audit via Jenkins UI
+
+        1. Sign in to Jenkins as an administrator.
+        2. Open **Manage Jenkins > Security**.
+        3. Confirm **Enable security** is checked, and that **Authorization** is not set to the legacy option that grants every user full control ("Anyone can do anything").
+
+        A passing result shows security enabled with a restrictive authorization strategy, for example Matrix-based or Role-Based; a failing result shows security disabled or the unsecured "Anyone can do anything" strategy selected.
+
+        ### Audit via Remote Access API
+
+        Query the Jenkins root API tree and inspect the result:
+
+        ```bash
+        curl -s -u "$JENKINS_USER:$JENKINS_TOKEN" "$JENKINS_URL/api/json?tree=useSecurity,authorizationStrategy[_class]"
+        ```
+
+        A passing response shows `useSecurity` set to `true` with `authorizationStrategy._class` set to anything other than `hudson.security.AuthorizationStrategy$Unsecured`; a failing response shows `useSecurity` set to `false` or that unsecured class name.
+      remediation:
+        - id: gui
+          desc: |
+            To restrict administrative access using the Jenkins UI:
+
+            1. Sign in to Jenkins as an administrator.
+            2. Open **Manage Jenkins > Security**.
+            3. Check **Enable security**.
+            4. Under **Authorization**, select a restrictive strategy such as **Matrix-based security** or **Role-Based Strategy** (installed with the Role-based Authorization Strategy plugin), and grant the Administer permission only to trusted accounts.
+            5. Click **Save**.
+        - id: script
+          desc: |
+            To enable security with a matrix authorization strategy using the Script Console (**Manage Jenkins > Script Console**):
+
+            ```groovy
+            import jenkins.model.Jenkins
+            import hudson.security.HudsonPrivateSecurityRealm
+            import hudson.security.GlobalMatrixAuthorizationStrategy
+
+            def instance = Jenkins.get()
+            instance.setSecurityRealm(new HudsonPrivateSecurityRealm(false))
+            def strategy = new GlobalMatrixAuthorizationStrategy()
+            strategy.add(Jenkins.ADMINISTER, "admin")
+            instance.setAuthorizationStrategy(strategy)
+            instance.save()
+            ```
+        - id: manifest
+          desc: |
+            To enable security with a matrix authorization strategy using Configuration as Code (JCasC):
+
+            ```yaml
+            jenkins:
+              securityRealm:
+                local:
+                  allowsSignup: false
+                  users:
+                    - id: admin
+              authorizationStrategy:
+                globalMatrix:
+                  permissions:
+                    - "Overall/Administer:admin"
+            ```
+        # No Terraform remediation: see comment above the check.
+    refs:
+      - url: https://www.jenkins.io/doc/book/system-administration/security/
+        title: Jenkins Standard Security Setup
+      - url: https://www.jenkins.io/doc/book/managing/security/
+        title: Jenkins Access Control
+  # No Terraform remediation: the security realm is controller-wide runtime
+  # configuration set through the Jenkins UI, Script Console, or JCasC, not a
+  # resource exposed by the taiidani/terraform-provider-jenkins provider.
+  - uid: mondoo-jenkins-security-security-realm-enabled
+    title: Ensure a security realm is configured and enabled
+    impact: 90
+    mql: |
+      jenkins.security.securityEnabled == true
+      jenkins.security.securityRealm != empty
+    docs:
+      desc: |
+        This check ensures that Jenkins has security enabled with an active security realm rather than running with authentication turned off or misconfigured. The security realm is what verifies user identity before any authorization strategy is consulted, so a missing or disabled realm undermines every access control layered on top of it.
+
+        **Why this matters**
+
+        - **Identity verification foundation:** An authorization strategy can only restrict what an identified user can do; without a security realm, Jenkins has no way to know who is making a request.
+        - **Consistent login enforcement:** A configured realm (local users, LDAP, or an external identity provider) ensures every session starts with a real credential check.
+        - **Configuration integrity:** A cleared or invalid security realm setting often signals an incomplete migration or a rollback that left the controller unintentionally open.
+
+        **Risk mitigation**
+
+        - **Layered defense:** Pairing a working security realm with a restrictive authorization strategy ensures both who you are and what you can do are enforced.
+        - **Change detection:** Regularly verifying the active realm class catches accidental resets introduced by configuration changes or plugin upgrades.
+      audit: |
+        ### Audit via Jenkins UI
+
+        1. Sign in to Jenkins as an administrator.
+        2. Open **Manage Jenkins > Security**.
+        3. Confirm **Enable security** is checked and that **Security Realm** shows a configured provider, such as **Jenkins' own user database** or an external identity provider.
+
+        A passing result shows security enabled with a security realm selected; a failing result shows security disabled or no realm configured.
+
+        ### Audit via Remote Access API
+
+        Query the Jenkins root API tree and inspect the result:
+
+        ```bash
+        curl -s -u "$JENKINS_USER:$JENKINS_TOKEN" "$JENKINS_URL/api/json?tree=useSecurity,securityRealm[_class]"
+        ```
+
+        A passing response shows `useSecurity` set to `true` with a non-empty `securityRealm._class`; a failing response shows `useSecurity` set to `false` or an empty `securityRealm` object.
+      remediation:
+        - id: gui
+          desc: |
+            To configure a security realm using the Jenkins UI:
+
+            1. Sign in to Jenkins as an administrator.
+            2. Open **Manage Jenkins > Security**.
+            3. Check **Enable security**.
+            4. Under **Security Realm**, select **Jenkins' own user database** or configure an external identity provider such as LDAP or SAML.
+            5. Click **Save**.
+        - id: script
+          desc: |
+            To enable security with Jenkins' own user database using the Script Console (**Manage Jenkins > Script Console**):
+
+            ```groovy
+            import jenkins.model.Jenkins
+            import hudson.security.HudsonPrivateSecurityRealm
+
+            def instance = Jenkins.get()
+            instance.setSecurityRealm(new HudsonPrivateSecurityRealm(false))
+            instance.save()
+            ```
+        - id: manifest
+          desc: |
+            To enable security with Jenkins' own user database using Configuration as Code (JCasC):
+
+            ```yaml
+            jenkins:
+              securityRealm:
+                local:
+                  allowsSignup: false
+                  users:
+                    - id: admin
+            ```
+        # No Terraform remediation: see comment above the check.
+    refs:
+      - url: https://www.jenkins.io/doc/book/system-administration/security/
+        title: Jenkins Standard Security Setup
+      - url: https://www.jenkins.io/doc/book/managing/security/
+        title: Jenkins Access Control
+  # No Terraform remediation: the Agent Access Control kill switch is a
+  # controller-wide administrative monitor toggled through the Jenkins UI or
+  # Script Console, not a resource exposed by the
+  # taiidani/terraform-provider-jenkins provider.
+  - uid: mondoo-jenkins-security-security-agent-to-controller-access-control-enabled
+    title: Ensure agent-to-controller access control is enabled
+    impact: 75
+    mql: |
+      jenkins.security.agentToControllerAccessControlEnabled == true
+    docs:
+      desc: |
+        This check ensures that the Agent Access Control subsystem is enabled, restricting the file and command access an inbound build agent can request from the controller. Jenkins agents run arbitrary build code, so an agent that is compromised, or a job that runs on one, can otherwise ask the controller to read arbitrary files or invoke sensitive internal APIs on its behalf.
+
+        **Why this matters**
+
+        - **Blast radius containment:** Agent Access Control stops a compromised or malicious agent from escalating into direct file or command access on the controller.
+        - **Untrusted code assumption:** Build agents frequently run third-party dependencies and pipeline code that was never vetted, so the controller should not trust every request an agent makes.
+        - **Defense in depth:** Even with a restrictive authorization strategy for human users, agent traffic follows a separate trust boundary that this control governs.
+
+        **Risk mitigation**
+
+        - **Reduced lateral movement:** Enforcing the access control rules limits what a compromised agent can reach on the controller filesystem and APIs.
+        - **Consistent baseline:** Jenkins enables this subsystem by default since 2.319; explicitly verifying it catches administrative monitors that were silenced or disabled during troubleshooting.
+      audit: |
+        ### Audit via Jenkins UI
+
+        1. Sign in to Jenkins as an administrator.
+        2. Open **Manage Jenkins > Security**.
+        3. Locate the **Agent → Controller Access Control** section and confirm it is enabled (no active kill switch warning is shown).
+
+        A passing result shows agent-to-controller access control enabled with no kill switch warning; a failing result shows the subsystem disabled or a kill switch banner present on the Security page.
+
+        ### Audit via Remote Access API
+
+        Query the administrative monitor endpoint and inspect the result:
+
+        ```bash
+        curl -s -u "$JENKINS_USER:$JENKINS_TOKEN" \
+          "$JENKINS_URL/administrativeMonitor/slaveToMasterAccessControl/api/json?tree=masterKillSwitch"
+        ```
+
+        A passing response shows `masterKillSwitch` set to `false`, meaning access control is active; a failing response shows `masterKillSwitch` set to `true`, meaning the control has been switched off.
+      remediation:
+        - id: gui
+          desc: |
+            To re-enable agent-to-controller access control using the Jenkins UI:
+
+            1. Sign in to Jenkins as an administrator.
+            2. Open **Manage Jenkins > Security**.
+            3. Under **Agent → Controller Access Control**, clear any option that disables the subsystem (for example, an existing `-Djenkins.security.s2m.AdminWhitelistRule.disabled=true` system property should be removed from the controller's startup configuration).
+            4. Click **Save** and restart the controller if a startup system property was changed.
+        - id: script
+          desc: |
+            To re-enable the subsystem using the Script Console (**Manage Jenkins > Script Console**):
+
+            ```groovy
+            import jenkins.security.s2m.AdminWhitelistRule
+            import jenkins.model.Jenkins
+
+            def rule = Jenkins.get().getInjector().getInstance(AdminWhitelistRule.class)
+            rule.setMasterKillSwitch(false)
+            ```
+        # No Terraform remediation: see comment above the check.
+    refs:
+      - url: https://www.jenkins.io/doc/book/security/agent-to-controller-security-subsystem/
+        title: Jenkins Agent-to-Controller Security Subsystem
+  # No Terraform remediation: installed plugins and their versions are
+  # managed through the Jenkins UI, the Script Console, or a plugins.txt
+  # manifest baked into the controller image, not a resource exposed by the
+  # taiidani/terraform-provider-jenkins provider.
+  - uid: mondoo-jenkins-security-plugin-no-available-updates
+    title: Ensure installed plugins have no available updates
+    impact: 70
+    mql: |
+      jenkins.plugins.all(hasUpdate == false)
+    docs:
+      desc: |
+        This check ensures that every plugin installed on the Jenkins controller is running the latest version offered by the configured update center. Jenkins plugins run with the same trust level as Jenkins core and frequently ship security fixes, so a plugin left on an outdated version can carry a publicly known vulnerability the update center has already patched.
+
+        **Why this matters**
+
+        - **Known-vulnerability exposure:** Jenkins Security Advisories are published against specific plugin versions, and an outdated install remains exposed to every disclosed issue fixed since that version.
+        - **Broad trust boundary:** Plugins execute inside the same JVM as Jenkins core with no sandboxing, so a plugin vulnerability can compromise the entire controller.
+        - **Attack surface visibility:** Update backlog size is a useful signal of how consistently the instance is maintained.
+
+        **Risk mitigation**
+
+        - **Timely patching:** Applying available plugin updates promptly closes known vulnerabilities before they can be exploited.
+        - **Reduced update backlog:** Updating plugins on a regular cadence keeps each individual update small and lowers the risk of a breaking change during patching.
+      audit: |
+        ### Audit via Jenkins UI
+
+        1. Sign in to Jenkins as an administrator.
+        2. Open **Manage Jenkins > Plugins**.
+        3. Select the **Updates** tab and review the listed plugins.
+
+        A passing result shows no plugins listed on the Updates tab; a failing result shows one or more plugins with an update available.
+
+        ### Audit via Remote Access API
+
+        Query the plugin manager and inspect the result:
+
+        ```bash
+        curl -s -u "$JENKINS_USER:$JENKINS_TOKEN" \
+          "$JENKINS_URL/pluginManager/api/json?tree=plugins[shortName,version,hasUpdate]"
+        ```
+
+        A passing response shows every plugin entry with `hasUpdate` set to `false`; a failing response shows a plugin entry with `hasUpdate` set to `true`.
+      remediation:
+        - id: gui
+          desc: |
+            To install available plugin updates using the Jenkins UI:
+
+            1. Sign in to Jenkins as an administrator.
+            2. Open **Manage Jenkins > Plugins**.
+            3. Select the **Updates** tab, check **Select All**, and click **Download now and install after restart**.
+            4. Restart Jenkins when the installation completes to activate the updated plugins.
+        - id: script
+          desc: |
+            To install all available plugin updates using the Script Console (**Manage Jenkins > Script Console**):
+
+            ```groovy
+            import jenkins.model.Jenkins
+
+            def pm = Jenkins.get().pluginManager
+            def uc = Jenkins.get().updateCenter
+            pm.plugins.findAll { it.hasUpdate() }.each { plugin ->
+              uc.getPlugin(plugin.getShortName())?.deploy()?.get()
+            }
+            Jenkins.get().save()
+            ```
+        - id: manifest
+          desc: |
+            To pin the current, up-to-date plugin versions declaratively for a container-based controller, list them with explicit versions in `plugins.txt` and install with the Plugin Installation Manager Tool used by the official `jenkins/jenkins` image:
+
+            ```
+            git:5.2.1
+            credentials-binding:650.va_de29b_2893a_1
+            role-strategy:713.v175a_f4770d0d
+            ```
+        # No Terraform remediation: see comment above the check.
+    refs:
+      - url: https://www.jenkins.io/security/advisories/
+        title: Jenkins Security Advisories
+      - url: https://www.jenkins.io/doc/book/managing/plugins/
+        title: Managing Jenkins Plugins
+  # No Terraform remediation: stored credential metadata is managed through
+  # the Jenkins UI, the Script Console, or a JCasC credentials provider, not
+  # a resource exposed by the taiidani/terraform-provider-jenkins provider's
+  # jenkins_credential resource, which manages credential values rather than
+  # reviewing existing scope and documentation.
+  - uid: mondoo-jenkins-security-credential-document-global-scope
+    title: Ensure globally scoped credentials are documented
+    impact: 40
+    mql: |
+      jenkins.credentials.where(scope == "GLOBAL").all(description != empty)
+    docs:
+      desc: |
+        This check ensures that every credential scoped to be available across all jobs on the controller carries a description identifying its owner or purpose. Global scope is often necessary and is not flagged here as a violation by itself, but an undocumented global credential makes it impossible for an administrator to tell whether it is still needed, who owns it, or whether its scope could be narrowed.
+
+        **Why this matters**
+
+        - **Ownership accountability:** A description naming the owning team or system lets administrators reach the right person when a credential needs rotation or removal.
+        - **Scope review enablement:** Documenting why a credential needs global rather than folder-level scope makes periodic access reviews meaningful instead of guesswork.
+        - **Stale credential detection:** Undocumented credentials accumulate over time and are the hardest to safely remove because nobody can confirm what still depends on them.
+
+        **Risk mitigation**
+
+        - **Faster incident response:** When a credential is implicated in an incident, a clear description shortens the time needed to identify its owner and blast radius.
+        - **Informed scope narrowing:** Documented purpose makes it possible to evaluate whether a credential can move from global to a narrower, folder-scoped store.
+      audit: |
+        ### Audit via Jenkins UI
+
+        1. Sign in to Jenkins as an administrator.
+        2. Open **Manage Jenkins > Credentials** and select the **System** store, **Global credentials (unrestricted)** domain.
+        3. Review the **Description** column for each listed credential.
+
+        A passing result shows every credential with a non-empty description; a failing result shows a credential with no description.
+
+        ### Audit via Remote Access API
+
+        Query the global credentials domain and inspect the result:
+
+        ```bash
+        curl -s -u "$JENKINS_USER:$JENKINS_TOKEN" \
+          "$JENKINS_URL/credentials/store/system/domain/_/api/json?tree=credentials[id,typeName,description]"
+        ```
+
+        A passing response shows every credential entry with a non-empty `description`; a failing response shows a credential entry with an empty `description`.
+      remediation:
+        - id: gui
+          desc: |
+            To document an existing credential using the Jenkins UI:
+
+            1. Sign in to Jenkins as an administrator.
+            2. Open **Manage Jenkins > Credentials** and select the **System** store, **Global credentials (unrestricted)** domain.
+            3. Click the credential to update, then **Update**.
+            4. Fill in **Description** with the owning team or system and the credential's purpose.
+            5. Click **Save**.
+        - id: script
+          desc: |
+            To set a description on an existing global credential using the Script Console (**Manage Jenkins > Script Console**):
+
+            ```groovy
+            import com.cloudbees.plugins.credentials.CredentialsProvider
+            import com.cloudbees.plugins.credentials.CredentialsMatchers
+            import com.cloudbees.plugins.credentials.common.IdMatcher
+            import jenkins.model.Jenkins
+
+            def credId = "example-credential-id"
+            def store = CredentialsProvider.lookupStores(Jenkins.get()).find { it.storeName == "SystemCredentialsProvider" }
+            def cred = CredentialsMatchers.firstOrNull(store.getCredentials(com.cloudbees.plugins.credentials.domains.Domain.global()), new IdMatcher(credId))
+            // Replace the credential in place with an identical one that carries a description,
+            // since most credential implementations expose description as a constructor argument.
+            ```
+        - id: manifest
+          desc: |
+            To declare a documented global credential using Configuration as Code (JCasC):
+
+            ```yaml
+            credentials:
+              system:
+                domainCredentials:
+                  - credentials:
+                      - usernamePassword:
+                          scope: GLOBAL
+                          id: example-credential-id
+                          username: svc-deploy
+                          description: "Owned by platform-team, used to publish release artifacts"
+                          password: "${DEPLOY_PASSWORD}"
+            ```
+        # No Terraform remediation: see comment above the check.
+    refs:
+      - url: https://www.jenkins.io/doc/book/using/using-credentials/
+        title: Jenkins Using Credentials
+  # No Terraform remediation: the built-in controller node's executor count
+  # is controller-wide runtime configuration set through the Jenkins UI or
+  # Script Console, not a resource exposed by the
+  # taiidani/terraform-provider-jenkins provider.
+  - uid: mondoo-jenkins-security-node-controller-no-executors
+    title: Ensure builds cannot execute on the controller node
+    impact: 85
+    mql: |
+      jenkins.nodes.where(isController == true).all(numExecutors == 0)
+    docs:
+      desc: |
+        This check ensures that the built-in controller node is configured with zero executors, so no build can be scheduled to run directly on the Jenkins controller. Jenkins allows the controller itself to accept build executors by default, but build steps run with the same filesystem and process access as Jenkins core, so a build running there can read every job's credentials and modify the controller's own configuration.
+
+        **Why this matters**
+
+        - **Direct takeover path:** A build scheduled on the controller runs arbitrary pipeline or shell code with the same privileges as Jenkins itself, turning any job-level compromise into a full controller compromise.
+        - **Credential exposure:** Builds on the controller can reach the Jenkins home directory directly, including cached credentials and the `secrets` folder used to encrypt stored credentials.
+        - **Blast radius separation:** Dedicated build agents isolate build execution from the controller process, so a compromised build cannot directly tamper with other jobs' configuration or the controller's own security settings.
+
+        **Risk mitigation**
+
+        - **Executor isolation:** Setting the controller's executor count to zero forces every build onto an agent, containing a compromised build to that agent alone.
+        - **Consistent enforcement:** Labeling jobs to require specific agents, combined with zero controller executors, ensures builds cannot silently fall back to running on the controller when no agent is available.
+      audit: |
+        ### Audit via Jenkins UI
+
+        1. Sign in to Jenkins as an administrator.
+        2. Open **Manage Jenkins > Nodes**.
+        3. Select **Built-In Node**, then **Configure**.
+        4. Review the **# of executors** field.
+
+        A passing result shows the built-in node configured with 0 executors; a failing result shows 1 or more executors configured.
+
+        ### Audit via Remote Access API
+
+        Query the computer collection and inspect the result:
+
+        ```bash
+        curl -s -u "$JENKINS_USER:$JENKINS_TOKEN" \
+          "$JENKINS_URL/computer/api/json?tree=computer[displayName,numExecutors]"
+        ```
+
+        A passing response shows the built-in controller entry (`displayName` of `Built-In Node`, `master`, or an empty string, depending on core version) with `numExecutors` set to `0`; a failing response shows that entry with `numExecutors` greater than `0`.
+      remediation:
+        - id: gui
+          desc: |
+            To remove the controller from build scheduling using the Jenkins UI:
+
+            1. Sign in to Jenkins as an administrator.
+            2. Open **Manage Jenkins > Nodes**.
+            3. Select **Built-In Node**, then **Configure**.
+            4. Set **# of executors** to `0`.
+            5. Click **Save**.
+        - id: script
+          desc: |
+            To set the controller's executor count to zero using the Script Console (**Manage Jenkins > Script Console**):
+
+            ```groovy
+            import jenkins.model.Jenkins
+
+            Jenkins.get().setNumExecutors(0)
+            Jenkins.get().save()
+            ```
+        - id: manifest
+          desc: |
+            To set the controller's executor count to zero using Configuration as Code (JCasC):
+
+            ```yaml
+            jenkins:
+              numExecutors: 0
+            ```
+        # No Terraform remediation: see comment above the check.
+    refs:
+      - url: https://www.jenkins.io/doc/book/security/controller-isolation/
+        title: Jenkins Controller Isolation
+      - url: https://www.jenkins.io/doc/book/managing/nodes/
+        title: Managing Jenkins Nodes

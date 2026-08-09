@@ -1,0 +1,534 @@
+# Copyright Mondoo, Inc. 2024, 2026
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: mondoo-datadog-security
+    name: Mondoo Datadog Security
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: datadog,saas
+    require:
+      - provider: datadog
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Secure Datadog organization sign-on, access control, and credential hygiene
+    docs:
+      desc: |
+        The Mondoo Datadog Security policy identifies critical misconfigurations in a Datadog organization that could let an attacker bypass single sign-on, retain unverified or over-privileged identities, or abuse a credential with more access than it needs. This policy helps organizations detect and remediate weaknesses before attackers can exploit them to gain administrative access, harvest telemetry, or exfiltrate dashboard data through public shares.
+
+        This policy provides security checks across key Datadog organization areas:
+
+        - SAML single sign-on configuration and enforcement
+        - Email domain allowlisting for organization invitations
+        - Dashboard widget sharing outside the organization
+        - Active user account verification
+        - Administrative role membership size
+        - Application key scoping
+
+        Learn more about scanning Datadog in the [cnspec documentation](https://mondoo.com/docs/cnspec).
+
+        Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
+    groups:
+      - title: Datadog
+        filters: asset.platform == "datadog"
+        checks:
+          - uid: mondoo-datadog-security-organization-saml-enabled
+          - uid: mondoo-datadog-security-organization-saml-strict-mode-enabled
+          - uid: mondoo-datadog-security-organization-saml-idp-initiated-login-disabled
+          - uid: mondoo-datadog-security-organization-domain-allowlist-enabled
+          - uid: mondoo-datadog-security-organization-private-widget-share-disabled
+          - uid: mondoo-datadog-security-user-active-users-verified
+          - uid: mondoo-datadog-security-role-admin-membership-bounded
+          - uid: mondoo-datadog-security-application-key-scoped
+queries:
+  - uid: mondoo-datadog-security-organization-saml-enabled
+    title: Ensure SAML single sign-on is enabled for the organization
+    impact: 85
+    mql: |
+      datadog.organization.samlEnabled == true
+    docs:
+      desc: |
+        This check ensures that the Datadog organization requires SAML single sign-on for member logins. By default a new Datadog organization authenticates members with a Datadog username and password, so access depends entirely on password strength rather than the identity provider's authentication policies.
+
+        **Why this matters**
+
+        - **Centralized authentication:** SAML routes every login through the identity provider, so multi-factor authentication, conditional access, and session policies enforced there also protect Datadog.
+        - **Faster deprovisioning:** Disabling a user in the identity provider immediately blocks their Datadog access instead of requiring a separate deactivation step.
+        - **Consistent credential policy:** Password complexity, rotation, and breach-monitoring controls apply uniformly instead of depending on a second, Datadog-specific password.
+        - **Reduced phishing surface:** A single trusted login page is easier for members to recognize than a second Datadog-specific credential that can be targeted separately.
+
+        **Risk mitigation**
+
+        - **Uniform enforcement:** Routing every member through the identity provider closes the gap left by weak or reused Datadog passwords.
+        - **Faster incident response:** Revoking identity provider access immediately cuts off Datadog access without a separate offboarding step.
+      audit: |
+        ### Audit via Datadog Web App
+
+        1. Sign in to Datadog as an organization owner or administrator.
+        2. Open **Organization Settings** from the user menu.
+        3. Select the **Login Methods** tab and review the SAML section.
+
+        A passing result shows SAML listed as enabled; a failing result shows SAML not configured or turned off.
+
+        ### Audit via API
+
+        Query the Datadog API and inspect the result:
+
+        ```bash
+        curl -s -X GET "https://api.datadoghq.com/api/v1/org/${DD_ORG_PUBLIC_ID}" \
+          -H "DD-API-KEY: ${DD_API_KEY}" \
+          -H "DD-APPLICATION-KEY: ${DD_APP_KEY}"
+        ```
+
+        A passing response shows `org.settings.saml.enabled` set to `true`; a failing response shows it set to `false`.
+      remediation:
+        - id: console
+          desc: |
+            To enable SAML single sign-on using the Datadog web app:
+
+            1. Sign in to Datadog as an organization owner.
+            2. Open **Organization Settings** from the user menu and select the **Login Methods** tab.
+            3. In the SAML section, select **Enable SAML** and upload the identity provider metadata file supplied by your identity provider.
+            4. Confirm the SAML configuration by completing a test login before requiring it for all members.
+        - id: terraform
+          desc: |
+            To enable SAML using Terraform:
+
+            ```hcl
+            resource "datadog_organization_settings" "org" {
+              settings {
+                saml {
+                  enabled = true
+                }
+              }
+            }
+            ```
+
+            Upload the identity provider metadata through the Datadog web app first; the Terraform provider does not accept the metadata file directly.
+    refs:
+      - url: https://docs.datadoghq.com/account_management/saml/
+        title: Datadog SAML Single Sign-On
+  - uid: mondoo-datadog-security-organization-saml-strict-mode-enabled
+    title: Ensure SAML strict mode blocks direct password login
+    impact: 80
+    mql: |
+      datadog.organization.samlEnabled == false || datadog.organization.samlStrictModeEnabled == true
+    docs:
+      desc: |
+        This check ensures that once SAML single sign-on is enabled, Datadog strict mode is also enabled so members can no longer sign in with a Datadog username and password. Without strict mode, SAML being enabled does not stop the original password login path, so any account whose Datadog password is compromised bypasses the identity provider entirely.
+
+        **Why this matters**
+
+        - **Closes the bypass path:** Strict mode removes the parallel password login that would otherwise let an attacker skip the identity provider's authentication policies.
+        - **Consistent enforcement:** Every login, including for long-tenured accounts created before SAML was configured, is routed through the same authentication policy.
+        - **Session policy coverage:** Conditional access, device trust, and multi-factor requirements enforced by the identity provider only apply to logins that actually pass through it.
+
+        **Risk mitigation**
+
+        - **Credential stuffing resistance:** A leaked or guessed Datadog password stops being useful for account takeover once the password login path is disabled.
+        - **Reduced dual-control surface:** Administrators only need to secure one authentication path instead of monitoring two.
+      audit: |
+        ### Audit via Datadog Web App
+
+        1. Sign in to Datadog as an organization owner or administrator.
+        2. Open **Organization Settings** from the user menu and select the **Login Methods** tab.
+        3. In the SAML section, confirm that **Strict Mode** is enabled.
+
+        A passing result shows SAML enabled with Strict Mode also enabled; a failing result shows SAML enabled but Strict Mode off, which leaves username and password login available.
+
+        ### Audit via API
+
+        Query the Datadog API and inspect the result:
+
+        ```bash
+        curl -s -X GET "https://api.datadoghq.com/api/v1/org/${DD_ORG_PUBLIC_ID}" \
+          -H "DD-API-KEY: ${DD_API_KEY}" \
+          -H "DD-APPLICATION-KEY: ${DD_APP_KEY}"
+        ```
+
+        A passing response shows `org.settings.saml.enabled` false, or `org.settings.saml.enabled` true together with `org.settings.saml_strict_mode.enabled` true; a failing response shows SAML enabled with strict mode false.
+      remediation:
+        - id: console
+          desc: |
+            To enable SAML strict mode using the Datadog web app:
+
+            1. Sign in to Datadog as an organization owner.
+            2. Open **Organization Settings** from the user menu and select the **Login Methods** tab.
+            3. In the SAML section, select **Enable Strict Mode**.
+            4. Verify that every member can still reach Datadog through the identity provider before saving, since strict mode immediately removes the password login option.
+        - id: terraform
+          desc: |
+            To enable SAML strict mode using Terraform:
+
+            ```hcl
+            resource "datadog_organization_settings" "org" {
+              settings {
+                saml {
+                  enabled = true
+                }
+                saml_strict_mode {
+                  enabled = true
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.datadoghq.com/account_management/saml/
+        title: Datadog SAML Single Sign-On
+  - uid: mondoo-datadog-security-organization-saml-idp-initiated-login-disabled
+    title: Ensure IdP-initiated SAML login is disabled
+    impact: 65
+    mql: |
+      datadog.organization.samlEnabled == false || datadog.organization.samlIdpInitiatedLoginEnabled == false
+    docs:
+      desc: |
+        This check ensures that, when SAML single sign-on is configured, Datadog does not accept identity provider initiated logins. An identity provider initiated flow lets a session start from an unsolicited SAML assertion instead of a request Datadog itself generated, which removes the correlation between request and response that service provider initiated login relies on.
+
+        **Why this matters**
+
+        - **Replay resistance:** Requiring a Datadog-initiated request gives each login flow a unique, time-bound correlation that an unsolicited assertion does not have.
+        - **Reduced phishing surface:** An unsolicited SAML assertion delivered through email or a malicious link is a known vector for tricking a user's already-authenticated identity provider session into establishing an unwanted Datadog session.
+        - **Predictable login flow:** Service provider initiated login gives users and security tooling one consistent entry point to monitor.
+
+        **Risk mitigation**
+
+        - **Attack surface reduction:** Disabling identity provider initiated login removes a login path attackers can trigger without the user visiting Datadog first.
+        - **Simplified monitoring:** A single, predictable login flow is easier to alert on and audit than two parallel initiation paths.
+      audit: |
+        ### Audit via Datadog Web App
+
+        1. Sign in to Datadog as an organization owner or administrator.
+        2. Open **Organization Settings** from the user menu and select the **Login Methods** tab.
+        3. In the SAML section, confirm whether **IdP-initiated Login** is enabled.
+
+        A passing result shows SAML enabled with IdP-initiated login disabled; a failing result shows it enabled.
+
+        ### Audit via API
+
+        Query the Datadog API and inspect the result:
+
+        ```bash
+        curl -s -X GET "https://api.datadoghq.com/api/v1/org/${DD_ORG_PUBLIC_ID}" \
+          -H "DD-API-KEY: ${DD_API_KEY}" \
+          -H "DD-APPLICATION-KEY: ${DD_APP_KEY}"
+        ```
+
+        A passing response shows `org.settings.saml.enabled` false, or `org.settings.saml_idp_initiated_login.enabled` false; a failing response shows SAML enabled with `saml_idp_initiated_login.enabled` true.
+      remediation:
+        - id: console
+          desc: |
+            To disable IdP-initiated login using the Datadog web app:
+
+            1. Sign in to Datadog as an organization owner.
+            2. Open **Organization Settings** from the user menu and select the **Login Methods** tab.
+            3. In the SAML section, clear **Enable IdP-initiated Login**.
+            4. Confirm that members can still reach Datadog by starting from the Datadog login page or the identity provider's application dashboard, which both use the service provider initiated flow.
+        - id: terraform
+          desc: |
+            To disable IdP-initiated login using Terraform:
+
+            ```hcl
+            resource "datadog_organization_settings" "org" {
+              settings {
+                saml_idp_initiated_login {
+                  enabled = false
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.datadoghq.com/account_management/saml/
+        title: Datadog SAML Single Sign-On
+  - uid: mondoo-datadog-security-organization-domain-allowlist-enabled
+    title: Ensure the organization enforces an email domain allowlist
+    impact: 60
+    mql: |
+      datadog.organization.domainAllowlistEnabled == true
+    docs:
+      desc: |
+        This check ensures that the Datadog organization restricts invitations to a set of approved email domains. Without a domain allowlist, anyone with invitation privileges can add a member using any email address, including personal or unrelated corporate domains.
+
+        **Why this matters**
+
+        - **Scoped membership:** Restricting invitations to approved domains keeps organization membership aligned with actual employees and contractors.
+        - **Reduced social engineering risk:** A compromised or careless administrator cannot invite an outside party using a domain your organization doesn't control.
+        - **Consistent identity assumptions:** Downstream controls that assume every member holds a corporate identity, such as SAML enforcement, depend on invitations being scoped the same way.
+
+        **Risk mitigation**
+
+        - **Invitation review:** An enforced allowlist stops invalid invitations before they are sent rather than relying on manual review after the fact.
+        - **Offboarding alignment:** Approved domains stay in sync with the set of organizations that should have any Datadog presence at all.
+      audit: |
+        ### Audit via Datadog Web App
+
+        1. Sign in to Datadog as an organization owner or administrator.
+        2. Open **Organization Settings** from the user menu and select the **Security** tab.
+        3. Review the **Domain Allowlist** section for the enabled state and the configured domains.
+
+        A passing result shows the domain allowlist enabled with your approved domains listed; a failing result shows it disabled.
+
+        ### Audit via API
+
+        Query the Datadog API and inspect the result:
+
+        ```bash
+        curl -s -X GET "https://api.datadoghq.com/api/v1/org/${DD_ORG_PUBLIC_ID}" \
+          -H "DD-API-KEY: ${DD_API_KEY}" \
+          -H "DD-APPLICATION-KEY: ${DD_APP_KEY}"
+        ```
+
+        A passing response shows `org.settings.domain_allowlist.enabled` set to `true`; a failing response shows it set to `false`.
+      remediation:
+        - id: console
+          desc: |
+            To enable the domain allowlist using the Datadog web app:
+
+            1. Sign in to Datadog as an organization owner.
+            2. Open **Organization Settings** from the user menu and select the **Security** tab.
+            3. In the **Domain Allowlist** section, select **Enable Domain Allowlist**.
+            4. Add every domain your organization invites members from, then save.
+          # No Terraform remediation: the domain allowlist is not exposed by any argument
+          # on the datadog_organization_settings resource in the DataDog/datadog Terraform
+          # provider, so it can only be managed through the web app or the Organizations API.
+    refs:
+      - url: https://docs.datadoghq.com/account_management/org_settings/
+        title: Datadog Organization Settings
+  - uid: mondoo-datadog-security-organization-private-widget-share-disabled
+    title: Ensure private dashboard widgets cannot be shared externally
+    impact: 60
+    mql: |
+      datadog.organization.privateWidgetShare == false
+    docs:
+      desc: |
+        This check ensures that the Datadog organization does not allow individual dashboard widgets to be shared outside the organization. When this setting is enabled, any member can generate a public link for a single widget regardless of the access controls on the dashboard that contains it.
+
+        **Why this matters**
+
+        - **Bypasses dashboard access controls:** A widget share does not honor restriction policies set on the parent dashboard, so it can expose data that the dashboard itself restricts.
+        - **Unmonitored public URLs:** A widget shared this way produces a link that lives outside normal access review, so it can remain live and unnoticed indefinitely.
+        - **Telemetry leakage:** Metrics, logs, and traces rendered in a widget often carry infrastructure names, customer identifiers, or internal hostnames that should stay inside the organization.
+
+        **Risk mitigation**
+
+        - **Consistent sharing surface:** Disabling widget-level sharing forces external access to go through dashboard-level shares, which are easier to inventory and revoke.
+        - **Reduced silent exposure:** Removing the ability to create a one-off widget link closes a path to public exposure that does not appear in a dashboard-level share review.
+      audit: |
+        ### Audit via Datadog Web App
+
+        1. Sign in to Datadog as an organization owner or administrator.
+        2. Open **Organization Settings** from the user menu and select the **Security** tab.
+        3. Review the **Private Widget Share** setting.
+
+        A passing result shows private widget sharing disabled; a failing result shows it enabled.
+
+        ### Audit via API
+
+        Query the Datadog API and inspect the result:
+
+        ```bash
+        curl -s -X GET "https://api.datadoghq.com/api/v1/org/${DD_ORG_PUBLIC_ID}" \
+          -H "DD-API-KEY: ${DD_API_KEY}" \
+          -H "DD-APPLICATION-KEY: ${DD_APP_KEY}"
+        ```
+
+        A passing response shows `org.settings.private_widget_share` set to `false`; a failing response shows it set to `true`.
+      remediation:
+        - id: console
+          desc: |
+            To disable private widget sharing using the Datadog web app:
+
+            1. Sign in to Datadog as an organization owner.
+            2. Open **Organization Settings** from the user menu and select the **Security** tab.
+            3. Clear **Private Widget Share**, then save.
+            4. Review any existing widget share links and revoke ones that are no longer needed.
+        - id: terraform
+          desc: |
+            To disable private widget sharing using Terraform:
+
+            ```hcl
+            resource "datadog_organization_settings" "org" {
+              settings {
+                private_widget_share = false
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.datadoghq.com/account_management/org_settings/
+        title: Datadog Organization Settings
+  - uid: mondoo-datadog-security-user-active-users-verified
+    title: Ensure active users have verified their Datadog account
+    impact: 70
+    mql: |
+      datadog.users.where(status == "Active" && serviceAccount == false).all(verified == true)
+    docs:
+      desc: |
+        This check ensures that every active human member of the Datadog organization has verified their account. An unverified account means Datadog has not confirmed that the person who registered actually controls the email address it was invited through, so access rests on an unproven identity.
+
+        **Why this matters**
+
+        - **Invitation hijacking:** An unverified account can indicate an invitation that was intercepted or accepted by someone other than the intended recipient.
+        - **Recovery flow integrity:** Password reset and notification email sent to an unconfirmed address may reach an account the real user cannot access, enabling a silent takeover.
+        - **Audit trail reliability:** Actions taken by an unverified account, such as editing monitors or dashboards, cannot be reliably attributed to a known person.
+        - **Offboarding gaps:** Long-lived unverified accounts are easy to overlook during access reviews because they never show meaningful activity.
+
+        **Risk mitigation**
+
+        - **Verified membership:** Requiring every flagged account to complete verification, or removing accounts that never do, ensures each active account maps to a real, confirmed person.
+        - **Reduced dormant-account risk:** Regularly reviewing unverified accounts prevents them from accumulating unnoticed alongside legitimate members.
+      audit: |
+        ### Audit via Datadog Web App
+
+        1. Sign in to Datadog as an organization owner or administrator.
+        2. Open **Organization Settings** from the user menu and select the **Users** tab.
+        3. Review the member list for accounts flagged as unverified or pending.
+
+        A passing result shows every active, non-service member verified; a failing result shows an active member still unverified.
+
+        ### Audit via API
+
+        Query the Datadog API and inspect the result:
+
+        ```bash
+        curl -s -X GET "https://api.datadoghq.com/api/v2/users" \
+          -H "DD-API-KEY: ${DD_API_KEY}" \
+          -H "DD-APPLICATION-KEY: ${DD_APP_KEY}"
+        ```
+
+        A passing response shows every user with `attributes.status` set to `Active` and `attributes.service_account` set to `false` also having `attributes.verified` set to `true`; a failing response shows such a user with `verified` set to `false`.
+      remediation:
+        - id: console
+          desc: |
+            To resolve an unverified active account using the Datadog web app:
+
+            1. Sign in to Datadog as an organization owner and open **Organization Settings > Users**.
+            2. Identify each active member shown as unverified.
+            3. Resend the verification email from the member's row, or ask the member to check their inbox for the original invitation.
+            4. If the account cannot be attributed to a known person, remove it from **Organization Settings > Users** instead of waiting for verification.
+          # No Terraform remediation: account verification state is runtime identity data
+          # set when a user completes their Datadog invitation flow. It is not a
+          # configurable attribute on the datadog_user resource in the DataDog/datadog
+          # Terraform provider.
+    refs:
+      - url: https://docs.datadoghq.com/account_management/users/
+        title: Datadog User Management
+  - uid: mondoo-datadog-security-role-admin-membership-bounded
+    title: Ensure administrative role membership stays limited
+    impact: 70
+    mql: |
+      datadog.roles.where(permissions.any(name == "org_management")).all(userCount <= 5)
+    docs:
+      desc: |
+        This check ensures that no role granting the `org_management` permission is held by more than five users. The `org_management` permission lets its holders manage organization settings, billing, and other members, so a role carrying it that accumulates members over time expands the number of accounts that can make organization-wide changes.
+
+        **Why this matters**
+
+        - **Reduced attack surface:** Every account holding an administrative role is a high-value target, so keeping the group small limits how many accounts an attacker can compromise to reach full organization control.
+        - **Accountability:** A small, reviewed administrative group keeps it clear who can change organization-wide settings and simplifies audit reviews.
+        - **Privilege creep prevention:** Administrative roles tend to accumulate members as responsibilities shift; a size check surfaces that drift before it goes unnoticed.
+
+        **Risk mitigation**
+
+        - **Containment:** A bounded administrative group limits the blast radius if a privileged credential is phished or stolen.
+        - **Regular review:** Flagging an oversized administrative role prompts a review of whether every current holder still needs that level of access.
+      audit: |
+        ### Audit via Datadog Web App
+
+        1. Sign in to Datadog as an organization owner or administrator.
+        2. Open **Organization Settings** from the user menu and select the **Roles** tab.
+        3. Open each role that includes organization management permissions and note its member count.
+
+        A passing result shows five or fewer members on every role granting organization management permissions; a failing result shows more than five.
+
+        ### Audit via API
+
+        Query the Datadog API and inspect the result:
+
+        ```bash
+        curl -s -X GET "https://api.datadoghq.com/api/v2/roles" \
+          -H "DD-API-KEY: ${DD_API_KEY}" \
+          -H "DD-APPLICATION-KEY: ${DD_APP_KEY}"
+        ```
+
+        Cross-reference each role's permissions with `GET /api/v2/roles/{role_id}/permissions`. A passing response shows `attributes.user_count` at or below 5 for every role whose permissions include `org_management`; a failing response shows a higher count.
+      remediation:
+        - id: console
+          desc: |
+            To reduce administrative role membership using the Datadog web app:
+
+            1. Sign in to Datadog as an organization owner and open **Organization Settings > Roles**.
+            2. Open each role that grants organization management permissions.
+            3. Review the member list and remove members who no longer need that level of access, reassigning them to a less privileged role.
+            4. If the role is needed by more than five people, consider splitting the specific permissions those members actually use into a narrower custom role.
+          # No Terraform remediation: role-to-user assignment count is runtime membership
+          # data. The DataDog/datadog Terraform provider can declare a datadog_role's
+          # permissions and assign roles on a datadog_user resource, but bounding how many
+          # users end up holding a given role is an organizational headcount, not a
+          # Terraform-managed property.
+    refs:
+      - url: https://docs.datadoghq.com/account_management/rbac/
+        title: Datadog Role Based Access Control
+  - uid: mondoo-datadog-security-application-key-scoped
+    title: Ensure application keys are scoped to least privilege
+    impact: 70
+    mql: |
+      datadog.applicationKeys.all(scopes != empty)
+    docs:
+      desc: |
+        This check ensures that every application key in the organization is restricted to specific permission scopes rather than left unscoped. An application key with no scopes inherits every permission its owning user or service account holds, so a leaked unscoped key grants an attacker the full reach of that identity instead of a narrow set of API calls.
+
+        **Why this matters**
+
+        - **Least privilege:** A scoped key limits what a leaked credential can do, whereas an unscoped key hands over the owner's entire permission set.
+        - **Blast radius containment:** Restricting a key to the scopes an integration actually needs means a compromised key cannot be used to change organization settings, manage users, or delete data it was never meant to touch.
+        - **Clearer intent:** Scopes document what an integration is supposed to do, making it easier to spot a key being used outside its intended purpose.
+
+        **Risk mitigation**
+
+        - **Credential compromise limits:** Scoping every application key shrinks what an attacker can accomplish with a single leaked credential.
+        - **Safer key rotation:** Reviewing and re-scoping keys as integrations change prevents old, broad grants from persisting after the original need has gone away.
+      audit: |
+        ### Audit via Datadog Web App
+
+        1. Sign in to Datadog as an organization owner or administrator.
+        2. Open **Organization Settings** from the user menu and select the **Application Keys** tab.
+        3. Review each key's **Scopes** column.
+
+        A passing result shows every key with one or more specific scopes assigned; a failing result shows a key with no scopes, which has full access equal to its owner.
+
+        ### Audit via API
+
+        Query the Datadog API and inspect the result:
+
+        ```bash
+        curl -s -X GET "https://api.datadoghq.com/api/v2/application_keys" \
+          -H "DD-API-KEY: ${DD_API_KEY}" \
+          -H "DD-APPLICATION-KEY: ${DD_APP_KEY}"
+        ```
+
+        A passing response shows every key with a non-empty `attributes.scopes` array; a failing response shows a key with an empty or missing `scopes` array.
+      remediation:
+        - id: console
+          desc: |
+            To scope an application key using the Datadog web app:
+
+            1. Sign in to Datadog as an organization owner and open **Organization Settings > Application Keys**.
+            2. Open the key that has no scopes assigned.
+            3. Select the specific scopes the integration actually needs, such as `dashboards_read` or `monitors_read`, instead of leaving the scope list empty.
+            4. Save the key and confirm the dependent integration still functions with the reduced scope before removing any broader access elsewhere.
+        - id: terraform
+          desc: |
+            To create a scoped application key using Terraform:
+
+            ```hcl
+            resource "datadog_application_key" "ci_pipeline" {
+              name   = "ci-pipeline"
+              scopes = ["dashboards_read", "monitors_read", "hosts_read"]
+            }
+            ```
+
+            Terraform can only set scopes at creation time; an existing unscoped key must be recreated or re-scoped through the web app or API.
+    refs:
+      - url: https://docs.datadoghq.com/account_management/api-app-keys/
+        title: Datadog API and Application Keys
