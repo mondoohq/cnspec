@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-stackit-security
     name: Mondoo STACKIT Security
-    version: 1.1.0
+    version: 1.2.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -87,16 +87,19 @@ policies:
         checks:
           - uid: mondoo-stackit-security-serviceaccount-key-bounded-validity
           - uid: mondoo-stackit-security-serviceaccount-token-bounded-validity
+          - uid: mondoo-stackit-security-serviceaccount-federated-identity-scoped
       - title: STACKIT Key Management
         checks:
           - uid: mondoo-stackit-security-kms-key-not-pending-deletion
           - uid: mondoo-stackit-security-kms-key-healthy-state
+          - uid: mondoo-stackit-security-kms-key-recently-rotated
       - title: STACKIT Kubernetes (SKE)
         checks:
           - uid: mondoo-stackit-security-ske-cluster-healthy
           - uid: mondoo-stackit-security-ske-cluster-auto-update
           - uid: mondoo-stackit-security-ske-apiserver-acl-enabled
           - uid: mondoo-stackit-security-ske-apiserver-acl-restricted
+          - uid: mondoo-stackit-security-ske-not-end-of-support
       - title: STACKIT Telemetry
         checks:
           - uid: mondoo-stackit-security-telemetry-token-expiry-set
@@ -1742,3 +1745,191 @@ queries:
     refs:
       - url: https://docs.stackit.cloud/products/data-and-ai/ai-model-serving/
         title: STACKIT Documentation - Model Serving
+  # ----------------------------- STACKIT Kubernetes (SKE) -----------------------------
+  # No Terraform variants: the end-of-support date is runtime schedule metadata STACKIT reports per Kubernetes and node-image version; it has no configuration analog on the stackit_ske_cluster resource.
+  - uid: mondoo-stackit-security-ske-not-end-of-support
+    title: Ensure SKE clusters and node pools are within their support window
+    impact: 80
+    filters: asset.platform == "stackit-ske-cluster"
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: false
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: false
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    mql: |
+      stackit.ske.cluster.kubernetesExpirationDate == null || stackit.ske.cluster.kubernetesExpirationDate > time.now
+      stackit.ske.cluster.nodePools.all(kubernetesExpirationDate == null || kubernetesExpirationDate > time.now)
+      stackit.ske.cluster.nodePools.all(osExpirationDate == null || osExpirationDate > time.now)
+    docs:
+      desc: |
+        This check ensures that a STACKIT Kubernetes Engine (SKE) cluster, and every node pool it runs, is still within the support window STACKIT publishes for its Kubernetes and node operating-system versions. STACKIT announces an end-of-support date for each Kubernetes minor version and each node image; past that date the version keeps running but stops receiving patches, so any vulnerability disclosed afterward is never fixed on it.
+
+        **Why this matters**
+
+        - **Unpatched vulnerabilities:** A version past end-of-support receives no security fixes, so every flaw disclosed after that date remains exploitable on the cluster.
+        - **Control-plane and node parity:** A node pool can sit on an older, already-unsupported version even when the control plane is current, so both must be checked.
+        - **Forced, unplanned upgrades:** Running up to the end-of-support date removes the option of a scheduled upgrade and risks an emergency migration under pressure.
+
+        **Risk mitigation**
+
+        - **Timely upgrades:** Upgrading ahead of the end-of-support date keeps the cluster on a version that still receives security patches.
+        - **Reduced attack surface:** A supported Kubernetes version and node image close the window in which known, unpatched flaws can be exploited.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the STACKIT Portal.
+        2. Open **Kubernetes Engine (SKE)** and select the cluster.
+        3. Review the control-plane Kubernetes version and each node pool's Kubernetes and OS image versions, and compare them against STACKIT's version support schedule.
+
+        A passing cluster runs a control-plane version and node images whose end-of-support dates are in the future. A failing cluster or node pool runs a version whose end-of-support date has already passed.
+
+        ### Audit via CLI
+
+        1. Describe the cluster and inspect its versions:
+
+        ```bash
+        stackit ske cluster describe <cluster-name> --output-format json
+        ```
+
+        Compare the reported control-plane and node-pool versions against STACKIT's published support schedule. A passing cluster reports versions still within support; a failing cluster reports a version past its end-of-support date.
+      remediation:
+        - id: console
+          desc: |
+            In the STACKIT Portal, open the SKE cluster and upgrade the control plane to a supported Kubernetes version, then upgrade each node pool's Kubernetes and machine-image version to a supported release. Plan the upgrade before the end-of-support date rather than after it.
+        # No Terraform remediation: the end-of-support date is runtime schedule metadata STACKIT reports per version, not a configurable attribute; staying in support means upgrading kubernetes_version and the node-pool image to a still-supported release, an operational action.
+    refs:
+      - url: https://docs.stackit.cloud/products/runtime/kubernetes-engine/
+        title: STACKIT Documentation - Kubernetes Engine (SKE)
+  # ----------------------------- STACKIT Identity & Access -----------------------------
+  # No Terraform variants: federated identity providers for service accounts are managed through the STACKIT portal and API; the stackit Terraform provider does not expose a resource for their claim assertions.
+  - uid: mondoo-stackit-security-serviceaccount-federated-identity-scoped
+    title: Ensure federated identity providers restrict tokens with assertions
+    impact: 85
+    filters: asset.platform == "stackit-project"
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: false
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: false
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    mql: |
+      stackit.serviceAccounts.all(federatedIdentityProviders.all(assertions.length > 0))
+    docs:
+      desc: |
+        This check ensures that every federated identity provider trusted by a STACKIT service account constrains which external tokens it will exchange, by requiring at least one assertion. A federated identity provider lets an external OIDC issuer exchange its own tokens for credentials belonging to the service account, and the assertions are the claim conditions a presented token must satisfy. A provider with no assertions accepts any token the issuer signs, so any workload that can obtain a token from that issuer can assume the service account and everything it can do.
+
+        **Why this matters**
+
+        - **Unscoped credential minting:** With no assertions, holding any token from the trusted issuer is enough to take on the service account, without holding any of its own keys or tokens.
+        - **Blast radius of a shared issuer:** Public or multi-tenant issuers such as a CI system or another cloud sign tokens for many unrelated workloads; without assertions every one of them is trusted.
+        - **Silent standing access:** Unlike a key or access token, a federated trust leaves no credential to rotate or expire, so an over-broad provider grants access indefinitely until it is corrected.
+
+        **Risk mitigation**
+
+        - **Claim pinning:** Requiring assertions on claims such as subject, repository, or environment narrows the trust to the specific external workload that should hold it.
+        - **Least privilege:** Scoped assertions keep a single service account from becoming an entry point for every workload the issuer can vouch for.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the STACKIT Portal.
+        2. Open **Service Accounts** and select the account.
+        3. Review each federated identity provider and confirm it defines assertions (claim conditions) rather than trusting its issuer unconditionally.
+
+        A passing service account has every federated identity provider defining at least one assertion. A failing service account has a provider with no assertions.
+
+        ### Audit via CLI
+
+        1. List the service accounts in the project:
+
+        ```bash
+        stackit service-account list --output-format json
+        ```
+
+        For each service account, review its federated identity providers in the STACKIT Portal or API and confirm each defines at least one assertion. A failing provider has an empty assertion list, meaning any token from its issuer is accepted.
+      remediation:
+        - id: console
+          desc: |
+            In the STACKIT Portal, open the service account's federated identity providers and add assertions that pin accepted tokens to the specific subject, repository, or environment claims of the intended workload. Remove any provider that cannot be scoped to a known workload.
+        # No Terraform remediation: service-account federated identity providers are managed through the STACKIT portal and API; the stackit Terraform provider exposes no resource for their claim assertions.
+    refs:
+      - url: https://docs.stackit.cloud/products/iam/service-accounts/
+        title: STACKIT Documentation - Service Accounts
+  # ----------------------------- STACKIT Key Management -----------------------------
+  # No Terraform variants: key-version age is runtime state produced by rotation over time; it has no configuration analog on the stackit_kms_key resource.
+  - uid: mondoo-stackit-security-kms-key-recently-rotated
+    title: Ensure KMS keys have an active version rotated within the last year
+    impact: 50
+    filters: asset.platform == "stackit-project"
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: false
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: false
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    mql: |
+      stackit.kms.keys.all(versions.where(state == "active" && disabled == false).length == 0 || versions.where(state == "active" && disabled == false).any(createdAt > time.now - 365 * time.day))
+    docs:
+      desc: |
+        This check ensures that every STACKIT KMS key has been rotated recently, by requiring at least one enabled, active key version created within the last year. Rotation creates a new key version and leaves earlier versions in place to decrypt existing ciphertext, so the age of the newest usable version is what tells you whether the key is still being rotated. A key whose most recent active version is more than a year old has not been rotated within that window.
+
+        **Why this matters**
+
+        - **Bounded exposure per version:** Regular rotation caps how much data is protected under any single key version, so a compromised version exposes less.
+        - **Cryptographic hygiene:** A key left unrotated for years drifts from the organization's rotation policy and from common compliance expectations for key lifetime.
+        - **Faster recovery from exposure:** Frequent rotation means a key suspected of compromise can be retired with less accumulated ciphertext bound to the exposed material.
+
+        **Risk mitigation**
+
+        - **Bounded key lifetime:** Rotating within a fixed interval limits the lifetime of any single key version and the volume of data encrypted under it.
+        - **Policy conformance:** A recent active version demonstrates the key is under an active rotation schedule rather than created once and forgotten.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the STACKIT Portal.
+        2. Open **Key Management Service** and select the key.
+        3. Review the key's versions and confirm the newest enabled, active version was created within the last year.
+
+        A passing key has an enabled, active version created less than a year ago. A failing key's most recent active version is older than a year, or it has no enabled active version at all.
+
+        ### Audit via CLI
+
+        1. List the keys in the project and inspect their versions:
+
+        ```bash
+        stackit kms key list --output-format json
+        ```
+
+        For each key, confirm the newest active version's creation date is within the last year. A failing key's most recent active version is older than one year.
+      remediation:
+        - id: console
+          desc: |
+            In the STACKIT Portal, open the key under **Key Management Service** and rotate it to create a fresh key version. Establish a rotation schedule so a new version is created at least once a year, and keep the older versions enabled only as long as they are needed to decrypt existing data.
+        # No Terraform remediation: key-version age is runtime state produced by rotation over time; keeping a recent version means performing or scheduling a rotation, an operational action rather than a configurable attribute on the key resource.
+    refs:
+      - url: https://docs.stackit.cloud/products/security/key-management-service/
+        title: STACKIT Documentation - Key Management Service
