@@ -1,0 +1,534 @@
+# Copyright Mondoo, Inc. 2024, 2026
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: mondoo-jamf-security
+    name: Mondoo Jamf Security
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: jamf
+    require:
+      - provider: jamf
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Secure Jamf Pro managed Mac fleets against weak disk encryption, firewall, and script credential exposure
+    docs:
+      desc: |
+        The Mondoo Jamf Security policy identifies critical misconfigurations across a Jamf Pro instance that could leave managed Apple devices exposed to data loss, unauthorized access, or unmanaged software execution. This policy helps organizations detect and remediate weaknesses in fleet-wide security posture before attackers can exploit an unencrypted disk, a disabled firewall, an unsupervised device, or a policy that executes unaudited shell commands.
+
+        This policy provides security checks across key Jamf Pro areas:
+
+        - Disk encryption (FileVault 2) status at the device and local account level
+        - macOS firewall enforcement across managed computers
+        - Automatic login and supervision (Automated Device Enrollment) posture
+        - Policies that run arbitrary shell commands outside of managed scripts
+        - Scripts staged for deployment that contain hardcoded credentials
+        - Single sign-on bypass settings for the Jamf Pro console
+
+        Learn more about scanning Jamf Pro in the [cnspec documentation](https://mondoo.com/docs/cnspec).
+
+        Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
+    groups:
+      - title: Jamf Pro
+        filters: asset.platform == "jamf"
+        checks:
+          - uid: mondoo-jamf-security-computer-filevault2-enabled
+          - uid: mondoo-jamf-security-computer-local-admin-accounts-filevault2-enrolled
+          - uid: mondoo-jamf-security-computer-firewall-enabled
+          - uid: mondoo-jamf-security-computer-auto-login-disabled
+          - uid: mondoo-jamf-security-computer-automated-device-enrollment
+          - uid: mondoo-jamf-security-policy-no-arbitrary-run-commands
+          - uid: mondoo-jamf-security-script-no-hardcoded-credentials
+          - uid: mondoo-jamf-security-sso-bypass-disabled
+queries:
+  # No Terraform remediation: Jamf Pro computer inventory (FileVault 2 status, firewall
+  # state, local user accounts) is device-reported runtime telemetry collected by the Jamf
+  # binary, not a Terraform-declared configuration. Encryption and firewall enforcement are
+  # rolled out through Jamf configuration profiles or MDM commands, which the deploymenttheory
+  # and shinji62 Jamf Terraform providers do not expose as inventory-readable resources, so
+  # there is no HCL resource whose state this check could assert against.
+  - uid: mondoo-jamf-security-computer-filevault2-enabled
+    title: Ensure FileVault 2 disk encryption is enabled on managed computers
+    impact: 85
+    mql: |
+      jamf.computerInventory.all(
+        fileVault2Status == "VALID" ||
+        fileVault2Status == "BOOT_PARTITION_ENCRYPTED" ||
+        fileVault2Status == "INDIVIDUAL_RECOVERY_KEY_USED" ||
+        fileVault2Status == "INSTITUTIONAL_RECOVERY_KEY_USED"
+      )
+    docs:
+      desc: |
+        This check ensures that every computer in the Jamf Pro inventory has FileVault 2 full-disk encryption active on its boot volume. Jamf Pro reports a `fileVault2Status` value for each computer, and only the values that indicate the volume is actually encrypted count as a pass; a computer that has never had FileVault turned on, or where a user disabled it after a profile prompted them, reports a different status.
+
+        **Why this matters**
+
+        - **Data-at-rest protection:** An unencrypted disk exposes every file on a lost or stolen laptop to anyone who removes the drive or boots from external media.
+        - **Regulatory obligations:** Many compliance frameworks and breach-notification laws treat encrypted devices differently from unencrypted ones when a device goes missing.
+        - **Consistent baseline:** Fleet-wide encryption removes the guesswork of which specific devices carry sensitive data and need protection.
+        - **Recovery key custody:** Jamf Pro can escrow the personal recovery key, so IT can unlock a device without depending on the end user remembering a key they generated themselves.
+
+        **Risk mitigation**
+
+        - **Theft and loss containment:** Encryption neutralizes the most common physical-access attack against a lost or stolen Mac.
+        - **Audit-ready evidence:** A fleet-wide encryption check gives security teams a single, reliable status to report on instead of relying on self-reported user compliance.
+      audit: |
+        ### Audit via Jamf Pro Console
+
+        1. Sign in to the Jamf Pro console.
+        2. Open **Computers > Search Inventory**, or build an **Advanced Computer Search** using the criterion **FileVault 2 Individual Key Validation** or **FileVault 2 Status**.
+        3. Review the FileVault 2 status reported for each computer.
+
+        A passing result shows every computer with a status that reflects an encrypted boot volume (`VALID`, `BOOT_PARTITION_ENCRYPTED`, `INDIVIDUAL_RECOVERY_KEY_USED`, or `INSTITUTIONAL_RECOVERY_KEY_USED`); a failing result shows a computer reporting `NOT_APPLICABLE`, `VALID_BUT_DISABLED_BY_USER`, or `PERSONAL_RECOVERY_KEY_REQUIRED`.
+
+        ### Audit via API
+
+        Query the Jamf Pro API and inspect the result:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $JAMF_API_TOKEN" \
+          "https://yourdomain.jamfcloud.com/api/v1/computers-inventory?section=OPERATING_SYSTEM"
+        ```
+
+        A passing response shows every computer's `operatingSystem.fileVault2Status` set to an encrypted-state value; a failing response shows a computer where that field is `NOT_APPLICABLE`, `VALID_BUT_DISABLED_BY_USER`, or `PERSONAL_RECOVERY_KEY_REQUIRED`.
+      remediation:
+        - id: console
+          desc: |
+            To enforce FileVault 2 encryption fleet-wide using the Jamf Pro console:
+
+            1. Sign in to the Jamf Pro console and open **Computers > Configuration Profiles**.
+            2. Click **New**, then select the **FileVault 2** payload.
+            3. Set the encryption enforcement to require the login window user, choose **Individual** or **Institutional** recovery key type, and enable key escrow to Jamf Pro.
+            4. Scope the profile to all managed computers and click **Save**.
+            5. For computers that already report `VALID_BUT_DISABLED_BY_USER` or `PERSONAL_RECOVERY_KEY_REQUIRED`, use **Computers > Search Inventory** to locate them and follow up directly, since a profile alone does not retroactively re-encrypt a volume a user manually decrypted.
+
+            To learn more, read [Use FileVault 2 with Jamf Pro](https://learn.jamf.com/en-US/bundle/jamf-pro-documentation-current/page/FileVault_2.html) in the Jamf Pro documentation.
+        # No Terraform remediation: see the comment above the check UID.
+    refs:
+      - url: https://learn.jamf.com/en-US/bundle/jamf-pro-documentation-current/page/FileVault_2.html
+        title: Use FileVault 2 with Jamf Pro
+  # No Terraform remediation: see the comment above mondoo-jamf-security-computer-filevault2-enabled.
+  - uid: mondoo-jamf-security-computer-local-admin-accounts-filevault2-enrolled
+    title: Ensure local admin accounts are enrolled in FileVault 2
+    impact: 80
+    mql: |
+      jamf.computerInventory.all(
+        localUserAccounts.where(admin == true).all(fileVault2Enabled == true)
+      )
+    docs:
+      desc: |
+        This check ensures that every local account with administrator privileges on a managed computer is individually enrolled in FileVault 2, meaning that account's password can unlock the encrypted boot volume. A computer's disk can report as encrypted overall while specific local accounts, including privileged ones added after the initial encryption, remain outside the set of unlock-capable users.
+
+        **Why this matters**
+
+        - **Full coverage of privileged accounts:** An admin account excluded from FileVault enrollment cannot unlock the disk at boot, which often leads users to work around encryption entirely or share credentials of an enrolled account.
+        - **Consistent recovery path:** Every admin account being enrolled ensures IT and users have a working way to unlock the device without falling back on the recovery key.
+        - **Detecting incomplete rollouts:** Admin accounts created after a FileVault configuration profile was applied are not automatically enrolled, so this surfaces the gap.
+        - **Privilege-aware auditing:** Focusing on admin accounts targets the users whose access is most consequential if the disk were ever removed and mounted elsewhere.
+
+        **Risk mitigation**
+
+        - **Encryption gap closure:** Enrolling every admin account closes a common blind spot where overall FileVault status looks compliant but a specific privileged user is not actually covered.
+        - **Reduced key-sharing risk:** When every admin account can unlock the disk on its own, there is less incentive for admins to share a single enrolled account's credentials.
+      audit: |
+        ### Audit via Jamf Pro Console
+
+        1. Sign in to the Jamf Pro console and open a computer's inventory record under **Computers > Search Inventory**.
+        2. Select the **Local User Accounts** tab.
+        3. Review each account marked as an administrator and check its FileVault 2 enablement status.
+
+        A passing result shows every administrator account with FileVault 2 enabled; a failing result shows an administrator account not enrolled.
+
+        ### Audit via API
+
+        Query the Jamf Pro API and inspect the result:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $JAMF_API_TOKEN" \
+          "https://yourdomain.jamfcloud.com/api/v1/computers-inventory?section=LOCAL_USER_ACCOUNTS"
+        ```
+
+        A passing response shows every local user account with `administratorEquivalent` (or `admin`) set to `true` also having `fileVault2Enabled` set to `true`; a failing response shows an admin account with `fileVault2Enabled` set to `false`.
+      remediation:
+        - id: console
+          desc: |
+            To enroll a missing admin account in FileVault 2 using the Jamf Pro console:
+
+            1. Sign in to the Jamf Pro console and open **Computers > Search Inventory** to identify the affected computer.
+            2. Deploy a policy that runs `fdesetup add` targeting the unenrolled admin account, using a bootstrap token or an already-enrolled admin's credentials for authorization.
+            3. Confirm the account now appears with FileVault 2 enabled under the computer's **Local User Accounts** inventory tab.
+
+            To learn more, read [Use FileVault 2 with Jamf Pro](https://learn.jamf.com/en-US/bundle/jamf-pro-documentation-current/page/FileVault_2.html) in the Jamf Pro documentation.
+        - id: script
+          desc: |
+            To add a local admin account to FileVault 2 from a Jamf Pro policy script:
+
+            ```bash
+            #!/bin/bash
+            # Adds $4 (the account short name) to FileVault 2 using the device's bootstrap token.
+            sudo fdesetup add -usertoadd "$4" -bootstraptoken
+            ```
+        # No Terraform remediation: see the comment above mondoo-jamf-security-computer-filevault2-enabled.
+    refs:
+      - url: https://learn.jamf.com/en-US/bundle/jamf-pro-documentation-current/page/FileVault_2.html
+        title: Use FileVault 2 with Jamf Pro
+  # No Terraform remediation: see the comment above mondoo-jamf-security-computer-filevault2-enabled.
+  - uid: mondoo-jamf-security-computer-firewall-enabled
+    title: Ensure the macOS firewall is enabled on managed computers
+    impact: 75
+    mql: |
+      jamf.computerInventory.all(firewallEnabled == true)
+    docs:
+      desc: |
+        This check ensures that the built-in macOS application firewall is turned on for every computer in the Jamf Pro inventory. macOS ships with the firewall disabled by default, so a computer only has it running because a configuration profile turned it on or a user enabled it manually.
+
+        **Why this matters**
+
+        - **Unsolicited connection blocking:** The firewall stops unsolicited inbound connections to listening services on the Mac, reducing exposure on untrusted networks such as public Wi-Fi.
+        - **Defense in depth:** A host-based firewall protects a device even when network-level controls are bypassed, such as when a laptop leaves the corporate network.
+        - **Malware containment:** Blocking unexpected inbound connections limits how a compromised or misconfigured application can be reached from the network.
+        - **Consistent baseline:** Enforcing the firewall fleet-wide removes reliance on individual users to turn it on themselves.
+
+        **Risk mitigation**
+
+        - **Reduced remote attack surface:** An active firewall closes off a straightforward path attackers use to reach listening services on a roaming device.
+        - **Baseline hardening:** Fleet-wide firewall enforcement is a low-friction control that measurably reduces exposure on every managed Mac.
+      audit: |
+        ### Audit via Jamf Pro Console
+
+        1. Sign in to the Jamf Pro console.
+        2. Open **Computers > Search Inventory**, or build an **Advanced Computer Search** using the criterion **Firewall Enabled**.
+        3. Review the firewall status reported for each computer.
+
+        A passing result shows every computer with the firewall enabled; a failing result shows a computer with the firewall disabled.
+
+        ### Audit via API
+
+        Query the Jamf Pro API and inspect the result:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $JAMF_API_TOKEN" \
+          "https://yourdomain.jamfcloud.com/api/v1/computers-inventory?section=SECURITY"
+        ```
+
+        A passing response shows every computer's `security.firewallEnabled` set to `true`; a failing response shows a computer with that field set to `false`.
+      remediation:
+        - id: console
+          desc: |
+            To enforce the macOS firewall fleet-wide using the Jamf Pro console:
+
+            1. Sign in to the Jamf Pro console and open **Computers > Configuration Profiles**.
+            2. Click **New**, then select the **Security & Privacy** payload.
+            3. On the **Firewall** tab, select **Enable Firewall**, and optionally enable **Block all incoming connections** or **Enable stealth mode** for stricter enforcement.
+            4. Scope the profile to all managed computers and click **Save**.
+
+            To learn more, read [Security & Privacy Payload](https://learn.jamf.com/en-US/bundle/jamf-pro-documentation-current/page/Security_And_Privacy_Payload.html) in the Jamf Pro documentation.
+        - id: script
+          desc: |
+            To enable the firewall from a Jamf Pro policy script:
+
+            ```bash
+            #!/bin/bash
+            /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on
+            ```
+        # No Terraform remediation: see the comment above mondoo-jamf-security-computer-filevault2-enabled.
+    refs:
+      - url: https://learn.jamf.com/en-US/bundle/jamf-pro-documentation-current/page/Security_And_Privacy_Payload.html
+        title: Security & Privacy Payload
+  # No Terraform remediation: see the comment above mondoo-jamf-security-computer-filevault2-enabled.
+  - uid: mondoo-jamf-security-computer-auto-login-disabled
+    title: Ensure automatic login is disabled on managed computers
+    impact: 70
+    mql: |
+      jamf.computerInventory.all(autoLoginDisabled == true)
+    docs:
+      desc: |
+        This check ensures that automatic login is turned off on every computer in the Jamf Pro inventory, so a user must authenticate at the login window every time the computer starts or wakes from a full shutdown. When automatic login is active, macOS signs a designated account in without a password prompt at startup.
+
+        **Why this matters**
+
+        - **Boot-time authentication:** Requiring a password at startup means possession of the physical device alone is not enough to reach a logged-in desktop.
+        - **FileVault interaction:** Automatic login undermines the practical benefit of FileVault, since after the FileVault unlock at boot, the account still logs in without a second credential check.
+        - **Shared or unattended device risk:** A device that boots directly into a usable session is far more exposed if it is stolen while powered off or restarted.
+        - **Session accountability:** Requiring login credentials each session helps ensure activity can be attributed to the person who authenticated.
+
+        **Risk mitigation**
+
+        - **Reduced impact of physical theft:** Disabling automatic login adds a required authentication step between power-on and a usable desktop.
+        - **Consistent enforcement:** A fleet-wide check catches automatic login re-enabled by a user or a non-standard imaging process.
+      audit: |
+        ### Audit via Jamf Pro Console
+
+        1. Sign in to the Jamf Pro console.
+        2. Open **Computers > Search Inventory**, or build an **Advanced Computer Search** using the criterion related to automatic login.
+        3. Review the automatic login status reported for each computer.
+
+        A passing result shows automatic login disabled on every computer; a failing result shows a computer with automatic login enabled.
+
+        ### Audit via API
+
+        Query the Jamf Pro API and inspect the result:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $JAMF_API_TOKEN" \
+          "https://yourdomain.jamfcloud.com/api/v1/computers-inventory?section=SECURITY"
+        ```
+
+        A passing response shows every computer's `security.autoLoginDisabled` set to `true`; a failing response shows a computer with that field set to `false`.
+      remediation:
+        - id: console
+          desc: |
+            To disable automatic login fleet-wide using the Jamf Pro console:
+
+            1. Sign in to the Jamf Pro console and open **Computers > Configuration Profiles**.
+            2. Click **New**, then select the **Login Window** payload (or the **Security & Privacy** payload, depending on your Jamf Pro version).
+            3. Enable the setting that disables automatic login.
+            4. Scope the profile to all managed computers and click **Save**.
+
+            To learn more, read [Login Window Payload](https://learn.jamf.com/en-US/bundle/jamf-pro-documentation-current/page/Login_Window_Payload.html) in the Jamf Pro documentation.
+        - id: script
+          desc: |
+            To disable automatic login from a Jamf Pro policy script:
+
+            ```bash
+            #!/bin/bash
+            defaults delete /Library/Preferences/com.apple.loginwindow autoLoginUser 2>/dev/null
+            ```
+        # No Terraform remediation: see the comment above mondoo-jamf-security-computer-filevault2-enabled.
+    refs:
+      - url: https://learn.jamf.com/en-US/bundle/jamf-pro-documentation-current/page/Login_Window_Payload.html
+        title: Login Window Payload
+  # No Terraform remediation: see the comment above mondoo-jamf-security-computer-filevault2-enabled.
+  - uid: mondoo-jamf-security-computer-automated-device-enrollment
+    title: Ensure computers are enrolled through Automated Device Enrollment
+    impact: 65
+    mql: |
+      jamf.computerInventory.all(enrolledViaAutomatedDeviceEnrollment == true)
+    docs:
+      desc: |
+        This check ensures that every computer in the Jamf Pro inventory was enrolled through Apple's Automated Device Enrollment (formerly DEP), rather than through user-initiated enrollment. Automated Device Enrollment ties a device's MDM enrollment to Apple's own device records, and depending on configuration can supervise the device and prevent the MDM profile from being removed by the end user.
+
+        **Why this matters**
+
+        - **Non-removable enrollment:** Automated Device Enrollment can be configured so the MDM profile cannot be removed by the user, guaranteeing continuous management for the life of the device.
+        - **Supervision-dependent controls:** Many of the strongest macOS management restrictions, including some content filtering and app restrictions, are only available on supervised devices, and Automated Device Enrollment is the standard path to supervision.
+        - **Reduced enrollment tampering:** User-initiated enrollment depends on the user completing and not later removing the process, while Automated Device Enrollment is tied to the device's Apple-registered identity.
+        - **Zero-touch provisioning integrity:** Devices enrolled this way follow a consistent, auditable provisioning path from first boot.
+
+        **Risk mitigation**
+
+        - **Management persistence:** Automated Device Enrollment closes the gap where a user removes MDM management and the device silently drops out of fleet oversight.
+        - **Coverage verification:** Identifying computers enrolled outside of Automated Device Enrollment highlights devices that may need to be re-provisioned under organizational control.
+      audit: |
+        ### Audit via Jamf Pro Console
+
+        1. Sign in to the Jamf Pro console.
+        2. Open **Computers > Search Inventory**, or build an **Advanced Computer Search** using the criterion **Enrollment Method: PreStage enrollment** (Automated Device Enrollment).
+        3. Review the enrollment method reported for each computer.
+
+        A passing result shows every computer enrolled via Automated Device Enrollment (PreStage enrollment); a failing result shows a computer enrolled through user-initiated enrollment.
+
+        ### Audit via API
+
+        Query the Jamf Pro API and inspect the result:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $JAMF_API_TOKEN" \
+          "https://yourdomain.jamfcloud.com/api/v1/computers-inventory?section=GENERAL"
+        ```
+
+        A passing response shows every computer's `general.enrolledViaAutomatedDeviceEnrollment` set to `true`; a failing response shows a computer with that field set to `false`.
+      remediation:
+        - id: console
+          desc: |
+            To move devices onto Automated Device Enrollment using the Jamf Pro console:
+
+            1. Sign in to Apple Business Manager or Apple School Manager and confirm the affected devices are assigned to your Jamf Pro MDM server.
+            2. In the Jamf Pro console, open **Computers > PreStage Enrollments** and confirm a PreStage enrollment exists and is scoped to include the affected devices.
+            3. Wipe and re-provision devices that were originally enrolled through user-initiated enrollment so they enroll through Automated Device Enrollment at next setup.
+
+            To learn more, read [Automated Device Enrollment](https://learn.jamf.com/en-US/bundle/jamf-pro-documentation-current/page/Automated_Device_Enrollment.html) in the Jamf Pro documentation.
+        # No Terraform remediation: see the comment above mondoo-jamf-security-computer-filevault2-enabled.
+    refs:
+      - url: https://learn.jamf.com/en-US/bundle/jamf-pro-documentation-current/page/Automated_Device_Enrollment.html
+        title: Automated Device Enrollment
+  # No Terraform remediation: Jamf Pro policies and their files-and-processes configuration
+  # are read through the Jamf Pro classic API, and neither the deploymenttheory nor shinji62
+  # community Jamf Terraform providers expose a policy resource with a files-and-processes
+  # (runCommand) attribute, so there is no HCL resource this check could assert against.
+  - uid: mondoo-jamf-security-policy-no-arbitrary-run-commands
+    title: Ensure enabled policies do not run arbitrary shell commands
+    impact: 55
+    mql: |
+      jamf.policies.where(enabled == true).all(filesProcesses['runCommand'] == empty)
+    docs:
+      desc: |
+        This check ensures that no enabled Jamf Pro policy executes an arbitrary shell command through the policy's **Files and Processes** payload. Jamf Pro lets a policy run a single inline shell command directly from its configuration, as an alternative to running a versioned script.
+
+        **Why this matters**
+
+        - **Auditability:** A command typed directly into a policy's configuration is not version-controlled the way an uploaded script is, making changes harder to track and review over time.
+        - **Review consistency:** Scripts uploaded to Jamf Pro's script library go through a single, consistent review and storage path, while inline run commands can be added or edited by anyone with policy-edit rights without that same scrutiny.
+        - **Change tracking:** Uploaded scripts have their own identity and history in the script library, while an inline command's history is buried in the policy's edit log.
+        - **Blast radius awareness:** An enabled policy with a run command executes on every scoped computer at its trigger, so an unreviewed or mistaken command can affect the fleet immediately.
+
+        **Risk mitigation**
+
+        - **Standardized execution path:** Moving logic out of inline run commands and into reviewed, versioned scripts creates a single place to audit what actually executes on managed computers.
+        - **Reduced unreviewed change risk:** Flagging enabled policies with inline commands surfaces logic that may have bypassed the script review process entirely.
+      audit: |
+        ### Audit via Jamf Pro Console
+
+        1. Sign in to the Jamf Pro console and open **Computers > Policies**.
+        2. Open each enabled policy and review the **Files and Processes** payload.
+        3. Check whether the **Execute Command** field contains a shell command.
+
+        A passing result shows every enabled policy with the **Execute Command** field empty; a failing result shows an enabled policy with a shell command configured there.
+
+        ### Audit via API
+
+        Query the Jamf Pro classic API and inspect the result:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $JAMF_API_TOKEN" -H "Accept: application/json" \
+          "https://yourdomain.jamfcloud.com/JSSResource/policies/id/<policy_id>"
+        ```
+
+        A passing response shows `policy.files_processes.run_command` empty for every enabled policy (`policy.general.enabled` is `true`); a failing response shows a non-empty `run_command` on an enabled policy.
+      remediation:
+        - id: console
+          desc: |
+            To remove an inline run command from a Jamf Pro policy:
+
+            1. Sign in to the Jamf Pro console and open **Computers > Policies**.
+            2. Open the flagged policy and select the **Files and Processes** payload.
+            3. Clear the **Execute Command** field.
+            4. If the command performs necessary work, move its logic into a script, upload the script under **Settings > Computer Management > Scripts**, and add it to the policy's **Scripts** payload instead.
+            5. Click **Save**.
+
+            To learn more, read [Files and Processes Payload](https://learn.jamf.com/en-US/bundle/jamf-pro-documentation-current/page/Files_and_Processes_Payload.html) in the Jamf Pro documentation.
+        # No Terraform remediation: see the comment above the check UID.
+    refs:
+      - url: https://learn.jamf.com/en-US/bundle/jamf-pro-documentation-current/page/Files_and_Processes_Payload.html
+        title: Files and Processes Payload
+  # No Terraform remediation: script content in Jamf Pro's script library is managed
+  # through the Jamf Pro API or console script editor. Neither community Jamf Terraform
+  # provider exposes a script resource with contents Terraform could assert or template,
+  # so there is no HCL resource this check could target.
+  - uid: mondoo-jamf-security-script-no-hardcoded-credentials
+    title: Ensure Jamf Pro scripts do not contain hardcoded credentials
+    impact: 88
+    mql: |
+      jamf.scripts.all(
+        scriptContents == empty ||
+        scriptContents.contains(/(?i)(password|passwd|pwd|secret|api[_-]?key|token)\s*=\s*['"][^'"]+['"]/) == false
+      )
+    docs:
+      desc: |
+        This check ensures that no script stored in the Jamf Pro script library contains a hardcoded credential, such as a password, API key, secret, or token assigned directly to a variable in the script body. Jamf Pro deploys script contents verbatim to every scoped computer, and any account with script-read access, or access to a computer where the script has run, can recover a credential embedded this way.
+
+        **Why this matters**
+
+        - **Plaintext exposure:** A credential written directly into a script is stored and transmitted in plaintext everywhere the script is stored, deployed, and logged.
+        - **Broad exposure surface:** Jamf Pro administrators, policy log viewers, and anyone who can read the script library can retrieve the credential, far beyond whoever needs to use it.
+        - **Device-side residue:** Scripts often remain cached on target computers after execution, and policy logs can capture script output, both of which can leak the embedded value long after deployment.
+        - **Rotation difficulty:** A credential baked into script text has no lifecycle of its own, so rotating it requires editing and redistributing the script rather than updating a single secret store.
+
+        **Risk mitigation**
+
+        - **Externalized secret management:** Passing credentials to a script through Jamf Pro's parameter labels sourced from a secret manager, or reading them from macOS Keychain at runtime, keeps the credential out of the script text itself.
+        - **Reduced blast radius:** Removing hardcoded credentials means a leaked script no longer directly exposes a working credential alongside it.
+      audit: |
+        ### Audit via Jamf Pro Console
+
+        1. Sign in to the Jamf Pro console and open **Settings > Computer Management > Scripts**.
+        2. Open each script and review its contents for variables assigned a literal password, secret, API key, or token value.
+
+        A passing result shows no script with a credential-like value hardcoded into its body; a failing result shows a script with a literal password, secret, key, or token assigned directly to a variable.
+
+        ### Audit via API
+
+        Query the Jamf Pro API and inspect the result:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $JAMF_API_TOKEN" \
+          "https://yourdomain.jamfcloud.com/api/v1/scripts/<script_id>"
+        ```
+
+        A passing response shows `scriptContents` with no literal `password=`, `secret=`, `apikey=`, or `token=` assignment; a failing response shows one of those patterns with a hardcoded value.
+      remediation:
+        - id: console
+          desc: |
+            To remove a hardcoded credential from a Jamf Pro script:
+
+            1. Sign in to the Jamf Pro console and open **Settings > Computer Management > Scripts**.
+            2. Open the flagged script and locate the hardcoded value.
+            3. Replace it with a Jamf Pro script parameter (labeled under the **Options** tab) so the value is supplied by the policy rather than embedded in the script, or read the credential from macOS Keychain or a secrets manager at runtime.
+            4. Remove the literal value from the script body and save.
+            5. Rotate the credential that was exposed, since it must be treated as compromised.
+
+            To learn more, read [Script Parameters](https://learn.jamf.com/en-US/bundle/jamf-pro-documentation-current/page/Script_Parameters.html) in the Jamf Pro documentation.
+        # No Terraform remediation: see the comment above the check UID.
+    refs:
+      - url: https://learn.jamf.com/en-US/bundle/jamf-pro-documentation-current/page/Script_Parameters.html
+        title: Script Parameters
+  # No Terraform remediation: Jamf Pro's SSO configuration is exposed only through the Jamf
+  # Pro API's sso settings endpoint. Neither community Jamf Terraform provider exposes an SSO
+  # settings resource, so there is no HCL resource this check could assert against.
+  - uid: mondoo-jamf-security-sso-bypass-disabled
+    title: Ensure SSO bypass is disabled when single sign-on is enabled
+    impact: 70
+    mql: |
+      jamf.sso.ssoEnabled == false || jamf.sso.ssoBypassAllowed == false
+    docs:
+      desc: |
+        This check ensures that when single sign-on is enabled for the Jamf Pro console, administrators cannot bypass it and sign in with a local Jamf Pro username and password instead. Jamf Pro allows SSO bypass to remain available as a fallback even after SSO is configured, unless it is explicitly turned off.
+
+        **Why this matters**
+
+        - **Consistent authentication strength:** Allowing a bypass means the console's actual authentication strength is only as strong as the weakest of its two sign-in paths, not the identity provider's policy.
+        - **Conditional access gaps:** Signing in through the bypass skips any conditional access, MFA, or session controls enforced by the identity provider.
+        - **Stale credential risk:** A local account used only through the bypass path can go unmonitored and unrotated while the organization believes SSO governs all access.
+        - **Offboarding gaps:** Disabling a user in the identity provider does not revoke a working local Jamf Pro password, so the bypass path can outlive an employee's intended access.
+
+        **Risk mitigation**
+
+        - **Single authentication path:** Disabling the bypass ensures every console sign-in goes through the identity provider's enforced controls.
+        - **Reduced credential sprawl:** Removing the bypass option reduces the number of working credentials that must be tracked and rotated for console access.
+      audit: |
+        ### Audit via Jamf Pro Console
+
+        1. Sign in to the Jamf Pro console as an administrator.
+        2. Open **Settings > System Settings > Single Sign-On**.
+        3. Review the SSO configuration and confirm whether bypassing SSO is allowed.
+
+        A passing result shows SSO bypass disabled (or SSO not configured at all); a failing result shows SSO enabled with bypass still allowed.
+
+        ### Audit via API
+
+        Query the Jamf Pro API and inspect the result:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $JAMF_API_TOKEN" \
+          "https://yourdomain.jamfcloud.com/api/v3/sso"
+        ```
+
+        A passing response shows `ssoEnabled` set to `false`, or `ssoEnabled` set to `true` with `ssoBypassAllowed` set to `false`; a failing response shows `ssoEnabled` set to `true` with `ssoBypassAllowed` set to `true`.
+      remediation:
+        - id: console
+          desc: |
+            To disable SSO bypass using the Jamf Pro console:
+
+            1. Sign in to the Jamf Pro console as an administrator and open **Settings > System Settings > Single Sign-On**.
+            2. Confirm SSO is enabled and correctly configured for your identity provider.
+            3. Turn off the setting that allows bypassing SSO with a local Jamf Pro account.
+            4. Click **Save**.
+            5. Before saving, confirm at least one account can still authenticate through the identity provider, since disabling the bypass removes local-password sign-in for every account subject to SSO.
+
+            To learn more, read [Single Sign-On](https://learn.jamf.com/en-US/bundle/jamf-pro-documentation-current/page/Single_Sign-On.html) in the Jamf Pro documentation.
+        # No Terraform remediation: see the comment above the check UID.
+    refs:
+      - url: https://learn.jamf.com/en-US/bundle/jamf-pro-documentation-current/page/Single_Sign-On.html
+        title: Single Sign-On
