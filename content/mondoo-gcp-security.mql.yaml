@@ -906,7 +906,7 @@ queries:
         )
       )
   - uid: mondoo-gcp-security-compute-instances-oslogin-enabled
-    title: Ensure oslogin is enabled for compute instances
+    title: Ensure OS Login is enabled or enforced by policy on compute instances
     impact: 70
     tags:
       compliance/bsi-sys-1-5: false
@@ -944,7 +944,7 @@ queries:
       desc: |
         This check verifies that SSH access to Compute Engine is governed by IAM identities rather than by hand-managed keys in metadata.
 
-        OS Login binds each SSH session to the caller's Google identity and to their IAM role grants. Without it, Compute Engine falls back to metadata-based SSH keys, which have to be managed key by key and connect to nothing in the organization's identity governance. The setting is the `enable-oslogin` metadata key with a value of `TRUE`, applied project-wide from the `Metadata` page under Compute Engine, or per instance under `Custom metadata`. From the command line, `gcloud compute project-info add-metadata --metadata enable-oslogin=TRUE` covers every instance in the project at once.
+        OS Login binds each SSH session to the caller's Google identity and to their IAM role grants. Without it, Compute Engine falls back to metadata-based SSH keys, which have to be managed key by key and connect to nothing in the organization's identity governance. The setting is the `enable-oslogin` metadata key with a value of `TRUE`, applied project-wide from the `Metadata` page under Compute Engine, or per instance under `Custom metadata`. From the command line, `gcloud compute project-info add-metadata --metadata enable-oslogin=TRUE` covers every instance in the project at once. The check also passes when the `constraints/compute.requireOsLogin` organization policy constraint is effectively enforced for the project, including when that enforcement is inherited from a parent folder or the organization.
 
         **Why this matters**
 
@@ -1056,7 +1056,9 @@ queries:
         title: Google Compute Engine Security
   - uid: mondoo-gcp-security-compute-instances-oslogin-enabled-gcp
     filters: asset.platform == 'gcp-compute-instance'
-    mql: gcp.compute.instance.metadata['enable-oslogin'] == true
+    mql: |
+      gcp.compute.instance.metadata['enable-oslogin'] == true ||
+      gcp.project.effectiveOrgPolicy(constraint: "constraints/compute.requireOsLogin").enforced == true
   - uid: mondoo-gcp-security-compute-instances-oslogin-enabled-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_instance' || nameLabel == 'google_compute_project_metadata')
@@ -19786,7 +19788,7 @@ queries:
       desc: |
         This check verifies that a preventive guardrail governs which Compute Engine instances are allowed to carry a public address.
 
-        The `constraints/compute.vmExternalIpAccess` organization policy constraint decides, at resource creation time, whether an instance may be given an external IP. On the **IAM & Admin > Organization Policies** page it appears as **Define allowed external IPs for VM instances**, and `gcloud resource-manager org-policies describe compute.vmExternalIpAccess --project=PROJECT_ID` returns it. This check requires the constraint to be configured for the project.
+        The `constraints/compute.vmExternalIpAccess` organization policy constraint decides, at resource creation time, whether an instance may be given an external IP. On the **IAM & Admin > Organization Policies** page it appears as **Define allowed external IPs for VM instances**, and `gcloud resource-manager org-policies describe compute.vmExternalIpAccess --project=PROJECT_ID` returns it. This check requires the effective policy to deny external IP addresses. Effective policy is evaluated with inheritance applied, so a constraint set on a parent folder or the organization counts even when it is not declared on the project itself, and a policy that is present without denying external IPs does not satisfy the control.
 
         **Why this matters**
 
@@ -19883,7 +19885,7 @@ queries:
   - uid: mondoo-gcp-security-org-policy-vm-external-ip-restricted-gcp
     filters: asset.platform == 'gcp-project'
     mql: |
-      gcp.project.orgPolicies.where(constraintName == "constraints/compute.vmExternalIpAccess").length > 0
+      gcp.project.effectiveOrgPolicy(constraint: "constraints/compute.vmExternalIpAccess").denyAll == true
   - uid: mondoo-gcp-security-org-policy-vm-external-ip-restricted-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_org_policy_policy')
@@ -19944,7 +19946,7 @@ queries:
       desc: |
         This check verifies that interactive serial console access to VMs is blocked by a constraint that instance owners cannot override.
 
-        The `constraints/compute.disableSerialPortAccess` organization policy constraint is not enforced by default, which leaves any project member with sufficient permissions free to enable serial port access on an individual instance. On the **IAM & Admin > Organization Policies** page the constraint appears as **Disable VM serial port access**, and this check requires its enforcement to be **On**, reported by `gcloud resource-manager org-policies describe compute.disableSerialPortAccess` as `booleanPolicy.enforced: true`.
+        The `constraints/compute.disableSerialPortAccess` organization policy constraint is not enforced by default, which leaves any project member with sufficient permissions free to enable serial port access on an individual instance. On the **IAM & Admin > Organization Policies** page the constraint appears as **Disable VM serial port access**, and this check requires its enforcement to be **On**, reported by `gcloud resource-manager org-policies describe compute.disableSerialPortAccess` as `booleanPolicy.enforced: true`. Enforcement is read from the effective policy, so a constraint set on a parent folder or the organization counts even when it is not declared on the project itself.
 
         **Why this matters**
 
@@ -20016,7 +20018,7 @@ queries:
   - uid: mondoo-gcp-security-org-policy-serial-port-disabled-gcp
     filters: asset.platform == 'gcp-project'
     mql: |
-      gcp.project.orgPolicies.where(constraintName == "constraints/compute.disableSerialPortAccess").any(enforced)
+      gcp.project.effectiveOrgPolicy(constraint: "constraints/compute.disableSerialPortAccess").enforced == true
   - uid: mondoo-gcp-security-org-policy-serial-port-disabled-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_org_policy_policy')
@@ -20087,7 +20089,7 @@ queries:
       desc: |
         This check verifies that Cloud Storage authorization is confined to IAM across the project, with legacy per-object access control lists ruled out at creation time.
 
-        The `constraints/storage.uniformBucketLevelAccess` organization policy constraint is not enforced by default, so buckets may mix IAM policies with object-level ACLs. On the **IAM & Admin > Organization Policies** page the constraint appears as **Enforce uniform bucket-level access**, and this check requires enforcement to be **On**, which `gcloud resource-manager org-policies describe storage.uniformBucketLevelAccess` reports as `booleanPolicy.enforced: true`.
+        The `constraints/storage.uniformBucketLevelAccess` organization policy constraint is not enforced by default, so buckets may mix IAM policies with object-level ACLs. On the **IAM & Admin > Organization Policies** page the constraint appears as **Enforce uniform bucket-level access**, and this check requires enforcement to be **On**, which `gcloud resource-manager org-policies describe storage.uniformBucketLevelAccess` reports as `booleanPolicy.enforced: true`. Enforcement is read from the effective policy, so a constraint set on a parent folder or the organization counts even when it is not declared on the project itself.
 
         **Why this matters**
 
@@ -20159,7 +20161,7 @@ queries:
   - uid: mondoo-gcp-security-org-policy-uniform-bucket-level-access-gcp
     filters: asset.platform == 'gcp-project'
     mql: |
-      gcp.project.orgPolicies.where(constraintName == "constraints/storage.uniformBucketLevelAccess").any(enforced)
+      gcp.project.effectiveOrgPolicy(constraint: "constraints/storage.uniformBucketLevelAccess").enforced == true
   - uid: mondoo-gcp-security-org-policy-uniform-bucket-level-access-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_org_policy_policy')
@@ -38516,9 +38518,9 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check verifies that no principal can act as or mint tokens for a service account, meaning its resource-level IAM policy grants none of `roles/iam.serviceAccountTokenCreator`, `roles/iam.serviceAccountUser`, or `roles/iam.workloadIdentityUser`.
+        This check verifies that no principal can act as or mint tokens for a service account through `roles/iam.serviceAccountTokenCreator`, `roles/iam.serviceAccountUser`, or `roles/iam.workloadIdentityUser`, whether that role is granted on the account's own IAM policy or inherited from the enclosing project, folder, or organization.
 
-        Those grants appear on the **Permissions** tab of each account under **IAM & Admin > Service Accounts** as **Service Account Token Creator**, **Service Account User**, and **Workload Identity User**. From the CLI, `gcloud iam service-accounts get-iam-policy` returns the bindings. A passing account lists none of the three.
+        Those grants appear on the **Permissions** tab of each account under **IAM & Admin > Service Accounts** as **Service Account Token Creator**, **Service Account User**, and **Workload Identity User**. From the CLI, `gcloud iam service-accounts get-iam-policy` returns the bindings written directly on the account. Detection also runs a Cloud Asset Inventory effective-access analysis, so a grant bound above the account, most commonly `roles/iam.serviceAccountUser` at the project level, and a grant that reaches a member through group expansion are both caught. A passing account is reachable through none of the three roles.
 
         **Why this matters**
 
@@ -38584,6 +38586,7 @@ queries:
     filters: asset.platform == 'gcp-iam-service-account'
     mql: |
       gcp.project.iam.serviceAccount.canBeImpersonated == false
+      gcp.project.iam.serviceAccount.impersonators == empty
   - uid: mondoo-gcp-security-iam-service-account-not-impersonatable-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_service_account_iam_member' || nameLabel == 'google_service_account_iam_binding')
