@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-okta-security
     name: Mondoo Okta Organization Security
-    version: 2.3.6
+    version: 2.3.7
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -53,6 +53,7 @@ policies:
       - title: Application Authentication
         checks:
           - uid: mondoo-okta-security-okta-auth-openid-saml
+          - uid: mondoo-okta-security-app-refresh-tokens-short-lived
       - title: Trusted Origins
         checks:
           - uid: mondoo-okta-security-trusted-origins-https
@@ -976,6 +977,92 @@ queries:
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains( providerName == /okta/ )
     mql: |
       terraform.plan.resourceChanges.any( type == /okta_idp_oidc/ || type == /okta_app_saml/ || type == /okta_app_oauth/ )
+  # No Terraform variants: outstanding OAuth 2.0 refresh tokens are runtime state
+  # minted by the authorization server, not a configurable resource, so Terraform
+  # HCL, plan, and state have no analog to assert against.
+  - uid: mondoo-okta-security-app-refresh-tokens-short-lived
+    title: Ensure application OAuth refresh tokens are short-lived
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: false
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: false
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-okta-security-app-refresh-tokens-short-lived-api
+        tags:
+          mondoo.com/filter-title: Okta Organization
+          mondoo.com/filter-icon: okta
+    docs:
+      desc: |
+        This check ensures that outstanding OAuth 2.0 refresh tokens Okta has issued for applications either carry an expiration or expire within a bounded window. A refresh token is standing access: for as long as it lives, the application can silently mint new access tokens carrying the token's scopes with the user no longer present, so a token that never expires or is valid for years outlasts the session, the password change, and even the application assignment that produced it.
+
+        **Why this matters**
+
+        - **Refresh tokens are standing access:** A live refresh token keeps producing access tokens without any user interaction, so its lifetime is the real window of exposure if it leaks.
+        - **Long lifetimes defeat revocation hygiene:** A token valid for years survives password resets, offboarding, and access reviews, leaving access that no one remembers to revoke.
+        - **Scope is inherited silently:** The access tokens minted from a refresh token carry its OAuth scopes, so a broadly scoped standing token quietly reaches everything those scopes allow.
+
+        **Risk mitigation**
+
+        - **Bound refresh token lifetime:** Configure the authorization server so refresh tokens expire, and keep the maximum lifetime short.
+        - **Revoke standing tokens:** Revoke outstanding refresh tokens for applications that no longer need them, especially broadly scoped ones tied to departed users.
+      audit: |
+        ### Audit via Admin Console
+
+        1. In the Admin Console, go to **Security > API > Authorization Servers**.
+        2. Open each authorization server and review its **Access Policies** and token lifetime rules for refresh tokens.
+        3. For a given application, review the outstanding grants and tokens under the application's **Okta API Scopes** and sign-on activity.
+
+        A passing result shows refresh tokens configured with a bounded expiration; a failing result shows tokens that never expire or remain valid for very long periods.
+
+        ### Audit via API
+
+        Query the Okta API and inspect the result:
+
+        ```bash
+        curl -s -H "Authorization: SSWS $OKTA_API_TOKEN" \
+          "https://$OKTA_ORG.okta.com/api/v1/apps/{appId}/tokens"
+        ```
+
+        For each returned token, inspect `status`, `expiresAt`, and `scopes`. A passing response shows active tokens with an `expiresAt` inside your approved window; a failing response shows an active token with no `expiresAt` or one set far in the future.
+      remediation:
+        - id: console
+          desc: |
+            ### Shorten refresh token lifetime and revoke standing tokens
+
+            1. In the Admin Console, go to **Security > API > Authorization Servers** and open the authorization server that issues the application's tokens.
+            2. Edit the access policy rule and set a bounded **Refresh token lifetime**, and require that refresh tokens expire if left unused.
+            3. Go to **Applications > Applications**, open the application, and revoke outstanding grants and tokens that are no longer needed, prioritizing broadly scoped tokens and tokens issued for departed users.
+            4. Review outstanding refresh tokens on a recurring schedule so long-lived grants are revoked promptly.
+        - id: api
+          desc: |
+            ### Revoke an outstanding refresh token through the API
+
+            Revoke a specific standing refresh token by its id:
+
+            ```bash
+            curl -s -X DELETE -H "Authorization: SSWS $OKTA_API_TOKEN" \
+              "https://$OKTA_ORG.okta.com/api/v1/apps/{appId}/tokens/{tokenId}"
+            ```
+    refs:
+      - url: https://developer.okta.com/docs/guides/refresh-tokens/main/
+        title: Refresh tokens and their lifetime
+      - url: https://help.okta.com/en-us/content/topics/security/security-home.htm
+        title: Okta Security Administration
+  - uid: mondoo-okta-security-app-refresh-tokens-short-lived-api
+    filters: asset.platform == "okta-org"
+    mql: |
+      okta.applications.all(tokens.all(status == "REVOKED" || expiresAt != empty && expiresAt < time.now + 90 * time.day))
   - uid: mondoo-okta-security-enable-suspicious-activity-reporting
     title: Enable Suspicious Activity Reporting
     impact: 80
