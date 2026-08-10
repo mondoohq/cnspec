@@ -876,3 +876,57 @@ queries:
 		require.Equal(t, string(llxtypes.String), query.Props[0].Type)
 	}
 }
+
+func TestProps_ImplicitPropsOrderIsDeterministic(t *testing.T) {
+	// Compiling a query appends to the `for` list of every policy property it
+	// implicitly references, so the `for` order is a function of the order in
+	// which queries get compiled. That order used to be seeded from a map, which
+	// Go deliberately randomizes, so the same bundle compiled twice could produce
+	// two different `for` orders. Repeat the compile to catch a reintroduction:
+	// a single run reproduced the old bug only about one time in ten.
+	bundleYaml := `
+policies:
+  - uid: example1
+    name: Example policy 1
+    version: "1.0.0"
+    groups:
+      - title: group1
+        filters: return true
+        checks:
+          - uid: check-1
+          - uid: check-2
+          - uid: check-3
+    props:
+      - uid: crontabDir
+        mql: return "/etc/cron.d"
+
+queries:
+  - uid: check-1
+    mql: props.crontabDir != ""
+  - uid: check-2
+    mql: props.crontabDir == "/etc/cron.d"
+  - uid: check-3
+    mql: props.crontabDir != "/tmp"`
+
+	compileOrder := func() []string {
+		b, err := policy.BundleFromYAML([]byte(bundleYaml))
+		require.NoError(t, err)
+		_, err = b.CompileExt(context.Background(), policy.BundleCompileConf{
+			CompilerConfig: conf,
+		})
+		require.NoError(t, err)
+
+		require.Len(t, b.Policies[0].Props, 1)
+		order := []string{}
+		for _, ref := range b.Policies[0].Props[0].For {
+			order = append(order, ref.Mrn)
+		}
+		return order
+	}
+
+	want := compileOrder()
+	require.Len(t, want, 3)
+	for i := 0; i < 25; i++ {
+		require.Equal(t, want, compileOrder(), "property `for` order changed between compiles of the same bundle")
+	}
+}

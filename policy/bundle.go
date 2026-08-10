@@ -706,10 +706,17 @@ func topologicalSortQueries(queries []*Mquery) ([]*Mquery, error) {
 		queriesMap[q.Mrn] = q
 	}
 
-	// Topologically sort the queries
+	// Topologically sort the queries. Seed the traversal from the input slice,
+	// not from queriesMap: Go randomizes map iteration order, so seeding from
+	// the map makes the resulting compile order differ between runs. Compile
+	// order is observable, because compiling a query appends to the `for` list
+	// of any policy property it implicitly references.
 	sorted := &Mqueries{}
 	visited := map[string]struct{}{}
-	for _, q := range queriesMap {
+	for _, q := range queries {
+		if q == nil {
+			continue
+		}
 		err := topologicalSortQueriesDFS(q.Mrn, queriesMap, visited, sorted)
 		if err != nil {
 			return nil, err
