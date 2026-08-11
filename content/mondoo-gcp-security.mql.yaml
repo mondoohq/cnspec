@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-gcp-security
     name: Mondoo Google Cloud (GCP) Security
-    version: 9.8.0
+    version: 9.9.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -140,6 +140,7 @@ policies:
           - uid: mondoo-gcp-security-firewall-no-egress-all-ports
           - uid: mondoo-gcp-security-firewall-no-large-port-range
           - uid: mondoo-gcp-security-firewall-default-rules-restricted
+          - uid: mondoo-gcp-security-hierarchical-firewall-policy-no-unrestricted-ingress
       - title: Compute Network
         checks:
           - uid: mondoo-gcp-security-compute-network-not-legacy
@@ -321,6 +322,7 @@ policies:
           - uid: mondoo-gcp-security-dataproc-cluster-no-default-service-account
           - uid: mondoo-gcp-security-dataproc-cluster-iam-no-public-principals
           - uid: mondoo-gcp-security-dataproc-cluster-iam-no-primitive-roles
+          - uid: mondoo-gcp-security-dataproc-cluster-ssh-disabled
       - title: Artifact Registry
         checks:
           - uid: mondoo-gcp-security-artifact-registry-repository-cmek-encryption
@@ -14140,6 +14142,105 @@ queries:
         values.cluster_config != empty &&
         values.cluster_config.all(_['gce_cluster_config'] != empty && _['gce_cluster_config'].all(_['internal_ip_only'] == true))
       )
+  # No Terraform variants: the identity SSH-enable setting is fixed at cluster creation through the
+  # Dataproc API and the google_dataproc_cluster resource exposes no equivalent argument, so there is
+  # no configuration surface for an HCL/plan/state variant to assert against.
+  - uid: mondoo-gcp-security-dataproc-cluster-ssh-disabled
+    title: Ensure SSH access to Dataproc cluster nodes is disabled
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: false
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: false
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-gcp-security-dataproc-cluster-ssh-disabled-gcp
+        tags:
+          mondoo.com/filter-title: GCP Dataproc Cluster
+          mondoo.com/filter-icon: gcp
+    docs:
+      desc: |
+        This check ensures that interactive SSH access to a Dataproc cluster's Compute Engine nodes is disabled, so operators reach the cluster through the Dataproc jobs API rather than by opening shell sessions on the data-plane VMs. Whether node SSH is on by default depends on the image version (enabled before image version 3.1, disabled from 3.1 onward), and the setting is fixed when the cluster is created.
+
+        **Why this matters**
+
+        - **Data-plane exposure:** An open SSH path to cluster nodes lets anyone who reaches them read the data the cluster is processing and use the credentials its service account holds, bypassing the controls that mediate the jobs API.
+        - **Lateral movement:** A shell on a worker node is a foothold inside the VPC from which an attacker can pivot to other internal services the cluster can reach.
+        - **Weakened auditability:** Work performed over an interactive SSH session is not captured by the Dataproc jobs API audit trail, so activity on the nodes is far less attributable than submitted jobs.
+
+        **Risk mitigation**
+
+        - **Disable node SSH at creation:** Create clusters with SSH access to nodes turned off; the setting cannot be changed after the cluster exists, so it must be chosen at creation time.
+        - **Use the jobs API for all work:** Submit workloads through the Dataproc jobs API or Workflow Templates instead of connecting to nodes directly.
+        - **Constrain the network path:** Give nodes internal IP addresses only and use firewall rules or Identity-Aware Proxy so that even permitted operators cannot reach TCP 22 from outside the VPC.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the [Google Cloud Console](https://console.cloud.google.com) and select the project.
+        2. Navigate to **Dataproc > Clusters**.
+        3. Select a cluster name to open its details page.
+        4. Click the **Configuration** tab and review the security configuration for SSH access to cluster nodes.
+        5. Repeat for each cluster.
+
+        A passing cluster shows SSH access to nodes disabled. A failing cluster shows SSH access to nodes enabled, meaning operators can open shell sessions on the data-plane VMs.
+
+        ### Audit via CLI
+
+        1. Describe each Dataproc cluster and check the node SSH setting:
+
+        ```bash
+        gcloud dataproc clusters describe CLUSTER_NAME \
+          --region=REGION \
+          --format="value(config.securityConfig.identityConfig.enableSsh)"
+        ```
+
+        A passing cluster returns an empty value or `False`. A failing cluster returns `True`.
+      remediation:
+        - id: console
+          desc: |
+            The node SSH setting is fixed when a Dataproc cluster is created, so remediation means recreating the cluster with SSH access disabled. Using the Google Cloud Console:
+
+            1. Navigate to **Dataproc > Clusters** and record the configuration of the affected cluster.
+            2. Select **Create Cluster** and reproduce that configuration.
+            3. Under the cluster's security and network configuration, disable SSH access to nodes and select **Internal IP only**.
+            4. Create the new cluster, migrate workloads to it, then delete the affected cluster.
+        - id: cli
+          desc: |
+            Because the node SSH setting cannot be changed on an existing cluster, delete and recreate the cluster with internal IP addresses only, and block SSH at the network layer as a compensating control. Using the Google Cloud CLI:
+
+            ```bash
+            gcloud dataproc clusters delete CLUSTER_NAME \
+              --region=REGION
+            ```
+
+            ```bash
+            gcloud dataproc clusters create CLUSTER_NAME \
+              --region=REGION \
+              --no-address
+            ```
+
+            ```bash
+            gcloud compute firewall-rules create deny-dataproc-ssh \
+              --network=NETWORK \
+              --direction=INGRESS \
+              --action=DENY \
+              --rules=tcp:22 \
+              --target-tags=dataproc
+            ```
+        # No Terraform remediation: the node SSH-enable setting is fixed at cluster creation through the Dataproc API and the google_dataproc_cluster resource exposes no equivalent argument.
+  - uid: mondoo-gcp-security-dataproc-cluster-ssh-disabled-gcp
+    filters: asset.platform == 'gcp-dataproc-cluster'
+    mql: |
+      gcp.project.dataprocService.cluster.config.sshEnabled == false
   - uid: mondoo-gcp-security-dataproc-cluster-shielded-vms
     title: Ensure Dataproc clusters have Shielded VM features enabled
     impact: 60
@@ -24911,6 +25012,128 @@ queries:
       ).all(
         values['allow'].all(
           _['ports'] == empty || _['ports'].none(_ == /^\d{1,4}-6553[0-5]$/)
+        )
+      )
+  # No Terraform variants: the finding depends on the org/folder association that puts a hierarchical
+  # policy in force, which is a separate resource (google_compute_firewall_policy_association) from the
+  # rule; a per-module HCL/plan/state variant cannot see whether the rule is actually associated, so it
+  # would report on rules that enforce nothing. Terraform remediation is still provided below.
+  - uid: mondoo-gcp-security-hierarchical-firewall-policy-no-unrestricted-ingress
+    title: Ensure hierarchical firewall policies do not allow unrestricted ingress
+    impact: 90
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: false
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: false
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-gcp-security-hierarchical-firewall-policy-no-unrestricted-ingress-gcp
+        tags:
+          mondoo.com/filter-title: GCP Organization
+          mondoo.com/filter-icon: gcp
+    docs:
+      desc: |
+        This check ensures that hierarchical firewall policies attached to the organization do not contain an allow rule that admits ingress traffic from the entire internet (`0.0.0.0/0` or `::/0`). Hierarchical firewall policy rules are evaluated ahead of every project-level firewall rule and cannot be overridden from inside a project, so a permissive rule here silently admits traffic to workloads across every project beneath the node it is attached to. Only policies that are actually associated with a node are evaluated, because an unassociated policy enforces nothing regardless of its rules.
+
+        **Why this matters**
+
+        - **Organization-wide blast radius:** A rule in a hierarchical policy applies to every project, network, and instance beneath the node it is attached to, so a single over-broad allow rule exposes the entire hierarchy at once.
+        - **Invisible to project reviews:** These rules never appear in an individual project's own firewall list, so a per-project firewall audit passes while traffic is admitted by a rule the project cannot see or change.
+        - **Precedence over local controls:** Because hierarchical rules are evaluated first and cannot be overridden downstream, a project team cannot close the hole by tightening its own firewall rules.
+
+        **Risk mitigation**
+
+        - **Scope source ranges:** Replace `0.0.0.0/0` and `::/0` in allow rules with the specific CIDR ranges that genuinely require access.
+        - **Keep hierarchical policies restrictive:** Enforce deny-by-default at the organization and folder level and delegate narrowly scoped allow rules to the projects that own the workloads.
+        - **Review associations:** Confirm which organizations and folders each policy is attached to, since an associated policy governs everything beneath it.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the [Google Cloud Console](https://console.cloud.google.com).
+        2. Navigate to **VPC network > Firewall policies**.
+        3. Select each hierarchical firewall policy associated with the organization or a folder.
+        4. Review its rules for any rule whose action is **Allow**, direction is **Ingress**, and source IP range is `0.0.0.0/0` or `::/0`.
+        5. Confirm the policy is associated with a node; an unassociated policy has no effect.
+
+        A passing configuration shows no associated hierarchical policy with an allow ingress rule open to `0.0.0.0/0` or `::/0`. A failing configuration shows one or more such rules.
+
+        ### Audit via CLI
+
+        1. List the firewall policies defined for the organization:
+
+        ```bash
+        gcloud compute firewall-policies list \
+          --organization=ORGANIZATION_ID
+        ```
+
+        2. Describe a policy to inspect its rules and associations:
+
+        ```bash
+        gcloud compute firewall-policies describe POLICY_NAME \
+          --organization=ORGANIZATION_ID
+        ```
+
+        A passing policy has no allow ingress rule with a source range of `0.0.0.0/0` or `::/0`. A failing policy has one or more.
+      remediation:
+        - id: console
+          desc: |
+            To remove unrestricted ingress from a hierarchical firewall policy using the Google Cloud Console:
+
+            1. Navigate to **VPC network > Firewall policies**.
+            2. Select the policy and locate the allow ingress rule with a source range of `0.0.0.0/0` or `::/0`.
+            3. Select **Edit** on that rule.
+            4. Replace the open source range with the specific CIDR ranges that require access, or change the action to **Deny**.
+            5. Select **Save**.
+        - id: cli
+          desc: |
+            To restrict the source ranges of a hierarchical firewall policy rule using the Google Cloud CLI:
+
+            ```bash
+            gcloud compute firewall-policies rules update PRIORITY \
+              --firewall-policy=POLICY_NAME \
+              --organization=ORGANIZATION_ID \
+              --src-ip-ranges=10.0.0.0/8
+            ```
+
+            Replace `PRIORITY` with the offending rule's priority and `--src-ip-ranges` with the specific ranges that require access.
+        - id: terraform
+          desc: |
+            To restrict a hierarchical firewall policy rule in Terraform, set specific source ranges instead of the open internet:
+
+            ```hcl
+            resource "google_compute_firewall_policy_rule" "allow_internal_https" {
+              firewall_policy = google_compute_firewall_policy.example.id
+              priority        = 1000
+              direction       = "INGRESS"
+              action          = "allow"
+
+              match {
+                layer4_configs {
+                  ip_protocol = "tcp"
+                  ports       = ["443"]
+                }
+                src_ip_ranges = ["10.0.0.0/8"]
+              }
+            }
+            ```
+    refs:
+      - url: https://cloud.google.com/firewall/docs/firewall-policies
+        title: Hierarchical firewall policies
+  - uid: mondoo-gcp-security-hierarchical-firewall-policy-no-unrestricted-ingress-gcp
+    filters: asset.platform == 'gcp-org'
+    mql: |
+      gcp.organization.firewallPolicies.where(associations != empty).all(
+        rules.where(action == "allow" && direction == "INGRESS").all(
+          srcIpRanges == empty || srcIpRanges.none(_ == "0.0.0.0/0" || _ == "::/0")
         )
       )
   - uid: mondoo-gcp-security-firewall-default-rules-restricted
