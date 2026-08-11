@@ -101,14 +101,7 @@ func doScanUpload(ctx context.Context, resolver uploadResolver, scanDataPath, as
 			// class. Always worth another attempt.
 			return true, 0, err
 		}
-		// Drain before Close on every path: the transport can only recycle a
-		// connection whose body was read to EOF, and with no api_proxy set
-		// UploadFile runs on http.DefaultTransport's process-wide pool. An
-		// undrained body would cost a pooled connection per scan.
-		defer func() {
-			_, _ = io.Copy(io.Discard, res.Response.Body)
-			res.Response.Body.Close()
-		}()
+		defer drainAndClose(res.Response.Body)
 
 		if res.Response.StatusCode != http.StatusOK && res.Response.StatusCode != http.StatusCreated {
 			// Truncate to 512 bytes to avoid leaking sensitive details. The
@@ -167,6 +160,17 @@ func doScanUpload(ctx context.Context, resolver uploadResolver, scanDataPath, as
 	}
 
 	return out, nil
+}
+
+// drainAndClose reads a response body to EOF before closing it. Go's transport
+// only recycles a connection whose body was fully consumed, and with no
+// api_proxy configured UploadFile runs on http.DefaultTransport's process-wide
+// pool — so a body left undrained costs a pooled connection on every scan.
+// Errors are ignored deliberately: this runs on the way out and must not mask
+// the upload's own result.
+func drainAndClose(body io.ReadCloser) {
+	_, _ = io.Copy(io.Discard, body)
+	_ = body.Close()
 }
 
 // uploadReportKind selects which client report an outcome becomes. The values
