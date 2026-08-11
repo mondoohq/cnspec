@@ -1,0 +1,120 @@
+# Copyright Mondoo, Inc. 2024, 2026
+# SPDX-License-Identifier: BUSL-1.1
+
+packs:
+  - uid: mondoo-aix-inventory
+    name: AIX Inventory Pack
+    version: 1.0.0
+    license: BUSL-1.1
+    require:
+      - provider: os
+    authors:
+      - name: Mondoo, Inc
+        email: hello@mondoo.com
+    tags:
+      mondoo.com/platform: aix
+      mondoo.com/category: best-practices
+    summary: Inventory AIX host OS, packages, services, and network exposure
+    docs:
+      desc: |
+        Inventories an AIX host: OS and platform details, users and groups, installed base operating system filesets, System Resource Controller subsystems, and network exposure including listening sockets and active connections.
+
+        Enable this query pack in [Mondoo Platform](https://mondoo.com/platform) to automatically inventory your AIX hosts, or scan a host manually with cnspec:
+
+        ```bash
+        cnspec scan ssh user@host -f mondoo-aix-inventory.mql.yaml
+        ```
+    groups:
+      - uid: mondoo-aix-inventory-system-group
+        title: System
+        filters: asset.platform == "aix"
+        queries:
+          - uid: mondoo-aix-asset-info
+            title: Asset information
+            docs:
+              desc: "Returns core asset identity: kind, title, platform, name, architecture, runtime, and version."
+            mql: asset { kind title platform name arch runtime version }
+          - uid: mondoo-aix-hostname
+            title: Hostname
+            docs:
+              desc: Returns the host's configured hostname.
+            mql: os.hostname
+          - uid: mondoo-aix-uptime
+            title: Operating system uptime
+            docs:
+              desc: Returns the time elapsed since the last boot.
+            filters: mondoo.capabilities.contains("run-command")
+            mql: os.uptime
+          - uid: mondoo-aix-oslevel
+            title: Maintenance level
+            docs:
+              desc: Returns the technology level of the installed base operating system, as reported by oslevel.
+            filters: mondoo.capabilities.contains("run-command")
+            mql: command("oslevel -s").stdout.trim
+      - uid: mondoo-aix-inventory-users-group
+        title: Users & Groups
+        filters: asset.platform == "aix"
+        queries:
+          - uid: mondoo-aix-users
+            title: Users
+            docs:
+              desc: Lists local user accounts with their UID, GID, shell, and home directory.
+            mql: users { uid gid name home shell }
+          - uid: mondoo-aix-groups
+            title: Groups
+            docs:
+              desc: Lists local groups with their GID and members.
+            mql: groups { gid name members }
+      - uid: mondoo-aix-inventory-packages-group
+        title: Packages
+        filters: asset.platform == "aix"
+        queries:
+          - uid: mondoo-aix-packages
+            title: Installed packages
+            docs:
+              desc: Lists installed base operating system filesets, as reported by lslpp.
+            mql: packages { name version arch origin }
+      - uid: mondoo-aix-inventory-processes-services-group
+        title: Processes & Services
+        filters: asset.platform == "aix"
+        queries:
+          - uid: mondoo-aix-processes
+            title: Running processes
+            docs:
+              desc: Lists running processes with their PID, command, and flags.
+            filters: mondoo.capabilities.contains("run-command")
+            mql: processes { pid command flags }
+          - uid: mondoo-aix-running-services
+            title: Running services
+            docs:
+              desc: Lists active System Resource Controller subsystems, as reported by lssrc.
+            filters: mondoo.capabilities.contains("run-command")
+            mql: services.where(running == true) { name running enabled masked type }
+      - uid: mondoo-aix-inventory-network-group
+        title: Network
+        filters: asset.platform == "aix"
+        queries:
+          - uid: mondoo-aix-listening-ports
+            title: Listening ports
+            docs:
+              desc: |
+                Lists listening network ports with their protocol, address, and state.
+
+                AIX reports sockets through netstat, which names no owning process (mapping a socket to a PID requires rmsock, which is root-only and costs one exec per socket), so `user` and `process` are null on this platform.
+            filters: mondoo.capabilities.contains("run-command")
+            mql: ports.listening { user state port address protocol process remoteAddress remotePort }
+          - uid: mondoo-aix-active-connections
+            title: Active network connections
+            docs:
+              desc: |
+                Lists network connections that are not closed, with their protocol, address, and state.
+
+                UDP sockets appear here with an empty state: AIX reports no state column for UDP because the protocol is stateless.
+            filters: mondoo.capabilities.contains("run-command")
+            mql: ports.where(state != "close") { user state port address protocol process remoteAddress remotePort }
+          - uid: mondoo-aix-interface-configuration
+            title: Network interface configuration
+            docs:
+              desc: Returns the configuration of all network interfaces, as reported by ifconfig.
+            filters: mondoo.capabilities.contains("run-command")
+            mql: command("ifconfig -a").stdout
