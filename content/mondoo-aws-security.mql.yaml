@@ -284,6 +284,7 @@ policies:
           - uid: mondoo-aws-security-ecs-task-definition-no-plaintext-secrets
           - uid: mondoo-aws-security-ecs-init-process-enabled
           - uid: mondoo-aws-security-ecs-container-no-public-ip
+          - uid: mondoo-aws-security-ecs-service-not-internet-reachable
           - uid: mondoo-aws-security-ecs-container-no-latest-tag
           - uid: mondoo-aws-security-ecs-container-image-from-ecr
           - uid: mondoo-aws-security-ecs-container-supported-fargate-version
@@ -56008,10 +56009,142 @@ queries:
   # representation. Terraform remediation is still provided because the fix lives in
   # the ECS service network configuration.
   - uid: mondoo-aws-security-ecs-container-no-public-ip
+    title: Ensure ECS containers are not assigned public IP addresses
+    impact: 80
+    filters: asset.platform == "aws"
+    mql: |
+      aws.ecs.containers.all(publicIp == empty)
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-06
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-5
+      compliance/pci-dss-4: pcidss-requirement-1-4-2
+      compliance/soc2-2017: soc2-control-cc6-1-5
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    docs:
+      desc: |
+        This check ensures that running Amazon ECS containers are not reachable through a directly attached public IP address. When a task's `awsvpcConfiguration` sets `assignPublicIp` to `ENABLED`, the task's elastic network interface receives a public IP and becomes directly addressable from the internet, bypassing the protection of private subnets and NAT.
+
+        **Why this matters**
+
+        - **Direct internet exposure:** A public IP places the container's listening ports one security-group rule away from the entire internet, dramatically enlarging the attack surface.
+        - **Bypassed network controls:** Public-facing tasks sidestep the layered defenses (load balancers, WAF, private routing) that front-door traffic is normally forced through.
+        - **Data exfiltration path:** A compromised task with a public address can both receive inbound connections and establish outbound channels without traversing inspected egress points.
+
+        **Risk mitigation**
+
+        - **Network isolation:** Running tasks in private subnets keeps workloads unreachable from the internet except through controlled ingress points.
+        - **Controlled ingress:** Routing external traffic through a load balancer or API gateway centralizes TLS termination, authentication, and request filtering.
+        - **Reduced blast radius:** Removing public addressability limits an attacker's ability to reach a task directly and to pivot outward from it.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the AWS Management Console and navigate to **Amazon ECS**.
+        2. Select a cluster, then open the **Tasks** tab and select a running task.
+        3. In the **Configuration** section, review the **Network** details for the task's public IP.
+        4. Repeat for each running task in every cluster.
+
+        A passing task shows no public IP assigned. A failing task shows a public IPv4 address attached to its elastic network interface.
+
+        ### Audit via CLI
+
+        1. For each cluster, list running tasks and inspect the attachment details for a public IP:
+
+        ```bash
+        aws ecs list-tasks --cluster <cluster-name> --desired-status RUNNING \
+          --query "taskArns" --output text | tr '\t' '\n' | \
+          xargs -I {} aws ecs describe-tasks --cluster <cluster-name> --tasks {} \
+          --query "tasks[].attachments[].details[?name=='networkInterfaceId'].value"
+        ```
+
+        2. For each returned network interface ID, check whether a public IP is associated:
+
+        ```bash
+        aws ec2 describe-network-interfaces --network-interface-ids <eni-id> \
+          --query "NetworkInterfaces[].Association.PublicIp"
+        ```
+
+        A passing task returns no public IP. A failing task returns a public IPv4 address.
+
+      remediation:
+        - id: console
+          desc: |
+            To remove public IP assignment from ECS tasks using the AWS Console:
+
+            1. Navigate to the Amazon ECS Console and select the service running the affected tasks.
+            2. Choose **Update service**.
+            3. Under **Networking**, place the service in private subnets and set **Public IP** to **Turned off**.
+            4. Save the change and let ECS roll out new tasks without public IP addresses.
+        - id: cli
+          desc: |
+            To disable public IP assignment on an ECS service using the AWS CLI, update the service network configuration and force a new deployment:
+
+            ```bash
+            aws ecs update-service --cluster <cluster-name> --service <service-name> \
+              --network-configuration "awsvpcConfiguration={subnets=[subnet-private1,subnet-private2],securityGroups=[sg-xxxx],assignPublicIp=DISABLED}" \
+              --force-new-deployment
+            ```
+        - id: terraform
+          desc: |
+            To ensure ECS tasks are not assigned public IP addresses in Terraform, set `assign_public_ip` to `false` and use private subnets:
+
+            ```hcl
+            resource "aws_ecs_service" "example" {
+              name            = "example"
+              cluster         = aws_ecs_cluster.example.id
+              task_definition = aws_ecs_task_definition.example.arn
+
+              network_configuration {
+                subnets          = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+                security_groups  = [aws_security_group.example.id]
+                assign_public_ip = false
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To ensure ECS tasks are not assigned public IP addresses in CloudFormation, set `AssignPublicIp` to `DISABLED`:
+
+            ```yaml
+            Resources:
+              Service:
+                Type: "AWS::ECS::Service"
+                Properties:
+                  Cluster: !Ref Cluster
+                  TaskDefinition: !Ref TaskDefinition
+                  NetworkConfiguration:
+                    AwsvpcConfiguration:
+                      AssignPublicIp: "DISABLED"
+                      Subnets:
+                        - !Ref PrivateSubnetA
+                        - !Ref PrivateSubnetB
+                      SecurityGroups:
+                        - !Ref ServiceSecurityGroup
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AmazonECS/latest/developerguide/fargate-task-networking.html
+        title: AWS Documentation - Fargate task networking
+      - url: https://docs.aws.amazon.com/AmazonECS/latest/bestpracticesguide/networking-outbound.html
+        title: AWS Documentation - ECS networking best practices
+  # No Terraform variants: this check evaluates the exposure computed for a live
+  # `aws.ecs.service` (the task's resolved ENI combined with its attached security
+  # groups), which has no Terraform/CloudFormation representation. Terraform
+  # remediation is still provided because the fix lives in the service network
+  # configuration.
+  - uid: mondoo-aws-security-ecs-service-not-internet-reachable
     title: Ensure ECS service tasks are not reachable from the internet
     impact: 80
     filters: asset.platform == "aws"
     mql: |
+      # `exposure` is null for services that do not use awsvpc networking (host/bridge),
+      # where the container instance rather than the task decides reachability.
       aws.ecs.clusters.all(services.all(exposure == null || exposure.internetReachable == false))
     tags:
       compliance/bsi-sys-1-5: false
