@@ -10,7 +10,7 @@ require (
 	github.com/Masterminds/semver v1.5.0
 	github.com/abiosoft/colima v0.10.3
 	github.com/aws/aws-sdk-go-v2/config v1.32.35
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.106.5
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.107.0
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
