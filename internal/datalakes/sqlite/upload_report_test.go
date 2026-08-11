@@ -50,3 +50,37 @@ func TestUploadFailureTags_EmptySessionOmitted(t *testing.T) {
 	assert.False(t, ok, "no session id exists yet for url_request_failed")
 	assert.Equal(t, "url_request_failed", tags["failureKind"])
 }
+
+func TestUploadOutcomeTags_FailureCarriesAttempts(t *testing.T) {
+	out := scanUploadOutcome{
+		sessionID:  "sess-9",
+		attempts:   5,
+		lastKind:   upload.FailureConnectionReset,
+		lastRes:    upload.Result{BytesSent: 229376, Duration: 19403 * time.Millisecond},
+		bytesTotal: 1855488,
+	}
+
+	tags := uploadOutcomeTags(uploadReportKindFailure, out, "//assets/a1")
+
+	assert.Equal(t, "upload_failure", tags["reportKind"])
+	assert.Equal(t, "5", tags["attempts"])
+	assert.Equal(t, "connection_reset", tags["failureKind"])
+	assert.Equal(t, "229376", tags["bytesSent"])
+}
+
+func TestUploadOutcomeTags_RecoveryUsesItsOwnReportKind(t *testing.T) {
+	out := scanUploadOutcome{
+		sessionID:  "sess-9",
+		attempts:   3,
+		lastKind:   upload.FailureConnectionReset,
+		bytesTotal: 1855488,
+	}
+
+	tags := uploadOutcomeTags(uploadReportKindRecovered, out, "//assets/a1")
+
+	assert.Equal(t, "upload_recovered", tags["reportKind"],
+		"a recovery must not be reported as upload_failure — that means a lost scan")
+	assert.Equal(t, "3", tags["attempts"])
+	assert.Equal(t, "connection_reset", tags["failureKind"],
+		"the recovery still says what it was fighting")
+}
