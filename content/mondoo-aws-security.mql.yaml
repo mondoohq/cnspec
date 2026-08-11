@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-aws-security
     name: Mondoo AWS Security
-    version: 12.9.0
+    version: 12.10.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -110,6 +110,8 @@ policies:
           - uid: mondoo-aws-security-iam-users-only-one-access-key
           - uid: mondoo-aws-security-iam-group-has-users-check
           - uid: mondoo-aws-security-iam-group-no-admin-policy
+          - uid: mondoo-aws-security-iam-group-inline-policy-no-wildcard
+          - uid: mondoo-aws-security-iam-group-attached-policy-no-wildcard
           - uid: mondoo-aws-security-iam-group-empty-no-policies
           - uid: mondoo-aws-security-iam-user-no-inline-policies-check
           - uid: mondoo-aws-security-iam-user-console-mfa
@@ -376,6 +378,10 @@ policies:
           - uid: mondoo-aws-security-sagemaker-monitoring-job-network-config
           - uid: mondoo-aws-security-sagemaker-job-role-not-admin
           - uid: mondoo-aws-security-sagemaker-domain-vpc-only
+          - uid: mondoo-aws-security-sagemaker-domain-rootless-docker
+          - uid: mondoo-aws-security-sagemaker-domain-space-role-not-admin
+          - uid: mondoo-aws-security-sagemaker-domain-shared-notebook-cmk-encrypted
+          - uid: mondoo-aws-security-sagemaker-model-artifact-bucket-not-public
           - uid: mondoo-aws-security-sagemaker-endpoint-data-capture-cmk-encryption
       - title: Amazon SageMaker Notebook Instance
         checks:
@@ -557,6 +563,9 @@ policies:
       - title: Amazon Route 53
         checks:
           - uid: mondoo-aws-security-route53-dnssec-enabled
+          - uid: mondoo-aws-security-route53-dnssec-key-signing-keys-active
+          - uid: mondoo-aws-security-route53-public-zone-caa-record
+          - uid: mondoo-aws-security-route53-mail-zone-dmarc-record
           - uid: mondoo-aws-security-route53-query-logging-enabled
           - uid: mondoo-aws-security-route53-private-zone-vpc-associated
           - uid: mondoo-aws-security-route53-health-check-not-disabled
@@ -30488,10 +30497,15 @@ queries:
         title: Configuring DNSSEC signing in Amazon Route 53
   - uid: mondoo-aws-security-route53-dnssec-enabled-aws
     filters: |
-      asset.platform == "aws-route53-hostedzone"
+      asset.platform == "aws-route53-hostedzone" &&
       aws.route53.hostedZone.isPrivate == false
+    # `aws.route53.hostedZone.dnssec` is itself a registered resource, so the bare
+    # dotted path compiles to that resource instead of a field read on the zone,
+    # leaving it unbound and every field null. Bind the zone with a block.
     mql: |
-      aws.route53.hostedZone.dnssec.status == "SIGNING"
+      aws.route53.hostedZone {
+        dnssec.status == "SIGNING"
+      }
   - uid: mondoo-aws-security-route53-dnssec-enabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_route53_zone")
     mql: |
@@ -30505,6 +30519,437 @@ queries:
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_route53_hosted_zone_dnssec")
     mql: |
       terraform.state.resources.where(type == "aws_route53_hosted_zone_dnssec").length > 0
+  # No Terraform variants: the check evaluates the operational status Route 53
+  # reports for each key signing key, which drifts to ACTION_NEEDED or
+  # INTERNAL_FAILURE when the backing KMS key policy or grant breaks. Terraform
+  # records only the requested status, so a variant would report a healthy zone
+  # while signing is failing.
+  - uid: mondoo-aws-security-route53-dnssec-key-signing-keys-active
+    title: Ensure Route 53 DNSSEC key signing keys are active
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-20
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-10
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc6-1-11
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-aws-security-route53-dnssec-key-signing-keys-active-aws
+        tags:
+          mondoo.com/filter-title: AWS Route 53 Hosted Zone
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that every key signing key configured on a public hosted zone reports a status of `ACTIVE`. A key signing key can also report `INACTIVE`, `DELETING`, `ACTION_NEEDED`, or `INTERNAL_FAILURE`.
+
+        Turning DNSSEC signing on is only the first half of the control. The signing chain depends on a customer managed KMS key that Route 53 must be able to use, and on a DS record published in the parent zone. When the KMS key policy changes, when the grant Route 53 relies on is revoked, or when a key rotation is left half finished, the key signing key moves to `ACTION_NEEDED` or `INTERNAL_FAILURE`. Signing status can still read as configured while resolvers receive answers that no longer validate.
+
+        **Why this matters**
+
+        - **A broken chain of trust is worse than none:** validating resolvers may return SERVFAIL for the whole zone, taking the domain offline for a large share of users.
+        - **Failures are silent:** the condition originates in KMS or in the parent zone, so nothing in the Route 53 record view signals it.
+        - **Rotation is the common trigger:** replacing a key signing key leaves an inactive predecessor behind if the DS record is never updated.
+
+        **Risk mitigation**
+
+        - **Preserves origin authentication:** an active key signing key is what lets resolvers detect forged or tampered answers for the zone.
+        - **Surfaces KMS permission drift:** a key that leaves `ACTIVE` is often the first observable symptom of a revoked grant on the signing key.
+      audit: |
+        ### Audit via Console
+
+        1. Open the Amazon Route 53 console and choose **Hosted zones**.
+        2. Select the public hosted zone and open the **DNSSEC signing** tab.
+        3. Review the key signing keys listed for the zone.
+        4. The zone passes when every key signing key shows a status of **Active**. It fails when any key shows **Inactive**, **Action needed**, or **Internal failure**.
+
+        ### Audit via CLI
+
+        1. Retrieve the DNSSEC configuration and key signing keys for the zone:
+
+           ```bash
+           aws route53 get-dnssec --hosted-zone-id <hosted-zone-id>
+           ```
+
+        2. Inspect the `KeySigningKeys` array in the response.
+        3. The zone passes when the `Status` of every entry is `ACTIVE`. Any other value fails the check, and the `StatusMessage` field explains the cause.
+      remediation:
+        - id: console
+          desc: |
+            To restore an active key signing key using the AWS Management Console:
+
+            1. Open the Amazon Route 53 console and choose **Hosted zones**.
+            2. Select the public hosted zone and open the **DNSSEC signing** tab.
+            3. Read the status message on the failing key signing key. When it reports a permission problem, open the AWS KMS console and confirm the key policy allows `dnssec-route53.amazonaws.com` to call `kms:DescribeKey`, `kms:GetPublicKey`, and `kms:Sign`.
+            4. Choose the key signing key and select **Activate** once the underlying cause is resolved.
+            5. If the parent zone still carries a stale DS record, publish the DS record shown under **Establish a chain of trust** with the domain registrar.
+        - id: cli
+          desc: |
+            To restore an active key signing key using the AWS CLI:
+
+            1. Read the current status and status message:
+
+            ```bash
+            aws route53 get-dnssec --hosted-zone-id <hosted-zone-id>
+            ```
+
+            2. Confirm that the KMS key policy permits Route 53 to sign, then activate the key signing key:
+
+            ```bash
+            aws route53 activate-key-signing-key \
+              --hosted-zone-id <hosted-zone-id> \
+              --name <key-signing-key-name>
+            ```
+
+            3. Confirm that the key reports `ACTIVE`:
+
+            ```bash
+            aws route53 get-dnssec --hosted-zone-id <hosted-zone-id>
+            ```
+        - id: terraform
+          desc: |
+            To keep a key signing key active using Terraform, set `status` to `ACTIVE` on the `aws_route53_key_signing_key` resource and enable signing on the zone:
+
+            ```hcl
+            resource "aws_route53_key_signing_key" "example" {
+              hosted_zone_id             = aws_route53_zone.example.id
+              key_management_service_arn = aws_kms_key.dnssec.arn
+              name                       = "example-ksk"
+              status                     = "ACTIVE"
+            }
+
+            resource "aws_route53_hosted_zone_dnssec" "example" {
+              depends_on     = [aws_route53_key_signing_key.example]
+              hosted_zone_id = aws_route53_key_signing_key.example.hosted_zone_id
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To keep a key signing key active using CloudFormation, set `Status` to `ACTIVE` on the `AWS::Route53::KeySigningKey` resource:
+
+            ```yaml
+            Resources:
+              ExampleKeySigningKey:
+                Type: AWS::Route53::KeySigningKey
+                Properties:
+                  HostedZoneId: !Ref ExampleHostedZone
+                  KeyManagementServiceArn: !GetAtt DnssecKey.Arn
+                  Name: example-ksk
+                  Status: ACTIVE
+
+              ExampleDnssec:
+                Type: AWS::Route53::DNSSEC
+                DependsOn: ExampleKeySigningKey
+                Properties:
+                  HostedZoneId: !Ref ExampleHostedZone
+            ```
+      refs:
+        - url: https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/dns-configuring-dnssec.html
+          title: Configuring DNSSEC signing in Amazon Route 53
+        - url: https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/dnssec-troubleshoot.html
+          title: Troubleshooting DNSSEC signing in Amazon Route 53
+  # No Terraform variants: hosted zone records are frequently managed outside the
+  # configuration that creates the zone, so a Terraform variant would report a
+  # missing CAA record for zones whose records are correct in Route 53.
+  - uid: mondoo-aws-security-route53-public-zone-caa-record
+    title: Ensure Route 53 public hosted zones publish a CAA record
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-17
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc6-1-11
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-aws-security-route53-public-zone-caa-record-aws
+        tags:
+          mondoo.com/filter-title: AWS Route 53 Hosted Zone
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that every public hosted zone publishes at least one Certification Authority Authorization record. A CAA record names the certificate authorities permitted to issue certificates for the domain, and a compliant authority refuses issuance when it is not listed.
+
+        Without a CAA record, any publicly trusted certificate authority may issue a certificate for the domain to whoever passes its validation. Domain validation is often satisfied by transient control of DNS, an email alias, or a web path, so an attacker who gains brief control of any of those can obtain a valid certificate that browsers accept. CAA turns that open set of issuers into a short list the domain owner chooses.
+
+        **Why this matters**
+
+        - **Any authority is otherwise acceptable:** the public trust model treats a certificate from a small regional authority exactly like one from the domain's usual issuer.
+        - **Mis-issuance enables interception:** a certificate obtained by an attacker allows a convincing man-in-the-middle against clients that trust the public roots.
+        - **Issuance is auditable only after the fact:** certificate transparency reveals mis-issuance once it has already happened, while CAA prevents it.
+
+        **Risk mitigation**
+
+        - **Narrows the issuance surface:** only the authorities the organization actually uses can produce certificates for the domain.
+        - **Provides an incident reporting path:** an `iodef` property directs a compliant authority to notify the domain owner about refused requests.
+      audit: |
+        ### Audit via Console
+
+        1. Open the Amazon Route 53 console and choose **Hosted zones**.
+        2. Select the public hosted zone and review the record list.
+        3. Filter the record type column for **CAA**.
+        4. The zone passes when at least one CAA record exists. It fails when the zone contains no CAA record.
+
+        ### Audit via CLI
+
+        1. List the record sets in the hosted zone:
+
+           ```bash
+           aws route53 list-resource-record-sets --hosted-zone-id <hosted-zone-id>
+           ```
+
+        2. Look for an entry whose `Type` is `CAA`.
+        3. The zone passes when at least one such record is present, and the record values name the authorities that are permitted to issue.
+      remediation:
+        - id: console
+          desc: |
+            To publish a CAA record using the AWS Management Console:
+
+            1. Open the Amazon Route 53 console and choose **Hosted zones**.
+            2. Select the public hosted zone and choose **Create record**.
+            3. Leave the record name empty so the record applies to the zone apex, and set **Record type** to **CAA**.
+            4. Enter one value per line for each permitted authority, for example `0 issue "amazon.com"` and `0 iodef "mailto:security@example.com"`.
+            5. Choose **Create records**.
+        - id: cli
+          desc: |
+            To publish a CAA record using the AWS CLI:
+
+            1. Write a change batch to `caa.json` that creates the record at the zone apex:
+
+            ```json
+            {
+              "Changes": [
+                {
+                  "Action": "UPSERT",
+                  "ResourceRecordSet": {
+                    "Name": "example.com",
+                    "Type": "CAA",
+                    "TTL": 300,
+                    "ResourceRecords": [
+                      { "Value": "0 issue \"amazon.com\"" },
+                      { "Value": "0 iodef \"mailto:security@example.com\"" }
+                    ]
+                  }
+                }
+              ]
+            }
+            ```
+
+            2. Apply the change batch:
+
+            ```bash
+            aws route53 change-resource-record-sets \
+              --hosted-zone-id <hosted-zone-id> \
+              --change-batch file://caa.json
+            ```
+        - id: terraform
+          desc: |
+            To publish a CAA record using Terraform, add an `aws_route53_record` of type `CAA` at the zone apex:
+
+            ```hcl
+            resource "aws_route53_record" "caa" {
+              zone_id = aws_route53_zone.example.zone_id
+              name    = "example.com"
+              type    = "CAA"
+              ttl     = 300
+
+              records = [
+                "0 issue \"amazon.com\"",
+                "0 iodef \"mailto:security@example.com\"",
+              ]
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To publish a CAA record using CloudFormation, add an `AWS::Route53::RecordSet` of type `CAA`:
+
+            ```yaml
+            Resources:
+              CaaRecord:
+                Type: AWS::Route53::RecordSet
+                Properties:
+                  HostedZoneId: !Ref ExampleHostedZone
+                  Name: example.com
+                  Type: CAA
+                  TTL: "300"
+                  ResourceRecords:
+                    - '0 issue "amazon.com"'
+                    - '0 iodef "mailto:security@example.com"'
+            ```
+      refs:
+        - url: https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/resource-record-sets-values-basic.html
+          title: Values that you specify when you create or edit Route 53 records
+        - url: https://datatracker.ietf.org/doc/html/rfc8659
+          title: RFC 8659 DNS Certification Authority Authorization
+  # No Terraform variants: mail records are commonly managed by a separate mail
+  # platform or a DNS module outside the configuration that creates the zone, so
+  # a Terraform variant would report a missing DMARC record for domains that
+  # publish one correctly in Route 53.
+  - uid: mondoo-aws-security-route53-mail-zone-dmarc-record
+    title: Ensure Route 53 mail-serving hosted zones publish a DMARC record
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-5-14
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-8
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: pcidss-requirement-5-4-1
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-aws-security-route53-mail-zone-dmarc-record-aws
+        tags:
+          mondoo.com/filter-title: AWS Route 53 Hosted Zone
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that a hosted zone carrying MX records also publishes a DMARC policy record at the `_dmarc` name. DMARC tells receiving mail servers what to do with messages that claim to come from the domain but fail SPF and DKIM alignment, and where to send reports about them.
+
+        A domain that accepts mail is a domain attackers will impersonate. SPF and DKIM each authenticate one part of a message, but neither instructs a receiver on what to do when authentication fails, and neither is tied to the address a recipient actually sees. DMARC supplies both the policy and the alignment requirement, which is what turns those two records into enforcement.
+
+        **Why this matters**
+
+        - **Impersonation targets the brand, not the infrastructure:** phishing that spoofs the domain reaches customers and staff without ever touching the organization's systems.
+        - **SPF and DKIM alone do not instruct receivers:** without a policy record, a receiving server decides on its own what to do with a failing message.
+        - **Reporting is otherwise unavailable:** aggregate reports reveal both abuse and legitimate senders that were never configured correctly.
+
+        **Risk mitigation**
+
+        - **Blocks direct domain spoofing:** a `quarantine` or `reject` policy stops unauthenticated mail that claims the domain in the visible From address.
+        - **Reveals unauthorized senders:** report addresses surface systems sending as the domain before a policy is tightened.
+      audit: |
+        ### Audit via Console
+
+        1. Open the Amazon Route 53 console and choose **Hosted zones**.
+        2. Select the hosted zone and confirm that it contains at least one **MX** record.
+        3. Search the record list for a **TXT** record named `_dmarc` at the zone apex.
+        4. The zone passes when such a record exists and its value begins with `v=DMARC1`. It fails when the zone serves mail but publishes no DMARC record.
+
+        ### Audit via CLI
+
+        1. List the record sets in the hosted zone:
+
+           ```bash
+           aws route53 list-resource-record-sets --hosted-zone-id <hosted-zone-id>
+           ```
+
+        2. Confirm whether any entry has a `Type` of `MX`.
+        3. When MX records exist, look for a `TXT` entry whose `Name` starts with `_dmarc`. The zone passes when that record is present.
+      remediation:
+        - id: console
+          desc: |
+            To publish a DMARC record using the AWS Management Console:
+
+            1. Open the Amazon Route 53 console and choose **Hosted zones**.
+            2. Select the hosted zone and choose **Create record**.
+            3. Set **Record name** to `_dmarc` and **Record type** to **TXT**.
+            4. Enter a policy value such as `"v=DMARC1; p=quarantine; rua=mailto:dmarc-reports@example.com"`. Start at `p=none` when the sending inventory is not yet known, then tighten to `quarantine` and `reject` once reports confirm all legitimate senders are aligned.
+            5. Choose **Create records**.
+        - id: cli
+          desc: |
+            To publish a DMARC record using the AWS CLI:
+
+            1. Write a change batch to `dmarc.json`:
+
+            ```json
+            {
+              "Changes": [
+                {
+                  "Action": "UPSERT",
+                  "ResourceRecordSet": {
+                    "Name": "_dmarc.example.com",
+                    "Type": "TXT",
+                    "TTL": 300,
+                    "ResourceRecords": [
+                      { "Value": "\"v=DMARC1; p=quarantine; rua=mailto:dmarc-reports@example.com\"" }
+                    ]
+                  }
+                }
+              ]
+            }
+            ```
+
+            2. Apply the change batch:
+
+            ```bash
+            aws route53 change-resource-record-sets \
+              --hosted-zone-id <hosted-zone-id> \
+              --change-batch file://dmarc.json
+            ```
+        - id: terraform
+          desc: |
+            To publish a DMARC record using Terraform, add an `aws_route53_record` of type `TXT` at the `_dmarc` name:
+
+            ```hcl
+            resource "aws_route53_record" "dmarc" {
+              zone_id = aws_route53_zone.example.zone_id
+              name    = "_dmarc.example.com"
+              type    = "TXT"
+              ttl     = 300
+
+              records = [
+                "v=DMARC1; p=quarantine; rua=mailto:dmarc-reports@example.com",
+              ]
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To publish a DMARC record using CloudFormation, add an `AWS::Route53::RecordSet` of type `TXT`:
+
+            ```yaml
+            Resources:
+              DmarcRecord:
+                Type: AWS::Route53::RecordSet
+                Properties:
+                  HostedZoneId: !Ref ExampleHostedZone
+                  Name: _dmarc.example.com
+                  Type: TXT
+                  TTL: "300"
+                  ResourceRecords:
+                    - '"v=DMARC1; p=quarantine; rua=mailto:dmarc-reports@example.com"'
+            ```
+      refs:
+        - url: https://docs.aws.amazon.com/ses/latest/dg/send-email-authentication-dmarc.html
+          title: Complying with DMARC using Amazon SES
+        - url: https://datatracker.ietf.org/doc/html/rfc7489
+          title: RFC 7489 Domain-based Message Authentication, Reporting, and Conformance
+  - uid: mondoo-aws-security-route53-dnssec-key-signing-keys-active-aws
+    filters: |
+      asset.platform == "aws-route53-hostedzone" &&
+      aws.route53.hostedZone.isPrivate == false
+    mql: |
+      aws.route53.hostedZone.keySigningKeys == empty ||
+      aws.route53.hostedZone.keySigningKeys.all(status == "ACTIVE")
+  - uid: mondoo-aws-security-route53-public-zone-caa-record-aws
+    filters: asset.platform == "aws-route53-hostedzone"
+    mql: |
+      aws.route53.hostedZone.isPrivate == true ||
+      aws.route53.hostedZone.records.any(type == "CAA")
+  - uid: mondoo-aws-security-route53-mail-zone-dmarc-record-aws
+    filters: asset.platform == "aws-route53-hostedzone"
+    mql: |
+      aws.route53.hostedZone.records.none(type == "MX") ||
+      aws.route53.hostedZone.records.any(type == "TXT" && name.downcase.contains("_dmarc"))
   - uid: mondoo-aws-security-route53-query-logging-enabled
     title: Ensure Route 53 public hosted zones have query logging enabled
     impact: 60
@@ -78020,6 +78465,331 @@ queries:
         title: AWS Documentation - Security best practices in IAM
   # No Terraform variants: group membership is expressed across separate aws_iam_group_membership / aws_iam_user_group_membership resources, so asserting that an empty group carries no policies requires cross-resource correlation not representable structurally.
   # No CloudFormation variant: the same cross-resource correlation between AWS::IAM::Group and its membership/policy resources is required and cannot be expressed structurally.
+  # No Terraform variants: an inline group policy body reaches Terraform as a
+  # jsonencode() call or an aws_iam_policy_document data source reference, neither
+  # of which the HCL provider evaluates, so a Terraform variant would inspect an
+  # unresolved expression and pass vacuously.
+  - uid: mondoo-aws-security-iam-group-inline-policy-no-wildcard
+    title: Ensure IAM group inline policies do not grant wildcard access
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-3-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-aws-security-iam-group-inline-policy-no-wildcard-aws
+        tags:
+          mondoo.com/filter-title: AWS IAM Group
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that no inline policy embedded in an IAM group contains an Allow statement that grants a wildcard action or a wildcard resource. A statement qualifies as wildcard access when its `Action` is `*` or a service-wide form such as `s3:*`, or when its `Resource` is `*`.
+
+        Inline policies are easy to write quickly and hard to review at scale. Because they live inside the group rather than in the managed-policy catalog, they never appear in a policy inventory and are rarely revisited after the access problem that prompted them is solved. A wildcard Allow grants every member of the group the full permission surface of a service, or of the entire account, regardless of what those members actually need.
+
+        **Why this matters**
+
+        - **Group grants multiply:** every user added to the group silently inherits the wildcard permission, so the blast radius grows with team size rather than with intent.
+        - **Wildcards defeat review:** an auditor reading `s3:*` cannot tell which of more than one hundred S3 actions the group is expected to use.
+        - **Inline policies evade inventory:** they are not listed by managed-policy tooling, so overly broad grants persist unnoticed.
+
+        **Risk mitigation**
+
+        - **Contains credential compromise:** a stolen credential belonging to a group member can only reach the actions the group explicitly names.
+        - **Enables meaningful least-privilege review:** enumerated actions and resource ARNs make it possible to compare granted access against actual usage.
+      audit: |
+        ### Audit via Console
+
+        1. Open the AWS IAM console and choose **User groups**.
+        2. Select the group and open the **Permissions** tab.
+        3. Expand **Inline policies** and open each policy in the JSON editor.
+        4. A group passes when no Allow statement sets `Action` to `*` or to a service-wide wildcard, and no Allow statement sets `Resource` to `*`. A group fails when any Allow statement contains either form.
+
+        ### Audit via CLI
+
+        1. List the inline policies embedded in the group:
+
+           ```bash
+           aws iam list-group-policies --group-name <group-name>
+           ```
+
+        2. Print each policy document:
+
+           ```bash
+           aws iam get-group-policy --group-name <group-name> --policy-name <policy-name>
+           ```
+
+        3. Inspect every statement whose `Effect` is `Allow`. The group passes when none of them use `*` as the resource or a wildcard action.
+      remediation:
+        - id: console
+          desc: |
+            To replace wildcard grants in an inline group policy using the AWS Management Console:
+
+            1. Open the AWS IAM console and choose **User groups**.
+            2. Select the group, open the **Permissions** tab, and expand **Inline policies**.
+            3. Choose **Edit** on the offending policy and switch to the **JSON** tab.
+            4. Replace each wildcard `Action` with the specific operations the group performs, and replace each `Resource` value of `*` with the ARNs of the resources the group must reach.
+            5. Choose **Review policy**, then **Save changes**.
+        - id: cli
+          desc: |
+            To replace wildcard grants in an inline group policy using the AWS CLI:
+
+            1. Write a scoped replacement document to `policy.json`, naming explicit actions and resource ARNs.
+            2. Overwrite the inline policy with the scoped document:
+
+            ```bash
+            aws iam put-group-policy \
+              --group-name <group-name> \
+              --policy-name <policy-name> \
+              --policy-document file://policy.json
+            ```
+
+            3. If the inline policy is no longer needed at all, remove it:
+
+            ```bash
+            aws iam delete-group-policy \
+              --group-name <group-name> \
+              --policy-name <policy-name>
+            ```
+        - id: terraform
+          desc: |
+            To replace wildcard grants in an inline group policy using Terraform, enumerate the actions and resource ARNs in the `aws_iam_group_policy` document:
+
+            ```hcl
+            resource "aws_iam_group_policy" "reports_readers" {
+              name  = "reports-read"
+              group = aws_iam_group.analysts.name
+
+              policy = jsonencode({
+                Version = "2012-10-17"
+                Statement = [
+                  {
+                    Effect = "Allow"
+                    Action = [
+                      "s3:GetObject",
+                      "s3:ListBucket",
+                    ]
+                    Resource = [
+                      "arn:aws:s3:::reports-bucket",
+                      "arn:aws:s3:::reports-bucket/*",
+                    ]
+                  },
+                ]
+              })
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To replace wildcard grants in an inline group policy using CloudFormation, scope the `Policies` document on the `AWS::IAM::Group` resource:
+
+            ```yaml
+            Resources:
+              AnalystsGroup:
+                Type: AWS::IAM::Group
+                Properties:
+                  GroupName: analysts
+                  Policies:
+                    - PolicyName: reports-read
+                      PolicyDocument:
+                        Version: "2012-10-17"
+                        Statement:
+                          - Effect: Allow
+                            Action:
+                              - s3:GetObject
+                              - s3:ListBucket
+                            Resource:
+                              - arn:aws:s3:::reports-bucket
+                              - arn:aws:s3:::reports-bucket/*
+            ```
+      refs:
+        - url: https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html
+          title: Security best practices in IAM
+        - url: https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies_manage-edit.html
+          title: Editing IAM policies
+  # No Terraform variants: the check resolves each attached managed policy to its
+  # default policy version, and AWS-managed policy documents are not present in
+  # the Terraform configuration, so a Terraform variant could only inspect the
+  # policy ARN and would miss every wildcard grant it is meant to catch.
+  - uid: mondoo-aws-security-iam-group-attached-policy-no-wildcard
+    title: Ensure IAM group managed policies do not grant wildcard access
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-3-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-aws-security-iam-group-attached-policy-no-wildcard-aws
+        tags:
+          mondoo.com/filter-title: AWS IAM Group
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that no managed policy attached to an IAM group grants wildcard access in its default version. A statement qualifies as wildcard access when its `Effect` is `Allow` and its `Action` is `*` or a service-wide form such as `ec2:*`, or when its `Resource` is `*`.
+
+        Checking policy names alone is not enough. `AdministratorAccess` is the best-known wildcard policy, but a customer-managed policy with an innocuous name can grant exactly the same permissions, and several AWS-managed policies grant service-wide wildcards that reach far beyond what a group needs. Evaluating the policy document catches all of them.
+
+        **Why this matters**
+
+        - **Names do not describe permissions:** a policy called `developer-tools` can carry `Action: *` on `Resource: *`.
+        - **Service wildcards are broader than they look:** `ec2:*` includes network, snapshot, and instance-modification operations that most groups never use.
+        - **Group attachments apply to every member:** the grant follows each current and future member of the group.
+
+        **Risk mitigation**
+
+        - **Blocks privilege escalation paths:** wildcard IAM permissions let a group member grant themselves any further access they want.
+        - **Keeps permission growth deliberate:** adding a new capability requires naming it, which restores the review step that a wildcard removes.
+      audit: |
+        ### Audit via Console
+
+        1. Open the AWS IAM console and choose **User groups**.
+        2. Select the group and open the **Permissions** tab.
+        3. For each attached managed policy, open the policy and view its JSON.
+        4. A group passes when no Allow statement in any attached policy uses `*` as the resource or a wildcard action.
+
+        ### Audit via CLI
+
+        1. List the managed policies attached to the group:
+
+           ```bash
+           aws iam list-attached-group-policies --group-name <group-name>
+           ```
+
+        2. For each policy ARN, find the default version and print the document:
+
+           ```bash
+           aws iam get-policy --policy-arn <policy-arn>
+           ```
+
+           ```bash
+           aws iam get-policy-version --policy-arn <policy-arn> --version-id <default-version-id>
+           ```
+
+        3. The group passes when no Allow statement in any returned document grants a wildcard action or a wildcard resource.
+      remediation:
+        - id: console
+          desc: |
+            To remove wildcard managed-policy grants from an IAM group using the AWS Management Console:
+
+            1. Open the AWS IAM console and choose **User groups**.
+            2. Select the group and open the **Permissions** tab.
+            3. Choose **Remove** next to the policy that grants wildcard access.
+            4. Choose **Add permissions**, then **Attach policies**, and attach a scoped policy that names the specific actions and resource ARNs the group requires.
+        - id: cli
+          desc: |
+            To remove wildcard managed-policy grants from an IAM group using the AWS CLI:
+
+            1. Detach the policy that grants wildcard access:
+
+            ```bash
+            aws iam detach-group-policy \
+              --group-name <group-name> \
+              --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+            ```
+
+            2. Create a scoped replacement policy from a document that enumerates actions and resource ARNs:
+
+            ```bash
+            aws iam create-policy \
+              --policy-name analysts-reports-read \
+              --policy-document file://policy.json
+            ```
+
+            3. Attach the scoped policy to the group:
+
+            ```bash
+            aws iam attach-group-policy \
+              --group-name <group-name> \
+              --policy-arn arn:aws:iam::<account-id>:policy/analysts-reports-read
+            ```
+        - id: terraform
+          desc: |
+            To remove wildcard managed-policy grants from an IAM group using Terraform, attach a scoped customer-managed policy in place of the wildcard policy:
+
+            ```hcl
+            resource "aws_iam_policy" "reports_read" {
+              name = "analysts-reports-read"
+
+              policy = jsonencode({
+                Version = "2012-10-17"
+                Statement = [
+                  {
+                    Effect   = "Allow"
+                    Action   = ["s3:GetObject", "s3:ListBucket"]
+                    Resource = [
+                      "arn:aws:s3:::reports-bucket",
+                      "arn:aws:s3:::reports-bucket/*",
+                    ]
+                  },
+                ]
+              })
+            }
+
+            resource "aws_iam_group_policy_attachment" "analysts_reports_read" {
+              group      = aws_iam_group.analysts.name
+              policy_arn = aws_iam_policy.reports_read.arn
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To remove wildcard managed-policy grants from an IAM group using CloudFormation, replace the wildcard ARN in `ManagedPolicyArns` with a scoped `AWS::IAM::ManagedPolicy`:
+
+            ```yaml
+            Resources:
+              ReportsReadPolicy:
+                Type: AWS::IAM::ManagedPolicy
+                Properties:
+                  ManagedPolicyName: analysts-reports-read
+                  PolicyDocument:
+                    Version: "2012-10-17"
+                    Statement:
+                      - Effect: Allow
+                        Action:
+                          - s3:GetObject
+                          - s3:ListBucket
+                        Resource:
+                          - arn:aws:s3:::reports-bucket
+                          - arn:aws:s3:::reports-bucket/*
+
+              AnalystsGroup:
+                Type: AWS::IAM::Group
+                Properties:
+                  GroupName: analysts
+                  ManagedPolicyArns:
+                    - !Ref ReportsReadPolicy
+            ```
+      refs:
+        - url: https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html
+          title: Security best practices in IAM
+        - url: https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies_managed-vs-inline.html
+          title: Managed policies and inline policies
+  - uid: mondoo-aws-security-iam-group-inline-policy-no-wildcard-aws
+    filters: asset.platform == "aws-iam-group"
+    mql: |
+      aws.iam.group.inlinePolicyDetails.all(hasWildcardAllow == false)
+  - uid: mondoo-aws-security-iam-group-attached-policy-no-wildcard-aws
+    filters: asset.platform == "aws-iam-group"
+    mql: |
+      aws.iam.group.attachedPolicies.all(hasWildcardAllow == false)
   - uid: mondoo-aws-security-iam-group-empty-no-policies
     title: Ensure empty IAM groups carry no attached or inline policies
     impact: 40
@@ -83976,6 +84746,602 @@ queries:
       terraform.state.resources.where(type == "aws_bedrockagent_flow").all(
         values.customer_encryption_key_arn != null && values.customer_encryption_key_arn != ""
       )
+  # No Terraform variants: the aws_sagemaker_domain docker_settings block exposes
+  # only enable_docker_access and vpc_only_trusted_accounts, not the rootless
+  # mode, so a variant could evaluate only half of this condition and would fail
+  # domains that legitimately enable Docker access in rootless mode.
+  - uid: mondoo-aws-security-sagemaker-domain-rootless-docker
+    title: Ensure SageMaker Studio Docker access runs containers rootless
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-3-1
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-aws-security-sagemaker-domain-rootless-docker-aws
+        tags:
+          mondoo.com/filter-title: AWS SageMaker Domain
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that a SageMaker domain either keeps Docker access turned off or runs Studio containers in rootless mode. Docker access lets Studio users build and run containers from inside their notebook environment, and rootless mode removes the privileged daemon those containers would otherwise talk to.
+
+        When Docker access is enabled without rootless mode, container workloads run through a daemon holding root on the underlying host. A user who can reach that daemon can mount host paths, run privileged containers, and read the credentials issued to the environment. The isolation the domain is meant to provide between users then rests on the notebook itself rather than on the platform.
+
+        **Why this matters**
+
+        - **A root daemon is a shared privilege:** anyone who can submit a container to it inherits its authority over the host.
+        - **Notebook code is rarely reviewed:** Studio environments run pasted snippets and third-party packages that would never pass a production change review.
+        - **Rootless mode keeps the feature usable:** teams that genuinely need to build images keep that ability without granting host-level privilege.
+
+        **Risk mitigation**
+
+        - **Contains container escape:** a compromised container in rootless mode is confined to the user's own namespace rather than the host.
+        - **Protects the execution role:** credentials available to the environment stay out of reach of arbitrary privileged containers.
+      audit: |
+        ### Audit via Console
+
+        1. Open the Amazon SageMaker AI console and choose **Domains**.
+        2. Select the domain and open **Domain settings**.
+        3. Review the **Docker access** setting under the general or network configuration.
+        4. The domain passes when Docker access is disabled, or when Docker access is enabled and rootless mode is also enabled. It fails when Docker access is enabled with rootless mode turned off.
+
+        ### Audit via CLI
+
+        1. Describe the domain:
+
+           ```bash
+           aws sagemaker describe-domain --domain-id <domain-id>
+           ```
+
+        2. Read `DomainSettings.DockerSettings` in the response.
+        3. The domain passes when `EnableDockerAccess` is `DISABLED`, or when it is `ENABLED` and `RootlessDocker` is also `ENABLED`.
+      remediation:
+        - id: console
+          desc: |
+            To remove privileged Docker access from a SageMaker domain using the AWS Management Console:
+
+            1. Open the Amazon SageMaker AI console and choose **Domains**.
+            2. Select the domain and choose **Edit** on the domain settings.
+            3. If Studio users do not need to build containers, set **Docker access** to **Disabled**.
+            4. If container builds are required, leave Docker access enabled and turn on **Rootless Docker** so containers run without host root privilege.
+            5. Save the settings and restart the affected Studio applications so they pick up the new configuration.
+        - id: cli
+          desc: |
+            To remove privileged Docker access from a SageMaker domain using the AWS CLI:
+
+            1. Turn Docker access off when Studio users do not need to build containers:
+
+            ```bash
+            aws sagemaker update-domain \
+              --domain-id <domain-id> \
+              --domain-settings-for-update '{"DockerSettings":{"EnableDockerAccess":"DISABLED"}}'
+            ```
+
+            2. When container builds are required, keep Docker access enabled and turn on rootless mode:
+
+            ```bash
+            aws sagemaker update-domain \
+              --domain-id <domain-id> \
+              --domain-settings-for-update '{"DockerSettings":{"EnableDockerAccess":"ENABLED","RootlessDocker":"ENABLED"}}'
+            ```
+
+            3. Confirm the effective setting:
+
+            ```bash
+            aws sagemaker describe-domain --domain-id <domain-id>
+            ```
+        - id: terraform
+          desc: |
+            To keep Docker access off in a SageMaker domain using Terraform, set `enable_docker_access` to `DISABLED` in the `docker_settings` block. The rootless setting is not exposed by this resource, so domains that require container builds enable rootless mode through the console or the AWS CLI:
+
+            ```hcl
+            resource "aws_sagemaker_domain" "example" {
+              domain_name = "example"
+              auth_mode   = "IAM"
+              vpc_id      = aws_vpc.example.id
+              subnet_ids  = [aws_subnet.example.id]
+
+              domain_settings {
+                docker_settings {
+                  enable_docker_access = "DISABLED"
+                }
+              }
+
+              default_user_settings {
+                execution_role = aws_iam_role.example.arn
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To keep Docker access off in a SageMaker domain using CloudFormation, set `EnableDockerAccess` to `DISABLED` in `DomainSettings.DockerSettings`:
+
+            ```yaml
+            Resources:
+              StudioDomain:
+                Type: AWS::SageMaker::Domain
+                Properties:
+                  DomainName: example
+                  AuthMode: IAM
+                  VpcId: !Ref StudioVpc
+                  SubnetIds:
+                    - !Ref StudioSubnet
+                  DomainSettings:
+                    DockerSettings:
+                      EnableDockerAccess: DISABLED
+                  DefaultUserSettings:
+                    ExecutionRole: !GetAtt StudioExecutionRole.Arn
+            ```
+      refs:
+        - url: https://docs.aws.amazon.com/sagemaker/latest/dg/studio-updated-local.html
+          title: Local mode and Docker support in Amazon SageMaker Studio
+        - url: https://docs.aws.amazon.com/sagemaker/latest/APIReference/API_DockerSettings.html
+          title: SageMaker API reference for DockerSettings
+  # No Terraform variants: the check resolves the shared space execution role to
+  # the managed policies attached to it, and those attachments frequently live
+  # outside the configuration that defines the domain, so a Terraform variant
+  # could only compare role ARNs and would miss the administrator grant.
+  - uid: mondoo-aws-security-sagemaker-domain-space-role-not-admin
+    title: Ensure SageMaker shared space roles have no administrator access
+    impact: 90
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/pci-dss-4: pcidss-requirement-7-2-2
+      compliance/soc2-2017: soc2-control-cc6-3-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-aws-security-sagemaker-domain-space-role-not-admin-aws
+        tags:
+          mondoo.com/filter-title: AWS SageMaker Domain
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that the execution role a SageMaker domain assigns to shared spaces does not carry the `AdministratorAccess` managed policy. Shared spaces run collaborative Studio applications, and every member of a space inherits the permissions of the space execution role rather than their own.
+
+        A domain carries several execution roles. The default user role applies to individual user profiles, while the shared space role applies to collaborative applications. Hardening the user role alone leaves the space role untouched, and a space role holding administrator permissions gives every collaborator in that space unrestricted access to the account through notebook code.
+
+        **Why this matters**
+
+        - **Space membership becomes account access:** anyone added to a shared space acquires the role's permissions, without any separate IAM change.
+        - **Shared roles obscure attribution:** actions taken from a shared space are recorded against the space role, so individual accountability is lost.
+        - **Notebook code executes with the role:** an imported notebook or a compromised package runs with whatever the role grants.
+
+        **Risk mitigation**
+
+        - **Prevents privilege escalation through collaboration:** adding a user to a space no longer confers administrator rights on the account.
+        - **Bounds the blast radius of untrusted code:** a scoped role limits what an unreviewed notebook can reach.
+      audit: |
+        ### Audit via Console
+
+        1. Open the Amazon SageMaker AI console and choose **Domains**.
+        2. Select the domain and open **Domain settings**, then review the **Space settings** section.
+        3. Note the execution role listed for shared spaces.
+        4. Open that role in the AWS IAM console and review its attached managed policies. The domain passes when `AdministratorAccess` is not attached.
+
+        ### Audit via CLI
+
+        1. Read the shared space execution role from the domain:
+
+           ```bash
+           aws sagemaker describe-domain --domain-id <domain-id>
+           ```
+
+        2. Take the `DefaultSpaceSettings.ExecutionRole` value and list the policies attached to that role:
+
+           ```bash
+           aws iam list-attached-role-policies --role-name <role-name>
+           ```
+
+        3. The domain passes when the returned list contains no policy named `AdministratorAccess`.
+      remediation:
+        - id: console
+          desc: |
+            To scope the shared space execution role using the AWS Management Console:
+
+            1. Open the AWS IAM console and choose **Roles**.
+            2. Select the role that the domain uses for shared spaces.
+            3. On the **Permissions** tab, choose **Remove** next to `AdministratorAccess`.
+            4. Choose **Add permissions**, then attach `AmazonSageMakerFullAccess` or a customer-managed policy that names only the actions the space requires.
+            5. Restart the applications in the affected spaces so they assume the updated role.
+        - id: cli
+          desc: |
+            To scope the shared space execution role using the AWS CLI:
+
+            1. Detach the administrator policy from the role:
+
+            ```bash
+            aws iam detach-role-policy \
+              --role-name <role-name> \
+              --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+            ```
+
+            2. Attach a scoped policy in its place:
+
+            ```bash
+            aws iam attach-role-policy \
+              --role-name <role-name> \
+              --policy-arn arn:aws:iam::aws:policy/AmazonSageMakerFullAccess
+            ```
+
+            3. Confirm the resulting attachments:
+
+            ```bash
+            aws iam list-attached-role-policies --role-name <role-name>
+            ```
+        - id: terraform
+          desc: |
+            To scope the shared space execution role using Terraform, attach a scoped policy to the role referenced by `default_space_settings`:
+
+            ```hcl
+            resource "aws_iam_role_policy_attachment" "space_scoped" {
+              role       = aws_iam_role.studio_space.name
+              policy_arn = "arn:aws:iam::aws:policy/AmazonSageMakerFullAccess"
+            }
+
+            resource "aws_sagemaker_domain" "example" {
+              domain_name = "example"
+              auth_mode   = "IAM"
+              vpc_id      = aws_vpc.example.id
+              subnet_ids  = [aws_subnet.example.id]
+
+              default_user_settings {
+                execution_role = aws_iam_role.studio_user.arn
+              }
+
+              default_space_settings {
+                execution_role = aws_iam_role.studio_space.arn
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To scope the shared space execution role using CloudFormation, point `DefaultSpaceSettings.ExecutionRole` at a role that carries only scoped policies:
+
+            ```yaml
+            Resources:
+              StudioSpaceRole:
+                Type: AWS::IAM::Role
+                Properties:
+                  AssumeRolePolicyDocument:
+                    Version: "2012-10-17"
+                    Statement:
+                      - Effect: Allow
+                        Principal:
+                          Service: sagemaker.amazonaws.com
+                        Action: sts:AssumeRole
+                  ManagedPolicyArns:
+                    - arn:aws:iam::aws:policy/AmazonSageMakerFullAccess
+
+              StudioDomain:
+                Type: AWS::SageMaker::Domain
+                Properties:
+                  DomainName: example
+                  AuthMode: IAM
+                  VpcId: !Ref StudioVpc
+                  SubnetIds:
+                    - !Ref StudioSubnet
+                  DefaultUserSettings:
+                    ExecutionRole: !GetAtt StudioUserRole.Arn
+                  DefaultSpaceSettings:
+                    ExecutionRole: !GetAtt StudioSpaceRole.Arn
+            ```
+      refs:
+        - url: https://docs.aws.amazon.com/sagemaker/latest/dg/domain-space.html
+          title: Shared spaces in Amazon SageMaker Studio
+        - url: https://docs.aws.amazon.com/sagemaker/latest/dg/security_iam_id-based-policy-examples.html
+          title: Identity-based policy examples for Amazon SageMaker
+  # No Terraform variants: the runtime check resolves the configured key to a KMS
+  # key resource so that an AWS managed key is rejected, and the Terraform
+  # configuration carries only an opaque key identifier, so a variant could not
+  # distinguish a customer managed key from an account default.
+  - uid: mondoo-aws-security-sagemaker-domain-shared-notebook-cmk-encrypted
+    title: Ensure SageMaker shared notebook output is encrypted with a KMS key
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-10
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-aws-security-sagemaker-domain-shared-notebook-cmk-encrypted-aws
+        tags:
+          mondoo.com/filter-title: AWS SageMaker Domain
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that the domain's default user settings name a KMS key for shared notebook output. When Studio users share a notebook, SageMaker writes the notebook along with its cell output to an S3 location, and the sharing settings decide which key protects that copy.
+
+        Encrypting the domain's home file system is a separate control from encrypting shared notebook output. A domain can hold an encrypted file system while every shared notebook lands in S3 under default protection. Cell output is often the most sensitive part of a notebook, because it contains the query results, sample records, and model evaluation data produced during exploration rather than the code that produced them.
+
+        **Why this matters**
+
+        - **Output carries the data, not just the code:** rendered cells hold the records and metrics an analyst pulled from production systems.
+        - **Sharing widens the audience:** a shared notebook is intended to be read by people outside the original user's session.
+        - **A named key restores control:** key policy and grants decide who can read the shared copy, independently of the S3 bucket policy.
+
+        **Risk mitigation**
+
+        - **Places shared output under a key policy:** access can be revoked centrally by changing the key policy rather than hunting down objects.
+        - **Produces an auditable access trail:** decrypt calls against the key are recorded, so reads of shared notebooks are attributable.
+      audit: |
+        ### Audit via Console
+
+        1. Open the Amazon SageMaker AI console and choose **Domains**.
+        2. Select the domain and open **Domain settings**, then review the default user settings.
+        3. Locate the notebook sharing configuration and the encryption key it names.
+        4. The domain passes when a KMS key is configured for shared notebook output. It fails when no key is set.
+
+        ### Audit via CLI
+
+        1. Describe the domain:
+
+           ```bash
+           aws sagemaker describe-domain --domain-id <domain-id>
+           ```
+
+        2. Read `DefaultUserSettings.SharingSettings` in the response.
+        3. The domain passes when `S3KmsKeyId` names a key. It fails when the field is absent or empty.
+      remediation:
+        - id: console
+          desc: |
+            To encrypt shared notebook output using the AWS Management Console:
+
+            1. Open the AWS KMS console and create or select a customer managed key for Studio output, granting the domain execution roles permission to use it.
+            2. Open the Amazon SageMaker AI console, choose **Domains**, and select the domain.
+            3. Choose **Edit** on the domain settings and open the default user settings.
+            4. In the notebook sharing configuration, set the encryption key to the KMS key and set the output path to the intended S3 location.
+            5. Save the settings.
+        - id: cli
+          desc: |
+            To encrypt shared notebook output using the AWS CLI:
+
+            1. Set the sharing settings on the domain's default user settings:
+
+            ```bash
+            aws sagemaker update-domain \
+              --domain-id <domain-id> \
+              --default-user-settings '{"SharingSettings":{"NotebookOutputOption":"Allowed","S3KmsKeyId":"<kms-key-id>","S3OutputPath":"s3://<bucket>/studio-shared/"}}'
+            ```
+
+            2. Confirm the resulting configuration:
+
+            ```bash
+            aws sagemaker describe-domain --domain-id <domain-id>
+            ```
+        - id: terraform
+          desc: |
+            To encrypt shared notebook output using Terraform, set `s3_kms_key_id` in the `sharing_settings` block of `default_user_settings`:
+
+            ```hcl
+            resource "aws_sagemaker_domain" "example" {
+              domain_name = "example"
+              auth_mode   = "IAM"
+              vpc_id      = aws_vpc.example.id
+              subnet_ids  = [aws_subnet.example.id]
+
+              default_user_settings {
+                execution_role = aws_iam_role.example.arn
+
+                sharing_settings {
+                  notebook_output_option = "Allowed"
+                  s3_kms_key_id          = aws_kms_key.studio.id
+                  s3_output_path         = "s3://${aws_s3_bucket.studio.bucket}/studio-shared/"
+                }
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To encrypt shared notebook output using CloudFormation, set `S3KmsKeyId` in `DefaultUserSettings.SharingSettings`:
+
+            ```yaml
+            Resources:
+              StudioDomain:
+                Type: AWS::SageMaker::Domain
+                Properties:
+                  DomainName: example
+                  AuthMode: IAM
+                  VpcId: !Ref StudioVpc
+                  SubnetIds:
+                    - !Ref StudioSubnet
+                  DefaultUserSettings:
+                    ExecutionRole: !GetAtt StudioExecutionRole.Arn
+                    SharingSettings:
+                      NotebookOutputOption: Allowed
+                      S3KmsKeyId: !Ref StudioKey
+                      S3OutputPath: !Sub s3://${StudioBucket}/studio-shared/
+            ```
+      refs:
+        - url: https://docs.aws.amazon.com/sagemaker/latest/dg/notebook-auto-run-troubleshoot-override.html
+          title: Sharing notebooks in Amazon SageMaker Studio
+        - url: https://docs.aws.amazon.com/sagemaker/latest/APIReference/API_SharingSettings.html
+          title: SageMaker API reference for SharingSettings
+  # No Terraform variants: the check resolves the model artifact URI to the S3
+  # bucket that holds it and reads that bucket's effective public access posture,
+  # which is a property of a separate resource that is usually created in another
+  # configuration, so a Terraform variant could only inspect the artifact URI.
+  - uid: mondoo-aws-security-sagemaker-model-artifact-bucket-not-public
+    title: Ensure SageMaker model artifact buckets are not publicly accessible
+    impact: 90
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-aws-security-sagemaker-model-artifact-bucket-not-public-aws
+        tags:
+          mondoo.com/filter-title: AWS SageMaker Model
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check ensures that the S3 bucket holding a model's artifacts is not publicly accessible. SageMaker downloads the archive named by the model's primary container at deployment time and loads it into the serving container.
+
+        Model artifacts are executable inputs, not passive data. A serialized model is deserialized by the inference container, and several common formats reconstruct arbitrary objects during load. A publicly readable artifact bucket exposes proprietary model weights, and a publicly writable one lets an attacker replace the archive so that the next endpoint deployment loads code of their choosing.
+
+        **Why this matters**
+
+        - **Artifacts are loaded as code:** deserializing a tampered archive can execute attacker-controlled logic inside the serving container.
+        - **The bucket is the supply chain:** every deployment and every autoscaling event pulls the archive again, so a single substitution reaches all future replicas.
+        - **Weights are valuable on their own:** a readable bucket discloses the trained model and often the training data characteristics with it.
+
+        **Risk mitigation**
+
+        - **Closes the model poisoning path:** only authorized principals can replace the archive an endpoint will load.
+        - **Protects intellectual property:** trained weights stay restricted to the roles that need them.
+      audit: |
+        ### Audit via Console
+
+        1. Open the Amazon SageMaker AI console and choose **Models**.
+        2. Select the model and note the S3 location of the model artifacts on the container definition.
+        3. Open the Amazon S3 console and select the bucket from that location.
+        4. On the **Permissions** tab, review **Block public access** and the bucket policy. The model passes when public access is blocked and no policy or ACL grants access to everyone.
+
+        ### Audit via CLI
+
+        1. Read the artifact location from the model:
+
+           ```bash
+           aws sagemaker describe-model --model-name <model-name>
+           ```
+
+        2. Check the public access block configuration on the bucket named in `PrimaryContainer.ModelDataUrl`:
+
+           ```bash
+           aws s3api get-public-access-block --bucket <bucket-name>
+           ```
+
+        3. Review the bucket policy status:
+
+           ```bash
+           aws s3api get-bucket-policy-status --bucket <bucket-name>
+           ```
+
+        4. The model passes when all four public access block settings are `true` and `IsPublic` is `false`.
+      remediation:
+        - id: console
+          desc: |
+            To restrict a model artifact bucket using the AWS Management Console:
+
+            1. Open the Amazon S3 console and select the bucket that holds the model artifacts.
+            2. On the **Permissions** tab, choose **Edit** under **Block public access**.
+            3. Select **Block all public access** and save the change.
+            4. Review the bucket policy and remove any statement whose principal is `*`.
+            5. Grant read access to the SageMaker execution role explicitly so that model deployment continues to work.
+        - id: cli
+          desc: |
+            To restrict a model artifact bucket using the AWS CLI:
+
+            1. Block public access on the bucket:
+
+            ```bash
+            aws s3api put-public-access-block \
+              --bucket <bucket-name> \
+              --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+            ```
+
+            2. Confirm the bucket is no longer public:
+
+            ```bash
+            aws s3api get-bucket-policy-status --bucket <bucket-name>
+            ```
+        - id: terraform
+          desc: |
+            To restrict a model artifact bucket using Terraform, attach an `aws_s3_bucket_public_access_block` to the bucket that holds the artifacts:
+
+            ```hcl
+            resource "aws_s3_bucket" "model_artifacts" {
+              bucket = "example-model-artifacts"
+            }
+
+            resource "aws_s3_bucket_public_access_block" "model_artifacts" {
+              bucket = aws_s3_bucket.model_artifacts.id
+
+              block_public_acls       = true
+              block_public_policy     = true
+              ignore_public_acls      = true
+              restrict_public_buckets = true
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To restrict a model artifact bucket using CloudFormation, set `PublicAccessBlockConfiguration` on the `AWS::S3::Bucket` resource:
+
+            ```yaml
+            Resources:
+              ModelArtifactsBucket:
+                Type: AWS::S3::Bucket
+                Properties:
+                  BucketName: example-model-artifacts
+                  PublicAccessBlockConfiguration:
+                    BlockPublicAcls: true
+                    BlockPublicPolicy: true
+                    IgnorePublicAcls: true
+                    RestrictPublicBuckets: true
+            ```
+      refs:
+        - url: https://docs.aws.amazon.com/sagemaker/latest/dg/your-algorithms-inference-main.html
+          title: Use your own inference code with hosting services
+        - url: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+          title: Blocking public access to your Amazon S3 storage
+  - uid: mondoo-aws-security-sagemaker-domain-rootless-docker-aws
+    filters: asset.platform == "aws-sagemaker-domain"
+    mql: |
+      aws.sagemaker.domain.dockerAccessEnabled == false ||
+      aws.sagemaker.domain.rootlessDocker == true
+  - uid: mondoo-aws-security-sagemaker-domain-space-role-not-admin-aws
+    filters: asset.platform == "aws-sagemaker-domain"
+    mql: |
+      aws.sagemaker.domain.defaultSpaceExecutionRole == empty ||
+      aws.sagemaker.domain.defaultSpaceExecutionRole.attachedPolicies.none(name == "AdministratorAccess")
+  - uid: mondoo-aws-security-sagemaker-domain-shared-notebook-cmk-encrypted-aws
+    filters: asset.platform == "aws-sagemaker-domain"
+    mql: |
+      aws.sagemaker.domain.defaultUserSharedNotebookKmsKey != empty
+  - uid: mondoo-aws-security-sagemaker-model-artifact-bucket-not-public-aws
+    filters: asset.platform == "aws-sagemaker-model"
+    mql: |
+      aws.sagemaker.model.primaryContainerRef == empty ||
+      aws.sagemaker.model.primaryContainerRef.modelDataBucket == empty ||
+      aws.sagemaker.model.primaryContainerRef.modelDataBucket.public == false
   - uid: mondoo-aws-security-sagemaker-endpoint-data-capture-cmk-encryption
     title: Ensure SageMaker endpoint data capture is encrypted with a KMS key
     impact: 70
