@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-vercel-security
     name: Mondoo Vercel Security
-    version: 1.0.0
+    version: 1.1.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -46,6 +46,7 @@ policies:
           - uid: mondoo-vercel-security-project-password-protection-enabled
           - uid: mondoo-vercel-security-project-trusted-ips-enforced
           - uid: mondoo-vercel-security-project-trusted-ips-allowlist-configured
+          - uid: mondoo-vercel-security-project-aliases-no-protection-bypass
       - title: Vercel Build and Source
         filters: asset.platform == "vercel-project"
         checks:
@@ -76,6 +77,11 @@ policies:
           - uid: mondoo-vercel-security-certificates-auto-renew
           - uid: mondoo-vercel-security-domains-verified
           - uid: mondoo-vercel-security-domains-auto-renew
+      - title: Vercel Team Governance
+        filters: asset.platform == "vercel-team"
+        checks:
+          - uid: mondoo-vercel-security-team-strict-protection-settings
+          - uid: mondoo-vercel-security-team-shared-env-vars-not-plaintext
     scoring_system: highest impact
 queries:
   # ---------------------------------------------------------------------------
@@ -1429,3 +1435,245 @@ queries:
     refs:
       - url: https://vercel.com/docs/domains/working-with-domains/renew-a-domain
         title: Vercel domain renewal documentation
+
+  # ---------------------------------------------------------------------------
+  # Alias deployment-protection bypass
+  # ---------------------------------------------------------------------------
+  # No Terraform variants: outstanding protection-bypass secrets on aliases are
+  # runtime state generated through the dashboard or API, not a declarative
+  # resource, so Terraform HCL, plan, and state have no analog to assert against.
+  - uid: mondoo-vercel-security-project-aliases-no-protection-bypass
+    title: Ensure project aliases have no deployment-protection bypass tokens
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: false
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: false
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    mql: |
+      vercel.project.aliases.all(protectionBypassCount == 0)
+    docs:
+      desc: |
+        This check ensures that none of the project's aliases carry a deployment-protection bypass secret. A bypass secret lets any request that presents it reach the aliased deployment without satisfying Vercel Authentication, password protection, or Trusted IPs. Each secret is standing access: it keeps working until it is revoked, so a bypass on a production alias quietly negates the protection configured for that deployment.
+
+        **Why this matters**
+
+        - **Bypass secrets defeat deployment protection:** A request carrying the secret skips authentication entirely, so the protection configured on the alias no longer gates who can load it.
+        - **They are long-lived by default:** A bypass secret does not expire on its own; once issued it grants access until someone revokes it.
+        - **Production aliases are the sensitive case:** A bypass on a production alias exposes the live deployment, not just an ephemeral preview URL.
+
+        **Risk mitigation**
+
+        - **Revoke unneeded bypass secrets:** Remove protection-bypass secrets from aliases that do not require automated, unauthenticated access.
+        - **Scope and rotate what remains:** Where automation genuinely needs a bypass, keep the count minimal and rotate the secret regularly.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Sign in to the Vercel dashboard at vercel.com.
+        2. Open the project, then go to **Settings > Deployment Protection**.
+        3. Review the **Protection Bypass for Automation** section and any shareable-link bypasses on the project's aliases.
+
+        A passing result shows no bypass secrets on the project's aliases; a failing result shows one or more aliases with an active bypass.
+
+        ### Audit via API
+
+        ```bash
+        curl -s -H "Authorization: Bearer $VERCEL_TOKEN" \
+          "https://api.vercel.com/v4/aliases?projectId=<project-id>&teamId=<team-id>" \
+          | jq '.aliases[] | select(.protectionBypassCount > 0) | .alias'
+        ```
+
+        A passing response returns nothing; a failing response lists the aliases that carry a protection-bypass secret.
+      remediation:
+        - id: console
+          desc: |
+            To remove deployment-protection bypass secrets using the Vercel dashboard:
+
+            1. Open the project and go to **Settings > Deployment Protection**.
+            2. In **Protection Bypass for Automation**, delete any bypass secret that is no longer required, and remove shareable-link bypasses from the project's aliases.
+            3. For any automation that still needs access, prefer a scoped, rotated credential over a standing bypass.
+        - id: api
+          desc: |
+            To revoke a bypass secret on an alias through the REST API:
+
+            ```bash
+            curl -s -X PATCH -H "Authorization: Bearer $VERCEL_TOKEN" \
+              -H "Content-Type: application/json" \
+              "https://api.vercel.com/aliases/<alias-id>/protection-bypass?teamId=<team-id>" \
+              --data '{ "revoke": { "secret": "<bypass-secret>", "regenerate": false } }'
+            ```
+        # No Terraform remediation: protection-bypass secrets on aliases are imperative
+        # runtime credentials with no vercel Terraform provider resource to manage them.
+    refs:
+      - url: https://vercel.com/docs/security/deployment-protection/methods-to-bypass-deployment-protection/protection-bypass-automation
+        title: Vercel protection bypass for automation documentation
+
+  # ---------------------------------------------------------------------------
+  # Team governance and shared secrets
+  # ---------------------------------------------------------------------------
+  # No Terraform variants: these read team-wide account settings exposed only
+  # through the Vercel API; the runtime check has no Terraform asset analog.
+  - uid: mondoo-vercel-security-team-strict-protection-settings
+    title: Ensure protection setting changes require the team owner role
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: false
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: false
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    mql: |
+      vercel.team.strictDeploymentProtectionSettings == true
+      vercel.team.strictPasswordProtectionSettings == true
+    docs:
+      desc: |
+        This check ensures that the team requires the owner role to change deployment protection and password protection settings. When strict settings are off, any team member can weaken or disable the protection on a project's deployments, so the guardrail is only as strong as the least privileged member who can turn it off. Restricting protection changes to owners keeps the control in the hands of the few accountable for it.
+
+        **Why this matters**
+
+        - **Protection is only as strong as who can weaken it:** If any member can disable deployment or password protection, a single compromised or careless account can expose deployments.
+        - **Owner-only changes enforce accountability:** Limiting the change to the owner role narrows who can lower protection and makes the action auditable.
+        - **Defends the controls other checks rely on:** Vercel Authentication and password protection only hold if members cannot silently turn them off.
+
+        **Risk mitigation**
+
+        - **Require the owner role:** Turn on strict deployment protection and strict password protection settings so only owners can change them.
+        - **Keep the owner set small:** Limit the number of team owners so the pool that can weaken protection stays minimal.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Sign in to the Vercel dashboard at vercel.com.
+        2. Go to **Team Settings > Security & Privacy**.
+        3. Review whether changing deployment protection and password protection is restricted to the owner role.
+
+        A passing result shows both restrictions enabled; a failing result shows either one allowing non-owners to change protection.
+
+        ### Audit via API
+
+        ```bash
+        curl -s -H "Authorization: Bearer $VERCEL_TOKEN" \
+          "https://api.vercel.com/v2/teams/<team-id>" \
+          | jq '{strictDeploymentProtectionSettings, strictPasswordProtectionSettings}'
+        ```
+
+        A passing response shows both fields set to `true`; a failing response shows either set to `false`.
+      remediation:
+        - id: console
+          desc: |
+            To restrict protection changes to owners using the Vercel dashboard:
+
+            1. Go to **Team Settings > Security & Privacy**.
+            2. Enable the option requiring the owner role to change deployment protection.
+            3. Enable the option requiring the owner role to change password protection.
+            4. Save the changes.
+        - id: api
+          desc: |
+            To require the owner role for protection changes through the REST API:
+
+            ```bash
+            curl -s -X PATCH -H "Authorization: Bearer $VERCEL_TOKEN" \
+              -H "Content-Type: application/json" \
+              "https://api.vercel.com/v2/teams/<team-id>" \
+              --data '{ "strictDeploymentProtectionSettings": { "enabled": true }, "strictPasswordProtectionSettings": { "enabled": true } }'
+            ```
+        # No Terraform remediation: these team-wide governance toggles have no
+        # resource in the vercel Terraform provider; they are set via the API or dashboard.
+    refs:
+      - url: https://vercel.com/docs/security/deployment-protection
+        title: Vercel deployment protection documentation
+
+  - uid: mondoo-vercel-security-team-shared-env-vars-not-plaintext
+    title: Ensure shared environment variables are not stored in plaintext
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: false
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: false
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    mql: |
+      vercel.team.sharedEnvironmentVariables.all(type != "plain")
+    docs:
+      desc: |
+        This check ensures that the team has no shared environment variable stored with the plaintext type. Shared variables are injected across many projects, so a plaintext secret held at the team level is readable in clear text through the API and dashboard by everyone with team access and is exposed across every project it targets. Secrets should use the encrypted or sensitive types instead.
+
+        **Why this matters**
+
+        - **Plaintext values are readable:** A plaintext shared variable is returned in clear text to anyone who can read the team, including through the API.
+        - **Team scope multiplies exposure:** A shared variable is injected into many projects at once, so a plaintext secret leaks across all of them, not just one.
+        - **Sensitive types hide values after creation:** The encrypted and sensitive types prevent the stored value from being read back.
+
+        **Risk mitigation**
+
+        - **Use encrypted or sensitive types:** Store shared secrets so their values cannot be retrieved after they are set.
+        - **Reserve plaintext for non-secrets:** Only use plaintext for values that are genuinely public, and rotate any secret previously stored as plaintext.
+      audit: |
+        ### Audit via API
+
+        ```bash
+        curl -s -H "Authorization: Bearer $VERCEL_TOKEN" \
+          "https://api.vercel.com/v1/env?teamId=<team-id>" \
+          | jq '.data[]? // .[]? | select(.type == "plain") | .key'
+        ```
+
+        A passing response returns nothing; a failing response lists the shared variable keys stored as plaintext.
+      remediation:
+        - id: console
+          desc: |
+            To convert plaintext shared variables using the Vercel dashboard:
+
+            1. Go to **Team Settings > Environment Variables** (Shared Environment Variables).
+            2. Remove each plaintext secret and re-add it as a **Sensitive** or **Encrypted** shared variable.
+            3. Rotate any secret that was previously stored as plaintext, since its value may have been exposed.
+        - id: api
+          desc: |
+            To recreate a shared variable with a protected type through the REST API, add it as a sensitive variable:
+
+            ```bash
+            curl -s -X POST -H "Authorization: Bearer $VERCEL_TOKEN" \
+              -H "Content-Type: application/json" \
+              "https://api.vercel.com/v1/env?teamId=<team-id>" \
+              --data '{ "type": "sensitive", "target": ["production"], "evs": [ { "key": "API_TOKEN", "value": "<secret>" } ] }'
+            ```
+        - id: terraform
+          desc: |
+            To store a shared secret with a protected type in Terraform, set `sensitive = true` on the `vercel_shared_environment_variable` resource:
+
+            ```hcl
+            resource "vercel_shared_environment_variable" "api_token" {
+              key       = "API_TOKEN"
+              value     = var.api_token
+              target    = ["production"]
+              sensitive = true
+
+              project_ids = [vercel_project.example.id]
+            }
+            ```
+    refs:
+      - url: https://vercel.com/docs/environment-variables/shared-environment-variables
+        title: Vercel shared environment variables documentation
