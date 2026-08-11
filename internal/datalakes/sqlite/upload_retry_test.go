@@ -5,10 +5,13 @@ package sqlite
 
 import (
 	"context"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -183,4 +186,37 @@ func TestDoScanUpload_CancelledContextReturnsPromptly(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Less(t, time.Since(start), 5*time.Second, "must abort rather than sleep out the budget")
+}
+
+func TestDoScanUpload_ReusesConnectionAcrossUploads(t *testing.T) {
+	// The success-path response body must be drained before Close, or the
+	// transport cannot recycle the connection. With no api_proxy configured
+	// UploadFile uses http.DefaultTransport, a process-wide pool, so an
+	// undrained body costs a pooled connection on every scan.
+	var conns int64
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.WriteHeader(http.StatusOK)
+		// GCS answers a signed-URL PUT with a body; an empty one would make
+		// this test pass whether or not we drain.
+		_, _ = w.Write([]byte("<?xml version='1.0' encoding='UTF-8'?><PostResponse/>"))
+	}))
+	srv.Config.ConnState = func(_ net.Conn, s http.ConnState) {
+		if s == http.StateNew {
+			atomic.AddInt64(&conns, 1)
+		}
+	}
+	srv.Start()
+	defer srv.Close()
+
+	f := &fakeResolver{uploadURL: srv.URL}
+	path := testScanDataFile(t)
+
+	for i := 0; i < 3; i++ {
+		_, err := doScanUpload(context.Background(), f, path, "//assets/a1", nil)
+		require.NoError(t, err)
+	}
+
+	assert.Equal(t, int64(1), atomic.LoadInt64(&conns),
+		"three sequential uploads should share one pooled connection")
 }

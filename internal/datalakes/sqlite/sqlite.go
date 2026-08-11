@@ -167,19 +167,14 @@ func fileSizeBytes(path string) int64 {
 	return info.Size()
 }
 
-// uploadFailureReportKind is the value sent on the "reportKind" tag to mark a
-// report as an upload failure. The platform dispatches on it to record the
-// failure with its structured fields, so the literal is part of the wire
-// contract and must stay in sync with the server side.
-const uploadFailureReportKind = "upload_failure"
-
-// uploadFailureTags builds the tag set for an upload-failure report. Numeric
-// values are rendered as strings because health.SendError tags are
-// map[string]string; httpStatus and uploadSessionId are omitted rather than
-// sent as zero/empty so the server can tell "absent" from "actually zero".
+// uploadFailureTags builds the tags shared by every upload report. It does not
+// set reportKind — uploadOutcomeTags owns that, since the same fields describe
+// both a failure and a recovery. Numeric values are rendered as strings because
+// health.SendError tags are map[string]string; httpStatus and uploadSessionId
+// are omitted rather than sent as zero/empty so the server can tell "absent"
+// from "actually zero".
 func uploadFailureTags(sessionID, assetMrn string, kind upload.FailureKind, httpStatus int, res upload.Result, bytesTotal int64) map[string]string {
 	tags := map[string]string{
-		"reportKind":  uploadFailureReportKind,
 		"failureKind": string(kind),
 		"bytesSent":   strconv.FormatInt(res.BytesSent, 10),
 		"bytesTotal":  strconv.FormatInt(bytesTotal, 10),

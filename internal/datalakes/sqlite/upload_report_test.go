@@ -22,7 +22,9 @@ func TestUploadFailureTags_TransportError(t *testing.T) {
 		3_621_572,
 	)
 
-	assert.Equal(t, "upload_failure", tags["reportKind"])
+	// reportKind is set by uploadOutcomeTags, not here — see
+	// TestUploadOutcomeTags_*.
+	assert.NotContains(t, tags, "reportKind")
 	assert.Equal(t, "sess-1", tags["uploadSessionId"])
 	assert.Equal(t, "timeout", tags["failureKind"])
 	assert.Equal(t, "1441792", tags["bytesSent"])

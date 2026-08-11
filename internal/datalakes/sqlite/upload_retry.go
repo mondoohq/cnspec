@@ -101,10 +101,18 @@ func doScanUpload(ctx context.Context, resolver uploadResolver, scanDataPath, as
 			// class. Always worth another attempt.
 			return true, 0, err
 		}
-		defer res.Response.Body.Close()
+		// Drain before Close on every path: the transport can only recycle a
+		// connection whose body was read to EOF, and with no api_proxy set
+		// UploadFile runs on http.DefaultTransport's process-wide pool. An
+		// undrained body would cost a pooled connection per scan.
+		defer func() {
+			_, _ = io.Copy(io.Discard, res.Response.Body)
+			res.Response.Body.Close()
+		}()
 
 		if res.Response.StatusCode != http.StatusOK && res.Response.StatusCode != http.StatusCreated {
-			// Truncate to 512 bytes to avoid leaking sensitive details.
+			// Truncate to 512 bytes to avoid leaking sensitive details. The
+			// deferred drain consumes whatever is left.
 			body, _ := io.ReadAll(io.LimitReader(res.Response.Body, 512))
 			out.lastKind = upload.FailureHTTPStatus
 			out.lastStatus = res.Response.StatusCode
