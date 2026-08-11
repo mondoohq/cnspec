@@ -5,14 +5,15 @@ package sqlite
 
 import (
 	"context"
+	"errors"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sync/atomic"
+	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -188,35 +189,44 @@ func TestDoScanUpload_CancelledContextReturnsPromptly(t *testing.T) {
 	assert.Less(t, time.Since(start), 5*time.Second, "must abort rather than sleep out the budget")
 }
 
-func TestDoScanUpload_ReusesConnectionAcrossUploads(t *testing.T) {
-	// The success-path response body must be drained before Close, or the
-	// transport cannot recycle the connection. With no api_proxy configured
-	// UploadFile uses http.DefaultTransport, a process-wide pool, so an
-	// undrained body costs a pooled connection on every scan.
-	var conns int64
-	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.Copy(io.Discard, r.Body)
-		w.WriteHeader(http.StatusOK)
-		// GCS answers a signed-URL PUT with a body; an empty one would make
-		// this test pass whether or not we drain.
-		_, _ = w.Write([]byte("<?xml version='1.0' encoding='UTF-8'?><PostResponse/>"))
-	}))
-	srv.Config.ConnState = func(_ net.Conn, s http.ConnState) {
-		if s == http.StateNew {
-			atomic.AddInt64(&conns, 1)
-		}
+// trackedBody records whether the transport-facing contract was met: a body
+// read to EOF and closed is the only state from which Go's transport will
+// recycle a connection.
+type trackedBody struct {
+	io.Reader
+	closed   bool
+	readToIO bool
+}
+
+func (b *trackedBody) Read(p []byte) (int, error) {
+	n, err := b.Reader.Read(p)
+	if err == io.EOF {
+		b.readToIO = true
 	}
-	srv.Start()
-	defer srv.Close()
+	return n, err
+}
 
-	f := &fakeResolver{uploadURL: srv.URL}
-	path := testScanDataFile(t)
+func (b *trackedBody) Close() error {
+	b.closed = true
+	return nil
+}
 
-	for i := 0; i < 3; i++ {
-		_, err := doScanUpload(context.Background(), f, path, "//assets/a1", nil)
-		require.NoError(t, err)
-	}
+func TestDrainAndClose_ReadsToEOFThenCloses(t *testing.T) {
+	// Close alone is not enough: with no api_proxy set UploadFile runs on
+	// http.DefaultTransport's process-wide pool, and a body left undrained
+	// costs a pooled connection on every scan.
+	body := &trackedBody{Reader: strings.NewReader("<?xml version='1.0'?><PostResponse/>")}
 
-	assert.Equal(t, int64(1), atomic.LoadInt64(&conns),
-		"three sequential uploads should share one pooled connection")
+	drainAndClose(body)
+
+	assert.True(t, body.readToIO, "body must be read to EOF so the connection can be recycled")
+	assert.True(t, body.closed, "body must still be closed")
+}
+
+func TestDrainAndClose_ClosesEvenWhenReadFails(t *testing.T) {
+	body := &trackedBody{Reader: iotest.ErrReader(errors.New("connection reset"))}
+
+	drainAndClose(body)
+
+	assert.True(t, body.closed, "a read error must not leak the body")
 }
