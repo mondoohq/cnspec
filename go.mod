@@ -47,13 +47,13 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/tliron/glsp v0.2.2
 	github.com/zclconf/go-cty v1.19.0
-	go.mondoo.com/mondoo-go v0.0.0-20260807010921-92ef02e456bd
-	go.mondoo.com/mql/v13 v13.32.3-0.20260808175116-ede7df144e7e
+	go.mondoo.com/mondoo-go v0.0.0-20260808001139-ef2a665833b7
+	go.mondoo.com/mql/v13 v13.33.0
 	go.mondoo.com/ranger-rpc v0.8.1
 	gocloud.dev v0.46.0
 	golang.org/x/sync v0.22.0
 	golang.org/x/sys v0.47.0
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260803160001-6ac0973c030d
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260807164820-c8921c73eeea
 	google.golang.org/protobuf v1.36.12-0.20260120151049-f2248ac996af
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/utils v0.0.0-20260707023825-cf1189d6abe3
@@ -109,7 +109,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.35 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.35 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.36 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ec2 v1.320.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ec2 v1.321.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ec2instanceconnect v1.35.4 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ecr v1.60.4 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ecrpublic v1.41.4 // indirect
@@ -125,7 +125,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sso v1.33.4 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.38.4 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.45.4 // indirect
-	github.com/aws/smithy-go v1.27.6 // indirect
+	github.com/aws/smithy-go v1.27.7 // indirect
 	github.com/awslabs/amazon-ecr-credential-helper/ecr-login v0.12.0 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
@@ -368,7 +368,7 @@ require (
 	k8s.io/klog/v2 v2.140.0 // indirect
 	k8s.io/kube-openapi v0.0.0-20260603220949-865597e52e25 // indirect
 	k8s.io/kubelet v0.36.3 // indirect
-	modernc.org/libc v1.75.1 // indirect
+	modernc.org/libc v1.75.2 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.0 // indirect
 	modernc.org/sqlite v1.56.0 // indirect
