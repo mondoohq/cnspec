@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-azure-security
     name: Mondoo Microsoft Azure Security
-    version: 9.8.0
+    version: 9.9.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -341,6 +341,7 @@ policies:
           - uid: mondoo-azure-security-synapse-trusted-service-bypass-disabled
           - uid: mondoo-azure-security-synapse-managed-identity
           - uid: mondoo-azure-security-synapse-default-storage-secure-transfer
+          - uid: mondoo-azure-security-synapse-firewall-no-public-ipv4
       - title: Azure Container Registry
         checks:
           - uid: mondoo-azure-security-acr-admin-user-disabled
@@ -425,6 +426,7 @@ policies:
           - uid: mondoo-azure-security-ml-online-endpoint-key-auth-disabled
           - uid: mondoo-azure-security-ml-serverless-endpoint-key-auth-disabled
           - uid: mondoo-azure-security-ml-workspace-cmk-encryption
+          - uid: mondoo-azure-security-ml-datastore-managed-identity
       - title: Azure Event Grid
         checks:
           - uid: mondoo-azure-security-eventgrid-local-auth-disabled
@@ -31559,6 +31561,86 @@ queries:
       bicep.resources.where(type == "Microsoft.DataFactory/factories").all(
         body["identity"] != empty
       )
+  # No Terraform variants: the check keys on the provider-derived allowsAllIpv4 flag, which reduces a firewall rule's start/end address range to a single "spans all of IPv4" boolean. A Terraform HCL/plan/state check would have to recompute that range arithmetic from start_ip_address/end_ip_address itself, so there is no faithful IaC analog of the runtime flag.
+  - uid: mondoo-azure-security-synapse-firewall-no-public-ipv4
+    title: Ensure Synapse workspace firewall does not allow all IPv4 addresses
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: false
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: false
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+      mondoo.com/filter-title: Azure Subscription
+      mondoo.com/filter-icon: azure
+    filters: asset.platform == "azure"
+    mql: |
+      azure.subscription.synapse.workspaces.all(
+        firewallRules.none(allowsAllIpv4)
+      )
+    docs:
+      desc: |
+        This check ensures that no Azure Synapse Analytics workspace has an IP firewall rule that spans the entire IPv4 address space. Synapse firewall rules are additive and apply to the workspace's SQL and development endpoints, so a single rule covering `0.0.0.0` to `255.255.255.255` leaves those endpoints reachable from any address on the internet regardless of the workspace's public network access setting.
+
+        **Why this matters**
+
+        - **Internet-wide exposure of analytics endpoints:** A rule spanning all of IPv4 exposes the SQL and Dev endpoints to the entire internet, turning a data-warehouse workspace into a directly reachable target for credential attacks and data exfiltration.
+        - **Bypasses the intent of network restriction:** An allow-all rule silently defeats the purpose of the firewall; the workspace looks restricted because a firewall exists, while in practice every source address is permitted.
+        - **Distinct from the allow-Azure-services rule:** The `0.0.0.0` to `0.0.0.0` rule that permits Azure-internal services is easily confused with an all-IPv4 rule, so an overly broad rule is often added by mistake and left in place.
+
+        **Risk mitigation**
+
+        - **Scope rules to known ranges:** Replace an all-IPv4 rule with narrow rules covering only the specific corporate or VPN egress addresses that require access.
+        - **Prefer private connectivity:** Use private endpoints and a managed virtual network so workspace endpoints are not reachable over the public internet at all.
+      audit: |
+        ### Audit via Portal
+
+        1. In the Azure Portal, open **Azure Synapse Analytics** and select the workspace.
+        2. Under **Security** > **Networking** (or **Firewalls**), review the IP firewall rules.
+        3. Confirm that no rule has a start address of `0.0.0.0` together with an end address of `255.255.255.255`.
+
+        A passing workspace has no rule spanning the full IPv4 range. A failing workspace has at least one rule from `0.0.0.0` to `255.255.255.255`.
+
+        ### Audit via CLI
+
+        1. List the workspace's firewall rules and inspect their address ranges:
+
+        ```bash
+        az synapse workspace firewall-rule list --workspace-name <WorkspaceName> --resource-group-name <ResourceGroupName> --query "[].{Name:name, Start:startIpAddress, End:endIpAddress}" -o table
+        ```
+
+        A passing workspace shows no rule with `Start` `0.0.0.0` and `End` `255.255.255.255`. A failing workspace shows one or more such rules.
+      remediation:
+        - id: portal
+          desc: |
+            To remove or narrow an all-IPv4 firewall rule using the Azure Portal:
+
+            1. In the Azure Portal, open **Azure Synapse Analytics** and select the workspace.
+            2. Under **Security** > **Networking**, locate the rule spanning `0.0.0.0` to `255.255.255.255`.
+            3. Delete the rule, or edit it so the start and end addresses cover only the specific trusted range that requires access.
+            4. Save the change.
+        - id: cli
+          desc: |
+            To remove an all-IPv4 firewall rule using the Azure CLI, delete the offending rule:
+
+            ```bash
+            az synapse workspace firewall-rule delete --rule-name <RuleName> --workspace-name <WorkspaceName> --resource-group-name <ResourceGroupName>
+            ```
+
+            If access from a specific range is still required, replace it with a narrowly scoped rule:
+
+            ```bash
+            az synapse workspace firewall-rule create --rule-name <RuleName> --workspace-name <WorkspaceName> --resource-group-name <ResourceGroupName> --start-ip-address 203.0.113.0 --end-ip-address 203.0.113.255
+            ```
+        # No Terraform remediation: this check has no Terraform variant (see the comment above the check), because it keys on the provider-derived allowsAllIpv4 flag rather than a raw config field. The underlying fix in Terraform is to remove or narrow the azurerm_synapse_firewall_rule spanning all of IPv4.
   - uid: mondoo-azure-security-synapse-public-access-disabled
     title: Ensure Synapse Analytics disables public network access
     impact: 80
@@ -49362,6 +49444,86 @@ queries:
       bicep.resources.where(type == "Microsoft.MachineLearningServices/workspaces/serverlessEndpoints").all(
         properties["authMode"] != "Key"
       )
+  # No Terraform variants: the check keys on the provider-resolved credentialsType of each datastore, which the runtime derives from the credential block Azure returns. The Terraform datastore resources model each credential kind as a separate resource/block shape rather than a single comparable "None vs stored credential" field, so there is no faithful IaC analog of the runtime posture.
+  - uid: mondoo-azure-security-ml-datastore-managed-identity
+    title: Ensure Machine Learning datastores use managed identity, not stored keys
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: false
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: false
+      compliance/nist-sp-800-171: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+      mondoo.com/filter-title: Azure Subscription
+      mondoo.com/filter-icon: azure
+    filters: asset.platform == "azure"
+    mql: |
+      azure.subscription.machineLearningService.workspaces.all(
+        datastores == empty || datastores.all(credentialsType == "None")
+      )
+    docs:
+      desc: |
+        This check ensures that every datastore registered in an Azure Machine Learning workspace authenticates to its backing storage with the workspace's managed identity rather than a stored credential. A datastore's `credentialsType` of `None` means the workspace's own identity is used; any other value (`AccountKey`, `Sas`, `ServicePrincipal`, or `Certificate`) means a long-lived credential is stored alongside the datastore.
+
+        **Why this matters**
+
+        - **Standing credential to the data:** A stored account key or SAS token is a long-lived secret that grants access to the backing storage account; anyone who can read the datastore definition or its secret gains direct access to the training and inference data behind it.
+        - **No central revocation or rotation:** Managed-identity access is governed by Azure RBAC and can be revoked or re-scoped centrally, whereas a stored key must be rotated everywhere it was copied and cannot be revoked without breaking every consumer at once.
+        - **Weaker audit trail:** Access made with the workspace identity is attributable through Microsoft Entra and Key Vault logs, while a shared account key blends every caller into one identity.
+
+        **Risk mitigation**
+
+        - **Use identity-based access:** Register datastores with identity-based authentication so the workspace's managed identity, granted the appropriate RBAC role on the storage account, is used instead of a stored key.
+        - **Remove embedded secrets:** Re-create datastores that carry a stored account key or SAS token as identity-based datastores, and rotate the exposed key on the storage account afterward.
+      audit: |
+        ### Audit via Portal
+
+        1. In Azure Machine Learning studio, open the workspace and go to **Data** > **Datastores**.
+        2. Select each datastore and review its **Authentication type**.
+        3. Confirm that the datastore uses **Identity-based access** rather than an account key or SAS token.
+
+        A passing workspace has every datastore configured for identity-based access. A failing workspace has one or more datastores that store an account key, SAS token, service principal secret, or certificate.
+
+        ### Audit via CLI
+
+        1. List the datastores in the workspace and inspect how each authenticates:
+
+        ```bash
+        az ml datastore list --workspace-name <WorkspaceName> --resource-group-name <ResourceGroupName> --query "[].{Name:name, CredentialsType:credentials.credentials_type}" -o table
+        ```
+
+        A passing workspace shows no stored credential type (identity-based access). A failing workspace shows a `CredentialsType` such as `AccountKey`, `Sas`, `ServicePrincipal`, or `Certificate`.
+      remediation:
+        - id: portal
+          desc: |
+            To switch a datastore to identity-based access using Azure Machine Learning studio:
+
+            1. Grant the workspace's managed identity the appropriate role (for example **Storage Blob Data Contributor**) on the backing storage account.
+            2. In Azure Machine Learning studio, open **Data** > **Datastores** and select the datastore.
+            3. Re-create the datastore (or create a replacement) choosing **Identity-based access** instead of account key or SAS authentication.
+            4. Update jobs and endpoints to reference the identity-based datastore, then remove the credential-based one.
+        - id: cli
+          desc: |
+            To register an identity-based datastore using the Azure CLI, define a datastore spec without stored credentials so the workspace identity is used, then create it:
+
+            ```bash
+            az ml datastore create --file identity-datastore.yml --workspace-name <WorkspaceName> --resource-group-name <ResourceGroupName>
+            ```
+
+            Confirm the datastore no longer carries a stored credential:
+
+            ```bash
+            az ml datastore show --name <DatastoreName> --workspace-name <WorkspaceName> --resource-group-name <ResourceGroupName> --query "credentials.credentials_type"
+            ```
+        # No Terraform remediation: this check has no Terraform variant (see the comment above the check), because it keys on the provider-resolved credentialsType rather than a single comparable config field. The underlying fix in Terraform is to register the datastore with identity-based access instead of an account-key or SAS credential block.
   - uid: mondoo-azure-security-ml-workspace-cmk-encryption
     title: Ensure Machine Learning workspaces use customer-managed key encryption
     impact: 70
