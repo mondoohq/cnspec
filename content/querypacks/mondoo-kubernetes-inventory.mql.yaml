@@ -4,7 +4,7 @@
 packs:
   - uid: mondoo-kubernetes-inventory
     name: Kubernetes Inventory Pack
-    version: 1.4.0
+    version: 1.5.0
     license: BUSL-1.1
     require:
       - provider: k8s
@@ -93,12 +93,26 @@ packs:
                 relation is deliberately not used here: nodes are cluster-scoped,
                 so it resolves to null on namespace-scoped assets and manifest
                 scans, whereas `nodeName` is always set for a scheduled pod.
+
+                Join the `containerStatuses` image IDs to container image assets
+                to reach the images an exposed pod is actually serving traffic
+                with. The IDs are kubelet-resolved, so they carry the running
+                image's digest even when the pod spec references a mutable tag,
+                and they cover only the pod's serving containers: init and
+                ephemeral containers ran or debug on the pod but do not serve,
+                so they are deliberately not part of the exposure surface. The
+                platform folds these digests into the "runs an internet-exposed
+                workload" risk factor on the matching container image assets,
+                which prioritizes the CVEs found in those images.
             mql: |
               k8s.pods.where(exposures.any(internetExposed == true)) {
                 namespace
                 name
                 nodeName
                 podIP
+                containerStatuses {
+                  imageId
+                }
                 exposures {
                   sourceKind
                   sourceRef
@@ -109,6 +123,26 @@ packs:
                   addresses
                   ports
                   protocols
+                }
+              }
+          - uid: k8s-cluster-internet-exposed-image-digests
+            title: Serving-container images of internet-exposed pods
+            docs:
+              desc: |
+                The kubelet-resolved image IDs of the serving containers of
+                every internet-exposed pod, as a minimal projection. This is
+                the platform's read surface for attributing workload exposure
+                to container image assets ("runs an internet-exposed
+                workload"): keeping it separate from the full exposed-pod
+                inventory above means the exposure fold decodes only image IDs
+                instead of the entire exposure projection, and the two queries
+                can evolve independently without breaking the fold's datapoint
+                lookup. Init and ephemeral containers do not serve traffic and
+                are deliberately not included.
+            mql: |
+              k8s.pods.where(exposures.any(internetExposed == true)) {
+                containerStatuses {
+                  imageId
                 }
               }
           - uid: k8s-cluster-clusterroles
