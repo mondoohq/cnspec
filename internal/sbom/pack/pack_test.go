@@ -42,6 +42,7 @@ func TestQueryPack(t *testing.T) {
 		"mondoo-sbom-packages",
 		"mondoo-sbom-python-packages",
 		"mondoo-sbom-npm-packages",
+		"mondoo-sbom-windows-printer-drivers",
 		"mondoo-sbom-kernel-installed",
 	}
 	for _, uid := range expectedQueries {

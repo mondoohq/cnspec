@@ -52,6 +52,15 @@ type BomFields struct {
 	PythonPackages  []BomPackage      `json:"python.packages,omitempty"`
 	NpmPackages     []BomPackage      `json:"npm.packages.list,omitempty"`
 	KernelInstalled []KernelInstalled `json:"kernel.installed,omitempty"`
+	// PrinterDrivers are read from the Windows print spooler rather than from
+	// installed software: a driver delivered as an INF/CAB package lands in the
+	// driver store and creates no Add/Remove Programs entry, so a software
+	// inventory cannot see it while the spooler is still loading it.
+	//
+	// The key is the compiled datapoint label for a list resource, which is
+	// "<resource>.list" -- the same shape as packages.list and
+	// npm.packages.list.
+	PrinterDrivers []BomPackage `json:"windows.printerDrivers.list,omitempty"`
 }
 
 func (b *BomFields) ToJSON() ([]byte, error) {

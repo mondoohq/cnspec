@@ -105,6 +105,22 @@ func GenerateBom(r *cr.Report) []*sbom.Sbom {
 				}
 			}
 
+			// Windows print drivers. Their purl comes from the resource and is
+			// empty when the spooler reports no manufacturer or no name -- a
+			// driver name alone does not identify a driver, since "PCL 6
+			// Driver" names a page description language that every printer
+			// vendor ships one for. Such a driver is still listed, without a
+			// purl.
+			for _, drv := range rb.PrinterDrivers {
+				bom.Packages = append(bom.Packages, &sbom.Package{
+					Name:    drv.Name,
+					Version: drv.Version,
+					Purl:    drv.Purl,
+					Cpes:    drv.CPEs,
+					Type:    "windows-driver",
+				})
+			}
+
 			if rb.Packages != nil {
 				for _, pkg := range rb.Packages {
 					bomPkg := &sbom.Package{
