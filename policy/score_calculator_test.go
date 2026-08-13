@@ -341,7 +341,53 @@ func TestDecayedScores(t *testing.T) {
 			},
 			out: &Score{Value: 0, ScoreCompletion: 100, DataCompletion: 100, DataTotal: 1, Weight: 0, Type: ScoreType_Result},
 		},
+		{
+			// an edge without an impact must not panic; it counts as full weight,
+			// the same as an impact that carries no value
+			in: []*Score{
+				{Value: 0, ScoreCompletion: 100, DataCompletion: 100, DataTotal: 1, Weight: 1, Type: ScoreType_Result},
+			},
+			out: &Score{Value: 0, ScoreCompletion: 100, DataCompletion: 100, DataTotal: 1, Weight: 1, Type: ScoreType_Result},
+		},
 	})
+}
+
+// TestBandedScores_UsesImpactValueForBand pins the property the banded
+// calculator exists for: a single failing check has to land in the band its
+// impact declares. Passing no impact at all leaves it critical.
+func TestBandedScores_UsesImpactValueForBand(t *testing.T) {
+	failingCheck := func(impact int32) scoreTest {
+		return scoreTest{
+			in: []*Score{
+				{Value: uint32(100 - impact), ScoreCompletion: 100, DataCompletion: 100, DataTotal: 1, Weight: 1, Type: ScoreType_Result},
+			},
+			impacts: []*Impact{{Value: &ImpactValue{Value: impact}}},
+		}
+	}
+
+	crit := failingCheck(100)
+	crit.out = &Score{Value: 0, ScoreCompletion: 100, DataCompletion: 100, Weight: 1, Type: ScoreType_Result}
+
+	high := failingCheck(80)
+	high.out = &Score{Value: 10, ScoreCompletion: 100, DataCompletion: 100, Weight: 1, Type: ScoreType_Result}
+
+	mid := failingCheck(60)
+	mid.out = &Score{Value: 30, ScoreCompletion: 100, DataCompletion: 100, Weight: 1, Type: ScoreType_Result}
+
+	low := failingCheck(20)
+	low.out = &Score{Value: 60, ScoreCompletion: 100, DataCompletion: 100, Weight: 1, Type: ScoreType_Result}
+
+	// No impact on the edge: nothing to band with, so it stays critical.
+	noImpact := scoreTest{
+		in:  []*Score{{Value: 40, ScoreCompletion: 100, DataCompletion: 100, DataTotal: 1, Weight: 1, Type: ScoreType_Result}},
+		out: &Score{Value: 0, ScoreCompletion: 100, DataCompletion: 100, Weight: 1, Type: ScoreType_Result},
+	}
+
+	testScoring(t, func() ScoreCalculator {
+		res := bandedScoreCalculator{}
+		res.Init()
+		return &res
+	}, []scoreTest{crit, high, mid, low, noImpact})
 }
 
 func TestDataOnly(t *testing.T) {

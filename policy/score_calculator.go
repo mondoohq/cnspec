@@ -685,7 +685,9 @@ func (c *decayedScoreCalculator) Add(score *Score, impact *Impact) {
 			// with accelerator > 0, default = 1
 			v := float64(100-score.Value) / 100
 			c.x += v * float64(score.Weight)
-			if impact.Value == nil {
+			// GetValue, not .Value: edges without an impact hand us a nil
+			// *Impact, which a field access would panic on.
+			if impact.GetValue() == nil {
 				c.xmax += 1 * float64(score.Weight)
 			} else {
 				c.xmax += float64(impact.Value.Value) / 100 * float64(score.Weight)
