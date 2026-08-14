@@ -52,18 +52,90 @@ func lintDeprecatedSymbols(schema resources.ResourcesSchema, conf mqlc.CompilerC
 	return entries
 }
 
+// walkQueryForDeprecatedSymbols reports deprecated symbols used by a query,
+// looking at both its mql and its filters. Filters matter as much as mql here:
+// when a deprecated symbol is finally removed, a filter that references it stops
+// matching and the check silently stops scoring assets instead of failing loudly.
+//
+// A symbol used in both places is reported once. The mql site wins, because that
+// is where a reader will find it; the "in its filters" hint is only added for
+// symbols that appear nowhere else, since every warning points at the query's own
+// line and filter Mqueries carry no file context of their own.
 func walkQueryForDeprecatedSymbols(schema resources.ResourcesSchema, conf mqlc.CompilerConfig, filename string, q *Mquery) []*Entry {
-	if q == nil || q.Mql == "" {
+	if q == nil {
 		return nil
 	}
 
-	usage, _, err := mqlc.AnalyzeQuery(q.Mql, mqlc.EmptyPropsHandler, conf)
-	if err != nil || usage == nil {
+	fromMql := deprecatedSymbolsIn(q.Mql, conf)
+
+	seen := make(map[string]struct{}, len(fromMql))
+	for _, symbol := range fromMql {
+		seen[symbol] = struct{}{}
+	}
+
+	var fromFilters []string
+	if q.Filters != nil {
+		// Sort for stable output across runs.
+		filterKeys := make([]string, 0, len(q.Filters.Items))
+		for key := range q.Filters.Items {
+			filterKeys = append(filterKeys, key)
+		}
+		sort.Strings(filterKeys)
+
+		for _, key := range filterKeys {
+			filter := q.Filters.Items[key]
+			if filter == nil {
+				continue
+			}
+			for _, symbol := range deprecatedSymbolsIn(filter.Mql, conf) {
+				if _, ok := seen[symbol]; ok {
+					continue
+				}
+				seen[symbol] = struct{}{}
+				fromFilters = append(fromFilters, symbol)
+			}
+		}
+	}
+
+	if len(fromMql) == 0 && len(fromFilters) == 0 {
 		return nil
 	}
 
 	loc := []Location{{File: filename, Line: q.FileContext.Line, Column: q.FileContext.Column}}
 	display := queryDisplayID(q)
+
+	entries := make([]*Entry, 0, len(fromMql)+len(fromFilters))
+	newEntry := func(symbol, where string) *Entry {
+		return &Entry{
+			RuleID:   QueryDeprecatedSymbolRuleID,
+			Level:    LevelWarning,
+			Message:  fmt.Sprintf("query '%s' uses %s%s", display, symbol, where),
+			Location: loc,
+		}
+	}
+	for _, symbol := range fromMql {
+		entries = append(entries, newEntry(symbol, ""))
+	}
+	for _, symbol := range fromFilters {
+		entries = append(entries, newEntry(symbol, " in its filters"))
+	}
+
+	return entries
+}
+
+// deprecatedSymbolsIn compiles a single MQL snippet and returns the deprecated
+// symbols it uses, as stable-sorted descriptions such as "deprecated resource
+// 'processes'" or "deprecated field 'file.basename'". Compile errors are
+// intentionally ignored — bundle-compile-error already surfaces them.
+func deprecatedSymbolsIn(query string, conf mqlc.CompilerConfig) []string {
+	if query == "" {
+		return nil
+	}
+
+	usage, _, err := mqlc.AnalyzeQuery(query, mqlc.EmptyPropsHandler, conf)
+	if err != nil || usage == nil {
+		return nil
+	}
 
 	// Sort for stable output across runs.
 	providerIDs := make([]string, 0, len(usage.Providers))
@@ -72,7 +144,7 @@ func walkQueryForDeprecatedSymbols(schema resources.ResourcesSchema, conf mqlc.C
 	}
 	sort.Strings(providerIDs)
 
-	var entries []*Entry
+	var symbols []string
 	for _, pid := range providerIDs {
 		pu := usage.Providers[pid]
 		resourceNames := make([]string, 0, len(pu.Resources))
@@ -84,12 +156,7 @@ func walkQueryForDeprecatedSymbols(schema resources.ResourcesSchema, conf mqlc.C
 		for _, rname := range resourceNames {
 			ru := pu.Resources[rname]
 			if ru.Maturity == resources.MaturityDeprecated {
-				entries = append(entries, &Entry{
-					RuleID:   QueryDeprecatedSymbolRuleID,
-					Level:    LevelWarning,
-					Message:  fmt.Sprintf("query '%s' uses deprecated resource '%s'", display, rname),
-					Location: loc,
-				})
+				symbols = append(symbols, fmt.Sprintf("deprecated resource '%s'", rname))
 				// Skip field warnings on a deprecated resource — every field
 				// inherits the deprecated effective maturity, which would
 				// drown the resource-level warning in noise.
@@ -106,17 +173,12 @@ func walkQueryForDeprecatedSymbols(schema resources.ResourcesSchema, conf mqlc.C
 				if ru.Fields[fname].EffectiveMaturity != resources.MaturityDeprecated {
 					continue
 				}
-				entries = append(entries, &Entry{
-					RuleID:   QueryDeprecatedSymbolRuleID,
-					Level:    LevelWarning,
-					Message:  fmt.Sprintf("query '%s' uses deprecated field '%s.%s'", display, rname, fname),
-					Location: loc,
-				})
+				symbols = append(symbols, fmt.Sprintf("deprecated field '%s.%s'", rname, fname))
 			}
 		}
 	}
 
-	return entries
+	return symbols
 }
 
 func queryDisplayID(q *Mquery) string {
