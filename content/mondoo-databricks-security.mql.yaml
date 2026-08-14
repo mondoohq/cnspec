@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-databricks-security
     name: Mondoo Databricks Security
-    version: 1.0.0
+    version: 1.1.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -1519,9 +1519,8 @@ queries:
             }
             ```
   - uid: mondoo-databricks-security-token-no-nonexpiring
-    title: Ensure no personal access tokens are set to never expire
+    title: Ensure access tokens and service principal secrets are not non-expiring
     impact: 70
-    filters: asset.platform == "databricks-workspace"
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
@@ -1537,34 +1536,42 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-8-6-3
       compliance/soc2-2017: soc2-control-cc6-1-8
       compliance/vda-isa-5: vda-isa-5-4-1-3
-    mql: |
-      databricks.tokens.all(expiryTime != empty)
+    variants:
+      - uid: mondoo-databricks-security-token-no-nonexpiring-workspace
+        tags:
+          mondoo.com/filter-title: Databricks Workspace
+          mondoo.com/filter-icon: databricks
+      - uid: mondoo-databricks-security-token-no-nonexpiring-account
+        tags:
+          mondoo.com/filter-title: Databricks Account
+          mondoo.com/filter-icon: databricks
     docs:
       desc: |
-        Databricks personal access tokens are long-lived bearer credentials that authenticate to the workspace REST API. Every token should have an expiry time set. The insecure default appears when a token is created with no lifetime, because such a token never expires and remains valid until someone manually revokes it.
+        Databricks personal access tokens and service principal OAuth secrets are long-lived bearer credentials that authenticate to the REST API. Personal access tokens act for a workspace user, and service principal secrets act for a machine identity at the account level. Every credential of either kind should have an expiry time set. The insecure default appears when a token or secret is created with no lifetime, because it never expires and remains valid until someone manually revokes it.
 
         **Why this matters**
 
-        - **Never rotates:** A token with no expiry stays valid indefinitely, so a credential that leaks today can still be used months or years later.
-        - **Evades cleanup:** Non-expiring tokens accumulate as employees and pipelines change, leaving forgotten credentials that no one revokes.
-        - **Grants standing access:** Anyone who obtains the token holds continuous API access to the workspace with no automatic cutoff.
+        - **Never rotates:** A token or secret with no expiry stays valid indefinitely, so a credential that leaks today can still be used months or years later.
+        - **Evades cleanup:** Non-expiring credentials accumulate as employees, pipelines, and service principals change, leaving forgotten credentials that no one revokes.
+        - **Grants standing access:** Anyone who obtains the token or secret holds continuous API access with no automatic cutoff, and a service principal secret grants that access to an unattended machine identity.
 
         **Risk mitigation**
 
-        - **Always set a lifetime:** Create every token with an expiry so it becomes invalid automatically.
-        - **Enforce a maximum lifetime:** Configure a workspace-wide maximum token lifetime so new tokens cannot be created without an expiry.
+        - **Always set a lifetime:** Create every personal access token and every service principal secret with an expiry so it becomes invalid automatically.
+        - **Enforce a maximum lifetime:** Configure a workspace-wide maximum token lifetime so new tokens cannot be created without an expiry, and set an expiration when issuing service principal secrets.
       audit: |
         ### Audit via Console
 
         1. Sign in to the Databricks workspace as an administrator.
-        2. Go to **Settings** > **Developer** and open **Access tokens** to review your own tokens.
-        3. Confirm the CLI or API is used for a workspace-wide review, because the UI shows only the current user's tokens.
+        2. Go to **Settings** > **Developer** and open **Access tokens** to review personal access tokens.
+        3. In the account console, open **User management** > **Service principals**, and for each service principal review its OAuth secrets and their expiration.
+        4. Confirm the CLI or API is used for a workspace-wide review of personal access tokens, because the UI shows only the current user's tokens.
 
-        A passing result shows every token with an expiration date; a failing result shows at least one token that never expires.
+        A passing result shows every personal access token and every active service principal secret with an expiration date; a failing result shows at least one that never expires.
 
         ### Audit via CLI
 
-        1. List all tokens in the workspace:
+        1. List all personal access tokens in the workspace:
 
             ```bash
             databricks token-management list
@@ -1582,6 +1589,7 @@ queries:
             2. Go to **Settings** > **Developer** and open **Access tokens**.
             3. When generating a token, enter a value in the **Lifetime (days)** field rather than leaving it blank.
             4. Revoke any existing token that was created with no lifetime by selecting it and choosing **Revoke**.
+            5. For machine identities, sign in to the account console, open **User management** > **Service principals**, and for each service principal set an expiration when issuing an OAuth secret and delete any active secret that has no expiration.
 
             Enforcing this across the whole workspace requires the maximum token lifetime setting shown in the CLI and Terraform steps.
         - id: cli
@@ -1624,6 +1632,16 @@ queries:
     refs:
       - url: https://docs.databricks.com/aws/en/admin/access-control/tokens
         title: Monitor and revoke Databricks personal access tokens
+      - url: https://docs.databricks.com/aws/en/admin/users-groups/service-principals
+        title: Manage service principals and their OAuth secrets
+  - uid: mondoo-databricks-security-token-no-nonexpiring-workspace
+    filters: asset.platform == "databricks-workspace"
+    mql: |
+      databricks.tokens.all(expiryTime != empty)
+  - uid: mondoo-databricks-security-token-no-nonexpiring-account
+    filters: asset.platform == "databricks-account"
+    mql: |
+      databricks.servicePrincipals.all(secrets.where(status == "active").all(expireTime != empty))
   - uid: mondoo-databricks-security-token-lifetime-under-90-days
     title: Ensure personal access token lifetimes do not exceed 90 days
     impact: 60
