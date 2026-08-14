@@ -1236,12 +1236,21 @@ func (s *localAssetScanner) prepareAsset() error {
 	// Compile the bundle tolerating queries for unavailable providers.
 	// The upstream bundle may contain queries for all providers in the space,
 	// but we only need the ones relevant to this asset's platform.
-	conf := s.services.NewCompilerConfig()
-	bundleMap, err := bundle.CompileExt(s.job.Ctx, policy.BundleCompileConf{
-		CompilerConfig: conf,
+	conf := policy.BundleCompileConf{
+		CompilerConfig: s.services.NewCompilerConfig(),
 		Library:        s.services.DataLake,
 		RemoveFailing:  true,
-	})
+	}
+
+	// Reuse the compiled bundle across assets that share a resource schema.
+	// Without the cache every asset recompiles the whole bundle.
+	var bundleMap *policy.PolicyBundleMap
+	var err error
+	if s.job.BundleCompileCache != nil {
+		bundleMap, err = s.job.BundleCompileCache.compile(s.job.Ctx, s.job.Bundle, conf)
+	} else {
+		bundleMap, err = bundle.CompileExt(s.job.Ctx, conf)
+	}
 	if err != nil {
 		return err
 	}
@@ -1249,11 +1258,16 @@ func (s *localAssetScanner) prepareAsset() error {
 		return err
 	}
 
-	policyMrns := filterPolicyMrns(bundle, s.job.PolicyFilters)
+	bundleForSelection := bundle
+	if s.job.BundleCompileCache != nil {
+		bundleForSelection = bundleMap.ToList()
+	}
 
-	frameworkMrns := make([]string, len(bundle.Frameworks))
-	for i := range bundle.Frameworks {
-		frameworkMrns[i] = bundle.Frameworks[i].Mrn
+	policyMrns := filterPolicyMrns(bundleForSelection, s.job.PolicyFilters)
+
+	frameworkMrns := make([]string, len(bundleForSelection.Frameworks))
+	for i := range bundleForSelection.Frameworks {
+		frameworkMrns[i] = bundleForSelection.Frameworks[i].Mrn
 	}
 
 	var resolver policy.PolicyResolver = s.services
@@ -1268,7 +1282,7 @@ func (s *localAssetScanner) prepareAsset() error {
 	}
 
 	if len(s.job.Props) != 0 {
-		propsReq, err := s.mapPropOverrides(bundle)
+		propsReq, err := s.mapPropOverrides(bundleForSelection)
 		if err != nil {
 			return fmt.Errorf("failed to map property overrides: %w", err)
 		}
