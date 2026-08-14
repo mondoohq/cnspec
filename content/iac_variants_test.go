@@ -12,7 +12,6 @@ package content
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"os"
@@ -609,63 +608,16 @@ func iacSuffix(uid string) (string, bool) {
 	return "", false
 }
 
-// coverageBudgetFile records, per policy and variant kind, how many variants are
-// still allowed to ship without pass+fail fixtures. It is a ratchet: the numbers
-// may only go down.
-const coverageBudgetFile = "iac-variant-coverage-budget.json"
-
-// coverageBudgetUpdateEnv, when set, makes TestTerraformVariantCoverage rewrite
-// coverageBudgetFile from the fixtures on disk instead of asserting against it.
-const coverageBudgetUpdateEnv = "IAC_COVERAGE_BUDGET_UPDATE"
-
-// coverageBudget maps a policy directory to a variant suffix to the number of
-// that policy's variants of that kind allowed to lack pass+fail fixtures. A
-// policy or suffix absent from the file has a budget of zero: full coverage.
-type coverageBudget map[string]map[string]int
-
-func (b coverageBudget) get(policyDir, suffix string) int {
-	return b[policyDir][suffix]
-}
-
-func (b coverageBudget) set(policyDir, suffix string, n int) {
-	if b[policyDir] == nil {
-		b[policyDir] = map[string]int{}
-	}
-	b[policyDir][suffix] = n
-}
-
-func loadCoverageBudget(t *testing.T) coverageBudget {
-	data, err := os.ReadFile(coverageBudgetFile)
-	require.NoError(t, err, "reading the coverage budget")
-	budget := coverageBudget{}
-	require.NoError(t, json.Unmarshal(data, &budget), "parsing %s", coverageBudgetFile)
-	return budget
-}
-
-func writeCoverageBudget(t *testing.T, budget coverageBudget) {
-	data, err := json.MarshalIndent(budget, "", "  ")
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(coverageBudgetFile, append(data, '\n'), 0o644))
-	t.Logf("wrote %s", coverageBudgetFile)
-}
-
-// TestTerraformVariantCoverage reports how many IaC variants in each registered
-// policy have pass+fail fixtures, and enforces the ratchet in
-// coverageBudgetFile: a policy may not gain uncovered variants, and once
-// fixtures land its budget must be tightened in the same change. Adding a
-// variant without fixtures therefore fails here rather than merging silently
-// untested. Regenerate the budget after adding fixtures with:
+// TestTerraformVariantCoverage requires every IaC variant in every registered
+// policy to carry both a pass and a fail fixture. Coverage reached 100% across
+// the corpus, so this is a flat assertion rather than a per-policy debt budget:
+// a variant added without fixtures fails here instead of merging untested.
 //
-//	IAC_COVERAGE_BUDGET_UPDATE=1 make test/go/content-iac/coverage
+// A variant whose filter already asserts what its query asserts has no possible
+// failing input; those carry a fail/IMPOSSIBLE.md marker (see failIsImpossible)
+// and count as fail-covered. That marker is the only sanctioned way to ship a
+// variant without a real fail fixture, and it has to state why.
 func TestTerraformVariantCoverage(t *testing.T) {
-	update := os.Getenv(coverageBudgetUpdateEnv) != ""
-	var budget coverageBudget
-	if update {
-		budget = coverageBudget{}
-	} else {
-		budget = loadCoverageBudget(t)
-	}
-
 	for _, pol := range tfVariantPolicies {
 		policyDir := strings.TrimSuffix(pol.slugPrefix, "-")
 		bundle, err := policy.DefaultBundleLoader().BundleFromPaths(pol.bundleFile)
@@ -709,37 +661,17 @@ func TestTerraformVariantCoverage(t *testing.T) {
 			t.Logf("%s %s: %d/%d covered (%.1f%%)", policyDir, suffix, covered[suffix], total[suffix], pct)
 			uncovered := missing[suffix]
 			sort.Strings(uncovered)
-			if len(uncovered) > 0 && testing.Verbose() {
-				t.Logf("  uncovered (%d):\n%s", len(uncovered), strings.Join(indent(uncovered), "\n"))
-			}
-
-			if update {
-				if len(uncovered) > 0 {
-					budget.set(policyDir, suffix, len(uncovered))
-				}
-				continue
-			}
-
-			allowed := budget.get(policyDir, suffix)
-			switch {
-			case len(uncovered) > allowed:
-				t.Errorf("%s %s: %d variants lack pass+fail fixtures, budget allows %d.\n"+
-					"Add fixtures under %s/%s/<uid>/{pass,fail}/<scenario>/ for the variants below.\n"+
-					"uncovered (%d):\n%s",
-					policyDir, suffix, len(uncovered), allowed,
-					tfVariantsRoot, policyDir, len(uncovered), strings.Join(indent(uncovered), "\n"))
-			case len(uncovered) < allowed:
-				t.Errorf("%s %s: only %d variants lack pass+fail fixtures but the budget allows %d. "+
-					"Coverage improved, so tighten the ratchet: set this entry to %d in %s "+
-					"(or regenerate with %s=1 make test/go/content-iac/coverage).",
-					policyDir, suffix, len(uncovered), allowed, len(uncovered),
-					coverageBudgetFile, coverageBudgetUpdateEnv)
+			if len(uncovered) > 0 {
+				t.Errorf("%s %s: %d of %d variants lack pass+fail fixtures. Every IaC variant "+
+					"must have both.\nAdd fixtures under %s/%s/<uid>/{pass,fail}/<scenario>/ for "+
+					"the variants below. If a variant's filter already asserts what its query "+
+					"asserts, no failing input exists: add %s/%s/<uid>/fail/IMPOSSIBLE.md "+
+					"explaining why instead.\nuncovered (%d):\n%s",
+					policyDir, suffix, len(uncovered), total[suffix],
+					tfVariantsRoot, policyDir, tfVariantsRoot, policyDir,
+					len(uncovered), strings.Join(indent(uncovered), "\n"))
 			}
 		}
-	}
-
-	if update {
-		writeCoverageBudget(t, budget)
 	}
 }
 

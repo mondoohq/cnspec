@@ -158,10 +158,9 @@ test/go/content-iac/dockerfile: prep/tools
 test/go/content-iac/kubernetes: prep/tools
 	go test -tags iac_variants -timeout 30m -parallel $(IAC_VARIANT_PARALLEL) -run '^TestKubernetesManifestVariants$$' ./content
 
-# Fixture-coverage ratchet. Runs no scans: it compares the variants declared in
-# each policy against the fixtures on disk and enforces the per-policy budgets in
-# content/iac-variant-coverage-budget.json. Run with IAC_COVERAGE_BUDGET_UPDATE=1
-# to rewrite those budgets after adding fixtures.
+# Fixture-coverage gate. Runs no scans: it compares the IaC variants declared in
+# each policy against the fixtures on disk and fails if any variant lacks a pass
+# or a fail fixture. Coverage is at 100%, so this holds it there.
 test/go/content-iac/coverage: prep/tools
 	go test -tags iac_variants -timeout 10m -v -run '^TestTerraformVariantCoverage$$' ./content
 

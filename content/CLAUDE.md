@@ -182,14 +182,13 @@ Reference patterns in this repo:
 
 Every `-terraform-hcl`, `-cloudformation`, and `-bicep` variant is expected to ship with pass/fail fixtures under `content/iac-variant-testdata/<policy>/<variant-uid>/{pass,fail}/<scenario>/`, exercised by the suites in `content/iac_variants_test.go`.
 
-`TestTerraformVariantCoverage` enforces this as a ratchet against the per-policy budgets in `content/iac-variant-coverage-budget.json` — the number of variants still allowed to ship without fixtures. Adding a variant without fixtures pushes a policy over budget and fails CI (the `coverage` job in `.github/workflows/content-iac-tests.yaml`). The budgets may only shrink: once you add fixtures, tighten the entry in the same change.
+**Coverage is 100% and `TestTerraformVariantCoverage` holds it there.** Every IaC variant must have both a pass and a fail fixture; adding a variant without them fails CI (the `coverage` job in `.github/workflows/content-iac-tests.yaml`). There is no debt budget to grow — a new variant ships with fixtures or it does not ship.
 
 ```bash
-make test/go/content-iac/coverage                                # check the ratchet
-IAC_COVERAGE_BUDGET_UPDATE=1 make test/go/content-iac/coverage    # rewrite it after adding fixtures
+make test/go/content-iac/coverage    # check coverage
 ```
 
-Where a variant asserts exactly what its own `filters:` require, no failing input exists; record that with a `fail/IMPOSSIBLE.md` marker instead of a fail fixture and it counts as covered.
+Where a variant asserts exactly what its own `filters:` require, no failing input exists; record that with a `fail/IMPOSSIBLE.md` marker explaining why, instead of a fail fixture, and it counts as covered. That marker is the only sanctioned way to ship a variant without a real fail fixture.
 
 ### Terraform remediation
 
