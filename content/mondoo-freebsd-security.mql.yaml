@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-freebsd-security
     name: Mondoo FreeBSD Security
-    version: 1.0.4
+    version: 1.1.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -222,6 +222,42 @@ queries:
                 sysctl_file: /etc/sysctl.conf
                 reload: true
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to enable address space layout randomization:
+
+            ```ruby
+            sysctl_conf = '/etc/sysctl.conf'
+
+            execute 'reload sysctl settings' do
+              command "sysctl -f #{sysctl_conf}"
+              action :nothing
+            end
+
+            { 'kern.elf64.aslr.enable' => '1' }.each do |key, value|
+              pattern = Regexp.escape(key)
+
+              ruby_block "set #{key} in sysctl.conf" do
+                block do
+                  body = ::File.exist?(sysctl_conf) ? ::File.read(sysctl_conf) : ''
+                  directive = "#{key}=#{value}"
+                  body = if body.match?(/^\s*#{pattern}\s*=/)
+                           body.gsub(/^\s*#{pattern}\s*=.*$/, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n".lstrip
+                         end
+                  ::File.write(sysctl_conf, body)
+                end
+                not_if do
+                  ::File.exist?(sysctl_conf) &&
+                    ::File.read(sysctl_conf).match?(/^#{pattern}\s*=\s*#{Regexp.escape(value)}\s*$/)
+                end
+                notifies :run, 'execute[reload sysctl settings]', :delayed
+              end
+            end
+            ```
   - uid: mondoo-freebsd-security-core-dump-backtraces-are-disabled
     title: Ensure core dump backtraces are disabled
     impact: 75
@@ -305,6 +341,18 @@ queries:
                 name: savecore
                 state: stopped
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to disable `savecore`. The FreeBSD service provider derives the `savecore_enable` rc variable from the rc script and clears it in `/etc/rc.conf`:
+
+            ```ruby
+            service 'savecore' do
+              action :disable
+              only_if { ::File.exist?('/etc/rc.d/savecore') }
+            end
+            ```
   - uid: mondoo-freebsd-security-core-dump-storage-is-disabled
     title: Ensure core dump storage is disabled
     impact: 75
@@ -378,6 +426,18 @@ queries:
               community.general.sysrc:
                 name: dumpdev
                 value: 'NO'
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to stop the kernel from writing a crash dump device:
+
+            ```ruby
+            execute 'set dumpdev in rc.conf' do
+              command 'sysrc dumpdev=NO'
+              not_if 'sysrc -n dumpdev | grep -qx NO'
+            end
             ```
   - uid: mondoo-freebsd-security-ip-forwarding-is-disabled
     title: Ensure IP forwarding is disabled
@@ -480,6 +540,42 @@ queries:
                 - net.inet.ip.forwarding
                 - net.inet6.ip6.forwarding
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to disable IP forwarding. Skip this on hosts that route traffic, such as gateways and jail hosts:
+
+            ```ruby
+            sysctl_conf = '/etc/sysctl.conf'
+
+            execute 'reload sysctl settings' do
+              command "sysctl -f #{sysctl_conf}"
+              action :nothing
+            end
+
+            { 'net.inet.ip.forwarding' => '0', 'net.inet6.ip6.forwarding' => '0' }.each do |key, value|
+              pattern = Regexp.escape(key)
+
+              ruby_block "set #{key} in sysctl.conf" do
+                block do
+                  body = ::File.exist?(sysctl_conf) ? ::File.read(sysctl_conf) : ''
+                  directive = "#{key}=#{value}"
+                  body = if body.match?(/^\s*#{pattern}\s*=/)
+                           body.gsub(/^\s*#{pattern}\s*=.*$/, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n".lstrip
+                         end
+                  ::File.write(sysctl_conf, body)
+                end
+                not_if do
+                  ::File.exist?(sysctl_conf) &&
+                    ::File.read(sysctl_conf).match?(/^#{pattern}\s*=\s*#{Regexp.escape(value)}\s*$/)
+                end
+                notifies :run, 'execute[reload sysctl settings]', :delayed
+              end
+            end
+            ```
   - uid: mondoo-freebsd-security-packet-redirect-sending-is-disabled
     title: Ensure packet redirect sending is disabled
     impact: 75
@@ -580,6 +676,42 @@ queries:
               loop:
                 - net.inet.ip.redirect
                 - net.inet6.ip6.redirect
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to stop the host from sending ICMP redirects:
+
+            ```ruby
+            sysctl_conf = '/etc/sysctl.conf'
+
+            execute 'reload sysctl settings' do
+              command "sysctl -f #{sysctl_conf}"
+              action :nothing
+            end
+
+            { 'net.inet.ip.redirect' => '0', 'net.inet6.ip6.redirect' => '0' }.each do |key, value|
+              pattern = Regexp.escape(key)
+
+              ruby_block "set #{key} in sysctl.conf" do
+                block do
+                  body = ::File.exist?(sysctl_conf) ? ::File.read(sysctl_conf) : ''
+                  directive = "#{key}=#{value}"
+                  body = if body.match?(/^\s*#{pattern}\s*=/)
+                           body.gsub(/^\s*#{pattern}\s*=.*$/, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n".lstrip
+                         end
+                  ::File.write(sysctl_conf, body)
+                end
+                not_if do
+                  ::File.exist?(sysctl_conf) &&
+                    ::File.read(sysctl_conf).match?(/^#{pattern}\s*=\s*#{Regexp.escape(value)}\s*$/)
+                end
+                notifies :run, 'execute[reload sysctl settings]', :delayed
+              end
+            end
             ```
   - uid: mondoo-freebsd-security-icmp-redirects-are-not-accepted
     title: Ensure ICMP redirects are not accepted
@@ -682,6 +814,42 @@ queries:
                 - { name: net.inet.icmp.drop_redirect, value: '1' }
                 - { name: net.inet6.icmp6.rediraccept, value: '0' }
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to drop incoming ICMP redirects:
+
+            ```ruby
+            sysctl_conf = '/etc/sysctl.conf'
+
+            execute 'reload sysctl settings' do
+              command "sysctl -f #{sysctl_conf}"
+              action :nothing
+            end
+
+            { 'net.inet.icmp.drop_redirect' => '1', 'net.inet6.icmp6.rediraccept' => '0' }.each do |key, value|
+              pattern = Regexp.escape(key)
+
+              ruby_block "set #{key} in sysctl.conf" do
+                block do
+                  body = ::File.exist?(sysctl_conf) ? ::File.read(sysctl_conf) : ''
+                  directive = "#{key}=#{value}"
+                  body = if body.match?(/^\s*#{pattern}\s*=/)
+                           body.gsub(/^\s*#{pattern}\s*=.*$/, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n".lstrip
+                         end
+                  ::File.write(sysctl_conf, body)
+                end
+                not_if do
+                  ::File.exist?(sysctl_conf) &&
+                    ::File.read(sysctl_conf).match?(/^#{pattern}\s*=\s*#{Regexp.escape(value)}\s*$/)
+                end
+                notifies :run, 'execute[reload sysctl settings]', :delayed
+              end
+            end
+            ```
   - uid: mondoo-freebsd-security-source-routed-packets-are-not-accepted
     title: Ensure source routed packets are not accepted
     impact: 75
@@ -771,6 +939,42 @@ queries:
                 value: '0'
                 sysctl_file: /etc/sysctl.conf
                 reload: true
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to reject source routed packets:
+
+            ```ruby
+            sysctl_conf = '/etc/sysctl.conf'
+
+            execute 'reload sysctl settings' do
+              command "sysctl -f #{sysctl_conf}"
+              action :nothing
+            end
+
+            { 'net.inet.ip.accept_sourceroute' => '0' }.each do |key, value|
+              pattern = Regexp.escape(key)
+
+              ruby_block "set #{key} in sysctl.conf" do
+                block do
+                  body = ::File.exist?(sysctl_conf) ? ::File.read(sysctl_conf) : ''
+                  directive = "#{key}=#{value}"
+                  body = if body.match?(/^\s*#{pattern}\s*=/)
+                           body.gsub(/^\s*#{pattern}\s*=.*$/, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n".lstrip
+                         end
+                  ::File.write(sysctl_conf, body)
+                end
+                not_if do
+                  ::File.exist?(sysctl_conf) &&
+                    ::File.read(sysctl_conf).match?(/^#{pattern}\s*=\s*#{Regexp.escape(value)}\s*$/)
+                end
+                notifies :run, 'execute[reload sysctl settings]', :delayed
+              end
+            end
             ```
   - uid: mondoo-freebsd-security-tcp-syn-cookies-is-enabled
     title: Ensure TCP SYN cookies are enabled
@@ -862,6 +1066,42 @@ queries:
                 sysctl_file: /etc/sysctl.conf
                 reload: true
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to enable TCP SYN cookies:
+
+            ```ruby
+            sysctl_conf = '/etc/sysctl.conf'
+
+            execute 'reload sysctl settings' do
+              command "sysctl -f #{sysctl_conf}"
+              action :nothing
+            end
+
+            { 'net.inet.tcp.syncookies' => '1' }.each do |key, value|
+              pattern = Regexp.escape(key)
+
+              ruby_block "set #{key} in sysctl.conf" do
+                block do
+                  body = ::File.exist?(sysctl_conf) ? ::File.read(sysctl_conf) : ''
+                  directive = "#{key}=#{value}"
+                  body = if body.match?(/^\s*#{pattern}\s*=/)
+                           body.gsub(/^\s*#{pattern}\s*=.*$/, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n".lstrip
+                         end
+                  ::File.write(sysctl_conf, body)
+                end
+                not_if do
+                  ::File.exist?(sysctl_conf) &&
+                    ::File.read(sysctl_conf).match?(/^#{pattern}\s*=\s*#{Regexp.escape(value)}\s*$/)
+                end
+                notifies :run, 'execute[reload sysctl settings]', :delayed
+              end
+            end
+            ```
   - uid: mondoo-freebsd-security-ipv6-router-advertisements-are-not-accepted
     title: Ensure IPv6 router advertisements are not accepted
     impact: 75
@@ -952,6 +1192,42 @@ queries:
                 sysctl_file: /etc/sysctl.conf
                 reload: true
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to reject IPv6 router advertisements. Skip this on hosts that rely on SLAAC for their IPv6 address:
+
+            ```ruby
+            sysctl_conf = '/etc/sysctl.conf'
+
+            execute 'reload sysctl settings' do
+              command "sysctl -f #{sysctl_conf}"
+              action :nothing
+            end
+
+            { 'net.inet6.ip6.accept_rtadv' => '0' }.each do |key, value|
+              pattern = Regexp.escape(key)
+
+              ruby_block "set #{key} in sysctl.conf" do
+                block do
+                  body = ::File.exist?(sysctl_conf) ? ::File.read(sysctl_conf) : ''
+                  directive = "#{key}=#{value}"
+                  body = if body.match?(/^\s*#{pattern}\s*=/)
+                           body.gsub(/^\s*#{pattern}\s*=.*$/, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n".lstrip
+                         end
+                  ::File.write(sysctl_conf, body)
+                end
+                not_if do
+                  ::File.exist?(sysctl_conf) &&
+                    ::File.read(sysctl_conf).match?(/^#{pattern}\s*=\s*#{Regexp.escape(value)}\s*$/)
+                end
+                notifies :run, 'execute[reload sysctl settings]', :delayed
+              end
+            end
+            ```
   - uid: mondoo-freebsd-security-broadcast-icmp-requests-are-ignored
     title: Ensure broadcast and multicast ICMP requests are ignored
     impact: 75
@@ -1041,6 +1317,42 @@ queries:
                 value: '0'
                 sysctl_file: /etc/sysctl.conf
                 reload: true
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to ignore broadcast and multicast ICMP echo requests:
+
+            ```ruby
+            sysctl_conf = '/etc/sysctl.conf'
+
+            execute 'reload sysctl settings' do
+              command "sysctl -f #{sysctl_conf}"
+              action :nothing
+            end
+
+            { 'net.inet.icmp.bmcastecho' => '0' }.each do |key, value|
+              pattern = Regexp.escape(key)
+
+              ruby_block "set #{key} in sysctl.conf" do
+                block do
+                  body = ::File.exist?(sysctl_conf) ? ::File.read(sysctl_conf) : ''
+                  directive = "#{key}=#{value}"
+                  body = if body.match?(/^\s*#{pattern}\s*=/)
+                           body.gsub(/^\s*#{pattern}\s*=.*$/, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n".lstrip
+                         end
+                  ::File.write(sysctl_conf, body)
+                end
+                not_if do
+                  ::File.exist?(sysctl_conf) &&
+                    ::File.read(sysctl_conf).match?(/^#{pattern}\s*=\s*#{Regexp.escape(value)}\s*$/)
+                end
+                notifies :run, 'execute[reload sysctl settings]', :delayed
+              end
+            end
             ```
   - uid: mondoo-freebsd-security-ftp-server-is-not-enabled
     title: Ensure FTP server is not enabled
@@ -1140,6 +1452,31 @@ queries:
                 state: reloaded
               failed_when: false
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to disable the FTP service in inetd:
+
+            ```ruby
+            inetd_conf = '/etc/inetd.conf'
+
+            # inetd is often not running at all, in which case commenting the entry out is
+            # already enough and the reload has nothing to do.
+            service 'inetd' do
+              action :nothing
+              ignore_failure true
+            end
+
+            ruby_block 'comment out ftp entries in inetd.conf' do
+              block do
+                body = ::File.read(inetd_conf)
+                ::File.write(inetd_conf, body.gsub(/^ftp/, '#ftp'))
+              end
+              only_if { ::File.exist?(inetd_conf) && ::File.read(inetd_conf).match?(/^ftp/) }
+              notifies :restart, 'service[inetd]', :delayed
+            end
+            ```
   - uid: mondoo-freebsd-security-telnet-server-is-not-enabled
     title: Ensure telnet server is not enabled
     impact: 100
@@ -1231,6 +1568,31 @@ queries:
                 state: reloaded
               failed_when: false
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to disable the telnet service in inetd:
+
+            ```ruby
+            inetd_conf = '/etc/inetd.conf'
+
+            # inetd is often not running at all, in which case commenting the entry out is
+            # already enough and the reload has nothing to do.
+            service 'inetd' do
+              action :nothing
+              ignore_failure true
+            end
+
+            ruby_block 'comment out telnet entries in inetd.conf' do
+              block do
+                body = ::File.read(inetd_conf)
+                ::File.write(inetd_conf, body.gsub(/^telnet/, '#telnet'))
+              end
+              only_if { ::File.exist?(inetd_conf) && ::File.read(inetd_conf).match?(/^telnet/) }
+              notifies :restart, 'service[inetd]', :delayed
+            end
+            ```
   - uid: mondoo-freebsd-security-nis-server-is-not-enabled
     title: Ensure NIS server is not enabled
     impact: 100
@@ -1314,6 +1676,18 @@ queries:
                 name: ypserv
                 state: stopped
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to stop and disable the NIS server:
+
+            ```ruby
+            service 'ypserv' do
+              action %i(stop disable)
+              only_if { ::File.exist?('/etc/rc.d/ypserv') }
+            end
+            ```
   - uid: mondoo-freebsd-security-rpcbind-is-not-enabled
     title: Ensure rpcbind is not enabled
     impact: 100
@@ -1396,6 +1770,18 @@ queries:
               ansible.builtin.service:
                 name: rpcbind
                 state: stopped
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to stop and disable rpcbind:
+
+            ```ruby
+            service 'rpcbind' do
+              action %i(stop disable)
+              only_if { ::File.exist?('/etc/rc.d/rpcbind') }
+            end
             ```
   - uid: mondoo-freebsd-security-nfs-server-is-not-enabled
     title: Ensure NFS server is not enabled
@@ -1490,6 +1876,18 @@ queries:
                 name: nfsd
                 state: stopped
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to stop and disable the NFS daemon:
+
+            ```ruby
+            service 'nfsd' do
+              action %i(stop disable)
+              only_if { ::File.exist?('/etc/rc.d/nfsd') }
+            end
+            ```
   - uid: mondoo-freebsd-security-snmp-server-is-not-enabled
     title: Ensure SNMP server is not enabled
     impact: 85
@@ -1581,6 +1979,18 @@ queries:
                 state: stopped
               failed_when: false
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to stop and disable the SNMP daemon:
+
+            ```ruby
+            service 'snmpd' do
+              action %i(stop disable)
+              only_if { ::File.exist?('/usr/local/etc/rc.d/snmpd') }
+            end
+            ```
   - uid: mondoo-freebsd-security-tftp-server-is-not-enabled
     title: Ensure TFTP server is not enabled
     impact: 100
@@ -1671,6 +2081,31 @@ queries:
                 name: inetd
                 state: reloaded
               failed_when: false
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to disable the TFTP service in inetd:
+
+            ```ruby
+            inetd_conf = '/etc/inetd.conf'
+
+            # inetd is often not running at all, in which case commenting the entry out is
+            # already enough and the reload has nothing to do.
+            service 'inetd' do
+              action :nothing
+              ignore_failure true
+            end
+
+            ruby_block 'comment out tftp entries in inetd.conf' do
+              block do
+                body = ::File.read(inetd_conf)
+                ::File.write(inetd_conf, body.gsub(/^tftp/, '#tftp'))
+              end
+              only_if { ::File.exist?(inetd_conf) && ::File.read(inetd_conf).match?(/^tftp/) }
+              notifies :restart, 'service[inetd]', :delayed
+            end
             ```
   - uid: mondoo-freebsd-security-imap-and-pop3-server-is-not-enabled
     title: Ensure IMAP and POP3 server is not enabled
@@ -1771,6 +2206,20 @@ queries:
                 - imapd
               failed_when: false
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to stop and disable the IMAP and POP3 daemons:
+
+            ```ruby
+            { 'dovecot' => '/usr/local/etc/rc.d/dovecot', 'imapd' => '/usr/local/etc/rc.d/imapd' }.each do |name, rc_script|
+              service name do
+                action %i(stop disable)
+                only_if { ::File.exist?(rc_script) }
+              end
+            end
+            ```
   - uid: mondoo-freebsd-security-web-proxy-server-is-not-enabled
     title: Ensure web proxy server is not enabled
     impact: 100
@@ -1861,6 +2310,18 @@ queries:
                 name: squid
                 state: stopped
               failed_when: false
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to stop and disable the Squid web proxy:
+
+            ```ruby
+            service 'squid' do
+              action %i(stop disable)
+              only_if { ::File.exist?('/usr/local/etc/rc.d/squid') }
+            end
             ```
   - uid: mondoo-freebsd-security-mail-transfer-agent-is-configured-for-local-only-mode
     title: Ensure mail transfer agent is configured for local-only mode
@@ -1965,6 +2426,35 @@ queries:
                   name: postfix
                   state: restarted
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to bind Postfix to the loopback interface. On FreeBSD the Postfix configuration lives under `/usr/local/etc`:
+
+            ```ruby
+            main_cf = '/usr/local/etc/postfix/main.cf'
+
+            service 'postfix' do
+              action :nothing
+            end
+
+            ruby_block 'bind Postfix to the loopback interface' do
+              block do
+                body = ::File.read(main_cf)
+                directive = 'inet_interfaces = localhost'
+                body = if body.match?(/^\s*inet_interfaces\s*=/)
+                         body.gsub(/^\s*inet_interfaces\s*=.*$/, directive)
+                       else
+                         "#{body.chomp}\n#{directive}\n"
+                       end
+                ::File.write(main_cf, body)
+              end
+              only_if { ::File.exist?(main_cf) }
+              not_if { ::File.exist?(main_cf) && ::File.read(main_cf).match?(/^inet_interfaces\s*=\s*localhost\s*$/) }
+              notifies :restart, 'service[postfix]', :delayed
+            end
+            ```
   - uid: mondoo-freebsd-security-permissions-on-sshd-config-are-configured
     title: Ensure permissions on /etc/ssh/sshd_config are configured
     impact: 80
@@ -2051,6 +2541,19 @@ queries:
                 owner: root
                 group: wheel
                 mode: '0600'
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to restrict the SSH daemon configuration to root:
+
+            ```ruby
+            file '/etc/ssh/sshd_config' do
+              owner 'root'
+              group 'wheel'
+              mode '0600'
+            end
             ```
   - uid: mondoo-freebsd-security-permissions-on-ssh-private-host-key-files-are-configured
     title: Ensure permissions on SSH private host key files are configured
@@ -2148,6 +2651,21 @@ queries:
                 mode: '0600'
               loop: "{{ ssh_private_keys.files }}"
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to restrict the SSH host private keys. The glob matches only the private keys, because the public keys end in `.pub`:
+
+            ```ruby
+            ::Dir.glob('/etc/ssh/ssh_host_*key').each do |private_key|
+              file private_key do
+                owner 'root'
+                group 'wheel'
+                mode '0600'
+              end
+            end
+            ```
   - uid: mondoo-freebsd-security-permissions-on-ssh-public-host-key-files-are-configured
     title: Ensure permissions on SSH public host key files are configured
     impact: 70
@@ -2239,6 +2757,21 @@ queries:
                 group: wheel
                 mode: '0644'
               loop: "{{ ssh_public_keys.files }}"
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to set the ownership and permissions on the SSH host public keys:
+
+            ```ruby
+            ::Dir.glob('/etc/ssh/ssh_host_*key.pub').each do |public_key|
+              file public_key do
+                owner 'root'
+                group 'wheel'
+                mode '0644'
+              end
+            end
             ```
   - uid: mondoo-freebsd-security-only-strong-ciphers-are-used
     title: Ensure only strong ciphers are used
@@ -2342,6 +2875,36 @@ queries:
                   name: sshd
                   state: restarted
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to restrict SSH to strong ciphers:
+
+            ```ruby
+            sshd_config = '/etc/ssh/sshd_config'
+
+            service 'sshd' do
+              action :nothing
+            end
+
+            { 'Ciphers' => 'chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr' }.each do |keyword, value|
+              ruby_block "set #{keyword} in sshd_config" do
+                block do
+                  body = ::File.read(sshd_config)
+                  directive = "#{keyword} #{value}"
+                  body = if body.match?(/^\s*#?\s*#{keyword}\b/i)
+                           body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n"
+                         end
+                  ::File.write(sshd_config, body)
+                end
+                not_if { ::File.read(sshd_config).match?(/^#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
+                notifies :restart, 'service[sshd]', :delayed
+              end
+            end
+            ```
   - uid: mondoo-freebsd-security-only-strong-mac-algorithms-are-used
     title: Ensure only strong MAC algorithms are used
     impact: 80
@@ -2443,6 +3006,36 @@ queries:
                 ansible.builtin.service:
                   name: sshd
                   state: restarted
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to restrict SSH to strong MAC algorithms:
+
+            ```ruby
+            sshd_config = '/etc/ssh/sshd_config'
+
+            service 'sshd' do
+              action :nothing
+            end
+
+            { 'MACs' => 'umac-128-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com,umac-128@openssh.com,hmac-sha2-256,hmac-sha2-512' }.each do |keyword, value|
+              ruby_block "set #{keyword} in sshd_config" do
+                block do
+                  body = ::File.read(sshd_config)
+                  directive = "#{keyword} #{value}"
+                  body = if body.match?(/^\s*#?\s*#{keyword}\b/i)
+                           body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n"
+                         end
+                  ::File.write(sshd_config, body)
+                end
+                not_if { ::File.read(sshd_config).match?(/^#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
+                notifies :restart, 'service[sshd]', :delayed
+              end
+            end
             ```
   - uid: mondoo-freebsd-security-only-strong-kex-algorithms-are-used
     title: Ensure only strong key exchange algorithms are used
@@ -2546,6 +3139,36 @@ queries:
                   name: sshd
                   state: restarted
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to restrict SSH to strong key exchange algorithms:
+
+            ```ruby
+            sshd_config = '/etc/ssh/sshd_config'
+
+            service 'sshd' do
+              action :nothing
+            end
+
+            { 'KexAlgorithms' => 'sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,curve25519-sha256,diffie-hellman-group18-sha512,diffie-hellman-group16-sha512' }.each do |keyword, value|
+              ruby_block "set #{keyword} in sshd_config" do
+                block do
+                  body = ::File.read(sshd_config)
+                  directive = "#{keyword} #{value}"
+                  body = if body.match?(/^\s*#?\s*#{keyword}\b/i)
+                           body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n"
+                         end
+                  ::File.write(sshd_config, body)
+                end
+                not_if { ::File.read(sshd_config).match?(/^#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
+                notifies :restart, 'service[sshd]', :delayed
+              end
+            end
+            ```
   - uid: mondoo-freebsd-security-ssh-root-login-is-disabled
     title: Ensure SSH root login is disabled
     impact: 100
@@ -2647,6 +3270,36 @@ queries:
                 ansible.builtin.service:
                   name: sshd
                   state: restarted
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to stop root from logging in over SSH. Confirm that an account in the `wheel` group can log in and reach root before you apply it, or you will lock yourself out:
+
+            ```ruby
+            sshd_config = '/etc/ssh/sshd_config'
+
+            service 'sshd' do
+              action :nothing
+            end
+
+            { 'PermitRootLogin' => 'no' }.each do |keyword, value|
+              ruby_block "set #{keyword} in sshd_config" do
+                block do
+                  body = ::File.read(sshd_config)
+                  directive = "#{keyword} #{value}"
+                  body = if body.match?(/^\s*#?\s*#{keyword}\b/i)
+                           body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n"
+                         end
+                  ::File.write(sshd_config, body)
+                end
+                not_if { ::File.read(sshd_config).match?(/^#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
+                notifies :restart, 'service[sshd]', :delayed
+              end
+            end
             ```
   - uid: mondoo-freebsd-security-ssh-permitemptypasswords-is-disabled
     title: Ensure SSH PermitEmptyPasswords is disabled
@@ -2750,6 +3403,36 @@ queries:
                   name: sshd
                   state: restarted
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to reject accounts with an empty password:
+
+            ```ruby
+            sshd_config = '/etc/ssh/sshd_config'
+
+            service 'sshd' do
+              action :nothing
+            end
+
+            { 'PermitEmptyPasswords' => 'no' }.each do |keyword, value|
+              ruby_block "set #{keyword} in sshd_config" do
+                block do
+                  body = ::File.read(sshd_config)
+                  directive = "#{keyword} #{value}"
+                  body = if body.match?(/^\s*#?\s*#{keyword}\b/i)
+                           body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n"
+                         end
+                  ::File.write(sshd_config, body)
+                end
+                not_if { ::File.read(sshd_config).match?(/^#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
+                notifies :restart, 'service[sshd]', :delayed
+              end
+            end
+            ```
   - uid: mondoo-freebsd-security-ssh-hostbasedauthentication-is-disabled
     title: Ensure SSH HostbasedAuthentication is disabled
     impact: 70
@@ -2851,6 +3534,36 @@ queries:
                 ansible.builtin.service:
                   name: sshd
                   state: restarted
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to disable host-based authentication:
+
+            ```ruby
+            sshd_config = '/etc/ssh/sshd_config'
+
+            service 'sshd' do
+              action :nothing
+            end
+
+            { 'HostbasedAuthentication' => 'no' }.each do |keyword, value|
+              ruby_block "set #{keyword} in sshd_config" do
+                block do
+                  body = ::File.read(sshd_config)
+                  directive = "#{keyword} #{value}"
+                  body = if body.match?(/^\s*#?\s*#{keyword}\b/i)
+                           body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n"
+                         end
+                  ::File.write(sshd_config, body)
+                end
+                not_if { ::File.read(sshd_config).match?(/^#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
+                notifies :restart, 'service[sshd]', :delayed
+              end
+            end
             ```
   - uid: mondoo-freebsd-security-ssh-permituserenvironment-is-disabled
     title: Ensure SSH PermitUserEnvironment is disabled
@@ -2954,6 +3667,36 @@ queries:
                   name: sshd
                   state: restarted
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to stop sshd from reading user-supplied environment options:
+
+            ```ruby
+            sshd_config = '/etc/ssh/sshd_config'
+
+            service 'sshd' do
+              action :nothing
+            end
+
+            { 'PermitUserEnvironment' => 'no' }.each do |keyword, value|
+              ruby_block "set #{keyword} in sshd_config" do
+                block do
+                  body = ::File.read(sshd_config)
+                  directive = "#{keyword} #{value}"
+                  body = if body.match?(/^\s*#?\s*#{keyword}\b/i)
+                           body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n"
+                         end
+                  ::File.write(sshd_config, body)
+                end
+                not_if { ::File.read(sshd_config).match?(/^#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
+                notifies :restart, 'service[sshd]', :delayed
+              end
+            end
+            ```
   - uid: mondoo-freebsd-security-ssh-ignorerhosts-is-enabled
     title: Ensure SSH IgnoreRhosts is enabled
     impact: 60
@@ -3056,6 +3799,36 @@ queries:
                   name: sshd
                   state: restarted
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to make sshd ignore `.rhosts` and `.shosts` files:
+
+            ```ruby
+            sshd_config = '/etc/ssh/sshd_config'
+
+            service 'sshd' do
+              action :nothing
+            end
+
+            { 'IgnoreRhosts' => 'yes' }.each do |keyword, value|
+              ruby_block "set #{keyword} in sshd_config" do
+                block do
+                  body = ::File.read(sshd_config)
+                  directive = "#{keyword} #{value}"
+                  body = if body.match?(/^\s*#?\s*#{keyword}\b/i)
+                           body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n"
+                         end
+                  ::File.write(sshd_config, body)
+                end
+                not_if { ::File.read(sshd_config).match?(/^#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
+                notifies :restart, 'service[sshd]', :delayed
+              end
+            end
+            ```
   - uid: mondoo-freebsd-security-ssh-maxauthtries-is-set-to-4-or-less
     title: Ensure SSH MaxAuthTries is set to 4 or less
     impact: 75
@@ -3157,6 +3930,36 @@ queries:
                 ansible.builtin.service:
                   name: sshd
                   state: restarted
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to cap the number of authentication attempts per connection:
+
+            ```ruby
+            sshd_config = '/etc/ssh/sshd_config'
+
+            service 'sshd' do
+              action :nothing
+            end
+
+            { 'MaxAuthTries' => '4' }.each do |keyword, value|
+              ruby_block "set #{keyword} in sshd_config" do
+                block do
+                  body = ::File.read(sshd_config)
+                  directive = "#{keyword} #{value}"
+                  body = if body.match?(/^\s*#?\s*#{keyword}\b/i)
+                           body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n"
+                         end
+                  ::File.write(sshd_config, body)
+                end
+                not_if { ::File.read(sshd_config).match?(/^#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
+                notifies :restart, 'service[sshd]', :delayed
+              end
+            end
             ```
   - uid: mondoo-freebsd-security-ssh-logingracetime-is-configured
     title: Ensure SSH LoginGraceTime is configured
@@ -3261,6 +4064,36 @@ queries:
                   name: sshd
                   state: restarted
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to close connections that do not authenticate within one minute:
+
+            ```ruby
+            sshd_config = '/etc/ssh/sshd_config'
+
+            service 'sshd' do
+              action :nothing
+            end
+
+            { 'LoginGraceTime' => '60' }.each do |keyword, value|
+              ruby_block "set #{keyword} in sshd_config" do
+                block do
+                  body = ::File.read(sshd_config)
+                  directive = "#{keyword} #{value}"
+                  body = if body.match?(/^\s*#?\s*#{keyword}\b/i)
+                           body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n"
+                         end
+                  ::File.write(sshd_config, body)
+                end
+                not_if { ::File.read(sshd_config).match?(/^#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
+                notifies :restart, 'service[sshd]', :delayed
+              end
+            end
+            ```
   - uid: mondoo-freebsd-security-ssh-loglevel-is-appropriate
     title: Ensure SSH LogLevel is appropriate
     impact: 60
@@ -3362,6 +4195,36 @@ queries:
                 ansible.builtin.service:
                   name: sshd
                   state: restarted
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to raise the SSH log level so that failed logins and key fingerprints are recorded:
+
+            ```ruby
+            sshd_config = '/etc/ssh/sshd_config'
+
+            service 'sshd' do
+              action :nothing
+            end
+
+            { 'LogLevel' => 'VERBOSE' }.each do |keyword, value|
+              ruby_block "set #{keyword} in sshd_config" do
+                block do
+                  body = ::File.read(sshd_config)
+                  directive = "#{keyword} #{value}"
+                  body = if body.match?(/^\s*#?\s*#{keyword}\b/i)
+                           body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n"
+                         end
+                  ::File.write(sshd_config, body)
+                end
+                not_if { ::File.read(sshd_config).match?(/^#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
+                notifies :restart, 'service[sshd]', :delayed
+              end
+            end
             ```
   - uid: mondoo-freebsd-security-ssh-idle-timeout-interval-is-configured
     title: Ensure SSH idle timeout interval is configured
@@ -3482,6 +4345,36 @@ queries:
                   name: sshd
                   state: restarted
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to disconnect idle SSH sessions:
+
+            ```ruby
+            sshd_config = '/etc/ssh/sshd_config'
+
+            service 'sshd' do
+              action :nothing
+            end
+
+            { 'ClientAliveInterval' => '300', 'ClientAliveCountMax' => '3' }.each do |keyword, value|
+              ruby_block "set #{keyword} in sshd_config" do
+                block do
+                  body = ::File.read(sshd_config)
+                  directive = "#{keyword} #{value}"
+                  body = if body.match?(/^\s*#?\s*#{keyword}\b/i)
+                           body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n"
+                         end
+                  ::File.write(sshd_config, body)
+                end
+                not_if { ::File.read(sshd_config).match?(/^#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
+                notifies :restart, 'service[sshd]', :delayed
+              end
+            end
+            ```
   - uid: mondoo-freebsd-security-ssh-disableforwarding-is-enabled
     title: Ensure SSH DisableForwarding is enabled
     impact: 75
@@ -3583,6 +4476,36 @@ queries:
                 ansible.builtin.service:
                   name: sshd
                   state: restarted
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to turn off all SSH forwarding: Apply it only where no one relies on port, agent, or X11 forwarding through this host.
+
+            ```ruby
+            sshd_config = '/etc/ssh/sshd_config'
+
+            service 'sshd' do
+              action :nothing
+            end
+
+            { 'DisableForwarding' => 'yes' }.each do |keyword, value|
+              ruby_block "set #{keyword} in sshd_config" do
+                block do
+                  body = ::File.read(sshd_config)
+                  directive = "#{keyword} #{value}"
+                  body = if body.match?(/^\s*#?\s*#{keyword}\b/i)
+                           body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n"
+                         end
+                  ::File.write(sshd_config, body)
+                end
+                not_if { ::File.read(sshd_config).match?(/^#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
+                notifies :restart, 'service[sshd]', :delayed
+              end
+            end
             ```
   - uid: mondoo-freebsd-security-ssh-usepam-is-enabled
     title: Ensure SSH UsePAM is enabled
@@ -3686,6 +4609,36 @@ queries:
                   name: sshd
                   state: restarted
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to have sshd authenticate through PAM:
+
+            ```ruby
+            sshd_config = '/etc/ssh/sshd_config'
+
+            service 'sshd' do
+              action :nothing
+            end
+
+            { 'UsePAM' => 'yes' }.each do |keyword, value|
+              ruby_block "set #{keyword} in sshd_config" do
+                block do
+                  body = ::File.read(sshd_config)
+                  directive = "#{keyword} #{value}"
+                  body = if body.match?(/^\s*#?\s*#{keyword}\b/i)
+                           body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n"
+                         end
+                  ::File.write(sshd_config, body)
+                end
+                not_if { ::File.read(sshd_config).match?(/^#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
+                notifies :restart, 'service[sshd]', :delayed
+              end
+            end
+            ```
   - uid: mondoo-freebsd-security-permissions-on-etc-passwd-are-configured
     title: Ensure permissions on /etc/passwd are configured
     impact: 100
@@ -3772,6 +4725,19 @@ queries:
                 group: wheel
                 mode: '0644'
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to set the ownership and permissions on `/etc/passwd`:
+
+            ```ruby
+            file '/etc/passwd' do
+              owner 'root'
+              group 'wheel'
+              mode '0644'
+            end
+            ```
   - uid: mondoo-freebsd-security-permissions-on-etc-group-are-configured
     title: Ensure permissions on /etc/group are configured
     impact: 100
@@ -3857,6 +4823,19 @@ queries:
                 owner: root
                 group: wheel
                 mode: '0644'
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to set the ownership and permissions on `/etc/group`:
+
+            ```ruby
+            file '/etc/group' do
+              owner 'root'
+              group 'wheel'
+              mode '0644'
+            end
             ```
   - uid: mondoo-freebsd-security-permissions-on-etc-master-passwd-are-configured
     title: Ensure permissions on /etc/master.passwd are configured
@@ -3946,6 +4925,19 @@ queries:
                 group: wheel
                 mode: '0600'
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to restrict `/etc/master.passwd`, which holds the password hashes:
+
+            ```ruby
+            file '/etc/master.passwd' do
+              owner 'root'
+              group 'wheel'
+              mode '0600'
+            end
+            ```
   - uid: mondoo-freebsd-security-permissions-on-etc-shells-are-configured
     title: Ensure permissions on /etc/shells are configured
     impact: 75
@@ -4030,6 +5022,19 @@ queries:
                 owner: root
                 group: wheel
                 mode: '0644'
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to set the ownership and permissions on `/etc/shells`:
+
+            ```ruby
+            file '/etc/shells' do
+              owner 'root'
+              group 'wheel'
+              mode '0644'
+            end
             ```
   - uid: mondoo-freebsd-security-permissions-on-bootloader-config-are-configured
     title: Ensure permissions on bootloader config are configured
@@ -4118,6 +5123,19 @@ queries:
                 owner: root
                 group: wheel
                 mode: '0600'
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to restrict the bootloader configuration to root:
+
+            ```ruby
+            file '/boot/loader.conf' do
+              owner 'root'
+              group 'wheel'
+              mode '0600'
+            end
             ```
   - uid: mondoo-freebsd-security-root-is-the-only-uid-0-account
     title: Ensure root is the only UID 0 account
@@ -4215,6 +5233,7 @@ queries:
                 msg: "Non-root UID 0 accounts found: {{ uid0_accounts.stdout }}"
               when: uid0_accounts.stdout | length > 0
             ```
+        # No Chef Infra remediation: resolving this means deciding which account or sudoers entry to change, which is a human decision rather than a converge step.
   - uid: mondoo-freebsd-security-no-duplicate-uids-exist
     title: Ensure no duplicate UIDs exist
     impact: 80
@@ -4325,6 +5344,7 @@ queries:
                 msg: "Duplicate UIDs found: {{ dup_uids.stdout }}"
               when: dup_uids.stdout | length > 0
             ```
+        # No Chef Infra remediation: resolving this means deciding which account or sudoers entry to change, which is a human decision rather than a converge step.
   - uid: mondoo-freebsd-security-no-duplicate-gids-exist
     title: Ensure no duplicate GIDs exist
     impact: 80
@@ -4435,6 +5455,7 @@ queries:
                 msg: "Duplicate GIDs found: {{ dup_gids.stdout }}"
               when: dup_gids.stdout | length > 0
             ```
+        # No Chef Infra remediation: resolving this means deciding which account or sudoers entry to change, which is a human decision rather than a converge step.
   - uid: mondoo-freebsd-security-no-duplicate-user-names-exist
     title: Ensure no duplicate user names exist
     impact: 80
@@ -4521,6 +5542,7 @@ queries:
                 msg: "Duplicate user names found: {{ dup_users.stdout }}"
               when: dup_users.stdout | length > 0
             ```
+        # No Chef Infra remediation: resolving this means deciding which account or sudoers entry to change, which is a human decision rather than a converge step.
   - uid: mondoo-freebsd-security-no-duplicate-group-names-exist
     title: Ensure no duplicate group names exist
     impact: 80
@@ -4607,6 +5629,7 @@ queries:
                 msg: "Duplicate group names found: {{ dup_groups.stdout }}"
               when: dup_groups.stdout | length > 0
             ```
+        # No Chef Infra remediation: resolving this means deciding which account or sudoers entry to change, which is a human decision rather than a converge step.
   - uid: mondoo-freebsd-security-all-groups-in-passwd-exist-in-group
     title: Ensure all groups in /etc/passwd exist in /etc/group
     impact: 70
@@ -4702,6 +5725,7 @@ queries:
                 msg: "Users with missing primary groups: {{ missing_groups.stdout }}"
               when: missing_groups.stdout | length > 0
             ```
+        # No Chef Infra remediation: resolving this means deciding which account or sudoers entry to change, which is a human decision rather than a converge step.
   - uid: mondoo-freebsd-security-syslogd-is-enabled-and-running
     title: Ensure syslogd is enabled and running
     impact: 50
@@ -4784,6 +5808,17 @@ queries:
               ansible.builtin.service:
                 name: syslogd
                 state: started
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to enable syslogd in `/etc/rc.conf` and start it:
+
+            ```ruby
+            service 'syslogd' do
+              action %i(enable start)
+            end
             ```
   - uid: mondoo-freebsd-security-syslogd-is-not-accepting-remote-messages
     title: Ensure syslogd is not accepting remote messages
@@ -4873,6 +5908,23 @@ queries:
                 name: syslogd
                 state: restarted
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to put syslogd in secure mode so it stops listening for remote log messages:
+
+            ```ruby
+            service 'syslogd' do
+              action :nothing
+            end
+
+            execute 'set syslogd_flags in rc.conf' do
+              command 'sysrc syslogd_flags="-s"'
+              not_if 'sysrc -n syslogd_flags | grep -q -- -s'
+              notifies :restart, 'service[syslogd]', :delayed
+            end
+            ```
   - uid: mondoo-freebsd-security-sudo-is-installed
     title: Ensure sudo is installed
     impact: 75
@@ -4954,6 +6006,17 @@ queries:
               community.general.pkgng:
                 name: sudo
                 state: present
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to install sudo. On FreeBSD the `package` resource resolves to `freebsd_package`, which uses pkg:
+
+            ```ruby
+            package 'sudo' do
+              action :install
+            end
             ```
   - uid: mondoo-freebsd-security-sudo-commands-use-pty
     title: Ensure sudo commands use a pseudo terminal
@@ -5054,6 +6117,17 @@ queries:
                 group: wheel
                 mode: '0440'
                 validate: 'visudo -cf %s'
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to require a pseudo terminal for sudo. The `sudo` resource knows FreeBSD keeps its sudoers configuration under `/usr/local/etc`, and validates the generated file with `visudo` before installing it:
+
+            ```ruby
+            sudo '99-use-pty' do
+              defaults ['use_pty']
+            end
             ```
   - uid: mondoo-freebsd-security-sudo-nopasswd-is-not-configured
     title: Ensure NOPASSWD is not configured in sudoers
@@ -5172,6 +6246,7 @@ queries:
                 msg: "NOPASSWD found in: {{ nopasswd_files.stdout }}"
               when: nopasswd_files.stdout | length > 0
             ```
+        # No Chef Infra remediation: resolving this means deciding which account or sudoers entry to change, which is a human decision rather than a converge step.
   - uid: mondoo-freebsd-security-firewall-is-enabled
     title: Ensure a firewall is enabled
     impact: 60
@@ -5284,4 +6359,28 @@ queries:
               ansible.builtin.service:
                 name: ipfw
                 state: started
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            **Warning: confirm the rule set allows your management access before you apply this.** The `workstation` firewall type denies inbound traffic that is not listed in `firewall_myservices`, so add every port you rely on to that list first. Use this Chef Infra recipe code to enable ipfw:
+
+            ```ruby
+            service 'ipfw' do
+              action :nothing
+            end
+
+            {
+              'firewall_enable' => 'YES',
+              'firewall_type' => 'workstation',
+              'firewall_myservices' => '22/tcp',
+              'firewall_allowservices' => 'any',
+            }.each do |key, value|
+              execute "set #{key} in rc.conf" do
+                command "sysrc #{key}=#{value}"
+                not_if "sysrc -n #{key} | grep -qx #{value}"
+                notifies :start, 'service[ipfw]', :delayed
+              end
+            end
             ```

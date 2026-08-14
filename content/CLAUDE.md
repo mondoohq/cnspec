@@ -45,8 +45,10 @@ policies:
   - **AWS**: `console`, `cli`, `terraform`, `cloudformation`
   - **Azure**: `portal`, `cli`, `terraform`, `bicep` (Azure uses `portal` — the product name for the Azure web UI — instead of the generic `console` used by other clouds)
   - **GCP / OCI / DigitalOcean / Cloudflare / Hetzner / other clouds**: `console`, `cli`, `terraform`
-  - **Windows / macOS**: `gui`, `cli`, `ansible`, and `script` (PowerShell on Windows, bash on macOS)
-  - **Linux**: `cli`, `script` (bash), `ansible`. In `mondoo-linux-security` also `chef` — a Chef Infra recipe, matching the `chef` entries in the two Chef Infra policies.
+  - **Windows / macOS**: `gui`, `cli`, `ansible`, and `script` (PowerShell on Windows, bash on macOS). In `mondoo-windows-security` also `chef`.
+  - **Linux / FreeBSD**: `cli`, `script` (bash or sh), `ansible`. In `mondoo-linux-security` and `mondoo-freebsd-security` also `chef`.
+
+  A `chef` entry is a Chef Infra recipe, matching the `chef` entries in the two Chef Infra policies. Add one wherever Chef Infra Client runs on the asset and the fix is a change to state on that host. Prefer a purpose-built resource over a shell-out: `registry_key`, `windows_security_policy`, `windows_audit_policy`, and `windows_user_privilege` cover almost all of the Windows policy; `sysctl`, `kernel_module`, `systemd_unit`, `user_ulimit`, and `sudo` cover most of the Linux one. On FreeBSD the `sysctl` resource writes `/etc/sysctl.d`, which the base system does not read, so kernel parameters go into `/etc/sysctl.conf` instead; the `service` provider there edits `/etc/rc.conf` directly, making `action :disable` the `sysrc` equivalent.
   - **Kubernetes**: `kubectl`, `manifest` (YAML), and where applicable `helm`
   - **Microsoft 365** (`mondoo-m365-security`): `console`, `powershell`, and `terraform` where a real resource exists.
     - `console` — the relevant Microsoft admin center (Microsoft Entra, Microsoft 365, Microsoft Defender, Exchange, SharePoint, or Intune). Always applies.
