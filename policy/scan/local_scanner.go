@@ -26,7 +26,6 @@ import (
 	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/cnspec/v13/policy/executor"
 	"go.mondoo.com/mql/v13"
-	"go.mondoo.com/mql/v13/cli/config"
 	"go.mondoo.com/mql/v13/cli/execruntime"
 	"go.mondoo.com/mql/v13/discovery"
 	"go.mondoo.com/mql/v13/llx"
@@ -41,7 +40,6 @@ import (
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/gql"
 	"go.mondoo.com/mql/v13/providers-sdk/v1/upstream/health"
 	"go.mondoo.com/mql/v13/utils/multierr"
-	ranger "go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/codes"
 	"go.mondoo.com/ranger-rpc/status"
 	"google.golang.org/protobuf/proto"
@@ -497,11 +495,26 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	connSem := make(chan struct{}, maxConn)
 	var scannedAssets atomic.Int64
 
+	// scanRunCtx bounds every scan goroutine. Cancelling it lets assets that
+	// are still queued for a worker slot be dropped instead of scanned, so the
+	// dispatcher drains promptly when we bail out early.
+	scanRunCtx, cancelScanRun := context.WithCancel(ctx)
+
 	dispatcher := newScanDispatcher(
 		parallelism, connSem, s, explorer, job, upstream,
 		reporter, multiprogress, services, spaceMrn, &scannedAssets,
 	)
 	batcher := newSyncBatcher(dispatcher, services, spaceMrn, s.recording, multiprogress)
+
+	// Drain in-flight scans before returning. Registered after the
+	// explorer.Shutdown defer above so it runs before it (defers are LIFO):
+	// Shutdown closes every asset runtime and sets it to nil, which races with
+	// scans that are still queued or running whenever an early return — e.g. a
+	// failed upstream sync — skips the normal drain at the end of scanSubtree.
+	defer func() {
+		cancelScanRun()
+		dispatcher.Wait()
+	}()
 
 	scanCtx := &scanContext{
 		explorer:           explorer,
@@ -529,7 +542,7 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 			}
 		}
 
-		if err := scanCtx.scanSubtree(ctx, root); err != nil {
+		if err := scanCtx.scanSubtree(scanRunCtx, root); err != nil {
 			return nil, err
 		}
 	}
@@ -1442,35 +1455,6 @@ func (s *localAssetScanner) UpdateFilters(filters *policy.Mqueries, timeout time
 	}
 
 	return queries, err
-}
-
-func sendErrorToMondooPlatform(serviceAccount *upstream.ServiceAccountCredentials, event *health.SendErrorReq) {
-	// 3. send error to mondoo platform
-	proxy, err := config.GetAPIProxy()
-	if err != nil {
-		log.Error().Err(err).Msg("failed to parse proxy setting")
-		return
-	}
-	httpClient := ranger.NewHttpClient(ranger.WithProxy(proxy))
-
-	plugins := []ranger.ClientPlugin{}
-	certAuth, err := upstream.NewServiceAccountRangerPlugin(serviceAccount)
-	if err != nil {
-		return
-	}
-	plugins = append(plugins, certAuth)
-
-	cl, err := health.NewErrorReportingClient(serviceAccount.ApiEndpoint, httpClient, plugins...)
-	if err != nil {
-		log.Error().Err(err).Msg("failed to create error reporting client")
-		return
-	}
-
-	_, err = cl.SendError(context.Background(), event)
-	if err != nil {
-		log.Error().Err(err).Msg("failed to send error to Mondoo Platform")
-		return
-	}
 }
 
 func WithServices(ctx context.Context, runtime llx.Runtime, asset *inventory.Asset, upstreamClient *upstream.UpstreamClient, f func(context.Context, *policy.LocalServices) error) error {
