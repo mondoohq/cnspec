@@ -13,6 +13,7 @@ policies:
         email: 99395643+langen1x@users.noreply.github.com
     require:
       - provider: os
+      - provider: proxmox
     summary: Secure Proxmox Virtual Environment hypervisor, VM, and container configurations
     docs:
       desc: |
@@ -120,8 +121,16 @@ policies:
         filters: |
           file("/etc/pve/storage.cfg").exists
         checks:
-          - uid: mondoo-proxmox-security-pbs-encryption-is-enabled
           - uid: mondoo-proxmox-security-pbs-master-key-is-configured
+
+      # Checks in this group read the Proxmox VE API rather than the node
+      # filesystem, so they run against a `cnspec scan proxmox` asset instead
+      # of the Debian host that every other group in this policy targets.
+      - title: "Proxmox API Backup Encryption"
+        filters: |
+          asset.platform == "proxmox"
+        checks:
+          - uid: mondoo-proxmox-security-pbs-encryption-is-enabled
 
       - title: "Proxmox-specific Hardening"
         filters: |
@@ -3669,7 +3678,7 @@ queries:
       - title: Proxmox Backup Server Encryption
         url: https://pbs.proxmox.com/docs/backup-client.html#encryption
     mql: |
-      proxmox.storages.all( backups.all( encrypted == true ) )
+      proxmox.storages.all( backups == empty || backups.all( encrypted == true ) )
     docs:
       desc: |
         This check ensures that every backup archive stored on the cluster was written encrypted, by inspecting the encryption state of the actual backup volumes on each storage rather than only confirming that a client-side encryption key is present in the configuration. Proxmox does not encrypt a backup unless the storage it is written to has an encryption key assigned, and a key present in the configuration does not prove that the archives already on disk were captured with it. A storage with no backup archives passes, since there is nothing unencrypted to find.
@@ -3688,20 +3697,24 @@ queries:
         ### Audit via Web UI
 
         1. Sign in to the Proxmox VE web interface.
-        2. Open **Datacenter**, then select **Storage** and choose the Proxmox Backup Server entry.
-        3. Confirm an encryption key is configured for the storage in its **Encryption** settings.
+        2. Open **Datacenter**, then expand a node and select the backup storage.
+        3. Open the **Backups** tab and review the **Encrypted** column for the listed archives.
 
-        A passing result shows an encryption key assigned to every PBS storage; a failing result shows a PBS storage with no encryption key.
+        A passing result shows every archive marked as encrypted; a failing result shows at least one archive that is not.
 
         ### Audit via CLI
 
-        Run the command on a cluster node:
+        Run the command on a cluster node to list every backup archive on every storage together with its encryption state:
 
         ```bash
-        for s in $(awk '/^pbs:/ {print $2}' /etc/pve/storage.cfg); do test -s "/etc/pve/priv/storage/$s.enc" && echo "$s: encrypted" || echo "$s: NO KEY"; done
+        node=$(hostname)
+        for s in $(pvesm status --content backup | awk 'NR > 1 {print $1}'); do
+          pvesh get "/nodes/$node/storage/$s/content" --content backup --output-format json |
+            jq -r --arg s "$s" '.[] | "\($s) \(.volid) encrypted=\(.encrypted // false)"'
+        done
         ```
 
-        A passing result reports an existing `.enc` key file for every PBS storage; a failing result reports a PBS storage with no key file.
+        A passing result reports `encrypted=true` for every archive; a failing result reports an archive with `encrypted=false`.
       remediation:
         - id: cli
           desc: |
