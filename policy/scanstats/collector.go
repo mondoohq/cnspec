@@ -38,12 +38,12 @@ const (
 	// only correct aggregation (max per run) is inexpressible.
 	MetricRunID = "cnspec.scan.run_id"
 
-	MetricMemRuntimePeak     = "cnspec.scan.mem.runtime_peak_bytes"     // unit: bytes
+	MetricMemRuntimePeak     = "cnspec.scan.mem.runtime_peak_bytes"      // unit: bytes
 	MetricMemRuntimeAtFinish = "cnspec.scan.mem.runtime_at_finish_bytes" // unit: bytes
-	MetricMemGoroutinesPeak  = "cnspec.scan.mem.goroutines_peak"        // unit: count
-	MetricMemCgroupCurrent   = "cnspec.scan.mem.cgroup_current_bytes"   // unit: bytes
-	MetricMemCgroupPeak      = "cnspec.scan.mem.cgroup_peak_bytes"      // unit: bytes
-	MetricMemCgroupMax       = "cnspec.scan.mem.cgroup_max_bytes"       // unit: bytes
+	MetricMemGoroutinesPeak  = "cnspec.scan.mem.goroutines_peak"         // unit: count
+	MetricMemCgroupCurrent   = "cnspec.scan.mem.cgroup_current_bytes"    // unit: bytes
+	MetricMemCgroupPeak      = "cnspec.scan.mem.cgroup_peak_bytes"       // unit: bytes
+	MetricMemCgroupMax       = "cnspec.scan.mem.cgroup_max_bytes"        // unit: bytes
 
 	MetricConcurrencyInFlightAtPeak = "cnspec.scan.concurrency.in_flight_at_peak" // unit: count
 	MetricConcurrencyParallelism    = "cnspec.scan.concurrency.parallelism"       // unit: count
