@@ -280,3 +280,191 @@ func TestDeprecatedSymbol_CompileFailureSilent(t *testing.T) {
 	entries := walkQueryForDeprecatedSymbols(overlay, newConf(overlay), "test.mql.yaml", q)
 	assert.Empty(t, entries, "compile failures should be silently skipped — bundle-compile-error reports them")
 }
+
+// deprecatedFieldOverlay is the fixture shared by the container-filter tests:
+// file.basename is deprecated, and this filter references it.
+func deprecatedFieldOverlay() *deprecateOverlay {
+	return &deprecateOverlay{
+		inner: schema,
+		deprecatedFields: map[string]map[string]struct{}{
+			"file": {"basename": {}},
+		},
+	}
+}
+
+func deprecatedFilters(line int) *Filters {
+	return &Filters{
+		FileContext: FileContext{Line: line, Column: 5},
+		Items: map[string]*Mquery{
+			"": {Mql: "file('/etc/passwd').basename == 'passwd'"},
+		},
+	}
+}
+
+func TestDeprecatedSymbol_PolicyGroupFilters(t *testing.T) {
+	overlay := deprecatedFieldOverlay()
+
+	b := &Bundle{
+		Policies: []*Policy{{
+			Uid: "test-policy",
+			Groups: []*PolicyGroup{{
+				Title:   "Linux hosts",
+				Filters: deprecatedFilters(42),
+			}},
+		}},
+	}
+
+	entries := lintDeprecatedSymbols(overlay, newConf(overlay), "test.mql.yaml", b)
+	require.Len(t, entries, 1)
+	assert.Equal(t, FilterDeprecatedSymbolRuleID, entries[0].RuleID,
+		"a policy group is not a query, so it must not report under the query rule")
+	assert.Equal(t, LevelWarning, entries[0].Level)
+	assert.Contains(t, entries[0].Message, "test-policy")
+	assert.Contains(t, entries[0].Message, "Linux hosts")
+	assert.Contains(t, entries[0].Message, "file.basename")
+	assert.Equal(t, 42, entries[0].Location[0].Line,
+		"a group's filters block has its own file context, so point at it directly")
+}
+
+func TestDeprecatedSymbol_PolicyGroupFiltersWithoutTitle(t *testing.T) {
+	overlay := deprecatedFieldOverlay()
+
+	b := &Bundle{
+		Policies: []*Policy{{
+			Uid: "test-policy",
+			Groups: []*PolicyGroup{
+				{Title: "first group, no deprecation"},
+				{Filters: deprecatedFilters(77)},
+			},
+		}},
+	}
+
+	entries := lintDeprecatedSymbols(overlay, newConf(overlay), "test.mql.yaml", b)
+	require.Len(t, entries, 1)
+	assert.Contains(t, entries[0].Message, "group 2",
+		"an untitled group still needs to be identifiable, so fall back to its position")
+}
+
+func TestDeprecatedSymbol_QueryPackFilters(t *testing.T) {
+	overlay := deprecatedFieldOverlay()
+
+	b := &Bundle{
+		Packs: []*QueryPack{{
+			Uid:     "test-pack",
+			Filters: deprecatedFilters(13),
+		}},
+	}
+
+	entries := lintDeprecatedSymbols(overlay, newConf(overlay), "test.mql.yaml", b)
+	require.Len(t, entries, 1)
+	assert.Equal(t, FilterDeprecatedSymbolRuleID, entries[0].RuleID)
+	assert.Contains(t, entries[0].Message, "test-pack")
+	assert.Contains(t, entries[0].Message, "file.basename")
+	assert.Equal(t, 13, entries[0].Location[0].Line)
+}
+
+func TestDeprecatedSymbol_QueryPackGroupFilters(t *testing.T) {
+	overlay := deprecatedFieldOverlay()
+
+	b := &Bundle{
+		Packs: []*QueryPack{{
+			Uid: "test-pack",
+			Groups: []*QueryGroup{{
+				Title:   "Inventory",
+				Filters: deprecatedFilters(21),
+			}},
+		}},
+	}
+
+	entries := lintDeprecatedSymbols(overlay, newConf(overlay), "test.mql.yaml", b)
+	require.Len(t, entries, 1)
+	assert.Equal(t, FilterDeprecatedSymbolRuleID, entries[0].RuleID)
+	assert.Contains(t, entries[0].Message, "test-pack")
+	assert.Contains(t, entries[0].Message, "Inventory")
+	assert.Equal(t, 21, entries[0].Location[0].Line)
+}
+
+func TestDeprecatedSymbol_ComputedFiltersNotReported(t *testing.T) {
+	overlay := deprecatedFieldOverlay()
+
+	// ComputedFilters is derived at load time from the group and query filters,
+	// so reporting it would double up on warnings the author cannot act on.
+	b := &Bundle{
+		Policies: []*Policy{{
+			Uid:             "test-policy",
+			ComputedFilters: deprecatedFilters(9),
+		}},
+		Packs: []*QueryPack{{
+			Uid:             "test-pack",
+			ComputedFilters: deprecatedFilters(11),
+		}},
+	}
+
+	entries := lintDeprecatedSymbols(overlay, newConf(overlay), "test.mql.yaml", b)
+	assert.Empty(t, entries)
+}
+
+func TestDeprecatedSymbol_GroupFilterAndCheckReportedIndependently(t *testing.T) {
+	overlay := &deprecateOverlay{
+		inner:         schema,
+		deprecatedRes: map[string]struct{}{"processes": {}},
+		deprecatedFields: map[string]map[string]struct{}{
+			"file": {"basename": {}},
+		},
+	}
+
+	b := &Bundle{
+		Policies: []*Policy{{
+			Uid: "test-policy",
+			Groups: []*PolicyGroup{{
+				Title:   "Linux hosts",
+				Filters: deprecatedFilters(42),
+				Checks: []*Mquery{{
+					Uid:         "test-check",
+					Mql:         "processes.length >= 0",
+					FileContext: FileContext{Line: 50},
+				}},
+			}},
+		}},
+	}
+
+	entries := lintDeprecatedSymbols(overlay, newConf(overlay), "test.mql.yaml", b)
+	require.Len(t, entries, 2, "the group's filters and the check's mql are separate sites")
+
+	byRule := map[string]*Entry{}
+	for _, e := range entries {
+		byRule[e.RuleID] = e
+	}
+	require.Contains(t, byRule, FilterDeprecatedSymbolRuleID)
+	require.Contains(t, byRule, QueryDeprecatedSymbolRuleID)
+	assert.Contains(t, byRule[FilterDeprecatedSymbolRuleID].Message, "file.basename")
+	assert.Contains(t, byRule[QueryDeprecatedSymbolRuleID].Message, "processes")
+}
+
+func TestDeprecatedSymbol_ContainerFiltersDedupeAndSkipEmpties(t *testing.T) {
+	overlay := deprecatedFieldOverlay()
+
+	b := &Bundle{
+		Policies: []*Policy{{
+			Uid: "test-policy",
+			Groups: []*PolicyGroup{
+				{Title: "no filters at all"},
+				{Title: "empty filters", Filters: &Filters{}},
+				{
+					Title: "repeated symbol",
+					Filters: &Filters{
+						FileContext: FileContext{Line: 31},
+						Items: map[string]*Mquery{
+							"0": {Mql: "file('/a').basename == 'a'"},
+							"1": {Mql: "file('/b').basename == 'b'"},
+						},
+					},
+				},
+			},
+		}},
+	}
+
+	entries := lintDeprecatedSymbols(overlay, newConf(overlay), "test.mql.yaml", b)
+	require.Len(t, entries, 1, "one deprecated symbol in one group's filters is one warning")
+	assert.Equal(t, 31, entries[0].Location[0].Line)
+}

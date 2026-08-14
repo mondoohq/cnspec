@@ -13,23 +13,43 @@ import (
 
 const (
 	QueryDeprecatedSymbolRuleID = "query-deprecated-symbol"
+
+	// FilterDeprecatedSymbolRuleID covers filters that belong to a container
+	// rather than to a query — policy groups, query packs and pack groups.
+	// A query's own filters stay under QueryDeprecatedSymbolRuleID, since those
+	// warnings are attributed to the query.
+	FilterDeprecatedSymbolRuleID = "filter-deprecated-symbol"
 )
 
 // lintDeprecatedSymbols compiles every query with non-empty MQL and reports
 // resources or fields whose effective maturity is "deprecated". Compile errors
 // are intentionally ignored here — bundle-compile-error already surfaces them.
+//
+// Filters attached to a container rather than to a query — policy groups, query
+// packs and pack groups — are covered too. Their stakes are higher than a single
+// query's: when the symbol is removed the filter stops matching and the whole
+// group drops out of scoring rather than one check.
+//
+// ComputedFilters is deliberately skipped. It is derived at load time from the
+// group and query filters already walked here, so reporting it would duplicate
+// warnings at a location the author never wrote.
 func lintDeprecatedSymbols(schema resources.ResourcesSchema, conf mqlc.CompilerConfig, filename string, b *Bundle) []*Entry {
 	var entries []*Entry
 
 	visit := func(q *Mquery) {
 		entries = append(entries, walkQueryForDeprecatedSymbols(schema, conf, filename, q)...)
 	}
+	visitFilters := func(subject string, filters *Filters) {
+		entries = append(entries, walkFiltersForDeprecatedSymbols(conf, filename, subject, filters)...)
+	}
 
 	for _, q := range b.Queries {
 		visit(q)
 	}
 	for _, p := range b.Policies {
-		for _, group := range p.Groups {
+		policy := fmt.Sprintf("policy '%s'", policyDisplayID(p))
+		for i, group := range p.Groups {
+			visitFilters(fmt.Sprintf("%s %s", policy, groupDisplay(group.Uid, group.Title, i)), group.Filters)
 			for _, q := range group.Checks {
 				visit(q)
 			}
@@ -39,10 +59,13 @@ func lintDeprecatedSymbols(schema resources.ResourcesSchema, conf mqlc.CompilerC
 		}
 	}
 	for _, pack := range b.Packs {
+		queryPack := fmt.Sprintf("query pack '%s'", queryPackDisplayID(pack))
+		visitFilters(queryPack, pack.Filters)
 		for _, q := range pack.Queries {
 			visit(q)
 		}
-		for _, group := range pack.Groups {
+		for i, group := range pack.Groups {
+			visitFilters(fmt.Sprintf("%s %s", queryPack, groupDisplay(group.Uid, group.Title, i)), group.Filters)
 			for _, q := range group.Queries {
 				visit(q)
 			}
@@ -50,6 +73,91 @@ func lintDeprecatedSymbols(schema resources.ResourcesSchema, conf mqlc.CompilerC
 	}
 
 	return entries
+}
+
+// walkFiltersForDeprecatedSymbols reports deprecated symbols used by a filters
+// block that belongs to a container rather than a query. Unlike a query's
+// filters, these carry their own file context, so warnings point straight at the
+// filters block instead of borrowing a parent's line.
+func walkFiltersForDeprecatedSymbols(conf mqlc.CompilerConfig, filename string, subject string, filters *Filters) []*Entry {
+	symbols := deprecatedSymbolsInFilters(filters, conf, map[string]struct{}{})
+	if len(symbols) == 0 {
+		return nil
+	}
+
+	loc := []Location{{File: filename, Line: filters.FileContext.Line, Column: filters.FileContext.Column}}
+
+	entries := make([]*Entry, 0, len(symbols))
+	for _, symbol := range symbols {
+		entries = append(entries, &Entry{
+			RuleID:   FilterDeprecatedSymbolRuleID,
+			Level:    LevelWarning,
+			Message:  fmt.Sprintf("%s uses %s in its filters", subject, symbol),
+			Location: loc,
+		})
+	}
+
+	return entries
+}
+
+// deprecatedSymbolsInFilters returns the deprecated symbols used across every
+// item of a filters block, skipping any already recorded in seen and adding the
+// ones it reports. Filters are a map, so items are walked in sorted key order
+// for stable output across runs.
+func deprecatedSymbolsInFilters(filters *Filters, conf mqlc.CompilerConfig, seen map[string]struct{}) []string {
+	if filters == nil || len(filters.Items) == 0 {
+		return nil
+	}
+
+	keys := make([]string, 0, len(filters.Items))
+	for key := range filters.Items {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	var symbols []string
+	for _, key := range keys {
+		filter := filters.Items[key]
+		if filter == nil {
+			continue
+		}
+		for _, symbol := range deprecatedSymbolsIn(filter.Mql, conf) {
+			if _, ok := seen[symbol]; ok {
+				continue
+			}
+			seen[symbol] = struct{}{}
+			symbols = append(symbols, symbol)
+		}
+	}
+
+	return symbols
+}
+
+// groupDisplay names a policy or query-pack group. Groups rarely carry a uid or
+// a title, so it falls back to the group's position, which is still enough to
+// find it alongside the reported line.
+func groupDisplay(uid, title string, index int) string {
+	if uid != "" {
+		return fmt.Sprintf("group '%s'", uid)
+	}
+	if title != "" {
+		return fmt.Sprintf("group '%s'", title)
+	}
+	return fmt.Sprintf("group %d", index+1)
+}
+
+func policyDisplayID(p *Policy) string {
+	if p.Uid != "" {
+		return p.Uid
+	}
+	return p.Mrn
+}
+
+func queryPackDisplayID(pack *QueryPack) string {
+	if pack.Uid != "" {
+		return pack.Uid
+	}
+	return pack.Mrn
 }
 
 // walkQueryForDeprecatedSymbols reports deprecated symbols used by a query,
@@ -73,29 +181,7 @@ func walkQueryForDeprecatedSymbols(schema resources.ResourcesSchema, conf mqlc.C
 		seen[symbol] = struct{}{}
 	}
 
-	var fromFilters []string
-	if q.Filters != nil {
-		// Sort for stable output across runs.
-		filterKeys := make([]string, 0, len(q.Filters.Items))
-		for key := range q.Filters.Items {
-			filterKeys = append(filterKeys, key)
-		}
-		sort.Strings(filterKeys)
-
-		for _, key := range filterKeys {
-			filter := q.Filters.Items[key]
-			if filter == nil {
-				continue
-			}
-			for _, symbol := range deprecatedSymbolsIn(filter.Mql, conf) {
-				if _, ok := seen[symbol]; ok {
-					continue
-				}
-				seen[symbol] = struct{}{}
-				fromFilters = append(fromFilters, symbol)
-			}
-		}
-	}
+	fromFilters := deprecatedSymbolsInFilters(q.Filters, conf, seen)
 
 	if len(fromMql) == 0 && len(fromFilters) == 0 {
 		return nil
