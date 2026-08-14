@@ -46,7 +46,7 @@ policies:
           - uid: mondoo-vercel-security-project-password-protection-enabled
           - uid: mondoo-vercel-security-project-trusted-ips-enforced
           - uid: mondoo-vercel-security-project-trusted-ips-allowlist-configured
-          - uid: mondoo-vercel-security-project-aliases-no-protection-bypass
+          - uid: mondoo-vercel-security-project-no-protection-bypass
       - title: Vercel Build and Source
         filters: asset.platform == "vercel-project"
         checks:
@@ -1456,13 +1456,13 @@ queries:
         title: Vercel domain renewal documentation
 
   # ---------------------------------------------------------------------------
-  # Alias deployment-protection bypass
+  # Deployment-protection bypass
   # ---------------------------------------------------------------------------
-  # No Terraform variants: outstanding protection-bypass secrets on aliases are
-  # runtime state generated through the dashboard or API, not a declarative
-  # resource, so Terraform HCL, plan, and state have no analog to assert against.
-  - uid: mondoo-vercel-security-project-aliases-no-protection-bypass
-    title: Ensure project aliases have no deployment-protection bypass tokens
+  # No Terraform variants: outstanding protection-bypass secrets are runtime
+  # state generated through the dashboard or API, not a declarative resource,
+  # so Terraform HCL, plan, and state have no analog to assert against.
+  - uid: mondoo-vercel-security-project-no-protection-bypass
+    title: Ensure projects have no deployment-protection bypass secrets
     impact: 80
     tags:
       compliance/bsi-sys-1-5: false
@@ -1480,59 +1480,59 @@ queries:
       compliance/soc2-2017: false
       compliance/vda-isa-5: false
     mql: |
-      vercel.project.aliases.all(protectionBypassCount == 0)
+      vercel.project.protectionBypassCount == 0
     docs:
       desc: |
-        This check ensures that none of the project's aliases carry a deployment-protection bypass secret. A bypass secret lets any request that presents it reach the aliased deployment without satisfying Vercel Authentication, password protection, or Trusted IPs. Each secret is standing access: it keeps working until it is revoked, so a bypass on a production alias quietly negates the protection configured for that deployment.
+        This check ensures that the project carries no deployment-protection bypass secrets. A bypass secret lets any request that presents it reach the project's deployments without satisfying Vercel Authentication, password protection, or Trusted IPs. Each secret is standing access: it keeps working until it is revoked, so a single bypass quietly negates the protection configured for every hostname the project serves.
 
         **Why this matters**
 
-        - **Bypass secrets defeat deployment protection:** A request carrying the secret skips authentication entirely, so the protection configured on the alias no longer gates who can load it.
+        - **Bypass secrets defeat deployment protection:** A request carrying the secret skips authentication entirely, so the protection configured on the project no longer gates who can load its deployments.
         - **They are long-lived by default:** A bypass secret does not expire on its own; once issued it grants access until someone revokes it.
-        - **Production aliases are the sensitive case:** A bypass on a production alias exposes the live deployment, not just an ephemeral preview URL.
+        - **The blast radius is the whole project:** A bypass is registered against the project, so it covers production and preview deployments alike, not just one ephemeral URL.
 
         **Risk mitigation**
 
-        - **Revoke unneeded bypass secrets:** Remove protection-bypass secrets from aliases that do not require automated, unauthenticated access.
+        - **Revoke unneeded bypass secrets:** Remove protection-bypass secrets from projects that do not require automated, unauthenticated access.
         - **Scope and rotate what remains:** Where automation genuinely needs a bypass, keep the count minimal and rotate the secret regularly.
       audit: |
         ### Audit via Dashboard
 
         1. Sign in to the Vercel dashboard at vercel.com.
         2. Open the project, then go to **Settings > Deployment Protection**.
-        3. Review the **Protection Bypass for Automation** section and any shareable-link bypasses on the project's aliases.
+        3. Review the **Protection Bypass for Automation** section for registered bypass secrets.
 
-        A passing result shows no bypass secrets on the project's aliases; a failing result shows one or more aliases with an active bypass.
+        A passing result shows no bypass secrets registered on the project; a failing result shows one or more active bypasses.
 
         ### Audit via API
 
         ```bash
         curl -s -H "Authorization: Bearer $VERCEL_TOKEN" \
-          "https://api.vercel.com/v4/aliases?projectId=<project-id>&teamId=<team-id>" \
-          | jq '.aliases[] | select(.protectionBypassCount > 0) | .alias'
+          "https://api.vercel.com/v9/projects/<project-id>?teamId=<team-id>" \
+          | jq '.protectionBypass | length'
         ```
 
-        A passing response returns nothing; a failing response lists the aliases that carry a protection-bypass secret.
+        A passing response reports `0`; any higher number is the count of protection-bypass secrets registered on the project.
       remediation:
         - id: console
           desc: |
             To remove deployment-protection bypass secrets using the Vercel dashboard:
 
             1. Open the project and go to **Settings > Deployment Protection**.
-            2. In **Protection Bypass for Automation**, delete any bypass secret that is no longer required, and remove shareable-link bypasses from the project's aliases.
+            2. In **Protection Bypass for Automation**, delete any bypass secret that is no longer required.
             3. For any automation that still needs access, prefer a scoped, rotated credential over a standing bypass.
         - id: api
           desc: |
-            To revoke a bypass secret on an alias through the REST API:
+            To revoke a bypass secret on the project through the REST API:
 
             ```bash
             curl -s -X PATCH -H "Authorization: Bearer $VERCEL_TOKEN" \
               -H "Content-Type: application/json" \
-              "https://api.vercel.com/aliases/<alias-id>/protection-bypass?teamId=<team-id>" \
+              "https://api.vercel.com/v1/projects/<project-id>/protection-bypass?teamId=<team-id>" \
               --data '{ "revoke": { "secret": "<bypass-secret>", "regenerate": false } }'
             ```
-        # No Terraform remediation: protection-bypass secrets on aliases are imperative
-        # runtime credentials with no vercel Terraform provider resource to manage them.
+        # No Terraform remediation: protection-bypass secrets are imperative runtime
+        # credentials with no vercel Terraform provider resource to manage them.
     refs:
       - url: https://vercel.com/docs/security/deployment-protection/methods-to-bypass-deployment-protection/protection-bypass-automation
         title: Vercel protection bypass for automation documentation
