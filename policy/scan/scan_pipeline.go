@@ -332,15 +332,30 @@ func (d *scanDispatcher) scanSingleAsset(ctx context.Context, tracked *discovery
 // logged numbers and the numbers reported upstream cannot disagree.
 func (d *scanDispatcher) logMemoryStats(asset *inventory.Asset) {
 	peakBytes, peakGoroutines, inFlightAtPeak := d.memTracker.Peaks()
+	snap := d.memTracker.Snapshot()
 
-	log.Info().
+	ev := log.Info().
 		Str("asset", asset.Name).
 		Int64("scanned_assets", d.scannedAssets.Load()).
 		Int("goroutines", goruntime.NumGoroutine()).
 		Uint64("runtime_peak_mb", peakBytes/1024/1024).
 		Int("goroutines_peak", peakGoroutines).
-		Int("in_flight_at_peak", inFlightAtPeak).
-		Msg("memory after asset scan")
+		Int("in_flight_at_peak", inFlightAtPeak)
+
+	// Current footprint and cgroup readings, best-effort: absent rather
+	// than zero when they could not be measured, matching the upstream
+	// metrics this diagnostic is read alongside.
+	if snap.HasRuntime {
+		ev = ev.Uint64("runtime_mb", snap.RuntimeBytes/1024/1024)
+	}
+	if snap.HasCgroupCurrent {
+		ev = ev.Uint64("cgroup_current_mb", snap.CgroupCurrent/1024/1024)
+	}
+	if snap.HasCgroupMax {
+		ev = ev.Uint64("cgroup_max_mb", snap.CgroupMax/1024/1024)
+	}
+
+	ev.Msg("memory after asset scan")
 
 	if ar, ok := d.reporter.(*AggregateReporter); ok {
 		rptBytes, rpBytes, vrBytes, aBytes := ar.AccumulatedBytes()

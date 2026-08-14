@@ -38,9 +38,13 @@ type MemTrackerConfig struct {
 	CgroupRoot     string
 }
 
-// MemTracker holds process-wide memory high-water marks for one scan run.
-// Memory is per-process while scanstats Collectors are per-asset, so this is
-// shared across every asset scanned by a run and makes no per-asset claim.
+// MemTracker holds memory high-water marks for one scan run. A tracker is
+// created per scan run (per distributeJob call), not per process: for the
+// CLI these coincide, but a long-lived serve/queue process handling multiple
+// jobs gets a fresh tracker per job. Memory is process-wide while scanstats
+// Collectors are per-asset, so a single tracker is shared across every asset
+// scanned by its run; RunID is what lets the resulting per-asset records be
+// grouped back into the run they came from.
 //
 // Every exported method is safe on a nil receiver: telemetry must never
 // panic a scan.
@@ -53,6 +57,12 @@ type MemTracker struct {
 	// compared against any other peak.
 	inFlightAtPeak int
 	lastRuntime    uint64
+	// hasSample is true once at least one observation has measured a
+	// non-zero runtime footprint. Guards the runtime-derived metrics in
+	// Record: a tracker that never resolved a real sample must omit them
+	// rather than report zero, which would be indistinguishable downstream
+	// from a real measurement.
+	hasSample bool
 
 	inFlight func() int
 
@@ -76,6 +86,10 @@ func NewMemTracker(cfg MemTrackerConfig) *MemTracker {
 // SetInFlightFunc registers an accessor for the number of assets currently
 // scanning. Registered after construction because the scan dispatcher that
 // owns the semaphore is built after the tracker.
+//
+// f is invoked while the tracker's mutex is held, so it must not block, do
+// I/O, or call back into the tracker: the mutex is not reentrant, so a
+// callback into Peaks or Snapshot would self-deadlock.
 func (t *MemTracker) SetInFlightFunc(f func() int) {
 	if t == nil {
 		return
@@ -96,6 +110,9 @@ func (t *MemTracker) Observe() {
 	defer t.mu.Unlock()
 
 	t.lastRuntime = s.RuntimeBytes
+	if s.RuntimeBytes > 0 {
+		t.hasSample = true
+	}
 	if s.RuntimeBytes > t.peakRuntime {
 		t.peakRuntime = s.RuntimeBytes
 		if t.inFlight != nil {
@@ -117,6 +134,43 @@ func (t *MemTracker) Peaks() (runtimeBytes uint64, goroutines int, inFlightAtPea
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.peakRuntime, t.peakGoroutines, t.inFlightAtPeak
+}
+
+// MemSnapshot is a point-in-time view for diagnostics: the latest observed
+// runtime footprint plus best-effort cgroup readings. Presence flags follow
+// the same absent-never-zero rule as the recorded metrics.
+type MemSnapshot struct {
+	RuntimeBytes     uint64
+	HasRuntime       bool
+	CgroupCurrent    uint64
+	HasCgroupCurrent bool
+	CgroupMax        uint64
+	HasCgroupMax     bool
+}
+
+// Snapshot returns the current diagnostic view. Safe on a nil tracker, which
+// reports everything absent.
+func (t *MemTracker) Snapshot() MemSnapshot {
+	if t == nil {
+		return MemSnapshot{}
+	}
+
+	t.mu.Lock()
+	last, hasSample := t.lastRuntime, t.hasSample
+	t.mu.Unlock()
+
+	// File I/O outside the lock: reading cgroup files under the tracker
+	// mutex would block the sampler goroutine.
+	cg := readCgroup(t.cfg.CgroupRoot)
+
+	return MemSnapshot{
+		RuntimeBytes:     last,
+		HasRuntime:       hasSample,
+		CgroupCurrent:    cg.current,
+		HasCgroupCurrent: cg.hasCurrent,
+		CgroupMax:        cg.max,
+		HasCgroupMax:     cg.hasMax,
+	}
 }
 
 // defaultCgroupRoot is the cgroup v2 unified hierarchy mount point.
@@ -244,8 +298,14 @@ func (t *MemTracker) Record(c *Collector) {
 		return
 	}
 
+	// Refresh before reading: without this, a sample can be up to a full
+	// tick stale, and every asset that finishes inside one sampling window
+	// would report an identical "at finish" value. Observe takes the lock
+	// itself, so this must happen before the mutex block below.
+	t.Observe()
+
 	t.mu.Lock()
-	peak, last := t.peakRuntime, t.lastRuntime
+	peak, last, hasSample := t.peakRuntime, t.lastRuntime, t.hasSample
 	goroutines, inFlight := t.peakGoroutines, t.inFlightAtPeak
 	t.mu.Unlock()
 
@@ -253,9 +313,14 @@ func (t *MemTracker) Record(c *Collector) {
 		c.AddString(MetricRunID, t.cfg.RunID)
 	}
 
-	c.AddInt(MetricMemRuntimePeak, "bytes", int64(peak))
-	c.AddInt(MetricMemRuntimeAtFinish, "bytes", int64(last))
-	c.AddInt(MetricMemGoroutinesPeak, "count", int64(goroutines))
+	// Absent, not zero: a tracker that never resolved a real runtime sample
+	// must omit these rather than report zero, which would be
+	// indistinguishable downstream from a real measurement.
+	if hasSample {
+		c.AddInt(MetricMemRuntimePeak, "bytes", int64(peak))
+		c.AddInt(MetricMemRuntimeAtFinish, "bytes", int64(last))
+		c.AddInt(MetricMemGoroutinesPeak, "count", int64(goroutines))
+	}
 
 	c.AddInt(MetricConcurrencyInFlightAtPeak, "count", int64(inFlight))
 	c.AddInt(MetricConcurrencyParallelism, "count", int64(t.cfg.Parallelism))

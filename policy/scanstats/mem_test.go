@@ -276,6 +276,94 @@ func TestMemTracker_StartStopObservesAndIsIdempotent(t *testing.T) {
 	})
 }
 
+func TestMemTracker_RecordOmitsRuntimeMetricsWhenNoSampleEverResolved(t *testing.T) {
+	// A zero-byte sample simulates every runtime/metrics name failing to
+	// resolve: defaultSample falls back to 0 rather than a real footprint.
+	tr := NewMemTracker(MemTrackerConfig{
+		RunID:      "run-abc",
+		CgroupRoot: filepath.Join(t.TempDir(), "absent"),
+		Sample:     fakeSampler(Sample{RuntimeBytes: 0, Goroutines: 0}),
+	})
+
+	c := New()
+	tr.Record(c)
+	m := metricByName(t, c)
+
+	// Absent, not zero: recording a zero here would be indistinguishable
+	// downstream from a real measurement and corrupt fleet-wide aggregates.
+	require.NotContains(t, m, MetricMemRuntimePeak)
+	require.NotContains(t, m, MetricMemRuntimeAtFinish)
+	require.NotContains(t, m, MetricMemGoroutinesPeak)
+	// Concurrency metrics and RunID are unconditional and must still be
+	// present even though no runtime sample was ever resolved.
+	require.Contains(t, m, MetricRunID)
+	require.Contains(t, m, MetricConcurrencyInFlightAtPeak)
+	require.Contains(t, m, MetricConcurrencyParallelism)
+	require.Contains(t, m, MetricConcurrencyMaxConnections)
+}
+
+func TestMemTracker_RecordRefreshesAtFinishRatherThanUsingStaleSample(t *testing.T) {
+	tr := NewMemTracker(MemTrackerConfig{
+		CgroupRoot: filepath.Join(t.TempDir(), "absent"),
+		Sample: fakeSampler(
+			Sample{RuntimeBytes: 100, Goroutines: 1},
+			Sample{RuntimeBytes: 200, Goroutines: 2},
+		),
+	})
+	tr.Observe() // simulates the periodic sampler firing once, a tick ago
+
+	c := New()
+	tr.Record(c)
+	m := metricByName(t, c)
+
+	// Record must pull a fresh sample rather than reporting the value from
+	// the last periodic tick, or every asset finishing inside one sampling
+	// window would report an identical, stale value.
+	require.Equal(t, int64(200), m[MetricMemRuntimeAtFinish].GetIntValue())
+	// The peak also reflects the fresh sample since it is the larger value.
+	require.Equal(t, int64(200), m[MetricMemRuntimePeak].GetIntValue())
+}
+
+func TestMemTracker_SnapshotReportsPresentAndAbsentCgroupValues(t *testing.T) {
+	dir := t.TempDir()
+	writeCgroupFile(t, dir, "memory.current", "1048576\n")
+	writeCgroupFile(t, dir, "memory.max", "2097152\n")
+
+	tr := NewMemTracker(MemTrackerConfig{
+		CgroupRoot: dir,
+		Sample:     fakeSampler(Sample{RuntimeBytes: 555, Goroutines: 5}),
+	})
+	tr.Observe()
+
+	snap := tr.Snapshot()
+	require.True(t, snap.HasRuntime)
+	require.Equal(t, uint64(555), snap.RuntimeBytes)
+	require.True(t, snap.HasCgroupCurrent)
+	require.Equal(t, uint64(1048576), snap.CgroupCurrent)
+	require.True(t, snap.HasCgroupMax)
+	require.Equal(t, uint64(2097152), snap.CgroupMax)
+}
+
+func TestMemTracker_SnapshotReportsAbsentWhenCgroupRootMissing(t *testing.T) {
+	tr := NewMemTracker(MemTrackerConfig{
+		CgroupRoot: filepath.Join(t.TempDir(), "absent"),
+		Sample:     fakeSampler(Sample{RuntimeBytes: 0, Goroutines: 0}),
+	})
+	tr.Observe()
+
+	snap := tr.Snapshot()
+	require.False(t, snap.HasRuntime)
+	require.False(t, snap.HasCgroupCurrent)
+	require.False(t, snap.HasCgroupMax)
+}
+
+func TestMemTracker_SnapshotNilReceiverIsSafe(t *testing.T) {
+	var tr *MemTracker
+	var snap MemSnapshot
+	require.NotPanics(t, func() { snap = tr.Snapshot() })
+	require.Equal(t, MemSnapshot{}, snap)
+}
+
 func TestMemTracker_StartTakesAnImmediateSample(t *testing.T) {
 	// A scan shorter than one tick must still report something.
 	tr := NewMemTracker(MemTrackerConfig{

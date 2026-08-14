@@ -507,13 +507,19 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	// Memory is process-wide while scanstats Collectors are per-asset, so the
 	// tracker is created once per run and shared by every asset. run_id lets
 	// the resulting per-asset records be grouped back into one process.
+	//
+	// uuid.NewRandom (unlike uuid.New) can fail rather than panic if the
+	// entropy source is unavailable; telemetry must never fail a scan, so a
+	// failure here just leaves RunID empty, which Record already omits.
+	runID := ""
+	if u, err := uuid.NewRandom(); err == nil {
+		runID = u.String()
+	}
 	memTracker := scanstats.NewMemTracker(scanstats.MemTrackerConfig{
-		RunID:          uuid.New().String(),
+		RunID:          runID,
 		Parallelism:    parallelism,
 		MaxConnections: maxConn,
 	})
-	memTracker.Start(memSampleInterval)
-	defer memTracker.Stop()
 	ctx = scanstats.ContextWithMemTracker(ctx, memTracker)
 
 	dispatcher := newScanDispatcher(
@@ -521,9 +527,13 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		reporter, multiprogress, services, spaceMrn, &scannedAssets,
 		memTracker,
 	)
-	// Registered after construction because the dispatcher owns the
-	// semaphore the tracker reads.
+	// Registered before Start so the sampler's immediate first sample —
+	// which can end up being the run's peak — already has an accessor to
+	// call, instead of recording an in-flight count of zero that would be
+	// indistinguishable from a legitimate zero.
 	memTracker.SetInFlightFunc(dispatcher.inFlight)
+	memTracker.Start(memSampleInterval)
+	defer memTracker.Stop()
 	batcher := newSyncBatcher(dispatcher, services, spaceMrn, s.recording, multiprogress)
 
 	scanCtx := &scanContext{

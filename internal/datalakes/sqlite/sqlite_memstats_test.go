@@ -5,6 +5,7 @@ package sqlite
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -12,7 +13,12 @@ import (
 )
 
 func TestRecordMemStats_WritesTrackerIntoCollector(t *testing.T) {
-	tr := scanstats.NewMemTracker(scanstats.MemTrackerConfig{RunID: "run-abc"})
+	tr := scanstats.NewMemTracker(scanstats.MemTrackerConfig{
+		RunID: "run-abc",
+		// Avoid reading the real /sys/fs/cgroup default on a containerized
+		// CI runner.
+		CgroupRoot: filepath.Join(t.TempDir(), "absent"),
+	})
 	ctx := scanstats.ContextWithMemTracker(context.Background(), tr)
 
 	c := scanstats.New()
