@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Sample is one observation of this process's memory state.
@@ -56,6 +57,9 @@ type MemTracker struct {
 	inFlight func() int
 
 	cfg MemTrackerConfig
+
+	stopOnce sync.Once
+	stop     chan struct{}
 }
 
 // NewMemTracker returns a tracker. Sampling does not start until Start.
@@ -66,7 +70,7 @@ func NewMemTracker(cfg MemTrackerConfig) *MemTracker {
 	if cfg.CgroupRoot == "" {
 		cfg.CgroupRoot = defaultCgroupRoot
 	}
-	return &MemTracker{cfg: cfg}
+	return &MemTracker{cfg: cfg, stop: make(chan struct{})}
 }
 
 // SetInFlightFunc registers an accessor for the number of assets currently
@@ -185,5 +189,74 @@ func defaultSample() Sample {
 	return Sample{
 		RuntimeBytes: footprint,
 		Goroutines:   runtime.NumGoroutine(),
+	}
+}
+
+// Start begins sampling every interval until Stop. It takes one sample
+// immediately so a scan shorter than a single tick still reports a value.
+func (t *MemTracker) Start(interval time.Duration) {
+	if t == nil {
+		return
+	}
+	t.Observe()
+
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-t.stop:
+				return
+			case <-ticker.C:
+				t.Observe()
+			}
+		}
+	}()
+}
+
+// Stop ends sampling. Safe to call more than once, and on a nil tracker.
+func (t *MemTracker) Stop() {
+	if t == nil {
+		return
+	}
+	t.stopOnce.Do(func() { close(t.stop) })
+}
+
+// Record writes the tracker's state into c. Called once per asset, so every
+// asset's upload carries the process state as of that asset's completion.
+//
+// Values that could not be measured are omitted rather than recorded as
+// zero: a zero cannot be told apart from a real measurement downstream.
+func (t *MemTracker) Record(c *Collector) {
+	if t == nil || c == nil {
+		return
+	}
+
+	t.mu.Lock()
+	peak, last := t.peakRuntime, t.lastRuntime
+	goroutines, inFlight := t.peakGoroutines, t.inFlightAtPeak
+	t.mu.Unlock()
+
+	if t.cfg.RunID != "" {
+		c.AddString(MetricRunID, t.cfg.RunID)
+	}
+
+	c.AddInt(MetricMemRuntimePeak, "bytes", int64(peak))
+	c.AddInt(MetricMemRuntimeAtFinish, "bytes", int64(last))
+	c.AddInt(MetricMemGoroutinesPeak, "count", int64(goroutines))
+
+	c.AddInt(MetricConcurrencyInFlightAtPeak, "count", int64(inFlight))
+	c.AddInt(MetricConcurrencyParallelism, "count", int64(t.cfg.Parallelism))
+	c.AddInt(MetricConcurrencyMaxConnections, "count", int64(t.cfg.MaxConnections))
+
+	cg := readCgroup(t.cfg.CgroupRoot)
+	if cg.hasCurrent {
+		c.AddInt(MetricMemCgroupCurrent, "bytes", int64(cg.current))
+	}
+	if cg.hasPeak {
+		c.AddInt(MetricMemCgroupPeak, "bytes", int64(cg.peak))
+	}
+	if cg.hasMax {
+		c.AddInt(MetricMemCgroupMax, "bytes", int64(cg.max))
 	}
 }
