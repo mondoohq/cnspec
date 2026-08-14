@@ -14,21 +14,27 @@ import (
 const (
 	QueryDeprecatedSymbolRuleID = "query-deprecated-symbol"
 
-	// FilterDeprecatedSymbolRuleID covers filters that belong to a container
-	// rather than to a query — policy groups, query packs and pack groups.
-	// A query's own filters stay under QueryDeprecatedSymbolRuleID, since those
-	// warnings are attributed to the query.
+	// FilterDeprecatedSymbolRuleID covers every filters block, whoever owns it —
+	// queries, policy groups, query packs and pack groups. The rule is split by
+	// site rather than by owner: QueryDeprecatedSymbolRuleID is what a query's
+	// mql uses, and a filter is a filter regardless of what it hangs off.
 	FilterDeprecatedSymbolRuleID = "filter-deprecated-symbol"
 )
 
-// lintDeprecatedSymbols compiles every query with non-empty MQL and reports
-// resources or fields whose effective maturity is "deprecated". Compile errors
-// are intentionally ignored here — bundle-compile-error already surfaces them.
+// lintDeprecatedSymbols compiles every query and filter in the bundle and
+// reports resources or fields whose effective maturity is "deprecated". Compile
+// errors are intentionally ignored here — bundle-compile-error already surfaces
+// them.
 //
-// Filters attached to a container rather than to a query — policy groups, query
-// packs and pack groups — are covered too. Their stakes are higher than a single
-// query's: when the symbol is removed the filter stops matching and the whole
-// group drops out of scoring rather than one check.
+// Reporting is split by site, not by owner. A query's mql reports under
+// QueryDeprecatedSymbolRuleID; every filters block reports under
+// FilterDeprecatedSymbolRuleID, whether it hangs off a query, a policy group, a
+// query pack or a pack group. Filters carry their own file context, so each
+// warning points at the filters block that has to change.
+//
+// Container filters raise the stakes over a query's: when the symbol is removed
+// the filter stops matching and the whole group drops out of scoring rather than
+// one check.
 //
 // ComputedFilters is deliberately skipped. It is derived at load time from the
 // group and query filters already walked here, so reporting it would duplicate
@@ -36,11 +42,15 @@ const (
 func lintDeprecatedSymbols(schema resources.ResourcesSchema, conf mqlc.CompilerConfig, filename string, b *Bundle) []*Entry {
 	var entries []*Entry
 
-	visit := func(q *Mquery) {
-		entries = append(entries, walkQueryForDeprecatedSymbols(schema, conf, filename, q)...)
-	}
 	visitFilters := func(subject string, filters *Filters) {
 		entries = append(entries, walkFiltersForDeprecatedSymbols(conf, filename, subject, filters)...)
+	}
+	visit := func(q *Mquery) {
+		if q == nil {
+			return
+		}
+		entries = append(entries, walkQueryForDeprecatedSymbols(schema, conf, filename, q)...)
+		visitFilters(fmt.Sprintf("query '%s'", queryDisplayID(q)), q.Filters)
 	}
 
 	for _, q := range b.Queries {
@@ -76,11 +86,11 @@ func lintDeprecatedSymbols(schema resources.ResourcesSchema, conf mqlc.CompilerC
 }
 
 // walkFiltersForDeprecatedSymbols reports deprecated symbols used by a filters
-// block that belongs to a container rather than a query. Unlike a query's
-// filters, these carry their own file context, so warnings point straight at the
-// filters block instead of borrowing a parent's line.
+// block, whether it belongs to a query, a policy group, a query pack or a pack
+// group. A Filters records its own file context, so warnings point straight at
+// the block that has to change rather than at whatever owns it.
 func walkFiltersForDeprecatedSymbols(conf mqlc.CompilerConfig, filename string, subject string, filters *Filters) []*Entry {
-	symbols := deprecatedSymbolsInFilters(filters, conf, map[string]struct{}{})
+	symbols := deprecatedSymbolsInFilters(filters, conf)
 	if len(symbols) == 0 {
 		return nil
 	}
@@ -101,10 +111,10 @@ func walkFiltersForDeprecatedSymbols(conf mqlc.CompilerConfig, filename string, 
 }
 
 // deprecatedSymbolsInFilters returns the deprecated symbols used across every
-// item of a filters block, skipping any already recorded in seen and adding the
-// ones it reports. Filters are a map, so items are walked in sorted key order
+// item of a filters block, reporting each one once no matter how many items
+// mention it. Filters.Items is a map, so items are walked in sorted key order
 // for stable output across runs.
-func deprecatedSymbolsInFilters(filters *Filters, conf mqlc.CompilerConfig, seen map[string]struct{}) []string {
+func deprecatedSymbolsInFilters(filters *Filters, conf mqlc.CompilerConfig) []string {
 	if filters == nil || len(filters.Items) == 0 {
 		return nil
 	}
@@ -115,6 +125,7 @@ func deprecatedSymbolsInFilters(filters *Filters, conf mqlc.CompilerConfig, seen
 	}
 	sort.Strings(keys)
 
+	seen := map[string]struct{}{}
 	var symbols []string
 	for _, key := range keys {
 		filter := filters.Items[key]
@@ -160,50 +171,30 @@ func queryPackDisplayID(pack *QueryPack) string {
 	return pack.Mrn
 }
 
-// walkQueryForDeprecatedSymbols reports deprecated symbols used by a query,
-// looking at both its mql and its filters. Filters matter as much as mql here:
-// when a deprecated symbol is finally removed, a filter that references it stops
-// matching and the check silently stops scoring assets instead of failing loudly.
-//
-// A symbol used in both places is reported once. The mql site wins, because that
-// is where a reader will find it; the "in its filters" hint is only added for
-// symbols that appear nowhere else, since every warning points at the query's own
-// line and filter Mqueries carry no file context of their own.
+// walkQueryForDeprecatedSymbols reports deprecated symbols used by a query's
+// mql. Its filters are reported separately by walkFiltersForDeprecatedSymbols,
+// which points at the filters block rather than at the query.
 func walkQueryForDeprecatedSymbols(schema resources.ResourcesSchema, conf mqlc.CompilerConfig, filename string, q *Mquery) []*Entry {
 	if q == nil {
 		return nil
 	}
 
-	fromMql := deprecatedSymbolsIn(q.Mql, conf)
-
-	seen := make(map[string]struct{}, len(fromMql))
-	for _, symbol := range fromMql {
-		seen[symbol] = struct{}{}
-	}
-
-	fromFilters := deprecatedSymbolsInFilters(q.Filters, conf, seen)
-
-	if len(fromMql) == 0 && len(fromFilters) == 0 {
+	symbols := deprecatedSymbolsIn(q.Mql, conf)
+	if len(symbols) == 0 {
 		return nil
 	}
 
 	loc := []Location{{File: filename, Line: q.FileContext.Line, Column: q.FileContext.Column}}
 	display := queryDisplayID(q)
 
-	entries := make([]*Entry, 0, len(fromMql)+len(fromFilters))
-	newEntry := func(symbol, where string) *Entry {
-		return &Entry{
+	entries := make([]*Entry, 0, len(symbols))
+	for _, symbol := range symbols {
+		entries = append(entries, &Entry{
 			RuleID:   QueryDeprecatedSymbolRuleID,
 			Level:    LevelWarning,
-			Message:  fmt.Sprintf("query '%s' uses %s%s", display, symbol, where),
+			Message:  fmt.Sprintf("query '%s' uses %s", display, symbol),
 			Location: loc,
-		}
-	}
-	for _, symbol := range fromMql {
-		entries = append(entries, newEntry(symbol, ""))
-	}
-	for _, symbol := range fromFilters {
-		entries = append(entries, newEntry(symbol, " in its filters"))
+		})
 	}
 
 	return entries
