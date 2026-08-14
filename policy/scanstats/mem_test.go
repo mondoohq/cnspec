@@ -4,9 +4,11 @@
 package scanstats
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -378,4 +380,66 @@ func TestMemTracker_StartTakesAnImmediateSample(t *testing.T) {
 		defer tr.mu.Unlock()
 		return tr.peakRuntime == 777
 	}, 2*time.Second, 5*time.Millisecond)
+}
+
+func TestRecord_OmitsByteValuesThatCannotBeRepresented(t *testing.T) {
+	// A uint64 at or above 1<<63 would wrap negative in the int64 cast used by
+	// the metric API. Omitting is deliberate: clamping would emit a fabricated
+	// ceiling that reads downstream as a real measurement.
+	dir := t.TempDir()
+	writeCgroupFile(t, dir, "memory.current", "1024\n")
+	writeCgroupFile(t, dir, "memory.max", "18446744073709551615\n") // 2^64-1
+
+	tr := NewMemTracker(MemTrackerConfig{
+		CgroupRoot: dir,
+		Sample:     fakeSampler(Sample{RuntimeBytes: 1 << 63, Goroutines: 3}),
+	})
+	tr.Observe()
+
+	c := New()
+	tr.Record(c)
+	m := metricByName(t, c)
+
+	require.NotContains(t, m, MetricMemCgroupMax)
+	require.NotContains(t, m, MetricMemRuntimePeak)
+	// Representable values alongside them are unaffected.
+	require.Equal(t, int64(1024), m[MetricMemCgroupCurrent].GetIntValue())
+	require.Equal(t, int64(3), m[MetricMemGoroutinesPeak].GetIntValue())
+}
+
+func TestRecord_KeepsLargestRepresentableByteValue(t *testing.T) {
+	// The boundary itself must still be reported — the guard rejects only what
+	// genuinely cannot round-trip.
+	dir := t.TempDir()
+	writeCgroupFile(t, dir, "memory.current", "9223372036854775807\n") // 2^63-1
+
+	tr := NewMemTracker(MemTrackerConfig{
+		CgroupRoot: dir,
+		Sample:     fakeSampler(Sample{RuntimeBytes: 100, Goroutines: 1}),
+	})
+	tr.Observe()
+
+	c := New()
+	tr.Record(c)
+	require.Equal(t, int64(math.MaxInt64), metricByName(t, c)[MetricMemCgroupCurrent].GetIntValue())
+}
+
+func TestMemTracker_StopWaitsForSamplerToExit(t *testing.T) {
+	var samples atomic.Int64
+	tr := NewMemTracker(MemTrackerConfig{
+		CgroupRoot: filepath.Join(t.TempDir(), "absent"),
+		Sample: func() Sample {
+			samples.Add(1)
+			return Sample{RuntimeBytes: 100, Goroutines: 1}
+		},
+	})
+
+	tr.Start(time.Millisecond)
+	require.Eventually(t, func() bool { return samples.Load() > 1 }, 2*time.Second, 5*time.Millisecond)
+
+	tr.Stop()
+	// Stop returned, so the sampler has exited: the count must not move again.
+	after := samples.Load()
+	time.Sleep(20 * time.Millisecond)
+	require.Equal(t, after, samples.Load())
 }

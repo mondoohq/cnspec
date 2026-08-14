@@ -4,6 +4,7 @@
 package scanstats
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -70,6 +71,11 @@ type MemTracker struct {
 
 	stopOnce sync.Once
 	stop     chan struct{}
+	// wg tracks the sampling goroutine so Stop can wait for it to exit.
+	// Without it Stop returns while a tick may still be in flight, which
+	// matters for a long-lived process (cnspec serve) that creates one
+	// tracker per job: samplers from consecutive jobs could otherwise overlap.
+	wg sync.WaitGroup
 }
 
 // NewMemTracker returns a tracker. Sampling does not start until Start.
@@ -266,7 +272,9 @@ func (t *MemTracker) Start(interval time.Duration) {
 	}
 	t.Observe()
 
+	t.wg.Add(1)
 	go func() {
+		defer t.wg.Done()
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
@@ -280,12 +288,27 @@ func (t *MemTracker) Start(interval time.Duration) {
 	}()
 }
 
-// Stop ends sampling. Safe to call more than once, and on a nil tracker.
+// Stop ends sampling and waits for the sampling goroutine to exit, so that
+// once it returns no further observations can occur. Safe to call more than
+// once, and on a nil tracker.
 func (t *MemTracker) Stop() {
 	if t == nil {
 		return
 	}
 	t.stopOnce.Do(func() { close(t.stop) })
+	t.wg.Wait()
+}
+
+// addBytes records a byte-count metric, omitting it when the value cannot be
+// represented as an int64. A uint64 at or above 1<<63 would wrap negative in
+// the cast, and a negative byte count downstream is worse than an absent one —
+// the same rule the cgroup presence flags follow. Clamping was considered and
+// rejected: a fabricated ceiling reads as a real measurement.
+func addBytes(c *Collector, name string, v uint64) {
+	if v > math.MaxInt64 {
+		return
+	}
+	c.AddInt(name, "bytes", int64(v))
 }
 
 // Record writes the tracker's state into c. Called once per asset, so every
@@ -317,8 +340,8 @@ func (t *MemTracker) Record(c *Collector) {
 	// must omit these rather than report zero, which would be
 	// indistinguishable downstream from a real measurement.
 	if hasSample {
-		c.AddInt(MetricMemRuntimePeak, "bytes", int64(peak))
-		c.AddInt(MetricMemRuntimeAtFinish, "bytes", int64(last))
+		addBytes(c, MetricMemRuntimePeak, peak)
+		addBytes(c, MetricMemRuntimeAtFinish, last)
 		c.AddInt(MetricMemGoroutinesPeak, "count", int64(goroutines))
 	}
 
@@ -328,12 +351,12 @@ func (t *MemTracker) Record(c *Collector) {
 
 	cg := readCgroup(t.cfg.CgroupRoot)
 	if cg.hasCurrent {
-		c.AddInt(MetricMemCgroupCurrent, "bytes", int64(cg.current))
+		addBytes(c, MetricMemCgroupCurrent, cg.current)
 	}
 	if cg.hasPeak {
-		c.AddInt(MetricMemCgroupPeak, "bytes", int64(cg.peak))
+		addBytes(c, MetricMemCgroupPeak, cg.peak)
 	}
 	if cg.hasMax {
-		c.AddInt(MetricMemCgroupMax, "bytes", int64(cg.max))
+		addBytes(c, MetricMemCgroupMax, cg.max)
 	}
 }
