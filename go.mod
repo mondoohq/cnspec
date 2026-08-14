@@ -48,7 +48,7 @@ require (
 	github.com/tliron/glsp v0.2.2
 	github.com/zclconf/go-cty v1.19.0
 	go.mondoo.com/mondoo-go v0.0.0-20260808001139-ef2a665833b7
-	go.mondoo.com/mql/v13 v13.33.0
+	go.mondoo.com/mql/v13 v13.33.2
 	go.mondoo.com/ranger-rpc v0.8.1
 	gocloud.dev v0.46.0
 	golang.org/x/sync v0.22.0
@@ -368,7 +368,7 @@ require (
 	k8s.io/klog/v2 v2.140.0 // indirect
 	k8s.io/kube-openapi v0.0.0-20260603220949-865597e52e25 // indirect
 	k8s.io/kubelet v0.36.3 // indirect
-	modernc.org/libc v1.75.2 // indirect
+	modernc.org/libc v1.75.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.0 // indirect
 	modernc.org/sqlite v1.56.0 // indirect
