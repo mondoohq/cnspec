@@ -1,0 +1,19 @@
+resource appgw 'Microsoft.Network/applicationGateways@2023-09-01' = {
+  name: 'public-appgw'
+  location: 'eastus'
+  properties: {
+    sku: {
+      name: 'WAF_v2'
+      tier: 'WAF_v2'
+      capacity: 2
+    }
+    httpListeners: [
+      {
+        name: 'https-listener'
+        properties: {
+          protocol: 'Https'
+        }
+      }
+    ]
+  }
+}
