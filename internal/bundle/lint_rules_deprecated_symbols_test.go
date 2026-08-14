@@ -4,6 +4,7 @@
 package bundle
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -136,6 +137,136 @@ func TestDeprecatedSymbol_DedupesRepeatedReferences(t *testing.T) {
 
 	entries := walkQueryForDeprecatedSymbols(overlay, newConf(overlay), "test.mql.yaml", q)
 	require.Len(t, entries, 1, "duplicate references to the same deprecated field should collapse to a single warning")
+}
+
+func TestDeprecatedSymbol_FiltersOnly(t *testing.T) {
+	overlay := &deprecateOverlay{
+		inner: schema,
+		deprecatedFields: map[string]map[string]struct{}{
+			"file": {"basename": {}},
+		},
+	}
+
+	// A variant parent carries filters but no mql of its own.
+	q := &Mquery{
+		Uid:         "test-filters-only",
+		FileContext: FileContext{Line: 11, Column: 3},
+		Filters: &Filters{
+			Items: map[string]*Mquery{
+				"": {Mql: "file('/etc/passwd').basename == 'passwd'"},
+			},
+		},
+	}
+
+	entries := walkQueryForDeprecatedSymbols(overlay, newConf(overlay), "test.mql.yaml", q)
+	require.Len(t, entries, 1)
+	assert.Equal(t, QueryDeprecatedSymbolRuleID, entries[0].RuleID)
+	assert.Equal(t, LevelWarning, entries[0].Level)
+	assert.Contains(t, entries[0].Message, "test-filters-only")
+	assert.Contains(t, entries[0].Message, "file.basename")
+	assert.Contains(t, entries[0].Message, "filters",
+		"a symbol found only in filters should say so, since the line points at the query")
+	assert.Equal(t, 11, entries[0].Location[0].Line,
+		"filter Mqueries carry no FileContext, so the parent query's line must be used")
+}
+
+func TestDeprecatedSymbol_MqlAndFiltersReportSeparateSymbols(t *testing.T) {
+	overlay := &deprecateOverlay{
+		inner:         schema,
+		deprecatedRes: map[string]struct{}{"processes": {}},
+		deprecatedFields: map[string]map[string]struct{}{
+			"file": {"basename": {}},
+		},
+	}
+
+	q := &Mquery{
+		Uid: "test-both-sites",
+		Mql: "processes.length >= 0",
+		Filters: &Filters{
+			Items: map[string]*Mquery{
+				"": {Mql: "file('/etc/passwd').basename == 'passwd'"},
+			},
+		},
+	}
+
+	entries := walkQueryForDeprecatedSymbols(overlay, newConf(overlay), "test.mql.yaml", q)
+	require.Len(t, entries, 2)
+
+	messages := []string{entries[0].Message, entries[1].Message}
+	assert.Condition(t, func() bool {
+		for _, m := range messages {
+			if strings.Contains(m, "processes") {
+				return true
+			}
+		}
+		return false
+	}, "expected the deprecated resource from mql, got %v", messages)
+	assert.Condition(t, func() bool {
+		for _, m := range messages {
+			if strings.Contains(m, "file.basename") {
+				return true
+			}
+		}
+		return false
+	}, "expected the deprecated field from filters, got %v", messages)
+}
+
+func TestDeprecatedSymbol_SameSymbolInMqlAndFiltersReportedOnce(t *testing.T) {
+	overlay := &deprecateOverlay{
+		inner: schema,
+		deprecatedFields: map[string]map[string]struct{}{
+			"file": {"basename": {}},
+		},
+	}
+
+	q := &Mquery{
+		Uid: "test-same-symbol-both-sites",
+		Mql: "file('/etc/shadow').basename == 'shadow'",
+		Filters: &Filters{
+			Items: map[string]*Mquery{
+				"": {Mql: "file('/etc/passwd').basename == 'passwd'"},
+			},
+		},
+	}
+
+	entries := walkQueryForDeprecatedSymbols(overlay, newConf(overlay), "test.mql.yaml", q)
+	require.Len(t, entries, 1, "one symbol used in both mql and filters is still one migration to make")
+	assert.NotContains(t, entries[0].Message, "filters",
+		"the symbol is reachable from mql, so the filters hint would be misleading")
+}
+
+func TestDeprecatedSymbol_MultipleFilterItems(t *testing.T) {
+	overlay := &deprecateOverlay{
+		inner:         schema,
+		deprecatedRes: map[string]struct{}{"processes": {}},
+		deprecatedFields: map[string]map[string]struct{}{
+			"file": {"basename": {}},
+		},
+	}
+
+	// The list form of filters: yields one Mquery per entry, keyed by index.
+	q := &Mquery{
+		Uid: "test-multi-filter-items",
+		Filters: &Filters{
+			Items: map[string]*Mquery{
+				"0": {Mql: "file('/etc/passwd').basename == 'passwd'"},
+				"1": {Mql: "processes.length >= 0"},
+			},
+		},
+	}
+
+	entries := walkQueryForDeprecatedSymbols(overlay, newConf(overlay), "test.mql.yaml", q)
+	require.Len(t, entries, 2, "every filter item should be analyzed, not just the first")
+}
+
+func TestDeprecatedSymbol_NoFiltersIsSafe(t *testing.T) {
+	overlay := &deprecateOverlay{inner: schema}
+
+	q := &Mquery{Uid: "test-nil-filters", Mql: "file('/etc/passwd').basename == 'passwd'"}
+	assert.Empty(t, walkQueryForDeprecatedSymbols(overlay, newConf(overlay), "test.mql.yaml", q))
+
+	empty := &Mquery{Uid: "test-empty-everything"}
+	assert.Empty(t, walkQueryForDeprecatedSymbols(overlay, newConf(overlay), "test.mql.yaml", empty))
 }
 
 func TestDeprecatedSymbol_CompileFailureSilent(t *testing.T) {
