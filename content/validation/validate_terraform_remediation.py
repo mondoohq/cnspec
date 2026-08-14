@@ -56,9 +56,24 @@ PROVIDER_MAP = {
 
 # tflint provider plugins (only for providers that have rulesets)
 TFLINT_PLUGIN_MAP = {
-    "aws": ("github.com/terraform-linters/tflint-ruleset-aws", "0.38.0"),
-    "azurerm": ("github.com/terraform-linters/tflint-ruleset-azurerm", "0.28.0"),
-    "google": ("github.com/terraform-linters/tflint-ruleset-google", "0.32.0"),
+    "aws": ("github.com/terraform-linters/tflint-ruleset-aws", "0.48.0"),
+    "azurerm": ("github.com/terraform-linters/tflint-ruleset-azurerm", "0.32.0"),
+    "google": ("github.com/terraform-linters/tflint-ruleset-google", "0.39.0"),
+}
+
+# Ruleset rules that do not apply to documentation snippets, keyed by plugin.
+# A remediation example demonstrates the one setting its check is about and is
+# meant to be copied into a reader's own configuration, not applied as written,
+# so operational-completeness rules only produce noise here. prevent_destroy
+# would be worse than noise: following it hands the reader a resource they
+# cannot delete until they find and remove the lifecycle block. Neither rule
+# touches the security control being demonstrated. Both ship enabled-by-default
+# in tflint-ruleset-azurerm 0.29.0+.
+DISABLED_RULES = {
+    "azurerm": (
+        "azurerm_resources_missing_prevent_destroy",
+        "azurerm_app_service_missing_auto_heal_setting",
+    ),
 }
 
 # Providers that need extra config in their provider block
@@ -223,18 +238,15 @@ def write_tflint_config(tmp_dir: Path, providers: set[str]) -> None:
             lines.append(f'  enabled = true\n')
             lines.append(f'  version = "{version}"\n')
             lines.append(f'  source  = "{source}"\n')
-            # TEMPORARY (2026-07-17): pinned to PGP because the default "auto"
-            # verification crashes. GitHub removed the `bundle` field from
-            # attestation API responses, so `tflint --init` nil-derefs in
-            # sigstore-go while verifying the ruleset and never reaches the
-            # lint stage. Upstream fix: terraform-linters/tflint#2593
-            # (unreleased). "pgp" still verifies the plugin cryptographically
-            # via the legacy signing key -- it is NOT "none", which would skip
-            # verification entirely. Requires tflint >= 0.62; 0.61 and earlier
-            # silently ignore this attribute. REVERT (delete this line) once
-            # #2593 ships -- attestations verify provenance, PGP only signing.
-            lines.append('  signature = "pgp"\n')
             lines.append('}\n')
+            # Rule blocks only resolve for a plugin that is actually loaded --
+            # naming a rule from an absent ruleset fails the whole run with
+            # "Failed to check rule config; Rule not found". So each ruleset's
+            # opt-outs are emitted with the plugin, not unconditionally.
+            for rule in DISABLED_RULES.get(p, ()):
+                lines.append(f'\nrule "{rule}" {{\n')
+                lines.append('  enabled = false\n')
+                lines.append('}\n')
 
     (tmp_dir / ".tflint.hcl").write_text("".join(lines))
 
