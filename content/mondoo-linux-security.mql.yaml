@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-linux-security
     name: Mondoo Linux Security
-    version: 2.7.3
+    version: 2.8.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -326,6 +326,17 @@ queries:
                     name: aide
                     state: present
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to install AIDE:
+
+            ```ruby
+            package 'aide' do
+              action :install
+            end
+            ```
     refs:
       - url: https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/9/html/security_hardening/index
         title: Red Hat Enterprise Linux Security Hardening
@@ -592,6 +603,52 @@ queries:
                     enabled: true
                     state: started
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to install AIDE, initialize its database, and run the check from a systemd timer. On Debian and Ubuntu systems change `ExecStart` to `/usr/bin/aide`:
+
+            ```ruby
+            package 'aide' do
+              action :install
+            end
+
+            execute 'initialize the AIDE database' do
+              command 'aide --init && mv /var/lib/aide/aide.db.new.gz /var/lib/aide/aide.db.gz'
+              creates '/var/lib/aide/aide.db.gz'
+            end
+
+            systemd_unit 'aidecheck.service' do
+              content <<~UNIT
+                [Unit]
+                Description=Aide Check
+
+                [Service]
+                Type=simple
+                ExecStart=/usr/sbin/aide --check
+
+                [Install]
+                WantedBy=multi-user.target
+              UNIT
+              action %i(create enable)
+            end
+
+            systemd_unit 'aidecheck.timer' do
+              content <<~UNIT
+                [Unit]
+                Description=Aide check every day at 5AM
+
+                [Timer]
+                OnCalendar=*-*-* 05:00:00
+                Unit=aidecheck.service
+
+                [Install]
+                WantedBy=multi-user.target
+              UNIT
+              action %i(create enable start)
+            end
+            ```
     refs:
       - url: https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/9/html/security_hardening/index
         title: Red Hat Enterprise Linux Security Hardening
@@ -806,6 +863,41 @@ queries:
                       ansible.builtin.command: systemctl daemon-reexec
                   when: coredump_conf.stat.exists
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to restrict core dumps:
+
+            ```ruby
+            user_ulimit '*' do
+              core_hard_limit 0
+              filename '99-disable-core.conf'
+            end
+
+            sysctl 'fs.suid_dumpable' do
+              value 0
+            end
+
+            coredump_conf = '/etc/systemd/coredump.conf'
+
+            { 'Storage' => 'none', 'ProcessSizeMax' => '0' }.each do |keyword, value|
+              ruby_block "set #{keyword} in coredump.conf" do
+                block do
+                  body = ::File.read(coredump_conf)
+                  directive = "#{keyword}=#{value}"
+                  body = if body.match?(/^\s*#?\s*#{keyword}=/)
+                           body.gsub(/^\s*#?\s*#{keyword}=.*$/, directive)
+                         else
+                           body.sub(/^\[Coredump\]$/, "[Coredump]\n#{directive}")
+                         end
+                  ::File.write(coredump_conf, body)
+                end
+                not_if { ::File.read(coredump_conf).match?(/^#{keyword}=#{Regexp.escape(value)}\s*$/) }
+                only_if { ::File.exist?(coredump_conf) }
+              end
+            end
+            ```
     refs:
       - url: https://www.kernel.org/doc/html/latest/admin-guide/sysctl/
         title: Linux Kernel sysctl Documentation
@@ -919,6 +1011,17 @@ queries:
                     sysctl_set: true
                     reload: yes
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to enable full address space layout randomization:
+
+            ```ruby
+            sysctl 'kernel.randomize_va_space' do
+              value 2
+            end
+            ```
     refs:
       - url: https://docs.kernel.org/admin-guide/sysctl/kernel.html#randomize-va-space
         title: "Linux Kernel Documentation: kernel.randomize_va_space"
@@ -1027,6 +1130,17 @@ queries:
                     state: present
                     sysctl_set: true
                     reload: yes
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to hide kernel pointers from unprivileged users:
+
+            ```ruby
+            sysctl 'kernel.kptr_restrict' do
+              value 2
+            end
             ```
     refs:
       - url: https://access.redhat.com/articles/7133962
@@ -1145,6 +1259,17 @@ queries:
                     sysctl_set: true
                     reload: yes
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to prevent mapping of low memory addresses:
+
+            ```ruby
+            sysctl 'vm.mmap_min_addr' do
+              value 65536
+            end
+            ```
     refs:
       - url: https://wiki.debian.org/mmap_min_addr
         title: "Debian Wiki: mmap_min_addr"
@@ -1259,6 +1384,17 @@ queries:
                     state: present
                     sysctl_set: true
                     reload: yes
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to restrict dmesg access to privileged users:
+
+            ```ruby
+            sysctl 'kernel.dmesg_restrict' do
+              value 1
+            end
             ```
     refs:
       - url: https://docs.kernel.org/admin-guide/sysctl/kernel.html#dmesg-restrict
@@ -1376,6 +1512,17 @@ queries:
                     state: present
                     sysctl_set: true
                     reload: yes
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to prevent non-privileged eBPF access:
+
+            ```ruby
+            sysctl 'kernel.unprivileged_bpf_disabled' do
+              value 1
+            end
             ```
     refs:
       - url: https://docs.kernel.org/admin-guide/sysctl/kernel.html#unprivileged-bpf-disabled
@@ -1496,6 +1643,17 @@ queries:
                     sysctl_set: true
                     reload: yes
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to restrict non-privileged access to ptrace:
+
+            ```ruby
+            sysctl 'kernel.yama.ptrace_scope' do
+              value 2
+            end
+            ```
     refs:
       - url: https://www.kernel.org/doc/Documentation/security/Yama.txt
         title: "Linux Kernel Documentation: Yama"
@@ -1600,6 +1758,17 @@ queries:
                       blacklist atm
                       install atm /bin/false
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to stop the ATM module from loading:
+
+            ```ruby
+            kernel_module 'atm' do
+              action %i(disable blacklist)
+            end
+            ```
     refs:
       - url: https://www.kernel.org/doc/html/latest/admin-guide/sysctl/
         title: Linux Kernel sysctl Documentation
@@ -1702,6 +1871,17 @@ queries:
                     content: |
                       blacklist can
                       install can /bin/false
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to stop the CAN module from loading:
+
+            ```ruby
+            kernel_module 'can' do
+              action %i(disable blacklist)
+            end
             ```
     refs:
       - url: https://www.kernel.org/doc/html/latest/admin-guide/sysctl/
@@ -1806,6 +1986,17 @@ queries:
                       blacklist dccp
                       install dccp /bin/false
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to stop the DCCP module from loading:
+
+            ```ruby
+            kernel_module 'dccp' do
+              action %i(disable blacklist)
+            end
+            ```
     refs:
       - url: https://www.kernel.org/doc/html/latest/admin-guide/sysctl/
         title: Linux Kernel sysctl Documentation
@@ -1908,6 +2099,17 @@ queries:
                     content: |
                       blacklist rds
                       install rds /bin/false
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to stop the RDS module from loading:
+
+            ```ruby
+            kernel_module 'rds' do
+              action %i(disable blacklist)
+            end
             ```
     refs:
       - url: https://www.kernel.org/doc/html/latest/admin-guide/sysctl/
@@ -2012,6 +2214,17 @@ queries:
                       blacklist sctp
                       install sctp /bin/false
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to stop the SCTP module from loading:
+
+            ```ruby
+            kernel_module 'sctp' do
+              action %i(disable blacklist)
+            end
+            ```
     refs:
       - url: https://www.kernel.org/doc/html/latest/admin-guide/sysctl/
         title: Linux Kernel sysctl Documentation
@@ -2114,6 +2327,17 @@ queries:
                     content: |
                       blacklist tipc
                       install tipc /bin/false
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to stop the TIPC module from loading:
+
+            ```ruby
+            kernel_module 'tipc' do
+              action %i(disable blacklist)
+            end
             ```
     refs:
       - url: https://www.kernel.org/doc/html/latest/admin-guide/sysctl/
@@ -2261,6 +2485,22 @@ queries:
                     state: absent
                   when: ansible_os_family == "Suse"
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to restore prelinked binaries and remove the prelink package:
+
+            ```ruby
+            execute 'restore prelinked binaries' do
+              command 'prelink -ua'
+              only_if { ::File.exist?('/usr/sbin/prelink') }
+            end
+
+            package 'prelink' do
+              action :remove
+            end
+            ```
     refs:
       - url: https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/9/html/security_hardening/index
         title: Red Hat Enterprise Linux Security Hardening
@@ -2393,6 +2633,25 @@ queries:
                     state: absent
                   when: ansible_os_family == "Suse"
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to remove the X Window System packages. Confirm that no application on the host needs a graphical display before you apply it:
+
+            ```ruby
+            xorg_packages = if platform_family?('debian')
+                              %w(xserver-xorg-core xserver-common)
+                            elsif platform_family?('suse')
+                              %w(xorg-x11-server)
+                            else
+                              %w(xorg-x11-server-Xorg xorg-x11-server-common xorg-x11-server-utils)
+                            end
+
+            package xorg_packages do
+              action :remove
+            end
+            ```
     refs:
       - url: https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/9/html/security_hardening/index
         title: Red Hat Enterprise Linux Security Hardening
@@ -2496,6 +2755,20 @@ queries:
                   loop:
                     - avahi-daemon.socket
                     - avahi-daemon.service
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to stop, disable, and mask the Avahi daemon and its activation socket:
+
+            ```ruby
+            %w(avahi-daemon.socket avahi-daemon.service).each do |unit|
+              systemd_unit unit do
+                action %i(stop disable mask)
+                only_if "systemctl cat #{unit}"
+              end
+            end
             ```
     refs:
       - url: https://www.freedesktop.org/wiki/Software/systemd/
@@ -2602,6 +2875,20 @@ queries:
                     - cups.path
                     - cups.service
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to stop, disable, and mask the CUPS printing units:
+
+            ```ruby
+            %w(cups.socket cups.path cups.service).each do |unit|
+              systemd_unit unit do
+                action %i(stop disable mask)
+                only_if "systemctl cat #{unit}"
+              end
+            end
+            ```
     refs:
       - url: https://www.freedesktop.org/wiki/Software/systemd/
         title: systemd System and Service Manager
@@ -2703,6 +2990,18 @@ queries:
                     enabled: no
                     masked: true
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to stop, disable, and mask the DHCP server:
+
+            ```ruby
+            systemd_unit 'dhcpd.service' do
+              action %i(stop disable mask)
+              only_if 'systemctl cat dhcpd.service'
+            end
+            ```
     refs:
       - url: https://www.freedesktop.org/wiki/Software/systemd/
         title: systemd System and Service Manager
@@ -2798,6 +3097,18 @@ queries:
                     state: stopped
                     enabled: no
                     masked: yes
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to stop, disable, and mask the LDAP server:
+
+            ```ruby
+            systemd_unit 'slapd.service' do
+              action %i(stop disable mask)
+              only_if 'systemctl cat slapd.service'
+            end
             ```
     refs:
       - url: https://www.freedesktop.org/wiki/Software/systemd/
@@ -2914,6 +3225,20 @@ queries:
                     - nfs_units.failed
                     - "'Could not find the requested service' not in (nfs_units.msg | default(''))"
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to stop, disable, and mask the NFS and RPC units:
+
+            ```ruby
+            %w(nfs-server.service rpcbind.socket rpcbind.service).each do |unit|
+              systemd_unit unit do
+                action %i(stop disable mask)
+                only_if "systemctl cat #{unit}"
+              end
+            end
+            ```
     refs:
       - url: https://www.freedesktop.org/wiki/Software/systemd/
         title: systemd System and Service Manager
@@ -3026,6 +3351,29 @@ queries:
                   ansible.builtin.command: exportfs -ra
                   when: exports_updated.results | selectattr('changed') | list | length > 0
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to replace `no_root_squash` with `root_squash` in every export definition and reapply the export table:
+
+            ```ruby
+            execute 'reapply the NFS export table' do
+              command 'exportfs -ra'
+              action :nothing
+            end
+
+            (['/etc/exports'] + ::Dir.glob('/etc/exports.d/*.exports')).each do |export_file|
+              ruby_block "enable root squashing in #{export_file}" do
+                block do
+                  body = ::File.read(export_file)
+                  ::File.write(export_file, body.gsub(/\bno_root_squash\b/, 'root_squash'))
+                end
+                only_if { ::File.exist?(export_file) && ::File.read(export_file).match?(/\bno_root_squash\b/) }
+                notifies :run, 'execute[reapply the NFS export table]', :delayed
+              end
+            end
+            ```
     refs:
       - url: https://man7.org/linux/man-pages/man5/exports.5.html
         title: exports(5) - NFS server export table
@@ -3133,6 +3481,20 @@ queries:
                   failed_when:
                     - dns_units.failed
                     - "'Could not find the requested service' not in (dns_units.msg | default(''))"
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to stop and disable the DNS server units:
+
+            ```ruby
+            %w(named.service bind9.service).each do |unit|
+              systemd_unit unit do
+                action %i(stop disable)
+                only_if "systemctl cat #{unit}"
+              end
+            end
             ```
     refs:
       - url: https://www.freedesktop.org/wiki/Software/systemd/
@@ -3242,6 +3604,20 @@ queries:
                   failed_when:
                     - ftp_units.failed
                     - "'Could not find the requested service' not in (ftp_units.msg | default(''))"
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to stop and disable the FTP server units:
+
+            ```ruby
+            %w(vsftpd.service proftpd.service pure-ftpd.service).each do |unit|
+              systemd_unit unit do
+                action %i(stop disable)
+                only_if "systemctl cat #{unit}"
+              end
+            end
             ```
     refs:
       - url: https://www.freedesktop.org/wiki/Software/systemd/
@@ -3354,6 +3730,20 @@ queries:
                     - http_units.failed
                     - "'Could not find the requested service' not in (http_units.msg | default(''))"
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to stop and disable the HTTP server units. Apply it only to hosts that are not meant to serve web traffic:
+
+            ```ruby
+            %w(httpd.service apache2.service nginx.service).each do |unit|
+              systemd_unit unit do
+                action %i(stop disable)
+                only_if "systemctl cat #{unit}"
+              end
+            end
+            ```
     refs:
       - url: https://www.freedesktop.org/wiki/Software/systemd/
         title: systemd System and Service Manager
@@ -3461,6 +3851,20 @@ queries:
                   failed_when:
                     - mail_units.failed
                     - "'Could not find the requested service' not in (mail_units.msg | default(''))"
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to stop and disable the IMAP and POP3 server units:
+
+            ```ruby
+            %w(dovecot.service cyrus-imapd.service).each do |unit|
+              systemd_unit unit do
+                action %i(stop disable)
+                only_if "systemctl cat #{unit}"
+              end
+            end
             ```
     refs:
       - url: https://www.freedesktop.org/wiki/Software/systemd/
@@ -3570,6 +3974,20 @@ queries:
                     - samba_units.failed
                     - "'Could not find the requested service' not in (samba_units.msg | default(''))"
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to stop and disable the Samba units:
+
+            ```ruby
+            %w(smb.service smbd.service).each do |unit|
+              systemd_unit unit do
+                action %i(stop disable)
+                only_if "systemctl cat #{unit}"
+              end
+            end
+            ```
     refs:
       - url: https://www.freedesktop.org/wiki/Software/systemd/
         title: systemd System and Service Manager
@@ -3678,6 +4096,20 @@ queries:
                     - proxy_units.failed
                     - "'Could not find the requested service' not in (proxy_units.msg | default(''))"
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to stop and disable the HTTP proxy units:
+
+            ```ruby
+            %w(squid.service tinyproxy.service).each do |unit|
+              systemd_unit unit do
+                action %i(stop disable)
+                only_if "systemctl cat #{unit}"
+              end
+            end
+            ```
     refs:
       - url: https://www.freedesktop.org/wiki/Software/systemd/
         title: systemd System and Service Manager
@@ -3780,6 +4212,18 @@ queries:
                     state: stopped
                     masked: true
                     enabled: no
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to stop, disable, and mask the SNMP server:
+
+            ```ruby
+            systemd_unit 'snmpd.service' do
+              action %i(stop disable mask)
+              only_if 'systemctl cat snmpd.service'
+            end
             ```
     refs:
       - url: https://www.freedesktop.org/wiki/Software/systemd/
@@ -3965,6 +4409,65 @@ queries:
                     name: exim4
                     state: restarted
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to bind Postfix to the loopback interface:
+
+            ```ruby
+            main_cf = '/etc/postfix/main.cf'
+
+            service 'postfix' do
+              action :nothing
+            end
+
+            ruby_block 'bind Postfix to the loopback interface' do
+              block do
+                body = ::File.read(main_cf)
+                directive = 'inet_interfaces = loopback-only'
+                body = if body.match?(/^\s*inet_interfaces\s*=/)
+                         body.gsub(/^\s*inet_interfaces\s*=.*$/, directive)
+                       else
+                         "#{body.chomp}\n#{directive}\n"
+                       end
+                ::File.write(main_cf, body)
+              end
+              not_if { ::File.read(main_cf).match?(/^inet_interfaces\s*=\s*loopback-only\s*$/) }
+              notifies :restart, 'service[postfix]', :delayed
+            end
+            ```
+
+            Use this Chef Infra recipe code to bind Exim4 to the loopback interface:
+
+            ```ruby
+            exim_conf = '/etc/exim4/update-exim4.conf.conf'
+
+            service 'exim4' do
+              action :nothing
+            end
+
+            execute 'regenerate the Exim4 configuration' do
+              command 'update-exim4.conf'
+              action :nothing
+              notifies :restart, 'service[exim4]', :delayed
+            end
+
+            ruby_block 'bind Exim4 to the loopback interface' do
+              block do
+                body = ::File.read(exim_conf)
+                directive = "dc_local_interfaces='127.0.0.1 ; ::1'"
+                body = if body.match?(/^\s*dc_local_interfaces\s*=/)
+                         body.gsub(/^\s*dc_local_interfaces\s*=.*$/, directive)
+                       else
+                         "#{body.chomp}\n#{directive}\n"
+                       end
+                ::File.write(exim_conf, body)
+              end
+              not_if { ::File.read(exim_conf).match?(/^dc_local_interfaces='127\.0\.0\.1 ; ::1'\s*$/) }
+              notifies :run, 'execute[regenerate the Exim4 configuration]', :delayed
+            end
+            ```
     refs:
       - url: https://www.freedesktop.org/wiki/Software/systemd/
         title: systemd System and Service Manager
@@ -4072,6 +4575,20 @@ queries:
                   failed_when:
                     - nis_units.failed
                     - "'Could not find the requested service' not in (nis_units.msg | default(''))"
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to stop and disable the NIS server units:
+
+            ```ruby
+            %w(ypserv.service nis.service).each do |unit|
+              systemd_unit unit do
+                action %i(stop disable)
+                only_if "systemctl cat #{unit}"
+              end
+            end
             ```
     refs:
       - url: https://www.freedesktop.org/wiki/Software/systemd/
@@ -4183,6 +4700,20 @@ queries:
                     - rlogin.socket
                     - rexec.socket
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to stop and disable the rsh, rlogin, and rexec sockets:
+
+            ```ruby
+            %w(rsh.socket rlogin.socket rexec.socket).each do |unit|
+              systemd_unit unit do
+                action %i(stop disable)
+                only_if "systemctl cat #{unit}"
+              end
+            end
+            ```
     refs:
       - url: https://www.freedesktop.org/wiki/Software/systemd/
         title: systemd System and Service Manager
@@ -4276,6 +4807,18 @@ queries:
                     state: stopped
                     enabled: no
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to stop and disable the Telnet socket:
+
+            ```ruby
+            systemd_unit 'telnet.socket' do
+              action %i(stop disable)
+              only_if 'systemctl cat telnet.socket'
+            end
+            ```
     refs:
       - url: https://www.freedesktop.org/wiki/Software/systemd/
         title: systemd System and Service Manager
@@ -4368,6 +4911,18 @@ queries:
                     name: tftp.socket
                     state: stopped
                     enabled: no
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to stop and disable the TFTP socket:
+
+            ```ruby
+            systemd_unit 'tftp.socket' do
+              action %i(stop disable)
+              only_if 'systemctl cat tftp.socket'
+            end
             ```
     refs:
       - url: https://www.freedesktop.org/wiki/Software/systemd/
@@ -4474,6 +5029,20 @@ queries:
                   failed_when:
                     - rsync_units.failed
                     - "'Could not find the requested service' not in (rsync_units.msg | default(''))"
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to stop and disable the rsync units:
+
+            ```ruby
+            %w(rsyncd.socket rsyncd.service).each do |unit|
+              systemd_unit unit do
+                action %i(stop disable)
+                only_if "systemctl cat #{unit}"
+              end
+            end
             ```
     refs:
       - url: https://www.freedesktop.org/wiki/Software/systemd/
@@ -4582,6 +5151,20 @@ queries:
                   failed_when:
                     - talk_units.failed
                     - "'Could not find the requested service' not in (talk_units.msg | default(''))"
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to stop and disable the talk server units:
+
+            ```ruby
+            %w(ntalk.service talkd.service).each do |unit|
+              systemd_unit unit do
+                action %i(stop disable)
+                only_if "systemctl cat #{unit}"
+              end
+            end
             ```
     refs:
       - url: https://www.freedesktop.org/wiki/Software/systemd/
@@ -4721,6 +5304,21 @@ queries:
                     - { name: 'net.ipv4.ip_forward', value: '0' }
                     - { name: 'net.ipv6.conf.all.forwarding', value: '0' }
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to disable IP forwarding. Skip this on hosts that route traffic, such as routers, VPN gateways, and container hosts:
+
+            ```ruby
+            sysctl 'net.ipv4.ip_forward' do
+              value 0
+            end
+
+            sysctl 'net.ipv6.conf.all.forwarding' do
+              value 0
+            end
+            ```
     refs:
       - url: https://www.kernel.org/doc/html/latest/admin-guide/sysctl/
         title: Linux Kernel sysctl Documentation
@@ -4850,6 +5448,21 @@ queries:
                   loop:
                     - { name: 'net.ipv4.conf.all.send_redirects', value: '0' }
                     - { name: 'net.ipv4.conf.default.send_redirects', value: '0' }
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to stop the host from sending ICMP redirects:
+
+            ```ruby
+            sysctl 'net.ipv4.conf.all.send_redirects' do
+              value 0
+            end
+
+            sysctl 'net.ipv4.conf.default.send_redirects' do
+              value 0
+            end
             ```
     refs:
       - url: https://www.kernel.org/doc/html/latest/admin-guide/sysctl/
@@ -5017,6 +5630,29 @@ queries:
                     - { name: 'net.ipv6.conf.all.accept_source_route', value: '0' }
                     - { name: 'net.ipv6.conf.default.accept_source_route', value: '0' }
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to reject source routed packets:
+
+            ```ruby
+            sysctl 'net.ipv4.conf.all.accept_source_route' do
+              value 0
+            end
+
+            sysctl 'net.ipv4.conf.default.accept_source_route' do
+              value 0
+            end
+
+            sysctl 'net.ipv6.conf.all.accept_source_route' do
+              value 0
+            end
+
+            sysctl 'net.ipv6.conf.default.accept_source_route' do
+              value 0
+            end
+            ```
     refs:
       - url: https://www.kernel.org/doc/html/latest/admin-guide/sysctl/
         title: Linux Kernel sysctl Documentation
@@ -5182,6 +5818,29 @@ queries:
                     - { name: 'net.ipv6.conf.all.accept_redirects', value: '0' }
                     - { name: 'net.ipv6.conf.default.accept_redirects', value: '0' }
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to reject ICMP redirects:
+
+            ```ruby
+            sysctl 'net.ipv4.conf.all.accept_redirects' do
+              value 0
+            end
+
+            sysctl 'net.ipv4.conf.default.accept_redirects' do
+              value 0
+            end
+
+            sysctl 'net.ipv6.conf.all.accept_redirects' do
+              value 0
+            end
+
+            sysctl 'net.ipv6.conf.default.accept_redirects' do
+              value 0
+            end
+            ```
     refs:
       - url: https://www.kernel.org/doc/html/latest/admin-guide/sysctl/
         title: Linux Kernel sysctl Documentation
@@ -5312,6 +5971,21 @@ queries:
                     - { name: 'net.ipv4.conf.all.secure_redirects', value: '0' }
                     - { name: 'net.ipv4.conf.default.secure_redirects', value: '0' }
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to reject secure ICMP redirects:
+
+            ```ruby
+            sysctl 'net.ipv4.conf.all.secure_redirects' do
+              value 0
+            end
+
+            sysctl 'net.ipv4.conf.default.secure_redirects' do
+              value 0
+            end
+            ```
     refs:
       - url: https://www.kernel.org/doc/html/latest/admin-guide/sysctl/
         title: Linux Kernel sysctl Documentation
@@ -5438,6 +6112,21 @@ queries:
                     - { name: 'net.ipv4.conf.all.log_martians', value: '1' }
                     - { name: 'net.ipv4.conf.default.log_martians', value: '1' }
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to log packets with impossible source addresses:
+
+            ```ruby
+            sysctl 'net.ipv4.conf.all.log_martians' do
+              value 1
+            end
+
+            sysctl 'net.ipv4.conf.default.log_martians' do
+              value 1
+            end
+            ```
     refs:
       - url: https://www.kernel.org/doc/html/latest/admin-guide/sysctl/
         title: Linux Kernel sysctl Documentation
@@ -5550,6 +6239,17 @@ queries:
                   loop:
                     - { name: 'net.ipv4.icmp_echo_ignore_broadcasts', value: '1' }
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to ignore broadcast ICMP echo requests:
+
+            ```ruby
+            sysctl 'net.ipv4.icmp_echo_ignore_broadcasts' do
+              value 1
+            end
+            ```
     refs:
       - url: https://www.kernel.org/doc/html/latest/admin-guide/sysctl/
         title: Linux Kernel sysctl Documentation
@@ -5661,6 +6361,17 @@ queries:
                     reload: yes
                   loop:
                     - { name: 'net.ipv4.icmp_ignore_bogus_error_responses', value: '1' }
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to ignore bogus ICMP error responses:
+
+            ```ruby
+            sysctl 'net.ipv4.icmp_ignore_bogus_error_responses' do
+              value 1
+            end
             ```
     refs:
       - url: https://www.kernel.org/doc/html/latest/admin-guide/sysctl/
@@ -5792,6 +6503,21 @@ queries:
                     - { name: 'net.ipv4.conf.all.rp_filter', value: '1' }
                     - { name: 'net.ipv4.conf.default.rp_filter', value: '1' }
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to enable reverse path filtering. Asymmetric routing setups need `2` for loose mode instead of `1`:
+
+            ```ruby
+            sysctl 'net.ipv4.conf.all.rp_filter' do
+              value 1
+            end
+
+            sysctl 'net.ipv4.conf.default.rp_filter' do
+              value 1
+            end
+            ```
     refs:
       - url: https://www.kernel.org/doc/html/latest/admin-guide/sysctl/
         title: Linux Kernel sysctl Documentation
@@ -5904,6 +6630,17 @@ queries:
                     reload: yes
                   loop:
                     - { name: 'net.ipv4.tcp_syncookies', value: '1' }
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to enable TCP SYN cookies:
+
+            ```ruby
+            sysctl 'net.ipv4.tcp_syncookies' do
+              value 1
+            end
             ```
     refs:
       - url: https://www.kernel.org/doc/html/latest/admin-guide/sysctl/
@@ -6034,6 +6771,21 @@ queries:
                   loop:
                     - { name: 'net.ipv6.conf.all.accept_ra', value: '0' }
                     - { name: 'net.ipv6.conf.default.accept_ra', value: '0' }
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to reject IPv6 router advertisements. Skip this on hosts that rely on SLAAC for their IPv6 address:
+
+            ```ruby
+            sysctl 'net.ipv6.conf.all.accept_ra' do
+              value 0
+            end
+
+            sysctl 'net.ipv6.conf.default.accept_ra' do
+              value 0
+            end
             ```
     refs:
       - url: https://www.kernel.org/doc/html/latest/admin-guide/sysctl/
@@ -6186,6 +6938,29 @@ queries:
                     name: auditd
                     enabled: yes
                     state: started
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to install auditd and start it at boot:
+
+            ```ruby
+            audit_packages = if platform_family?('debian')
+                               %w(auditd audispd-plugins)
+                             elsif platform_family?('suse')
+                               %w(audit)
+                             else
+                               %w(audit audit-libs)
+                             end
+
+            package audit_packages do
+              action :install
+            end
+
+            service 'auditd' do
+              action %i(enable start)
+            end
             ```
     refs:
       - url: https://man7.org/linux/man-pages/man8/auditd.8.html
@@ -6362,6 +7137,43 @@ queries:
                   ansible.builtin.command: grubby --update-kernel=ALL --args="audit=1"
                   when: ansible_os_family == "RedHat"
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to add `audit=1` to the kernel command line and regenerate the bootloader configuration. The setting takes effect on the next boot:
+
+            ```ruby
+            grub_default = '/etc/default/grub'
+            grub_command = if platform_family?('debian')
+                             'update-grub'
+                           else
+                             'grub2-mkconfig -o /boot/grub2/grub.cfg'
+                           end
+
+            execute 'regenerate the GRUB configuration' do
+              command grub_command
+              action :nothing
+            end
+
+            execute 'update the command line of installed kernels' do
+              command 'grubby --update-kernel=ALL --args="audit=1"'
+              only_if { platform_family?('rhel', 'fedora', 'amazon') }
+              only_if 'command -v grubby'
+            end
+
+            ruby_block 'add audit=1 to the kernel command line' do
+              block do
+                body = ::File.read(grub_default)
+                body = body.gsub(/^GRUB_CMDLINE_LINUX="(.*)"$/) do
+                  %(GRUB_CMDLINE_LINUX="audit=1 #{Regexp.last_match(1)}")
+                end
+                ::File.write(grub_default, body)
+              end
+              not_if { ::File.read(grub_default).match?(/^GRUB_CMDLINE_LINUX=".*\baudit=1\b.*"$/) }
+              notifies :run, 'execute[regenerate the GRUB configuration]', :immediately
+            end
+            ```
     refs:
       - url: https://man7.org/linux/man-pages/man8/auditd.8.html
         title: Linux Audit System
@@ -6513,6 +7325,43 @@ queries:
                     msg: "Reboot required to load audit rules because auditd is in immutable mode"
                   when: immutable_check.rc == 0
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to cap the size of a single audit log file. Change `500` to the size in megabytes your site policy requires:
+
+            ```ruby
+            auditd_conf = '/etc/audit/auditd.conf'
+            restart_command = if platform_family?('rhel', 'fedora', 'amazon')
+                                '/usr/libexec/initscripts/legacy-actions/auditd/restart'
+                              else
+                                'systemctl restart auditd'
+                              end
+
+            execute 'restart auditd' do
+              command restart_command
+              action :nothing
+              not_if "auditctl -s | grep -q '^enabled.*2$'"
+            end
+
+            { 'max_log_file' => '500' }.each do |keyword, value|
+              ruby_block "set #{keyword} in auditd.conf" do
+                block do
+                  body = ::File.read(auditd_conf)
+                  directive = "#{keyword} = #{value}"
+                  body = if body.match?(/^\s*#{keyword}\s*=/)
+                           body.gsub(/^\s*#{keyword}\s*=.*$/, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n"
+                         end
+                  ::File.write(auditd_conf, body)
+                end
+                not_if { ::File.read(auditd_conf).match?(/^#{keyword}\s*=\s*#{Regexp.escape(value)}\s*$/) }
+                notifies :run, 'execute[restart auditd]', :delayed
+              end
+            end
+            ```
     refs:
       - url: https://man7.org/linux/man-pages/man8/auditd.8.html
         title: Linux Audit System
@@ -6658,6 +7507,43 @@ queries:
                   ansible.builtin.debug:
                     msg: "Reboot required to load audit rules because auditd is in immutable mode"
                   when: immutable_check.rc == 0
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to keep rotated audit logs instead of deleting them. Ship the logs to a central collector or size the audit partition to match the retention you need:
+
+            ```ruby
+            auditd_conf = '/etc/audit/auditd.conf'
+            restart_command = if platform_family?('rhel', 'fedora', 'amazon')
+                                '/usr/libexec/initscripts/legacy-actions/auditd/restart'
+                              else
+                                'systemctl restart auditd'
+                              end
+
+            execute 'restart auditd' do
+              command restart_command
+              action :nothing
+              not_if "auditctl -s | grep -q '^enabled.*2$'"
+            end
+
+            { 'max_log_file_action' => 'keep_logs' }.each do |keyword, value|
+              ruby_block "set #{keyword} in auditd.conf" do
+                block do
+                  body = ::File.read(auditd_conf)
+                  directive = "#{keyword} = #{value}"
+                  body = if body.match?(/^\s*#{keyword}\s*=/)
+                           body.gsub(/^\s*#{keyword}\s*=.*$/, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n"
+                         end
+                  ::File.write(auditd_conf, body)
+                end
+                not_if { ::File.read(auditd_conf).match?(/^#{keyword}\s*=\s*#{Regexp.escape(value)}\s*$/) }
+                notifies :run, 'execute[restart auditd]', :delayed
+              end
+            end
             ```
     refs:
       - url: https://man7.org/linux/man-pages/man8/auditd.8.html
@@ -6832,6 +7718,43 @@ queries:
                     msg: "Reboot required to load audit rules because auditd is in immutable mode"
                   when: immutable_check.rc == 0
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            **Warning: this can take a production host offline.** `admin_space_left_action = single` drops the system to single-user mode when the audit disk is critically low, which interrupts service. This recipe uses `single` rather than `halt` to reduce the impact, but it is still disruptive. Size a dedicated partition for `/var/log/audit` and rely on the lower-severity `space_left_action = email` alert to act before the critical threshold is reached. Use this Chef Infra recipe code to set the auditd disk space actions:
+
+            ```ruby
+            auditd_conf = '/etc/audit/auditd.conf'
+            restart_command = if platform_family?('rhel', 'fedora', 'amazon')
+                                '/usr/libexec/initscripts/legacy-actions/auditd/restart'
+                              else
+                                'systemctl restart auditd'
+                              end
+
+            execute 'restart auditd' do
+              command restart_command
+              action :nothing
+              not_if "auditctl -s | grep -q '^enabled.*2$'"
+            end
+
+            { 'space_left_action' => 'email', 'action_mail_acct' => 'root', 'admin_space_left_action' => 'single' }.each do |keyword, value|
+              ruby_block "set #{keyword} in auditd.conf" do
+                block do
+                  body = ::File.read(auditd_conf)
+                  directive = "#{keyword} = #{value}"
+                  body = if body.match?(/^\s*#{keyword}\s*=/)
+                           body.gsub(/^\s*#{keyword}\s*=.*$/, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n"
+                         end
+                  ::File.write(auditd_conf, body)
+                end
+                not_if { ::File.read(auditd_conf).match?(/^#{keyword}\s*=\s*#{Regexp.escape(value)}\s*$/) }
+                notifies :run, 'execute[restart auditd]', :delayed
+              end
+            end
+            ```
     refs:
       - url: https://man7.org/linux/man-pages/man8/auditd.8.html
         title: Linux Audit System
@@ -6986,6 +7909,30 @@ queries:
                   ansible.builtin.debug:
                     msg: "Reboot required to load audit rules because auditd is in immutable mode"
                   when: immutable_check.rc == 0
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to audit changes to the sudoers configuration:
+
+            ```ruby
+            execute 'load audit rules' do
+              command 'augenrules --load'
+              action :nothing
+              not_if "auditctl -s | grep -q '^enabled.*2$'"
+            end
+
+            file '/etc/audit/rules.d/50-scope.rules' do
+              content <<~RULES
+                -w /etc/sudoers -p wa -k scope
+                -w /etc/sudoers.d -p wa -k scope
+              RULES
+              owner 'root'
+              group 'root'
+              mode '0640'
+              notifies :run, 'execute[load audit rules]', :delayed
+            end
             ```
     refs:
       - url: https://man7.org/linux/man-pages/man8/auditd.8.html
@@ -7170,6 +8117,34 @@ queries:
                 - name: Load audit rules
                   ansible.builtin.command: augenrules --load
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to audit login and logout events. The failed-login record differs by distribution, so the rule set is assembled from the platform family:
+
+            ```ruby
+            execute 'load audit rules' do
+              command 'augenrules --load'
+              action :nothing
+              not_if "auditctl -s | grep -q '^enabled.*2$'"
+            end
+
+            login_rules = ['-w /var/log/lastlog -p wa -k logins', '-w /var/log/tallylog -p wa -k logins']
+            login_rules << if platform_family?('debian')
+                             '-w /var/log/faillog -p wa -k logins'
+                           else
+                             '-w /var/run/faillock -p wa -k logins'
+                           end
+
+            file '/etc/audit/rules.d/50-logins.rules' do
+              content "#{login_rules.join("\n")}\n"
+              owner 'root'
+              group 'root'
+              mode '0640'
+              notifies :run, 'execute[load audit rules]', :delayed
+            end
+            ```
     refs:
       - url: https://man7.org/linux/man-pages/man8/auditd.8.html
         title: Linux Audit System
@@ -7351,6 +8326,31 @@ queries:
                 - name: Load audit rules
                   ansible.builtin.command: augenrules --load
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to audit session initiation:
+
+            ```ruby
+            execute 'load audit rules' do
+              command 'augenrules --load'
+              action :nothing
+              not_if "auditctl -s | grep -q '^enabled.*2$'"
+            end
+
+            file '/etc/audit/rules.d/50-session.rules' do
+              content <<~RULES
+                -w /var/run/utmp -p wa -k session
+                -w /var/log/wtmp -p wa -k logins
+                -w /var/log/btmp -p wa -k logins
+              RULES
+              owner 'root'
+              group 'root'
+              mode '0640'
+              notifies :run, 'execute[load audit rules]', :delayed
+            end
+            ```
     refs:
       - url: https://man7.org/linux/man-pages/man8/auditd.8.html
         title: Linux Audit System
@@ -7524,6 +8524,33 @@ queries:
                   ansible.builtin.debug:
                     msg: "Reboot required to load audit rules because auditd is in immutable mode"
                   when: immutable_check.rc == 0
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to audit changes to the system clock:
+
+            ```ruby
+            execute 'load audit rules' do
+              command 'augenrules --load'
+              action :nothing
+              not_if "auditctl -s | grep -q '^enabled.*2$'"
+            end
+
+            file '/etc/audit/rules.d/50-time_change.rules' do
+              content <<~RULES
+                -a always,exit -F arch=b32 -S adjtimex -S settimeofday -S stime -k time-change
+                -a always,exit -F arch=b64 -S adjtimex -S settimeofday -k time-change
+                -a always,exit -F arch=b32 -S clock_settime -k time-change
+                -a always,exit -F arch=b64 -S clock_settime -k time-change
+                -w /etc/localtime -p wa -k time-change
+              RULES
+              owner 'root'
+              group 'root'
+              mode '0640'
+              notifies :run, 'execute[load audit rules]', :delayed
+            end
             ```
     refs:
       - url: https://man7.org/linux/man-pages/man8/auditd.8.html
@@ -7719,6 +8746,32 @@ queries:
                   ansible.builtin.debug:
                     msg: "Reboot required to load audit rules because auditd is in immutable mode"
                   when: immutable_check.rc == 0
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to audit changes to the SELinux and AppArmor policy directories:
+
+            ```ruby
+            execute 'load audit rules' do
+              command 'augenrules --load'
+              action :nothing
+              not_if "auditctl -s | grep -q '^enabled.*2$'"
+            end
+
+            file '/etc/audit/rules.d/50-MAC_policy.rules' do
+              content <<~RULES
+                -w /etc/selinux -p wa -k MAC-policy
+                -w /usr/share/selinux -p wa -k MAC-policy
+                -w /etc/apparmor -p wa -k MAC-policy
+                -w /etc/apparmor.d -p wa -k MAC-policy
+              RULES
+              owner 'root'
+              group 'root'
+              mode '0640'
+              notifies :run, 'execute[load audit rules]', :delayed
+            end
             ```
     refs:
       - url: https://man7.org/linux/man-pages/man8/auditd.8.html
@@ -7921,6 +8974,39 @@ queries:
                   ansible.builtin.debug:
                     msg: "Reboot required to load audit rules because auditd is in immutable mode"
                   when: immutable_check.rc == 0
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to audit changes to the system's network environment. The distribution-specific network configuration paths are only watched where they exist, because auditd refuses to load a watch on a missing path:
+
+            ```ruby
+            execute 'load audit rules' do
+              command 'augenrules --load'
+              action :nothing
+              not_if "auditctl -s | grep -q '^enabled.*2$'"
+            end
+
+            locale_rules = [
+              '-a always,exit -F arch=b64 -S sethostname -S setdomainname -k system-locale',
+              '-a always,exit -F arch=b32 -S sethostname -S setdomainname -k system-locale',
+              '-w /etc/issue -p wa -k system-locale',
+              '-w /etc/issue.net -p wa -k system-locale',
+              '-w /etc/hosts -p wa -k system-locale',
+            ]
+
+            %w(/etc/sysconfig/network /etc/network).each do |path|
+              locale_rules << "-w #{path} -p wa -k system-locale" if ::File.exist?(path)
+            end
+
+            file '/etc/audit/rules.d/50-system_local.rules' do
+              content "#{locale_rules.join("\n")}\n"
+              owner 'root'
+              group 'root'
+              mode '0600'
+              notifies :run, 'execute[load audit rules]', :delayed
+            end
             ```
     refs:
       - url: https://man7.org/linux/man-pages/man8/auditd.8.html
@@ -8218,6 +9304,49 @@ queries:
                     msg: "Reboot required to load audit rules because auditd is in immutable mode"
                   when: immutable_check.rc == 0
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to audit permission and ownership changes made by unprivileged users. ARM kernels do not implement the `chmod` and `chown` syscalls, so those are only requested on other architectures:
+
+            ```ruby
+            execute 'load audit rules' do
+              command 'augenrules --load'
+              action :nothing
+              not_if "auditctl -s | grep -q '^enabled.*2$'"
+            end
+
+            arm = node['kernel']['machine'].to_s.match?(/^(arm|aarch)/)
+
+            perm_rules = []
+            unless arm
+              perm_rules << '-a always,exit -F arch=b64 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod'
+              perm_rules << '-a always,exit -F arch=b32 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod'
+              perm_rules << '-a always,exit -F arch=b64 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod'
+              perm_rules << '-a always,exit -F arch=b32 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod'
+            end
+
+            if arm
+              perm_rules << '-a always,exit -F arch=b64 -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod'
+              perm_rules << '-a always,exit -F arch=b32 -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod'
+              perm_rules << '-a always,exit -F arch=b64 -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod'
+              perm_rules << '-a always,exit -F arch=b32 -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod'
+            end
+
+            perm_rules << '-a always,exit -F arch=b64 -S setxattr -S lsetxattr -S fsetxattr -F auid>=1000 -F auid!=4294967295 -k perm_mod'
+            perm_rules << '-a always,exit -F arch=b64 -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod'
+            perm_rules << '-a always,exit -F arch=b32 -S setxattr -S lsetxattr -S fsetxattr -F auid>=1000 -F auid!=4294967295 -k perm_mod'
+            perm_rules << '-a always,exit -F arch=b32 -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod'
+
+            file '/etc/audit/rules.d/50-perm_mod.rules' do
+              content "#{perm_rules.join("\n")}\n"
+              owner 'root'
+              group 'root'
+              mode '0640'
+              notifies :run, 'execute[load audit rules]', :delayed
+            end
+            ```
     refs:
       - url: https://man7.org/linux/man-pages/man8/auditd.8.html
         title: Linux Audit System
@@ -8454,6 +9583,36 @@ queries:
                     msg: "Reboot required to load audit rules because auditd is in immutable mode"
                   when: immutable_check.rc == 0
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to audit denied file access attempts. ARM kernels do not implement the `creat` and `open` syscalls, so those are only requested on other architectures:
+
+            ```ruby
+            execute 'load audit rules' do
+              command 'augenrules --load'
+              action :nothing
+              not_if "auditctl -s | grep -q '^enabled.*2$'"
+            end
+
+            arm = node['kernel']['machine'].to_s.match?(/^(arm|aarch)/)
+            syscalls = arm ? '-S openat -S truncate -S ftruncate' : '-S creat -S open -S openat -S truncate -S ftruncate'
+
+            access_rules = %w(b64 b32).flat_map do |arch|
+              %w(EACCES EPERM).map do |errno|
+                "-a always,exit -F arch=#{arch} #{syscalls} -F exit=-#{errno} -F auid>=1000 -F auid!=4294967295 -k access"
+              end
+            end
+
+            file '/etc/audit/rules.d/50-access.rules' do
+              content "#{access_rules.join("\n")}\n"
+              owner 'root'
+              group 'root'
+              mode '0640'
+              notifies :run, 'execute[load audit rules]', :delayed
+            end
+            ```
     refs:
       - url: https://man7.org/linux/man-pages/man8/auditd.8.html
         title: Linux Audit System
@@ -8609,6 +9768,33 @@ queries:
                     msg: "Reboot required to load audit rules because auditd is in immutable mode"
                   when: immutable_check.rc == 0
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to audit changes to the user and group databases:
+
+            ```ruby
+            execute 'load audit rules' do
+              command 'augenrules --load'
+              action :nothing
+              not_if "auditctl -s | grep -q '^enabled.*2$'"
+            end
+
+            file '/etc/audit/rules.d/50-identity.rules' do
+              content <<~RULES
+                -w /etc/group -p wa -k identity
+                -w /etc/passwd -p wa -k identity
+                -w /etc/gshadow -p wa -k identity
+                -w /etc/shadow -p wa -k identity
+                -w /etc/security/opasswd -p wa -k identity
+              RULES
+              owner 'root'
+              group 'root'
+              mode '0640'
+              notifies :run, 'execute[load audit rules]', :delayed
+            end
+            ```
     refs:
       - url: https://man7.org/linux/man-pages/man8/auditd.8.html
         title: Linux Audit System
@@ -8761,6 +9947,30 @@ queries:
                   ansible.builtin.debug:
                     msg: "Reboot required to load audit rules because auditd is in immutable mode"
                   when: immutable_check.rc == 0
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to audit file system mounts made by unprivileged users:
+
+            ```ruby
+            execute 'load audit rules' do
+              command 'augenrules --load'
+              action :nothing
+              not_if "auditctl -s | grep -q '^enabled.*2$'"
+            end
+
+            file '/etc/audit/rules.d/50-mounts.rules' do
+              content <<~RULES
+                -a always,exit -F arch=b64 -S mount -F auid>=1000 -F auid!=4294967295 -k mounts
+                -a always,exit -F arch=b32 -S mount -F auid>=1000 -F auid!=4294967295 -k mounts
+              RULES
+              owner 'root'
+              group 'root'
+              mode '0600'
+              notifies :run, 'execute[load audit rules]', :delayed
+            end
             ```
     refs:
       - url: https://man7.org/linux/man-pages/man8/auditd.8.html
@@ -8977,6 +10187,34 @@ queries:
                     msg: "Reboot required to load audit rules because auditd is in immutable mode"
                   when: immutable_check.rc == 0
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to audit file deletions and renames by unprivileged users. ARM kernels do not implement the `unlink` and `rename` syscalls, so those are only requested on other architectures:
+
+            ```ruby
+            execute 'load audit rules' do
+              command 'augenrules --load'
+              action :nothing
+              not_if "auditctl -s | grep -q '^enabled.*2$'"
+            end
+
+            arm = node['kernel']['machine'].to_s.match?(/^(arm|aarch)/)
+            syscalls = arm ? '-S unlinkat -S renameat' : '-S unlink -S unlinkat -S rename -S renameat'
+
+            deletion_rules = %w(b64 b32).map do |arch|
+              "-a always,exit -F arch=#{arch} #{syscalls} -F auid>=1000 -F auid!=4294967295 -k delete"
+            end
+
+            file '/etc/audit/rules.d/50-deletion.rules' do
+              content "#{deletion_rules.join("\n")}\n"
+              owner 'root'
+              group 'root'
+              mode '0640'
+              notifies :run, 'execute[load audit rules]', :delayed
+            end
+            ```
     refs:
       - url: https://man7.org/linux/man-pages/man8/auditd.8.html
         title: Linux Audit System
@@ -9134,6 +10372,33 @@ queries:
                     msg: "Reboot required to load audit rules because auditd is in immutable mode"
                   when: immutable_check.rc == 0
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to audit kernel module loading and unloading:
+
+            ```ruby
+            execute 'load audit rules' do
+              command 'augenrules --load'
+              action :nothing
+              not_if "auditctl -s | grep -q '^enabled.*2$'"
+            end
+
+            file '/etc/audit/rules.d/50-modules.rules' do
+              content <<~RULES
+                -w /sbin/insmod -p x -k modules
+                -w /sbin/rmmod -p x -k modules
+                -w /sbin/modprobe -p x -k modules
+                -a always,exit -F arch=b64 -S init_module -S finit_module -S delete_module -k modules
+                -a always,exit -F arch=b32 -S init_module -S finit_module -S delete_module -k modules
+              RULES
+              owner 'root'
+              group 'root'
+              mode '0640'
+              notifies :run, 'execute[load audit rules]', :delayed
+            end
+            ```
     refs:
       - url: https://man7.org/linux/man-pages/man8/auditd.8.html
         title: Linux Audit System
@@ -9274,6 +10539,29 @@ queries:
                     msg: "Reboot required to load audit rules because auditd is in immutable mode"
                   when: immutable_check.rc == 0
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to audit writes to the sudo log:
+
+            ```ruby
+            execute 'load audit rules' do
+              command 'augenrules --load'
+              action :nothing
+              not_if "auditctl -s | grep -q '^enabled.*2$'"
+            end
+
+            file '/etc/audit/rules.d/50-sudo.rules' do
+              content <<~RULES
+                -w /var/log/sudo.log -p wa -k actions
+              RULES
+              owner 'root'
+              group 'root'
+              mode '0640'
+              notifies :run, 'execute[load audit rules]', :delayed
+            end
+            ```
     refs:
       - url: https://man7.org/linux/man-pages/man8/auditd.8.html
         title: Linux Audit System
@@ -9409,6 +10697,27 @@ queries:
                     msg: "Reboot required to load audit rules because auditd is in immutable mode"
                   when: immutable_check.rc == 0
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to make the audit configuration immutable. Once loaded, the rule set cannot be changed until the host reboots, so apply this after every other audit rule is in place:
+
+            ```ruby
+            execute 'load audit rules' do
+              command 'augenrules --load'
+              action :nothing
+              not_if "auditctl -s | grep -q '^enabled.*2$'"
+            end
+
+            file '/etc/audit/rules.d/99-immutable.rules' do
+              content "-e 2\n"
+              owner 'root'
+              group 'root'
+              mode '0640'
+              notifies :run, 'execute[load audit rules]', :delayed
+            end
+            ```
     refs:
       - url: https://man7.org/linux/man-pages/man8/auditd.8.html
         title: Linux Audit System
@@ -9539,6 +10848,23 @@ queries:
                     group: root
                     mode: '0600'
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to log sudo activity to a dedicated file. The `sudo` resource validates the generated file with `visudo` before installing it:
+
+            ```ruby
+            sudo 'sudo-logging' do
+              defaults ['logfile="/var/log/sudo.log"']
+            end
+
+            file '/var/log/sudo.log' do
+              owner 'root'
+              group 'root'
+              mode '0600'
+            end
+            ```
     refs:
       - url: https://www.sudo.ws/docs/man/sudoers.man/
         title: sudoers Manual
@@ -9639,6 +10965,19 @@ queries:
                   ansible.builtin.file:
                     path: /etc/ssh/sshd_config
                     mode: '0600'
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to restrict the SSH daemon configuration to root:
+
+            ```ruby
+            file '/etc/ssh/sshd_config' do
+              owner 'root'
+              group 'root'
+              mode '0600'
+            end
             ```
     refs:
       - url: https://man.openbsd.org/sshd_config
@@ -9763,6 +11102,21 @@ queries:
                     name: rsyslog
                     enabled: yes
                     state: started
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to install rsyslog and start it at boot:
+
+            ```ruby
+            package 'rsyslog' do
+              action :install
+            end
+
+            service 'rsyslog' do
+              action %i(enable start)
+            end
             ```
     refs:
       - url: https://www.rsyslog.com/doc/master/
@@ -9899,6 +11253,35 @@ queries:
                     name: rsyslog
                     state: restarted
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to set the mode rsyslog creates new log files with. The directive is applied to the main configuration file and to every drop-in, because a later drop-in overrides an earlier setting:
+
+            ```ruby
+            service 'rsyslog' do
+              action :nothing
+            end
+
+            (['/etc/rsyslog.conf'] + ::Dir.glob('/etc/rsyslog.d/*.conf')).each do |config|
+              ruby_block "set $FileCreateMode in #{config}" do
+                block do
+                  body = ::File.read(config)
+                  directive = '$FileCreateMode 0640'
+                  body = if body.match?(/^\s*\$FileCreateMode\s/)
+                           body.gsub(/^\s*\$FileCreateMode\s.*$/, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n"
+                         end
+                  ::File.write(config, body)
+                end
+                only_if { ::File.exist?(config) }
+                not_if { ::File.read(config).match?(/^\$FileCreateMode\s+0640\s*$/) }
+                notifies :restart, 'service[rsyslog]', :delayed
+              end
+            end
+            ```
     refs:
       - url: https://www.rsyslog.com/doc/master/
         title: rsyslog Documentation
@@ -10014,6 +11397,35 @@ queries:
                   ansible.builtin.systemd:
                     name: systemd-journald
                     state: restarted
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to forward journald records to rsyslog:
+
+            ```ruby
+            journald_conf = '/etc/systemd/journald.conf'
+
+            service 'systemd-journald' do
+              action :nothing
+            end
+
+            ruby_block 'set ForwardToSyslog in journald.conf' do
+              block do
+                body = ::File.exist?(journald_conf) ? ::File.read(journald_conf) : ''
+                body = "[Journal]\n#{body}" unless body.match?(/^\[Journal\]$/)
+                directive = 'ForwardToSyslog=yes'
+                body = if body.match?(/^\s*#?\s*ForwardToSyslog=/)
+                         body.gsub(/^\s*#?\s*ForwardToSyslog=.*$/, directive)
+                       else
+                         body.sub(/^\[Journal\]$/, "[Journal]\n#{directive}")
+                       end
+                ::File.write(journald_conf, body)
+              end
+              not_if { ::File.exist?(journald_conf) && ::File.read(journald_conf).match?(/^ForwardToSyslog=yes\s*$/) }
+              notifies :restart, 'service[systemd-journald]', :delayed
+            end
             ```
     refs:
       - url: https://www.freedesktop.org/software/systemd/man/latest/journald.conf.html
@@ -10131,6 +11543,35 @@ queries:
                     name: systemd-journald
                     state: restarted
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to compress large journal files:
+
+            ```ruby
+            journald_conf = '/etc/systemd/journald.conf'
+
+            service 'systemd-journald' do
+              action :nothing
+            end
+
+            ruby_block 'set Compress in journald.conf' do
+              block do
+                body = ::File.exist?(journald_conf) ? ::File.read(journald_conf) : ''
+                body = "[Journal]\n#{body}" unless body.match?(/^\[Journal\]$/)
+                directive = 'Compress=yes'
+                body = if body.match?(/^\s*#?\s*Compress=/)
+                         body.gsub(/^\s*#?\s*Compress=.*$/, directive)
+                       else
+                         body.sub(/^\[Journal\]$/, "[Journal]\n#{directive}")
+                       end
+                ::File.write(journald_conf, body)
+              end
+              not_if { ::File.exist?(journald_conf) && ::File.read(journald_conf).match?(/^Compress=yes\s*$/) }
+              notifies :restart, 'service[systemd-journald]', :delayed
+            end
+            ```
     refs:
       - url: https://www.freedesktop.org/software/systemd/man/latest/journald.conf.html
         title: journald.conf Manual Page
@@ -10246,6 +11687,35 @@ queries:
                   ansible.builtin.systemd:
                     name: systemd-journald
                     state: restarted
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to keep the journal across reboots:
+
+            ```ruby
+            journald_conf = '/etc/systemd/journald.conf'
+
+            service 'systemd-journald' do
+              action :nothing
+            end
+
+            ruby_block 'set Storage in journald.conf' do
+              block do
+                body = ::File.exist?(journald_conf) ? ::File.read(journald_conf) : ''
+                body = "[Journal]\n#{body}" unless body.match?(/^\[Journal\]$/)
+                directive = 'Storage=persistent'
+                body = if body.match?(/^\s*#?\s*Storage=/)
+                         body.gsub(/^\s*#?\s*Storage=.*$/, directive)
+                       else
+                         body.sub(/^\[Journal\]$/, "[Journal]\n#{directive}")
+                       end
+                ::File.write(journald_conf, body)
+              end
+              not_if { ::File.exist?(journald_conf) && ::File.read(journald_conf).match?(/^Storage=persistent\s*$/) }
+              notifies :restart, 'service[systemd-journald]', :delayed
+            end
             ```
     refs:
       - url: https://www.freedesktop.org/software/systemd/man/latest/journald.conf.html
@@ -10436,6 +11906,73 @@ queries:
                     name: rsyslog
                     state: restarted
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to remove group and world access from every existing log file, set the mode rsyslog creates new files with, and record the intended permissions so systemd-tmpfiles keeps them:
+
+            ```ruby
+            service 'rsyslog' do
+              action :nothing
+            end
+
+            ruby_block 'remove group and world access from log files' do
+              block do
+                ::Dir.glob('/var/log/**/*').each do |log_file|
+                  next unless ::File.file?(log_file)
+
+                  ::File.chmod(::File.stat(log_file).mode & 0o740, log_file)
+                end
+              end
+              only_if do
+                ::Dir.glob('/var/log/**/*').any? do |log_file|
+                  ::File.file?(log_file) && (::File.stat(log_file).mode & 0o037) != 0
+                end
+              end
+            end
+
+            rsyslog_conf = '/etc/rsyslog.conf'
+
+            { '$FileCreateMode' => '0640', '$Umask' => '0077' }.each do |keyword, value|
+              pattern = Regexp.escape(keyword)
+
+              ruby_block "set #{keyword} in rsyslog.conf" do
+                block do
+                  body = ::File.read(rsyslog_conf)
+                  directive = "#{keyword} #{value}"
+                  body = if body.match?(/^\s*#{pattern}\s/)
+                           body.gsub(/^\s*#{pattern}\s.*$/, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n"
+                         end
+                  ::File.write(rsyslog_conf, body)
+                end
+                not_if { ::File.read(rsyslog_conf).match?(/^#{pattern}\s+#{Regexp.escape(value)}\s*$/) }
+                only_if { ::File.exist?(rsyslog_conf) }
+                notifies :restart, 'service[rsyslog]', :delayed
+              end
+            end
+
+            file '/etc/tmpfiles.d/var.conf' do
+              content <<~TMPFILES
+                f /var/log/alternatives.log 0640 root utmp -
+                f /var/log/apt/history.log 0640 root utmp -
+                f /var/log/auth.log 0640 root utmp -
+                f /var/log/btmp 0640 root utmp -
+                f /var/log/cron.log 0640 root utmp -
+                f /var/log/daemon.log 0640 root utmp -
+                f /var/log/dpkg.log 0640 root utmp -
+                f /var/log/faillog 0640 root root -
+                f /var/log/lastlog 0640 root utmp -
+                f /var/log/sudo.log 0640 root utmp -
+                f /var/log/wtmp 0640 root utmp -
+              TMPFILES
+              owner 'root'
+              group 'root'
+              mode '0644'
+            end
+            ```
     refs:
       - url: https://www.rsyslog.com/doc/master/
         title: rsyslog Documentation
@@ -10556,6 +12093,24 @@ queries:
                     mode: '0600'
                   loop: "{{ ssh_private_keys.files }}"
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to restrict the SSH host private keys. Distributions that ship an `ssh_keys` group expect the keys to belong to it so that `ssh-keygen` can read them without root:
+
+            ```ruby
+            ssh_keys_group = ::File.readlines('/etc/group').any? { |entry| entry.start_with?('ssh_keys:') }
+            key_group = ssh_keys_group ? 'ssh_keys' : 'root'
+
+            ::Dir.glob('/etc/ssh/ssh_host_*_key').each do |private_key|
+              file private_key do
+                owner 'root'
+                group key_group
+                mode '0600'
+              end
+            end
+            ```
     refs:
       - url: https://man.openbsd.org/sshd_config
         title: OpenSSH sshd_config Manual
@@ -10659,6 +12214,21 @@ queries:
                     mode: '0644'
                   loop: "{{ ssh_public_keys.files }}"
                   when: ssh_public_keys.matched > 0
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to set the ownership and permissions on the SSH host public keys:
+
+            ```ruby
+            ::Dir.glob('/etc/ssh/ssh_host_*_key.pub').each do |public_key|
+              file public_key do
+                owner 'root'
+                group 'root'
+                mode '0644'
+              end
+            end
             ```
     refs:
       - url: https://man.openbsd.org/sshd_config
@@ -10806,6 +12376,37 @@ queries:
                     state: restarted
                   when: ssh_config_change.changed
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to pin the SSH protocol to version 2:
+
+            ```ruby
+            sshd_config = '/etc/ssh/sshd_config'
+            ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
+
+            service ssh_service do
+              action :nothing
+            end
+
+            { 'Protocol' => '2' }.each do |keyword, value|
+              ruby_block "set #{keyword} in sshd_config" do
+                block do
+                  body = ::File.read(sshd_config)
+                  directive = "#{keyword} #{value}"
+                  body = if body.match?(/^\s*#{keyword}\b/i)
+                           body.gsub(/^\s*#{keyword}\b.*$/i, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n"
+                         end
+                  ::File.write(sshd_config, body)
+                end
+                not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
+                notifies :restart, "service[#{ssh_service}]", :delayed
+              end
+            end
+            ```
     refs:
       - url: https://man.openbsd.org/sshd_config
         title: OpenSSH sshd_config Manual
@@ -10952,6 +12553,37 @@ queries:
                     state: restarted
                   when: ssh_config_change.changed
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to raise the SSH log level so that failed logins and key fingerprints are recorded:
+
+            ```ruby
+            sshd_config = '/etc/ssh/sshd_config'
+            ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
+
+            service ssh_service do
+              action :nothing
+            end
+
+            { 'LogLevel' => 'VERBOSE' }.each do |keyword, value|
+              ruby_block "set #{keyword} in sshd_config" do
+                block do
+                  body = ::File.read(sshd_config)
+                  directive = "#{keyword} #{value}"
+                  body = if body.match?(/^\s*#{keyword}\b/i)
+                           body.gsub(/^\s*#{keyword}\b.*$/i, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n"
+                         end
+                  ::File.write(sshd_config, body)
+                end
+                not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
+                notifies :restart, "service[#{ssh_service}]", :delayed
+              end
+            end
+            ```
     refs:
       - url: https://man.openbsd.org/sshd_config
         title: OpenSSH sshd_config Manual
@@ -11092,6 +12724,37 @@ queries:
                     name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
                     state: restarted
                   when: ssh_config_change.changed
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to disable X11 forwarding:
+
+            ```ruby
+            sshd_config = '/etc/ssh/sshd_config'
+            ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
+
+            service ssh_service do
+              action :nothing
+            end
+
+            { 'X11Forwarding' => 'no' }.each do |keyword, value|
+              ruby_block "set #{keyword} in sshd_config" do
+                block do
+                  body = ::File.read(sshd_config)
+                  directive = "#{keyword} #{value}"
+                  body = if body.match?(/^\s*#{keyword}\b/i)
+                           body.gsub(/^\s*#{keyword}\b.*$/i, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n"
+                         end
+                  ::File.write(sshd_config, body)
+                end
+                not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
+                notifies :restart, "service[#{ssh_service}]", :delayed
+              end
+            end
             ```
     refs:
       - url: https://man.openbsd.org/sshd_config
@@ -11235,6 +12898,37 @@ queries:
                     state: restarted
                   when: ssh_config_change.changed
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to cap the number of authentication attempts per connection:
+
+            ```ruby
+            sshd_config = '/etc/ssh/sshd_config'
+            ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
+
+            service ssh_service do
+              action :nothing
+            end
+
+            { 'MaxAuthTries' => '4' }.each do |keyword, value|
+              ruby_block "set #{keyword} in sshd_config" do
+                block do
+                  body = ::File.read(sshd_config)
+                  directive = "#{keyword} #{value}"
+                  body = if body.match?(/^\s*#{keyword}\b/i)
+                           body.gsub(/^\s*#{keyword}\b.*$/i, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n"
+                         end
+                  ::File.write(sshd_config, body)
+                end
+                not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
+                notifies :restart, "service[#{ssh_service}]", :delayed
+              end
+            end
+            ```
     refs:
       - url: https://man.openbsd.org/sshd_config
         title: OpenSSH sshd_config Manual
@@ -11377,6 +13071,37 @@ queries:
                     state: restarted
                   when: ssh_config_change.changed
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to make sshd ignore `.rhosts` and `.shosts` files:
+
+            ```ruby
+            sshd_config = '/etc/ssh/sshd_config'
+            ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
+
+            service ssh_service do
+              action :nothing
+            end
+
+            { 'IgnoreRhosts' => 'yes' }.each do |keyword, value|
+              ruby_block "set #{keyword} in sshd_config" do
+                block do
+                  body = ::File.read(sshd_config)
+                  directive = "#{keyword} #{value}"
+                  body = if body.match?(/^\s*#{keyword}\b/i)
+                           body.gsub(/^\s*#{keyword}\b.*$/i, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n"
+                         end
+                  ::File.write(sshd_config, body)
+                end
+                not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
+                notifies :restart, "service[#{ssh_service}]", :delayed
+              end
+            end
+            ```
     refs:
       - url: https://man.openbsd.org/sshd_config
         title: OpenSSH sshd_config Manual
@@ -11518,6 +13243,37 @@ queries:
                     name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
                     state: restarted
                   when: ssh_config_change.changed
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to disable host-based authentication:
+
+            ```ruby
+            sshd_config = '/etc/ssh/sshd_config'
+            ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
+
+            service ssh_service do
+              action :nothing
+            end
+
+            { 'HostbasedAuthentication' => 'no' }.each do |keyword, value|
+              ruby_block "set #{keyword} in sshd_config" do
+                block do
+                  body = ::File.read(sshd_config)
+                  directive = "#{keyword} #{value}"
+                  body = if body.match?(/^\s*#{keyword}\b/i)
+                           body.gsub(/^\s*#{keyword}\b.*$/i, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n"
+                         end
+                  ::File.write(sshd_config, body)
+                end
+                not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
+                notifies :restart, "service[#{ssh_service}]", :delayed
+              end
+            end
             ```
     refs:
       - url: https://man.openbsd.org/sshd_config
@@ -11667,6 +13423,37 @@ queries:
                     state: restarted
                   when: ssh_config_change.changed
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to stop root from logging in over SSH. Confirm that an administrative account with sudo access can log in before you apply it, or you will lock yourself out:
+
+            ```ruby
+            sshd_config = '/etc/ssh/sshd_config'
+            ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
+
+            service ssh_service do
+              action :nothing
+            end
+
+            { 'PermitRootLogin' => 'no' }.each do |keyword, value|
+              ruby_block "set #{keyword} in sshd_config" do
+                block do
+                  body = ::File.read(sshd_config)
+                  directive = "#{keyword} #{value}"
+                  body = if body.match?(/^\s*#{keyword}\b/i)
+                           body.gsub(/^\s*#{keyword}\b.*$/i, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n"
+                         end
+                  ::File.write(sshd_config, body)
+                end
+                not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
+                notifies :restart, "service[#{ssh_service}]", :delayed
+              end
+            end
+            ```
     refs:
       - url: https://man.openbsd.org/sshd_config
         title: OpenSSH sshd_config Manual
@@ -11809,6 +13596,37 @@ queries:
                     state: restarted
                   when: ssh_config_change.changed
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to reject accounts with an empty password:
+
+            ```ruby
+            sshd_config = '/etc/ssh/sshd_config'
+            ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
+
+            service ssh_service do
+              action :nothing
+            end
+
+            { 'PermitEmptyPasswords' => 'no' }.each do |keyword, value|
+              ruby_block "set #{keyword} in sshd_config" do
+                block do
+                  body = ::File.read(sshd_config)
+                  directive = "#{keyword} #{value}"
+                  body = if body.match?(/^\s*#{keyword}\b/i)
+                           body.gsub(/^\s*#{keyword}\b.*$/i, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n"
+                         end
+                  ::File.write(sshd_config, body)
+                end
+                not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
+                notifies :restart, "service[#{ssh_service}]", :delayed
+              end
+            end
+            ```
     refs:
       - url: https://man.openbsd.org/sshd_config
         title: OpenSSH sshd_config Manual
@@ -11950,6 +13768,37 @@ queries:
                     name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
                     state: restarted
                   when: ssh_config_change.changed
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to stop sshd from reading user-supplied environment options:
+
+            ```ruby
+            sshd_config = '/etc/ssh/sshd_config'
+            ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
+
+            service ssh_service do
+              action :nothing
+            end
+
+            { 'PermitUserEnvironment' => 'no' }.each do |keyword, value|
+              ruby_block "set #{keyword} in sshd_config" do
+                block do
+                  body = ::File.read(sshd_config)
+                  directive = "#{keyword} #{value}"
+                  body = if body.match?(/^\s*#{keyword}\b/i)
+                           body.gsub(/^\s*#{keyword}\b.*$/i, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n"
+                         end
+                  ::File.write(sshd_config, body)
+                end
+                not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
+                notifies :restart, "service[#{ssh_service}]", :delayed
+              end
+            end
             ```
     refs:
       - url: https://man.openbsd.org/sshd_config
@@ -12113,6 +13962,37 @@ queries:
                     state: restarted
                   when: ssh_ciphers_config_change.changed
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to restrict SSH to strong ciphers: On hosts running OpenSSH 6.x, change the value to `aes256-ctr,aes192-ctr,aes128-ctr`, because the chacha20 and GCM ciphers are not supported there.
+
+            ```ruby
+            sshd_config = '/etc/ssh/sshd_config'
+            ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
+
+            service ssh_service do
+              action :nothing
+            end
+
+            { 'Ciphers' => 'chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr' }.each do |keyword, value|
+              ruby_block "set #{keyword} in sshd_config" do
+                block do
+                  body = ::File.read(sshd_config)
+                  directive = "#{keyword} #{value}"
+                  body = if body.match?(/^\s*#{keyword}\b/i)
+                           body.gsub(/^\s*#{keyword}\b.*$/i, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n"
+                         end
+                  ::File.write(sshd_config, body)
+                end
+                not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
+                notifies :restart, "service[#{ssh_service}]", :delayed
+              end
+            end
+            ```
     refs:
       - url: https://man.openbsd.org/sshd_config
         title: OpenSSH sshd_config Manual
@@ -12259,6 +14139,37 @@ queries:
                     name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
                     state: restarted
                   when: ssh_mac_config_change.changed
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to restrict SSH to strong MAC algorithms:
+
+            ```ruby
+            sshd_config = '/etc/ssh/sshd_config'
+            ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
+
+            service ssh_service do
+              action :nothing
+            end
+
+            { 'MACs' => 'hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256' }.each do |keyword, value|
+              ruby_block "set #{keyword} in sshd_config" do
+                block do
+                  body = ::File.read(sshd_config)
+                  directive = "#{keyword} #{value}"
+                  body = if body.match?(/^\s*#{keyword}\b/i)
+                           body.gsub(/^\s*#{keyword}\b.*$/i, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n"
+                         end
+                  ::File.write(sshd_config, body)
+                end
+                not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
+                notifies :restart, "service[#{ssh_service}]", :delayed
+              end
+            end
             ```
     refs:
       - url: https://man.openbsd.org/sshd_config
@@ -12479,6 +14390,47 @@ queries:
                     state: restarted
                   when: kexalgos_config_change.changed
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to restrict SSH to approved key exchange algorithms. The algorithm list depends on the OpenSSH release, so it is selected from the version reported by the installed binary:
+
+            ```ruby
+            sshd_config = '/etc/ssh/sshd_config'
+            ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
+            openssh_version = shell_out('ssh -V').stderr[/OpenSSH_(\d+\.\d+)/, 1].to_f
+            kex_algorithms = if openssh_version < 7.0
+                               'curve25519-sha256@libssh.org'
+                             elsif openssh_version < 8.0
+                               'curve25519-sha256@libssh.org,diffie-hellman-group18-sha512'
+                             elsif openssh_version < 8.6
+                               'sntrup4591761x25519-sha512@tinyssh.org,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512'
+                             else
+                               'sntrup761x25519-sha512@openssh.com,curve25519-sha256@libssh.org,diffie-hellman-group18-sha512'
+                             end
+
+            service ssh_service do
+              action :nothing
+            end
+
+            { 'KexAlgorithms' => kex_algorithms }.each do |keyword, value|
+              ruby_block "set #{keyword} in sshd_config" do
+                block do
+                  body = ::File.read(sshd_config)
+                  directive = "#{keyword} #{value}"
+                  body = if body.match?(/^\s*#{keyword}\b/i)
+                           body.gsub(/^\s*#{keyword}\b.*$/i, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n"
+                         end
+                  ::File.write(sshd_config, body)
+                end
+                not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
+                notifies :restart, "service[#{ssh_service}]", :delayed
+              end
+            end
+            ```
     refs:
       - url: https://man.openbsd.org/sshd_config
         title: OpenSSH sshd_config Manual
@@ -12671,6 +14623,37 @@ queries:
                     state: restarted
                   when: ssh_interval_change.changed or ssh_countmax_change.changed
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to disconnect idle SSH sessions after ten minutes:
+
+            ```ruby
+            sshd_config = '/etc/ssh/sshd_config'
+            ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
+
+            service ssh_service do
+              action :nothing
+            end
+
+            { 'ClientAliveInterval' => '300', 'ClientAliveCountMax' => '2' }.each do |keyword, value|
+              ruby_block "set #{keyword} in sshd_config" do
+                block do
+                  body = ::File.read(sshd_config)
+                  directive = "#{keyword} #{value}"
+                  body = if body.match?(/^\s*#{keyword}\b/i)
+                           body.gsub(/^\s*#{keyword}\b.*$/i, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n"
+                         end
+                  ::File.write(sshd_config, body)
+                end
+                not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
+                notifies :restart, "service[#{ssh_service}]", :delayed
+              end
+            end
+            ```
     refs:
       - url: https://man.openbsd.org/sshd_config
         title: OpenSSH sshd_config Manual
@@ -12805,6 +14788,37 @@ queries:
                   ansible.builtin.systemd:
                     name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
                     state: restarted
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to close connections that do not authenticate within one minute:
+
+            ```ruby
+            sshd_config = '/etc/ssh/sshd_config'
+            ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
+
+            service ssh_service do
+              action :nothing
+            end
+
+            { 'LoginGraceTime' => '60' }.each do |keyword, value|
+              ruby_block "set #{keyword} in sshd_config" do
+                block do
+                  body = ::File.read(sshd_config)
+                  directive = "#{keyword} #{value}"
+                  body = if body.match?(/^\s*#{keyword}\b/i)
+                           body.gsub(/^\s*#{keyword}\b.*$/i, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n"
+                         end
+                  ::File.write(sshd_config, body)
+                end
+                not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
+                notifies :restart, "service[#{ssh_service}]", :delayed
+              end
+            end
             ```
     refs:
       - url: https://man.openbsd.org/sshd_config
@@ -12953,6 +14967,37 @@ queries:
                     state: restarted
                   when: allow_groups_changed.changed
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to limit SSH access to a named group. Create the group and add your administrators to it before you apply this, or no one will be able to log in:
+
+            ```ruby
+            sshd_config = '/etc/ssh/sshd_config'
+            ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
+
+            service ssh_service do
+              action :nothing
+            end
+
+            { 'AllowGroups' => 'sshusers' }.each do |keyword, value|
+              ruby_block "set #{keyword} in sshd_config" do
+                block do
+                  body = ::File.read(sshd_config)
+                  directive = "#{keyword} #{value}"
+                  body = if body.match?(/^\s*#{keyword}\b/i)
+                           body.gsub(/^\s*#{keyword}\b.*$/i, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n"
+                         end
+                  ::File.write(sshd_config, body)
+                end
+                not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
+                notifies :restart, "service[#{ssh_service}]", :delayed
+              end
+            end
+            ```
     refs:
       - url: https://man.openbsd.org/sshd_config
         title: OpenSSH sshd_config Manual
@@ -13088,6 +15133,37 @@ queries:
                     name: "{{ 'ssh' if 'ssh.service' in ansible_facts.services else 'sshd' }}"
                     state: restarted
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to present a warning banner before authentication:
+
+            ```ruby
+            sshd_config = '/etc/ssh/sshd_config'
+            ssh_service = platform_family?('debian') ? 'ssh' : 'sshd'
+
+            service ssh_service do
+              action :nothing
+            end
+
+            { 'Banner' => '/etc/issue.net' }.each do |keyword, value|
+              ruby_block "set #{keyword} in sshd_config" do
+                block do
+                  body = ::File.read(sshd_config)
+                  directive = "#{keyword} #{value}"
+                  body = if body.match?(/^\s*#{keyword}\b/i)
+                           body.gsub(/^\s*#{keyword}\b.*$/i, directive)
+                         else
+                           "#{body.chomp}\n#{directive}\n"
+                         end
+                  ::File.write(sshd_config, body)
+                end
+                not_if { ::File.read(sshd_config).match?(/^\s*#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
+                notifies :restart, "service[#{ssh_service}]", :delayed
+              end
+            end
+            ```
     refs:
       - url: https://man.openbsd.org/sshd_config
         title: OpenSSH sshd_config Manual
@@ -13190,6 +15266,19 @@ queries:
                     owner: root
                     group: root
                     mode: '0644'
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to set the ownership and permissions on `/etc/passwd`:
+
+            ```ruby
+            file '/etc/passwd' do
+              owner 'root'
+              group 'root'
+              mode '0644'
+            end
             ```
     refs:
       - url: https://man7.org/linux/man-pages/man5/passwd.5.html
@@ -13316,6 +15405,22 @@ queries:
                     group: "{{ 'shadow' if ansible_facts['os_family'] == 'Debian' else 'root' }}"
                     mode: "{{ '0640' if ansible_facts['os_family'] == 'Debian' else '0000' }}"
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to set the ownership and permissions on `/etc/shadow`:
+
+            ```ruby
+            shadow_group = platform_family?('debian') ? 'shadow' : 'root'
+            shadow_mode = platform_family?('debian') ? '0640' : '0000'
+
+            file '/etc/shadow' do
+              owner 'root'
+              group shadow_group
+              mode shadow_mode
+            end
+            ```
     refs:
       - url: https://man7.org/linux/man-pages/man5/shadow.5.html
         title: shadow(5) Manual Page
@@ -13411,6 +15516,19 @@ queries:
                     owner: root
                     group: root
                     mode: '0644'
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to set the ownership and permissions on `/etc/group`:
+
+            ```ruby
+            file '/etc/group' do
+              owner 'root'
+              group 'root'
+              mode '0644'
+            end
             ```
     refs:
       - url: https://man7.org/linux/man-pages/man5/group.5.html
@@ -13528,6 +15646,22 @@ queries:
                     group: "{{ 'shadow' if ansible_facts['os_family'] == 'Debian' else 'root' }}"
                     mode: "{{ '0640' if ansible_facts['os_family'] == 'Debian' else '0000' }}"
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to set the ownership and permissions on `/etc/gshadow`:
+
+            ```ruby
+            shadow_group = platform_family?('debian') ? 'shadow' : 'root'
+            shadow_mode = platform_family?('debian') ? '0640' : '0000'
+
+            file '/etc/gshadow' do
+              owner 'root'
+              group shadow_group
+              mode shadow_mode
+            end
+            ```
     refs:
       - url: https://man7.org/linux/man-pages/man5/gshadow.5.html
         title: gshadow(5) Manual Page
@@ -13638,6 +15772,35 @@ queries:
                     path: /etc/tmpfiles.d/etc.conf
                     line: 'f /etc/passwd- 0600 root root -'
                     state: present
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to set the ownership and permissions on `/etc/passwd-`:
+
+            ```ruby
+            tmpfiles_conf = '/etc/tmpfiles.d/etc.conf'
+            tmpfiles_entry = 'f /etc/passwd- 0600 root root -'
+
+            file '/etc/passwd-' do
+              owner 'root'
+              group 'root'
+              mode '0600'
+            end
+
+            ruby_block 'keep systemd-tmpfiles from reverting /etc/passwd-' do
+              block do
+                body = ::File.exist?(tmpfiles_conf) ? ::File.read(tmpfiles_conf) : ''
+                body = if body.match?(%r{^f /etc/passwd-\s})
+                         body.gsub(%r{^f /etc/passwd-\s.*$}, tmpfiles_entry)
+                       else
+                         "#{body.chomp}\n#{tmpfiles_entry}\n".lstrip
+                       end
+                ::File.write(tmpfiles_conf, body)
+              end
+              not_if { ::File.exist?(tmpfiles_conf) && ::File.read(tmpfiles_conf).include?(tmpfiles_entry) }
+            end
             ```
     refs:
       - url: https://man7.org/linux/man-pages/man5/passwd.5.html
@@ -13773,6 +15936,37 @@ queries:
                     create: yes
                     state: present
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to set the ownership and permissions on `/etc/shadow-`. systemd-tmpfiles resets these permissions on some distributions, so the tmpfiles entry is corrected alongside the file itself:
+
+            ```ruby
+            tmpfiles_conf = '/etc/tmpfiles.d/etc.conf'
+            shadow_group = platform_family?('debian') ? 'shadow' : 'root'
+            shadow_mode = platform_family?('debian') ? '0640' : '0000'
+            tmpfiles_entry = "f /etc/shadow- #{shadow_mode} root #{shadow_group} -"
+
+            file '/etc/shadow-' do
+              owner 'root'
+              group shadow_group
+              mode shadow_mode
+            end
+
+            ruby_block 'keep systemd-tmpfiles from reverting /etc/shadow-' do
+              block do
+                body = ::File.exist?(tmpfiles_conf) ? ::File.read(tmpfiles_conf) : ''
+                body = if body.match?(%r{^f /etc/shadow-\s})
+                         body.gsub(%r{^f /etc/shadow-\s.*$}, tmpfiles_entry)
+                       else
+                         "#{body.chomp}\n#{tmpfiles_entry}\n".lstrip
+                       end
+                ::File.write(tmpfiles_conf, body)
+              end
+              not_if { ::File.exist?(tmpfiles_conf) && ::File.read(tmpfiles_conf).include?(tmpfiles_entry) }
+            end
+            ```
     refs:
       - url: https://man7.org/linux/man-pages/man5/shadow.5.html
         title: shadow(5) Manual Page
@@ -13891,6 +16085,35 @@ queries:
                     line: 'f /etc/group- 0600 root root -'
                     state: present
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to set the ownership and permissions on `/etc/group-`:
+
+            ```ruby
+            tmpfiles_conf = '/etc/tmpfiles.d/etc.conf'
+            tmpfiles_entry = 'f /etc/group- 0600 root root -'
+
+            file '/etc/group-' do
+              owner 'root'
+              group 'root'
+              mode '0600'
+            end
+
+            ruby_block 'keep systemd-tmpfiles from reverting /etc/group-' do
+              block do
+                body = ::File.exist?(tmpfiles_conf) ? ::File.read(tmpfiles_conf) : ''
+                body = if body.match?(%r{^f /etc/group-\s})
+                         body.gsub(%r{^f /etc/group-\s.*$}, tmpfiles_entry)
+                       else
+                         "#{body.chomp}\n#{tmpfiles_entry}\n".lstrip
+                       end
+                ::File.write(tmpfiles_conf, body)
+              end
+              not_if { ::File.exist?(tmpfiles_conf) && ::File.read(tmpfiles_conf).include?(tmpfiles_entry) }
+            end
+            ```
     refs:
       - url: https://man7.org/linux/man-pages/man5/group.5.html
         title: group(5) Manual Page
@@ -14008,6 +16231,35 @@ queries:
                     line: 'f /etc/gshadow- 0640 root root -'
                     state: present
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to set the ownership and permissions on `/etc/gshadow-`:
+
+            ```ruby
+            tmpfiles_conf = '/etc/tmpfiles.d/etc.conf'
+            tmpfiles_entry = 'f /etc/gshadow- 0640 root root -'
+
+            file '/etc/gshadow-' do
+              owner 'root'
+              group 'root'
+              mode '0640'
+            end
+
+            ruby_block 'keep systemd-tmpfiles from reverting /etc/gshadow-' do
+              block do
+                body = ::File.exist?(tmpfiles_conf) ? ::File.read(tmpfiles_conf) : ''
+                body = if body.match?(%r{^f /etc/gshadow-\s})
+                         body.gsub(%r{^f /etc/gshadow-\s.*$}, tmpfiles_entry)
+                       else
+                         "#{body.chomp}\n#{tmpfiles_entry}\n".lstrip
+                       end
+                ::File.write(tmpfiles_conf, body)
+              end
+              not_if { ::File.exist?(tmpfiles_conf) && ::File.read(tmpfiles_conf).include?(tmpfiles_entry) }
+            end
+            ```
     refs:
       - url: https://man7.org/linux/man-pages/man5/gshadow.5.html
         title: gshadow(5) Manual Page
@@ -14068,6 +16320,7 @@ queries:
             ```bash
             usermod -u <new uid> <user>
             ```
+        # No Chef Infra remediation: the fix is choosing which account or group to renumber, which is a human decision rather than a converge step.
     refs:
       - url: https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/9/html/security_hardening/index
         title: Red Hat Enterprise Linux Security Hardening
@@ -14128,6 +16381,7 @@ queries:
             ```bash
             usermod -l <new login-name> <old username>
             ```
+        # No Chef Infra remediation: the fix is choosing which account or group to renumber, which is a human decision rather than a converge step.
     refs:
       - url: https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/9/html/security_hardening/index
         title: Red Hat Enterprise Linux Security Hardening
@@ -14188,6 +16442,7 @@ queries:
             ```bash
             groupmod -g <new gid> <old groupname>
             ```
+        # No Chef Infra remediation: the fix is choosing which account or group to renumber, which is a human decision rather than a converge step.
     refs:
       - url: https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/9/html/security_hardening/index
         title: Red Hat Enterprise Linux Security Hardening
@@ -14248,6 +16503,7 @@ queries:
             ```bash
             groupmod -n <new group name> <old groupname>
             ```
+        # No Chef Infra remediation: the fix is choosing which account or group to renumber, which is a human decision rather than a converge step.
     refs:
       - url: https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/9/html/security_hardening/index
         title: Red Hat Enterprise Linux Security Hardening
@@ -14333,6 +16589,17 @@ queries:
                     name: root
                     group: 0
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to set the primary group of the root account to GID 0:
+
+            ```ruby
+            user 'root' do
+              gid 0
+            end
+            ```
     refs:
       - url: https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/9/html/security_hardening/index
         title: Red Hat Enterprise Linux Security Hardening
@@ -14393,6 +16660,7 @@ queries:
             ```bash
             usermod -g <primary group> <user>
             ```
+        # No Chef Infra remediation: the fix is choosing which account or group to renumber, which is a human decision rather than a converge step.
     refs:
       - url: https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/9/html/security_hardening/index
         title: Red Hat Enterprise Linux Security Hardening
@@ -14453,6 +16721,7 @@ queries:
             ```bash
             groupadd -g <gid> <groupname>
             ```
+        # No Chef Infra remediation: the fix is choosing which account or group to renumber, which is a human decision rather than a converge step.
     refs:
       - url: https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/9/html/security_hardening/index
         title: Red Hat Enterprise Linux Security Hardening
@@ -14544,6 +16813,29 @@ queries:
                     path: /etc/login.defs
                     regexp: '^UID_MIN'
                     line: 'UID_MIN                  1000'
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to set `UID_MIN` in `/etc/login.defs`. The value only applies to accounts created after the change, so renumber any existing regular account that sits below it:
+
+            ```ruby
+            login_defs = '/etc/login.defs'
+
+            ruby_block 'set UID_MIN in login.defs' do
+              block do
+                body = ::File.read(login_defs)
+                directive = 'UID_MIN                  1000'
+                body = if body.match?(/^\s*UID_MIN\s/)
+                         body.gsub(/^\s*UID_MIN\s.*$/, directive)
+                       else
+                         "#{body.chomp}\n#{directive}\n"
+                       end
+                ::File.write(login_defs, body)
+              end
+              not_if { ::File.read(login_defs).match?(/^UID_MIN\s+1000\s*$/) }
+            end
             ```
     refs:
       - url: https://man7.org/linux/man-pages/man5/login.defs.5.html
@@ -14654,6 +16946,20 @@ queries:
                 - name: Remove users from shadow group
                   ansible.builtin.command: "gpasswd -d {{ item }} shadow"
                   loop: "{{ (shadow_group.stdout.split(':')[3].split(',') | select | list) if shadow_group.rc == 0 else [] }}"
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to empty the `shadow` group. Members of this group can read the password hashes of every account on the host, so move any service that needs them to a dedicated group with an explicit ACL instead:
+
+            ```ruby
+            group 'shadow' do
+              members []
+              append false
+              action :modify
+              only_if 'getent group shadow'
+            end
             ```
     refs:
       - url: https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/9/html/security_hardening/index
@@ -14782,6 +17088,19 @@ queries:
                   ansible.builtin.command: "gpasswd -d {{ item }} root"
                   loop: "{{ (root_group.stdout.split(':')[3] | default('')).split(',') | select | reject('eq', 'root') | list }}"
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to remove the secondary members of the `root` group. Grant administrative access through sudo instead, which records who ran what:
+
+            ```ruby
+            group 'root' do
+              members []
+              append false
+              action :modify
+            end
+            ```
     refs:
       - url: https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/9/html/security_hardening/index
         title: Red Hat Enterprise Linux Security Hardening
@@ -14909,6 +17228,34 @@ queries:
                     - sync
                     - shutdown
                     - halt
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to give every system account a non-login shell and lock the accounts that exist only to run a single command:
+
+            ```ruby
+            nologin_shell = ::File.exist?('/usr/sbin/nologin') ? '/usr/sbin/nologin' : '/sbin/nologin'
+
+            ::File.readlines('/etc/passwd').each do |entry|
+              account, _password, uid, _gid, _comment, _home, shell = entry.chomp.split(':')
+
+              next if %w(root sync shutdown halt).include?(account)
+              next if uid.to_i >= 1000
+              next if shell.to_s.match?(/nologin|false/)
+
+              user account do
+                shell nologin_shell
+              end
+            end
+
+            %w(sync shutdown halt).each do |account|
+              user account do
+                action :lock
+                only_if "getent passwd #{account}"
+              end
+            end
             ```
     refs:
       - url: https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/9/html/security_hardening/index
@@ -15047,6 +17394,29 @@ queries:
                     line: 'auth required pam_wheel.so use_uid'
                     create: yes
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            **Warning: confirm the `wheel` group has an administrator before you apply this.** If the `wheel` group is empty, this configuration prevents anyone from running `su` to root. Debian and Ubuntu do not populate `wheel` by default, so add a trusted administrative account to it first and verify `su` works in a separate session. Use this Chef Infra recipe code to restrict the `su` command to the `wheel` group:
+
+            ```ruby
+            pam_su = '/etc/pam.d/su'
+
+            ruby_block 'restrict su to the wheel group' do
+              block do
+                body = ::File.exist?(pam_su) ? ::File.read(pam_su) : ''
+                directive = 'auth required pam_wheel.so use_uid'
+                body = if body.match?(/^\s*auth\s+required\s+pam_wheel\.so\b/)
+                         body.gsub(/^\s*auth\s+required\s+pam_wheel\.so\b.*$/, directive)
+                       else
+                         "#{directive}\n#{body}"
+                       end
+                ::File.write(pam_su, body)
+              end
+              not_if { ::File.exist?(pam_su) && ::File.read(pam_su).match?(/^auth\s+required\s+pam_wheel\.so\s+use_uid\s*$/) }
+            end
+            ```
     refs:
       - url: https://www.linux-pam.org/Linux-PAM-html/
         title: Linux-PAM System Administrator's Guide
@@ -15134,6 +17504,21 @@ queries:
                   ansible.builtin.reboot:
                   when: selinux_state.reboot_required | default(false)
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            **Warning: this reboots the host when SELinux was disabled.** Moving from disabled to enforcing requires a full file system relabel, which only happens during boot. On a host that is already permissive, the switch takes effect immediately and no reboot is triggered. Use this Chef Infra recipe code to put SELinux into enforcing mode:
+
+            ```ruby
+            selinux_install 'selinux tools'
+
+            selinux_state 'enforcing' do
+              policy 'targeted'
+              automatic_reboot true
+              action :enforcing
+            end
+            ```
     refs:
       - url: https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/9/html/using_selinux/changing-selinux-states-and-modes_using-selinux
         title: Red Hat - Changing SELinux states and modes
@@ -15205,6 +17590,20 @@ queries:
                   ansible.posix.selinux:
                     policy: targeted
                     state: enforcing
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to set enforcing mode in `/etc/selinux/config` so the policy survives a reboot:
+
+            ```ruby
+            selinux_install 'selinux tools'
+
+            selinux_state 'enforcing' do
+              policy 'targeted'
+              action :enforcing
+            end
             ```
     refs:
       - url: https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/9/html/using_selinux/changing-selinux-states-and-modes_using-selinux
@@ -15323,6 +17722,36 @@ queries:
                     name: "{{ debian_chrony.stat.exists | ternary('chrony', 'chronyd') }}"
                     state: restarted
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to configure a chrony time source. Replace the public pool with your own time servers where site policy requires it:
+
+            ```ruby
+            debian = ::File.exist?('/etc/chrony/chrony.conf')
+            chrony_conf = debian ? '/etc/chrony/chrony.conf' : '/etc/chrony.conf'
+            chrony_service = debian ? 'chrony' : 'chronyd'
+
+            service chrony_service do
+              action :nothing
+            end
+
+            ruby_block 'configure a chrony time source' do
+              block do
+                body = ::File.exist?(chrony_conf) ? ::File.read(chrony_conf) : ''
+                directive = 'pool 2.pool.ntp.org iburst'
+                body = if body.match?(/^\s*pool\s/)
+                         body.gsub(/^\s*pool\s.*$/, directive)
+                       else
+                         "#{body.chomp}\n#{directive}\n".lstrip
+                       end
+                ::File.write(chrony_conf, body)
+              end
+              not_if { ::File.exist?(chrony_conf) && ::File.read(chrony_conf).match?(/^\s*(pool|server)\s+\S+/) }
+              notifies :restart, "service[#{chrony_service}]", :delayed
+            end
+            ```
     refs:
       - url: https://chrony-project.org/documentation.html
         title: chrony - Documentation
@@ -15440,6 +17869,35 @@ queries:
                     name: systemd-timesyncd
                     state: restarted
             ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to set the NTP server systemd-timesyncd queries. Replace the public pool with your own time servers where site policy requires it:
+
+            ```ruby
+            timesyncd_conf = '/etc/systemd/timesyncd.conf'
+
+            service 'systemd-timesyncd' do
+              action :nothing
+            end
+
+            ruby_block 'set NTP in timesyncd.conf' do
+              block do
+                body = ::File.exist?(timesyncd_conf) ? ::File.read(timesyncd_conf) : ''
+                body = "[Time]\n#{body}" unless body.match?(/^\[Time\]$/)
+                directive = 'NTP=2.pool.ntp.org'
+                body = if body.match?(/^\s*#?\s*NTP=/)
+                         body.gsub(/^\s*#?\s*NTP=.*$/, directive)
+                       else
+                         body.sub(/^\[Time\]$/, "[Time]\n#{directive}")
+                       end
+                ::File.write(timesyncd_conf, body)
+              end
+              not_if { ::File.exist?(timesyncd_conf) && ::File.read(timesyncd_conf).match?(/^NTP=\S+/) }
+              notifies :restart, 'service[systemd-timesyncd]', :delayed
+            end
+            ```
     refs:
       - url: https://www.freedesktop.org/software/systemd/man/latest/timesyncd.conf.html
         title: systemd - timesyncd.conf manual page
@@ -15535,6 +17993,22 @@ queries:
                     name: systemd-timesyncd
                     enabled: true
                     state: started
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to turn on network time synchronization and start systemd-timesyncd:
+
+            ```ruby
+            execute 'enable network time synchronization' do
+              command 'timedatectl set-ntp true'
+              not_if 'timedatectl show --property=NTP --value | grep -q yes'
+            end
+
+            service 'systemd-timesyncd' do
+              action %i(enable start)
+            end
             ```
     refs:
       - url: https://www.freedesktop.org/software/systemd/man/latest/systemd-timesyncd.service.html
@@ -15647,6 +18121,29 @@ queries:
                     option: gpgcheck
                     value: "1"
                     no_extra_spaces: true
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to require package signature verification in the global package manager configuration. Repositories that set `gpgcheck=0` in their own definition still override this, so audit `/etc/yum.repos.d/` afterwards:
+
+            ```ruby
+            package_conf = ::File.exist?('/etc/dnf/dnf.conf') ? '/etc/dnf/dnf.conf' : '/etc/yum.conf'
+
+            ruby_block 'enable gpgcheck globally' do
+              block do
+                body = ::File.exist?(package_conf) ? ::File.read(package_conf) : ''
+                body = "[main]\n#{body}" unless body.match?(/^\[main\]$/)
+                body = if body.match?(/^\s*gpgcheck\s*=/)
+                         body.gsub(/^\s*gpgcheck\s*=.*$/, 'gpgcheck=1')
+                       else
+                         body.sub(/^\[main\]$/, "[main]\ngpgcheck=1")
+                       end
+                ::File.write(package_conf, body)
+              end
+              not_if { ::File.exist?(package_conf) && ::File.read(package_conf).match?(/^gpgcheck\s*=\s*1\s*$/) }
+            end
             ```
     refs:
       - url: https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/9/html/managing_software_with_the_dnf_tool/
@@ -15783,6 +18280,37 @@ queries:
                     regexp: '^\s*Trusted:\s*yes\s*$'
                     state: absent
                   loop: "{{ deb822_sources.files }}"
+            ```
+        - id: chef
+          desc: |
+            **Using Chef Infra**
+
+            Use this Chef Infra recipe code to drop the trusted overrides from APT source definitions. It removes only `trusted=yes` and `Trusted: yes`, leaving options such as `arch=` and `signed-by=` in place:
+
+            ```ruby
+            one_line_sources = ::Dir.glob('/etc/apt/*.list') + ::Dir.glob('/etc/apt/sources.list.d/*.list')
+
+            one_line_sources.each do |source_file|
+              ruby_block "remove trusted overrides from #{source_file}" do
+                block do
+                  body = ::File.read(source_file)
+                  body = body.gsub(/\btrusted=yes\b\s*/, '')
+                  body = body.gsub(/\[\s*\]\s*/, '')
+                  ::File.write(source_file, body)
+                end
+                only_if { ::File.read(source_file).match?(/\btrusted=yes\b/) }
+              end
+            end
+
+            ::Dir.glob('/etc/apt/sources.list.d/*.sources').each do |source_file|
+              ruby_block "remove Trusted from #{source_file}" do
+                block do
+                  body = ::File.read(source_file)
+                  ::File.write(source_file, body.gsub(/^\s*Trusted:\s*yes\s*$\n/, ''))
+                end
+                only_if { ::File.read(source_file).match?(/^\s*Trusted:\s*yes\s*$/) }
+              end
+            end
             ```
     refs:
       - url: https://manpages.debian.org/stable/apt/sources.list.5.en.html
