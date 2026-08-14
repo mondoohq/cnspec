@@ -18,6 +18,7 @@ import (
 	"go.mondoo.com/cnspec/v13"
 	"go.mondoo.com/cnspec/v13/cli/progress"
 	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/cnspec/v13/policy/scanstats"
 	"go.mondoo.com/mql/v13/cli/config"
 	"go.mondoo.com/mql/v13/discovery"
 	"go.mondoo.com/mql/v13/llx"
@@ -149,6 +150,7 @@ type scanDispatcher struct {
 	services      *policy.Services
 	spaceMrn      string
 	scannedAssets *atomic.Int64
+	memTracker    *scanstats.MemTracker
 }
 
 func newScanDispatcher(
@@ -163,6 +165,7 @@ func newScanDispatcher(
 	services *policy.Services,
 	spaceMrn string,
 	scannedAssets *atomic.Int64,
+	memTracker *scanstats.MemTracker,
 ) *scanDispatcher {
 	return &scanDispatcher{
 		scanSem:       make(chan struct{}, parallelism),
@@ -176,6 +179,7 @@ func newScanDispatcher(
 		services:      services,
 		spaceMrn:      spaceMrn,
 		scannedAssets: scannedAssets,
+		memTracker:    memTracker,
 	}
 }
 
@@ -405,4 +409,12 @@ func (d *scanDispatcher) reportPanic(tracked *discovery.TrackedAsset) {
 		sendErrorToMondooPlatform(serviceAccount, event)
 		log.Info().Msg("reported panic to Mondoo Platform")
 	})
+}
+
+// inFlight reports how many assets are currently scanning. scanSem is a
+// buffered channel used as a semaphore, so its length is the number of
+// held slots. Read by the memory sampler to record the concurrency a peak
+// occurred at — a peak without its denominator cannot be compared.
+func (d *scanDispatcher) inFlight() int {
+	return len(d.scanSem)
 }

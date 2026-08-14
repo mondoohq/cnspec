@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/errors"
+	"github.com/google/uuid"
 	"github.com/mattn/go-isatty"
 	"github.com/rs/zerolog/log"
 	"github.com/segmentio/ksuid"
@@ -25,6 +26,7 @@ import (
 	"go.mondoo.com/cnspec/v13/internal/scandump"
 	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/cnspec/v13/policy/executor"
+	"go.mondoo.com/cnspec/v13/policy/scanstats"
 	"go.mondoo.com/mql/v13"
 	"go.mondoo.com/mql/v13/cli/config"
 	"go.mondoo.com/mql/v13/cli/execruntime"
@@ -50,6 +52,11 @@ import (
 const (
 	defaultRefreshInterval = 3600
 )
+
+// memSampleInterval is how often the scan's memory footprint is sampled.
+// runtime/metrics reads are sub-microsecond and do not stop the world, so
+// one second costs nothing against scans that run for minutes.
+const memSampleInterval = time.Second
 
 type LocalScanner struct {
 	queue           *diskQueueClient
@@ -497,10 +504,26 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	connSem := make(chan struct{}, maxConn)
 	var scannedAssets atomic.Int64
 
+	// Memory is process-wide while scanstats Collectors are per-asset, so the
+	// tracker is created once per run and shared by every asset. run_id lets
+	// the resulting per-asset records be grouped back into one process.
+	memTracker := scanstats.NewMemTracker(scanstats.MemTrackerConfig{
+		RunID:          uuid.New().String(),
+		Parallelism:    parallelism,
+		MaxConnections: maxConn,
+	})
+	memTracker.Start(memSampleInterval)
+	defer memTracker.Stop()
+	ctx = scanstats.ContextWithMemTracker(ctx, memTracker)
+
 	dispatcher := newScanDispatcher(
 		parallelism, connSem, s, explorer, job, upstream,
 		reporter, multiprogress, services, spaceMrn, &scannedAssets,
+		memTracker,
 	)
+	// Registered after construction because the dispatcher owns the
+	// semaphore the tracker reads.
+	memTracker.SetInFlightFunc(dispatcher.inFlight)
 	batcher := newSyncBatcher(dispatcher, services, spaceMrn, s.recording, multiprogress)
 
 	scanCtx := &scanContext{
