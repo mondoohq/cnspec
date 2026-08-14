@@ -38,6 +38,11 @@ TARGETS = {
         SCRIPT_DIR / ".." / "mondoo-linux-snmp-policy.mql.yaml",
         SCRIPT_DIR / ".." / "mondoo-linux-workstation-security.mql.yaml",
     ],
+    "freebsd": [SCRIPT_DIR / ".." / "mondoo-freebsd-security.mql.yaml"],
+    "windows": [
+        SCRIPT_DIR / ".." / "mondoo-windows-security.mql.yaml",
+        SCRIPT_DIR / ".." / "mondoo-windows-workstation-security.mql.yaml",
+    ],
     "chef": [
         SCRIPT_DIR / ".." / "mondoo-chef-infra-client.mql.yaml",
         SCRIPT_DIR / ".." / "mondoo-chef-infra-server.mql.yaml",
