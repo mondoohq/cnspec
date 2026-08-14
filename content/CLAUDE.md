@@ -178,6 +178,19 @@ Reference patterns in this repo:
 - HCL nested-block fanout: `mondoo-gcp-security-cloud-sql-mysql-skip-show-database-enabled-terraform-*` (database_flags)
 - Plan/state list-of-objects shape: `mondoo-gcp-security-cloud-storage-bucket-retention-policy-locked-terraform-*`
 
+### Fixtures for new IaC variants
+
+Every `-terraform-hcl`, `-cloudformation`, and `-bicep` variant is expected to ship with pass/fail fixtures under `content/iac-variant-testdata/<policy>/<variant-uid>/{pass,fail}/<scenario>/`, exercised by the suites in `content/iac_variants_test.go`.
+
+`TestTerraformVariantCoverage` enforces this as a ratchet against the per-policy budgets in `content/iac-variant-coverage-budget.json` — the number of variants still allowed to ship without fixtures. Adding a variant without fixtures pushes a policy over budget and fails CI (the `coverage` job in `.github/workflows/content-iac-tests.yaml`). The budgets may only shrink: once you add fixtures, tighten the entry in the same change.
+
+```bash
+make test/go/content-iac/coverage                                # check the ratchet
+IAC_COVERAGE_BUDGET_UPDATE=1 make test/go/content-iac/coverage    # rewrite it after adding fixtures
+```
+
+Where a variant asserts exactly what its own `filters:` require, no failing input exists; record that with a `fail/IMPOSSIBLE.md` marker instead of a fail fixture and it counts as covered.
+
 ### Terraform remediation
 
 Every parent check that has Terraform variants must also document how to fix the issue in Terraform. Add an `- id: terraform` entry to the `remediation:` list alongside the existing `id: console`, `id: cli`, `id: cloudformation`, `id: bicep` entries. The block holds a short Markdown intro and a fenced ```hcl``` example that resolves the violation.

@@ -12,6 +12,7 @@ package content
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"os"
@@ -52,7 +53,7 @@ import (
 func init() {
 	extraProviders = append(extraProviders,
 		"bicep", "os",
-		"oci", "vsphere", "okta", "openstack", "gitlab", "cloudflare",
+		"alicloud", "oci", "vsphere", "okta", "openstack", "gitlab", "cloudflare",
 		"github", "digitalocean", "unifi", "portainer", "snowflake",
 		"hetzner", "tailscale", "ms365",
 	)
@@ -80,6 +81,7 @@ var tfVariantPolicies = []tfVariantPolicy{
 	{"mondoo-azure-security-", "./mondoo-azure-security.mql.yaml", "//policy.api.mondoo.app/policies/mondoo-azure-security"},
 	// Other policies with terraform variants. Empty policyMrn scans the single
 	// policy in each bundle without a fragile MRN filter.
+	{"mondoo-alibaba-security-", "./mondoo-alibaba-security.mql.yaml", ""},
 	{"mondoo-oci-security-", "./mondoo-oci-security.mql.yaml", ""},
 	{"mondoo-vmware-vsphere-", "./mondoo-vmware-vsphere.mql.yaml", ""},
 	{"mondoo-vmware-vsphere-esxi-", "./mondoo-vmware-vsphere-esxi.mql.yaml", ""},
@@ -594,9 +596,6 @@ func checkResultAcross(reports []*policy.Report, mrn string) (checkOutcome, uint
 	return outcomeSkipped, 0
 }
 
-// TestTerraformVariantCoverage reports how many -terraform-hcl variants in each
-// registered policy have pass+fail fixtures. It never fails the build; it exists
-// to make coverage visible as the suite grows.
 // iacVariantSuffixes are the infrastructure-as-code variant kinds the harness
 // validates via fixture files.
 var iacVariantSuffixes = []string{"-terraform-hcl", "-cloudformation", "-bicep"}
@@ -610,7 +609,63 @@ func iacSuffix(uid string) (string, bool) {
 	return "", false
 }
 
+// coverageBudgetFile records, per policy and variant kind, how many variants are
+// still allowed to ship without pass+fail fixtures. It is a ratchet: the numbers
+// may only go down.
+const coverageBudgetFile = "iac-variant-coverage-budget.json"
+
+// coverageBudgetUpdateEnv, when set, makes TestTerraformVariantCoverage rewrite
+// coverageBudgetFile from the fixtures on disk instead of asserting against it.
+const coverageBudgetUpdateEnv = "IAC_COVERAGE_BUDGET_UPDATE"
+
+// coverageBudget maps a policy directory to a variant suffix to the number of
+// that policy's variants of that kind allowed to lack pass+fail fixtures. A
+// policy or suffix absent from the file has a budget of zero: full coverage.
+type coverageBudget map[string]map[string]int
+
+func (b coverageBudget) get(policyDir, suffix string) int {
+	return b[policyDir][suffix]
+}
+
+func (b coverageBudget) set(policyDir, suffix string, n int) {
+	if b[policyDir] == nil {
+		b[policyDir] = map[string]int{}
+	}
+	b[policyDir][suffix] = n
+}
+
+func loadCoverageBudget(t *testing.T) coverageBudget {
+	data, err := os.ReadFile(coverageBudgetFile)
+	require.NoError(t, err, "reading the coverage budget")
+	budget := coverageBudget{}
+	require.NoError(t, json.Unmarshal(data, &budget), "parsing %s", coverageBudgetFile)
+	return budget
+}
+
+func writeCoverageBudget(t *testing.T, budget coverageBudget) {
+	data, err := json.MarshalIndent(budget, "", "  ")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(coverageBudgetFile, append(data, '\n'), 0o644))
+	t.Logf("wrote %s", coverageBudgetFile)
+}
+
+// TestTerraformVariantCoverage reports how many IaC variants in each registered
+// policy have pass+fail fixtures, and enforces the ratchet in
+// coverageBudgetFile: a policy may not gain uncovered variants, and once
+// fixtures land its budget must be tightened in the same change. Adding a
+// variant without fixtures therefore fails here rather than merging silently
+// untested. Regenerate the budget after adding fixtures with:
+//
+//	IAC_COVERAGE_BUDGET_UPDATE=1 make test/go/content-iac/coverage
 func TestTerraformVariantCoverage(t *testing.T) {
+	update := os.Getenv(coverageBudgetUpdateEnv) != ""
+	var budget coverageBudget
+	if update {
+		budget = coverageBudget{}
+	} else {
+		budget = loadCoverageBudget(t)
+	}
+
 	for _, pol := range tfVariantPolicies {
 		policyDir := strings.TrimSuffix(pol.slugPrefix, "-")
 		bundle, err := policy.DefaultBundleLoader().BundleFromPaths(pol.bundleFile)
@@ -652,11 +707,39 @@ func TestTerraformVariantCoverage(t *testing.T) {
 			}
 			pct := float64(covered[suffix]) / float64(total[suffix]) * 100
 			t.Logf("%s %s: %d/%d covered (%.1f%%)", policyDir, suffix, covered[suffix], total[suffix], pct)
-			if len(missing[suffix]) > 0 && testing.Verbose() {
-				sort.Strings(missing[suffix])
-				t.Logf("  uncovered (%d):\n%s", len(missing[suffix]), strings.Join(indent(missing[suffix]), "\n"))
+			uncovered := missing[suffix]
+			sort.Strings(uncovered)
+			if len(uncovered) > 0 && testing.Verbose() {
+				t.Logf("  uncovered (%d):\n%s", len(uncovered), strings.Join(indent(uncovered), "\n"))
+			}
+
+			if update {
+				if len(uncovered) > 0 {
+					budget.set(policyDir, suffix, len(uncovered))
+				}
+				continue
+			}
+
+			allowed := budget.get(policyDir, suffix)
+			switch {
+			case len(uncovered) > allowed:
+				t.Errorf("%s %s: %d variants lack pass+fail fixtures, budget allows %d.\n"+
+					"Add fixtures under %s/%s/<uid>/{pass,fail}/<scenario>/ for the variants below.\n"+
+					"uncovered (%d):\n%s",
+					policyDir, suffix, len(uncovered), allowed,
+					tfVariantsRoot, policyDir, len(uncovered), strings.Join(indent(uncovered), "\n"))
+			case len(uncovered) < allowed:
+				t.Errorf("%s %s: only %d variants lack pass+fail fixtures but the budget allows %d. "+
+					"Coverage improved, so tighten the ratchet: set this entry to %d in %s "+
+					"(or regenerate with %s=1 make test/go/content-iac/coverage).",
+					policyDir, suffix, len(uncovered), allowed, len(uncovered),
+					coverageBudgetFile, coverageBudgetUpdateEnv)
 			}
 		}
+	}
+
+	if update {
+		writeCoverageBudget(t, budget)
 	}
 }
 

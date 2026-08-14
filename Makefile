@@ -139,7 +139,7 @@ test/go/plain-ci: prep/tools
 # that shard. Unset means run everything. See .github/workflows/content-iac-tests.yaml.
 IAC_VARIANT_PARALLEL ?= 4
 
-.PHONY: test/go/content-iac test/go/content-iac/terraform test/go/content-iac/cloudformation test/go/content-iac/bicep test/go/content-iac/dockerfile test/go/content-iac/kubernetes
+.PHONY: test/go/content-iac test/go/content-iac/terraform test/go/content-iac/cloudformation test/go/content-iac/bicep test/go/content-iac/dockerfile test/go/content-iac/kubernetes test/go/content-iac/coverage
 test/go/content-iac: prep/tools
 	go test -tags iac_variants -timeout 30m -parallel $(IAC_VARIANT_PARALLEL) -run 'TestTerraformVariants|TestCloudFormationVariants|TestBicepVariants|TestDockerfileVariants|TestKubernetesManifestVariants' ./content
 
@@ -157,6 +157,13 @@ test/go/content-iac/dockerfile: prep/tools
 
 test/go/content-iac/kubernetes: prep/tools
 	go test -tags iac_variants -timeout 30m -parallel $(IAC_VARIANT_PARALLEL) -run '^TestKubernetesManifestVariants$$' ./content
+
+# Fixture-coverage ratchet. Runs no scans: it compares the variants declared in
+# each policy against the fixtures on disk and enforces the per-policy budgets in
+# content/iac-variant-coverage-budget.json. Run with IAC_COVERAGE_BUDGET_UPDATE=1
+# to rewrite those budgets after adding fixtures.
+test/go/content-iac/coverage: prep/tools
+	go test -tags iac_variants -timeout 10m -v -run '^TestTerraformVariantCoverage$$' ./content
 
 .PHONY: test/lint/staticcheck
 test/lint/staticcheck:
