@@ -90,12 +90,12 @@ func sarifLinterRules() []Rule {
 	rules = append(rules, Rule{
 		ID:          QueryDeprecatedSymbolRuleID,
 		Name:        "Query uses deprecated MQL symbol",
-		Description: "Query references a resource or field annotated with @maturity('deprecated')",
+		Description: "A query's MQL references a resource or field annotated with @maturity('deprecated')",
 	})
 	rules = append(rules, Rule{
 		ID:          FilterDeprecatedSymbolRuleID,
 		Name:        "Filter uses deprecated MQL symbol",
-		Description: "A policy group, query pack or pack group filter references a resource or field annotated with @maturity('deprecated')",
+		Description: "A filter on a query, policy group, query pack or pack group references a resource or field annotated with @maturity('deprecated')",
 	})
 
 	return rules
