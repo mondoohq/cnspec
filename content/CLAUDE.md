@@ -46,7 +46,7 @@ policies:
   - **Azure**: `portal`, `cli`, `terraform`, `bicep` (Azure uses `portal` — the product name for the Azure web UI — instead of the generic `console` used by other clouds)
   - **GCP / OCI / DigitalOcean / Cloudflare / Hetzner / other clouds**: `console`, `cli`, `terraform`
   - **Windows / macOS**: `gui`, `cli`, `ansible`, and `script` (PowerShell on Windows, bash on macOS)
-  - **Linux**: `cli`, `script` (bash), `ansible`
+  - **Linux**: `cli`, `script` (bash), `ansible`. In `mondoo-linux-security` also `chef` — a Chef Infra recipe, matching the `chef` entries in the two Chef Infra policies.
   - **Kubernetes**: `kubectl`, `manifest` (YAML), and where applicable `helm`
   - **Microsoft 365** (`mondoo-m365-security`): `console`, `powershell`, and `terraform` where a real resource exists.
     - `console` — the relevant Microsoft admin center (Microsoft Entra, Microsoft 365, Microsoft Defender, Exchange, SharePoint, or Intune). Always applies.
@@ -245,6 +245,21 @@ cnspec scan local -f content/your-policy.mql.yaml
 ```
 
 `cnspec policy lint` must pass before committing any policy changes.
+
+## Validating remediation code blocks
+
+Remediation snippets that are *code* rather than CLI invocations get linted with the tool their ecosystem already uses. Each validator extracts the fenced blocks from one `- id:` and runs the linter on each snippet in isolation, so a snippet has to stand on its own.
+
+```bash
+python3 content/validation/validate_bash_remediation.py     # `id: bash` via shellcheck
+python3 content/validation/validate_ansible_remediation.py  # `id: ansible` via ansible-lint
+python3 content/validation/validate_chef_remediation.py     # `id: chef` via cookstyle
+python3 content/validation/validate_terraform_remediation.py
+```
+
+Each takes an optional target (`linux`, `windows`, `macos`, `kubernetes`, `chef`, …) and `--github-actions`. They run per-PR from `.github/workflows/validate-remediation.yaml`.
+
+cookstyle is Chef's RuboCop distribution, so `validate_chef_remediation.py` catches Ruby syntax errors *and* Chef-specific problems: `Chef/Modernize/ExecuteSysctl` pushes sysctl settings onto the `sysctl` resource instead of a template plus `execute`, `Chef/Style/FileMode` rejects integer file modes, and `Chef/Style/UsePlatformHelpers` requires `platform_family?` over raw node attribute comparisons. Snippets are linted inside a temporary `recipes/` directory with `--force-default-config`, which is what makes cookstyle apply the recipe-scoped cops.
 
 ## Validating remediation CLI commands
 
