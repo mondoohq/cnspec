@@ -107,6 +107,18 @@ func (t *MemTracker) Observe() {
 	}
 }
 
+// Peaks returns the current high-water marks: runtime footprint bytes,
+// goroutine count, and the in-flight asset count at the moment the footprint
+// peak was set. Safe on a nil tracker, which reports zeroes.
+func (t *MemTracker) Peaks() (runtimeBytes uint64, goroutines int, inFlightAtPeak int) {
+	if t == nil {
+		return 0, 0, 0
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.peakRuntime, t.peakGoroutines, t.inFlightAtPeak
+}
+
 // defaultCgroupRoot is the cgroup v2 unified hierarchy mount point.
 const defaultCgroupRoot = "/sys/fs/cgroup"
 

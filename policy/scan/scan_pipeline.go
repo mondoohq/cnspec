@@ -327,26 +327,20 @@ func (d *scanDispatcher) scanSingleAsset(ctx context.Context, tracked *discovery
 
 // logMemoryStats emits memory diagnostics after an asset scan completes.
 // Only called when DEBUG_PROVIDER_MEMORY is set.
+//
+// Reads the run's MemTracker rather than sampling independently, so the
+// logged numbers and the numbers reported upstream cannot disagree.
 func (d *scanDispatcher) logMemoryStats(asset *inventory.Asset) {
-	var m goruntime.MemStats
-	goruntime.ReadMemStats(&m)
+	peakBytes, peakGoroutines, inFlightAtPeak := d.memTracker.Peaks()
 
-	ev := log.Info().
+	log.Info().
 		Str("asset", asset.Name).
 		Int64("scanned_assets", d.scannedAssets.Load()).
 		Int("goroutines", goruntime.NumGoroutine()).
-		Uint64("heap_alloc_mb", m.Alloc/1024/1024).
-		Uint64("heap_sys_mb", m.HeapSys/1024/1024).
-		Uint64("total_alloc_mb", m.TotalAlloc/1024/1024)
-
-	if cgroup, err := os.ReadFile("/sys/fs/cgroup/memory.current"); err == nil {
-		ev = ev.Str("cgroup_bytes", strings.TrimSpace(string(cgroup)))
-	}
-	if cgroupMax, err := os.ReadFile("/sys/fs/cgroup/memory.max"); err == nil {
-		ev = ev.Str("cgroup_max", strings.TrimSpace(string(cgroupMax)))
-	}
-
-	ev.Msg("memory after asset scan")
+		Uint64("runtime_peak_mb", peakBytes/1024/1024).
+		Int("goroutines_peak", peakGoroutines).
+		Int("in_flight_at_peak", inFlightAtPeak).
+		Msg("memory after asset scan")
 
 	if ar, ok := d.reporter.(*AggregateReporter); ok {
 		rptBytes, rpBytes, vrBytes, aBytes := ar.AccumulatedBytes()
