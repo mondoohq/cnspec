@@ -6,6 +6,8 @@ package scanstats
 import (
 	"os"
 	"path/filepath"
+	"runtime"
+	"runtime/metrics"
 	"strconv"
 	"strings"
 	"sync"
@@ -143,5 +145,45 @@ func readCgroupValue(root, name string) (uint64, bool) {
 	return v, true
 }
 
-// Replaced in Task 3.
-func defaultSample() Sample { return Sample{} }
+// runtimeFootprintMetrics are the runtime/metrics names whose difference is
+// the Go runtime's memory footprint — the same quantity the runtime accounts
+// against GOMEMLIMIT.
+const (
+	metricTotalBytes        = "/memory/classes/total:bytes"
+	metricHeapReleasedBytes = "/memory/classes/heap/released:bytes"
+)
+
+// defaultSample reads the live process memory state.
+//
+// It uses runtime/metrics rather than runtime.ReadMemStats for two reasons:
+// ReadMemStats stops the world, which would perturb the very scan being
+// measured; and MemStats.Alloc counts only live heap objects, excluding
+// stacks and memory the runtime has retained but not returned to the OS, so
+// it systematically understates what the OOM killer acts on.
+func defaultSample() Sample {
+	// A fresh slice per call: metrics.Read writes into it, so a shared one
+	// would need its own lock and this is called once a second.
+	s := []metrics.Sample{
+		{Name: metricTotalBytes},
+		{Name: metricHeapReleasedBytes},
+	}
+	metrics.Read(s)
+
+	var total, released uint64
+	if s[0].Value.Kind() == metrics.KindUint64 {
+		total = s[0].Value.Uint64()
+	}
+	if s[1].Value.Kind() == metrics.KindUint64 {
+		released = s[1].Value.Uint64()
+	}
+
+	var footprint uint64
+	if total > released {
+		footprint = total - released
+	}
+
+	return Sample{
+		RuntimeBytes: footprint,
+		Goroutines:   runtime.NumGoroutine(),
+	}
+}

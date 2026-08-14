@@ -148,3 +148,12 @@ func TestReadCgroup_MalformedValueIsAbsent(t *testing.T) {
 	cg := readCgroup(dir)
 	require.False(t, cg.hasCurrent)
 }
+
+func TestDefaultSample_ReturnsLiveValues(t *testing.T) {
+	s := defaultSample()
+
+	// A running Go process always has a non-zero footprint and at least
+	// this test's own goroutine. The stub returned a zero Sample.
+	require.Greater(t, s.RuntimeBytes, uint64(0))
+	require.Greater(t, s.Goroutines, 0)
+}
