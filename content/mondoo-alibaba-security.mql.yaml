@@ -730,7 +730,7 @@ queries:
     impact: 85
     docs:
       desc: |
-        This check ensures that no custom RAM policy grants full administrative access by allowing every action on every resource. A statement with `Effect: Allow`, `Action: "*"`, and `Resource: "*"` is equivalent to the built-in AdministratorAccess policy and hands the attached identity unrestricted control of the account.
+        This check ensures that no custom RAM policy grants full administrative access by allowing every action on every resource. An `Allow` statement whose `Action` is `*` and whose `Resource` is `*` or the fully wildcarded `acs:*:*:*:*` (whether written as a single string or inside a list, and with no `NotAction` or `NotResource` exception carved out) is equivalent to the built-in AdministratorAccess policy and hands the attached identity unrestricted control of the account.
 
         **Why this matters**
 
@@ -800,12 +800,7 @@ queries:
   - uid: mondoo-alibaba-security-ram-policy-no-full-admin-alicloud
     filters: asset.platform == "alicloud-account"
     mql: |
-      alicloud.ram.policies.where(policyType == "Custom").all(
-        policyDocument == empty ||
-        parse.json(policyDocument).params["Statement"].none(
-          _["Effect"] == "Allow" && _["Action"] == "*" && _["Resource"] == "*"
-        )
-      )
+      alicloud.ram.policies.where(policyType == "Custom").none(allowsAdminAccess)
 
   # No Terraform variants: user inactivity is measured from the runtime last-login timestamp of a provisioned identity; no alicloud_ram_user attribute expresses when a user last authenticated.
   - uid: mondoo-alibaba-security-ram-user-inactive-credentials
@@ -893,7 +888,7 @@ queries:
     impact: 90
     docs:
       desc: |
-        This check ensures that no Object Storage Service (OSS) bucket is configured with a `public-read` or `public-read-write` access control list (ACL). A public ACL lets anonymous callers on the internet list and download bucket objects, and `public-read-write` additionally lets them upload and overwrite objects.
+        This check ensures that no Object Storage Service (OSS) bucket is exposed through a `public-read` or `public-read-write` access control list (ACL). A public ACL lets anonymous callers on the internet list and download bucket objects, and `public-read-write` additionally lets them upload and overwrite objects. A bucket whose public ACL is neutralized by an enabled Block Public Access setting is not treated as exposed, because Block Public Access overrides the ACL.
 
         **Why this matters**
 
@@ -976,7 +971,7 @@ queries:
   - uid: mondoo-alibaba-security-oss-bucket-no-public-acl-alicloud
     filters: asset.platform == "alicloud-account"
     mql: |
-      alicloud.oss.buckets.all(acl != "public-read" && acl != "public-read-write")
+      alicloud.oss.buckets.all(blockPublicAccess || acl != "public-read" && acl != "public-read-write")
   - uid: mondoo-alibaba-security-oss-bucket-no-public-acl-terraform-hcl
     filters: |
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_oss_bucket")
@@ -1096,7 +1091,7 @@ queries:
     impact: 90
     docs:
       desc: |
-        This check ensures that no Object Storage Service (OSS) bucket policy grants access to anonymous principals. In an OSS bucket policy an anonymous grant is expressed as a `Principal` of `*`, which allows unauthenticated callers on the internet to perform the granted actions regardless of the bucket ACL.
+        This check ensures that no Object Storage Service (OSS) bucket policy grants access to anonymous principals. In an OSS bucket policy an anonymous grant is expressed as a `Principal` of `*`, which allows unauthenticated callers on the internet to perform the granted actions regardless of the bucket ACL. A bucket whose wildcard-principal policy is neutralized by an enabled Block Public Access setting is not treated as exposed, because Block Public Access overrides the policy grant.
 
         **Why this matters**
 
@@ -1164,6 +1159,7 @@ queries:
     filters: asset.platform == "alicloud-account"
     mql: |
       alicloud.oss.buckets.all(
+        blockPublicAccess ||
         policy == empty ||
         parse.json(content: policy).params["Statement"].where(_["Effect"] == "Allow").all(
           _["Principal"] == empty || _["Principal"].contains("*") == false
