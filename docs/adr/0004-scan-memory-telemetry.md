@@ -49,6 +49,10 @@ Each per-asset `Collector` snapshots the tracker immediately before `ToProto()`,
 
 A peak is uninterpretable without knowing how loaded the pipeline was when it occurred: 3 GB with 48 assets in flight and 3 GB with 2 in flight describe entirely different problems. The in-flight count is therefore captured **at the moment the peak is set**, not at asset finish. The scan dispatcher registers an in-flight accessor (`len(scanSem)`) on the tracker, and the sampler reads it on any tick that raises the maximum.
 
+Because the peak is process-wide but a record is emitted per asset, a single run scanning N assets emits N records carrying one process's monotonically rising high-water mark. These are repeated observations of one process, not N independent measurements, so they must be aggregated with `max` per run rather than averaged — an average is weighted by asset count and drifts below the true peak.
+
+That aggregation requires knowing which records came from the same process, and nothing in the scan path currently identifies a run: the collector is per-asset, the upload session is per-asset, and there is no job or run identifier. A `cnspec.scan.run_id` string metric is therefore generated once per `RunLocalScan` invocation and recorded into every asset's collector. `policy.Metric` already carries a `string_value`, so this needs no proto change; `scanstats.Collector` gains an `AddString` alongside its existing typed setters.
+
 Per-asset heap deltas were considered and rejected — see Alternatives.
 
 ### 4. Metrics
@@ -57,6 +61,7 @@ All names extend the existing `cnspec.scan.*` namespace. No proto change is requ
 
 | Metric | Unit | Meaning |
 |---|---|---|
+| `cnspec.scan.run_id` | — | Identifies records from one scan process |
 | `cnspec.scan.mem.runtime_peak_bytes` | bytes | Go runtime footprint high-water mark |
 | `cnspec.scan.mem.runtime_at_finish_bytes` | bytes | Footprint when this asset completed |
 | `cnspec.scan.mem.goroutines_peak` | count | Goroutine high-water mark; leak signal |
@@ -90,7 +95,7 @@ These metrics are collected unconditionally on the `UploadResultsV2` path. Makin
 ### 8. File layout
 
 - `policy/scanstats/mem.go` — `MemTracker`: sampling loop, high-water tracking, in-flight correlation, cgroup reader, and the snapshot that records into a `Collector`.
-- `policy/scanstats/collector.go` — metric name constants.
+- `policy/scanstats/collector.go` — metric name constants and `AddString`, for the run identifier.
 - `policy/scanstats/context.go` — tracker propagation, mirroring the existing `ContextWithCollector`.
 - `policy/scan/local_scanner.go` — tracker construction, sampler lifecycle, recording the static concurrency settings.
 - `policy/scan/scan_pipeline.go` — registers the in-flight accessor; existing `logMemoryStats` is repointed at the tracker so there is a single source of truth for memory readings.
@@ -115,6 +120,7 @@ The tracker takes an injected sample function and an injected cgroup root, so hi
 - Comparing memory cost across asset types or across releases becomes possible in aggregate, over many scans, rather than per individual scan.
 - Scans on the in-memory path emit no memory telemetry. Coverage is tied to `UploadResultsV2` rollout.
 - Hosts without cgroups report Go footprint only, which understates total usage by the provider subprocess memory. Aggregates that mix containerized and non-containerized scans must key on the presence of the cgroup metrics to remain comparable.
+- Peak values must be aggregated with `max` grouped by `cnspec.scan.run_id`. Averaging them across assets yields a number that looks like a fleet average but is weighted by run size and understates every peak.
 - Metric names become a wire contract. As with `upload.FailureKind`, names may be added freely but must not be renamed or repurposed.
 - One additional goroutine per scan process, sampling once per second.
 
