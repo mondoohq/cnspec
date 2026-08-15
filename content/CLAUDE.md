@@ -190,6 +190,41 @@ make test/go/content-iac/coverage    # check coverage
 
 Where a variant asserts exactly what its own `filters:` require, no failing input exists; record that with a `fail/IMPOSSIBLE.md` marker explaining why, instead of a fail fixture, and it counts as covered. That marker is the only sanctioned way to ship a variant without a real fail fixture.
 
+### The remediation has to satisfy the check
+
+`TestRemediationSatisfiesCheck` (in `content/remediation_closes_check_test.go`, behind the
+`iac_variants` tag) scans each IaC variant's **own remediation snippet** and requires the
+check that recommends it to pass:
+
+```bash
+make test/go/content-iac/remediation
+```
+
+This is the question the linters cannot answer. cfn-lint, tflint and `bicep build` prove a
+snippet is well-formed; they cannot prove it is right. A snippet can name every property
+correctly and still demonstrate the exact misconfiguration the check forbids, target a
+resource type the check does not match, or set a neighbouring property instead of the
+asserted one.
+
+The snippet is generated per run from the policy rather than checked in as a fixture — it
+is a copy of content that already lives in the bundle, and a checked-in copy would drift
+from it silently. Only what the snippet needs to be a scannable document is added: a
+`provider "x" {}` stub for HCL (so a filter reading `terraform.providers` does not skip the
+check), and the `AWSTemplateFormatVersion` preamble for a CloudFormation fragment.
+
+A variant whose remediation does not satisfy it yet is listed in
+`content/remediation-closes-check-budget.json` with a reason. The list may only shrink: an
+entry that starts passing fails the test, so the entry is removed together with the fix —
+the same contract as a `KNOWN_BUG.md` marker.
+
+Three distinct failures are reported differently, because they mean different things:
+
+- **the check did not run** — the snippet declares no resource the check's filter matches,
+  so applying it as shown leaves the check unevaluated
+- **the remediation does not satisfy the check** — a reader who applies the documented fix
+  still fails
+- **scanning failed** — the snippet is not a scannable document of its kind on its own
+
 ### Terraform remediation
 
 Every parent check that has Terraform variants must also document how to fix the issue in Terraform. Add an `- id: terraform` entry to the `remediation:` list alongside the existing `id: console`, `id: cli`, `id: cloudformation`, `id: bicep` entries. The block holds a short Markdown intro and a fenced ```hcl``` example that resolves the violation.
