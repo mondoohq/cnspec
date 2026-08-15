@@ -34,7 +34,6 @@ TARGETS = {
         SCRIPT_DIR / ".." / "mondoo-linux-workstation-security.mql.yaml",
     ],
     "kubernetes": [SCRIPT_DIR / ".." / "mondoo-kubernetes-security.mql.yaml"],
-    # Policies whose shell remediation had never been linted.
     "edr": [SCRIPT_DIR / ".." / "mondoo-edr-policy.mql.yaml"],
     "freebsd": [SCRIPT_DIR / ".." / "mondoo-freebsd-security.mql.yaml"],
     "mariadb": [SCRIPT_DIR / ".." / "mondoo-mariadb-security.mql.yaml"],
