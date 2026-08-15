@@ -17,6 +17,31 @@ REPO_ROOT = SCRIPT_DIR.parent.parent
 # file, line, uid, command, errors, cloud
 FAILURES: list[dict] = []
 
+# `$(...)` command substitution. The character class excludes parens, so a
+# single match is always the innermost substitution; extract_substitutions()
+# loops to unwrap nested ones.
+COMMAND_SUBSTITUTION = re.compile(r"\$\(([^()]*)\)")
+
+
+def extract_substitutions(text: str) -> tuple[list[str], str]:
+    """Pull every `$(...)` command out of `text`.
+
+    Returns (inner commands, text with the substitutions blanked out).
+
+    Replacing in one pass would mishandle nesting: substituting the inner
+    `$(cmd2)` of `$(cmd1 $(cmd2))` leaves `$(cmd1 )` behind, and re.sub
+    resumes *after* the match rather than rescanning, so the outer command
+    would stay inline and its flags would read as flags of whatever command
+    surrounds it. Looping until no match remains unwraps both.
+    """
+    commands = []
+    while True:
+        m = COMMAND_SUBSTITUTION.search(text)
+        if not m:
+            return commands, text
+        commands.append(m.group(1).strip())
+        text = text[: m.start()] + " " + text[m.end() :]
+
 
 def policy_relpath(policy_file: Path) -> str:
     """Repo-root-relative path for a policy file, as GitHub annotations
@@ -49,12 +74,13 @@ def extract_bash_blocks(
 
     With include_audit=True, bash blocks in `audit: |` sections are
     extracted as well. A wrong audit command misleads users exactly like a
-    wrong remediation, so the REST API and Cobra validators have always
-    enabled it. `azure` can enable it too now that dump_azure_commands.py
-    records CLI option strings rather than argparse destination names: with
-    the old grammar, commands used only in audit blocks kept names like
-    `--resource-group-name`, and turning this on reported ~170 failures that
-    were the grammar's fault rather than the content's.
+    wrong remediation, so every validator that can enable this does: the
+    REST API and Cobra validators from the start, and the cloud CLI
+    validators as of this change. `azure` included, now that
+    dump_azure_commands.py records CLI option strings rather than argparse
+    destination names — with the old grammar, commands used only in audit
+    blocks kept names like `--resource-group-name`, and turning this on
+    reported ~170 failures that were the grammar's fault, not the content's.
     """
     # Pre-compute a list of (line_number, uid) from all `- uid:` lines so we
     # can look up the enclosing check for any position in the file.
@@ -163,6 +189,15 @@ def split_commands(block: str, prefix: str, block_start_line: int) -> list[tuple
                         break
                     cont_lines += 1
                     stripped = stripped + "\n" + lines[i + cont_lines]
+            # A `$(...)` substitution holds a command in its own right, and
+            # audit blocks use them to feed one query into the next. Pull each
+            # one out as a separate command and drop it from the text around
+            # it — left inline, its flags read as flags of the outer command.
+            inner_commands, rejoined = extract_substitutions(rejoined)
+            for inner in inner_commands:
+                if inner.startswith(f"{prefix} "):
+                    commands.append((inner, raw_line_num))
+
             # Split on pipe/semicolon boundaries
             for segment in re.split(r"\s*[|;]\s*", rejoined):
                 segment = segment.strip()

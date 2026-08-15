@@ -11,7 +11,15 @@ import sys
 from collections.abc import Iterator
 from pathlib import Path
 
-from .common import FAILURES, SCRIPT_DIR, extract_bash_blocks, policy_relpath, split_commands, truncate_cmd
+from .common import (
+    COMMAND_SUBSTITUTION,
+    FAILURES,
+    SCRIPT_DIR,
+    extract_bash_blocks,
+    policy_relpath,
+    split_commands,
+    truncate_cmd,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -38,8 +46,18 @@ def detect_gcloud_services_from_policy() -> list[str]:
         joined = re.sub(r"\\\s*\n\s*", " ", block)
         for line in joined.split("\n"):
             line = line.strip()
-            if line.startswith("gcloud "):
-                parts = line.split()
+            # A gcloud call is not always at the start of the line: audit
+            # blocks reach APIs with no gcloud surface via
+            # `curl -H "Authorization: Bearer $(gcloud auth print-access-token)"`.
+            # Miss those and the service never gets walked, so every command
+            # under it reports as unknown.
+            candidates = [line] + [
+                inner.strip() for inner in COMMAND_SUBSTITUTION.findall(line)
+            ]
+            for candidate in candidates:
+                if not candidate.startswith("gcloud "):
+                    continue
+                parts = candidate.split()
                 if len(parts) >= 2 and not parts[1].startswith("-"):
                     services.add(parts[1])
     return sorted(services)
@@ -159,8 +177,15 @@ _GCLOUD_SUBCOMMAND_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 
 
 def _iter_gcloud_policy_invocations() -> Iterator[list[str]]:
-    """Yield the post-``gcloud`` token list for every gcloud invocation in an
-    ``id: cli`` remediation in the GCP policy.
+    """Yield the post-``gcloud`` token list for every gcloud invocation the
+    validator will check in the GCP policy.
+
+    That means `audit:` blocks as well as `id: cli` remediations. The scope
+    here decides which commands get their flags enriched from `gcloud --help`,
+    so it has to match what validate_gcloud() actually reads: a command left
+    out lands in the DB with only the static completion tree's flags — which
+    for many leaf commands is an empty list — and then rejects every flag it
+    is given, `--format` included.
 
     Centralises the YAML + fenced-block + line-continuation parsing so the
     per-token filtering logic stays in the callers.
@@ -169,20 +194,17 @@ def _iter_gcloud_policy_invocations() -> Iterator[list[str]]:
         return
 
     content = GCLOUD_POLICY_FILE.read_text()
-    for match in re.finditer(
-        r"- id: cli\s*\n\s+desc: \|\s*\n(.*?)(?=\n\s+- id: |\n\s+refs:|\n  - uid: |\Z)",
-        content,
-        re.DOTALL,
-    ):
-        for fence in re.finditer(
-            r"```bash\s*\n(.*?)```", match.group(1), re.DOTALL
-        ):
-            joined = re.sub(r"\\\s*\n\s*", " ", fence.group(1))
-            for line in joined.split("\n"):
-                line = line.strip()
-                if not line.startswith("gcloud "):
+    for block, _line, _uid in extract_bash_blocks(content, include_audit=True):
+        joined = re.sub(r"\\\s*\n\s*", " ", block)
+        for line in joined.split("\n"):
+            line = line.strip()
+            candidates = [line] + [
+                inner.strip() for inner in COMMAND_SUBSTITUTION.findall(line)
+            ]
+            for candidate in candidates:
+                if not candidate.startswith("gcloud "):
                     continue
-                yield line.split()[1:]
+                yield candidate.split()[1:]
 
 
 def detect_gcloud_policy_command_paths() -> set[str]:
@@ -215,9 +237,18 @@ def detect_gcloud_policy_commands(commands_db: dict[str, list[str]]) -> set[str]
             if p.startswith("-"):
                 break
             cmd_parts.append(p)
-        candidate = " ".join(cmd_parts)
-        if candidate in commands_db:
-            policy_commands.add(candidate)
+        # Trailing tokens are usually positional arguments, not subcommands
+        # (`gcloud sql instances describe INSTANCE_NAME`). Walk back to the
+        # longest prefix that names a real command so the argument does not
+        # hide it — otherwise the command is never enriched from `--help` and
+        # keeps the completion tree's flags, which for many leaves is nothing
+        # at all.
+        while cmd_parts:
+            candidate = " ".join(cmd_parts)
+            if candidate in commands_db:
+                policy_commands.add(candidate)
+                break
+            cmd_parts.pop()
     return policy_commands
 
 
@@ -395,7 +426,7 @@ def validate_gcloud() -> tuple[int, int]:
         return 0, 0
 
     content = GCLOUD_POLICY_FILE.read_text()
-    blocks = extract_bash_blocks(content)
+    blocks = extract_bash_blocks(content, include_audit=True)
 
     pass_count = 0
     fail_count = 0
