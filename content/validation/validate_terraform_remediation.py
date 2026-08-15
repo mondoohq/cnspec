@@ -37,6 +37,27 @@ TARGETS = {
     "gitlab": [SCRIPT_DIR / ".." / "mondoo-gitlab-security.mql.yaml"],
     "okta": [SCRIPT_DIR / ".." / "mondoo-okta-security.mql.yaml"],
     "m365": [SCRIPT_DIR / ".." / "mondoo-m365-security.mql.yaml"],
+    # Policies whose terraform remediation had never been linted. Each uses a
+    # single provider; those without a tflint ruleset still get the terraform
+    # preset's syntax and declaration checks.
+    "alibaba": [SCRIPT_DIR / ".." / "mondoo-alibaba-security.mql.yaml"],
+    "cloudflare": [SCRIPT_DIR / ".." / "mondoo-cloudflare-security.mql.yaml"],
+    "databricks": [SCRIPT_DIR / ".." / "mondoo-databricks-security.mql.yaml"],
+    "digitalocean": [SCRIPT_DIR / ".." / "mondoo-digitalocean-security.mql.yaml"],
+    "dns": [SCRIPT_DIR / ".." / "mondoo-dns-security.mql.yaml"],
+    "email": [SCRIPT_DIR / ".." / "mondoo-email-security.mql.yaml"],
+    "hetzner": [SCRIPT_DIR / ".." / "mondoo-hetzner-security.mql.yaml"],
+    "openstack": [SCRIPT_DIR / ".." / "mondoo-openstack-security.mql.yaml"],
+    "portainer": [SCRIPT_DIR / ".." / "mondoo-portainer-security.mql.yaml"],
+    "snowflake": [SCRIPT_DIR / ".." / "mondoo-snowflake-security.mql.yaml"],
+    "stackit": [SCRIPT_DIR / ".." / "mondoo-stackit-security.mql.yaml"],
+    "tailscale": [SCRIPT_DIR / ".." / "mondoo-tailscale-security.mql.yaml"],
+    "unifi": [SCRIPT_DIR / ".." / "mondoo-unifi-security.mql.yaml"],
+    "vercel": [SCRIPT_DIR / ".." / "mondoo-vercel-security.mql.yaml"],
+    "vsphere": [
+        SCRIPT_DIR / ".." / "mondoo-vmware-vsphere.mql.yaml",
+        SCRIPT_DIR / ".." / "mondoo-vmware-vsphere-esxi.mql.yaml",
+    ],
 }
 
 # Map resource prefix -> (provider source, version constraint)
@@ -52,6 +73,23 @@ PROVIDER_MAP = {
     "okta": ("okta/okta", "~> 4.0"),
     "null": ("hashicorp/null", "~> 3.0"),
     "time": ("hashicorp/time", "~> 0.12"),
+    # Providers for the policies added to TARGETS above. A prefix missing
+    # from this map produces an empty `required_providers` block, which the
+    # terraform preset's terraform_required_providers rule fails on every
+    # resource — so a new target needs an entry here to be checkable at all.
+    "alicloud": ("aliyun/alicloud", "~> 1.0"),
+    "cloudflare": ("cloudflare/cloudflare", "~> 5.0"),
+    "databricks": ("databricks/databricks", "~> 1.0"),
+    "digitalocean": ("digitalocean/digitalocean", "~> 2.0"),
+    "hcloud": ("hetznercloud/hcloud", "~> 1.0"),
+    "openstack": ("terraform-provider-openstack/openstack", "~> 3.0"),
+    "portainer": ("portainer/portainer", "~> 1.0"),
+    "snowflake": ("snowflakedb/snowflake", "~> 2.0"),
+    "stackit": ("stackitcloud/stackit", "~> 0.111"),
+    "tailscale": ("tailscale/tailscale", "~> 0.29"),
+    "unifi": ("paultyng/unifi", "~> 0.41"),
+    "vercel": ("vercel/vercel", "~> 5.0"),
+    "vsphere": ("hashicorp/vsphere", "~> 2.0"),
 }
 
 # tflint provider plugins (only for providers that have rulesets)
