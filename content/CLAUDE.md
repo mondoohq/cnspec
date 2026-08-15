@@ -270,6 +270,7 @@ python3 content/validation/validate_ansible_remediation.py  # `id: ansible` via 
 python3 content/validation/validate_chef_remediation.py     # `id: chef` via cookstyle
 python3 content/validation/validate_cloudformation_remediation.py  # `id: cloudformation` via cfn-lint
 python3 content/validation/validate_bicep_remediation.py    # `id: bicep` via the Bicep CLI
+python3 content/validation/validate_powershell_remediation.py      # ```powershell fences via the PowerShell parser
 python3 content/validation/validate_terraform_remediation.py
 ```
 
@@ -292,6 +293,30 @@ Two diagnostics print as `[INFO]` rather than failing: `BCP081` (no types availa
 CI installs a pinned `bicep-linux-x64` release binary rather than running `az bicep install`, which places the binary under the Azure CLI's config directory (`AZURE_CONFIG_DIR`, not reliably `~/.azure` on a runner) and offers nothing to checksum. The pinned version decides which resource types and apiVersions are known, so bumping it can surface newly deprecated apiVersions in snippets that used to pass.
 
 The job takes several minutes: the Bicep CLI reloads the ARM type index on every invocation, so ~330 snippets cost roughly a second and a half each.
+
+`validate_powershell_remediation.py` reads every ```` ```powershell ```` fence — in any
+remediation method and in `audit:` blocks — because the PowerShell convention differs per
+policy: Windows puts it under `- id: script`, M365 under `- id: powershell`, vSphere uses
+both. It checks three things, in descending order of certainty. The snippet must **parse**
+(the real PowerShell parser builds the AST, so a parse error is unambiguous). Commands that
+**resolve on the runner** get their parameter names checked against the cmdlet's real
+parameters — the PowerShell analogue of the `az`/`aws` grammar validators, covering the
+built-in cmdlets that are the largest single group of invocations here. Commands from a
+module the runner does not have (Az, Microsoft.Graph, VMware.PowerCLI,
+ExchangeOnlineManagement, or a Windows-only module) cannot have their parameters checked,
+so the **name shape** is checked instead: PowerShell requires Verb-Noun with an approved
+verb, and a wrong verb is the usual way to misremember a cmdlet.
+
+No modules are installed in CI. Az and Microsoft.Graph are large and slow, and the job
+stays fast without them; a checked-in cmdlet grammar, on the model of
+`dump_azure_commands.py`, is the way to add parameter checking for those later.
+
+Two things the validator has to know about. `<placeholder>` tokens are substituted first,
+because PowerShell has no `<x>` syntax and an unsubstituted placeholder is a parse error
+that says nothing about the snippet. And a handful of parameters are *dynamic* — supplied
+by a PowerShell provider rather than declared on the cmdlet — so `Get-Command` cannot see
+them where the provider is absent: `Set-ItemProperty -Type` is real on Windows and
+invisible on Linux, which is where CI runs. Those live in `DYNAMIC_PARAMETERS`.
 
 cookstyle is Chef's RuboCop distribution, so `validate_chef_remediation.py` catches Ruby syntax errors *and* Chef-specific problems: `Chef/Modernize/ExecuteSysctl` pushes sysctl settings onto the `sysctl` resource instead of a template plus `execute`, `Chef/Style/FileMode` rejects integer file modes, and `Chef/Style/UsePlatformHelpers` requires `platform_family?` over raw node attribute comparisons. Snippets are linted inside a temporary `recipes/` directory with `--force-default-config`, which is what makes cookstyle apply the recipe-scoped cops.
 
