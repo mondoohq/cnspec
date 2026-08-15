@@ -62,6 +62,15 @@ _XFORM_END_CAP = re.compile(r"([a-z0-9])([A-Z])")
 # A trailing all-caps plural is one word, not an acronym followed by a stray
 # "s": ListWebACLs is `list-web-acls`, never `list-web-ac-ls`. botocore special
 # cases this before the general splits, and the CLI's command names follow.
+#
+# The three regexes and the order they are applied in mirror
+# `xform_name` in awscli/botocore/__init__.py (`_first_cap_regex`,
+# `_end_cap_regex`, `_special_case_transform`). Matching botocore exactly is
+# the point, including where the rule is broader than the ACLs example: any
+# name ending in two-or-more capitals plus "s" takes it, so a hypothetical
+# `ListAPs` becomes `list-aps`. Verify a change here against the bundled
+# botocore rather than against intuition — `aws <service> help` lists the
+# command names the CLI actually accepts.
 _XFORM_SPECIAL_CASE = re.compile(r"[A-Z]{2,}s$")
 
 

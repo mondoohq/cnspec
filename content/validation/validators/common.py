@@ -17,10 +17,30 @@ REPO_ROOT = SCRIPT_DIR.parent.parent
 # file, line, uid, command, errors, cloud
 FAILURES: list[dict] = []
 
-# `$(...)` command substitution, non-greedy so adjacent substitutions on one
-# line stay separate. Nested substitutions are rare enough in audit blocks that
-# the simple form is enough.
+# `$(...)` command substitution. The character class excludes parens, so a
+# single match is always the innermost substitution; extract_substitutions()
+# loops to unwrap nested ones.
 COMMAND_SUBSTITUTION = re.compile(r"\$\(([^()]*)\)")
+
+
+def extract_substitutions(text: str) -> tuple[list[str], str]:
+    """Pull every `$(...)` command out of `text`.
+
+    Returns (inner commands, text with the substitutions blanked out).
+
+    Replacing in one pass would mishandle nesting: substituting the inner
+    `$(cmd2)` of `$(cmd1 $(cmd2))` leaves `$(cmd1 )` behind, and re.sub
+    resumes *after* the match rather than rescanning, so the outer command
+    would stay inline and its flags would read as flags of whatever command
+    surrounds it. Looping until no match remains unwraps both.
+    """
+    commands = []
+    while True:
+        m = COMMAND_SUBSTITUTION.search(text)
+        if not m:
+            return commands, text
+        commands.append(m.group(1).strip())
+        text = text[: m.start()] + " " + text[m.end() :]
 
 
 def policy_relpath(policy_file: Path) -> str:
@@ -173,11 +193,10 @@ def split_commands(block: str, prefix: str, block_start_line: int) -> list[tuple
             # audit blocks use them to feed one query into the next. Pull each
             # one out as a separate command and drop it from the text around
             # it — left inline, its flags read as flags of the outer command.
-            for inner in COMMAND_SUBSTITUTION.findall(rejoined):
-                inner = inner.strip()
+            inner_commands, rejoined = extract_substitutions(rejoined)
+            for inner in inner_commands:
                 if inner.startswith(f"{prefix} "):
                     commands.append((inner, raw_line_num))
-            rejoined = COMMAND_SUBSTITUTION.sub(" ", rejoined)
 
             # Split on pipe/semicolon boundaries
             for segment in re.split(r"\s*[|;]\s*", rejoined):
