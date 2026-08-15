@@ -205,13 +205,25 @@ jobs:
           python-version: "3.12"
 
       - name: Install Bicep CLI
-        # `az bicep install` fetches the CLI into ~/.azure/bin. The Azure CLI
-        # ships on the runner image; the Bicep CLI does not. The installed
-        # version determines which resource types and apiVersions are known.
+        # Pinned release binary from https://github.com/Azure/bicep/releases.
+        # Bump BICEP_VERSION and BICEP_SHA256 in lockstep; the pinned version
+        # determines which resource types and apiVersions are known, so a bump
+        # can surface newly deprecated apiVersions in existing snippets.
+        #
+        # Installed directly rather than via `az bicep install`, which puts the
+        # binary under the Azure CLI's config directory (AZURE_CONFIG_DIR, not
+        # always ~/.azure on a runner) and gives nothing to checksum.
+        env:
+          BICEP_VERSION: "0.46.1"
+          BICEP_SHA256: "3e011d629ea4311b7a7dd8f0040ab2b1a072ea4ff5d02cb75e0e55a9a6703fb9"
         run: |
-          az bicep install
-          echo "$HOME/.azure/bin" >> "$GITHUB_PATH"
-          "$HOME/.azure/bin/bicep" --version
+          curl --fail --retry 5 --retry-delay 5 --retry-all-errors -sSL \
+            "https://github.com/Azure/bicep/releases/download/v${BICEP_VERSION}/bicep-linux-x64" \
+            -o /tmp/bicep
+          echo "${BICEP_SHA256}  /tmp/bicep" | sha256sum -c -
+          chmod +x /tmp/bicep
+          sudo mv /tmp/bicep /usr/local/bin/bicep
+          bicep --version
 
       - name: Validate bicep remediation blocks
         run: python3 content/validation/validate_bicep_remediation.py --github-actions

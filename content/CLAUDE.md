@@ -289,6 +289,8 @@ Each takes an optional target (`linux`, `windows`, `macos`, `kubernetes`, `chef`
 
 Two diagnostics print as `[INFO]` rather than failing: `BCP081` (no types available for that resource type or apiVersion) and the `no-hardcoded-env-urls` linter rule, since a remediation example names a specific cloud on purpose.
 
+CI installs a pinned `bicep-linux-x64` release binary rather than running `az bicep install`, which places the binary under the Azure CLI's config directory (`AZURE_CONFIG_DIR`, not reliably `~/.azure` on a runner) and offers nothing to checksum. The pinned version decides which resource types and apiVersions are known, so bumping it can surface newly deprecated apiVersions in snippets that used to pass.
+
 The job takes several minutes: the Bicep CLI reloads the ARM type index on every invocation, so ~330 snippets cost roughly a second and a half each.
 
 cookstyle is Chef's RuboCop distribution, so `validate_chef_remediation.py` catches Ruby syntax errors *and* Chef-specific problems: `Chef/Modernize/ExecuteSysctl` pushes sysctl settings onto the `sysctl` resource instead of a template plus `execute`, `Chef/Style/FileMode` rejects integer file modes, and `Chef/Style/UsePlatformHelpers` requires `platform_family?` over raw node attribute comparisons. Snippets are linted inside a temporary `recipes/` directory with `--force-default-config`, which is what makes cookstyle apply the recipe-scoped cops.

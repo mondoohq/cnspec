@@ -54,6 +54,11 @@ INFORMATIONAL = {
     "no-hardcoded-env-urls",
 }
 
+# Collected failures, for the GitHub annotations emitted at the end of a run.
+# Appended to only by validate_policy_file, on the main thread, after its worker
+# pool has been drained — validate_block returns its findings rather than
+# writing here. Keep it that way: this list is not synchronized, so appending
+# from inside the pool would race.
 FAILURES: list[dict] = []
 
 DIAGNOSTIC = re.compile(
@@ -72,7 +77,10 @@ class BicepBlock:
 
 @dataclass
 class LintResult:
-    issues: list[str] = field(default_factory=list)
+    # (line, message) — line is the diagnostic's position in the policy file,
+    # already offset from the block's start, so annotations point at the snippet
+    # rather than at the temp file the linter saw.
+    issues: list[tuple[int, str]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
 
