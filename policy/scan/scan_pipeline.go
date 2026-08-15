@@ -18,6 +18,7 @@ import (
 	"go.mondoo.com/cnspec/v13"
 	"go.mondoo.com/cnspec/v13/cli/progress"
 	"go.mondoo.com/cnspec/v13/policy"
+	"go.mondoo.com/cnspec/v13/policy/scanstats"
 	"go.mondoo.com/mql/v13/cli/config"
 	"go.mondoo.com/mql/v13/discovery"
 	"go.mondoo.com/mql/v13/llx"
@@ -149,6 +150,7 @@ type scanDispatcher struct {
 	services      *policy.Services
 	spaceMrn      string
 	scannedAssets *atomic.Int64
+	memTracker    *scanstats.MemTracker
 }
 
 func newScanDispatcher(
@@ -163,6 +165,7 @@ func newScanDispatcher(
 	services *policy.Services,
 	spaceMrn string,
 	scannedAssets *atomic.Int64,
+	memTracker *scanstats.MemTracker,
 ) *scanDispatcher {
 	return &scanDispatcher{
 		scanSem:       make(chan struct{}, parallelism),
@@ -176,6 +179,7 @@ func newScanDispatcher(
 		services:      services,
 		spaceMrn:      spaceMrn,
 		scannedAssets: scannedAssets,
+		memTracker:    memTracker,
 	}
 }
 
@@ -323,23 +327,32 @@ func (d *scanDispatcher) scanSingleAsset(ctx context.Context, tracked *discovery
 
 // logMemoryStats emits memory diagnostics after an asset scan completes.
 // Only called when DEBUG_PROVIDER_MEMORY is set.
+//
+// Reads the run's MemTracker rather than sampling independently, so the
+// logged numbers and the numbers reported upstream cannot disagree.
 func (d *scanDispatcher) logMemoryStats(asset *inventory.Asset) {
-	var m goruntime.MemStats
-	goruntime.ReadMemStats(&m)
+	peakBytes, peakGoroutines, inFlightAtPeak := d.memTracker.Peaks()
+	snap := d.memTracker.Snapshot()
 
 	ev := log.Info().
 		Str("asset", asset.Name).
 		Int64("scanned_assets", d.scannedAssets.Load()).
 		Int("goroutines", goruntime.NumGoroutine()).
-		Uint64("heap_alloc_mb", m.Alloc/1024/1024).
-		Uint64("heap_sys_mb", m.HeapSys/1024/1024).
-		Uint64("total_alloc_mb", m.TotalAlloc/1024/1024)
+		Uint64("runtime_peak_mb", peakBytes/1024/1024).
+		Int("goroutines_peak", peakGoroutines).
+		Int("in_flight_at_peak", inFlightAtPeak)
 
-	if cgroup, err := os.ReadFile("/sys/fs/cgroup/memory.current"); err == nil {
-		ev = ev.Str("cgroup_bytes", strings.TrimSpace(string(cgroup)))
+	// Current footprint and cgroup readings, best-effort: absent rather
+	// than zero when they could not be measured, matching the upstream
+	// metrics this diagnostic is read alongside.
+	if snap.HasRuntime {
+		ev = ev.Uint64("runtime_mb", snap.RuntimeBytes/1024/1024)
 	}
-	if cgroupMax, err := os.ReadFile("/sys/fs/cgroup/memory.max"); err == nil {
-		ev = ev.Str("cgroup_max", strings.TrimSpace(string(cgroupMax)))
+	if snap.HasCgroupCurrent {
+		ev = ev.Uint64("cgroup_current_mb", snap.CgroupCurrent/1024/1024)
+	}
+	if snap.HasCgroupMax {
+		ev = ev.Uint64("cgroup_max_mb", snap.CgroupMax/1024/1024)
 	}
 
 	ev.Msg("memory after asset scan")
@@ -405,4 +418,12 @@ func (d *scanDispatcher) reportPanic(tracked *discovery.TrackedAsset) {
 		sendErrorToMondooPlatform(serviceAccount, event)
 		log.Info().Msg("reported panic to Mondoo Platform")
 	})
+}
+
+// inFlight reports how many assets are currently scanning. scanSem is a
+// buffered channel used as a semaphore, so its length is the number of
+// held slots. Read by the memory sampler to record the concurrency a peak
+// occurred at — a peak without its denominator cannot be compared.
+func (d *scanDispatcher) inFlight() int {
+	return len(d.scanSem)
 }

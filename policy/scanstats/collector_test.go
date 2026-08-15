@@ -60,3 +60,34 @@ func TestCollector_NilReceiverDoesNotPanic(t *testing.T) {
 	})
 	require.Nil(t, c.ToProto())
 }
+
+func TestCollector_AddString(t *testing.T) {
+	c := New()
+	c.AddString(MetricRunID, "1e8f7a0c-0000-4000-8000-000000000000")
+
+	stats := c.ToProto()
+	require.Len(t, stats.Metrics, 1)
+	require.Equal(t, MetricRunID, stats.Metrics[0].Name)
+	require.Equal(t, "1e8f7a0c-0000-4000-8000-000000000000", stats.Metrics[0].GetStringValue())
+}
+
+func TestCollector_AddStringNilReceiverIsSafe(t *testing.T) {
+	var c *Collector
+	require.NotPanics(t, func() { c.AddString(MetricRunID, "x") })
+	require.Nil(t, c.ToProto())
+}
+
+func TestMemMetricNamesMatchWireContract(t *testing.T) {
+	// These names are a wire contract (ADR-0004). They may be added to, but
+	// never renamed or repurposed — downstream queries key on them.
+	require.Equal(t, "cnspec.scan.run_id", MetricRunID)
+	require.Equal(t, "cnspec.scan.mem.runtime_peak_bytes", MetricMemRuntimePeak)
+	require.Equal(t, "cnspec.scan.mem.runtime_at_finish_bytes", MetricMemRuntimeAtFinish)
+	require.Equal(t, "cnspec.scan.mem.goroutines_peak", MetricMemGoroutinesPeak)
+	require.Equal(t, "cnspec.scan.mem.cgroup_current_bytes", MetricMemCgroupCurrent)
+	require.Equal(t, "cnspec.scan.mem.cgroup_peak_bytes", MetricMemCgroupPeak)
+	require.Equal(t, "cnspec.scan.mem.cgroup_max_bytes", MetricMemCgroupMax)
+	require.Equal(t, "cnspec.scan.concurrency.in_flight_at_peak", MetricConcurrencyInFlightAtPeak)
+	require.Equal(t, "cnspec.scan.concurrency.parallelism", MetricConcurrencyParallelism)
+	require.Equal(t, "cnspec.scan.concurrency.max_connections", MetricConcurrencyMaxConnections)
+}

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/errors"
+	"github.com/google/uuid"
 	"github.com/mattn/go-isatty"
 	"github.com/rs/zerolog/log"
 	"github.com/segmentio/ksuid"
@@ -25,6 +26,7 @@ import (
 	"go.mondoo.com/cnspec/v13/internal/scandump"
 	"go.mondoo.com/cnspec/v13/policy"
 	"go.mondoo.com/cnspec/v13/policy/executor"
+	"go.mondoo.com/cnspec/v13/policy/scanstats"
 	"go.mondoo.com/mql/v13"
 	"go.mondoo.com/mql/v13/cli/config"
 	"go.mondoo.com/mql/v13/cli/execruntime"
@@ -50,6 +52,11 @@ import (
 const (
 	defaultRefreshInterval = 3600
 )
+
+// memSampleInterval is how often the scan's memory footprint is sampled.
+// runtime/metrics reads are sub-microsecond and do not stop the world, so
+// one second costs nothing against scans that run for minutes.
+const memSampleInterval = time.Second
 
 type LocalScanner struct {
 	queue           *diskQueueClient
@@ -497,10 +504,36 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 	connSem := make(chan struct{}, maxConn)
 	var scannedAssets atomic.Int64
 
+	// Memory is process-wide while scanstats Collectors are per-asset, so the
+	// tracker is created once per run and shared by every asset. run_id lets
+	// the resulting per-asset records be grouped back into one process.
+	//
+	// uuid.NewRandom (unlike uuid.New) can fail rather than panic if the
+	// entropy source is unavailable; telemetry must never fail a scan, so a
+	// failure here just leaves RunID empty, which Record already omits.
+	runID := ""
+	if u, err := uuid.NewRandom(); err == nil {
+		runID = u.String()
+	}
+	memTracker := scanstats.NewMemTracker(scanstats.MemTrackerConfig{
+		RunID:          runID,
+		Parallelism:    parallelism,
+		MaxConnections: maxConn,
+	})
+	ctx = scanstats.ContextWithMemTracker(ctx, memTracker)
+
 	dispatcher := newScanDispatcher(
 		parallelism, connSem, s, explorer, job, upstream,
 		reporter, multiprogress, services, spaceMrn, &scannedAssets,
+		memTracker,
 	)
+	// Registered before Start so the sampler's immediate first sample —
+	// which can end up being the run's peak — already has an accessor to
+	// call, instead of recording an in-flight count of zero that would be
+	// indistinguishable from a legitimate zero.
+	memTracker.SetInFlightFunc(dispatcher.inFlight)
+	memTracker.Start(memSampleInterval)
+	defer memTracker.Stop()
 	batcher := newSyncBatcher(dispatcher, services, spaceMrn, s.recording, multiprogress)
 
 	scanCtx := &scanContext{

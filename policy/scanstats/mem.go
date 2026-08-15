@@ -1,0 +1,362 @@
+// Copyright Mondoo, Inc. 2024, 2026
+// SPDX-License-Identifier: BUSL-1.1
+
+package scanstats
+
+import (
+	"math"
+	"os"
+	"path/filepath"
+	"runtime"
+	"runtime/metrics"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+)
+
+// Sample is one observation of this process's memory state.
+type Sample struct {
+	// RuntimeBytes is the Go runtime's memory footprint — the quantity the
+	// runtime accounts against GOMEMLIMIT, and the one the OOM killer acts
+	// on. Deliberately not MemStats.Alloc, which counts only live heap
+	// objects and so understates the real footprint.
+	RuntimeBytes uint64
+	Goroutines   int
+}
+
+// SampleFunc returns a current Sample. Injected so the high-water logic is
+// testable without a live runtime.
+type SampleFunc func() Sample
+
+// MemTrackerConfig configures a MemTracker. A zero Sample or CgroupRoot
+// falls back to the real process defaults.
+type MemTrackerConfig struct {
+	RunID          string
+	Parallelism    int
+	MaxConnections int
+	Sample         SampleFunc
+	CgroupRoot     string
+}
+
+// MemTracker holds memory high-water marks for one scan run. A tracker is
+// created per scan run (per distributeJob call), not per process: for the
+// CLI these coincide, but a long-lived serve/queue process handling multiple
+// jobs gets a fresh tracker per job. Memory is process-wide while scanstats
+// Collectors are per-asset, so a single tracker is shared across every asset
+// scanned by its run; RunID is what lets the resulting per-asset records be
+// grouped back into the run they came from.
+//
+// Every exported method is safe on a nil receiver: telemetry must never
+// panic a scan.
+type MemTracker struct {
+	mu             sync.Mutex
+	peakRuntime    uint64
+	peakGoroutines int
+	// inFlightAtPeak is sampled when the peak is set, not when the scan
+	// ends. A peak without the concurrency it occurred at cannot be
+	// compared against any other peak.
+	inFlightAtPeak int
+	lastRuntime    uint64
+	// hasSample is true once at least one observation has measured a
+	// non-zero runtime footprint. Guards the runtime-derived metrics in
+	// Record: a tracker that never resolved a real sample must omit them
+	// rather than report zero, which would be indistinguishable downstream
+	// from a real measurement.
+	hasSample bool
+
+	inFlight func() int
+
+	cfg MemTrackerConfig
+
+	stopOnce sync.Once
+	stop     chan struct{}
+	// wg tracks the sampling goroutine so Stop can wait for it to exit.
+	// Without it Stop returns while a tick may still be in flight, which
+	// matters for a long-lived process (cnspec serve) that creates one
+	// tracker per job: samplers from consecutive jobs could otherwise overlap.
+	wg sync.WaitGroup
+}
+
+// NewMemTracker returns a tracker. Sampling does not start until Start.
+func NewMemTracker(cfg MemTrackerConfig) *MemTracker {
+	if cfg.Sample == nil {
+		cfg.Sample = defaultSample
+	}
+	if cfg.CgroupRoot == "" {
+		cfg.CgroupRoot = defaultCgroupRoot
+	}
+	return &MemTracker{cfg: cfg, stop: make(chan struct{})}
+}
+
+// SetInFlightFunc registers an accessor for the number of assets currently
+// scanning. Registered after construction because the scan dispatcher that
+// owns the semaphore is built after the tracker.
+//
+// f is invoked while the tracker's mutex is held, so it must not block, do
+// I/O, or call back into the tracker: the mutex is not reentrant, so a
+// callback into Peaks or Snapshot would self-deadlock.
+func (t *MemTracker) SetInFlightFunc(f func() int) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	t.inFlight = f
+	t.mu.Unlock()
+}
+
+// Observe takes one sample and folds it into the high-water marks.
+func (t *MemTracker) Observe() {
+	if t == nil {
+		return
+	}
+	s := t.cfg.Sample()
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.lastRuntime = s.RuntimeBytes
+	if s.RuntimeBytes > 0 {
+		t.hasSample = true
+	}
+	if s.RuntimeBytes > t.peakRuntime {
+		t.peakRuntime = s.RuntimeBytes
+		if t.inFlight != nil {
+			t.inFlightAtPeak = t.inFlight()
+		}
+	}
+	if s.Goroutines > t.peakGoroutines {
+		t.peakGoroutines = s.Goroutines
+	}
+}
+
+// Peaks returns the current high-water marks: runtime footprint bytes,
+// goroutine count, and the in-flight asset count at the moment the footprint
+// peak was set. Safe on a nil tracker, which reports zeroes.
+func (t *MemTracker) Peaks() (runtimeBytes uint64, goroutines int, inFlightAtPeak int) {
+	if t == nil {
+		return 0, 0, 0
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.peakRuntime, t.peakGoroutines, t.inFlightAtPeak
+}
+
+// MemSnapshot is a point-in-time view for diagnostics: the latest observed
+// runtime footprint plus best-effort cgroup readings. Presence flags follow
+// the same absent-never-zero rule as the recorded metrics.
+type MemSnapshot struct {
+	RuntimeBytes     uint64
+	HasRuntime       bool
+	CgroupCurrent    uint64
+	HasCgroupCurrent bool
+	CgroupMax        uint64
+	HasCgroupMax     bool
+}
+
+// Snapshot returns the current diagnostic view. Safe on a nil tracker, which
+// reports everything absent.
+func (t *MemTracker) Snapshot() MemSnapshot {
+	if t == nil {
+		return MemSnapshot{}
+	}
+
+	t.mu.Lock()
+	last, hasSample := t.lastRuntime, t.hasSample
+	t.mu.Unlock()
+
+	// File I/O outside the lock: reading cgroup files under the tracker
+	// mutex would block the sampler goroutine.
+	cg := readCgroup(t.cfg.CgroupRoot)
+
+	return MemSnapshot{
+		RuntimeBytes:     last,
+		HasRuntime:       hasSample,
+		CgroupCurrent:    cg.current,
+		HasCgroupCurrent: cg.hasCurrent,
+		CgroupMax:        cg.max,
+		HasCgroupMax:     cg.hasMax,
+	}
+}
+
+// defaultCgroupRoot is the cgroup v2 unified hierarchy mount point.
+const defaultCgroupRoot = "/sys/fs/cgroup"
+
+// cgroupStats holds cgroup v2 memory readings. Each value carries a
+// presence flag: a value that could not be read is absent, never zero.
+// Reporting zero would be indistinguishable from a real measurement and
+// would corrupt any aggregate computed across a mixed fleet.
+type cgroupStats struct {
+	current, peak, max          uint64
+	hasCurrent, hasPeak, hasMax bool
+}
+
+// readCgroup reads cgroup v2 memory values from root, best-effort. Every
+// file is optional: non-Linux hosts have no cgroup at all, cgroup v1 has a
+// different layout, and memory.peak requires Linux 5.19 or later.
+func readCgroup(root string) cgroupStats {
+	var cg cgroupStats
+	cg.current, cg.hasCurrent = readCgroupValue(root, "memory.current")
+	cg.peak, cg.hasPeak = readCgroupValue(root, "memory.peak")
+	cg.max, cg.hasMax = readCgroupValue(root, "memory.max")
+	return cg
+}
+
+// readCgroupValue reads a single unsigned integer from a cgroup file. The
+// literal "max" means no limit and is reported as absent rather than as a
+// sentinel number.
+func readCgroupValue(root, name string) (uint64, bool) {
+	raw, err := os.ReadFile(filepath.Join(root, name))
+	if err != nil {
+		return 0, false
+	}
+	s := strings.TrimSpace(string(raw))
+	if s == "" || s == "max" {
+		return 0, false
+	}
+	v, err := strconv.ParseUint(s, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return v, true
+}
+
+// runtimeFootprintMetrics are the runtime/metrics names whose difference is
+// the Go runtime's memory footprint — the same quantity the runtime accounts
+// against GOMEMLIMIT.
+const (
+	metricTotalBytes        = "/memory/classes/total:bytes"
+	metricHeapReleasedBytes = "/memory/classes/heap/released:bytes"
+)
+
+// defaultSample reads the live process memory state.
+//
+// It uses runtime/metrics rather than runtime.ReadMemStats for two reasons:
+// ReadMemStats stops the world, which would perturb the very scan being
+// measured; and MemStats.Alloc counts only live heap objects, excluding
+// stacks and memory the runtime has retained but not returned to the OS, so
+// it systematically understates what the OOM killer acts on.
+func defaultSample() Sample {
+	// A fresh slice per call: metrics.Read writes into it, so a shared one
+	// would need its own lock and this is called once a second.
+	s := []metrics.Sample{
+		{Name: metricTotalBytes},
+		{Name: metricHeapReleasedBytes},
+	}
+	metrics.Read(s)
+
+	var total, released uint64
+	if s[0].Value.Kind() == metrics.KindUint64 {
+		total = s[0].Value.Uint64()
+	}
+	if s[1].Value.Kind() == metrics.KindUint64 {
+		released = s[1].Value.Uint64()
+	}
+
+	var footprint uint64
+	if total > released {
+		footprint = total - released
+	}
+
+	return Sample{
+		RuntimeBytes: footprint,
+		Goroutines:   runtime.NumGoroutine(),
+	}
+}
+
+// Start begins sampling every interval until Stop. It takes one sample
+// immediately so a scan shorter than a single tick still reports a value.
+func (t *MemTracker) Start(interval time.Duration) {
+	if t == nil {
+		return
+	}
+	t.Observe()
+
+	t.wg.Add(1)
+	go func() {
+		defer t.wg.Done()
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-t.stop:
+				return
+			case <-ticker.C:
+				t.Observe()
+			}
+		}
+	}()
+}
+
+// Stop ends sampling and waits for the sampling goroutine to exit, so that
+// once it returns no further observations can occur. Safe to call more than
+// once, and on a nil tracker.
+func (t *MemTracker) Stop() {
+	if t == nil {
+		return
+	}
+	t.stopOnce.Do(func() { close(t.stop) })
+	t.wg.Wait()
+}
+
+// addBytes records a byte-count metric, omitting it when the value cannot be
+// represented as an int64. A uint64 at or above 1<<63 would wrap negative in
+// the cast, and a negative byte count downstream is worse than an absent one —
+// the same rule the cgroup presence flags follow. Clamping was considered and
+// rejected: a fabricated ceiling reads as a real measurement.
+func addBytes(c *Collector, name string, v uint64) {
+	if v > math.MaxInt64 {
+		return
+	}
+	c.AddInt(name, "bytes", int64(v))
+}
+
+// Record writes the tracker's state into c. Called once per asset, so every
+// asset's upload carries the process state as of that asset's completion.
+//
+// Values that could not be measured are omitted rather than recorded as
+// zero: a zero cannot be told apart from a real measurement downstream.
+func (t *MemTracker) Record(c *Collector) {
+	if t == nil || c == nil {
+		return
+	}
+
+	// Refresh before reading: without this, a sample can be up to a full
+	// tick stale, and every asset that finishes inside one sampling window
+	// would report an identical "at finish" value. Observe takes the lock
+	// itself, so this must happen before the mutex block below.
+	t.Observe()
+
+	t.mu.Lock()
+	peak, last, hasSample := t.peakRuntime, t.lastRuntime, t.hasSample
+	goroutines, inFlight := t.peakGoroutines, t.inFlightAtPeak
+	t.mu.Unlock()
+
+	if t.cfg.RunID != "" {
+		c.AddString(MetricRunID, t.cfg.RunID)
+	}
+
+	// Absent, not zero: a tracker that never resolved a real runtime sample
+	// must omit these rather than report zero, which would be
+	// indistinguishable downstream from a real measurement.
+	if hasSample {
+		addBytes(c, MetricMemRuntimePeak, peak)
+		addBytes(c, MetricMemRuntimeAtFinish, last)
+		c.AddInt(MetricMemGoroutinesPeak, "count", int64(goroutines))
+	}
+
+	c.AddInt(MetricConcurrencyInFlightAtPeak, "count", int64(inFlight))
+	c.AddInt(MetricConcurrencyParallelism, "count", int64(t.cfg.Parallelism))
+	c.AddInt(MetricConcurrencyMaxConnections, "count", int64(t.cfg.MaxConnections))
+
+	cg := readCgroup(t.cfg.CgroupRoot)
+	if cg.hasCurrent {
+		addBytes(c, MetricMemCgroupCurrent, cg.current)
+	}
+	if cg.hasPeak {
+		addBytes(c, MetricMemCgroupPeak, cg.peak)
+	}
+	if cg.hasMax {
+		addBytes(c, MetricMemCgroupMax, cg.max)
+	}
+}

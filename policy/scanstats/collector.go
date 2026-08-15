@@ -30,6 +30,24 @@ const (
 	MetricFrameworks         = "cnspec.scan.frameworks"           // unit: count
 	MetricChecksErrored      = "cnspec.scan.checks_errored"       // unit: count
 	MetricDataQueriesErrored = "cnspec.scan.data_queries_errored" // unit: count
+
+	// MetricRunID identifies the scan process a record came from. The memory
+	// metrics below are process-wide but emitted once per asset, so a run
+	// scanning N assets produces N records carrying one process's rising
+	// high-water mark. Without this, those records cannot be grouped and the
+	// only correct aggregation (max per run) is inexpressible.
+	MetricRunID = "cnspec.scan.run_id"
+
+	MetricMemRuntimePeak     = "cnspec.scan.mem.runtime_peak_bytes"      // unit: bytes
+	MetricMemRuntimeAtFinish = "cnspec.scan.mem.runtime_at_finish_bytes" // unit: bytes
+	MetricMemGoroutinesPeak  = "cnspec.scan.mem.goroutines_peak"         // unit: count
+	MetricMemCgroupCurrent   = "cnspec.scan.mem.cgroup_current_bytes"    // unit: bytes
+	MetricMemCgroupPeak      = "cnspec.scan.mem.cgroup_peak_bytes"       // unit: bytes
+	MetricMemCgroupMax       = "cnspec.scan.mem.cgroup_max_bytes"        // unit: bytes
+
+	MetricConcurrencyInFlightAtPeak = "cnspec.scan.concurrency.in_flight_at_peak" // unit: count
+	MetricConcurrencyParallelism    = "cnspec.scan.concurrency.parallelism"       // unit: count
+	MetricConcurrencyMaxConnections = "cnspec.scan.concurrency.max_connections"   // unit: count
 )
 
 // Collector accumulates scan metrics. It is safe for concurrent use.
@@ -71,6 +89,11 @@ func (c *Collector) AddDouble(name, unit string, v float64) {
 // AddBool records a boolean flag metric.
 func (c *Collector) AddBool(name string, v bool) {
 	c.add(&policy.Metric{Name: name, Value: &policy.Metric_BoolValue{BoolValue: v}})
+}
+
+// AddString records a string metric (identifiers, labels). No unit applies.
+func (c *Collector) AddString(name, v string) {
+	c.add(&policy.Metric{Name: name, Value: &policy.Metric_StringValue{StringValue: v}})
 }
 
 // ToProto returns the collected metrics as a ScanStatistics, or nil when the
