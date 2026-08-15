@@ -191,12 +191,12 @@ func (t *ResourceTracker) Snapshot() ResourceSnapshot {
 // cpuUsage is the run's CPU consumption: the difference between the latest
 // observation and the baseline taken at the run's first observation.
 type cpuUsage struct {
-	busy      float64
-	available float64
-	user      float64
-	gc        float64
-	scavenge  float64
-	gomaxprcs int
+	busy       float64
+	available  float64
+	user       float64
+	gc         float64
+	scavenge   float64
+	gomaxprocs int
 }
 
 // cpuUsageLocked computes the run's CPU deltas. Callers must hold t.mu.
@@ -217,12 +217,12 @@ func (t *ResourceTracker) cpuUsageLocked() (cpuUsage, bool) {
 	}
 
 	return cpuUsage{
-		busy:      delta(t.lastCPU.Busy(), t.cpuBaseline.Busy()),
-		available: delta(t.lastCPU.TotalSeconds, t.cpuBaseline.TotalSeconds),
-		user:      delta(t.lastCPU.UserSeconds, t.cpuBaseline.UserSeconds),
-		gc:        delta(t.lastCPU.GCSeconds, t.cpuBaseline.GCSeconds),
-		scavenge:  delta(t.lastCPU.ScavengeSeconds, t.cpuBaseline.ScavengeSeconds),
-		gomaxprcs: t.lastCPU.GOMAXPROCS,
+		busy:       delta(t.lastCPU.Busy(), t.cpuBaseline.Busy()),
+		available:  delta(t.lastCPU.TotalSeconds, t.cpuBaseline.TotalSeconds),
+		user:       delta(t.lastCPU.UserSeconds, t.cpuBaseline.UserSeconds),
+		gc:         delta(t.lastCPU.GCSeconds, t.cpuBaseline.GCSeconds),
+		scavenge:   delta(t.lastCPU.ScavengeSeconds, t.cpuBaseline.ScavengeSeconds),
+		gomaxprocs: t.lastCPU.GOMAXPROCS,
 	}, true
 }
 
@@ -326,8 +326,8 @@ func (t *ResourceTracker) Record(c *Collector) {
 		if cpu.available > 0 {
 			c.AddDouble(MetricCPUUtilization, "", cpu.busy/cpu.available)
 		}
-		if cpu.gomaxprcs > 0 {
-			c.AddInt(MetricCPUGOMAXPROCS, "count", int64(cpu.gomaxprcs))
+		if cpu.gomaxprocs > 0 {
+			c.AddInt(MetricCPUGOMAXPROCS, "count", int64(cpu.gomaxprocs))
 		}
 	}
 
