@@ -43,6 +43,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -217,7 +218,11 @@ def sanitize(code: str) -> str:
 # what its valid parameters are, and which parameters the snippet used.
 ANALYZE_PS = r"""
 $ErrorActionPreference = 'Stop'
-$items = [Console]::In.ReadToEnd() | ConvertFrom-Json
+# The payload arrives as a file path rather than on stdin. Reading stdin from a
+# -Command script is version-dependent — on the 7.6 runner it came back empty
+# while it worked locally, and pwsh still exited 0, so the failure surfaced as
+# an unexplained JSON decode error rather than as anything diagnosable.
+$items = Get-Content -Raw -LiteralPath $args[0] | ConvertFrom-Json
 $verbs = (Get-Verb).Verb
 $out = New-Object System.Collections.ArrayList
 foreach ($it in $items) {
@@ -279,14 +284,26 @@ $out | ConvertTo-Json -Depth 8 -Compress
 def analyze(snippets: list[Snippet]) -> list[dict]:
     payload = json.dumps([{"i": i, "code": sanitize(s.code)}
                           for i, s in enumerate(snippets)])
-    result = subprocess.run(
-        ["pwsh", "-NoProfile", "-NonInteractive", "-Command", ANALYZE_PS],
-        input=payload, capture_output=True, text=True, timeout=900,
-    )
-    if result.returncode != 0:
-        print(f"Error running pwsh:\n{result.stderr[:2000]}", file=sys.stderr)
+    with tempfile.TemporaryDirectory(prefix="psvalidate_") as tmp:
+        payload_path = Path(tmp) / "snippets.json"
+        payload_path.write_text(payload)
+        script_path = Path(tmp) / "analyze.ps1"
+        script_path.write_text(ANALYZE_PS)
+        result = subprocess.run(
+            ["pwsh", "-NoProfile", "-NonInteractive", "-File",
+             str(script_path), str(payload_path)],
+            capture_output=True, text=True, timeout=900,
+        )
+    if result.returncode != 0 or not result.stdout.strip():
+        print(
+            "Error: the PowerShell analysis step produced no usable output "
+            f"(exit {result.returncode}).\n"
+            f"stderr:\n{result.stderr[:2000]}\n"
+            f"stdout:\n{result.stdout[:500]}",
+            file=sys.stderr,
+        )
         sys.exit(1)
-    data = json.loads(result.stdout or "[]")
+    data = json.loads(result.stdout)
     return data if isinstance(data, list) else [data]
 
 
