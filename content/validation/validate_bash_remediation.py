@@ -53,6 +53,25 @@ TARGETS = {
 }
 
 
+def files_for_target(target: str) -> list[Path]:
+    """Policy files for a target name. `all` means every policy in content/, not
+    the union of the named groups — see the comment on TARGETS.
+
+    The unknown-target guard lives here rather than only in main(), so the
+    lookup and the error that explains it cannot drift apart.
+    """
+    if target == "all":
+        return all_policy_files()
+    if target not in TARGETS:
+        print(
+            f"Unknown target: {target}\n"
+            f"Valid targets: all, {', '.join(TARGETS)}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    return TARGETS[target]
+
+
 def all_policy_files() -> list[Path]:
     """Every policy bundle in content/ — what `all` (and therefore CI) covers."""
     return sorted(CONTENT_DIR.glob("*.mql.yaml"))
@@ -416,9 +435,7 @@ def main():
     total_pass = 0
     total_fail = 0
 
-    # `all` means every policy in content/, not the union of the named groups —
-    # see the comment on TARGETS.
-    files = all_policy_files() if target == "all" else TARGETS[target]
+    files = files_for_target(target)
 
     for filepath in files:
         p, f = validate_policy_file(filepath, workers)
