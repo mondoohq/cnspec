@@ -26,25 +26,70 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).parent
 
+CONTENT_DIR = SCRIPT_DIR / ".."
+
+# Unlike the other validators, this one has no policy allowlist. A `TARGETS`
+# list is a standing invitation to the failure it is supposed to prevent: a
+# policy gains its first shell snippet, nobody adds it to the list, and the
+# snippet ships unlinted with CI green. shellcheck needs no per-policy setup —
+# it lints a shell script, and every policy's shell snippets are shell scripts —
+# so the default target is simply every policy in content/.
+#
+# The named groups below stay as a convenience for running one area locally
+# (`validate_bash_remediation.py linux`), not as a definition of what CI covers.
 TARGETS = {
     "linux": [
-        SCRIPT_DIR / ".." / "mondoo-linux-security.mql.yaml",
-        SCRIPT_DIR / ".." / "mondoo-linux-operational-policy.mql.yaml",
-        SCRIPT_DIR / ".." / "mondoo-linux-snmp-policy.mql.yaml",
-        SCRIPT_DIR / ".." / "mondoo-linux-workstation-security.mql.yaml",
+        CONTENT_DIR / "mondoo-linux-security.mql.yaml",
+        CONTENT_DIR / "mondoo-linux-operational-policy.mql.yaml",
+        CONTENT_DIR / "mondoo-linux-snmp-policy.mql.yaml",
+        CONTENT_DIR / "mondoo-linux-workstation-security.mql.yaml",
     ],
-    "kubernetes": [SCRIPT_DIR / ".." / "mondoo-kubernetes-security.mql.yaml"],
-    "edr": [SCRIPT_DIR / ".." / "mondoo-edr-policy.mql.yaml"],
-    "freebsd": [SCRIPT_DIR / ".." / "mondoo-freebsd-security.mql.yaml"],
-    "mariadb": [SCRIPT_DIR / ".." / "mondoo-mariadb-security.mql.yaml"],
-    "mysql": [SCRIPT_DIR / ".." / "mondoo-mysql-security.mql.yaml"],
-    "proxmox": [SCRIPT_DIR / ".." / "mondoo-proxmox-security.mql.yaml"],
+    "kubernetes": [CONTENT_DIR / "mondoo-kubernetes-security.mql.yaml"],
+    "edr": [CONTENT_DIR / "mondoo-edr-policy.mql.yaml"],
+    "freebsd": [CONTENT_DIR / "mondoo-freebsd-security.mql.yaml"],
+    "mariadb": [CONTENT_DIR / "mondoo-mariadb-security.mql.yaml"],
+    "mysql": [CONTENT_DIR / "mondoo-mysql-security.mql.yaml"],
+    "proxmox": [CONTENT_DIR / "mondoo-proxmox-security.mql.yaml"],
 }
 
-# shellcheck codes to exclude:
+
+def all_policy_files() -> list[Path]:
+    """Every policy bundle in content/ — what `all` (and therefore CI) covers."""
+    return sorted(CONTENT_DIR.glob("*.mql.yaml"))
+
+
+# shellcheck codes to exclude.
+#
+# The first group is about these snippets being *examples*, not programs:
 # SC2016 - expressions don't expand in single quotes (intentional for config file content)
 # SC2312 - consider invoking separately to avoid masking return values (noisy for examples)
-EXCLUDE_CODES = ["SC2016", "SC2312"]
+# SC2009 - "use pgrep instead of ps | grep" (style; the ps form is what the vendor docs show)
+# SC2013 - "read lines with a while loop instead of for" (style, and the loop bodies here are one-liners)
+#
+# The second group is shellcheck reading vendor CLI syntax as shell syntax:
+# SC1083 - literal { }. AWS CLI shorthand (`EncryptionAtRest={DataVolumeKMSKeyId=...}`)
+#          and doc placeholders (`/subscriptions/{subscriptionId}`) contain braces
+#          that are meant literally; without a comma the shell leaves them alone.
+# SC2102 - "ranges can only match single chars". gcloud's own docs write placeholders
+#          as `[key_ring_name]`, which shellcheck reads as a glob character range.
+# SC2046 - quote `$(...)` to prevent word splitting. `az resource update --ids
+#          $(az ... -o tsv)` is the documented idiom and deliberately splits when the
+#          inner query returns more than one id.
+# SC2162 - `read` without -r. The snippets that use it read vendor identifiers,
+#          which never contain backslashes.
+#
+# Deliberately NOT excluded: SC2086 (unquoted variable) and SC2140 (`"a"b"c"`),
+# which flag real quoting mistakes. Both were fixed in the content instead.
+EXCLUDE_CODES = [
+    "SC2016",
+    "SC2312",
+    "SC2009",
+    "SC2013",
+    "SC1083",
+    "SC2102",
+    "SC2046",
+    "SC2162",
+]
 
 FAILURES: list[dict] = []
 
@@ -71,19 +116,27 @@ class ShellcheckResult:
 # Extraction
 # ---------------------------------------------------------------------------
 
-# Remediation ids that hold a shell script. `bash`, `script` and `sh` are the
-# same method under three names; all three are linted, and the fence language
-# decides the dialect so a `script` entry holding PowerShell (the Windows
-# convention in content/CLAUDE.md) is skipped rather than linted as shell.
-SHELL_REMEDIATION_IDS = ("bash", "script", "sh")
+# The fence language decides what gets linted, not the remediation method id.
+#
+# This used to read `- id: bash|script|sh` only, which left the ~690 ```bash
+# fences under `- id: cli` unlinted in every policy without a CLI grammar
+# validator (linux, freebsd, proxmox, macos, the database policies). A shell
+# snippet is a shell snippet whichever method documents it, and for the cloud
+# policies this is complementary rather than redundant: the grammar validators
+# check that `aws ...` is a real command, shellcheck checks that the shell around
+# it is correct — quoting, loops, redirection.
+#
+# Reading the fence rather than the id is also what keeps a `script` entry
+# holding PowerShell (the Windows convention in content/CLAUDE.md) out of
+# shellcheck: it is fenced ```powershell, so it is simply not matched.
 SHELL_FENCE_LANGUAGES = ("bash", "sh")
 
 
 def extract_bash_blocks(content: str, filepath: Path) -> list[BashBlock]:
-    """Extract shell code blocks from shell remediation sections.
+    """Extract shell code blocks from every remediation method.
 
-    Reads `- id: bash`, `- id: script` and `- id: sh`, never `- id: cli`
-    (which validate_remediation_commands.py owns).
+    Any `- id:` entry may hold a shell snippet; the fence language decides
+    whether it is one (see SHELL_FENCE_LANGUAGES).
     """
     lines = content.split("\n")
     uid_positions: list[tuple[int, str]] = []
@@ -101,9 +154,8 @@ def extract_bash_blocks(content: str, filepath: Path) -> list[BashBlock]:
                 break
         return result
 
-    id_alt = "|".join(SHELL_REMEDIATION_IDS)
     pattern = re.compile(
-        rf"- id: (?:{id_alt})\s*\n\s+desc: \|-?\s*\n"
+        r"- id: \S+\s*\n\s+desc: \|-?\s*\n"
         r"(.*?)(?=\n\s+- id: |\n\s+refs:|\n  - uid: |\Z)",
         re.DOTALL,
     )
@@ -133,9 +185,23 @@ def extract_bash_blocks(content: str, filepath: Path) -> list[BashBlock]:
 def sanitize_snippet(code: str) -> str:
     """Clean up bash snippet for shellcheck."""
     code = textwrap.dedent(code)
-    # Replace <placeholder> tokens with valid shell strings
-    code = re.sub(r'"<[a-zA-Z][a-zA-Z0-9_-]*>"', '"placeholder"', code)
-    code = re.sub(r"<[a-zA-Z][a-zA-Z0-9_-]*>", "placeholder", code)
+    # Replace <placeholder> tokens with valid shell strings.
+    #
+    # The character class has to admit spaces and dots. Real placeholders in
+    # this content include `<Key Vault Resource ID>`, `<new login-name>`,
+    # `<cert.pem>` and `<AKIA...>`, and a pattern limited to
+    # [a-zA-Z0-9_-] leaves those in place — where shellcheck then reads the
+    # `<` as a redirection and reports SC1073 "couldn't parse this
+    # redirection" against a snippet that is perfectly fine. Six of those were
+    # the entire "failure" list when this validator's scope was widened.
+    #
+    # Bounded to one line and 60 characters so a genuine `<` redirection
+    # followed by a later `>` cannot be swallowed as one giant placeholder,
+    # and `(?<!<)` keeps it off heredocs: in `cat <<EOF > /etc/foo` the span
+    # `<EOF >` otherwise reads as a placeholder, the heredoc marker is
+    # destroyed, and shellcheck reports the heredoc *body* as bad commands.
+    code = re.sub(r'"(?<!<)<[^<>\n]{1,60}>"', '"placeholder"', code)
+    code = re.sub(r"(?<!<)<[^<>\n]{1,60}>", "placeholder", code)
     # Ensure shebang is present — shellcheck needs it to detect shell dialect
     if not code.lstrip().startswith("#!"):
         code = "#!/bin/bash\n" + code
@@ -345,13 +411,14 @@ def main():
     total_pass = 0
     total_fail = 0
 
-    targets_to_run = TARGETS.keys() if target == "all" else [target]
+    # `all` means every policy in content/, not the union of the named groups —
+    # see the comment on TARGETS.
+    files = all_policy_files() if target == "all" else TARGETS[target]
 
-    for t in targets_to_run:
-        for filepath in TARGETS[t]:
-            p, f = validate_policy_file(filepath, workers)
-            total_pass += p
-            total_fail += f
+    for filepath in files:
+        p, f = validate_policy_file(filepath, workers)
+        total_pass += p
+        total_fail += f
 
     if github_actions:
         emit_github_annotations()
