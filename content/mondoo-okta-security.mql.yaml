@@ -994,6 +994,7 @@ queries:
       compliance/nist-csf-2: false
       compliance/nist-sp-800-53-rev5: false
       compliance/nist-sp-800-171: false
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
       compliance/pci-dss-4: false
       compliance/soc2-2017: false
       compliance/vda-isa-5: false
@@ -1004,7 +1005,7 @@ queries:
           mondoo.com/filter-icon: okta
     docs:
       desc: |
-        This check ensures that outstanding OAuth 2.0 refresh tokens Okta has issued for applications either carry an expiration or expire within a bounded window. A refresh token is standing access: for as long as it lives, the application can silently mint new access tokens carrying the token's scopes with the user no longer present, so a token that never expires or is valid for years outlasts the session, the password change, and even the application assignment that produced it.
+        This check ensures that outstanding OAuth 2.0 refresh tokens Okta has issued for applications carry an expiration and that the span between issue and expiry stays inside a bounded window, currently 90 days. The comparison is against the token's own creation time rather than the present moment, so what is measured is the lifetime the token was minted with: a five-year token is failed the day it is issued and every day after, instead of passing once it happens to drift within 90 days of expiring. A refresh token is standing access: for as long as it lives, the application can silently mint new access tokens carrying the token's scopes with the user no longer present, so a token that never expires or is valid for years outlasts the session, the password change, and even the application assignment that produced it.
 
         **Why this matters**
 
@@ -1034,7 +1035,7 @@ queries:
           "https://$OKTA_ORG.okta.com/api/v1/apps/{appId}/tokens"
         ```
 
-        For each returned token, inspect `status`, `expiresAt`, and `scopes`. A passing response shows active tokens with an `expiresAt` inside your approved window; a failing response shows an active token with no `expiresAt` or one set far in the future.
+        For each returned token, inspect `status`, `created`, `expiresAt`, and `scopes`, and compare `expiresAt` against `created` rather than against today. A passing response shows active tokens whose `expiresAt` falls within 90 days of their `created` timestamp; a failing response shows an active token with no `expiresAt`, or one whose `expiresAt` sits further than 90 days past the moment it was issued.
       remediation:
         - id: console
           desc: |
@@ -1062,7 +1063,7 @@ queries:
   - uid: mondoo-okta-security-app-refresh-tokens-short-lived-api
     filters: asset.platform == "okta-org"
     mql: |
-      okta.applications.all(tokens.all(status == "REVOKED" || expiresAt != empty && expiresAt < time.now + 90 * time.day))
+      okta.applications.all(tokens.all(status == "REVOKED" || expiresAt != empty && created != empty && expiresAt < created + 90 * time.day))
   - uid: mondoo-okta-security-enable-suspicious-activity-reporting
     title: Enable Suspicious Activity Reporting
     impact: 80
