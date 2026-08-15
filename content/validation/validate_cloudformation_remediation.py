@@ -13,14 +13,12 @@
 # Usage: python3 validate_cloudformation_remediation.py [aws] [--github-actions]
 
 import argparse
-import concurrent.futures
-import json
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).parent
@@ -81,15 +79,6 @@ class CfnBlock:
     file: Path
 
 
-@dataclass
-class LintResult:
-    success: bool = True
-    issues: list[str] = field(default_factory=list)
-    # (in-snippet line offset, message) so failures can be reported against
-    # the policy file rather than the temp template.
-    located: list[tuple[int, str]] = field(default_factory=list)
-
-
 # ---------------------------------------------------------------------------
 # Extraction
 # ---------------------------------------------------------------------------
@@ -143,24 +132,20 @@ def extract_cfn_blocks(content: str, filepath: Path) -> list[CfnBlock]:
         cfn_line = content[: match.start()].count("\n") + 1
         uid = find_uid_for_line(cfn_line)
 
-        # One logical template may be split across several ```yaml fences
-        # interleaved with prose. Concatenate them so cfn-lint sees the whole
-        # template rather than fragments.
-        fences = []
-        first_line = None
+        # Each ```yaml fence is its own template. Unlike HCL — where a `data`
+        # source in one fence and a `resource` in another form one
+        # configuration — a second CloudFormation fence is an alternative
+        # example, and concatenating them produces a duplicate `Resources:`
+        # key rather than a bigger template.
         for fence in re.finditer(r"```yaml\s*\n(.*?)```", desc_block, re.DOTALL):
             block = fence.group(1).rstrip()
             if not block.strip():
                 continue
-            if first_line is None:
-                code_offset = desc_start + fence.start(1)
-                first_line = content[:code_offset].count("\n") + 1
-            fences.append(dedent_block(block))
-
-        if fences:
+            code_offset = desc_start + fence.start(1)
+            line = content[:code_offset].count("\n") + 1
             blocks.append(
                 CfnBlock(
-                    code="\n".join(fences), line=first_line, uid=uid, file=filepath
+                    code=dedent_block(block), line=line, uid=uid, file=filepath
                 )
             )
     return blocks
@@ -224,7 +209,11 @@ def generate_template(code: str) -> tuple[str, int]:
                 f"  {name}:\n    Type: String\n" for name in stubs
             )
             code = re.sub(
-                r"^(Parameters:\s*\n)", r"\1" + stub_yaml, code, count=1, flags=re.M
+                r"^Parameters:\s*\n",
+                lambda m: m.group(0) + stub_yaml,
+                code,
+                count=1,
+                flags=re.M,
             )
         else:
             parts.append("Parameters:\n")
