@@ -269,6 +269,7 @@ python3 content/validation/validate_bash_remediation.py     # `id: bash`/`script
 python3 content/validation/validate_ansible_remediation.py  # `id: ansible` via ansible-lint
 python3 content/validation/validate_chef_remediation.py     # `id: chef` via cookstyle
 python3 content/validation/validate_cloudformation_remediation.py  # `id: cloudformation` via cfn-lint
+python3 content/validation/validate_bicep_remediation.py    # `id: bicep` via the Bicep CLI
 python3 content/validation/validate_terraform_remediation.py
 ```
 
@@ -281,6 +282,16 @@ cfn-lint checks resource types and property names against the AWS resource speci
 Deprecation warnings are split by what the fix is. A deprecated Lambda runtime or RDS engine version (`W2531`, `W3690`) **fails** — the fix is to bump a version string. A whole service being retired (`W3696`, `W3697`) prints as `[INFO]` and does not fail, because the fix is to migrate the check to a different service, which is a content decision rather than a typo.
 
 Each takes an optional target (`linux`, `windows`, `macos`, `kubernetes`, `chef`, …) and `--github-actions`. They run per-PR from `.github/workflows/validate-remediation.yaml`.
+
+`bicep build` resolves each resource type and apiVersion against the ARM type index, so it rejects a property the type does not define and a resource declared at the wrong deployment scope — the Bicep equivalent of what tflint's provider rulesets give us on Terraform. Snippets are dedented out of the `desc: |` block scalar first, because Bicep, unlike HCL, is indentation-sensitive at the token level once a nested object is involved.
+
+`BCP057` ("the name X does not exist in the current context") is ignored. A remediation example wires itself to a key vault or subnet it does not declare, and there is no type-safe stand-in: declaring the name as `param x object` merely trades `BCP057` for `BCP036`/`BCP240`, because Bicep requires a genuine resource reference in the positions those names occupy. This mirrors the CloudFormation validator ignoring `E1010` for `!GetAtt` targets.
+
+Two diagnostics print as `[INFO]` rather than failing: `BCP081` (no types available for that resource type or apiVersion) and the `no-hardcoded-env-urls` linter rule, since a remediation example names a specific cloud on purpose.
+
+CI installs a pinned `bicep-linux-x64` release binary rather than running `az bicep install`, which places the binary under the Azure CLI's config directory (`AZURE_CONFIG_DIR`, not reliably `~/.azure` on a runner) and offers nothing to checksum. The pinned version decides which resource types and apiVersions are known, so bumping it can surface newly deprecated apiVersions in snippets that used to pass.
+
+The job takes several minutes: the Bicep CLI reloads the ARM type index on every invocation, so ~330 snippets cost roughly a second and a half each.
 
 cookstyle is Chef's RuboCop distribution, so `validate_chef_remediation.py` catches Ruby syntax errors *and* Chef-specific problems: `Chef/Modernize/ExecuteSysctl` pushes sysctl settings onto the `sysctl` resource instead of a template plus `execute`, `Chef/Style/FileMode` rejects integer file modes, and `Chef/Style/UsePlatformHelpers` requires `platform_family?` over raw node attribute comparisons. Snippets are linted inside a temporary `recipes/` directory with `--force-default-config`, which is what makes cookstyle apply the recipe-scoped cops.
 
