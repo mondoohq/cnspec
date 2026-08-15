@@ -26,6 +26,14 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).parent
 DEFAULT_OUTPUT = SCRIPT_DIR / "cmd_data" / "azure_commands.json"
 
+sys.path.insert(0, str(SCRIPT_DIR))
+from validators.common import extract_bash_blocks  # noqa: E402
+
+# Remediation ids whose bash blocks may contain `az` commands. The Azure
+# policy uses `cli`; the M365 policy documents a few DNS fixes there too.
+# Keep in sync with what validators/azure.py reads.
+AZURE_REMEDIATION_IDS = ("cli",)
+
 # Global flags available on every az CLI command
 GLOBAL_FLAGS = [
     "--debug",
@@ -183,6 +191,54 @@ def get_flags_from_help(cmd_name: str, retries: int = 4) -> list[str]:
     raise RuntimeError(f"az {cmd_name} --help failed after {retries} tries: {last_err}")
 
 
+def detect_policy_commands(commands: dict) -> set[str]:
+    """Return every `az` command path the validator will check.
+
+    That is a wider set than the `- id: cli` remediation blocks alone: the
+    validator also reads `audit:` blocks, and the M365 policy documents some
+    fixes under other remediation ids. A command missed here keeps phase 1's
+    destination-name flags, which is precisely the defect this scoping used
+    to cause — so the extraction mirrors the validator's own reader rather
+    than re-implementing a narrower regex.
+    """
+    policy_dir = SCRIPT_DIR / ".."
+    policy_files = [
+        policy_dir / "mondoo-azure-security.mql.yaml",
+        policy_dir / "mondoo-m365-security.mql.yaml",
+    ]
+
+    policy_commands = set()
+    for policy_file in policy_files:
+        if not policy_file.exists():
+            continue
+        content = policy_file.read_text()
+        blocks = extract_bash_blocks(
+            content, include_audit=True, remediation_ids=AZURE_REMEDIATION_IDS
+        )
+        for block, _line, _uid in blocks:
+            joined = re.sub(r"\\\s*\n\s*", " ", block)
+            for line in joined.split("\n"):
+                line = line.strip()
+                if not line.startswith("az "):
+                    continue
+                # Command path is every token before the first flag.
+                cmd_parts = []
+                for p in line.split()[1:]:
+                    if p.startswith("-"):
+                        break
+                    cmd_parts.append(p)
+                # Walk back to the longest prefix that names a real command,
+                # so a trailing positional argument does not hide it.
+                while cmd_parts:
+                    candidate = " ".join(cmd_parts)
+                    if candidate in commands:
+                        policy_commands.add(candidate)
+                        break
+                    cmd_parts.pop()
+
+    return policy_commands
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Dump Azure CLI commands and flags to JSON"
@@ -219,49 +275,21 @@ def main():
 
     commands = json.loads(result.stdout)
 
-    # Phase 2: Supplement flags via `az --help` for each command.
-    # The Python API misses some user-facing aliases (e.g. --resource-group
-    # may appear as --resource-group-name). Parsing --help is accurate but
-    # slow (~0.5s per command), so we only do it for commands that appear in
-    # the policy files we validate against. For all other commands, the API
-    # flags plus global flags are sufficient for existence checking.
+    # Phase 2: Resolve real flags via `az --help` for each command.
     #
-    # Both the Azure policy and the M365 policy use `az` in their cli
-    # remediations, so both must be scanned here — otherwise M365-only
-    # commands fall back to dest-name flags (e.g. --resource-group-name).
-    policy_dir = SCRIPT_DIR / ".."
-    policy_files = [
-        policy_dir / "mondoo-azure-security.mql.yaml",
-        policy_dir / "mondoo-m365-security.mql.yaml",
-    ]
-    policy_commands = set()
-    for policy_file in policy_files:
-        if not policy_file.exists():
-            continue
-        content = policy_file.read_text()
-        # Extract az commands from bash blocks in cli remediation sections
-        for match in re.finditer(
-            r"- id: cli\s*\n\s+desc: \|\s*\n(.*?)(?=\n\s+- id: |\n\s+refs:|\n  - uid: |\Z)",
-            content,
-            re.DOTALL,
-        ):
-            for fence in re.finditer(r"```bash\s*\n(.*?)```", match.group(1), re.DOTALL):
-                block = fence.group(1)
-                joined = re.sub(r"\\\s*\n\s*", " ", block)
-                for line in joined.split("\n"):
-                    line = line.strip()
-                    if not line.startswith("az "):
-                        continue
-                    # Extract command path (tokens before first flag)
-                    parts = line.split()
-                    cmd_parts = []
-                    for p in parts[1:]:
-                        if p.startswith("-"):
-                            break
-                        cmd_parts.append(p)
-                    candidate = " ".join(cmd_parts)
-                    if candidate in commands:
-                        policy_commands.add(candidate)
+    # Phase 1's flags are argparse *destination* names for any argument whose
+    # user-facing alias is registered globally rather than on the command
+    # (`resource_group_name` is exposed as `--resource-group`/`-g`, not
+    # `--resource-group-name`). Only `--help` reports what the CLI actually
+    # accepts, so phase 2 REPLACES the phase-1 flags rather than adding to
+    # them — unioning the two lets an invented flag through validation.
+    #
+    # Parsing --help is slow (~0.5s per command), so it runs only for the
+    # commands the validator will actually check: every `az` invocation in
+    # the policy files. For all other commands the phase-1 flags remain as a
+    # permissive fallback; they only ever serve the "does this command
+    # exist" half of validation.
+    policy_commands = detect_policy_commands(commands)
 
     print(
         f"Phase 2: Parsing --help for {len(policy_commands)} policy commands...",
@@ -274,12 +302,12 @@ def main():
         except Exception as e:
             print(f"  WARNING: {e}", file=sys.stderr)
             return cmd_name, None
-        api_flags = commands.get(cmd_name, [])
-        merged = sorted(
-            f for f in set(api_flags + help_flags + GLOBAL_FLAGS)
-            if not f.endswith("-")
+        # `--help` is authoritative: it lists exactly the options this command
+        # parses. Phase 1's flags are deliberately discarded here.
+        resolved = sorted(
+            f for f in set(help_flags + GLOBAL_FLAGS) if not f.endswith("-")
         )
-        return cmd_name, merged
+        return cmd_name, resolved
 
     failed = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:

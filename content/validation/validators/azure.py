@@ -112,7 +112,7 @@ def validate_azure() -> tuple[int, int]:
             sys.exit(1)
 
         content = policy_file.read_text()
-        blocks = extract_bash_blocks(content)
+        blocks = extract_bash_blocks(content, include_audit=True)
         relpath = policy_relpath(policy_file)
 
         for block_text, block_line, uid in blocks:
