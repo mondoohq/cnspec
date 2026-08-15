@@ -265,11 +265,15 @@ cnspec scan local -f content/your-policy.mql.yaml
 Remediation snippets that are *code* rather than CLI invocations get linted with the tool their ecosystem already uses. Each validator extracts the fenced blocks from one `- id:` and runs the linter on each snippet in isolation, so a snippet has to stand on its own.
 
 ```bash
-python3 content/validation/validate_bash_remediation.py     # `id: bash` via shellcheck
+python3 content/validation/validate_bash_remediation.py     # `id: bash`/`script`/`sh` via shellcheck
 python3 content/validation/validate_ansible_remediation.py  # `id: ansible` via ansible-lint
 python3 content/validation/validate_chef_remediation.py     # `id: chef` via cookstyle
 python3 content/validation/validate_terraform_remediation.py
 ```
+
+`bash`, `script` and `sh` are three names for the same method, so the shell validator reads all three. The **fence language** decides the dialect, which is what keeps a `script` entry holding PowerShell (the Windows convention above) out of shellcheck: only ```` ```bash ```` and ```` ```sh ```` fences are linted.
+
+**A validator only sees the policies in its `TARGETS`.** Adding a remediation method to a policy that is not listed there means it ships unlinted and CI stays green — so when a policy gains its first `terraform`/`ansible`/`bash` remediation, add it to that validator's `TARGETS` in the same change. For Terraform there is a second step: the resource prefix needs an entry in `PROVIDER_MAP` too. Without one the generated `required_providers` block comes out empty and the `terraform` preset's `terraform_required_providers` rule fails *every* resource in that policy, which looks like 20 content bugs rather than one missing line.
 
 Each takes an optional target (`linux`, `windows`, `macos`, `kubernetes`, `chef`, …) and `--github-actions`. They run per-PR from `.github/workflows/validate-remediation.yaml`.
 

@@ -29,10 +29,17 @@ SCRIPT_DIR = Path(__file__).parent
 TARGETS = {
     "linux": [
         SCRIPT_DIR / ".." / "mondoo-linux-security.mql.yaml",
+        SCRIPT_DIR / ".." / "mondoo-linux-operational-policy.mql.yaml",
         SCRIPT_DIR / ".." / "mondoo-linux-snmp-policy.mql.yaml",
         SCRIPT_DIR / ".." / "mondoo-linux-workstation-security.mql.yaml",
     ],
     "kubernetes": [SCRIPT_DIR / ".." / "mondoo-kubernetes-security.mql.yaml"],
+    # Policies whose shell remediation had never been linted.
+    "edr": [SCRIPT_DIR / ".." / "mondoo-edr-policy.mql.yaml"],
+    "freebsd": [SCRIPT_DIR / ".." / "mondoo-freebsd-security.mql.yaml"],
+    "mariadb": [SCRIPT_DIR / ".." / "mondoo-mariadb-security.mql.yaml"],
+    "mysql": [SCRIPT_DIR / ".." / "mondoo-mysql-security.mql.yaml"],
+    "proxmox": [SCRIPT_DIR / ".." / "mondoo-proxmox-security.mql.yaml"],
 }
 
 # shellcheck codes to exclude:
@@ -65,10 +72,19 @@ class ShellcheckResult:
 # Extraction
 # ---------------------------------------------------------------------------
 
-def extract_bash_blocks(content: str, filepath: Path) -> list[BashBlock]:
-    """Extract bash code blocks from bash remediation sections.
+# Remediation ids that hold a shell script. `bash`, `script` and `sh` are the
+# same method under three names; all three are linted, and the fence language
+# decides the dialect so a `script` entry holding PowerShell (the Windows
+# convention in content/CLAUDE.md) is skipped rather than linted as shell.
+SHELL_REMEDIATION_IDS = ("bash", "script", "sh")
+SHELL_FENCE_LANGUAGES = ("bash", "sh")
 
-    Only extracts from `- id: bash` sections, NOT `- id: cli`.
+
+def extract_bash_blocks(content: str, filepath: Path) -> list[BashBlock]:
+    """Extract shell code blocks from shell remediation sections.
+
+    Reads `- id: bash`, `- id: script` and `- id: sh`, never `- id: cli`
+    (which validate_remediation_commands.py owns).
     """
     lines = content.split("\n")
     uid_positions: list[tuple[int, str]] = []
@@ -86,8 +102,10 @@ def extract_bash_blocks(content: str, filepath: Path) -> list[BashBlock]:
                 break
         return result
 
+    id_alt = "|".join(SHELL_REMEDIATION_IDS)
     pattern = re.compile(
-        r"- id: bash\s*\n\s+desc: \|\s*\n(.*?)(?=\n\s+- id: |\n\s+refs:|\n  - uid: |\Z)",
+        rf"- id: (?:{id_alt})\s*\n\s+desc: \|-?\s*\n"
+        r"(.*?)(?=\n\s+- id: |\n\s+refs:|\n  - uid: |\Z)",
         re.DOTALL,
     )
     blocks = []
@@ -97,7 +115,8 @@ def extract_bash_blocks(content: str, filepath: Path) -> list[BashBlock]:
         bash_line = content[: match.start()].count("\n") + 1
         uid = find_uid_for_line(bash_line)
 
-        for fence in re.finditer(r"```bash\s*\n(.*?)```", desc_block, re.DOTALL):
+        lang_alt = "|".join(SHELL_FENCE_LANGUAGES)
+        for fence in re.finditer(rf"```(?:{lang_alt})\s*\n(.*?)```", desc_block, re.DOTALL):
             block = fence.group(1).rstrip()
             if block.strip():
                 code_offset = desc_start + fence.start(1)

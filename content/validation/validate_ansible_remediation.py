@@ -38,6 +38,13 @@ TARGETS = {
     ],
     "macos": [SCRIPT_DIR / ".." / "mondoo-macos-security.mql.yaml"],
     "kubernetes": [SCRIPT_DIR / ".." / "mondoo-kubernetes-security.mql.yaml"],
+    # Policies whose ansible remediation had never been linted.
+    "ai": [SCRIPT_DIR / ".." / "mondoo-ai-security.mql.yaml"],
+    "edr": [SCRIPT_DIR / ".." / "mondoo-edr-policy.mql.yaml"],
+    "freebsd": [SCRIPT_DIR / ".." / "mondoo-freebsd-security.mql.yaml"],
+    "mariadb": [SCRIPT_DIR / ".." / "mondoo-mariadb-security.mql.yaml"],
+    "mysql": [SCRIPT_DIR / ".." / "mondoo-mysql-security.mql.yaml"],
+    "proxmox": [SCRIPT_DIR / ".." / "mondoo-proxmox-security.mql.yaml"],
 }
 
 # ansible-lint rules to skip — these are too noisy for remediation snippets
