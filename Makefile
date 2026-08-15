@@ -139,7 +139,7 @@ test/go/plain-ci: prep/tools
 # that shard. Unset means run everything. See .github/workflows/content-iac-tests.yaml.
 IAC_VARIANT_PARALLEL ?= 4
 
-.PHONY: test/go/content-iac test/go/content-iac/terraform test/go/content-iac/cloudformation test/go/content-iac/bicep test/go/content-iac/dockerfile test/go/content-iac/kubernetes test/go/content-iac/coverage
+.PHONY: test/go/content-iac test/go/content-iac/terraform test/go/content-iac/cloudformation test/go/content-iac/bicep test/go/content-iac/dockerfile test/go/content-iac/kubernetes test/go/content-iac/coverage test/go/content-iac/remediation
 test/go/content-iac: prep/tools
 	go test -tags iac_variants -timeout 30m -parallel $(IAC_VARIANT_PARALLEL) -run 'TestTerraformVariants|TestCloudFormationVariants|TestBicepVariants|TestDockerfileVariants|TestKubernetesManifestVariants' ./content
 
@@ -157,6 +157,12 @@ test/go/content-iac/dockerfile: prep/tools
 
 test/go/content-iac/kubernetes: prep/tools
 	go test -tags iac_variants -timeout 30m -parallel $(IAC_VARIANT_PARALLEL) -run '^TestKubernetesManifestVariants$$' ./content
+
+# Closed loop: scans each IaC variant's own remediation snippet and requires the
+# check that recommends it to pass. Sharded like the terraform suite, since it
+# runs one provider-backed scan per variant.
+test/go/content-iac/remediation: prep/tools
+	go test -tags iac_variants -timeout 60m -parallel $(IAC_VARIANT_PARALLEL) -run '^TestRemediationSatisfiesCheck$$' ./content
 
 # Fixture-coverage gate. Runs no scans: it compares the IaC variants declared in
 # each policy against the fixtures on disk and fails if any variant lacks a pass
