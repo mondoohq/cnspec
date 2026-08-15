@@ -48,11 +48,13 @@ def extract_bash_blocks(
     block into the next.
 
     With include_audit=True, bash blocks in `audit: |` sections are
-    extracted as well. The REST API validators use this — for API-first
-    products the verification path is also a curl call, and a wrong audit
-    command misleads users just like a wrong remediation. The CLI
-    validators don't enable it yet: that adds ~1,900 so-far-unvalidated
-    blocks repo-wide, which need to be cleaned up cloud by cloud first.
+    extracted as well. A wrong audit command misleads users exactly like a
+    wrong remediation, so the REST API and Cobra validators have always
+    enabled it. `azure` can enable it too now that dump_azure_commands.py
+    records CLI option strings rather than argparse destination names: with
+    the old grammar, commands used only in audit blocks kept names like
+    `--resource-group-name`, and turning this on reported ~170 failures that
+    were the grammar's fault rather than the content's.
     """
     # Pre-compute a list of (line_number, uid) from all `- uid:` lines so we
     # can look up the enclosing check for any position in the file.

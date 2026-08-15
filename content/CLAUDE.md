@@ -343,6 +343,8 @@ If a required CLI is missing, the validator prints actionable install hints and 
 
 **azure** and **vercel** are the exceptions among the CLI targets: they use a checked-in command grammar (`cmd_data/azure_commands.json`, `cmd_data/vercel_commands.json`) rather than live introspection. Azure CLI metadata is too slow to refresh every run; `vercel` is a Node.js CLI with no completion surface (not Cobra, no botocore/Click tree), so `dump_vercel_commands.py` parses its `--help` tree once — scoped to the command groups the policy uses — and checks the result in.
 
+`dump_azure_commands.py` runs in two phases, and the split matters. Phase 1 loads the whole command table from the Azure CLI's Python internals, which is the only practical way to enumerate ~7,000 commands — but its flag names are argparse *destination* names for every argument whose user-facing alias is registered globally. `resource_group_name` is exposed as `--resource-group`/`-g`, never as `--resource-group-name`. Phase 2 therefore re-reads `az <cmd> --help` and **replaces** the phase-1 flags for every command the validator will actually check; unioning the two would keep accepting the invented spelling. That scope is computed by `detect_policy_commands()` from the same blocks the validator reads, `audit:` included — a command missed there keeps phase-1's names and then either accepts a flag that does not exist or rejects one that does.
+
 **Regenerate checked-in command/spec data**:
 
 ```bash
