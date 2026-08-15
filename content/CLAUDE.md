@@ -437,6 +437,39 @@ python3 content/validation/dump_api_specs.py        # Tailscale + Atlassian + Ve
 
 **Never hand-edit** the files in `cmd_data/`.
 
+## Keeping the pinned upstreams current
+
+Every one of these validators is only as good as the thing it checks against, and each of those is pinned somewhere:
+
+| Pin | Declared in |
+|-----|-------------|
+| linter releases (`cfn-lint`, `ansible-lint`, `cookstyle`, `tflint`) | `.github/workflows/validate-remediation.yaml` |
+| CLI release artifacts (`bicep`, `doctl`, `glab`, `hcloud`, `databricks`) — version **and** SHA-256 | `.github/workflows/validate-remediation.yaml` |
+| tflint ruleset plugins, Terraform provider `~>` constraints | `content/validation/validate_terraform_remediation.py` (`TFLINT_PLUGIN_MAP`, `PROVIDER_MAP`) |
+| OpenAPI specs pinned to a commit | `content/validation/validators/openapi.py` (`*_OPENAPI_SHA`) |
+| checked-in CLI grammars | the `_meta` block of each `cmd_data/*.json` |
+
+Dependabot watches `gomod` and `github-actions`. It does **not** watch any of the above. `content/validation/upstream_pins.py` is the single registry of them — it reads each pin out of the file that declares it, so there is no second copy to go stale. Adding an entry to `PROVIDER_MAP` or `TFLINT_PLUGIN_MAP` puts it under watch automatically; a new linter or CLI needs a line in `WORKFLOW_TOOLS` or `WORKFLOW_CHECKSUMMED`.
+
+```bash
+python3 content/validation/check_upstream_versions.py                  # what has moved
+python3 content/validation/check_upstream_versions.py --format json    # same, for tooling
+python3 content/validation/bump_upstream_versions.py --list            # which pins can be bumped mechanically
+python3 content/validation/bump_upstream_versions.py --all --dry-run
+python3 content/validation/bump_upstream_versions.py --only cfn-lint   # rewrite one pin in place
+python3 content/validation/bump_upstream_versions.py --verify-checksums
+```
+
+Two workflows run weekly off this. `validation-upstream-drift.yaml` reports the whole table into one long-lived issue. `validation-dependency-updates.yaml` opens one pull request per pin that moved, on a stable branch named for the pin (`deps/validation/<slug>`) and **not** for the version — so next week's run updates the open pull request instead of opening a second one.
+
+Things to know when touching this:
+
+- **A bump is never applied without review.** The tooling does the mechanical half; whether a red CI run means the pin is wrong or the content is remains a judgement call. Closing a bump pull request is a valid answer; the branch reopens when upstream moves again.
+- **A CLI's version and its checksum can never move apart.** The bumper re-downloads the artifact using the URL read back out of the workflow's own `curl` line and recomputes the digest, so it hashes exactly what CI fetches. `--verify-checksums` re-derives all five at their *current* pins and is the way to prove that still holds after editing an install step.
+- **Terraform provider entries hold a constraint, not a version.** `~> 5.0` floats across all of 5.x, so a provider only outgrows it on a major; below 1.0 the minor is the breaking axis, so `~> 0.111` outgrows on a minor. `constraint_for()` encodes that. A provider major bump is a content migration, not a dependency bump — expect real work.
+- **Grammars are not string bumps.** The pin records which tool produced the checked-in JSON, so it moves by installing that tool and re-running the dump script; the workflow has a dedicated job per grammar that does exactly that. `--all` reports them as skipped rather than pretending.
+- **`dump_vercel_commands.py` is the one place a version is written twice** (its `VERCEL_VERSION` constant and the JSON's `_meta`). `bump_upstream_versions.py --sync-dump-pins` pulls the constant back into line after a regeneration.
+
 ## Resources
 
 - [MQL Documentation](https://mondoo.com/docs/mql)
