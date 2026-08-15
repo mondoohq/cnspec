@@ -22,6 +22,7 @@
 
 import argparse
 import json
+import os
 import re
 import sys
 import urllib.error
@@ -37,6 +38,13 @@ CMD_DATA = SCRIPT_DIR / "cmd_data"
 
 USER_AGENT = "cnspec-validation-drift-check"
 TIMEOUT = 30
+
+# This makes up to 17 api.github.com calls per run. Unauthenticated that shares
+# a 60/hour budget with everything else on the runner's IP, so a rate-limited
+# run would report "could not reach upstream" for most pins and look like
+# everything is fine. With a token the limit is 5,000/hour. The workflow passes
+# the one Actions already provides.
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "").strip()
 
 
 @dataclass
@@ -63,7 +71,10 @@ class Result:
 
 
 def fetch_json(url: str) -> dict | list | None:
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    headers = {"User-Agent": USER_AGENT}
+    if GITHUB_TOKEN and "api.github.com" in url:
+        headers["Authorization"] = f"Bearer {GITHUB_TOKEN}"
+    req = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
             return json.load(resp)

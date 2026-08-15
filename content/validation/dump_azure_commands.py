@@ -99,8 +99,12 @@ print(json.dumps(result))
 
 def az_cli_version() -> str:
     """Version of the Azure CLI this grammar was dumped from."""
+    # `az version -o json` and a dict lookup, rather than a --query: the
+    # JMESPath for this key has to be written `"azure-cli"` because a bare
+    # azure-cli parses as subtraction, and quoting that through a shell or an
+    # argv list is a trap worth stepping around entirely.
     result = subprocess.run(
-        ["az", "version", "--query", '"azure-cli"', "-o", "tsv"],
+        ["az", "version", "--output", "json"],
         capture_output=True,
         text=True,
         timeout=60,
@@ -111,7 +115,12 @@ def az_cli_version() -> str:
             file=sys.stderr,
         )
         sys.exit(1)
-    return result.stdout.strip()
+    try:
+        version = json.loads(result.stdout)["azure-cli"]
+    except (json.JSONDecodeError, KeyError, TypeError) as e:
+        print(f"Error: unexpected `az version` output: {e}", file=sys.stderr)
+        sys.exit(1)
+    return str(version)
 
 
 def find_az_site_packages() -> str:
