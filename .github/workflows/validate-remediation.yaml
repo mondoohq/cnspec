@@ -1,11 +1,32 @@
 ---
 name: Validate Policy Remediation Content
 
+## Triggers, and why there are three of them:
+##
+## `pull_request` catches the case these validators were built for — content
+## changing under an unchanged toolchain.
+##
+## `schedule` catches the opposite case, which nothing used to watch: the
+## toolchain changing under unchanged content. Several validators build their
+## command database by introspecting a CLI that resolves to *latest* at install
+## time (the AWS CLI installer, the gcloud rapid channel, `pip install oci-cli`),
+## so a subcommand AWS renames or a flag Google retires turns a passing check
+## into a failing one with no commit on our side. Without a scheduled run that
+## breakage stays invisible until somebody happens to edit the policy, and then
+## it lands on whoever's PR touched it last.
+##
+## `workflow_dispatch` is for confirming a fix, or re-running after bumping one
+## of the pinned tool versions below.
 on:
   pull_request:
     types: [opened, reopened, synchronize]
     paths:
       - "content/**"
+  schedule:
+    # Mondays 07:00 UTC — early enough in the week that drift found here can be
+    # fixed before it blocks anyone's PR.
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -286,3 +307,55 @@ jobs:
 
       - name: Validate chef remediation blocks
         run: python3 content/validation/validate_chef_remediation.py --github-actions
+
+  # A scheduled failure has no PR to annotate, so it would otherwise be visible
+  # only to whoever thinks to open the Actions tab. File it as an issue instead.
+  # Runs for the scheduled trigger only: a failing PR already reports itself.
+  report-drift:
+    needs:
+      - validate-cli
+      - validate-terraform
+      - validate-cloudformation
+      - validate-bicep
+      - validate-ansible
+      - validate-bash
+      - validate-chef
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Open or update the drift issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # `gh issue list --label` errors on a label the repo does not have, so
+          # make sure it exists before either call. --force makes this a no-op on
+          # reruns rather than a duplicate-label failure.
+          gh label create validation-drift --force \
+            --color B7791F \
+            --description "Remediation validation broke without a content change"
+          title="Remediation validation is failing on the scheduled run"
+          # One issue per outbreak, not one per week: reuse the open issue if
+          # there is one so a multi-week drift does not spawn a pile of dupes.
+          existing=$(gh issue list --state open --label validation-drift \
+            --search "$title in:title" --json number --jq '.[0].number // empty')
+          body=$(printf '%s\n' \
+            "The scheduled run of \`validate-remediation.yaml\` failed with no content change." \
+            "" \
+            "Content did not move, so the likely cause is upstream: a CLI whose command tree is" \
+            "introspected at install time (aws, gcloud, oci) renamed or retired something, or a" \
+            "pinned linter now rejects what it used to accept." \
+            "" \
+            "Run: $RUN_URL" \
+            "" \
+            "The failing job's annotations name the check UID and the offending command.")
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body" --label validation-drift
+          fi
