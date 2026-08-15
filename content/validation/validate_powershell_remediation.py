@@ -102,6 +102,24 @@ DYNAMIC_PARAMETERS = {
     "get-childitem": {"type"},
 }
 
+# Parameters are only checked for commands from modules that ship with
+# PowerShell itself. Anything else — a module that happens to be installed on
+# one machine, or a native executable, whose `.Parameters` is empty — would make
+# the result depend on the environment, and a gate that says something different
+# on a laptop than on the runner is worse than no gate. Everything outside this
+# set falls through to the name-shape check, which is environment-independent.
+BUILTIN_MODULES = {
+    "microsoft.powershell.core",
+    "microsoft.powershell.management",
+    "microsoft.powershell.utility",
+    "microsoft.powershell.security",
+    "microsoft.powershell.diagnostics",
+    "microsoft.powershell.host",
+    "microsoft.powershell.archive",
+    "microsoft.wsman.management",
+    "cimcmdlets",
+}
+
 # Native executables invoked from PowerShell. They are not cmdlets, so neither
 # Verb-Noun nor Get-Command applies.
 NATIVE_EXECUTABLES = {
@@ -223,12 +241,25 @@ foreach ($it in $items) {
                   Select-Object -First 1
       $valid = @()
       if ($resolved -and $resolved.Parameters) { $valid = @($resolved.Parameters.Keys) }
+      $module = ''
+      if ($resolved) {
+        $module = $resolved.ModuleName
+        # An alias resolves to the command it points at; that is where the
+        # parameters live (gc -> Get-Content).
+        if ($resolved.CommandType -eq 'Alias' -and $resolved.ResolvedCommand) {
+          $module = $resolved.ResolvedCommand.ModuleName
+          if ($resolved.ResolvedCommand.Parameters) {
+            $valid = @($resolved.ResolvedCommand.Parameters.Keys)
+          }
+        }
+      }
       $verb = $null
       if ($name -match '^([A-Za-z]+)-') { $verb = $matches[1] }
       [void]$cmds.Add([pscustomobject]@{
         name       = $name
         params     = @($params)
         resolved   = [bool]$resolved
+        module     = "$module"
         valid      = @($valid)
         verb       = $verb
         verbKnown  = ($verb -ne $null -and $verbs -contains $verb)
@@ -279,7 +310,7 @@ def check_snippet(s: Snippet, analysis: dict) -> list[str]:
         name = cmd["name"]
         if name.lower() in NATIVE_EXECUTABLES or "\\" in name or "/" in name:
             continue
-        if cmd["resolved"]:
+        if cmd["resolved"] and (cmd.get("module") or "").lower() in BUILTIN_MODULES:
             valid = {p.lower() for p in cmd["valid"]}
             valid |= DYNAMIC_PARAMETERS.get(name.lower(), set())
             for param in cmd["params"]:
