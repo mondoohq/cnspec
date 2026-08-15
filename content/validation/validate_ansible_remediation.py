@@ -38,7 +38,6 @@ TARGETS = {
     ],
     "macos": [SCRIPT_DIR / ".." / "mondoo-macos-security.mql.yaml"],
     "kubernetes": [SCRIPT_DIR / ".." / "mondoo-kubernetes-security.mql.yaml"],
-    # Policies whose ansible remediation had never been linted.
     "ai": [SCRIPT_DIR / ".." / "mondoo-ai-security.mql.yaml"],
     "edr": [SCRIPT_DIR / ".." / "mondoo-edr-policy.mql.yaml"],
     "freebsd": [SCRIPT_DIR / ".." / "mondoo-freebsd-security.mql.yaml"],

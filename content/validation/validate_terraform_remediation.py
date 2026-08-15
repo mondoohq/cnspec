@@ -37,9 +37,8 @@ TARGETS = {
     "gitlab": [SCRIPT_DIR / ".." / "mondoo-gitlab-security.mql.yaml"],
     "okta": [SCRIPT_DIR / ".." / "mondoo-okta-security.mql.yaml"],
     "m365": [SCRIPT_DIR / ".." / "mondoo-m365-security.mql.yaml"],
-    # Policies whose terraform remediation had never been linted. Each uses a
-    # single provider; those without a tflint ruleset still get the terraform
-    # preset's syntax and declaration checks.
+    # Only aws/azurerm/google have tflint rulesets; the rest are checked by
+    # the terraform preset's syntax and declaration rules alone.
     "alibaba": [SCRIPT_DIR / ".." / "mondoo-alibaba-security.mql.yaml"],
     "cloudflare": [SCRIPT_DIR / ".." / "mondoo-cloudflare-security.mql.yaml"],
     "databricks": [SCRIPT_DIR / ".." / "mondoo-databricks-security.mql.yaml"],
