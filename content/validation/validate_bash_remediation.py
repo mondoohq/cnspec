@@ -196,12 +196,17 @@ def sanitize_snippet(code: str) -> str:
     # the entire "failure" list when this validator's scope was widened.
     #
     # Bounded to one line and 60 characters so a genuine `<` redirection
-    # followed by a later `>` cannot be swallowed as one giant placeholder,
-    # and `(?<!<)` keeps it off heredocs: in `cat <<EOF > /etc/foo` the span
-    # `<EOF >` otherwise reads as a placeholder, the heredoc marker is
-    # destroyed, and shellcheck reports the heredoc *body* as bad commands.
-    code = re.sub(r'"(?<!<)<[^<>\n]{1,60}>"', '"placeholder"', code)
-    code = re.sub(r"(?<!<)<[^<>\n]{1,60}>", "placeholder", code)
+    # followed by a later `>` cannot be swallowed as one giant placeholder.
+    # Two shell constructs start with `<` and must not be eaten:
+    #   `(?<!<)` — heredocs and herestrings. In `cat <<EOF > /etc/foo` the span
+    #             `<EOF >` otherwise reads as a placeholder, the marker is
+    #             destroyed, and shellcheck reports the heredoc *body* as bad
+    #             commands. `<<<WORD >` is covered by the same lookbehind.
+    #   `(?!\()`  — process substitution. `diff <(a) <(b) > out` otherwise loses
+    #             `<(b) >` to a placeholder. The mariadb, mysql and linux
+    #             policies all use `done < <(find …)`.
+    code = re.sub(r'"(?<!<)<(?!\()[^<>\n]{1,60}>"', '"placeholder"', code)
+    code = re.sub(r"(?<!<)<(?!\()[^<>\n]{1,60}>", "placeholder", code)
     # Ensure shebang is present — shellcheck needs it to detect shell dialect
     if not code.lstrip().startswith("#!"):
         code = "#!/bin/bash\n" + code
