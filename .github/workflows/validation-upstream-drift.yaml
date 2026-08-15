@@ -1,0 +1,75 @@
+---
+name: Validator Upstream Drift
+
+## Reports which upstreams the remediation validators are pinned behind.
+##
+## The validators are only as good as what they check against — a linter
+## release, a vendor CLI grammar, an OpenAPI spec — and every one of those is
+## pinned somewhere in the repo. Dependabot covers gomod and github-actions, so
+## none of these pins are watched by anything.
+##
+## This is deliberately a *report*, not a gate. A bump is a judgement call: a
+## new cfn-lint can legitimately start failing snippets that were fine, and that
+## needs a person to decide whether the content or the pin is wrong. So the job
+## writes a table into one long-lived issue and never fails the build.
+on:
+  schedule:
+    # Mondays 06:00 UTC, an hour before the validators themselves run, so the
+    # "your pins are behind" table is already waiting if the run breaks.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-upstream-versions:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Check pinned versions against upstream
+        run: |
+          {
+            echo "Each of these pins decides what the remediation validators accept."
+            echo "\`BEHIND\` is not automatically a bug — it is a prompt to look."
+            echo
+            python3 content/validation/check_upstream_versions.py --format markdown
+            echo
+            echo "Refresh instructions live in \`content/CLAUDE.md\`; the pins"
+            echo "themselves live in \`.github/workflows/validate-remediation.yaml\`,"
+            echo "\`content/validation/validators/openapi.py\`, and the \`dump_*.py\` scripts."
+          } > /tmp/drift.md
+          cat /tmp/drift.md
+
+      - name: Publish the report to a tracking issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh label create validation-drift --force \
+            --color B7791F \
+            --description "Remediation validation broke without a content change"
+          title="Validator upstream pins: weekly drift report"
+          existing=$(gh issue list --state open --label validation-drift \
+            --search "$title in:title" --json number --jq '.[0].number // empty')
+          # One long-lived issue whose body is replaced each week: the table is a
+          # snapshot of right now, so appending weekly comments would bury the
+          # current state under stale ones.
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" --body-file /tmp/drift.md
+          else
+            gh issue create --title "$title" --body-file /tmp/drift.md --label validation-drift
+          fi

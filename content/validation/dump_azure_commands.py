@@ -97,6 +97,23 @@ print(json.dumps(result))
 """
 
 
+def az_cli_version() -> str:
+    """Version of the Azure CLI this grammar was dumped from."""
+    result = subprocess.run(
+        ["az", "version", "--query", '"azure-cli"', "-o", "tsv"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if result.returncode != 0:
+        print(
+            f"Error: could not read the Azure CLI version:\n{result.stderr}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    return result.stdout.strip()
+
+
 def find_az_site_packages() -> str:
     """Find the site-packages directory for the Azure CLI's bundled Python."""
     az_path = subprocess.run(
@@ -339,8 +356,24 @@ def main():
         if key not in policy_commands:
             commands[key] = sorted(set(commands[key] + GLOBAL_FLAGS))
 
+    # Record which Azure CLI produced this grammar, so its staleness is a fact
+    # rather than a guess (check_upstream_versions.py compares it against the
+    # current azure-cli release). Deliberately a version and not a timestamp:
+    # regenerating against an unchanged CLI then produces a byte-identical
+    # file, so a diff always means the grammar itself moved.
+    #
+    # Written here, after the loop above that appends GLOBAL_FLAGS to every
+    # value — `_meta` is a dict, not a flag list, and would break it.
+    # `sort_keys` puts `_meta` first (`_` sorts before every lowercase letter,
+    # and every command name is lowercase); lookups are by exact command path,
+    # so no consumer can collide with it.
+    commands["_meta"] = {
+        "azure_cli_version": az_cli_version(),
+        "generated_by": "dump_azure_commands.py",
+    }
+
     args.output.write_text(json.dumps(commands, indent=2, sort_keys=True) + "\n")
-    print(f"Wrote {len(commands)} commands to {args.output}", file=sys.stderr)
+    print(f"Wrote {len(commands) - 1} commands to {args.output}", file=sys.stderr)
 
 
 if __name__ == "__main__":
