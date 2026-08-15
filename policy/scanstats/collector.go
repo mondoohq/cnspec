@@ -48,6 +48,19 @@ const (
 	MetricConcurrencyInFlightAtPeak = "cnspec.scan.concurrency.in_flight_at_peak" // unit: count
 	MetricConcurrencyParallelism    = "cnspec.scan.concurrency.parallelism"       // unit: count
 	MetricConcurrencyMaxConnections = "cnspec.scan.concurrency.max_connections"   // unit: count
+
+	// CPU metrics are cumulative over the run, not high-water marks like the
+	// memory ones: each is the difference between the run's first and latest
+	// observation. Note that "available" is CPU the process could have used
+	// (roughly GOMAXPROCS x wall time) — "busy" is what it actually burned.
+	MetricCPUBusySeconds      = "cnspec.scan.cpu.busy_seconds"      // unit: s
+	MetricCPUAvailableSeconds = "cnspec.scan.cpu.available_seconds" // unit: s
+	MetricCPUUserSeconds      = "cnspec.scan.cpu.user_seconds"      // unit: s
+	MetricCPUGCSeconds        = "cnspec.scan.cpu.gc_seconds"        // unit: s
+	MetricCPUScavengeSeconds  = "cnspec.scan.cpu.scavenge_seconds"  // unit: s
+	MetricCPUGCFraction       = "cnspec.scan.cpu.gc_fraction"       // gc / busy
+	MetricCPUUtilization      = "cnspec.scan.cpu.utilization"       // busy / available
+	MetricCPUGOMAXPROCS       = "cnspec.scan.cpu.gomaxprocs"        // unit: count
 )
 
 // Collector accumulates scan metrics. It is safe for concurrent use.

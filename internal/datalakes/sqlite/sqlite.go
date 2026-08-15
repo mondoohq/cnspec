@@ -47,11 +47,11 @@ func outputDirFromCtx(ctx context.Context) string {
 	return ""
 }
 
-// recordMemStats folds the run's memory tracker into this asset's collector.
+// recordResourceStats folds the run's memory tracker into this asset's collector.
 // Extracted so the wiring is testable without standing up a scan. A nil
-// tracker (no tracker on ctx) is a no-op — MemTracker methods are nil-safe.
-func recordMemStats(ctx context.Context, stats *scanstats.Collector) {
-	scanstats.MemTrackerFromContext(ctx).Record(stats)
+// tracker (no tracker on ctx) is a no-op — ResourceTracker methods are nil-safe.
+func recordResourceStats(ctx context.Context, stats *scanstats.Collector) {
+	scanstats.ResourceTrackerFromContext(ctx).Record(stats)
 }
 
 func WithServices(ctx context.Context, runtime llx.Runtime, asset *inventory.Asset, upstreamClient *upstream.UpstreamClient, f func(context.Context, *policy.LocalServices) error) error {
@@ -100,7 +100,7 @@ func WithServices(ctx context.Context, runtime llx.Runtime, asset *inventory.Ass
 
 		// Snapshot process memory as of this asset's completion. The values
 		// are process-wide, not this asset's cost — see ADR-0004.
-		recordMemStats(scanCtx, stats)
+		recordResourceStats(scanCtx, stats)
 
 		if upstream != nil {
 			scanDataPath, err := scanDataStore.Finalize()

@@ -5,33 +5,13 @@ package scanstats
 
 import (
 	"math"
-	"os"
-	"path/filepath"
-	"runtime"
-	"runtime/metrics"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 )
 
-// Sample is one observation of this process's memory state.
-type Sample struct {
-	// RuntimeBytes is the Go runtime's memory footprint — the quantity the
-	// runtime accounts against GOMEMLIMIT, and the one the OOM killer acts
-	// on. Deliberately not MemStats.Alloc, which counts only live heap
-	// objects and so understates the real footprint.
-	RuntimeBytes uint64
-	Goroutines   int
-}
-
-// SampleFunc returns a current Sample. Injected so the high-water logic is
-// testable without a live runtime.
-type SampleFunc func() Sample
-
-// MemTrackerConfig configures a MemTracker. A zero Sample or CgroupRoot
-// falls back to the real process defaults.
-type MemTrackerConfig struct {
+// ResourceTrackerConfig configures a ResourceTracker. A zero Sample or
+// CgroupRoot falls back to the real process defaults.
+type ResourceTrackerConfig struct {
 	RunID          string
 	Parallelism    int
 	MaxConnections int
@@ -39,17 +19,23 @@ type MemTrackerConfig struct {
 	CgroupRoot     string
 }
 
-// MemTracker holds memory high-water marks for one scan run. A tracker is
-// created per scan run (per distributeJob call), not per process: for the
-// CLI these coincide, but a long-lived serve/queue process handling multiple
-// jobs gets a fresh tracker per job. Memory is process-wide while scanstats
-// Collectors are per-asset, so a single tracker is shared across every asset
-// scanned by its run; RunID is what lets the resulting per-asset records be
-// grouped back into the run they came from.
+// ResourceTracker holds resource usage for one scan run: memory high-water
+// marks and cumulative CPU. A tracker is created per scan run (per
+// distributeJob call), not per process: for the CLI these coincide, but a
+// long-lived serve/queue process handling multiple jobs gets a fresh tracker
+// per job. Usage is process-wide while scanstats Collectors are per-asset, so
+// a single tracker is shared across every asset scanned by its run; RunID is
+// what lets the resulting per-asset records be grouped back into the run they
+// came from.
+//
+// Memory and CPU are tracked differently because they are different kinds of
+// quantity. Memory is instantaneous, so the tracker keeps peaks. CPU counters
+// are cumulative since process start, so the tracker keeps a baseline taken
+// at the run's first observation and reports the difference.
 //
 // Every exported method is safe on a nil receiver: telemetry must never
 // panic a scan.
-type MemTracker struct {
+type ResourceTracker struct {
 	mu             sync.Mutex
 	peakRuntime    uint64
 	peakGoroutines int
@@ -65,9 +51,17 @@ type MemTracker struct {
 	// from a real measurement.
 	hasSample bool
 
+	// cpuBaseline is the first valid CPU reading of the run; lastCPU is the
+	// most recent. Their difference is the run's CPU usage. hasCPUBaseline
+	// tracks resolution rather than a non-zero value, because zero
+	// CPU-seconds is a legitimate reading for a very short scan.
+	cpuBaseline    CPUSample
+	lastCPU        CPUSample
+	hasCPUBaseline bool
+
 	inFlight func() int
 
-	cfg MemTrackerConfig
+	cfg ResourceTrackerConfig
 
 	stopOnce sync.Once
 	stop     chan struct{}
@@ -78,15 +72,15 @@ type MemTracker struct {
 	wg sync.WaitGroup
 }
 
-// NewMemTracker returns a tracker. Sampling does not start until Start.
-func NewMemTracker(cfg MemTrackerConfig) *MemTracker {
+// NewResourceTracker returns a tracker. Sampling does not start until Start.
+func NewResourceTracker(cfg ResourceTrackerConfig) *ResourceTracker {
 	if cfg.Sample == nil {
 		cfg.Sample = defaultSample
 	}
 	if cfg.CgroupRoot == "" {
 		cfg.CgroupRoot = defaultCgroupRoot
 	}
-	return &MemTracker{cfg: cfg, stop: make(chan struct{})}
+	return &ResourceTracker{cfg: cfg, stop: make(chan struct{})}
 }
 
 // SetInFlightFunc registers an accessor for the number of assets currently
@@ -96,7 +90,7 @@ func NewMemTracker(cfg MemTrackerConfig) *MemTracker {
 // f is invoked while the tracker's mutex is held, so it must not block, do
 // I/O, or call back into the tracker: the mutex is not reentrant, so a
 // callback into Peaks or Snapshot would self-deadlock.
-func (t *MemTracker) SetInFlightFunc(f func() int) {
+func (t *ResourceTracker) SetInFlightFunc(f func() int) {
 	if t == nil {
 		return
 	}
@@ -105,8 +99,9 @@ func (t *MemTracker) SetInFlightFunc(f func() int) {
 	t.mu.Unlock()
 }
 
-// Observe takes one sample and folds it into the high-water marks.
-func (t *MemTracker) Observe() {
+// Observe takes one sample, folds the memory readings into the high-water
+// marks, and advances the CPU counters.
+func (t *ResourceTracker) Observe() {
 	if t == nil {
 		return
 	}
@@ -128,12 +123,20 @@ func (t *MemTracker) Observe() {
 	if s.Goroutines > t.peakGoroutines {
 		t.peakGoroutines = s.Goroutines
 	}
+
+	if s.CPU.Valid {
+		if !t.hasCPUBaseline {
+			t.cpuBaseline = s.CPU
+			t.hasCPUBaseline = true
+		}
+		t.lastCPU = s.CPU
+	}
 }
 
 // Peaks returns the current high-water marks: runtime footprint bytes,
 // goroutine count, and the in-flight asset count at the moment the footprint
 // peak was set. Safe on a nil tracker, which reports zeroes.
-func (t *MemTracker) Peaks() (runtimeBytes uint64, goroutines int, inFlightAtPeak int) {
+func (t *ResourceTracker) Peaks() (runtimeBytes uint64, goroutines int, inFlightAtPeak int) {
 	if t == nil {
 		return 0, 0, 0
 	}
@@ -142,131 +145,92 @@ func (t *MemTracker) Peaks() (runtimeBytes uint64, goroutines int, inFlightAtPea
 	return t.peakRuntime, t.peakGoroutines, t.inFlightAtPeak
 }
 
-// MemSnapshot is a point-in-time view for diagnostics: the latest observed
-// runtime footprint plus best-effort cgroup readings. Presence flags follow
-// the same absent-never-zero rule as the recorded metrics.
-type MemSnapshot struct {
+// ResourceSnapshot is a point-in-time view for diagnostics: the latest
+// observed runtime footprint and CPU usage so far, plus best-effort cgroup
+// readings. Presence flags follow the same absent-never-zero rule as the
+// recorded metrics.
+type ResourceSnapshot struct {
 	RuntimeBytes     uint64
 	HasRuntime       bool
 	CgroupCurrent    uint64
 	HasCgroupCurrent bool
 	CgroupMax        uint64
 	HasCgroupMax     bool
+	CPUBusySeconds   float64
+	HasCPU           bool
 }
 
 // Snapshot returns the current diagnostic view. Safe on a nil tracker, which
 // reports everything absent.
-func (t *MemTracker) Snapshot() MemSnapshot {
+func (t *ResourceTracker) Snapshot() ResourceSnapshot {
 	if t == nil {
-		return MemSnapshot{}
+		return ResourceSnapshot{}
 	}
 
 	t.mu.Lock()
 	last, hasSample := t.lastRuntime, t.hasSample
+	cpu, hasCPU := t.cpuUsageLocked()
 	t.mu.Unlock()
 
 	// File I/O outside the lock: reading cgroup files under the tracker
 	// mutex would block the sampler goroutine.
 	cg := readCgroup(t.cfg.CgroupRoot)
 
-	return MemSnapshot{
+	return ResourceSnapshot{
 		RuntimeBytes:     last,
 		HasRuntime:       hasSample,
 		CgroupCurrent:    cg.current,
 		HasCgroupCurrent: cg.hasCurrent,
 		CgroupMax:        cg.max,
 		HasCgroupMax:     cg.hasMax,
+		CPUBusySeconds:   cpu.busy,
+		HasCPU:           hasCPU,
 	}
 }
 
-// defaultCgroupRoot is the cgroup v2 unified hierarchy mount point.
-const defaultCgroupRoot = "/sys/fs/cgroup"
-
-// cgroupStats holds cgroup v2 memory readings. Each value carries a
-// presence flag: a value that could not be read is absent, never zero.
-// Reporting zero would be indistinguishable from a real measurement and
-// would corrupt any aggregate computed across a mixed fleet.
-type cgroupStats struct {
-	current, peak, max          uint64
-	hasCurrent, hasPeak, hasMax bool
+// cpuUsage is the run's CPU consumption: the difference between the latest
+// observation and the baseline taken at the run's first observation.
+type cpuUsage struct {
+	busy      float64
+	available float64
+	user      float64
+	gc        float64
+	scavenge  float64
+	gomaxprcs int
 }
 
-// readCgroup reads cgroup v2 memory values from root, best-effort. Every
-// file is optional: non-Linux hosts have no cgroup at all, cgroup v1 has a
-// different layout, and memory.peak requires Linux 5.19 or later.
-func readCgroup(root string) cgroupStats {
-	var cg cgroupStats
-	cg.current, cg.hasCurrent = readCgroupValue(root, "memory.current")
-	cg.peak, cg.hasPeak = readCgroupValue(root, "memory.peak")
-	cg.max, cg.hasMax = readCgroupValue(root, "memory.max")
-	return cg
-}
-
-// readCgroupValue reads a single unsigned integer from a cgroup file. The
-// literal "max" means no limit and is reported as absent rather than as a
-// sentinel number.
-func readCgroupValue(root, name string) (uint64, bool) {
-	raw, err := os.ReadFile(filepath.Join(root, name))
-	if err != nil {
-		return 0, false
-	}
-	s := strings.TrimSpace(string(raw))
-	if s == "" || s == "max" {
-		return 0, false
-	}
-	v, err := strconv.ParseUint(s, 10, 64)
-	if err != nil {
-		return 0, false
-	}
-	return v, true
-}
-
-// runtimeFootprintMetrics are the runtime/metrics names whose difference is
-// the Go runtime's memory footprint — the same quantity the runtime accounts
-// against GOMEMLIMIT.
-const (
-	metricTotalBytes        = "/memory/classes/total:bytes"
-	metricHeapReleasedBytes = "/memory/classes/heap/released:bytes"
-)
-
-// defaultSample reads the live process memory state.
+// cpuUsageLocked computes the run's CPU deltas. Callers must hold t.mu.
 //
-// It uses runtime/metrics rather than runtime.ReadMemStats for two reasons:
-// ReadMemStats stops the world, which would perturb the very scan being
-// measured; and MemStats.Alloc counts only live heap objects, excluding
-// stacks and memory the runtime has retained but not returned to the OS, so
-// it systematically understates what the OOM killer acts on.
-func defaultSample() Sample {
-	// A fresh slice per call: metrics.Read writes into it, so a shared one
-	// would need its own lock and this is called once a second.
-	s := []metrics.Sample{
-		{Name: metricTotalBytes},
-		{Name: metricHeapReleasedBytes},
-	}
-	metrics.Read(s)
-
-	var total, released uint64
-	if s[0].Value.Kind() == metrics.KindUint64 {
-		total = s[0].Value.Uint64()
-	}
-	if s[1].Value.Kind() == metrics.KindUint64 {
-		released = s[1].Value.Uint64()
+// Each delta is clamped at zero. The counters are monotonic within a process
+// so a negative difference should be impossible, but reporting a negative
+// CPU-seconds figure would be worse than reporting none.
+func (t *ResourceTracker) cpuUsageLocked() (cpuUsage, bool) {
+	if !t.hasCPUBaseline {
+		return cpuUsage{}, false
 	}
 
-	var footprint uint64
-	if total > released {
-		footprint = total - released
+	delta := func(now, base float64) float64 {
+		if now > base {
+			return now - base
+		}
+		return 0
 	}
 
-	return Sample{
-		RuntimeBytes: footprint,
-		Goroutines:   runtime.NumGoroutine(),
-	}
+	return cpuUsage{
+		busy:      delta(t.lastCPU.Busy(), t.cpuBaseline.Busy()),
+		available: delta(t.lastCPU.TotalSeconds, t.cpuBaseline.TotalSeconds),
+		user:      delta(t.lastCPU.UserSeconds, t.cpuBaseline.UserSeconds),
+		gc:        delta(t.lastCPU.GCSeconds, t.cpuBaseline.GCSeconds),
+		scavenge:  delta(t.lastCPU.ScavengeSeconds, t.cpuBaseline.ScavengeSeconds),
+		gomaxprcs: t.lastCPU.GOMAXPROCS,
+	}, true
 }
 
 // Start begins sampling every interval until Stop. It takes one sample
-// immediately so a scan shorter than a single tick still reports a value.
-func (t *MemTracker) Start(interval time.Duration) {
+// immediately so a scan shorter than a single tick still reports a value —
+// and so the CPU baseline is taken at the start of the run rather than a
+// tick into it.
+func (t *ResourceTracker) Start(interval time.Duration) {
 	if t == nil {
 		return
 	}
@@ -291,7 +255,7 @@ func (t *MemTracker) Start(interval time.Duration) {
 // Stop ends sampling and waits for the sampling goroutine to exit, so that
 // once it returns no further observations can occur. Safe to call more than
 // once, and on a nil tracker.
-func (t *MemTracker) Stop() {
+func (t *ResourceTracker) Stop() {
 	if t == nil {
 		return
 	}
@@ -316,7 +280,7 @@ func addBytes(c *Collector, name string, v uint64) {
 //
 // Values that could not be measured are omitted rather than recorded as
 // zero: a zero cannot be told apart from a real measurement downstream.
-func (t *MemTracker) Record(c *Collector) {
+func (t *ResourceTracker) Record(c *Collector) {
 	if t == nil || c == nil {
 		return
 	}
@@ -330,6 +294,7 @@ func (t *MemTracker) Record(c *Collector) {
 	t.mu.Lock()
 	peak, last, hasSample := t.peakRuntime, t.lastRuntime, t.hasSample
 	goroutines, inFlight := t.peakGoroutines, t.inFlightAtPeak
+	cpu, hasCPU := t.cpuUsageLocked()
 	t.mu.Unlock()
 
 	if t.cfg.RunID != "" {
@@ -343,6 +308,27 @@ func (t *MemTracker) Record(c *Collector) {
 		addBytes(c, MetricMemRuntimePeak, peak)
 		addBytes(c, MetricMemRuntimeAtFinish, last)
 		c.AddInt(MetricMemGoroutinesPeak, "count", int64(goroutines))
+	}
+
+	if hasCPU {
+		c.AddDouble(MetricCPUBusySeconds, "s", cpu.busy)
+		c.AddDouble(MetricCPUAvailableSeconds, "s", cpu.available)
+		c.AddDouble(MetricCPUUserSeconds, "s", cpu.user)
+		c.AddDouble(MetricCPUGCSeconds, "s", cpu.gc)
+		c.AddDouble(MetricCPUScavengeSeconds, "s", cpu.scavenge)
+
+		// Ratios are omitted rather than reported as zero when their
+		// denominator is zero: a fabricated 0.0 fraction reads downstream as
+		// "no time in GC" when the truth is "not enough CPU to say".
+		if cpu.busy > 0 {
+			c.AddDouble(MetricCPUGCFraction, "", cpu.gc/cpu.busy)
+		}
+		if cpu.available > 0 {
+			c.AddDouble(MetricCPUUtilization, "", cpu.busy/cpu.available)
+		}
+		if cpu.gomaxprcs > 0 {
+			c.AddInt(MetricCPUGOMAXPROCS, "count", int64(cpu.gomaxprcs))
+		}
 	}
 
 	c.AddInt(MetricConcurrencyInFlightAtPeak, "count", int64(inFlight))
