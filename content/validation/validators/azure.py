@@ -102,6 +102,11 @@ def validate_azure() -> tuple[int, int]:
         sys.exit(1)
 
     commands_db = json.loads(AZURE_COMMANDS_FILE.read_text())
+    # `_meta` records the Azure CLI version the grammar was dumped from. Drop it
+    # so the rest of this function sees command paths only; nothing here would
+    # match a key starting with `_`, but a stray dict among the flag lists is
+    # the kind of thing that surfaces later as an unexplained TypeError.
+    commands_db.pop("_meta", None)
 
     pass_count = 0
     fail_count = 0
