@@ -268,12 +268,17 @@ Remediation snippets that are *code* rather than CLI invocations get linted with
 python3 content/validation/validate_bash_remediation.py     # `id: bash`/`script`/`sh` via shellcheck
 python3 content/validation/validate_ansible_remediation.py  # `id: ansible` via ansible-lint
 python3 content/validation/validate_chef_remediation.py     # `id: chef` via cookstyle
+python3 content/validation/validate_cloudformation_remediation.py  # `id: cloudformation` via cfn-lint
 python3 content/validation/validate_terraform_remediation.py
 ```
 
 `bash`, `script` and `sh` are three names for the same method, so the shell validator reads all three. The **fence language** decides the dialect, which is what keeps a `script` entry holding PowerShell (the Windows convention above) out of shellcheck: only ```` ```bash ```` and ```` ```sh ```` fences are linted.
 
 **A validator only sees the policies in its `TARGETS`.** Adding a remediation method to a policy that is not listed there means it ships unlinted and CI stays green — so when a policy gains its first `terraform`/`ansible`/`bash` remediation, add it to that validator's `TARGETS` in the same change. For Terraform there is a second step: the resource prefix needs an entry in `PROVIDER_MAP` too. Without one the generated `required_providers` block comes out empty and the `terraform` preset's `terraform_required_providers` rule fails *every* resource in that policy, which looks like 20 content bugs rather than one missing line.
+
+cfn-lint checks resource types and property names against the AWS resource specification, so it catches a property CloudFormation does not actually support as readily as a typo. Each ```` ```yaml ```` fence is linted as its own template — a second fence in a CloudFormation block is an alternative example, not the rest of the first one, unlike HCL where two fences can form a single configuration. A remediation snippet is a fragment, though, so two things happen before it is linted: the `AWSTemplateFormatVersion` preamble is supplied, and any logical id the snippet references through `!Ref`/`!Sub` but never declares is generated as a stub `Parameters:` entry — the same trick `validate_terraform_remediation.py` uses for undeclared `var.` references. `!GetAtt` targets cannot be stubbed that way (the attribute's type depends on a resource type the snippet never names), so `E1010` is disabled and a snippet that needs a `!GetAtt` target should declare it.
+
+Deprecation warnings are split by what the fix is. A deprecated Lambda runtime or RDS engine version (`W2531`, `W3690`) **fails** — the fix is to bump a version string. A whole service being retired (`W3696`, `W3697`) prints as `[INFO]` and does not fail, because the fix is to migrate the check to a different service, which is a content decision rather than a typo.
 
 Each takes an optional target (`linux`, `windows`, `macos`, `kubernetes`, `chef`, …) and `--github-actions`. They run per-PR from `.github/workflows/validate-remediation.yaml`.
 
