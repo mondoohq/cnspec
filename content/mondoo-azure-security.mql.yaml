@@ -903,6 +903,11 @@ queries:
         disallowedPortSSH
         allNsgTCP.none(destinationPortRange.any(fromPort <= disallowedPortSSH && toPort >= disallowedPortSSH))
       }
+  # The effective-rule form of destinationPortRange is a raw string ("22", "*",
+  # "20-25"), not the parsed fromPort/toPort list the securityRules form exposes,
+  # and MQL has no string-to-int conversion, so a span is matched with a regex
+  # instead of arithmetic. The two alternations spell out "lower bound <= 22" and
+  # "upper bound >= 22"; each was verified to match exactly its half of 0-65535.
   - uid: mondoo-azure-security-ssh-access-restricted-from-internet-effective-azure
     filters: |
       asset.platform == "azure"
@@ -910,8 +915,17 @@ queries:
       azure.subscription.network.interfaces.all(
         effectiveRules
           .where(direction == "Inbound" && access == "Allow" && protocol == /TCP|All|\*/i)
-          .where(destinationPortRange == "22" || destinationPortRange == "*" || destinationPortRanges.any(_ == "22"))
-          .none(sourceAddressPrefix == /\*|0\.0\.0\.0|Internet|\/0|internet|any/ || sourceAddressPrefixes.any(_ == /\*|0\.0\.0\.0\/0|Internet|\/0/) || expandedSourceAddressPrefix.any(_ == /0\.0\.0\.0\/0/))
+          .where(
+            destinationPortRange == "22" ||
+            destinationPortRange == "*" ||
+            destinationPortRange == /^(\d|1\d|2[0-2])-(2[2-9]|[3-9]\d|\d{3,5})$/ ||
+            destinationPortRanges.any(_ == "22" || _ == "*" || _ == /^(\d|1\d|2[0-2])-(2[2-9]|[3-9]\d|\d{3,5})$/)
+          )
+          .none(
+            sourceAddressPrefix == /\*|0\.0\.0\.0|Internet|\/0|any/i ||
+            sourceAddressPrefixes.any(_ == /\*|0\.0\.0\.0|Internet|\/0|any/i) ||
+            expandedSourceAddressPrefix.any(_ == /0\.0\.0\.0\/0/)
+          )
       )
   - uid: mondoo-azure-security-ssh-access-restricted-from-internet-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_network_security_group")
@@ -1159,6 +1173,8 @@ queries:
         disallowedPortRDP
         allNsgTCP.none(destinationPortRange.any(fromPort <= disallowedPortRDP && toPort >= disallowedPortRDP))
       }
+  # Same raw-string port range as the SSH effective-rule check above; the two
+  # alternations spell out "lower bound <= 3389" and "upper bound >= 3389".
   - uid: mondoo-azure-security-rdp-access-restricted-from-internet-effective-azure
     filters: |
       asset.platform == "azure"
@@ -1166,8 +1182,17 @@ queries:
       azure.subscription.network.interfaces.all(
         effectiveRules
           .where(direction == "Inbound" && access == "Allow" && protocol == /TCP|All|\*/i)
-          .where(destinationPortRange == "3389" || destinationPortRange == "*" || destinationPortRanges.any(_ == "3389"))
-          .none(sourceAddressPrefix == /\*|0\.0\.0\.0|Internet|\/0|internet|any/ || sourceAddressPrefixes.any(_ == /\*|0\.0\.0\.0\/0|Internet|\/0/) || expandedSourceAddressPrefix.any(_ == /0\.0\.0\.0\/0/))
+          .where(
+            destinationPortRange == "3389" ||
+            destinationPortRange == "*" ||
+            destinationPortRange == /^(\d{1,3}|[12]\d{3}|3[0-2]\d{2}|33[0-7]\d|338\d)-(3389|339\d|3[4-9]\d{2}|[4-9]\d{3}|\d{5})$/ ||
+            destinationPortRanges.any(_ == "3389" || _ == "*" || _ == /^(\d{1,3}|[12]\d{3}|3[0-2]\d{2}|33[0-7]\d|338\d)-(3389|339\d|3[4-9]\d{2}|[4-9]\d{3}|\d{5})$/)
+          )
+          .none(
+            sourceAddressPrefix == /\*|0\.0\.0\.0|Internet|\/0|any/i ||
+            sourceAddressPrefixes.any(_ == /\*|0\.0\.0\.0|Internet|\/0|any/i) ||
+            expandedSourceAddressPrefix.any(_ == /0\.0\.0\.0\/0/)
+          )
       )
   - uid: mondoo-azure-security-rdp-access-restricted-from-internet-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_network_security_group")
@@ -43109,9 +43134,9 @@ queries:
     filters: |
       asset.platform == "azure-application-gateway"
     mql: |
-      azure.subscription.networkService.applicationGateway.policy != null && azure.subscription.networkService.applicationGateway.policy.mode == "Prevention"
-      azure.subscription.networkService.applicationGateway.policy == null || azure.subscription.networkService.applicationGateway.policy.managedRules.all(ruleGroupOverrides.none(disablesEntireGroup))
-      azure.subscription.networkService.applicationGateway.policy == null || azure.subscription.networkService.applicationGateway.policy.managedRules.all(ruleGroupOverrides.all(rules.none(action == "Log")))
+      azure.subscription.networkService.applicationGateway.policy != empty && azure.subscription.networkService.applicationGateway.policy.mode == "Prevention"
+      azure.subscription.networkService.applicationGateway.policy == empty || azure.subscription.networkService.applicationGateway.policy.managedRules.all(ruleGroupOverrides.none(disablesEntireGroup))
+      azure.subscription.networkService.applicationGateway.policy == empty || azure.subscription.networkService.applicationGateway.policy.managedRules.all(ruleGroupOverrides.all(rules.none(action == "Log")))
   - uid: mondoo-azure-security-appgw-waf-prevention-mode-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_web_application_firewall_policy")
     mql: |
