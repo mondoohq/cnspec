@@ -70,8 +70,8 @@ def count_block_validators() -> dict[str, dict[str, int]]:
         extractor = getattr(module, extractor_name)
         per_policy: dict[str, int] = {}
         for paths in module.TARGETS.values():
-            for path in paths:
-                path = Path(path)
+            for entry in paths:
+                path = Path(entry)
                 if not path.exists():
                     continue
                 blocks = extractor(path.read_text(), path)
