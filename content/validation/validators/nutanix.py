@@ -133,7 +133,7 @@ def validate_nutanix() -> tuple[int, int]:
         sys.exit(1)
 
     content = NUTANIX_POLICY_FILE.read_text()
-    blocks = extract_bash_blocks(content)
+    blocks = extract_bash_blocks(content, include_audit=True)
     relpath = policy_relpath(NUTANIX_POLICY_FILE)
 
     pass_count = 0

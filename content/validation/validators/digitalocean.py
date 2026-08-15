@@ -265,7 +265,7 @@ def validate_digitalocean() -> tuple[int, int]:
         return 0, 0
 
     content = DO_POLICY_FILE.read_text()
-    blocks = extract_bash_blocks(content)
+    blocks = extract_bash_blocks(content, include_audit=True)
 
     pass_count = 0
     fail_count = 0

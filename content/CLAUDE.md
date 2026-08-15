@@ -314,7 +314,12 @@ python3 content/validation/validate_remediation_commands.py grafana
 python3 content/validation/validate_remediation_commands.py mongodbatlas
 ```
 
-The validator scans each `aws`/`az`/`oci`/`gcloud`/`doctl`/`ncli`/`vercel`/`kubectl`/`gh`/`glab`/`hcloud`/`databricks` CLI command — and `curl` calls against the registered vendor API hosts — in ```` ```bash ```` code blocks within `id: cli` remediation sections. For the REST API and Cobra CLI targets, ```` ```bash ```` blocks in `audit:` sections are validated too (these products' verification paths use the same CLI/API surface, and the new validators have no backlog of unvalidated audit blocks). Output shows `[PASS]` or `[FAIL]` with the check UID and the offending command.
+The validator scans each `aws`/`az`/`oci`/`gcloud`/`doctl`/`ncli`/`vercel`/`kubectl`/`gh`/`glab`/`hcloud`/`databricks` CLI command — and `curl` calls against the registered vendor API hosts — in ```` ```bash ```` code blocks within `id: cli` remediation sections, **and in `audit:` sections**. A wrong audit command misleads an auditor exactly like a wrong remediation misleads an operator, so both are checked. Output shows `[PASS]` or `[FAIL]` with the check UID and the offending command.
+
+Two parsing details follow from validating audit blocks, which are read-only and shaped differently from remediation blocks:
+
+- A `$(...)` command substitution is pulled out and validated as a command in its own right, then removed from the text around it. Left inline, its flags read as flags of the outer command — `aws elasticbeanstalk describe-configuration-settings --application-name "$(aws elasticbeanstalk describe-environments --environment-names …)"` would otherwise report `--environment-names` as invalid on the outer command.
+- A subcommand held in a shell variable (`for cmd in list-a list-b; do aws sagemaker $cmd …`) has no literal name to check and is accepted rather than reported as unknown.
 
 The `vercel` target is the only one that runs a **CLI validator and a REST API validator together** (both keyed `vercel`): the Vercel policy fixes some settings with the `vercel` CLI (`- id: cli`) and others with `curl` against the Vercel REST API (`- id: api`). Both remediation ids and the `audit:` blocks are validated.
 

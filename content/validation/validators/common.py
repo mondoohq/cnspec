@@ -17,6 +17,11 @@ REPO_ROOT = SCRIPT_DIR.parent.parent
 # file, line, uid, command, errors, cloud
 FAILURES: list[dict] = []
 
+# `$(...)` command substitution, non-greedy so adjacent substitutions on one
+# line stay separate. Nested substitutions are rare enough in audit blocks that
+# the simple form is enough.
+COMMAND_SUBSTITUTION = re.compile(r"\$\(([^()]*)\)")
+
 
 def policy_relpath(policy_file: Path) -> str:
     """Repo-root-relative path for a policy file, as GitHub annotations
@@ -49,12 +54,13 @@ def extract_bash_blocks(
 
     With include_audit=True, bash blocks in `audit: |` sections are
     extracted as well. A wrong audit command misleads users exactly like a
-    wrong remediation, so the REST API and Cobra validators have always
-    enabled it. `azure` can enable it too now that dump_azure_commands.py
-    records CLI option strings rather than argparse destination names: with
-    the old grammar, commands used only in audit blocks kept names like
-    `--resource-group-name`, and turning this on reported ~170 failures that
-    were the grammar's fault rather than the content's.
+    wrong remediation, so every validator that can enable this does: the
+    REST API and Cobra validators from the start, and the cloud CLI
+    validators as of this change. `azure` included, now that
+    dump_azure_commands.py records CLI option strings rather than argparse
+    destination names — with the old grammar, commands used only in audit
+    blocks kept names like `--resource-group-name`, and turning this on
+    reported ~170 failures that were the grammar's fault, not the content's.
     """
     # Pre-compute a list of (line_number, uid) from all `- uid:` lines so we
     # can look up the enclosing check for any position in the file.
@@ -163,6 +169,16 @@ def split_commands(block: str, prefix: str, block_start_line: int) -> list[tuple
                         break
                     cont_lines += 1
                     stripped = stripped + "\n" + lines[i + cont_lines]
+            # A `$(...)` substitution holds a command in its own right, and
+            # audit blocks use them to feed one query into the next. Pull each
+            # one out as a separate command and drop it from the text around
+            # it — left inline, its flags read as flags of the outer command.
+            for inner in COMMAND_SUBSTITUTION.findall(rejoined):
+                inner = inner.strip()
+                if inner.startswith(f"{prefix} "):
+                    commands.append((inner, raw_line_num))
+            rejoined = COMMAND_SUBSTITUTION.sub(" ", rejoined)
+
             # Split on pipe/semicolon boundaries
             for segment in re.split(r"\s*[|;]\s*", rejoined):
                 segment = segment.strip()

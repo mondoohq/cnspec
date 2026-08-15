@@ -57,15 +57,24 @@ AWS_GLOBAL_FLAGS = [
     "--version",
 ]
 
-_XFORM_RE1 = re.compile(r"([a-z0-9])([A-Z])")
-_XFORM_RE2 = re.compile(r"([A-Z])([A-Z][a-z])")
+_XFORM_FIRST_CAP = re.compile(r"(.)([A-Z][a-z]+)")
+_XFORM_END_CAP = re.compile(r"([a-z0-9])([A-Z])")
+# A trailing all-caps plural is one word, not an acronym followed by a stray
+# "s": ListWebACLs is `list-web-acls`, never `list-web-ac-ls`. botocore special
+# cases this before the general splits, and the CLI's command names follow.
+_XFORM_SPECIAL_CASE = re.compile(r"[A-Z]{2,}s$")
 
 
-def _xform_name(name: str) -> str:
+def _xform_name(name: str, sep: str = "_") -> str:
     """CamelCase → snake_case (mirrors botocore.xform_name)."""
-    s = _XFORM_RE1.sub(r"\1_\2", name)
-    s = _XFORM_RE2.sub(r"\1_\2", s)
-    return s.lower()
+    if sep in name:
+        return name
+    special = _XFORM_SPECIAL_CASE.search(name)
+    if special is not None:
+        matched = special.group()
+        name = name[: -len(matched)] + sep + matched.lower()
+    s = _XFORM_FIRST_CAP.sub(r"\1" + sep + r"\2", name)
+    return _XFORM_END_CAP.sub(r"\1" + sep + r"\2", s).lower()
 
 
 def _load_aws_service_ops(service_dir: Path) -> tuple[list[str], dict[str, list[str]]]:
@@ -271,6 +280,9 @@ AWS_CLI_CUSTOM_FLAGS = {
         "--assign-ipv6-address-on-creation",
         "--no-assign-ipv6-address-on-creation",
     ],
+    # ListClusters takes ClusterStates; the CLI adds --active/--terminated/
+    # --failed as shorthand for the common state groupings.
+    "emr list-clusters": ["--active", "--terminated", "--failed"],
 }
 
 
@@ -290,6 +302,13 @@ def validate_aws_command(
     if not subcommand:
         errors.append(f"missing subcommand for '{service}'")
         return False, errors
+
+    # Audit blocks sometimes loop over a set of related operations with the
+    # subcommand held in a shell variable (`for cmd in list-x list-y; do aws
+    # sagemaker $cmd ...`). There is no literal name to check, so accept it
+    # rather than report the variable as an unknown subcommand.
+    if subcommand.startswith("$"):
+        return True, []
 
     if subcommand in AWS_CLI_CUSTOM_SUBCOMMANDS:
         return True, []
@@ -329,7 +348,7 @@ def validate_aws() -> tuple[int, int]:
         return 0, 0
 
     content = AWS_POLICY_FILE.read_text()
-    blocks = extract_bash_blocks(content)
+    blocks = extract_bash_blocks(content, include_audit=True)
 
     pass_count = 0
     fail_count = 0
