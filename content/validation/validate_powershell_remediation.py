@@ -425,7 +425,8 @@ def main() -> None:
     passed = failed = 0
     for i, s in enumerate(snippets):
         problems = check_snippet(s, by_index.get(i, {}))
-        label = f"{s.uid} ({s.section}" + (f"/{s.method})" if s.method else ")")
+        method = f"/{s.method}" if s.method else ""
+        label = f"{s.uid} ({s.section}{method})"
         if problems:
             failed += 1
             print(f"[FAIL] {label}")
