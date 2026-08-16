@@ -18,10 +18,10 @@ resource "google_sql_database_instance" "sqlserver_public_instance" {
 
       // SSL connection encryption
       ssl_mode = "ENCRYPTED_ONLY"
-
-      // Require Cloud SQL connectors
-      connector_enforcement = "REQUIRED"
     }
+
+    // Require Cloud SQL connectors
+    connector_enforcement = "REQUIRED"
 
     # Enable backup configuration
     backup_configuration {
