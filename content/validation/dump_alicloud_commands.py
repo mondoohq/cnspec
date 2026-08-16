@@ -43,6 +43,10 @@ CMD_DATA = Path(__file__).parent / "cmd_data" / "alicloud_commands.json"
 PRODUCTS = [
     "ecs", "ram", "kms", "vpc", "rds", "polardb", "nas", "dds", "slb",
     "actiontrail", "ddoscoo", "cloudfw", "cs", "r-kvstore", "waf-openapi",
+    # Entries are CLI product names, which is the product code lowercased.
+    # Function Compute 3.0 has the code `FC` (the 2023-03-30 API), so `fc`; its
+    # 2.0 predecessor is a separate product, `FC-Open`, which is not used here.
+    "cloudsso", "cr", "elasticsearch", "fc",
 ]
 
 
@@ -129,14 +133,44 @@ def main() -> None:
     products_meta = _get_json(f"{META}/products.json")
     by_lc = {p["code"].lower(): p for p in products_meta}
 
+    # The metadata service answers a request for an unavailable product with an
+    # error document rather than an HTTP error, and an error document parses to
+    # zero actions. Writing that through would silently empty a product the
+    # validator already covers, turning every command it validates into a false
+    # failure. So a product that comes back empty keeps whatever the checked-in
+    # file already had for it, loudly, and only a product with no previous
+    # coverage either is fatal.
+    previous: dict = {}
+    if CMD_DATA.exists():
+        previous = (json.loads(CMD_DATA.read_text()).get("products") or {})
+
     products: dict = {}
+    degraded: list = []
     for cli_name in PRODUCTS:
         meta = by_lc.get(cli_name)
         if not meta:
             print(f"  WARNING: no OpenAPI metadata product for '{cli_name}'", file=sys.stderr)
             continue
         version = meta.get("defaultVersion")
-        products[cli_name] = fetch_product(cli_name, meta["code"], version)
+        fetched = fetch_product(cli_name, meta["code"], version)
+        if fetched["actions"]:
+            products[cli_name] = fetched
+            continue
+        kept = previous.get(cli_name)
+        if kept and kept.get("actions"):
+            print(
+                f"  WARNING: '{cli_name}' returned no actions upstream; keeping the "
+                f"{len(kept['actions'])} already checked in",
+                file=sys.stderr,
+            )
+            products[cli_name] = kept
+            degraded.append(cli_name)
+        else:
+            sys.exit(
+                f"ERROR: '{cli_name}' returned no actions and nothing is checked in "
+                f"for it. Refusing to write a grammar that would fail every "
+                f"'aliyun {cli_name} ...' command."
+            )
 
     print("Fetching aliyun oss (ossutil) subcommands...", file=sys.stderr)
     oss_subcommands = fetch_oss_subcommands()
@@ -149,6 +183,13 @@ def main() -> None:
     }
     CMD_DATA.parent.mkdir(parents=True, exist_ok=True)
     CMD_DATA.write_text(json.dumps(out, indent=1, sort_keys=True) + "\n")
+    if degraded:
+        print(
+            "  NOTE: kept previously checked-in actions for "
+            + ", ".join(degraded)
+            + " — re-run when upstream metadata is available again.",
+            file=sys.stderr,
+        )
     print(f"Wrote {CMD_DATA} ({CMD_DATA.stat().st_size} bytes)", file=sys.stderr)
 
 

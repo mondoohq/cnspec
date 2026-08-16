@@ -5067,16 +5067,18 @@ queries:
       )
 
   - uid: mondoo-alibaba-security-cloudsso-password-policy-strong
-    title: Ensure the Cloud SSO password policy enforces length and complexity
+    title: Ensure the Cloud SSO password policy sets length and blocks usernames
     impact: 60
     docs:
       desc: |
-        This check ensures that every Cloud SSO directory requires passwords of at least 14 characters drawn from all four character classes: uppercase letters, lowercase letters, digits, and symbols. Cloud SSO keeps its own password policy, separate from the Resource Access Management policy, so a hardened RAM account says nothing about the directory its workforce actually signs in to.
+        This check ensures that every Cloud SSO directory requires passwords of at least 14 characters and forbids a password that contains the user's own name. Cloud SSO keeps its own password policy, separate from the Resource Access Management policy, so a hardened RAM account says nothing about the directory its workforce actually signs in to.
+
+        The character-class requirements the directory reports are not asserted. `GetPasswordPolicy` returns them, but `SetPasswordPolicy` accepts no parameter for any of them, so they are service-fixed and an operator has no way to act on a finding about them.
 
         **Why this matters**
 
-        - **Length defeats offline cracking:** Each additional character multiplies the work an attacker must do against a captured hash.
-        - **Character classes widen the keyspace:** Requiring all four classes removes the predictable all-lowercase passwords that dictionary attacks find first.
+        - **Length defeats offline cracking:** Each additional character multiplies the work an attacker must do against a captured hash, and length buys more than composition rules do.
+        - **Username-derived passwords are guessed first:** A password containing the account name is the first thing credential-stuffing and targeted guessing attempts try.
         - **The directory policy is easy to miss:** Teams that harden RAM often leave the Cloud SSO directory at its defaults, where the workforce identities actually live.
 
         **Risk mitigation**
@@ -5088,9 +5090,9 @@ queries:
 
         1. Sign in to the [Cloud SSO console](https://cloudsso.console.aliyun.com/).
         2. Go to **Settings** > **Password Policy**.
-        3. Review the minimum length and the required character types.
+        3. Review the minimum length and whether passwords may contain the username.
 
-        A passing directory requires at least 14 characters and all four character types. A failing directory requires fewer characters or omits a character type.
+        A passing directory requires at least 14 characters and forbids the username. A failing directory requires fewer characters or permits it.
 
         ### Audit via CLI
 
@@ -5100,7 +5102,7 @@ queries:
         aliyun cloudsso GetPasswordPolicy --DirectoryId <directory-id>
         ```
 
-        A passing directory returns `MinimumPasswordLength` of 14 or more with every `Require...` field set to `true`. A failing directory returns a shorter length or a `Require...` field set to `false`.
+        A passing directory returns `MinPasswordLength` of 14 or more and `PasswordNotContainUsername` of `true`. A failing directory returns a shorter length or `false`.
       remediation:
         - id: console
           desc: |
@@ -5108,30 +5110,26 @@ queries:
 
             1. Sign in to the [Cloud SSO console](https://cloudsso.console.aliyun.com/).
             2. Go to **Settings** > **Password Policy**.
-            3. Set the minimum length to 14 or more, require uppercase, lowercase, digits, and symbols, and save.
+            3. Set the minimum length to 14 or more, forbid passwords containing the username, and save.
         - id: cli
           desc: |
             To set a strong password policy with the `aliyun` CLI:
 
             ```bash
             aliyun cloudsso SetPasswordPolicy --DirectoryId <directory-id> \
-              --MinimumPasswordLength 14 --RequireUpperCaseChars true \
-              --RequireLowerCaseChars true --RequireNumbers true --RequireSymbols true
+              --MinPasswordLength 14 --PasswordNotContainUsername true
             ```
         - id: terraform
           desc: |
-            To declare a strong password policy in Terraform, set every requirement in the `password_policy` block:
+            To declare a strong password policy in Terraform, set the length and username rules in the `password_policy` block:
 
             ```hcl
             resource "alicloud_cloud_sso_directory" "example" {
               directory_name = "example-directory"
 
               password_policy {
-                min_password_length     = 14
-                require_upper_case_chars = true
-                require_lower_case_chars = true
-                require_numbers          = true
-                require_symbols          = true
+                min_password_length           = 14
+                password_not_contain_username = true
               }
             }
             ```
@@ -5159,11 +5157,11 @@ queries:
   - uid: mondoo-alibaba-security-cloudsso-password-policy-strong-alicloud
     filters: asset.platform == "alicloud-account"
     mql: |
+      # requireUpperCaseChars and its siblings are readable but not settable: the Cloud SSO
+      # SetPasswordPolicy API accepts no parameter for any of them, so a finding about them
+      # would give an operator nothing to act on.
       alicloud.cloudsso.directories.all(passwordPolicy.minPasswordLength >= 14)
-      alicloud.cloudsso.directories.all(passwordPolicy.requireUpperCaseChars == true)
-      alicloud.cloudsso.directories.all(passwordPolicy.requireLowerCaseChars == true)
-      alicloud.cloudsso.directories.all(passwordPolicy.requireNumbers == true)
-      alicloud.cloudsso.directories.all(passwordPolicy.requireSymbols == true)
+      alicloud.cloudsso.directories.all(passwordPolicy.passwordNotContainUsername == true)
   - uid: mondoo-alibaba-security-cloudsso-password-policy-strong-terraform-hcl
     filters: |
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "alicloud_cloud_sso_directory")
@@ -5173,10 +5171,7 @@ queries:
         blocks.where(type == "password_policy").all(
           arguments["min_password_length"] != empty &&
           arguments["min_password_length"] >= 14 &&
-          arguments["require_upper_case_chars"] == true &&
-          arguments["require_lower_case_chars"] == true &&
-          arguments["require_numbers"] == true &&
-          arguments["require_symbols"] == true
+          arguments["password_not_contain_username"] == true
         )
       )
   - uid: mondoo-alibaba-security-cloudsso-password-policy-strong-terraform-plan
@@ -5188,10 +5183,7 @@ queries:
         change.after["password_policy"].all(
           _["min_password_length"] != empty &&
           _["min_password_length"] >= 14 &&
-          _["require_upper_case_chars"] == true &&
-          _["require_lower_case_chars"] == true &&
-          _["require_numbers"] == true &&
-          _["require_symbols"] == true
+          _["password_not_contain_username"] == true
         )
       )
   - uid: mondoo-alibaba-security-cloudsso-password-policy-strong-terraform-state
@@ -5203,10 +5195,7 @@ queries:
         values["password_policy"].all(
           _["min_password_length"] != empty &&
           _["min_password_length"] >= 14 &&
-          _["require_upper_case_chars"] == true &&
-          _["require_lower_case_chars"] == true &&
-          _["require_numbers"] == true &&
-          _["require_symbols"] == true
+          _["password_not_contain_username"] == true
         )
       )
 
@@ -5679,7 +5668,8 @@ queries:
             To create a replacement cluster with encrypted data node disks using the `aliyun` CLI:
 
             ```bash
-            aliyun elasticsearch CreateInstance --body '{"nodeSpec":{"diskEncryption":true}}'
+            aliyun elasticsearch POST /openapi/instances \
+              --body '{"nodeSpec":{"diskEncryption":true}}'
             ```
         - id: terraform
           desc: |
