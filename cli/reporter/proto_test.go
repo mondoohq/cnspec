@@ -41,7 +41,7 @@ func TestProtoConversion(t *testing.T) {
 		assert.Equal(t, 53, len(report.Scores[assetMrn].Values))
 
 		score := report.Scores[assetMrn].Values["//policy.api.mondoo.app/queries/mondoo-linux-security-permissions-on-etcgshadow-are-configured"]
-		assert.Equal(t, 100, int(score.Score))
+		assert.Equal(t, 0, int(score.RiskScore))
 		assert.Equal(t, "pass", score.Status)
 	})
 
