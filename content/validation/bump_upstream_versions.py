@@ -20,12 +20,14 @@
 # Usage:
 #   python3 content/validation/bump_upstream_versions.py --list
 #   python3 content/validation/bump_upstream_versions.py --only cfn-lint
+#   python3 content/validation/bump_upstream_versions.py --only terraform-provider
 #   python3 content/validation/bump_upstream_versions.py --all --dry-run
 #   python3 content/validation/bump_upstream_versions.py --only doctl --json -
 
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -73,6 +75,48 @@ CAVEATS = {
 }
 
 
+# How to name a pull request that carries every behind pin of one kind. Every
+# kind lives in one dense block of one file -- 24 Terraform providers on 24
+# consecutive lines of PROVIDER_MAP, four spec SHAs on four consecutive lines
+# of openapi.py -- so a pull request per *pin* means every pull request of that
+# kind conflicts with every other one the moment the first is merged. Grouping
+# by kind is what makes them mergeable in any order.
+KIND_LABELS = {
+    "linter": "linter pins",
+    "cli": "pinned CLI releases",
+    "tflint-ruleset": "tflint ruleset pins",
+    "terraform-provider": "Terraform provider constraints",
+    "spec": "pinned OpenAPI specs",
+}
+
+
+def pr_title(applied: list[dict]) -> str:
+    """Pull request title for a group of applied bumps."""
+    if len(applied) == 1:
+        # A one-pin group still says which pin and which version, which is what
+        # the commit history reads like today.
+        return f"🧹 validation: bump {applied[0]['name']} to {applied[0]['to']}"
+
+    kinds = dict.fromkeys(a["kind"] for a in applied)
+    if len(kinds) == 1:
+        kind = next(iter(kinds))
+        return f"🧹 validation: bump {len(applied)} {KIND_LABELS.get(kind, f'{kind} pins')}"
+    return f"🧹 validation: bump {len(applied)} pinned upstreams"
+
+
+def pr_branch(applied: list[dict]) -> str:
+    """Stable branch for a group of applied bumps.
+
+    Named for the *kind*, never for a version and no longer for a single pin:
+    the branch belongs to the group, so next week's run updates the open pull
+    request instead of opening a second one beside it.
+    """
+    kinds = dict.fromkeys(a["kind"] for a in applied)
+    if len(kinds) == 1:
+        return f"deps/validation/{re.sub(r'[^a-z0-9]+', '-', next(iter(kinds)).lower()).strip('-')}"
+    return "deps/validation/upstream-pins"
+
+
 def pr_body(applied: list[dict]) -> str:
     lines = [
         "Opened by the weekly `Validation Dependency Updates` workflow.",
@@ -94,9 +138,20 @@ def pr_body(applied: list[dict]) -> str:
     lines += [
         "",
         "A bump is a judgement call, which is why this is a pull request and not a "
-        "commit. Close it if the pin should stay where it is; the workflow will "
+        "commit. Close it if a pin should stay where it is; the workflow will "
         "reopen the same branch when upstream moves again.",
     ]
+
+    if len(applied) > 1:
+        lines += [
+            "",
+            "Every pin above is declared in the same block of the same file, so one "
+            "pull request per pin would mean every one of them conflicting with the "
+            "rest the moment the first was merged. They are grouped instead. If one "
+            "row needs work the others should not wait on, drop that line from this "
+            "branch and merge the rest -- next week's run will offer it again.",
+        ]
+
     return "\n".join(lines)
 
 
@@ -104,20 +159,35 @@ def select(pins: list[Pin], only: str | None) -> list[Pin]:
     if only is None:
         return [p for p in pins if p.state == "behind"]
 
-    match = [p for p in pins if only in (p.name, p.slug)]
-    if not match:
-        known = ", ".join(sorted(p.slug for p in pins))
-        raise SystemExit(f"no pin named {only!r}. Known pins: {known}")
+    picked: set[int] = set()
+    # Each term names one pin or a whole kind, and several may be given at once.
+    # A kind is what the weekly workflow passes -- one job per kind, so the
+    # pins that share a block of lines also share a pull request.
+    for term in (t.strip() for t in only.split(",")):
+        if not term:
+            continue
+        match = [p for p in pins if term in (p.name, p.slug) or term == p.kind]
+        if not match:
+            known = ", ".join(sorted({p.slug for p in pins} | {p.kind for p in pins}))
+            raise SystemExit(f"no pin or kind named {term!r}. Known: {known}")
+        picked.update(id(p) for p in match)
+
     # An explicitly named pin that is already current is not an error: the
     # weekly workflow builds its matrix from one run of the checker and applies
-    # each entry in a later job, and upstream can publish in between.
-    return [p for p in match if p.state == "behind"]
+    # each entry in a later job, and upstream can publish in between. Filtering
+    # over `pins` rather than the matches keeps discovery order and drops the
+    # duplicates that overlapping terms produce.
+    return [p for p in pins if id(p) in picked and p.state == "behind"]
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Bump a pinned validator upstream in place")
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--only", metavar="PIN", help="bump this pin (name or slug)")
+    group.add_argument(
+        "--only",
+        metavar="PIN",
+        help="bump these pins: a comma-separated list of pin names, slugs, or kinds",
+    )
     group.add_argument("--all", action="store_true", help="bump every pin that is behind")
     group.add_argument("--list", action="store_true", help="list bumpable pins and exit")
     group.add_argument(
@@ -214,27 +284,17 @@ def main() -> None:
         Path(args.pr_body).write_text(pr_body(applied) + "\n")
 
     if args.github_output and applied:
-        # The branch name deliberately carries the pin but *not* the version.
-        # A version in the branch would abandon last week's branch and open a
-        # second pull request every time upstream released, instead of updating
-        # the one already open.
-        first = applied[0]
-        title = (
-            f"🧹 validation: bump {first['name']} to {first['to']}"
-            if len(applied) == 1
-            else f"🧹 validation: bump {len(applied)} pinned upstreams"
-        )
         # The title interpolates an upstream-supplied version, which reaches
         # $GITHUB_OUTPUT and from there the pull request title and commit
         # message. `as_token` already refuses anything but a single version-
         # shaped token, so a newline cannot get this far -- the heredoc form is
         # the second layer, and the one that stays correct if a future resolver
-        # returns something richer. `slug` needs neither: it is generated from
-        # a `[^a-z0-9]+` substitution.
+        # returns something richer. The branch needs neither: it is generated
+        # from a `[^a-z0-9]+` substitution.
         with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
             fh.write(f"applied={len(applied)}\n")
-            fh.write(f"title<<PR_TITLE_EOF\n{title}\nPR_TITLE_EOF\n")
-            fh.write(f"branch=deps/validation/{first['slug']}\n")
+            fh.write(f"title<<PR_TITLE_EOF\n{pr_title(applied)}\nPR_TITLE_EOF\n")
+            fh.write(f"branch={pr_branch(applied)}\n")
 
     if not applied and not args.dry_run:
         print("nothing to bump", file=sys.stderr)
