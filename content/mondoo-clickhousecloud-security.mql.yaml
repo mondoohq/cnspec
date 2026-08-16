@@ -1,0 +1,194 @@
+# Copyright Mondoo, Inc. 2024, 2026
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: mondoo-clickhousecloud-security
+    name: Mondoo ClickHouse Cloud Security
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: clickhousecloud
+    require:
+      - provider: clickhousecloud
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Harden ClickHouse Cloud service network exposure and encryption at rest
+    docs:
+      desc: |
+        The Mondoo ClickHouse Cloud Security policy connects to a ClickHouse Cloud organization and assesses the security posture of its services: whether each service is reachable from any IP address and whether transparent data encryption is enabled.
+
+        These settings are read from the ClickHouse Cloud API, so the checks reflect the controls ClickHouse Cloud is actually enforcing rather than a file on disk.
+
+        Learn more about scanning databases in the [cnspec documentation](https://mondoo.com/docs/cnspec).
+    groups:
+      - title: Network Access
+        filters: asset.platform == "clickhousecloud"
+        checks:
+          - uid: mondoo-clickhousecloud-security-services-not-open-to-all-ips
+      - title: Encryption
+        filters: asset.platform == "clickhousecloud"
+        checks:
+          - uid: mondoo-clickhousecloud-security-services-encryption-at-rest
+    scoring_system: highest impact
+queries:
+  - uid: mondoo-clickhousecloud-security-services-not-open-to-all-ips
+    filters: asset.platform == "clickhousecloud"
+    title: Ensure ClickHouse Cloud services are not open to all IP addresses
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    mql: |
+      clickhousecloud.organization.services.all(openToAllIps == false)
+    docs:
+      desc: |-
+        This check ensures that no ClickHouse Cloud service is reachable from any IP address. A service is open to all IPs when its IP access list contains a wildcard entry such as `0.0.0.0/0` or `::/0`, which exposes the database endpoint to the entire internet.
+
+        **Why this matters**
+
+        - **Reduced exposure:** Restricting source IPs means only approved networks can even attempt to connect.
+        - **Credential-theft containment:** A leaked password cannot be used from outside the approved ranges.
+        - **Defense in depth:** Network restrictions complement authentication rather than replacing it.
+
+        **Risk mitigation**
+
+        - **Blocked off-network access:** Connection attempts from unapproved addresses are rejected.
+        - **Smaller attack surface:** Only approved networks can reach the service endpoint.
+      audit: |-
+        ### Audit via the ClickHouse Cloud console
+
+        1. Sign in to the ClickHouse Cloud console and open each service.
+        2. Go to **Settings** > **Security** > **IP access list**.
+        3. Confirm the list does not contain `0.0.0.0/0` or `::/0` and instead names specific approved ranges.
+
+        If no service allows all IP addresses, the check passes. If any service has a wildcard entry, the check fails.
+      remediation:
+        - id: console
+          desc: |-
+            To restrict service network access in the ClickHouse Cloud console:
+
+            1. Open the service and go to **Settings** > **Security** > **IP access list**.
+            2. Remove any `0.0.0.0/0` or `::/0` entry.
+            3. Add specific CIDR ranges for the approved office, VPN, and application networks.
+        - id: api
+          desc: |-
+            To restrict service network access with the ClickHouse Cloud API, update the service's IP access list to specific ranges:
+
+            ```bash
+            curl -s -X PATCH \
+              -u "$CLICKHOUSE_KEY_ID:$CLICKHOUSE_KEY_SECRET" \
+              -H "Content-Type: application/json" \
+              --data '{"ipAccessList":{"add":[{"source":"203.0.113.0/24","description":"office"}],"remove":[{"source":"0.0.0.0/0"}]}}' \
+              "https://api.clickhouse.cloud/v1/organizations/$ORG_ID/services/$SERVICE_ID"
+            ```
+        - id: terraform
+          desc: |-
+            To restrict service network access with the ClickHouse Cloud Terraform provider, set an explicit `ip_access` list on the service:
+
+            ```hcl
+            resource "clickhouse_service" "example" {
+              name           = "example"
+              cloud_provider = "aws"
+              region         = "us-east-1"
+              password_wo    = var.clickhouse_default_password
+
+              ip_access = [
+                {
+                  source      = "203.0.113.0/24"
+                  description = "office"
+                }
+              ]
+            }
+            ```
+    refs:
+      - url: https://clickhouse.com/docs/en/cloud/security/setting-ip-filters
+        title: ClickHouse Cloud IP access lists
+      - url: https://clickhouse.com/docs/cloud/manage/api/api-overview
+        title: ClickHouse Cloud API
+  - uid: mondoo-clickhousecloud-security-services-encryption-at-rest
+    filters: asset.platform == "clickhousecloud"
+    title: Ensure ClickHouse Cloud services enable transparent data encryption
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-16
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-11
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    mql: |
+      clickhousecloud.organization.services.all(hasTransparentDataEncryption == true)
+    docs:
+      desc: |-
+        This check ensures that every ClickHouse Cloud service has transparent data encryption enabled, so data stored on disk is encrypted at rest. Transparent data encryption protects the stored data if the underlying storage is ever accessed outside the service.
+
+        **Why this matters**
+
+        - **Data-at-rest protection:** Encrypted storage is unreadable without the keys, limiting exposure from storage-layer compromise.
+        - **Compliance:** Many frameworks require sensitive data to be encrypted at rest.
+        - **Key management:** Transparent data encryption integrates key management with the service rather than leaving data in cleartext.
+
+        **Risk mitigation**
+
+        - **Neutralized storage theft:** A copy of the underlying storage is useless without the encryption keys.
+        - **Consistent coverage:** Every service, not just some, protects its stored data.
+      audit: |-
+        ### Audit via the ClickHouse Cloud console
+
+        1. Sign in to the ClickHouse Cloud console and open each service.
+        2. Review the service's data encryption setting under **Settings** > **Security**.
+
+        If every service reports transparent data encryption enabled, the check passes. If any service has it disabled, the check fails.
+      remediation:
+        - id: console
+          desc: |-
+            To enable transparent data encryption in the ClickHouse Cloud console:
+
+            1. Transparent data encryption (including customer-managed keys) is selected when a service is created on supported tiers.
+            2. For an existing service, contact ClickHouse Cloud support or recreate the service on a tier that supports encryption at rest, then migrate the data.
+        - id: terraform
+          desc: |-
+            To provision a service with encryption at rest using the ClickHouse Cloud Terraform provider, configure the encryption key settings supported by the service resource:
+
+            ```hcl
+            resource "clickhouse_service" "example" {
+              name           = "example"
+              cloud_provider = "aws"
+              region         = "us-east-1"
+              password_wo    = var.clickhouse_default_password
+
+              ip_access = [
+                {
+                  source      = "203.0.113.0/24"
+                  description = "office"
+                }
+              ]
+
+              encryption_key                     = var.kms_key_arn
+              encryption_assumed_role_identifier = var.kms_role_arn
+            }
+            ```
+    refs:
+      - url: https://clickhouse.com/docs/en/cloud/security/cmek
+        title: ClickHouse Cloud data encryption
