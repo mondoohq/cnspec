@@ -1,0 +1,31 @@
+resource mysqlServer 'Microsoft.DBforMySQL/flexibleServers@2023-06-30' = {
+  name: 'contoso-mysql'
+  location: 'eastus'
+  sku: {
+    name: 'Standard_D2ds_v4'
+    tier: 'GeneralPurpose'
+  }
+  properties: {
+    version: '8.0.21'
+    administratorLogin: 'mysqladmin'
+    storage: {
+      storageSizeGB: 128
+    }
+  }
+
+  resource secureTransport 'configurations@2023-06-30' = {
+    name: 'require_secure_transport'
+    properties: {
+      value: 'ON'
+      source: 'user-override'
+    }
+  }
+
+  resource tlsVersion 'configurations@2023-06-30' = {
+    name: 'tls_version'
+    properties: {
+      value: 'TLSv1.1,TLSv1.2'
+      source: 'user-override'
+    }
+  }
+}
