@@ -61,7 +61,7 @@ TARGETS = {
 
 # Map resource prefix -> (provider source, version constraint)
 PROVIDER_MAP = {
-    "aws": ("hashicorp/aws", "~> 5.0"),
+    "aws": ("hashicorp/aws", "~> 6.0"),
     "azurerm": ("hashicorp/azurerm", "~> 5.0"),
     "azuread": ("hashicorp/azuread", "~> 3.0"),
     "azapi": ("azure/azapi", "~> 2.0"),
