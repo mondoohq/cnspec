@@ -134,7 +134,7 @@ queries:
       remediation:
         - id: dockerfile
           desc: |
-            Combine update and install commands in a single `RUN` instruction:
+            Combine update and install commands in a single `RUN` instruction. The replacement also adds `--no-install-recommends`, so the result satisfies the sibling package-hygiene checks as well:
 
             ```dockerfile
             # Instead of:
@@ -142,7 +142,9 @@ queries:
             RUN apt-get install -y package
 
             # Use:
-            RUN apt-get update && apt-get install -y package && rm -rf /var/lib/apt/lists/*
+            RUN apt-get update && \
+                apt-get install -y --no-install-recommends package && \
+                rm -rf /var/lib/apt/lists/*
 
             # For Alpine, instead of:
             RUN apk update
@@ -199,10 +201,10 @@ queries:
     title: Clean apt-get cache after installing packages
     impact: 40
     mql: |
-      docker.file.stages.all(run.where(commands.any(binary == "apt-get" && subcommand == "install")).all(commands.any(binary == "rm" && args.any(_ == /\/var\/lib\/apt\/lists/))))
+      docker.file.stages.all(run.where(commands.any(binary == "apt-get" && subcommand == "install")).all(mounts.any(type == "cache" && target == /^\/var\/lib\/apt\/lists\/?$/) || commands.any(binary == "rm" && args.any(_ == /\/var\/lib\/apt\/lists/))))
     docs:
       desc: |
-        Dockerfile `RUN` instructions that use `apt-get install` should also clean up the apt package lists in the same layer.
+        Dockerfile `RUN` instructions that use `apt-get install` should also clean up the apt package lists in the same layer, or keep them out of the image by mounting `/var/lib/apt/lists` as a BuildKit cache.
 
         **Why this matters**
 
@@ -214,9 +216,9 @@ queries:
 
         1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
         2. Locate every `RUN` instruction containing `apt-get install`: `grep -nE 'RUN.*apt-get install' Dockerfile`.
-        3. Confirm each matched instruction also references `/var/lib/apt/lists` to remove the cached index in the same `RUN` statement.
+        3. Confirm each matched instruction either removes `/var/lib/apt/lists` in the same `RUN` statement or mounts it as a BuildKit cache with `--mount=type=cache,target=/var/lib/apt/lists`.
 
-        If every `apt-get install` instruction cleans `/var/lib/apt/lists`, the check passes. If any omits the cleanup, the check fails.
+        If every `apt-get install` instruction cleans or cache-mounts `/var/lib/apt/lists`, the check passes. If any omits both, the check fails.
       remediation:
         - id: dockerfile
           desc: |
@@ -251,10 +253,10 @@ queries:
     title: Clean yum cache after installing packages
     impact: 40
     mql: |
-      docker.file.stages.all(run.where(commands.any(binary == "yum" && subcommand == "install")).all(commands.any(binary == "yum" && subcommand == "clean" && args.contains("all"))))
+      docker.file.stages.all(run.where(commands.any(binary == "yum" && subcommand == "install")).all(mounts.any(type == "cache" && target == /^\/var\/cache\/yum\/?$/) || commands.any(binary == "yum" && subcommand == "clean" && args.contains("all"))))
     docs:
       desc: |
-        Dockerfile `RUN` instructions that use `yum install` should also run `yum clean all` in the same layer.
+        Dockerfile `RUN` instructions that use `yum install` should also run `yum clean all` in the same layer, or keep the cache out of the image by mounting `/var/cache/yum` as a BuildKit cache.
 
         **Why this matters**
 
@@ -266,9 +268,9 @@ queries:
 
         1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
         2. Locate every `RUN` instruction containing `yum install`: `grep -nE 'RUN.*yum install' Dockerfile`.
-        3. Confirm each matched instruction also runs `yum clean all` in the same `RUN` statement.
+        3. Confirm each matched instruction either runs `yum clean all` in the same `RUN` statement or mounts the cache with `--mount=type=cache,target=/var/cache/yum`.
 
-        If every `yum install` instruction runs `yum clean all`, the check passes. If any omits it, the check fails.
+        If every `yum install` instruction cleans or cache-mounts `/var/cache/yum`, the check passes. If any omits both, the check fails.
       remediation:
         - id: dockerfile
           desc: |
@@ -297,10 +299,10 @@ queries:
     title: Clean dnf cache after installing packages
     impact: 40
     mql: |
-      docker.file.stages.all(run.where(commands.any(binary == "dnf" && subcommand == "install")).all(commands.any(binary == "dnf" && subcommand == "clean" && args.contains("all"))))
+      docker.file.stages.all(run.where(commands.any(binary == "dnf" && subcommand == "install")).all(mounts.any(type == "cache" && target == /^\/var\/cache\/dnf\/?$/) || commands.any(binary == "dnf" && subcommand == "clean" && args.contains("all"))))
     docs:
       desc: |
-        Dockerfile `RUN` instructions that use `dnf install` should also run `dnf clean all` in the same layer.
+        Dockerfile `RUN` instructions that use `dnf install` should also run `dnf clean all` in the same layer, or keep the cache out of the image by mounting `/var/cache/dnf` as a BuildKit cache.
 
         **Why this matters**
 
@@ -312,9 +314,9 @@ queries:
 
         1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
         2. Locate every `RUN` instruction containing `dnf install`: `grep -nE 'RUN.*dnf install' Dockerfile`.
-        3. Confirm each matched instruction also runs `dnf clean all` in the same `RUN` statement.
+        3. Confirm each matched instruction either runs `dnf clean all` in the same `RUN` statement or mounts the cache with `--mount=type=cache,target=/var/cache/dnf`.
 
-        If every `dnf install` instruction runs `dnf clean all`, the check passes. If any omits it, the check fails.
+        If every `dnf install` instruction cleans or cache-mounts `/var/cache/dnf`, the check passes. If any omits both, the check fails.
       remediation:
         - id: dockerfile
           desc: |
@@ -343,10 +345,10 @@ queries:
     title: Clean zypper cache after installing packages
     impact: 40
     mql: |
-      docker.file.stages.all(run.where(commands.any(binary == "zypper" && subcommand == "install")).all(commands.any(binary == "zypper" && subcommand == "clean")))
+      docker.file.stages.all(run.where(commands.any(binary == "zypper" && subcommand == "install")).all(mounts.any(type == "cache" && target == /^\/var\/cache\/zypp\/?$/) || commands.any(binary == "zypper" && subcommand == "clean")))
     docs:
       desc: |
-        Dockerfile `RUN` instructions that use `zypper install` should also run `zypper clean` in the same layer.
+        Dockerfile `RUN` instructions that use `zypper install` should also run `zypper clean` in the same layer, or keep the cache out of the image by mounting `/var/cache/zypp` as a BuildKit cache.
 
         **Why this matters**
 
@@ -358,9 +360,9 @@ queries:
 
         1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
         2. Locate every `RUN` instruction containing `zypper install`: `grep -nE 'RUN.*zypper install' Dockerfile`.
-        3. Confirm each matched instruction also runs `zypper clean` in the same `RUN` statement.
+        3. Confirm each matched instruction either runs `zypper clean` in the same `RUN` statement or mounts the cache with `--mount=type=cache,target=/var/cache/zypp`.
 
-        If every `zypper install` instruction runs `zypper clean`, the check passes. If any omits it, the check fails.
+        If every `zypper install` instruction cleans or cache-mounts `/var/cache/zypp`, the check passes. If any omits both, the check fails.
       remediation:
         - id: dockerfile
           desc: |
@@ -388,10 +390,10 @@ queries:
     title: Use --no-cache-dir with pip install
     impact: 40
     mql: |
-      docker.file.stages.all(run.all(commands.where(binary == "pip" && subcommand == "install").all(flags.contains("--no-cache-dir"))))
+      docker.file.stages.all(run.where(commands.any(binary == "pip" && subcommand == "install")).all(mounts.any(type == "cache" && target == /pip/) || commands.where(binary == "pip" && subcommand == "install").all(flags.contains("--no-cache-dir"))))
     docs:
       desc: |
-        `pip install` commands in Dockerfile `RUN` instructions should include the `--no-cache-dir` flag.
+        `pip install` commands in Dockerfile `RUN` instructions should include the `--no-cache-dir` flag, or mount the pip cache directory as a BuildKit cache so it never lands in an image layer.
 
         **Why this matters**
 
@@ -403,9 +405,9 @@ queries:
 
         1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
         2. Locate every `RUN` instruction containing `pip install`: `grep -nE 'RUN.*pip install' Dockerfile`.
-        3. Confirm each matched instruction includes the `--no-cache-dir` flag.
+        3. Confirm each matched instruction either includes the `--no-cache-dir` flag or mounts the pip cache with `--mount=type=cache,target=/root/.cache/pip`.
 
-        If every `pip install` uses `--no-cache-dir`, the check passes. If any omits it, the check fails.
+        If every `pip install` disables or cache-mounts the cache, the check passes. If any omits both, the check fails.
       remediation:
         - id: dockerfile
           desc: |
@@ -437,10 +439,10 @@ queries:
     title: Clean yarn cache after installing packages
     impact: 40
     mql: |
-      docker.file.stages.all(run.where(commands.any(binary == "yarn" && subcommand == "install")).all(commands.any(binary == "yarn" && subcommand == "cache" && args.contains("clean"))))
+      docker.file.stages.all(run.where(commands.any(binary == "yarn" && subcommand == "install")).all(mounts.any(type == "cache" && target == /yarn/) || commands.any(binary == "yarn" && subcommand == "cache" && args.contains("clean"))))
     docs:
       desc: |
-        Dockerfile `RUN` instructions that use `yarn install` should also run `yarn cache clean` in the same layer. This check targets Yarn Classic (Yarn 1.x), where the cache lives in a global directory. Yarn Berry (Yarn 2 and later) manages its cache differently through Plug'n'Play and zero-installs, so the `yarn cache clean` step does not apply there.
+        Dockerfile `RUN` instructions that use `yarn install` should also run `yarn cache clean` in the same layer, or mount the yarn cache directory as a BuildKit cache so it never lands in an image layer. This check targets Yarn Classic (Yarn 1.x), where the cache lives in a global directory. Yarn Berry (Yarn 2 and later) manages its cache differently through Plug'n'Play and zero-installs, so the `yarn cache clean` step does not apply there.
 
         **Why this matters**
 
@@ -452,9 +454,9 @@ queries:
 
         1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
         2. Locate every `RUN` instruction containing `yarn install`: `grep -nE 'RUN.*yarn install' Dockerfile`.
-        3. Confirm each matched instruction also runs `yarn cache clean` in the same `RUN` statement.
+        3. Confirm each matched instruction either runs `yarn cache clean` in the same `RUN` statement or mounts the yarn cache with `--mount=type=cache,target=/usr/local/share/.cache/yarn`.
 
-        If every `yarn install` instruction runs `yarn cache clean`, the check passes. If any omits it, the check fails.
+        If every `yarn install` instruction cleans or cache-mounts the yarn cache, the check passes. If any omits both, the check fails.
       remediation:
         - id: dockerfile
           desc: |
@@ -483,11 +485,11 @@ queries:
     title: Clean npm cache after installing packages
     impact: 40
     mql: |
-      docker.file.stages.all(run.where(commands.any(binary == "npm" && subcommand == "install")).all(commands.any(binary == "npm" && subcommand == "cache" && args.contains("clean"))))
-      docker.file.stages.all(run.where(commands.any(binary == "npm" && subcommand == "ci")).all(commands.any(binary == "npm" && subcommand == "cache" && args.contains("clean"))))
+      docker.file.stages.all(run.where(commands.any(binary == "npm" && subcommand == "install")).all(mounts.any(type == "cache" && target == /npm/) || commands.any(binary == "npm" && subcommand == "cache" && args.contains("clean"))))
+      docker.file.stages.all(run.where(commands.any(binary == "npm" && subcommand == "ci")).all(mounts.any(type == "cache" && target == /npm/) || commands.any(binary == "npm" && subcommand == "cache" && args.contains("clean"))))
     docs:
       desc: |
-        Dockerfile `RUN` instructions that use `npm install` or `npm ci` should also run `npm cache clean` in the same layer.
+        Dockerfile `RUN` instructions that use `npm install` or `npm ci` should also run `npm cache clean` in the same layer, or mount the npm cache directory as a BuildKit cache so it never lands in an image layer.
 
         **Why this matters**
 
@@ -499,9 +501,9 @@ queries:
 
         1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
         2. Locate every `RUN` instruction containing `npm install` or `npm ci`: `grep -nE 'RUN.*npm (install|ci)' Dockerfile`.
-        3. Confirm each matched instruction also runs `npm cache clean` in the same `RUN` statement.
+        3. Confirm each matched instruction either runs `npm cache clean` in the same `RUN` statement or mounts the npm cache with `--mount=type=cache,target=/root/.npm`.
 
-        If every `npm install` and `npm ci` instruction runs `npm cache clean`, the check passes. If any omits it, the check fails.
+        If every `npm install` and `npm ci` instruction cleans or cache-mounts the npm cache, the check passes. If any omits both, the check fails.
       remediation:
         - id: dockerfile
           desc: |
@@ -911,10 +913,10 @@ queries:
     title: Clean microdnf cache after installing packages
     impact: 40
     mql: |
-      docker.file.stages.all(run.where(commands.any(binary == "microdnf" && subcommand == "install")).all(commands.any(binary == "microdnf" && subcommand == "clean" && args.contains("all"))))
+      docker.file.stages.all(run.where(commands.any(binary == "microdnf" && subcommand == "install")).all(mounts.any(type == "cache" && target == /^\/var\/cache\/(dnf|yum)\/?$/) || commands.any(binary == "microdnf" && subcommand == "clean" && args.contains("all"))))
     docs:
       desc: |
-        Dockerfile `RUN` instructions that use `microdnf install` should also run `microdnf clean all` in the same layer. microdnf is a minimal DNF implementation used in Red Hat UBI micro images, and like other package managers it caches downloaded packages and metadata.
+        Dockerfile `RUN` instructions that use `microdnf install` should also run `microdnf clean all` in the same layer, or keep the cache out of the image by mounting `/var/cache/dnf` as a BuildKit cache. microdnf is a minimal DNF implementation used in Red Hat UBI micro images, and like other package managers it caches downloaded packages and metadata.
 
         **Why this matters**
 
@@ -926,9 +928,9 @@ queries:
 
         1. Open the Dockerfile in a text editor or print it with `cat Dockerfile`.
         2. Locate every `RUN` instruction containing `microdnf install`: `grep -nE 'RUN.*microdnf install' Dockerfile`.
-        3. Confirm each matched instruction also runs `microdnf clean all` in the same `RUN` statement.
+        3. Confirm each matched instruction either runs `microdnf clean all` in the same `RUN` statement or mounts the cache with `--mount=type=cache,target=/var/cache/dnf`.
 
-        If every `microdnf install` instruction runs `microdnf clean all`, the check passes. If any omits it, the check fails.
+        If every `microdnf install` instruction cleans or cache-mounts the package cache, the check passes. If any omits both, the check fails.
       remediation:
         - id: dockerfile
           desc: |
