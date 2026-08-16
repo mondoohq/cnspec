@@ -511,10 +511,10 @@ queries:
     mql: |
       terraform.state.resources.where(type == "unifi_wlan" && values.security != "open").all(values.pmf_mode.in(["required", "optional"]))
 
-  # No Terraform variants: the WPA encryption-cipher selector (`wpaEnc`, values like
-  # `ccmp`/`gcmp256`) is not exposed on the ubiquiti-community/unifi unifi_wlan resource —
-  # there is no `wpa_enc` top-level attribute and no nested encryption block. The cipher
-  # can only be selected in the controller UI under WLAN advanced settings.
+  # No Terraform variants yet: the ubiquiti-community/unifi unifi_wlan resource does carry
+  # the cipher selector as the `wpa_enc` attribute (`auto`, `ccmp`, `gcmp`, `ccmp-256`,
+  # `gcmp-256`), so a Terraform remediation entry is provided below. The HCL, plan, and
+  # state variants have not been written.
   - uid: mondoo-unifi-security-wlans-strong-encryption-cipher
     filters: asset.platform == "unifi"
     title: Ensure WLANs use strong WPA encryption ciphers
@@ -565,14 +565,33 @@ queries:
             3. Under advanced settings, ensure the encryption cipher is set to **CCMP** (AES) or **GCMP-256**.
             4. Avoid selecting TKIP or mixed-mode cipher configurations.
         # No cli remediation: wireless network security is a controller-managed site setting; the device SSH CLI cannot change it and the controller overwrites local changes on provision.
+        - id: terraform
+          desc: |
+            To pin the encryption cipher in Terraform, set `wpa_enc` to `ccmp` or `gcmp-256` on every secured `unifi_wlan` resource. Leaving the attribute unset selects `auto`, which lets the controller keep a weaker cipher negotiable:
+
+            ```hcl
+            # The provider exposes UniFi user groups as client QOS rates; this
+            # looks up the default user group for the required user_group_id.
+            data "unifi_client_qos_rate" "default" {
+            }
+
+            resource "unifi_wlan" "strong_cipher" {
+              name          = "internal"
+              security      = "wpapsk"
+              passphrase    = var.wifi_passphrase
+              wpa_enc       = "ccmp"
+              network_id    = unifi_network.lan.id
+              user_group_id = data.unifi_client_qos_rate.default.id
+            }
+            ```
     refs:
       - url: https://help.ui.com/hc/en-us/articles/205231710
         title: UniFi wireless network configuration
 
-  # No Terraform variants: the WPA group-rekey / GTK rotation interval
-  # (`groupRekeyInterval`) is not exposed on the ubiquiti-community/unifi unifi_wlan
-  # resource — no top-level attribute and no nested encryption block carries the field.
-  # The setting is only configurable via the controller UI under WLAN advanced settings.
+  # No Terraform variants yet: the ubiquiti-community/unifi unifi_wlan resource does carry
+  # the GTK rotation interval as the `group_rekey` attribute, documented as "Group rekey
+  # interval in seconds (0 to disable)", so a Terraform remediation entry is provided
+  # below. The HCL, plan, and state variants have not been written.
   - uid: mondoo-unifi-security-wlans-group-rekey-interval
     filters: asset.platform == "unifi"
     title: Ensure WPA group rekey interval is configured
@@ -622,6 +641,25 @@ queries:
             2. Select each wireless network.
             3. Under advanced settings, set the **Group Rekey Interval** to a value between 1 and 3600 seconds, such as 3600. Do not set it to 0, which disables rekeying.
         # No cli remediation: wireless network security is a controller-managed site setting; the device SSH CLI cannot change it and the controller overwrites local changes on provision.
+        - id: terraform
+          desc: |
+            To set the group rekey interval in Terraform, set `group_rekey` to a value between 1 and 3600 seconds on every secured `unifi_wlan` resource. A value of 0 disables rekeying and is the failure case:
+
+            ```hcl
+            # The provider exposes UniFi user groups as client QOS rates; this
+            # looks up the default user group for the required user_group_id.
+            data "unifi_client_qos_rate" "default" {
+            }
+
+            resource "unifi_wlan" "rekeyed" {
+              name          = "internal"
+              security      = "wpapsk"
+              passphrase    = var.wifi_passphrase
+              group_rekey   = 3600
+              network_id    = unifi_network.lan.id
+              user_group_id = data.unifi_client_qos_rate.default.id
+            }
+            ```
     refs:
       - url: https://help.ui.com/hc/en-us/articles/205231710
         title: UniFi wireless network configuration
@@ -924,9 +962,11 @@ queries:
         title: UniFi Threat Management
 
   # No Terraform variants: DNS filtering is part of UniFi's Threat Management feature
-  # (`siteSettings.threatManagement.dnsFiltering`). The ubiquiti-community/unifi provider
-  # exposes no threat-management settings — unifi_setting carries only `mgmt`, `radius`,
-  # and `usg`. The setting can only be toggled via the controller UI.
+  # (`siteSettings.threatManagement.dnsFiltering`). The ubiquiti-community/unifi
+  # unifi_setting resource models threat management through its `ips` attribute, and that
+  # attribute carries no DNS-filtering field: it holds `ips_mode`, `enabled_categories`,
+  # `enabled_networks`, `honeypot*`, `restrict_torrents`, and the suppression lists only.
+  # The setting can therefore only be toggled via the controller UI.
   - uid: mondoo-unifi-security-dns-filtering-enabled
     filters: asset.platform == "unifi"
     title: Ensure DNS filtering is enabled
@@ -983,11 +1023,11 @@ queries:
       - url: https://help.ui.com/hc/en-us/articles/360006893234
         title: UniFi Threat Management
 
-  # No Terraform variants: the internal honeypot is part of UniFi's Threat Management
-  # feature (`siteSettings.threatManagement.honeypotEnabled`). The ubiquiti-community/unifi
-  # provider exposes no threat-management settings — unifi_setting only carries `mgmt`,
-  # `radius`, and `usg` nested attributes. The honeypot can only be enabled in the
-  # controller UI under Settings > Security.
+  # No Terraform variants yet: the ubiquiti-community/unifi unifi_setting resource does
+  # carry the honeypot toggle as `ips.honeypot_enabled`, documented as "Enable honeypot to
+  # detect internal port scans", alongside an `ips.honeypot` list of decoy addresses. A
+  # Terraform remediation entry is provided below; the HCL, plan, and state variants have
+  # not been written.
   - uid: mondoo-unifi-security-honeypot-enabled
     filters: asset.platform == "unifi"
     title: Ensure the internal honeypot is enabled
@@ -1039,6 +1079,24 @@ queries:
             2. Enable **Internal Honeypot**.
             3. Select the network and choose an unused IP address on that network so it does not conflict with a real host.
         # No cli remediation: the internal honeypot is a controller-managed site setting; the device SSH CLI cannot change it and the controller overwrites local changes on provision.
+        - id: terraform
+          desc: |
+            To enable the internal honeypot in Terraform, set `honeypot_enabled = true` inside the `ips` attribute on the `unifi_setting` resource and declare at least one decoy address. Choose an address that no real host uses:
+
+            ```hcl
+            resource "unifi_setting" "ips" {
+              site = "default"
+
+              ips = {
+                honeypot_enabled = true
+                honeypot = [{
+                  ip_address = "10.0.0.250"
+                  network_id = unifi_network.lan.id
+                  version    = "v4"
+                }]
+              }
+            }
+            ```
     refs:
       - url: https://help.ui.com/hc/en-us/articles/360006893234
         title: UniFi Threat Management
@@ -1701,11 +1759,11 @@ queries:
     mql: |
       terraform.state.resources.where(type == "unifi_setting" && values.mgmt != empty).all(values.mgmt.ssh_enabled == false)
 
-  # No Terraform variants: the SSH password-auth toggle (`mgmt.sshPasswordAuthEnabled`)
-  # is not exposed by the ubiquiti-community/unifi provider — the unifi_setting mgmt block
-  # carries only `auto_upgrade`, `ssh_enabled`, and `ssh_keys` (key-based auth list). To
-  # express this as IaC the operator must enroll keys via `ssh_keys` and disable password
-  # auth in the controller UI, since the provider has no Terraform-declared field for it.
+  # No Terraform variants yet: the ubiquiti-community/unifi unifi_setting resource does
+  # carry the toggle as `mgmt.ssh_auth_password_enabled`, documented as "Allow SSH password
+  # authentication (in addition to keys)", next to the `mgmt.ssh_keys` enrollment list. A
+  # Terraform remediation entry is provided below; the HCL, plan, and state variants have
+  # not been written.
   - uid: mondoo-unifi-security-ssh-password-auth-disabled
     filters: asset.platform == "unifi"
     title: Ensure SSH password authentication is disabled
@@ -1758,14 +1816,33 @@ queries:
             2. Add an SSH public key for each administrator and verify key-based SSH access works.
             3. Disable **SSH Password Authentication**.
         # No cli remediation: the device SSH authentication setting is a controller-managed site setting; the device SSH CLI cannot durably change it and the controller overwrites local changes on provision.
+        - id: terraform
+          desc: |
+            To disable SSH password authentication in Terraform, enroll administrator public keys through `mgmt.ssh_keys` and set `ssh_auth_password_enabled = false` inside the same `mgmt` attribute on the `unifi_setting` resource. Declare the keys in the same apply so key-based access exists the moment password authentication is withdrawn:
+
+            ```hcl
+            resource "unifi_setting" "mgmt" {
+              site = "default"
+
+              mgmt = {
+                ssh_enabled               = true
+                ssh_auth_password_enabled = false
+                ssh_keys = [{
+                  name = "netops"
+                  type = "ssh-ed25519"
+                  key  = var.netops_ssh_public_key
+                }]
+              }
+            }
+            ```
     refs:
       - url: https://help.ui.com/hc/en-us/articles/204909374
         title: UniFi device SSH access
 
-  # No Terraform variants: the controller's debug-tools toggle lives on the management
-  # site setting (`mgmt.debugToolsEnabled`), but the ubiquiti-community/unifi unifi_setting
-  # mgmt block only exposes `auto_upgrade`, `ssh_enabled`, and `ssh_keys`. The provider
-  # does not surface the debug-tools flag, so HCL/plan/state cannot evaluate it.
+  # No Terraform variants yet: the ubiquiti-community/unifi unifi_setting resource does
+  # carry the toggle as `mgmt.debug_tools_enabled`, documented as "Enable debug tools". A
+  # Terraform remediation entry is provided below; the HCL, plan, and state variants have
+  # not been written.
   - uid: mondoo-unifi-security-debug-tools-disabled
     filters: asset.platform == "unifi"
     title: Ensure debug tools are disabled
@@ -1814,15 +1891,28 @@ queries:
             1. Go to **Settings > System > Advanced**.
             2. Disable **Debug Tools**.
         # No cli remediation: the debug tools setting is a controller-managed site setting; the device SSH CLI cannot change it and the controller overwrites local changes on provision.
+        - id: terraform
+          desc: |
+            To disable debug tools in Terraform, set `debug_tools_enabled = false` inside the `mgmt` attribute on the `unifi_setting` resource:
+
+            ```hcl
+            resource "unifi_setting" "mgmt" {
+              site = "default"
+
+              mgmt = {
+                debug_tools_enabled = false
+              }
+            }
+            ```
     refs:
       - url: https://help.ui.com/hc/en-us/articles/204909374
         title: UniFi advanced system settings
 
   # No Terraform variants: controller automatic backups are a controller-wide setting
   # (controller.autobackupEnabled), not a site setting. The ubiquiti-community/unifi
-  # provider exposes no `auto_backup` or `autobackup_enabled` attribute on any resource —
-  # unifi_setting covers per-site mgmt/radius/usg only. Backups are configured via the
-  # controller's System Settings UI.
+  # provider exposes no `auto_backup` or `autobackup_enabled` attribute on any resource:
+  # unifi_setting models per-site settings only, and unifi_site carries just `name` and
+  # `description`. Backups are configured via the controller's System Settings UI.
   - uid: mondoo-unifi-security-autobackup-enabled
     filters: asset.platform == "unifi"
     title: Ensure automatic backups are enabled
@@ -1978,10 +2068,9 @@ queries:
       terraform.state.resources.where(type == "unifi_setting" && values.mgmt != empty).all(values.mgmt.auto_upgrade == true)
 
   # No Terraform variants: the analytics/telemetry opt-out is a controller-wide setting
-  # (controller.enableAnalytics), not a site setting. The ubiquiti-community/unifi
-  # unifi_setting resource only exposes the per-site `mgmt`, `radius`, and `usg` blocks —
-  # no analytics/telemetry toggle on either the unifi_setting resource or the unifi_site
-  # resource. The setting can only be changed in the controller UI.
+  # (controller.enableAnalytics), not a site setting. No attribute on the
+  # ubiquiti-community/unifi unifi_setting resource carries it, and unifi_site holds only
+  # `name` and `description`. The setting can only be changed in the controller UI.
   - uid: mondoo-unifi-security-analytics-disabled
     filters: asset.platform == "unifi"
     title: Ensure analytics data collection is disabled
@@ -2033,12 +2122,10 @@ queries:
       - url: https://help.ui.com/hc/en-us/articles/204909374
         title: UniFi system settings
 
-  # No Terraform variants: remote syslog is configured under a `remoteSyslog` site setting,
-  # but the ubiquiti-community/unifi unifi_setting resource only exposes `mgmt`, `radius`,
-  # and `usg` nested attributes — no `remote_syslog` or `rsyslogd` block. (The
-  # filipowm/unifi provider, a separate fork, does expose unifi_setting_rsyslogd from
-  # controller 8.5+; if cnspec ever standardizes on that provider this check could be
-  # implemented.)
+  # No Terraform variants yet: the ubiquiti-community/unifi unifi_setting resource does
+  # carry remote logging as the `syslog` attribute, with `enabled`, `ip`, `port`, and the
+  # `contents` facility list. A Terraform remediation entry is provided below; the HCL,
+  # plan, and state variants have not been written.
   - uid: mondoo-unifi-security-remote-syslog-enabled
     filters: asset.platform == "unifi"
     title: Ensure remote syslog is configured
@@ -2094,6 +2181,28 @@ queries:
             3. Configure the syslog server IP address and port.
             4. Optionally enable **Log All Contents** for comprehensive logging. This greatly increases log volume and may include sensitive data, so enable it only if the syslog target is sized and access-controlled for it.
         # No cli remediation: remote logging is a controller-managed site setting; the device SSH CLI cannot change it and the controller overwrites local changes on provision.
+        - id: terraform
+          desc: |
+            To configure remote syslog in Terraform, set `enabled = true` inside the `syslog` attribute on the `unifi_setting` resource and point it at the collector. Name the facilities you want in `contents` rather than setting `log_all_contents`, which greatly increases volume:
+
+            ```hcl
+            resource "unifi_setting" "syslog" {
+              site = "default"
+
+              syslog = {
+                enabled         = true
+                ip              = "10.0.0.20"
+                port            = 514
+                this_controller = true
+                contents = [
+                  "device",
+                  "admin_activity",
+                  "critical",
+                  "security_detections",
+                ]
+              }
+            }
+            ```
     refs:
       - url: https://help.ui.com/hc/en-us/articles/204909374
         title: UniFi remote logging settings
@@ -2285,11 +2394,11 @@ queries:
       - url: https://help.ui.com/hc/en-us/articles/360052224054
         title: UniFi DNS settings
 
-  # No Terraform variants: the runtime check filters networks by `purpose == "guest"`,
-  # but the ubiquiti-community/unifi unifi_network resource has no `purpose` attribute.
-  # The schema uses `gateway_type` (`default`/`switch`) and `third_party_gateway` instead,
-  # neither of which expresses "this is a guest network." Without a way to identify guest
-  # networks from HCL/plan/state, a variant cannot replicate the runtime's targeting.
+  # No Terraform variants yet: the ubiquiti-community/unifi unifi_network resource does
+  # carry both halves of this check, `purpose` (`corporate`, `guest`, or `vlan-only`) and
+  # `network_isolation`. A Terraform remediation entry is provided below; the HCL, plan,
+  # and state variants have not been written. Note that `purpose` may be left unset for the
+  # controller to manage, so a variant has to decide what an absent purpose means.
   - uid: mondoo-unifi-security-guest-network-isolation
     filters: asset.platform == "unifi"
     title: Ensure network isolation is enabled on guest networks
@@ -2345,6 +2454,20 @@ queries:
             2. Select each guest or IoT network.
             3. Enable **Network Isolation** to prevent inter-VLAN routing.
         # No cli remediation: network configuration is controller-managed; the device SSH CLI cannot change it and the controller overwrites local changes on provision.
+        - id: terraform
+          desc: |
+            To isolate a guest network in Terraform, set `network_isolation = true` on every `unifi_network` resource declared with `purpose = "guest"`:
+
+            ```hcl
+            resource "unifi_network" "guest" {
+              name    = "Guest"
+              purpose = "guest"
+              # The provider expects the gateway address in CIDR notation, not the network address.
+              subnet            = "10.0.20.1/24"
+              vlan              = 20
+              network_isolation = true
+            }
+            ```
     refs:
       - url: https://help.ui.com/hc/en-us/articles/115003173168
         title: UniFi network settings
@@ -2810,6 +2933,9 @@ queries:
       - url: https://help.ui.com/hc/en-us/articles/204910134
         title: UniFi device lifecycle and support
 
+  # No Terraform variants yet: the ubiquiti-community/unifi unifi_setting resource does
+  # carry the toggle as `dpi.enabled`. A Terraform remediation entry is provided below; the
+  # HCL, plan, and state variants have not been written.
   - uid: mondoo-unifi-security-dpi-enabled
     filters: asset.platform == "unifi"
     title: Ensure Deep Packet Inspection is enabled
@@ -2859,6 +2985,20 @@ queries:
             1. Go to **Settings > Security**. On older versions, go to **Settings > System**.
             2. Enable **Deep Packet Inspection**.
         # No cli remediation: DPI is a controller-managed site setting; the device SSH CLI cannot change it and the controller overwrites local changes on provision.
+        - id: terraform
+          desc: |
+            To enable Deep Packet Inspection in Terraform, set `enabled = true` inside the `dpi` attribute on the `unifi_setting` resource:
+
+            ```hcl
+            resource "unifi_setting" "dpi" {
+              site = "default"
+
+              dpi = {
+                enabled                = true
+                fingerprinting_enabled = true
+              }
+            }
+            ```
     refs:
       - url: https://help.ui.com/hc/en-us/articles/360038690813
         title: UniFi traffic identification and DPI
@@ -2933,6 +3073,9 @@ queries:
       - url: https://help.ui.com/hc/en-us/articles/115003173168
         title: UniFi gateway settings
 
+  # No Terraform variants yet: the ubiquiti-community/unifi unifi_wlan resource does carry
+  # both `wpa3_support` and `wpa3_transition`. A Terraform remediation entry is provided
+  # below; the HCL, plan, and state variants have not been written.
   - uid: mondoo-unifi-security-wlans-wpa3-only
     filters: asset.platform == "unifi"
     title: Ensure wireless networks use WPA3 without WPA2 transition mode
@@ -2983,6 +3126,27 @@ queries:
             2. Set the **Security Protocol** to **WPA3** (disable the WPA2/WPA3 transition option).
             3. Confirm that all clients on the network support WPA3; move any legacy WPA2-only devices to a separate SSID and VLAN.
         # No cli remediation: wireless security is a controller-managed site setting; the device SSH CLI cannot change it and the controller overwrites local changes on provision.
+        - id: terraform
+          desc: |
+            To require WPA3 without transition mode in Terraform, set `wpa3_support = true` and `wpa3_transition = false` on the `unifi_wlan` resource. The provider accepts WPA3 only when `security` is `wpapsk` and Protected Management Frames are on, so set `pmf_mode` in the same resource:
+
+            ```hcl
+            # The provider exposes UniFi user groups as client QOS rates; this
+            # looks up the default user group for the required user_group_id.
+            data "unifi_client_qos_rate" "default" {
+            }
+
+            resource "unifi_wlan" "wpa3_only" {
+              name            = "staff"
+              security        = "wpapsk"
+              passphrase      = var.wifi_passphrase
+              pmf_mode        = "required"
+              wpa3_support    = true
+              wpa3_transition = false
+              network_id      = unifi_network.lan.id
+              user_group_id   = data.unifi_client_qos_rate.default.id
+            }
+            ```
     refs:
       - url: https://help.ui.com/hc/en-us/articles/360015268353
         title: UniFi WiFi security settings
