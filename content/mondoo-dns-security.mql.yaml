@@ -212,16 +212,16 @@ queries:
             }
 
             resource "aws_route53_record" "ns" {
-              zone_id = aws_route53_zone.primary.zone_id
-              name    = "example.com"
-              type    = "NS"
-              ttl     = 172800
-              records = [
-                "ns1.example.com",
-                "ns2.example.com",
-              ]
+              allow_overwrite = true
+              zone_id         = aws_route53_zone.primary.zone_id
+              name            = "example.com"
+              type            = "NS"
+              ttl             = 172800
+              records         = aws_route53_zone.primary.name_servers
             }
             ```
+
+            Route 53 creates the apex `NS` record as soon as the hosted zone exists, so a plain `aws_route53_record` of type `NS` at the apex fails to apply with a "but it already exists" error. `allow_overwrite = true` lets the same run manage the record. Reading the values from `name_servers` also keeps them the hostnames Route 53 assigned, which is what this check requires. Where you run your own nameservers, list their hostnames instead and publish an `A` or `AAAA` record for each.
     refs:
       - url: https://www.cisa.gov/dns-security
         title: CISA DNS Security
@@ -656,21 +656,34 @@ queries:
             To declare redundant nameservers with Terraform:
 
             ```hcl
+            resource "aws_route53_zone" "primary" {
+              name = "example.com"
+            }
+
             resource "aws_route53_record" "ns" {
-              zone_id = aws_route53_zone.primary.zone_id
-              name    = "example.com"
-              type    = "NS"
-              ttl     = 172800
-              records = [
-                "ns1.example.com",
-                "ns2.example.com",
-                "ns3.example.net",
-                "ns4.example.net",
-              ]
+              allow_overwrite = true
+              zone_id         = aws_route53_zone.primary.zone_id
+              name            = "example.com"
+              type            = "NS"
+              ttl             = 172800
+              records         = aws_route53_zone.primary.name_servers
+            }
+
+            resource "aws_route53domains_registered_domain" "primary" {
+              domain_name = "example.com"
+
+              dynamic "name_server" {
+                for_each = aws_route53_zone.primary.name_servers
+                content {
+                  name = name_server.value
+                }
+              }
             }
             ```
 
-            Publishing the NS set in the zone is only half of it — the registrar's delegation must list the same nameservers. Where the registrar has a Terraform provider, manage the delegation there too; otherwise update it in the registrar's control panel.
+            Route 53 assigns four nameservers on distinct networks when the hosted zone is created and publishes them as the apex `NS` record, so the redundancy comes from the zone itself. Managing that record in Terraform needs `allow_overwrite = true`, because the record already exists the moment the zone does. Do not substitute hostnames of your own choosing: replacing the set with nameservers that do not serve the zone breaks resolution for the whole domain.
+
+            Publishing the NS set in the zone is only half of it, because the registrar's delegation must list the same nameservers. The `aws_route53domains_registered_domain` resource does that for domains registered with Route 53. For a registrar with no Terraform provider, copy the `name_servers` output into its control panel.
     refs:
       - url: https://datatracker.ietf.org/doc/html/rfc1034#section-4.1
         title: 'RFC 1034: Domain Names - Concepts and Facilities'

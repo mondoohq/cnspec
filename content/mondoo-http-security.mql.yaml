@@ -108,11 +108,15 @@ queries:
             **Using NGINX**
 
             1. Open your NGINX configuration file (typically found at `/etc/nginx/nginx.conf` or in a site-specific file under `/etc/nginx/sites-available/`).
-            2. Inside the `server` or `location` block, add the following line:
+            2. Inside the `server` block, add the following line:
 
                 ```nginx
-                add_header X-Content-Type-Options "nosniff";
+                add_header X-Content-Type-Options "nosniff" always;
                 ```
+
+                Put the directive in the `server` block rather than in a nested `location`. NGINX inherits `add_header` from the enclosing level only while the current level declares none of its own, so one `add_header` inside a `location` discards every header the `server` block sets for requests routed there. Where a `location` genuinely needs its own header, repeat the whole set inside it.
+
+                The `always` flag sends the header on error responses as well. Without it NGINX omits the header from a 404 or 500, and an error page whose type a browser is free to sniff is exactly the case this header exists to close.
 
             3. Save the file and reload NGINX:
 
@@ -210,11 +214,15 @@ queries:
             The `default-src 'self'` value shown below is only a starting skeleton, not a finished policy. On its own it blocks inline styles and scripts, CDNs, analytics, fonts, and embedded media that most real sites depend on. Treat it as the strict baseline you start from, then enumerate the exact sources your application actually loads and add the directives for them, such as the specific `script-src`, `style-src`, `img-src`, and `connect-src` origins your pages request. This is why report-only rollout matters: the violation reports tell you which sources to add before you enforce.
 
             1. Open your NGINX configuration file, typically `/etc/nginx/nginx.conf` or a site-specific file under `/etc/nginx/sites-available/`.
-            2. Inside the `server` or `location` block, add a report-only policy to observe violations without blocking content:
+            2. Inside the `server` block, add a report-only policy to observe violations without blocking content:
 
                 ```nginx
-                add_header Content-Security-Policy-Report-Only "default-src 'self';";
+                add_header Content-Security-Policy-Report-Only "default-src 'self';" always;
                 ```
+
+                Put the directive in the `server` block rather than in a nested `location`. NGINX inherits `add_header` from the enclosing level only while the current level declares none of its own, so one `add_header` inside a `location` discards every header the `server` block sets for requests routed there. Where a `location` genuinely needs its own header, repeat the whole set inside it.
+
+                The `always` flag sends the header on error responses as well. Without it NGINX omits the header from a 404 or 500, leaving error pages outside the policy.
 
             3. Save the file and reload NGINX:
 
@@ -226,7 +234,7 @@ queries:
             5. Once the policy no longer reports violations for legitimate traffic, replace the report-only directive with the enforcing header:
 
                 ```nginx
-                add_header Content-Security-Policy "default-src 'self';";
+                add_header Content-Security-Policy "default-src 'self';" always;
                 ```
 
             6. Save the file and reload NGINX:
@@ -376,12 +384,33 @@ queries:
           desc: |
             **Using IIS**
 
+            IIS 10.0 version 1709 and later carry a native HSTS setting on the site. Use it rather than the `HTTP Response Headers` feature: a custom response header is emitted on the site's plain HTTP binding as well, and RFC 6797 requires that an HSTS host never send the header over non-secure transport. The native setting adds the header only when IIS answers an HTTPS request.
+
             1. Confirm the site and everything under its hostname is fully reachable over HTTPS. Browsers that receive this header refuse plain HTTP for the duration of `max-age`.
-            2. Open the IIS Manager.
-            3. Select your site and go to the `HTTP Response Headers` feature.
-            4. Click `Add` in the right pane.
-            5. Set the name to `Strict-Transport-Security` and the value to `max-age=31536000; includeSubDomains`. Add `includeSubDomains` only after verifying that every subdomain serves HTTPS. Add the `preload` directive only if you intend to submit the domain to browser preload lists; that is a long-term commitment that is slow to reverse.
-            6. Click OK. The change takes effect immediately.
+            2. There is no IIS Manager page for this setting, so configure it with `appcmd.exe`. Replace `Contoso` with your site name and keep `/commit:apphost`, which writes the value to the right section of `applicationHost.config`:
+
+                ```cmd
+                appcmd.exe set config -section:system.applicationHost/sites "/[name='Contoso'].hsts.enabled:True" /commit:apphost
+                appcmd.exe set config -section:system.applicationHost/sites "/[name='Contoso'].hsts.max-age:31536000" /commit:apphost
+                ```
+
+            3. Enable `includeSubDomains` only after verifying that every subdomain serves HTTPS:
+
+                ```cmd
+                appcmd.exe set config -section:system.applicationHost/sites "/[name='Contoso'].hsts.includeSubDomains:True" /commit:apphost
+                ```
+
+                Enable the `preload` attribute only if you intend to submit the domain to browser preload lists; that is a long-term commitment that is slow to reverse.
+
+            4. The resulting `applicationHost.config` entry looks like this:
+
+                ```xml
+                <site name="Contoso" id="1">
+                  <hsts enabled="true" max-age="31536000" includeSubDomains="true" />
+                </site>
+                ```
+
+            5. The setting applies to the next request. On IIS releases older than 10.0 version 1709 the `<hsts>` element does not exist, so emit the header from the application or from a URL Rewrite outbound rule conditioned on `HTTPS` being `on`.
     refs:
       - url: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Strict-Transport-Security
         title: MDN Web Docs Strict-Transport-Security
@@ -992,14 +1021,18 @@ queries:
             X-Frame-Options is a legacy header. The modern equivalent is the Content-Security-Policy `frame-ancestors` directive, which modern browsers prefer when both are present and which supports finer-grained origin control. Deploy `frame-ancestors` alongside X-Frame-Options so legacy browsers that do not honor CSP still get clickjacking protection.
 
             1. Open your NGINX configuration file.
-            2. Inside the `server` or `location` block, add both headers:
+            2. Inside the `server` block, add both headers:
 
                 ```nginx
-                add_header X-Frame-Options "SAMEORIGIN";
-                add_header Content-Security-Policy "frame-ancestors 'self';";
+                add_header X-Frame-Options "SAMEORIGIN" always;
+                add_header Content-Security-Policy "frame-ancestors 'self';" always;
                 ```
 
                 Use `frame-ancestors 'none'` to forbid all framing, the CSP equivalent of `DENY`.
+
+                Put the directives in the `server` block rather than in a nested `location`. NGINX inherits `add_header` from the enclosing level only while the current level declares none of its own, so one `add_header` inside a `location` discards every header the `server` block sets for requests routed there. Where a `location` genuinely needs its own header, repeat the whole set inside it.
+
+                The `always` flag sends the headers on error responses as well. Without it NGINX omits them from a 404 or 500, leaving those pages framable.
 
                 If you already serve a Content-Security-Policy header, do not add a second `add_header Content-Security-Policy` line. NGINX `add_header` is additive, so a second directive emits two CSP headers and browsers enforce the most restrictive intersection, which can break the page. Instead, add `frame-ancestors 'self'` to the single existing CSP value.
 
@@ -1103,11 +1136,15 @@ queries:
             **Using NGINX**
 
             1. Open your NGINX configuration file.
-            2. Inside the `server` or `location` block, add:
+            2. Inside the `server` block, add:
 
                 ```nginx
-                add_header Referrer-Policy "strict-origin-when-cross-origin";
+                add_header Referrer-Policy "strict-origin-when-cross-origin" always;
                 ```
+
+                Put the directive in the `server` block rather than in a nested `location`. NGINX inherits `add_header` from the enclosing level only while the current level declares none of its own, so one `add_header` inside a `location` discards every header the `server` block sets for requests routed there. Where a `location` genuinely needs its own header, repeat the whole set inside it.
+
+                The `always` flag sends the header on error responses as well. Without it NGINX omits the header from a 404 or 500, and those URLs are the ones most likely to carry a token in the query string.
 
             3. Save and reload NGINX:
 
@@ -1231,10 +1268,22 @@ queries:
           desc: |
             **Using IIS**
 
-            1. Open the IIS Manager.
-            2. Select your site and go to `HTTP Response Headers`.
-            3. Update `Strict-Transport-Security` so `max-age` is at least `31536000`, for example `max-age=31536000; includeSubDomains`. Do not add the `preload` directive unless you intend to submit the domain to browser preload lists, which is a long-term commitment that is slow to reverse.
-            4. Click OK. The change takes effect immediately.
+            The HSTS header on IIS 10.0 version 1709 and later comes from the site's native HSTS setting, not from the `HTTP Response Headers` feature, so raise `max-age` there.
+
+            1. Set `max-age` to at least one year, which is 31536000 seconds. Replace `Contoso` with your site name:
+
+                ```cmd
+                appcmd.exe set config -section:system.applicationHost/sites "/[name='Contoso'].hsts.max-age:31536000" /commit:apphost
+                ```
+
+            2. Leave the other attributes as they are. In particular, do not enable `preload` unless you intend to submit the domain to browser preload lists, which is a long-term commitment that is slow to reverse.
+            3. Confirm the stored value:
+
+                ```cmd
+                appcmd.exe list config -section:system.applicationHost/sites
+                ```
+
+            4. The setting applies to the next request. If the site still carries a `Strict-Transport-Security` entry under `HTTP Response Headers`, remove it, because that copy is also sent over plain HTTP and can override the intended `max-age`.
     refs:
       - url: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Strict-Transport-Security
         title: MDN Web Docs Strict-Transport-Security
@@ -1325,11 +1374,23 @@ queries:
           desc: |
             **Using IIS**
 
+            The `includeSubDomains` directive on IIS 10.0 version 1709 and later is an attribute of the site's native HSTS setting, not a value you type into the `HTTP Response Headers` feature.
+
             1. Inventory every subdomain of this domain and confirm each one is fully reachable over HTTPS. After this change, browsers refuse plain HTTP to all subdomains for the full `max-age`, which makes any HTTP-only subdomain unreachable.
-            2. Open the IIS Manager.
-            3. Select your site and go to `HTTP Response Headers`.
-            4. Update `Strict-Transport-Security` to `max-age=31536000; includeSubDomains`. Do not add the `preload` directive unless you intend to submit the domain to browser preload lists, which is a long-term commitment that is slow to reverse.
-            5. Click OK. The change takes effect immediately.
+            2. Set the attribute. Replace `Contoso` with your site name:
+
+                ```cmd
+                appcmd.exe set config -section:system.applicationHost/sites "/[name='Contoso'].hsts.includeSubDomains:True" /commit:apphost
+                ```
+
+            3. Confirm `max-age` is still at least 31536000, since preload eligibility needs both:
+
+                ```cmd
+                appcmd.exe list config -section:system.applicationHost/sites
+                ```
+
+            4. Do not enable `preload` unless you intend to submit the domain to browser preload lists, which is a long-term commitment that is slow to reverse.
+            5. The setting applies to the next request.
     refs:
       - url: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Strict-Transport-Security
         title: MDN Web Docs Strict-Transport-Security
@@ -1428,12 +1489,28 @@ queries:
 
             HSTS preload is a long-term commitment. Once the domain is on browser preload lists, every browser refuses plain HTTP for the entire registrable domain and all of its subdomains, and removal from the lists takes months to propagate. Only proceed if every current and future subdomain will serve HTTPS. Preload list eligibility requires `max-age` of at least 31536000 and the `includeSubDomains` directive.
 
+            On IIS 10.0 version 1709 and later, `preload` is an attribute of the site's native HSTS setting rather than a value typed into the `HTTP Response Headers` feature.
+
             1. Confirm every subdomain of the registrable domain serves HTTPS and that you accept the long-term commitment described above.
-            2. Open the IIS Manager.
-            3. Select your site and go to `HTTP Response Headers`.
-            4. Update `Strict-Transport-Security` to `max-age=31536000; includeSubDomains; preload`.
-            5. Click OK. The change takes effect immediately.
-            6. After deploying the header, submit your domain at https://hstspreload.org/.
+            2. Set all three attributes, since the preload list rejects a domain missing any of them. Replace `Contoso` with your site name:
+
+                ```cmd
+                appcmd.exe set config -section:system.applicationHost/sites "/[name='Contoso'].hsts.enabled:True" /commit:apphost
+                appcmd.exe set config -section:system.applicationHost/sites "/[name='Contoso'].hsts.max-age:31536000" /commit:apphost
+                appcmd.exe set config -section:system.applicationHost/sites "/[name='Contoso'].hsts.includeSubDomains:True" /commit:apphost
+                appcmd.exe set config -section:system.applicationHost/sites "/[name='Contoso'].hsts.preload:True" /commit:apphost
+                ```
+
+            3. The resulting `applicationHost.config` entry looks like this:
+
+                ```xml
+                <site name="Contoso" id="1">
+                  <hsts enabled="true" max-age="31536000" includeSubDomains="true" preload="true" />
+                </site>
+                ```
+
+            4. The setting applies to the next request.
+            5. After deploying the header, submit your domain at https://hstspreload.org/.
     refs:
       - url: https://hstspreload.org/
         title: HSTS Preload List Submission
