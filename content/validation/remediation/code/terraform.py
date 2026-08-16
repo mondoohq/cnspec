@@ -90,7 +90,9 @@ PROVIDER_MAP = {
     # `~> 2.0` matched no released version: the registry carries 2.0.0-beta1 and
     # 2.0.0-beta2 and nothing else in that line, so terraform could not resolve
     # the provider at all. tflint never noticed because it does not resolve
-    # versions. Current stable is 1.288.0.
+    # versions. Current stable is 1.288.0, so the pin holds the 1.x line on
+    # purpose rather than by preference. Revisit it once 2.x has a stable
+    # release, otherwise the mirror keeps resolving to 1.x indefinitely.
     "alicloud": ("aliyun/alicloud", "~> 1.288"),
     "cloudflare": ("cloudflare/cloudflare", "~> 5.0"),
     "databricks": ("databricks/databricks", "~> 1.0"),
@@ -333,7 +335,7 @@ def neutralize_dangling_refs(hcl_code: str) -> str:
     # string is itself an error there. It carries no schema surface, so the
     # validate copy drops it rather than neutralizing inside it.
     hcl_code = re.sub(
-        r"^\s*depends_on\s*=\s*\[[^\]]*\]\s*$", "", hcl_code, flags=re.M | re.S
+        r"^\s*depends_on\s*=\s*\[[^\]]*\]\s*$", "", hcl_code, flags=re.M
     )
 
     declared = {
@@ -850,7 +852,6 @@ def build_provider_mirror(
     with tempfile.TemporaryDirectory(prefix="tfwarm_") as tmp:
         tmp_path = Path(tmp)
         (tmp_path / "main.tf").write_text(generate_wrapper("", set(wanted)))
-        env = {**dict(os.environ), "TF_IN_AUTOMATION": "1", "TF_INPUT": "0"}
         try:
             subprocess.run(
                 [
