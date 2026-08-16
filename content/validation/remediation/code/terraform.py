@@ -50,12 +50,16 @@ TARGETS = {
     # Only aws/azurerm/google have tflint rulesets; the rest are checked by
     # the terraform preset's syntax and declaration rules alone.
     "alibaba": [CONTENT_DIR / "mondoo-alibaba-security.mql.yaml"],
+    "clickhousecloud": [CONTENT_DIR / "mondoo-clickhousecloud-security.mql.yaml"],
     "cloudflare": [CONTENT_DIR / "mondoo-cloudflare-security.mql.yaml"],
     "databricks": [CONTENT_DIR / "mondoo-databricks-security.mql.yaml"],
     "digitalocean": [CONTENT_DIR / "mondoo-digitalocean-security.mql.yaml"],
     "dns": [CONTENT_DIR / "mondoo-dns-security.mql.yaml"],
     "email": [CONTENT_DIR / "mondoo-email-security.mql.yaml"],
+    "hcp": [CONTENT_DIR / "mondoo-hcp-security.mql.yaml"],
     "hetzner": [CONTENT_DIR / "mondoo-hetzner-security.mql.yaml"],
+    "neon": [CONTENT_DIR / "mondoo-neon-security.mql.yaml"],
+    "netlify": [CONTENT_DIR / "mondoo-netlify-security.mql.yaml"],
     "openstack": [CONTENT_DIR / "mondoo-openstack-security.mql.yaml"],
     "portainer": [CONTENT_DIR / "mondoo-portainer-security.mql.yaml"],
     "snowflake": [CONTENT_DIR / "mondoo-snowflake-security.mql.yaml"],
@@ -94,10 +98,17 @@ PROVIDER_MAP = {
     # purpose rather than by preference. Revisit it once 2.x has a stable
     # release, otherwise the mirror keeps resolving to 1.x indefinitely.
     "alicloud": ("aliyun/alicloud", "~> 1.288"),
+    "clickhouse": ("ClickHouse/clickhouse", "~> 3.0"),
     "cloudflare": ("cloudflare/cloudflare", "~> 5.0"),
     "databricks": ("databricks/databricks", "~> 1.0"),
     "digitalocean": ("digitalocean/digitalocean", "~> 2.0"),
     "hcloud": ("hetznercloud/hcloud", "~> 1.0"),
+    "hcp": ("hashicorp/hcp", "~> 0.114"),
+    # Neon has no official provider. kislerdm/neon is the one Neon's own docs
+    # point at, and the only one of the two community providers that carries
+    # `block_public_connections`; terraform-community-providers/neon does not.
+    "neon": ("kislerdm/neon", "~> 0.15"),
+    "netlify": ("netlify/netlify", "~> 0.4"),
     "openstack": ("terraform-provider-openstack/openstack", "~> 3.0"),
     "portainer": ("portainer/portainer", "~> 1.0"),
     "snowflake": ("snowflakedb/snowflake", "~> 2.0"),
