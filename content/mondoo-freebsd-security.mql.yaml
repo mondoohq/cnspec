@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-freebsd-security
     name: Mondoo FreeBSD Security
-    version: 1.2.2
+    version: 1.2.3
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -395,11 +395,19 @@ queries:
         - url: https://man.freebsd.org/cgi/man.cgi?query=rc.conf&sektion=5
           title: FreeBSD rc.conf(5)
       desc: |
-        This check verifies that `dumpdev` is set to `NO`, disabling kernel crash dump storage. Crash dumps can contain sensitive kernel memory contents.
+        This check verifies that the kernel does not write crash dumps to disk.
+
+        When the kernel panics it can write an image of its memory to a configured dump device, from which `savecore` later copies it into `/var/crash`. The check reads `dumpdev` with `sysrc`, which must be `NO`.
 
         **Why this matters**
 
-        Kernel crash dumps may expose sensitive data from kernel memory, including credentials and cryptographic material. Unless crash dumps are specifically needed for debugging, they should be disabled.
+        A kernel crash dump is a copy of kernel memory at the moment of the panic, and kernel memory holds material that exists nowhere else on the system in readable form.
+
+        That includes disk encryption keys held for the mounted filesystems, IPsec and WireGuard session keys, the contents of network buffers in transit, and credentials passed through the kernel by processes that were running at the time. None of it is protected by file permissions while it is in memory, and all of it lands in a file on disk once the dump is written.
+
+        The file then persists. It sits in `/var/crash` until someone removes it, gets swept into backups like any other file, and is frequently included when an administrator collects diagnostics to send to a vendor or a support forum.
+
+        Where kernel debugging is genuinely required, enable dumps on a specific host for the duration of the investigation, treat `/var/crash` as holding secrets while they exist, and remove the dumps afterward rather than leaving the capability on across the estate.
       audit: |
         To verify that kernel crash dump storage is disabled, run the following command:
 
@@ -1800,11 +1808,19 @@ queries:
         - url: https://man.freebsd.org/cgi/man.cgi?query=rc.conf&sektion=5
           title: FreeBSD rc.conf(5)
       desc: |
-        This check verifies that `rpcbind` is not running or enabled. The `rpcbind` service maps RPC program numbers to network addresses.
+        This check verifies that the `rpcbind` service is neither running nor enabled at boot.
+
+        `rpcbind` is the portmapper. It listens on port 111 and tells callers which ports the system's RPC services are using, which is what NFS and NIS rely on to find each other. The check reads the service's running and enabled state.
 
         **Why this matters**
 
-        The `rpcbind` service is required for NFS and NIS and has historically been a target for DDoS amplification attacks and information disclosure. If NFS and NIS are not required, `rpcbind` should be disabled to reduce the attack surface.
+        `rpcbind` answers two questions for anyone who can reach it, and both help an attacker.
+
+        It enumerates. A single query returns the list of RPC services registered on the host and the ports they occupy, so an attacker learns what the machine offers without scanning for it and without producing the traffic pattern that a scan would.
+
+        It amplifies. Queries are small and responses can be considerably larger, and because the service answers over UDP the source address is trivially forged. That makes the host usable as a reflector in a denial of service attack against a third party, which the host itself will never see the effect of and which can land its address on public abuse lists.
+
+        `rpcbind` is only needed where NFS or NIS is actually in use. It is frequently enabled because a client package pulled it in rather than because anything on the host requires it, so check what depends on it before concluding it is needed.
       audit: |
         To verify that `rpcbind` is not active, run the following commands:
 
@@ -1904,11 +1920,19 @@ queries:
         - url: https://docs.freebsd.org/en/books/handbook/network-servers/
           title: FreeBSD Handbook - Network Servers
       desc: |
-        This check verifies that the NFS daemon is not running or enabled.
+        This check verifies that the NFS server daemon is neither running nor enabled at boot.
+
+        When `nfsd` runs, the directories listed in `/etc/exports` are available to other machines over the NFS protocol. The check reads the service's running and enabled state.
 
         **Why this matters**
 
-        NFS allows file sharing over the network. If not properly configured, NFS can expose sensitive data to unauthorized users. Unless NFS is specifically required, the service should be disabled to reduce the attack surface.
+        NFS decides who you are by trusting the user and group IDs the client puts in each request. There is no authentication in the protocol beyond a check that the connection came from a permitted address, so anyone with root on a permitted client, or the ability to appear as one, can present any identity they choose and read the corresponding files.
+
+        Where an export was written without `-maproot=root` being explicitly avoided, a remote root user is root on the exported files as well, which means they can create a setuid binary inside the export and execute it to escalate on any machine that mounts it.
+
+        Exports are also easy to leave behind. An entry added to `/etc/exports` for a one-time transfer, without a host restriction, keeps exporting to everything that can reach the port, and nothing about the running system draws attention to it afterward.
+
+        Where NFS is required, restrict each export to named hosts rather than to a subnet, keep root mapping in place, and confine the traffic to a storage network.
       audit: |
         To verify that the NFS daemon is not active, run the following commands:
 
@@ -2248,11 +2272,19 @@ queries:
         - url: https://man.freebsd.org/cgi/man.cgi?query=rc.conf&sektion=5
           title: FreeBSD rc.conf(5)
       desc: |
-        This check verifies that the IMAP and POP3 mail access services Dovecot and Cyrus IMAP are not running or enabled.
+        This check verifies that the Dovecot and Cyrus IMAP mail access services are neither running nor enabled at boot.
+
+        The check reads the running and enabled state of the `dovecot` and `imapd` services.
 
         **Why this matters**
 
-        Unless the system is intended to be a mail server, IMAP and POP3 services unnecessarily expand the attack surface. These services, if misconfigured, can expose email contents and credentials.
+        IMAP and POP3 servers on FreeBSD normally authenticate through PAM against the system's own accounts. That makes an unintended mail service a second front door to the host, using the same usernames and passwords as SSH.
+
+        This matters most on hosts that have been hardened everywhere else. A machine configured for key-only SSH, with root login disabled and `LoginGraceTime` lowered, still accepts unlimited password attempts on port 143 if `dovecot` is listening. None of the controls placed on the intended login path applies to one nobody knew was there.
+
+        Both daemons also parse client input before authentication completes, accepting commands from anyone who can open the connection. That is a pre-authentication attack surface on a host that has no reason to have one.
+
+        Where the host is a mail server, that is a deliberate role. Require TLS, disable plaintext authentication, and apply the same rate limiting used on other authentication paths. Everywhere else, stop and disable both services.
       audit: |
         To verify that IMAP and POP3 services are not active, run the following commands:
 
@@ -3373,11 +3405,19 @@ queries:
         - url: https://www.openssh.com/cgi-bin/man.cgi?query=sshd_config
           title: OpenSSH sshd_config(5)
       desc: |
-        This check verifies that direct root login via SSH is disabled or restricted to key-based authentication only.
+        This check verifies that the SSH server does not allow the root account to log in with a password.
+
+        The check reads `PermitRootLogin` in `/etc/ssh/sshd_config`, which must be `no`, `prohibit-password`, or the older synonym `without-password`.
 
         **Why this matters**
 
-        Allowing direct root login over SSH provides attackers with a known username to target in brute force attacks. Disabling root login forces administrators to authenticate as individual users first and then escalate privileges, improving accountability and reducing the attack surface.
+        `root` exists on every FreeBSD host, so it is the one account name an attacker never has to discover. Password-guessing traffic against SSH is aimed at it more than at anything else, and a single correct guess yields complete control with no further escalation required.
+
+        Accountability is the other half. When administrators log in as themselves and escalate with `sudo` or `su`, the logs record which person ran which privileged command. When they log in as `root` directly, every action is attributed to `root`, and an investigation cannot distinguish one administrator from another, or from an intruder using the same credential.
+
+        `prohibit-password` is usually the right setting for a server: it permits key-based root login for automation that genuinely needs it while removing the guessable password path entirely. `no` is stronger and appropriate where nothing depends on direct root access.
+
+        Before applying `no`, confirm that an administrative account exists, that it can reach the host, and that it is a member of `wheel` so it can escalate. Locking out root without a verified path back in is a common way to lose access to a system.
       audit: |
         To verify the SSH root login setting in effect, run the following command:
 
@@ -4202,11 +4242,19 @@ queries:
         - url: https://www.openssh.com/cgi-bin/man.cgi?query=sshd_config
           title: OpenSSH sshd_config(5)
       desc: |
-        This check verifies that `LoginGraceTime` is set between 1 and 60 seconds, limiting the time allowed for authentication.
+        This check verifies that the SSH server closes connections that have not authenticated within one minute.
+
+        The check reads `LoginGraceTime` in `/etc/ssh/sshd_config`, which must be between 1 and 60 seconds. The OpenSSH default is 120 seconds.
 
         **Why this matters**
 
-        A long `LoginGraceTime` allows an attacker to keep unauthenticated connections open, consuming server resources and potentially facilitating brute force attacks. Setting this to 60 seconds or less ensures that idle unauthenticated connections are quickly terminated.
+        `LoginGraceTime` bounds how long a connection may sit unauthenticated before `sshd` closes it, and every connection in that state occupies a slot and an unauthenticated `sshd` process.
+
+        That makes the value a denial of service parameter. `MaxStartups` caps how many unauthenticated connections may be in progress at once, and `LoginGraceTime` decides how long each one holds its slot. With a long grace period, an attacker who opens connections and never authenticates can fill the available slots and keep them full at almost no cost, and legitimate administrators are refused. Halving the grace period halves the number of connections needed to sustain that.
+
+        The pre-authentication window matters for a second reason: it is where `sshd` parses attacker-supplied protocol data before any credential has been accepted. Keeping it short reduces the time available to work through a multi-step interaction against that code.
+
+        A minute is generous for an automated client and for an administrator typing a password or touching a hardware key. Where an interactive second factor needs longer, scope the exception with a `Match` block rather than raising the global value.
       audit: |
         To verify the SSH `LoginGraceTime` setting in effect, run the following command:
 
@@ -4481,13 +4529,21 @@ queries:
         - url: https://www.openssh.com/cgi-bin/man.cgi?query=sshd_config
           title: OpenSSH sshd_config(5)
       desc: |
-        This check verifies that `ClientAliveInterval` is between 1 and 300 seconds and `ClientAliveCountMax` is between 1 and 3, ensuring idle SSH sessions are terminated.
+        This check verifies that the SSH server terminates sessions whose client has stopped responding.
+
+        The check reads `ClientAliveInterval`, which must be between 1 and 300 seconds, and `ClientAliveCountMax`, which must be between 1 and 3.
 
         **Why this matters**
 
-        Idle SSH sessions left unattended can be hijacked by an attacker with local access to the terminal. Configuring an idle timeout ensures that inactive sessions are automatically disconnected, reducing the window of opportunity for session hijacking.
+        The two directives work together. `sshd` sends an encrypted keepalive every `ClientAliveInterval` seconds and closes the session after `ClientAliveCountMax` of them go unanswered, so the product is the longest a session can survive with nothing on the other end.
+
+        What this closes is the abandoned session. An administrator connects from a laptop, authenticates, and then closes the lid, loses the network, or walks away. The connection stays established on the server, holding an authenticated shell with that administrator's privileges, and anyone who reaches the client machine reaches that shell with no authentication step in between.
+
+        It also frees sessions stranded by network changes, which would otherwise accumulate and hold resources indefinitely.
 
         A `ClientAliveCountMax` of `0` is rejected. OpenSSH treats zero as disabling connection termination, so the daemon never drops an unresponsive session no matter how short the interval is.
+
+        These directives use the encrypted channel, so they detect a dead peer rather than merely keeping a NAT mapping alive, which is what the unrelated `TCPKeepAlive` option does.
       audit: |
         To verify the SSH idle timeout settings in effect, run the following command:
 
@@ -6165,11 +6221,19 @@ queries:
         - url: https://man.freebsd.org/cgi/man.cgi?query=syslogd&sektion=8
           title: FreeBSD syslogd(8)
       desc: |
-        This check verifies that `syslogd_flags` contains `-s` (secure mode), so the system does not accept log messages from remote hosts.
+        This check verifies that `syslogd` does not accept log messages from other hosts.
+
+        Secure mode stops the daemon binding a network socket for inbound messages while leaving local logging untouched. The check reads `syslogd_flags` with `sysrc`, which must contain `-s`.
 
         **Why this matters**
 
-        A syslog daemon that accepts remote messages can be targeted with log injection attacks or used in denial-of-service attacks by flooding it with messages. Unless the system is specifically configured as a log aggregation server, it should only process local log messages.
+        A `syslogd` listening on the network accepts messages from anyone who can reach the port, with no authentication and, over UDP, no way to verify the sender's address.
+
+        The direct consequence is that an attacker controls the contents of this host's logs. They can inject entries that never happened, fabricating evidence of activity by an account or a host that was never involved, and they can flood the daemon so that the entries that do matter are pushed out of retention or lost as the filesystem fills. An investigator working from those logs is working from a record the attacker helped write.
+
+        Log injection also reaches whatever consumes the logs downstream. Entries carrying crafted content have been used against the parsers and dashboards that read them, so the exposure is not limited to this machine.
+
+        Where the host genuinely aggregates logs, that is a deliberate role: restrict the accepting socket to the management network with `-a`, and prefer a transport that authenticates the sender. Everywhere else, `-s` is correct, and `-ss` goes further by disabling the network socket entirely.
       audit: |
         To verify that `syslogd` rejects remote messages, run the following command:
 
