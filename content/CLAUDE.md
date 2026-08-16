@@ -23,20 +23,22 @@ policies:
               }
 ```
 
-**Key concepts**:
+The parts whose behavior is not obvious from reading a policy file:
 
-- **uid**: Unique identifier for policies, checks, queries.
-- **summary**: Required one-line policy description (≤130 chars). See Formatting requirements.
-- **filters**: MQL expressions that determine applicability.
-- **impact**: Risk score 0-100 for prioritization.
-- **checks**: Scoring queries (pass/fail).
-- **queries**: Data collection queries (no scoring).
-- **Multi-statement check MQL**: A check's `mql:` block can contain multiple top-level statements. Each statement is scored as a separate datapoint and the check passes only if every datapoint passes — it is *not* "last expression wins". Use this pattern when you want each assertion to surface independently in scan output; collapse to a single `&&`-joined expression only if you want one combined datapoint.
+- **`checks:` score, `queries:` do not.** A `queries:` entry collects data and never passes or fails.
+- **`filters:` is asset selection, not logic.** A filter decides *which assets a check applies to* (`asset.platform == "aws"`). Predicate logic — `field != empty`, `flag == true`, a threshold — belongs in `mql:`. Lifting a predicate into `filters:` does not make the check stricter; it silently drops the failing assets from scoring, so the policy reports compliant on assets it never evaluated. Multi-line `filters:` join with an explicit `&&`; multi-line `mql:` uses newline-as-AND.
+- **Multi-statement check `mql:`.** A check's `mql:` block can contain multiple top-level statements. Each is scored as a separate datapoint and the check passes only if every datapoint passes — it is *not* "last expression wins". Use this when you want each assertion to surface independently in scan output; collapse to a single `&&`-joined expression only if you want one combined datapoint.
+- **`summary:`** is required, ≤130 chars. See Formatting requirements.
 
 ## Formatting requirements
 
 - Every policy must have a `summary:` field — the one-line description shown in policy listings and the marketplace. It is **required** and must be **130 characters or fewer**. Write it verb-first (`Secure`, `Enforce`, `Validate`, `Detect`, `Harden`) followed by the concrete scope, matching the existing policies. Do **not** use em-dashes (`—`, `–`) or `--` in the summary; restructure the sentence instead.
 - All `desc` and `remediation` fields must be valid Markdown (rendered in the UI). Use proper headings, lists, code blocks, links.
+- **The em-dash ban is not only for `summary:`.** No `—`, `–`, or `--` anywhere in policy prose — `desc`, `audit`, `remediation`. The same goes for parenthetical asides: do not bolt a clarification onto a sentence with `(...)`. In both cases restructure the sentence or drop the aside; do not trade one for the other.
+- **Write about the check, not about the bundle.** Policy prose is read next to a single finding, so it must not name variant UIDs or the `variants:` mechanism. Say "the Terraform version of this check", never "the `-terraform-hcl` variant". Do not reference "this policy", the MQL query, or Mondoo tooling.
+- **Containers are not patched.** Images are rebuilt and redeployed. Remediation prose for container checks says so, rather than describing an in-place package upgrade that would be lost on the next deploy.
+- **No inline linter suppressions in remediation snippets.** A shipped snippet is example code an operator will paste. If shellcheck, cfn-lint, or PSScriptAnalyzer flags it, fix the snippet or add the rule to the validator's exclude list — never `# shellcheck disable=...` inside the fence.
+- **Spelling exceptions go in `typos.toml`** under `[default.extend-words]`, which is case-insensitive, so one lowercase entry covers every casing. There is no `expect.txt`. If the flagged word is a deliberate misspelling in an example, reword the example instead of allowlisting it.
 - Check `title` fields must be 75 characters or fewer.
 - Check `title` must match the action enforced by the `mql` query and described in `desc`. If the title says "Ensure X is enabled" the query must assert X is enabled and the description must explain X — don't let titles drift from what the check actually does (e.g., a title about "encryption at rest" paired with a query that inspects TLS settings).
 - Every check's `docs:` block must include all three sections: `desc:`, `audit:`, and `remediation:`. None of these are optional — `desc` explains *what and why*, `audit` explains *how to verify manually*, and `remediation` explains *how to fix*.
@@ -142,15 +144,38 @@ When adding or changing compliance tags, follow this process for **each** framew
 1. **Read the authoritative control text.** Open the framework definition in `cnspec-enterprise-policies/frameworks/<framework>.mql.yaml` (e.g., `iso-27001-2022.mql.yaml`, `soc2-2017.mql.yaml`, `nist-sp-800-53-rev5.mql.yaml`). Each control has a `uid`, `title`, and usually `docs.desc`. Ask the user where their clone lives if you don't already know; if the files aren't available, stop and tell the user — do not guess.
 2. **State in one sentence what the check actually enforces.** If the check is about identity proofing, say so; if it's about encryption-at-rest, say so. Do not let the check's *title* mislead you — read the MQL.
 3. **Find the single best-matching control** by scanning control titles and descriptions for language that covers the enforced behavior. Strict fit only: MFA, password policy, and session-timeout controls are *not* acceptable stand-ins for identity-proofing, encryption, network-isolation, etc.
-4. **If no control fits, tag it with the YAML boolean `false`** — unquoted, like `compliance/soc2-2017: false`. **Not** `"false"` (the string), not `false-fit`, not `n/a`, not omitting the key. The unquoted boolean is the established repo convention (grep `compliance/.*: false` for ~150+ examples) and is what downstream tooling expects. A missing mapping is strictly better than a wrong one — wrong mappings get caught in compliance audits and create trust debt.
+4. **If no control fits, tag it with the YAML boolean `false`** — unquoted, like `compliance/soc2-2017: false`. **Not** `"false"` (the string), not `false-fit`, not `n/a`, not omitting the key. The unquoted boolean is the established repo convention (`grep -rho 'compliance/[a-z0-9-]*: false' content/*.mql.yaml | wc -l` counts over 5,000) and is what downstream tooling expects. A missing mapping is strictly better than a wrong one — wrong mappings get caught in compliance audits and create trust debt.
 5. **Cite the control you chose.** When you present tags to the user, include the control title and a short quote from the control description so the user can verify.
 
 **The `<framework>` in the key must exactly match the framework's `uid:` field** — the value declared inside the framework YAML, *not* the file name. They are not always the same: `cnspec-enterprise-policies/frameworks/bsi-grundschutz-sys15.mql.yaml` declares `uid: bsi-sys-1-5`, so the tag is `compliance/bsi-sys-1-5`. A key that matches no real framework `uid` generates a framework map with a dangling `framework_owner`, which fails bundle migration in `cnspec-enterprise-policies` with `cannot find framework owner`. Likewise the `<control-uid>` value must be a `uid` that exists under that framework's `controls:`.
 
-Known high-value anchors (verify before using):
+### Which frameworks a check has to resolve
 
-- Identity proofing / email verification: `iso-27001-2022-a-5-16` (Identity management), `nist-csf-2-pr-aa-02` ("Identities are proofed and bound to credentials"), `nist-sp-800-53-rev5-ia-12` (Identity Proofing). No direct equivalent in NIST CSF 1.x, NIST 800-171 rev2, NIS2 Article 21(2), or SOC 2 2017.
-- Authenticator / MFA strength: `iso-27001-2022-a-8-5`, `nist-csf-2-pr-aa-03`, `nist-sp-800-53-rev5-ia-2`, `soc2-control-cc6-1-4`. Do **not** reuse these for identity-proofing checks.
+Step 1 says "each framework the policy already tags", and in practice that is the same list nearly everywhere. Fourteen frameworks are applied to essentially every tagged check in `content/`, so a new check resolves all fourteen — to a control uid, or to `false`:
+
+`bsi-sys-1-5`, `csa-cloud-controls-matrix-4`, `dora`, `hipaa`, `iso-27001-2022`, `nis-2`, `nist-csf-1`, `nist-csf-2`, `nist-sp-800-171`, `nist-sp-800-53-rev5`, `owasp-top-10-2025`, `pci-dss-4`, `soc2-2017`, `vda-isa-5`
+
+Four more are **subject-scoped** and are added only when the check's subject matter is genuinely in scope, not as part of the standard sweep: `owasp-llm-top-10-2025` and `nist-ai-100-1` (AI/LLM checks), `owasp-asvs-5` (application security verification), `mitre-attack` (checks that map to a specific adversary technique).
+
+Confirm the current list rather than trusting this one, since it moves as frameworks are added:
+
+```bash
+grep -rho "compliance/[a-z0-9-]*:" content/*.mql.yaml | sort | uniq -c | sort -rn
+```
+
+The frameworks in the standard set appear on nearly every tagged check; the subject-scoped ones appear on a few dozen to a few hundred. **A policy missing one of the standard fourteen entirely is drift, not a decision** — `mondoo-postgresql-security.mql.yaml` carries thirteen and no `owasp-top-10-2025` across all 29 of its checks, which is what an undocumented convention looks like after one policy is written without it.
+
+**The control uid is not derived from the framework key.** Several frameworks name their controls with a prefix that does not match the key you tag them under, so a constructed uid compiles and maps to nothing:
+
+| Tag key | A real control uid under it |
+|---|---|
+| `compliance/pci-dss-4` | `pcidss-requirement-10-2-1` (no hyphens in `pcidss`) |
+| `compliance/soc2-2017` | `soc2-control-cc6-8-1` (`-control-` infix) |
+| `compliance/csa-cloud-controls-matrix-4` | `cloud-controls-matrix-4-log-08` (drops `csa-`) |
+| `compliance/nist-sp-800-171` | `nist-sp-800-171--3-4-8` (**double** hyphen) |
+| `compliance/hipaa` | `hipaa-security-ss164-312-b-audit-controls` |
+
+Read the control uid out of the framework YAML. Do not construct it from the framework name.
 
 ## Terraform variants and remediation for cloud policies
 
@@ -233,27 +258,87 @@ remediation:
 
 When neither variants nor remediation are possible (the usual case — if you can't write a variant, you usually can't write Terraform remediation either), include both comments. Each comment must explain the technical limitation, not just say "skip".
 
-### MQL parser quirk for Terraform variants
+### Terraform variants read a different shape than the runtime check
 
-The parser rejects `.all((expr) || ...)` — a parenthesized clause as the first token inside `.all(`. Rely on `&&` binding tighter than `||` instead of writing leading parentheses.
+The HCL, plan, and state variants of one check are **not** interchangeable, and the usual bug is assuming they are:
 
-## MQL syntax cheatsheet
+- **A default-true attribute must be asserted as `!= false`, not `== true`.** An attribute the author omitted is `null`, and `null == true` fails, so `== true` flags every correct config that relied on the default.
+- **An absent block is not neutral.** Whether a missing Terraform block means pass or fail depends on the vendor's API default for that setting, which you have to look up. Two attributes in the same block can go opposite ways.
+- **In plan and state JSON, nested blocks serialize as arrays**, and an omitted optional block is `[]`, not `null`. A missing block usually means the insecure default, so guard with `!= empty &&` rather than letting the empty list pass vacuously.
+- **The HCL variant is often stricter than its plan/state siblings**, legitimately — HCL sees the author's intent, plan/state see a resolved value. Do not "unify" variants by copying one body into another; that silently weakens the strict one.
+- Verify every attribute name against the provider's real schema (`terraform providers schema -json`) rather than from memory.
 
-```coffee
-# Resource access
-users.where(name == "root")
+## MQL traps that produce a confidently wrong verdict
 
-# Filtering and assertions
-sshd.config.params["PermitRootLogin"] == "no"
+Most of these do not fail lint and do not error at scan time. They return a **verdict**, and the verdict is wrong — worse than a broken check, because nothing signals it. Read this section before writing a query, not after a reviewer questions one.
 
-# List operations
-processes.list { name pid }
+**Check the field exists before you write the query.** The installed provider schema is what lint resolves against: `~/.config/mondoo/providers/<name>/<name>.resources.json`. The source of truth is `providers/<name>/resources/<name>.lr` in the [mql repo](https://github.com/mondoohq/mql). Prove the query end to end with `cnquery run <provider> -c '<mql>'`, and read the verdict as `[ok]` / `[failed]` — a check asserting `x == false` prints `[ok] value: false` when it passes, so "value: false" in the output is not a failure.
 
-# Relationships
-files("/etc").where(name == /\.conf$/)
+### There is no parenthesized grouping
+
+`(` is not a valid operand anywhere in MQL. This one *is* a compile error, but it is listed here because the usual response to it is wrong:
+
+```
+(a == 1) || (a == 2)          → expected operand, got token "("
+[1,2].all((_ == 1) || _ == 2) → expected closing ')', got '('
+[1,2].all(_ == 1 || (_ == 2)) → expected operand, got token "("
 ```
 
-For MQL resources available per provider, see [MQL resources documentation](https://mondoo.com/docs/mql/resources).
+Rely on `&&` binding tighter than `||`, so `a || b && c` already parses as `a || (b && c)`, or split the assertion into separate `.any()` / `.all()` calls. Never add parentheses "for clarity" — and decline review suggestions that ask for them.
+
+### Comparison against an unresolved field is asymmetric
+
+A field the provider never populated is `null`, and null does not compare like a value. Against a missing map key (`m = {"a": 1}`):
+
+| Written as | Verdict when the field is absent |
+|---|---|
+| `m["b"] == "x"` | **fails** |
+| `m["b"] != "x"` | **passes** |
+| `m["b"] != ""` | **passes** — `!= ""` is not a non-empty test |
+| `m["b"] != empty` | **fails** — this is the null-safe guard |
+
+The trap is the second row. A check phrased in the negative — `setting != "insecure"`, `mode != "off"` — **passes on every asset where the field never resolved**. It should be inconclusive; it reports compliant. Assert presence first:
+
+```coffee
+setting != empty && setting != "insecure"
+```
+
+Prefer `!= empty` over `!= ""` for the same reason: `"" == empty` is true, but so is `null != ""`.
+
+### `.all()` and `.none()` treat null and empty differently
+
+An absent HCL or map key is `null`, **not** an empty list, and the two go opposite ways:
+
+```coffee
+[1,2].where(_ > 5).all(_ == 99)   # empty list  → [ok] value: true   (vacuous pass)
+m["missing"].all(_ == 1)          # null        → [failed] actual: _
+m["missing"] == empty || m["missing"].all(_ == 1)   # [ok] true      (null-safe form)
+```
+
+So `blocks.where(type == 'x').all(y)` and `values['x'].all(y)` are **not** equivalent rewrites: the first is vacuously true when nothing matches, the second fails outright. Do not swap one for the other — the vacuous pass and the hard fail are both wrong answers for "the block is absent", and which one you want depends on the vendor default (see the Terraform section above).
+
+### A dotted path that is also a resource name is not a field read
+
+The compiler extends the resource path greedily, and the longest matching resource name wins unconditionally over a field on a shorter one — even when the longer resource cannot stand on its own. `azure.subscription.aksService.cluster.autoUpgradeProfile.upgradeChannel` builds a bare `…cluster.autoUpgradeProfile` resource with no id and no fields; the cluster's accessor never runs and every field reads `null`. Combined with the asymmetry above, the check returns a confident wrong answer rather than an error.
+
+Suspect it when the value is a sub-object (a profile, config, or settings block) **and** the full path appears as a resource in its own right in `cnspec providers resources <provider> --json`. Confirm by running the query: the log line is `provider returned no data and no error for a field … id=` with an **empty `id=`**. Fix by reaching the value through an accessor whose path is not a resource name (`azure.subscription.aks.cluster.…`) or by binding a block to the parent:
+
+```coffee
+azure.subscription.aks.cluster {
+  autoUpgradeProfile.upgradeChannel != "none"
+}
+```
+
+Not Azure-specific: Cloudflare (`cloudflare.zone.settings.*`), GCP (`gcp.project.gkeService.cluster.networkPolicy.*`), AWS (`aws.emr.cluster.encryptionConfiguration.*`), vSphere, and Arista all have resources shaped this way. Cloudflare adds a second failure mode — a 401/403 degrades to an empty list rather than an error, so an unauthorized scan passes vacuously.
+
+### Smaller ones that still flip a verdict
+
+- **`files.find` regex matches the whole path**, not the basename. A pattern without a leading `.*` matches nothing, and the `.all()` wrapped around it then passes vacuously. There are 17 `files.find` regex usages in `content/` today; check yours against a real path before trusting it.
+- **Flatten with `.flat`, not `.flatten`** — and guard the nested key first.
+- **`map[string][]string` is filtered, never indexed.** Use `keys` / `values` / `where(key …)` / `flat`. Indexing a missing key returns `null`, which collides with a legitimately empty list.
+- **`terraform.resources()` takes a positional type argument** — `terraform.resources("aws_s3_bucket")`. The named form does not compile.
+- **`parse.int` fails inside variant queries.** Use date arithmetic or a string match instead. For port ranges there is no string→int conversion at all, so match with an anchored regex.
+- **GCP dict fields omit defaults.** `protoToDict` drops `false`, `0`, and `""` and camelCases the keys, so assert presence rather than `== false`.
 
 ## Validation and testing
 
@@ -262,7 +347,7 @@ For MQL resources available per provider, see [MQL resources documentation](http
 ```bash
 make test/content              # lint + bundle scans + compliance mappings
 make test/content/lint         # cnspec policy lint (run this first, and fix it first)
-make test/content/iac          # the IaC fixture suites — slow, run when you touch a variant
+make test/content/iac          # every IaC fixture suite — slow; scope it instead, see below
 make test/content/remediation  # the remediation code-block linters
 make test/content/commands     # the remediation CLI and API validators
 ```
@@ -273,6 +358,15 @@ make test/content/commands     # the remediation CLI and API validators
 cnspec policy lint content/mondoo-aws-security.mql.yaml
 cnspec scan local -f content/your-policy.mql.yaml
 ```
+
+**Do not run the whole IaC suite to test one check.** Subtests are named `<policy>/<check-uid>/<pass|fail>/<scenario>`, so a `-run` pattern with a **trailing slash** scopes it to a single check in a couple of seconds:
+
+```bash
+go test -tags iac_variants ./content/validation/scans \
+  -run 'TestTerraformVariants/mondoo-aws-security/mondoo-aws-security-s3-bucket-encryption-terraform-hcl/'
+```
+
+The trailing slash is what makes it work; without it the pattern matches the suite name and runs everything under it.
 
 Five things gate a content change, and each fails differently:
 
@@ -292,9 +386,4 @@ Three traps worth knowing before you hit them:
 
 **Never hand-edit** the checked-in CLI grammars and OpenAPI specs in `validation/data/`; re-run the relevant script in `validation/upstream/dump/` instead.
 
-## Resources
-
-- [MQL Documentation](https://mondoo.com/docs/mql)
-- [MQL Built-in Functions](https://mondoo.com/docs/mql/functions)
-- [MQL Resources by Provider](https://mondoo.com/docs/mql/resources) ([AWS](https://mondoo.com/docs/mql/resources/aws), [Azure](https://mondoo.com/docs/mql/resources/azure), [GCP](https://mondoo.com/docs/mql/resources/gcp), [Core](https://mondoo.com/docs/mql/resources/core))
-- [Policy Authoring Guide](https://mondoo.com/docs/cnspec/write-policies/write-intro)
+Reference links for MQL resources, built-in functions, and the authoring guide are in the repository-root [`CLAUDE.md`](../CLAUDE.md), which loads alongside this file.
