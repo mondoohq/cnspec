@@ -337,33 +337,43 @@ Things to know when touching this:
 
 ## Adding a policy: what to register
 
-A new check inherits the coverage its policy already has. A new *policy* inherits nothing. Most
-validators here are allowlist-driven, so a `content/*.mql.yaml` that nobody registers is scanned by
-`bash.py` and the lint pass and by nothing else — the bundle ships unexamined with every gate green.
-`bash.py` is the exception on purpose; the comment on its `TARGETS` explains why.
+A new check inherits the coverage its policy already has. A new *policy* inherits nothing. Most validators here are allowlist-driven, so a `content/*.mql.yaml` that nobody registers is linted, spell-checked, scanned by `bash.py` and checked by the compliance suites, and examined by nothing else — the bundle ships with its variants untested and its remediation unverified, with every gate green.
+
+This has already happened. PR #3338 added four SaaS policies; a follow-up commit in the same PR registered them with `remediation/code/terraform.py` and that immediately failed **8 of their 11** HCL snippets against the real provider schemas, and hand-checking their CLI snippets found invented `hcp vault` / `hcp consul` command groups and two `neonctl` flags that do not exist. None of it was visible until the policy was on a list.
 
 Register the policy everywhere it applies, in the same change that adds it:
 
 | Where | When it applies | What happens if you skip it |
 |---|---|---|
-| `remediation/code/terraform.py` → `TARGETS` **and** `PROVIDER_MAP` | any `hcl` remediation block | snippets are never resolved against the provider schema |
-| `remediation/code/{cloudformation,bicep,ansible,powershell,chef}.py` → `TARGETS` | that language appears in a remediation block | same, for that language |
-| `remediation/commands/` → `CLI_VALIDATORS`, `COBRA_CLIS`, or `API_PROVIDERS` | any `bash` remediation calls a vendor CLI or REST API | invented commands and endpoints ship unchallenged |
-| `scans/iac_variants_test.go` → `tfVariantPolicies` | the policy has any IaC variant | variants are never scanned, and coverage never asks for fixtures |
+| `content/README.md` | always — a row under the matching platform heading | the policy is invisible in the user-facing catalog |
+| `scans/iac_variants_test.go` → `tfVariantPolicies` | the policy has any `-terraform-hcl`, `-terraform-plan`, `-terraform-state`, `-cloudformation` or `-bicep` variant | variants are never scanned, and coverage never asks for fixtures |
+| `scans/iac_variants_test.go` → `init()`'s `extraProviders` | its runtime variant needs a provider outside `terraform`/`k8s`/`aws`/`azure`/`gcp`/`cloudformation` (the base list in `main_test.go`) | parallel subtests race to auto-install it and lose with `cannot find resource for identifier '<provider>'` |
+| `remediation/code/terraform.py` → `TARGETS` **and** `PROVIDER_MAP` for each resource prefix | any `- id: terraform` remediation | snippets are never resolved against the provider schema; with `TARGETS` but no `PROVIDER_MAP` entry, `required_providers` comes out empty and `terraform_required_providers` fails *every* resource in the policy |
+| `remediation/code/{cloudformation,bicep,ansible,powershell,chef}.py` → `TARGETS` | that language appears in a remediation block (`powershell.py` also reads ```` ```powershell ```` fences in `audit:`) | same, for that language |
+| `remediation/commands/` → `CLI_VALIDATORS`, `COBRA_CLIS`, or `API_PROVIDERS` | any `- id: cli` / `- id: api` block, or an `audit:` step that invokes a CLI or REST call | invented commands and endpoints ship unchallenged |
+| `compliance/owasp_mapping_test.go` → `llmAnchoredPolicies` | the policy is AI/LLM-focused | nothing guards its OWASP Top 10 for LLM Applications tags against silently going missing |
+| `typos.toml` → `[default.extend-words]` | the vendor's terminology trips the spell checker | `spell-check.yaml` fails |
 
-A policy in `PROVIDER_MAP` needs a real provider source and a version constraint that resolves; a
-constraint matching only prereleases silently fails to resolve.
+A policy in `PROVIDER_MAP` needs a real provider source and a version constraint that resolves; a constraint matching only prereleases silently fails to resolve.
+
+`remediation/code/bash.py` is the exception on purpose and needs no entry — it globs every policy in `content/`, because a `TARGETS` list is a standing invitation to exactly this failure, and the comment on its `TARGETS` says so. The compliance suites glob too (`../../mondoo-*.mql.yaml`), so tag coherence is covered from the first commit.
 
 ### Group filters and variants do not mix
 
-A policy whose groups carry `filters: asset.platform == "<api-platform>"` cannot have IaC variants.
-The group filter is evaluated before the check's own filter, so a Terraform asset never reaches the
-variant and every fixture reports as *skipped* rather than pass or fail. Policies with variants leave
-their groups unfiltered and let each variant's `filters:` select its asset — that is why
-`mondoo-tailscale-security` and `mondoo-snowflake-security` declare no group filters.
+A policy whose groups carry `filters: asset.platform == "<api-platform>"` cannot have IaC variants. The group filter is evaluated before the check's own filter, so a Terraform asset never reaches the variant and every fixture reports as *skipped* rather than pass or fail. Policies with variants leave their groups unfiltered and let each variant's `filters:` select its asset — that is why `mondoo-tailscale-security` and `mondoo-snowflake-security` declare no group filters.
 
-The failure mode is loud once you have fixtures (`check did not run against …`) and invisible before
-that, so convert the groups in the same change that adds the first variant.
+The failure mode is loud once you have fixtures (`check did not run against …`) and invisible before that, so convert the groups in the same change that adds the first variant.
+
+### Registering with the command validators
+
+Which registry depends on how the vendor's interface is reached, and anything that introduces a new binary needs a CI change too:
+
+- **A new REST API** — add an entry to `API_PROVIDERS` in `commands/openapi.py` with the policy file, host, and spec source. A spec pinned to a commit SHA also needs its constant registered in `upstream/pins.py`; a YAML-only spec is converted once by `upstream/dump/api_specs.py` and checked into `data/`.
+- **A new Cobra CLI** — add an entry to `COBRA_CLIS` in `commands/cobra.py` (CLI name, policy list, `include_audit`, install hint). The CLI must also be installed by the `validate-remediation.yaml` commands job, pinned by version **and** SHA-256.
+- **A new cloud CLI with its own grammar source** — a module beside `aws.py`/`azure.py`/`gcloud.py` plus an entry in `CLI_VALIDATORS` in `commands/validate.py`, and the same CI install step.
+- **An existing validator gaining a second policy** — some validators name their policies in module constants rather than a registry (`azure.py` validates both `mondoo-azure-security` and `mondoo-m365-security`, because the M365 policy's CLI remediations also use `az`). Add the file there.
+
+When no registry fits because the vendor has no non-interactive surface at all, that is a finding worth recording rather than a gap to leave silent: say so in a comment on the check, the way the Netlify MFA check does, so the next reader does not re-derive it.
 
 ## Adding a check: what has to pass
 
