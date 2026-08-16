@@ -1907,7 +1907,8 @@ queries:
                 connector_type = "S3"
                 source_connector_properties {
                   s3 {
-                    bucket_name = aws_s3_bucket.source.bucket
+                    bucket_name   = aws_s3_bucket.source.bucket
+                    bucket_prefix = "incoming"
                   }
                 }
               }
@@ -10418,7 +10419,7 @@ queries:
 
             ```bash
             aws elbv2 create-load-balancer \
-              --name internal-app-lb \
+              --name app-lb-internal \
               --scheme internal \
               --subnets <private-subnet-1> <private-subnet-2> \
               --security-groups <sg-id>
@@ -10429,7 +10430,7 @@ queries:
 
             ```hcl
             resource "aws_lb" "internal" {
-              name               = "internal-app-lb"
+              name               = "app-lb-internal"
               internal           = true
               load_balancer_type = "application"
               subnets            = [aws_subnet.private_a.id, aws_subnet.private_b.id]
@@ -10445,7 +10446,7 @@ queries:
               InternalLoadBalancer:
                 Type: AWS::ElasticLoadBalancingV2::LoadBalancer
                 Properties:
-                  Name: internal-app-lb
+                  Name: app-lb-internal
                   Scheme: internal
                   Type: application
                   Subnets:
@@ -22264,7 +22265,28 @@ queries:
 
             ```hcl
             resource "aws_cloudfront_distribution" "example" {
+              enabled = true
+
+              origin {
+                domain_name = aws_s3_bucket.example.bucket_regional_domain_name
+                origin_id   = "myS3Origin"
+              }
+
+              default_cache_behavior {
+                allowed_methods        = ["GET", "HEAD"]
+                cached_methods         = ["GET", "HEAD"]
+                target_origin_id       = "myS3Origin"
+                viewer_protocol_policy = "redirect-to-https"
+              }
+
+              restrictions {
+                geo_restriction {
+                  restriction_type = "none"
+                }
+              }
+
               viewer_certificate {
+                acm_certificate_arn      = aws_acm_certificate.example.arn
                 minimum_protocol_version = "TLSv1.2_2021"
                 ssl_support_method       = "sni-only"
               }
@@ -22429,7 +22451,30 @@ queries:
 
             ```hcl
             resource "aws_cloudfront_distribution" "example" {
+              enabled    = true
               web_acl_id = aws_wafv2_web_acl.example.arn
+
+              origin {
+                domain_name = aws_s3_bucket.example.bucket_regional_domain_name
+                origin_id   = "myS3Origin"
+              }
+
+              default_cache_behavior {
+                allowed_methods        = ["GET", "HEAD"]
+                cached_methods         = ["GET", "HEAD"]
+                target_origin_id       = "myS3Origin"
+                viewer_protocol_policy = "redirect-to-https"
+              }
+
+              restrictions {
+                geo_restriction {
+                  restriction_type = "none"
+                }
+              }
+
+              viewer_certificate {
+                cloudfront_default_certificate = true
+              }
             }
             ```
         - id: cloudformation
@@ -24853,7 +24898,8 @@ queries:
 
             ```hcl
             resource "aws_codebuild_project" "example" {
-              name = "example-project"
+              name         = "example-project"
+              service_role = aws_iam_role.codebuild_role.arn
 
               source {
                 type         = "CODECOMMIT"
@@ -24867,6 +24913,16 @@ queries:
               #   location     = "https://github.example.com/repo"
               #   insecure_ssl = false
               # }
+
+              environment {
+                compute_type = "BUILD_GENERAL1_SMALL"
+                image        = "aws/codebuild/amazonlinux2-x86_64-standard:5.0"
+                type         = "LINUX_CONTAINER"
+              }
+
+              artifacts {
+                type = "NO_ARTIFACTS"
+              }
             }
             ```
         - id: cloudformation
@@ -26311,11 +26367,16 @@ queries:
 
             ```hcl
             resource "aws_timestreaminfluxdb_db_instance" "example" {
-              name                = "example"
-              db_instance_type    = "db.influx.medium"
-              allocated_storage   = 20
-              vpc_subnet_ids      = [aws_subnet.private.id]
-              publicly_accessible = false
+              name                   = "example"
+              db_instance_type       = "db.influx.medium"
+              allocated_storage      = 20
+              vpc_subnet_ids         = [aws_subnet.private.id]
+              vpc_security_group_ids = [aws_security_group.influxdb.id]
+              username               = "admin"
+              password               = var.influxdb_password
+              organization           = "example-org"
+              bucket                 = "example-bucket"
+              publicly_accessible    = false
             }
             ```
         - id: cloudformation
@@ -26466,10 +26527,15 @@ queries:
 
             ```hcl
             resource "aws_timestreaminfluxdb_db_instance" "example" {
-              name              = "example"
-              db_instance_type  = "db.influx.medium"
-              allocated_storage = 20
-              vpc_subnet_ids    = [aws_subnet.example.id]
+              name                   = "example"
+              db_instance_type       = "db.influx.medium"
+              allocated_storage      = 20
+              vpc_subnet_ids         = [aws_subnet.example.id]
+              vpc_security_group_ids = [aws_security_group.influxdb.id]
+              username               = "admin"
+              password               = var.influxdb_password
+              organization           = "example-org"
+              bucket                 = "example-bucket"
 
               log_delivery_configuration {
                 s3_configuration {
@@ -27254,9 +27320,18 @@ queries:
             resource "aws_eks_node_group" "example" {
               cluster_name    = aws_eks_cluster.example.name
               node_group_name = "example"
+              node_role_arn   = aws_iam_role.eks_nodes.arn
+              subnet_ids      = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+
               launch_template {
                 id      = aws_launch_template.eks_nodes.id
                 version = aws_launch_template.eks_nodes.latest_version
+              }
+
+              scaling_config {
+                desired_size = 2
+                max_size     = 4
+                min_size     = 2
               }
             }
             ```
@@ -28721,6 +28796,10 @@ queries:
             ```hcl
             resource "aws_lambda_function" "example" {
               function_name = "example"
+              role          = aws_iam_role.lambda_exec.arn
+              handler       = "index.handler"
+              runtime       = "python3.13"
+              filename      = "function.zip"
               kms_key_arn   = aws_kms_key.lambda_env.arn
 
               environment {
@@ -29580,7 +29659,8 @@ queries:
 
             ```hcl
             resource "aws_codebuild_project" "example" {
-              name          = "example"
+              name           = "example"
+              service_role   = aws_iam_role.codebuild_role.arn
               encryption_key = aws_kms_key.codebuild.arn
 
               artifacts {
@@ -29769,6 +29849,17 @@ queries:
                 location            = aws_s3_bucket.artifacts.bucket
                 encryption_disabled = false
               }
+
+              environment {
+                compute_type = "BUILD_GENERAL1_SMALL"
+                image        = "aws/codebuild/amazonlinux2-x86_64-standard:5.0"
+                type         = "LINUX_CONTAINER"
+              }
+
+              source {
+                type     = "GITHUB"
+                location = "https://github.com/example/repo.git"
+              }
             }
             ```
         - id: cloudformation
@@ -29944,6 +30035,21 @@ queries:
                   location            = "${aws_s3_bucket.logs.id}/build-logs"
                   encryption_disabled = false
                 }
+              }
+
+              artifacts {
+                type = "NO_ARTIFACTS"
+              }
+
+              environment {
+                compute_type = "BUILD_GENERAL1_SMALL"
+                image        = "aws/codebuild/amazonlinux2-x86_64-standard:5.0"
+                type         = "LINUX_CONTAINER"
+              }
+
+              source {
+                type     = "GITHUB"
+                location = "https://github.com/example/repo.git"
               }
             }
             ```
@@ -31973,6 +32079,10 @@ queries:
 
               enable_default_internet_access = false
 
+              compute_capacity {
+                desired_instances = 1
+              }
+
               vpc_config {
                 subnet_ids = [aws_subnet.example.id]
               }
@@ -32132,6 +32242,10 @@ queries:
               image_name    = "AppStream-WinServer2019"
 
               max_user_duration_in_seconds = 36000
+
+              compute_capacity {
+                desired_instances = 1
+              }
             }
             ```
         - id: cloudformation
@@ -32285,6 +32399,10 @@ queries:
 
               idle_disconnect_timeout_in_seconds = 900
               disconnect_timeout_in_seconds      = 300
+
+              compute_capacity {
+                desired_instances = 1
+              }
             }
             ```
         - id: cloudformation
@@ -39155,6 +39273,14 @@ queries:
                   s3_encryption_mode = "SSE-KMS"
                   kms_key_arn        = aws_kms_key.glue.arn
                 }
+                cloudwatch_encryption {
+                  cloudwatch_encryption_mode = "SSE-KMS"
+                  kms_key_arn                = aws_kms_key.glue.arn
+                }
+                job_bookmarks_encryption {
+                  job_bookmarks_encryption_mode = "CSE-KMS"
+                  kms_key_arn                   = aws_kms_key.glue.arn
+                }
               }
             }
             ```
@@ -39328,6 +39454,14 @@ queries:
                   cloudwatch_encryption_mode = "SSE-KMS"
                   kms_key_arn                = aws_kms_key.glue.arn
                 }
+                s3_encryption {
+                  s3_encryption_mode = "SSE-KMS"
+                  kms_key_arn        = aws_kms_key.glue.arn
+                }
+                job_bookmarks_encryption {
+                  job_bookmarks_encryption_mode = "CSE-KMS"
+                  kms_key_arn                   = aws_kms_key.glue.arn
+                }
               }
             }
             ```
@@ -39500,6 +39634,14 @@ queries:
                 job_bookmarks_encryption {
                   job_bookmarks_encryption_mode = "CSE-KMS"
                   kms_key_arn                   = aws_kms_key.glue.arn
+                }
+                s3_encryption {
+                  s3_encryption_mode = "SSE-KMS"
+                  kms_key_arn        = aws_kms_key.glue.arn
+                }
+                cloudwatch_encryption {
+                  cloudwatch_encryption_mode = "SSE-KMS"
+                  kms_key_arn                = aws_kms_key.glue.arn
                 }
               }
             }
@@ -40662,9 +40804,9 @@ queries:
 
             ```hcl
             resource "aws_memorydb_cluster" "example" {
-              cluster_name = "my-cluster"
-              node_type    = "db.r6g.large"
-              acl_name     = aws_memorydb_acl.custom.name
+              name      = "my-cluster"
+              node_type = "db.r6g.large"
+              acl_name  = aws_memorydb_acl.custom.name
             }
 
             resource "aws_memorydb_acl" "custom" {
@@ -42608,8 +42750,31 @@ queries:
                 }
               }
 
-              # data_quality_app_specification, data_quality_job_input,
-              # data_quality_job_output_config, job_resources omitted for brevity
+              data_quality_app_specification {
+                image_uri = "123456789012.dkr.ecr.us-east-1.amazonaws.com/sagemaker-model-monitor-analyzer"
+              }
+
+              data_quality_job_input {
+                endpoint_input {
+                  endpoint_name = aws_sagemaker_endpoint.example.name
+                }
+              }
+
+              data_quality_job_output_config {
+                monitoring_outputs {
+                  s3_output {
+                    s3_uri = "s3://example-bucket/monitoring"
+                  }
+                }
+              }
+
+              job_resources {
+                cluster_config {
+                  instance_count    = 1
+                  instance_type     = "ml.m5.large"
+                  volume_size_in_gb = 20
+                }
+              }
             }
             ```
     refs:
@@ -43251,8 +43416,10 @@ queries:
 
             ```hcl
             resource "aws_mq_broker" "example" {
-              broker_name = "example-broker"
-              engine_type = "ActiveMQ"
+              broker_name        = "example-broker"
+              engine_type        = "ActiveMQ"
+              engine_version     = "5.18"
+              host_instance_type = "mq.m5.large"
 
               logs {
                 audit = true
@@ -43428,8 +43595,10 @@ queries:
 
             ```hcl
             resource "aws_mq_broker" "example" {
-              broker_name = "example-broker"
-              engine_type = "ActiveMQ"
+              broker_name        = "example-broker"
+              engine_type        = "ActiveMQ"
+              engine_version     = "5.18"
+              host_instance_type = "mq.m5.large"
 
               logs {
                 general = true
@@ -43608,8 +43777,10 @@ queries:
 
             ```hcl
             resource "aws_mq_broker" "example" {
-              broker_name        = "example-broker"
-              engine_type        = "ActiveMQ"
+              broker_name         = "example-broker"
+              engine_type         = "ActiveMQ"
+              engine_version      = "5.18"
+              host_instance_type  = "mq.m5.large"
               publicly_accessible = false
               subnet_ids          = [aws_subnet.private.id]
             }
@@ -43780,6 +43951,12 @@ queries:
               cluster_name           = "example-cluster"
               kafka_version          = "3.5.1"
               number_of_broker_nodes = 3
+
+              broker_node_group_info {
+                client_subnets  = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+                instance_type   = "kafka.m5.large"
+                security_groups = [aws_security_group.msk.id]
+              }
 
               encryption_info {
                 encryption_at_rest_kms_key_arn = aws_kms_key.msk.arn
@@ -43955,6 +44132,12 @@ queries:
               cluster_name           = "example-cluster"
               kafka_version          = "3.5.1"
               number_of_broker_nodes = 3
+
+              broker_node_group_info {
+                client_subnets  = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+                instance_type   = "kafka.m5.large"
+                security_groups = [aws_security_group.msk.id]
+              }
 
               encryption_info {
                 encryption_in_transit {
@@ -44136,6 +44319,12 @@ queries:
               cluster_name           = "example-cluster"
               kafka_version          = "3.5.1"
               number_of_broker_nodes = 3
+
+              broker_node_group_info {
+                client_subnets  = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+                instance_type   = "kafka.m5.large"
+                security_groups = [aws_security_group.msk.id]
+              }
 
               logging_info {
                 broker_logs {
@@ -51814,9 +52003,12 @@ queries:
             resource "aws_emr_cluster" "example" {
               name                   = "secure-cluster"
               release_label          = "emr-6.15.0"
+              service_role           = aws_iam_role.emr.arn
               security_configuration = aws_emr_security_configuration.encryption.name
 
-              # ... other configuration
+              master_instance_group {
+                instance_type = "m5.xlarge"
+              }
             }
             ```
         - id: cloudformation
@@ -55874,12 +56066,16 @@ queries:
             resource "aws_emr_cluster" "example" {
               name          = "example"
               release_label = "emr-6.15.0"
+              service_role  = aws_iam_role.emr.arn
 
               ec2_attributes {
-                subnet_id = aws_subnet.private.id
+                subnet_id        = aws_subnet.private.id
+                instance_profile = aws_iam_instance_profile.emr_ec2.arn
               }
 
-              # ... other configuration ...
+              master_instance_group {
+                instance_type = "m5.xlarge"
+              }
             }
             ```
 
@@ -56077,10 +56273,14 @@ queries:
             resource "aws_emr_cluster" "example" {
               name          = "example"
               release_label = "emr-6.15.0"
+              service_role  = aws_iam_role.emr.arn
               log_uri       = "s3://my-emr-logs/"
 
               security_configuration = aws_emr_security_configuration.example.name
-              # ... other configuration ...
+
+              master_instance_group {
+                instance_type = "m5.xlarge"
+              }
             }
             ```
         - id: cloudformation
@@ -56800,7 +57000,25 @@ queries:
 
             ```hcl
             resource "aws_cloudfront_distribution" "example" {
-              # ... other configuration ...
+              enabled = true
+
+              origin {
+                domain_name = aws_s3_bucket.example.bucket_regional_domain_name
+                origin_id   = "myS3Origin"
+              }
+
+              default_cache_behavior {
+                allowed_methods        = ["GET", "HEAD"]
+                cached_methods         = ["GET", "HEAD"]
+                target_origin_id       = "myS3Origin"
+                viewer_protocol_policy = "redirect-to-https"
+              }
+
+              restrictions {
+                geo_restriction {
+                  restriction_type = "none"
+                }
+              }
 
               viewer_certificate {
                 acm_certificate_arn      = aws_acm_certificate.cert.arn
@@ -56980,7 +57198,29 @@ queries:
 
             ```hcl
             resource "aws_cloudfront_distribution" "example" {
-              # ... other configuration ...
+              enabled = true
+
+              origin {
+                domain_name = aws_s3_bucket.example.bucket_regional_domain_name
+                origin_id   = "myS3Origin"
+              }
+
+              default_cache_behavior {
+                allowed_methods        = ["GET", "HEAD"]
+                cached_methods         = ["GET", "HEAD"]
+                target_origin_id       = "myS3Origin"
+                viewer_protocol_policy = "redirect-to-https"
+              }
+
+              restrictions {
+                geo_restriction {
+                  restriction_type = "none"
+                }
+              }
+
+              viewer_certificate {
+                cloudfront_default_certificate = true
+              }
 
               logging_config {
                 include_cookies = false
@@ -59056,7 +59296,7 @@ queries:
             ```hcl
             resource "aws_keyspaces_table" "example" {
               keyspace_name = aws_keyspaces_keyspace.example.name
-              table_name    = "example-table"
+              table_name    = "example_table"
 
               encryption_specification {
                 type       = "CUSTOMER_MANAGED_KMS_KEY"
@@ -59239,7 +59479,7 @@ queries:
             ```hcl
             resource "aws_keyspaces_table" "example" {
               keyspace_name = aws_keyspaces_keyspace.example.name
-              table_name    = "example-table"
+              table_name    = "example_table"
 
               point_in_time_recovery {
                 status = "ENABLED"
@@ -65066,6 +65306,7 @@ queries:
               create_public_ip         = false
               data_plane_routing       = "PRIVATE_IP"
               default_large_staging_disk_type = "GP3"
+              staging_area_tags        = {}
             }
             ```
         # No CloudFormation remediation: Elastic Disaster Recovery has no CloudFormation resource types, so
@@ -65210,6 +65451,7 @@ queries:
               create_public_ip         = false
               data_plane_routing       = "PRIVATE_IP"
               default_large_staging_disk_type = "GP3"
+              staging_area_tags        = {}
             }
             ```
         # No CloudFormation remediation: Elastic Disaster Recovery has no CloudFormation resource types, so
@@ -69461,7 +69703,7 @@ queries:
             resource "aws_workspacesweb_ip_access_settings" "example" {
               display_name = "corporate-only"
 
-              ip_rules {
+              ip_rule {
                 ip_range    = "203.0.113.0/24"
                 description = "Corporate egress"
               }
@@ -70363,7 +70605,7 @@ queries:
             ```
         - id: terraform
           desc: |
-            To create a Transfer Family Web App with a non-public endpoint in Terraform, set `access_endpoint` to an internal URL via `endpoint_details`:
+            To create a Transfer Family Web App with a non-public endpoint in Terraform, attach it to your VPC through `endpoint_details` so it resolves privately. The provider rejects `access_endpoint` alongside a VPC endpoint, because a VPC-attached web app derives its own endpoint:
 
             ```hcl
             resource "aws_transfer_web_app" "example" {
@@ -70375,10 +70617,12 @@ queries:
               }
 
               endpoint_details {
-                vpc_endpoint_id = aws_vpc_endpoint.transfer.id
+                vpc {
+                  vpc_id             = aws_vpc.example.id
+                  subnet_ids         = [aws_subnet.private.id]
+                  security_group_ids = [aws_security_group.web_app.id]
+                }
               }
-
-              access_endpoint = "https://internal.example.com"
             }
             ```
         - id: cloudformation
@@ -70699,10 +70943,17 @@ queries:
             resource "aws_bedrock_custom_model" "example" {
               custom_model_name     = "example-custom-model"
               job_name              = "example-job"
-              base_model_identifier = "amazon.titan-text-express-v1"
+              base_model_identifier = "arn:aws:bedrock:us-east-1::foundation-model/amazon.titan-text-express-v1"
               role_arn              = aws_iam_role.bedrock.arn
 
               custom_model_kms_key_id = aws_kms_key.bedrock.arn
+
+              hyperparameters = {
+                "epochCount"              = "1"
+                "batchSize"               = "1"
+                "learningRate"            = "0.005"
+                "learningRateWarmupSteps" = "0"
+              }
 
               training_data_config {
                 s3_uri = "s3://${aws_s3_bucket.train.id}/train.jsonl"
@@ -71499,10 +71750,10 @@ queries:
 
             ```hcl
             resource "aws_batch_compute_environment" "example" {
-              compute_environment_name = "example-private"
-              type                     = "MANAGED"
-              state                    = "ENABLED"
-              service_role             = aws_iam_role.batch_service.arn
+              name         = "example-private"
+              type         = "MANAGED"
+              state        = "ENABLED"
+              service_role = aws_iam_role.batch_service.arn
 
               compute_resources {
                 type               = "EC2"
@@ -73048,6 +73299,10 @@ queries:
                   catalog_encryption_mode = "SSE-KMS"
                   sse_aws_kms_key_id      = aws_kms_key.glue.arn
                 }
+                connection_password_encryption {
+                  return_connection_password_encrypted = true
+                  aws_kms_key_id                       = aws_kms_key.glue.arn
+                }
               }
             }
             ```
@@ -74428,6 +74683,7 @@ queries:
             resource "aws_cloud9_environment_ec2" "example" {
               name            = "example"
               instance_type   = "t3.small"
+              image_id        = "amazonlinux-2023-x86_64"
               subnet_id       = aws_subnet.private.id
               connection_type = "CONNECT_SSM"
             }
@@ -75794,7 +76050,23 @@ queries:
                 origin_id                = "s3-origin"
                 origin_access_control_id = aws_cloudfront_origin_access_control.example.id
               }
-              # ... other distribution configuration ...
+
+              default_cache_behavior {
+                allowed_methods        = ["GET", "HEAD"]
+                cached_methods         = ["GET", "HEAD"]
+                target_origin_id       = "s3-origin"
+                viewer_protocol_policy = "redirect-to-https"
+              }
+
+              restrictions {
+                geo_restriction {
+                  restriction_type = "none"
+                }
+              }
+
+              viewer_certificate {
+                cloudfront_default_certificate = true
+              }
             }
             ```
         - id: cloudformation
@@ -78335,7 +78607,22 @@ queries:
             resource "aws_codebuild_project" "example" {
               name               = "example"
               project_visibility = "PRIVATE"
-              # ... service_role, source, environment, artifacts ...
+              service_role       = aws_iam_role.codebuild_role.arn
+
+              artifacts {
+                type = "NO_ARTIFACTS"
+              }
+
+              environment {
+                compute_type = "BUILD_GENERAL1_SMALL"
+                image        = "aws/codebuild/amazonlinux2-x86_64-standard:5.0"
+                type         = "LINUX_CONTAINER"
+              }
+
+              source {
+                type     = "GITHUB"
+                location = "https://github.com/example/repo.git"
+              }
             }
             ```
         - id: cloudformation
@@ -79813,6 +80100,7 @@ queries:
               gateway_arn   = aws_storagegateway_gateway.example.arn
               location_arn  = aws_s3_bucket.example.arn
               role_arn      = aws_iam_role.example.arn
+              client_list   = ["10.0.0.0/8"]
               kms_encrypted = true
               kms_key_arn   = aws_kms_key.example.arn
             }
@@ -81784,8 +82072,10 @@ queries:
 
             ```hcl
             resource "aws_mq_broker" "example" {
-              broker_name = "example-broker"
-              engine_type = "ActiveMQ"
+              broker_name        = "example-broker"
+              engine_type        = "ActiveMQ"
+              engine_version     = "5.18"
+              host_instance_type = "mq.m5.large"
 
               auto_minor_version_upgrade = true
             }
@@ -85359,7 +85649,8 @@ queries:
 
             ```hcl
             resource "aws_elasticache_replication_group" "example" {
-              replication_group_id      = "my-redis"
+              replication_group_id       = "my-redis"
+              description                = "Redis replication group"
               transit_encryption_enabled = true
               transit_encryption_mode    = "required"
             }
@@ -85458,9 +85749,14 @@ queries:
 
             ```hcl
             resource "aws_emr_cluster" "example" {
-              name                = "my-cluster"
-              release_label       = "emr-7.0.0"
+              name                 = "my-cluster"
+              release_label        = "emr-7.0.0"
+              service_role         = aws_iam_role.emr.arn
               visible_to_all_users = false
+
+              master_instance_group {
+                instance_type = "m5.xlarge"
+              }
             }
             ```
         - id: cloudformation
@@ -85939,6 +86235,7 @@ queries:
             ```hcl
             resource "aws_elasticache_replication_group" "example" {
               replication_group_id       = "my-cluster"
+              description                = "Redis replication group"
               auto_minor_version_upgrade = true
             }
             ```
