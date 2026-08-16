@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-oci-security
     name: Mondoo Oracle Cloud Infrastructure (OCI) Security
-    version: 4.4.2
+    version: 4.5.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -23,12 +23,15 @@ policies:
 
         - Identity and Access Management (IAM)
         - Object Storage
-        - Virtual Cloud Network (VCN)
+        - Virtual Cloud Network (VCN), including site-to-site VPN and cross-tenancy peering
+        - Network Firewall
+        - Bastion
+        - DNS
         - Compute and Block Storage
         - File Storage
         - Key Management (Vault)
         - Database and Autonomous Database
-        - Load Balancer
+        - Load Balancer and Network Load Balancer
         - Oracle Kubernetes Engine (OKE)
         - OCI Cache (Redis)
         - Cloud Guard
@@ -86,6 +89,20 @@ policies:
           - uid: mondoo-oci-security-public-vnic-has-nsg
           - uid: mondoo-oci-security-vcn-flow-logs-enabled
           - uid: mondoo-oci-security-ipsec-tunnel-ikev2
+          - uid: mondoo-oci-security-ipsec-tunnel-strong-dh-group
+          - uid: mondoo-oci-security-ipsec-tunnel-pfs-enabled
+          - uid: mondoo-oci-security-network-no-cross-tenancy-peering
+      - title: Network Firewall
+        checks:
+          - uid: mondoo-oci-security-network-firewall-decryption-profile-strict
+          - uid: mondoo-oci-security-network-firewall-no-allow-any-source
+      - title: Bastion
+        checks:
+          - uid: mondoo-oci-security-bastion-client-cidr-not-open
+          - uid: mondoo-oci-security-bastion-session-ttl-limited
+      - title: DNS
+        checks:
+          - uid: mondoo-oci-security-dns-zone-dnssec-enabled
       - title: Compute
         checks:
           - uid: mondoo-oci-security-compute-instance-tagging
@@ -100,6 +117,8 @@ policies:
           - uid: mondoo-oci-security-loadbalancer-tls-minimum-1-2
           - uid: mondoo-oci-security-loadbalancer-no-weak-cipher-suites
           - uid: mondoo-oci-security-loadbalancer-http-listener-has-https
+          - uid: mondoo-oci-security-network-loadbalancer-public-restricted-by-nsg
+          - uid: mondoo-oci-security-network-loadbalancer-not-internet-reachable
       - title: Oracle Kubernetes Engine
         checks:
           - uid: mondoo-oci-security-oke-public-endpoint-disabled
@@ -12228,3 +12247,1434 @@ queries:
     refs:
       - url: https://docs.oracle.com/en-us/iaas/data-science/using/pe-concepts.htm
         title: OCI - Data Science Private Endpoints
+
+  # ---------------------------------------------------------------------------
+  # Network Firewall
+  # ---------------------------------------------------------------------------
+  - uid: mondoo-oci-security-network-firewall-decryption-profile-strict
+    title: Ensure Network Firewall decryption profiles block unsafe TLS sessions
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-23
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-15
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    variants:
+      - uid: mondoo-oci-security-network-firewall-decryption-profile-strict-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-network-firewall-decryption-profile-strict-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-network-firewall-decryption-profile-strict-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-network-firewall-decryption-profile-strict-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that every Network Firewall decryption profile blocks the TLS sessions it cannot validate. Every one of these settings defaults to permissive, so a profile created without changing them decrypts and forwards sessions whose certificate is expired, whose issuer is untrusted, or whose cipher suite or protocol version the firewall does not support.
+
+        Two settings apply to every profile. The certificate settings apply to forward-proxy profiles only and read null on inbound-inspection profiles, so they are asserted only where they mean something.
+
+        **Why this matters**
+
+        - **A permissive profile forwards exactly what inspection is for:** An expired or untrusted certificate is the signal that a session is being intercepted or served by an impostor, and a profile left at its defaults passes it through anyway.
+        - **Unsupported ciphers bypass inspection entirely:** A session the firewall cannot decrypt is forwarded undecrypted unless blocking is turned on, so an attacker who negotiates an unsupported suite is invisible to every rule behind it.
+        - **The defaults read as configured:** A profile exists and is attached to a policy, so a console review shows decryption in place while nothing is actually being enforced.
+
+        **Risk mitigation**
+
+        - **Block on validation failure:** Turn on the expired-certificate, untrusted-issuer, and revocation-status settings on every forward-proxy profile.
+        - **Block unsupported ciphers and versions:** Turn on both settings on every profile so a session the firewall cannot read does not pass unexamined.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console and navigate to **Networking > Network Firewall > Policies**.
+        2. Open each policy and select **Decryption profiles**.
+        3. Open each profile and review its blocking settings.
+
+        A passing profile blocks unsupported versions and ciphers, and for a forward-proxy profile also blocks expired certificates, untrusted issuers, and unknown or timed-out revocation status. A failing profile leaves any of these off.
+
+        ### Audit via CLI
+
+        1. List the decryption profiles in a policy:
+
+        ```bash
+        oci network-firewall decryption-profile list --network-firewall-policy-id <policy-ocid>
+        ```
+
+        A passing profile returns `true` for each blocking field. A failing profile returns `false`.
+      remediation:
+        - id: console
+          desc: |
+            To harden a decryption profile using the OCI Console:
+
+            1. Navigate to **Networking > Network Firewall > Policies** and open the policy.
+            2. Select **Decryption profiles** and open the profile.
+            3. Enable blocking for unsupported versions and unsupported ciphers, and on a forward-proxy profile also for expired certificates, untrusted issuers, and unknown or timed-out revocation status.
+            4. Select **Save changes** and apply the policy.
+        - id: cli
+          desc: |
+            To harden a decryption profile using the OCI CLI:
+
+            ```bash
+            oci network-firewall decryption-profile update \
+              --network-firewall-policy-id <policy-ocid> --decryption-profile-name <profile-name> \
+              --type SSL_FORWARD_PROXY \
+              --decryption-profile-details '{"isExpiredCertificateBlocked":true,"isUntrustedIssuerBlocked":true,"isRevocationStatusTimeoutBlocked":true,"isUnknownRevocationStatusBlocked":true,"isUnsupportedCipherBlocked":true,"isUnsupportedVersionBlocked":true,"isOutOfCapacityBlocked":true}'
+            ```
+        - id: terraform
+          desc: |
+            To harden a decryption profile in Terraform, set every blocking flag:
+
+            ```hcl
+            resource "oci_network_firewall_network_firewall_policy_decryption_profile" "example" {
+              name                                 = "forward-proxy"
+              network_firewall_policy_id           = oci_network_firewall_network_firewall_policy.example.id
+              type                                 = "SSL_FORWARD_PROXY"
+              is_expired_certificate_blocked       = true
+              is_untrusted_issuer_blocked          = true
+              is_revocation_status_timeout_blocked = true
+              is_unknown_revocation_status_blocked = true
+              is_unsupported_cipher_blocked        = true
+              is_unsupported_version_blocked       = true
+              is_out_of_capacity_blocked           = true
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/network-firewall/decryption-profiles.htm
+        title: OCI Network Firewall decryption profiles
+  - uid: mondoo-oci-security-network-firewall-decryption-profile-strict-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      # The certificate settings are forward-proxy only and read null on an inbound-inspection
+      # profile, so asserting them everywhere would compare null to true on profiles the
+      # setting does not exist for.
+      oci.networkFirewall.policies.all(
+        decryptionProfiles.all(
+          isUnsupportedVersionBlocked == true &&
+          isUnsupportedCipherBlocked == true
+        ) &&
+        decryptionProfiles.where(type == "SSL_FORWARD_PROXY").all(
+          isExpiredCertificateBlocked == true &&
+          isUntrustedIssuerBlocked == true &&
+          isRevocationStatusTimeoutBlocked == true &&
+          isUnknownRevocationStatusBlocked == true
+        )
+      )
+  - uid: mondoo-oci-security-network-firewall-decryption-profile-strict-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_network_firewall_network_firewall_policy_decryption_profile')
+    mql: |
+      terraform.resources('oci_network_firewall_network_firewall_policy_decryption_profile').all(
+        arguments['is_unsupported_version_blocked'] == true &&
+        arguments['is_unsupported_cipher_blocked'] == true
+      )
+      terraform.resources('oci_network_firewall_network_firewall_policy_decryption_profile').where(
+        arguments['type'] == 'SSL_FORWARD_PROXY'
+      ).all(
+        arguments['is_expired_certificate_blocked'] == true &&
+        arguments['is_untrusted_issuer_blocked'] == true &&
+        arguments['is_revocation_status_timeout_blocked'] == true &&
+        arguments['is_unknown_revocation_status_blocked'] == true
+      )
+  - uid: mondoo-oci-security-network-firewall-decryption-profile-strict-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_network_firewall_network_firewall_policy_decryption_profile')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_network_firewall_network_firewall_policy_decryption_profile').map(change.after).all(
+        _['is_unsupported_version_blocked'] == true &&
+        _['is_unsupported_cipher_blocked'] == true
+      )
+      terraform.plan.resourceChanges.where(type == 'oci_network_firewall_network_firewall_policy_decryption_profile').map(change.after).where(_['type'] == 'SSL_FORWARD_PROXY').all(
+        _['is_expired_certificate_blocked'] == true &&
+        _['is_untrusted_issuer_blocked'] == true &&
+        _['is_revocation_status_timeout_blocked'] == true &&
+        _['is_unknown_revocation_status_blocked'] == true
+      )
+  - uid: mondoo-oci-security-network-firewall-decryption-profile-strict-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_network_firewall_network_firewall_policy_decryption_profile')
+    mql: |
+      terraform.state.resources.where(type == 'oci_network_firewall_network_firewall_policy_decryption_profile').map(values).all(
+        _['is_unsupported_version_blocked'] == true &&
+        _['is_unsupported_cipher_blocked'] == true
+      )
+      terraform.state.resources.where(type == 'oci_network_firewall_network_firewall_policy_decryption_profile').map(values).where(_['type'] == 'SSL_FORWARD_PROXY').all(
+        _['is_expired_certificate_blocked'] == true &&
+        _['is_untrusted_issuer_blocked'] == true &&
+        _['is_revocation_status_timeout_blocked'] == true &&
+        _['is_unknown_revocation_status_blocked'] == true
+      )
+
+  - uid: mondoo-oci-security-network-firewall-no-allow-any-source
+    title: Ensure Network Firewall allow rules name a source address list
+    impact: 85
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: vda-isa-5-5-2-6
+    variants:
+      - uid: mondoo-oci-security-network-firewall-no-allow-any-source-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-network-firewall-no-allow-any-source-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-network-firewall-no-allow-any-source-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-network-firewall-no-allow-any-source-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that every Network Firewall security rule with an `ALLOW` verdict names at least one source address list. A rule's match condition is expressed by naming lists; a condition that omits the source key matches every source, so an allow rule written without one permits the named traffic from anywhere on the internet.
+
+        **Why this matters**
+
+        - **An omitted key is not a narrow rule, it is no rule:** The condition reads as configured, but the absent source means the firewall applies the allow verdict to traffic from any address.
+        - **It is silent in review:** A rule listing a destination and an application looks scoped; the missing source is visible only by knowing that absence means "any".
+        - **The firewall is the boundary:** Traffic this rule admits has already passed the outermost control, so a downstream security list is the only thing left.
+
+        **Risk mitigation**
+
+        - **Name a source address list on every allow rule:** Define the ranges the traffic is expected from and reference them in the rule's condition.
+        - **Prefer a deny-by-default policy:** Order allow rules after an explicit catch-all drop so an unscoped rule cannot become the effective policy.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console and navigate to **Networking > Network Firewall > Policies**.
+        2. Open each policy and select **Security rules**.
+        3. For each rule whose action is **Allow**, review the **Source** condition.
+
+        A passing rule names one or more source address lists. A failing rule leaves the source empty, which matches any address.
+
+        ### Audit via CLI
+
+        1. List the security rules in a policy:
+
+        ```bash
+        oci network-firewall security-rule list --network-firewall-policy-id <policy-ocid>
+        ```
+
+        A passing `ALLOW` rule returns a non-empty `sourceAddress` in its `condition`. A failing rule returns none.
+      remediation:
+        - id: console
+          desc: |
+            To scope an allow rule using the OCI Console:
+
+            1. Navigate to **Networking > Network Firewall > Policies** and open the policy.
+            2. Select **Security rules** and open the rule.
+            3. Add one or more source address lists to the rule's condition, or change the action to **Drop**.
+            4. Select **Save changes** and apply the policy.
+        - id: cli
+          desc: |
+            To scope an allow rule using the OCI CLI:
+
+            ```bash
+            oci network-firewall security-rule update --network-firewall-policy-id <policy-ocid> \
+              --security-rule-name <rule-name> --action ALLOW \
+              --condition '{"sourceAddress":["corporate-ranges"],"destinationAddress":["app-tier"]}'
+            ```
+        - id: terraform
+          desc: |
+            To scope an allow rule in Terraform, name a source address list in the `condition` block:
+
+            ```hcl
+            resource "oci_network_firewall_network_firewall_policy_security_rule" "example" {
+              name                       = "allow-partner-api"
+              network_firewall_policy_id = oci_network_firewall_network_firewall_policy.example.id
+              action                     = "ALLOW"
+              inspection                 = "INTRUSION_PREVENTION"
+
+              condition {
+                source_address      = ["corporate-ranges"]
+                destination_address = ["app-tier"]
+              }
+
+              position {
+                after_rule = "deny-all"
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/network-firewall/security-rules.htm
+        title: OCI Network Firewall security rules
+  - uid: mondoo-oci-security-network-firewall-no-allow-any-source-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      # An absent or empty sourceAddress key matches every source, so both cases have to
+      # count as unscoped; != empty covers null and the empty list together.
+      oci.networkFirewall.policies.all(
+        securityRules.where(action == "ALLOW").all(
+          condition["sourceAddress"] != empty
+        )
+      )
+  - uid: mondoo-oci-security-network-firewall-no-allow-any-source-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_network_firewall_network_firewall_policy_security_rule')
+    mql: |
+      terraform.resources('oci_network_firewall_network_firewall_policy_security_rule').where(
+        arguments['action'] == 'ALLOW'
+      ).all(
+        blocks.where(type == "condition") != empty &&
+        blocks.where(type == "condition").all(arguments['source_address'] != empty)
+      )
+  - uid: mondoo-oci-security-network-firewall-no-allow-any-source-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_network_firewall_network_firewall_policy_security_rule')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_network_firewall_network_firewall_policy_security_rule').map(change.after).where(
+        _['action'] == 'ALLOW'
+      ).all(
+        _['condition'] != empty &&
+        _['condition'].all(_['source_address'] != empty)
+      )
+  - uid: mondoo-oci-security-network-firewall-no-allow-any-source-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_network_firewall_network_firewall_policy_security_rule')
+    mql: |
+      terraform.state.resources.where(type == 'oci_network_firewall_network_firewall_policy_security_rule').map(values).where(
+        _['action'] == 'ALLOW'
+      ).all(
+        _['condition'] != empty &&
+        _['condition'].all(_['source_address'] != empty)
+      )
+
+  # ---------------------------------------------------------------------------
+  # Bastion
+  # ---------------------------------------------------------------------------
+  - uid: mondoo-oci-security-bastion-client-cidr-not-open
+    title: Ensure bastions do not accept sessions from every address
+    impact: 85
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-3
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: vda-isa-5-5-2-6
+    variants:
+      - uid: mondoo-oci-security-bastion-client-cidr-not-open-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-bastion-client-cidr-not-open-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-bastion-client-cidr-not-open-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-bastion-client-cidr-not-open-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that no OCI Bastion allows session creation from `0.0.0.0/0`. The client CIDR allow list is what decides where a bastion session may be opened from, and a bastion is by design the one path into a private subnet, so an allow list of `0.0.0.0/0` publishes that path to the entire internet.
+
+        **Why this matters**
+
+        - **The bastion is the way in:** It exists precisely because the hosts behind it are not reachable, so its allow list is the boundary those hosts depend on.
+        - **A world-open bastion is continuously probed:** Session creation becomes reachable from anywhere, so credential attacks against it never stop.
+        - **It is usually a leftover:** `0.0.0.0/0` gets added for a remote incident or an onboarding and is rarely narrowed afterwards.
+
+        **Risk mitigation**
+
+        - **List the ranges operators actually connect from:** Corporate egress addresses and VPN pools, not the whole internet.
+        - **Review the list on a schedule:** Ranges added for an incident should be removed when the incident closes.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console and navigate to **Identity & Security > Bastion**.
+        2. Open each bastion and review **CIDR block allowlist**.
+
+        A passing bastion lists only specific ranges. A failing bastion lists `0.0.0.0/0`.
+
+        ### Audit via CLI
+
+        1. List the bastions in a compartment and review their allow lists:
+
+        ```bash
+        oci bastion bastion list --compartment-id <compartment-ocid> --query 'data[].{name:name,cidrs:"client-cidr-block-allow-list"}'
+        ```
+
+        A passing bastion returns an allow list without `0.0.0.0/0`. A failing bastion includes it.
+      remediation:
+        - id: console
+          desc: |
+            To narrow a bastion's allow list using the OCI Console:
+
+            1. Navigate to **Identity & Security > Bastion** and open the bastion.
+            2. Select **Edit** and replace `0.0.0.0/0` in **CIDR block allowlist** with the ranges operators connect from.
+            3. Select **Save changes**.
+        - id: cli
+          desc: |
+            To narrow a bastion's allow list using the OCI CLI:
+
+            ```bash
+            oci bastion bastion update --bastion-id <bastion-ocid> \
+              --client-cidr-list '["203.0.113.0/24"]'
+            ```
+        - id: terraform
+          desc: |
+            To scope a bastion's allow list in Terraform, name the ranges in `client_cidr_block_allow_list`:
+
+            ```hcl
+            resource "oci_bastion_bastion" "example" {
+              bastion_type                 = "STANDARD"
+              compartment_id               = var.compartment_ocid
+              target_subnet_id             = oci_core_subnet.private.id
+              name                         = "ops-bastion"
+              client_cidr_block_allow_list = ["203.0.113.0/24"]
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Bastion/Concepts/bastionoverview.htm
+        title: OCI Bastion overview
+  - uid: mondoo-oci-security-bastion-client-cidr-not-open-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.bastion.bastions.all(
+        clientCidrBlockAllowList.none(_ == "0.0.0.0/0" || _ == "::/0")
+      )
+  - uid: mondoo-oci-security-bastion-client-cidr-not-open-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_bastion_bastion')
+    mql: |
+      terraform.resources('oci_bastion_bastion').all(
+        arguments['client_cidr_block_allow_list'] == empty ||
+        arguments['client_cidr_block_allow_list'].none(_ == "0.0.0.0/0" || _ == "::/0")
+      )
+  - uid: mondoo-oci-security-bastion-client-cidr-not-open-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_bastion_bastion')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_bastion_bastion').map(change.after).all(
+        _['client_cidr_block_allow_list'] == empty ||
+        _['client_cidr_block_allow_list'].none(_ == "0.0.0.0/0" || _ == "::/0")
+      )
+  - uid: mondoo-oci-security-bastion-client-cidr-not-open-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_bastion_bastion')
+    mql: |
+      terraform.state.resources.where(type == 'oci_bastion_bastion').map(values).all(
+        _['client_cidr_block_allow_list'] == empty ||
+        _['client_cidr_block_allow_list'].none(_ == "0.0.0.0/0" || _ == "::/0")
+      )
+
+  - uid: mondoo-oci-security-bastion-session-ttl-limited
+    title: Ensure bastion sessions expire within one hour
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-10
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iii-access-control-automatic-logoff
+      compliance/iso-27001-2022: iso-27001-2022-a-5-15
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-3
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-12
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-11
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-oci-security-bastion-session-ttl-limited-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-bastion-session-ttl-limited-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-bastion-session-ttl-limited-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-bastion-session-ttl-limited-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that every OCI Bastion caps session lifetime at one hour or less. The maximum session time-to-live is the longest a session may stay open before it has to be recreated, and OCI permits up to three hours. A bastion session is privileged access into a private subnet, so its lifetime is the window in which a session left open on an unattended workstation, or captured from one, remains usable.
+
+        **Why this matters**
+
+        - **A live session needs no credentials:** Whoever reaches the terminal inherits the access, so the ceiling on session length is the ceiling on that exposure.
+        - **Long sessions outlive the work:** Access granted for a twenty-minute task stays open for hours if nothing forces it closed.
+        - **Recreation is cheap:** Reopening a session is a single command, so a short ceiling costs little and bounds every session at once.
+
+        **Risk mitigation**
+
+        - **Set the maximum TTL to one hour or less:** Long-running work can reconnect; the ceiling only affects how long a forgotten session survives.
+        - **Prefer per-session TTLs below the bastion ceiling:** Sessions can request less than the maximum, and routine access rarely needs the full hour.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console and navigate to **Identity & Security > Bastion**.
+        2. Open each bastion and review **Maximum session time-to-live**.
+
+        A passing bastion shows 3600 seconds or less. A failing bastion shows more.
+
+        ### Audit via CLI
+
+        1. List the bastions in a compartment and review their maximum session TTL:
+
+        ```bash
+        oci bastion bastion list --compartment-id <compartment-ocid> --query 'data[].{name:name,ttl:"max-session-ttl-in-seconds"}'
+        ```
+
+        A passing bastion returns a `maxSessionTtlInSeconds` of 3600 or less. A failing bastion returns more.
+      remediation:
+        - id: console
+          desc: |
+            To shorten a bastion's session lifetime using the OCI Console:
+
+            1. Navigate to **Identity & Security > Bastion** and open the bastion.
+            2. Select **Edit** and set **Maximum session time-to-live** to 3600 seconds or less.
+            3. Select **Save changes**.
+        - id: cli
+          desc: |
+            To shorten a bastion's session lifetime using the OCI CLI:
+
+            ```bash
+            oci bastion bastion update --bastion-id <bastion-ocid> \
+              --max-session-ttl 3600
+            ```
+        - id: terraform
+          desc: |
+            To cap session lifetime in Terraform, set `max_session_ttl_in_seconds`:
+
+            ```hcl
+            resource "oci_bastion_bastion" "example" {
+              bastion_type                 = "STANDARD"
+              compartment_id               = var.compartment_ocid
+              target_subnet_id             = oci_core_subnet.private.id
+              name                         = "ops-bastion"
+              client_cidr_block_allow_list = ["203.0.113.0/24"]
+              max_session_ttl_in_seconds   = 3600
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Bastion/Tasks/managingbastions.htm
+        title: Managing OCI bastions
+  - uid: mondoo-oci-security-bastion-session-ttl-limited-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      # maxSessionTtlInSeconds is null when the bastion reports no limit, which is not a
+      # bounded lifetime, so presence is asserted before the comparison.
+      oci.bastion.bastions.all(
+        maxSessionTtlInSeconds != empty && maxSessionTtlInSeconds <= 3600
+      )
+  - uid: mondoo-oci-security-bastion-session-ttl-limited-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_bastion_bastion')
+    mql: |
+      terraform.resources('oci_bastion_bastion').all(
+        arguments['max_session_ttl_in_seconds'] != empty &&
+        arguments['max_session_ttl_in_seconds'] <= 3600
+      )
+  - uid: mondoo-oci-security-bastion-session-ttl-limited-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_bastion_bastion')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_bastion_bastion').map(change.after).all(
+        _['max_session_ttl_in_seconds'] != empty &&
+        _['max_session_ttl_in_seconds'] <= 3600
+      )
+  - uid: mondoo-oci-security-bastion-session-ttl-limited-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_bastion_bastion')
+    mql: |
+      terraform.state.resources.where(type == 'oci_bastion_bastion').map(values).all(
+        _['max_session_ttl_in_seconds'] != empty &&
+        _['max_session_ttl_in_seconds'] <= 3600
+      )
+
+  # ---------------------------------------------------------------------------
+  # DNS
+  # ---------------------------------------------------------------------------
+  - uid: mondoo-oci-security-dns-zone-dnssec-enabled
+    title: Ensure public DNS zones have DNSSEC signing enabled
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-21
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-20
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-15
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a08
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    variants:
+      - uid: mondoo-oci-security-dns-zone-dnssec-enabled-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-dns-zone-dnssec-enabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-dns-zone-dnssec-enabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-dns-zone-dnssec-enabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that every primary DNS zone answering publicly has DNSSEC signing enabled. DNSSEC signs the zone's records so a resolver can verify that the answer it received is the one the zone published. Without it, a resolver has no way to tell a genuine answer from a forged one, and OCI creates zones with DNSSEC disabled.
+
+        Private zones and secondary zones are not in scope: a private zone answers only inside attached VCNs, and a secondary zone serves records signed at its primary.
+
+        **Why this matters**
+
+        - **An unsigned answer is unverifiable:** Cache poisoning and on-path answer substitution redirect users and services to attacker-controlled addresses with nothing to detect the swap.
+        - **DNS decides where everything goes:** A forged record redirects mail, API traffic, and certificate validation challenges, which is the step that makes fraudulent certificate issuance possible.
+        - **The failure is silent:** Traffic reaches the wrong host and works, so nothing in the application signals that resolution was tampered with.
+
+        **Risk mitigation**
+
+        - **Enable DNSSEC on every public primary zone:** Signing makes forged answers detectable by any validating resolver.
+        - **Publish the DS record at the parent:** Signing only takes effect once the delegation carries the matching DS record, so complete the chain of trust at the registrar.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console and navigate to **Networking > DNS management > Zones**.
+        2. Open each public primary zone and review the **DNSSEC** state.
+
+        A passing zone shows DNSSEC enabled. A failing zone shows it disabled.
+
+        ### Audit via CLI
+
+        1. List the zones in a compartment and review their DNSSEC state:
+
+        ```bash
+        oci dns zone list --compartment-id <compartment-ocid> --scope GLOBAL --query 'data[].{name:name,dnssec:"dnssec-state"}'
+        ```
+
+        A passing zone returns `"dnssec": "ENABLED"`. A failing zone returns `"DISABLED"`.
+      remediation:
+        - id: console
+          desc: |
+            To enable DNSSEC on a zone using the OCI Console:
+
+            1. Navigate to **Networking > DNS management > Zones** and open the zone.
+            2. Select **Enable DNSSEC**.
+            3. Copy the generated DS record and publish it at the parent zone or registrar so the chain of trust completes.
+        - id: cli
+          desc: |
+            To enable DNSSEC on a zone using the OCI CLI:
+
+            ```bash
+            oci dns zone update --zone-name-or-id <zone-name> --scope GLOBAL --dnssec-state ENABLED
+            ```
+
+            Then publish the resulting DS record at the parent zone or registrar.
+        - id: terraform
+          desc: |
+            To enable DNSSEC in Terraform, set `dnssec_state` to `ENABLED`:
+
+            ```hcl
+            resource "oci_dns_zone" "example" {
+              compartment_id = var.compartment_ocid
+              name           = "example.com"
+              zone_type      = "PRIMARY"
+              scope          = "GLOBAL"
+              dnssec_state   = "ENABLED"
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/DNS/Concepts/dnssec.htm
+        title: OCI DNS DNSSEC
+  - uid: mondoo-oci-security-dns-zone-dnssec-enabled-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      # A private zone answers only inside attached VCNs and a secondary zone serves records
+      # signed at its primary, so neither is a place DNSSEC is configured.
+      oci.dns.zones.where(zoneType == "PRIMARY" && scope == "GLOBAL").all(
+        dnssecState == "ENABLED"
+      )
+  - uid: mondoo-oci-security-dns-zone-dnssec-enabled-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_dns_zone')
+    mql: |
+      terraform.resources('oci_dns_zone').where(
+        arguments['zone_type'] == 'PRIMARY' && arguments['scope'] != 'PRIVATE'
+      ).all(arguments['dnssec_state'] == 'ENABLED')
+  - uid: mondoo-oci-security-dns-zone-dnssec-enabled-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_dns_zone')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_dns_zone').map(change.after).where(
+        _['zone_type'] == 'PRIMARY' && _['scope'] != 'PRIVATE'
+      ).all(_['dnssec_state'] == 'ENABLED')
+  - uid: mondoo-oci-security-dns-zone-dnssec-enabled-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_dns_zone')
+    mql: |
+      terraform.state.resources.where(type == 'oci_dns_zone').map(values).where(
+        _['zone_type'] == 'PRIMARY' && _['scope'] != 'PRIVATE'
+      ).all(_['dnssec_state'] == 'ENABLED')
+
+  # ---------------------------------------------------------------------------
+  # IPSec tunnel cryptography
+  # ---------------------------------------------------------------------------
+  - uid: mondoo-oci-security-ipsec-tunnel-strong-dh-group
+    title: Ensure IPSec tunnels do not use Diffie-Hellman group 2 or 5
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    variants:
+      - uid: mondoo-oci-security-ipsec-tunnel-strong-dh-group-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-ipsec-tunnel-strong-dh-group-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-ipsec-tunnel-strong-dh-group-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-ipsec-tunnel-strong-dh-group-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that no IPSec tunnel is configured with Diffie-Hellman group 2 or group 5 for either the IKE key exchange or the IPSec rekey. Group 2 is a 1024-bit MODP prime and group 5 is 1536-bit; both are fixed, standardized primes shared by everyone who selects them, which is the cheapest possible target for precomputation. Group 14 and above keep the discrete-logarithm problem out of practical reach.
+
+        Only tunnels with a custom proposal set are evaluated. A tunnel using Oracle's default proposals reports no configured group, and Oracle's defaults do not include the weak ones.
+
+        **Why this matters**
+
+        - **A weak exchange undoes a strong cipher:** AES-256 protects nothing if the key that seeds it came from an exchange an attacker can break.
+        - **Shared primes amortize the attack:** Precomputation against one widely reused prime pays off against every tunnel that selected it, which is what makes group 2 a practical target rather than a theoretical one.
+        - **Recorded traffic stays attackable:** Ciphertext captured today can be decrypted whenever the exchange falls, so a weak group is a retroactive exposure.
+
+        **Risk mitigation**
+
+        - **Set group 14 or higher on both phases:** Configure the IKE and IPSec proposals together, and apply the matching change on the customer-premises equipment.
+        - **Prefer Oracle's defaults over a weak custom set:** A custom proposal is worth keeping only when it is stronger than the default, not weaker.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console and navigate to **Networking > Customer connectivity > Site-to-Site VPN**.
+        2. Open each IPSec connection and select a tunnel.
+        3. Review **Phase 1** and **Phase 2** under the tunnel's IPSec configuration.
+
+        A passing tunnel either uses Oracle's default proposals or names group 14 or higher in both phases. A failing tunnel names group 2 or group 5 in either.
+
+        ### Audit via CLI
+
+        1. List the tunnels of an IPSec connection and review the configured groups:
+
+        ```bash
+        oci network ip-sec-tunnel list --ipsc-id <ipsec-connection-ocid>
+        ```
+
+        A passing tunnel returns `customDhGroup` of `GROUP14` or higher, or reports no custom configuration. A failing tunnel returns `GROUP2` or `GROUP5`.
+      remediation:
+        - id: console
+          desc: |
+            To raise a tunnel's Diffie-Hellman group using the OCI Console:
+
+            1. Navigate to **Networking > Customer connectivity > Site-to-Site VPN** and open the IPSec connection.
+            2. Select the tunnel, then select **Edit**.
+            3. Under **Phase 1** and **Phase 2**, set the Diffie-Hellman group to **GROUP14** or higher.
+            4. Select **Save changes** and apply the matching proposal on the customer-premises equipment.
+        - id: cli
+          desc: |
+            To raise a tunnel's Diffie-Hellman group using the OCI CLI:
+
+            ```bash
+            oci network ip-sec-tunnel update --ipsc-id <ipsec-connection-ocid> --tunnel-id <tunnel-ocid> \
+              --phase-one-config '{"isCustomPhaseOneConfig":true,"customDhGroup":"GROUP14"}' \
+              --phase-two-config '{"isCustomPhaseTwoConfig":true,"dhGroup":"GROUP14"}'
+            ```
+        - id: terraform
+          desc: |
+            To pin a tunnel's Diffie-Hellman group in Terraform, set it in both phase blocks:
+
+            ```hcl
+            resource "oci_core_ipsec_connection_tunnel_management" "example" {
+              ipsec_id    = oci_core_ipsec.example.id
+              tunnel_id   = data.oci_core_ipsec_connection_tunnels.example.ip_sec_connection_tunnels[0].id
+              ike_version = "V2"
+
+              phase_one_details {
+                is_custom_phase_one_config = true
+                custom_dh_group            = "GROUP14"
+                custom_encryption_algorithm = "AES_256_CBC"
+              }
+
+              phase_two_details {
+                is_custom_phase_two_config = true
+                dh_group                   = "GROUP14"
+                is_pfs_enabled             = true
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Network/Reference/supportedIPsecparams.htm
+        title: OCI supported IPSec parameters
+  - uid: mondoo-oci-security-ipsec-tunnel-strong-dh-group-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      # Two things are asserted, because neither alone covers every tunnel. The configured
+      # proposal is present whether or not the tunnel has come up, but is null when the
+      # tunnel uses Oracle's default proposal set. The negotiated group is what a default
+      # tunnel actually settled on, but reads null while the tunnel is down. Together they
+      # cover a custom proposal that was never brought up and a default one that negotiated
+      # down to a weak group against an old customer-premises device.
+      oci.network.ipsecConnections.all(
+        tunnels.all(
+          isCustomPhase1Config == false ||
+          phase1ConfiguredDhGroup != "GROUP2" && phase1ConfiguredDhGroup != "GROUP5"
+        ) &&
+        tunnels.all(
+          isCustomPhase2Config == false ||
+          phase2ConfiguredDhGroup != "GROUP2" && phase2ConfiguredDhGroup != "GROUP5"
+        )
+      )
+      oci.network.ipsecConnections.all(
+        tunnels.where(isIkeEstablished == true).all(
+          phase1DhGroup != "GROUP2" && phase1DhGroup != "GROUP5"
+        ) &&
+        tunnels.where(isEspEstablished == true).all(
+          phase2DhGroup != "GROUP2" && phase2DhGroup != "GROUP5"
+        )
+      )
+  - uid: mondoo-oci-security-ipsec-tunnel-strong-dh-group-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_core_ipsec_connection_tunnel_management')
+    mql: |
+      # A tunnel with no phase block takes Oracle's default proposal set, which Terraform
+      # cannot resolve to a group: what it lands on depends on what the customer-premises
+      # device offers. The runtime variant covers that case by reading the negotiated group,
+      # so an absent block is not failed here.
+      terraform.resources('oci_core_ipsec_connection_tunnel_management').all(
+        blocks.where(type == "phase_one_details").all(
+          arguments['is_custom_phase_one_config'] != true ||
+          arguments['custom_dh_group'] != 'GROUP2' && arguments['custom_dh_group'] != 'GROUP5'
+        ) &&
+        blocks.where(type == "phase_two_details").all(
+          arguments['is_custom_phase_two_config'] != true ||
+          arguments['dh_group'] != 'GROUP2' && arguments['dh_group'] != 'GROUP5'
+        )
+      )
+  - uid: mondoo-oci-security-ipsec-tunnel-strong-dh-group-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_core_ipsec_connection_tunnel_management')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_core_ipsec_connection_tunnel_management').map(change.after).all(
+        _['phase_one_details'] == empty ||
+        _['phase_one_details'].all(
+          _['is_custom_phase_one_config'] != true ||
+          _['custom_dh_group'] != 'GROUP2' && _['custom_dh_group'] != 'GROUP5'
+        )
+      )
+      terraform.plan.resourceChanges.where(type == 'oci_core_ipsec_connection_tunnel_management').map(change.after).all(
+        _['phase_two_details'] == empty ||
+        _['phase_two_details'].all(
+          _['is_custom_phase_two_config'] != true ||
+          _['dh_group'] != 'GROUP2' && _['dh_group'] != 'GROUP5'
+        )
+      )
+  - uid: mondoo-oci-security-ipsec-tunnel-strong-dh-group-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_core_ipsec_connection_tunnel_management')
+    mql: |
+      terraform.state.resources.where(type == 'oci_core_ipsec_connection_tunnel_management').map(values).all(
+        _['phase_one_details'] == empty ||
+        _['phase_one_details'].all(
+          _['is_custom_phase_one_config'] != true ||
+          _['custom_dh_group'] != 'GROUP2' && _['custom_dh_group'] != 'GROUP5'
+        )
+      )
+      terraform.state.resources.where(type == 'oci_core_ipsec_connection_tunnel_management').map(values).all(
+        _['phase_two_details'] == empty ||
+        _['phase_two_details'].all(
+          _['is_custom_phase_two_config'] != true ||
+          _['dh_group'] != 'GROUP2' && _['dh_group'] != 'GROUP5'
+        )
+      )
+
+  - uid: mondoo-oci-security-ipsec-tunnel-pfs-enabled
+    title: Ensure established IPSec tunnels have perfect forward secrecy
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    variants:
+      - uid: mondoo-oci-security-ipsec-tunnel-pfs-enabled-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-ipsec-tunnel-pfs-enabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-ipsec-tunnel-pfs-enabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-ipsec-tunnel-pfs-enabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that every IPSec tunnel with an established data channel negotiates perfect forward secrecy. With forward secrecy, each rekey derives fresh key material from a new Diffie-Hellman exchange, so recovering one key does not decrypt anything that came before it. Without it, a single recovered key opens every session it ever protected.
+
+        Only tunnels whose ESP security association is established are evaluated. The provider reports forward secrecy as disabled on a tunnel that is down, because the negotiated crypto is simply unavailable, and a tunnel that has never come up is not evidence of a misconfiguration.
+
+        **Why this matters**
+
+        - **It bounds a key compromise in time:** With forward secrecy, a recovered key exposes one rekey interval; without it, the whole history of the tunnel.
+        - **Site-to-site tunnels are long-lived and high-volume:** They carry months of traffic between two networks, which is exactly the case where retroactive decryption is worth the most.
+        - **Captured traffic is patient:** An attacker can record now and decrypt later, so the protection has to be in place before the key is ever at risk.
+
+        **Risk mitigation**
+
+        - **Enable perfect forward secrecy on the IPSec phase:** Configure it on the tunnel and apply the matching setting on the customer-premises equipment.
+        - **Pair it with a strong Diffie-Hellman group:** Fresh key material from a weak group is still weak key material.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console and navigate to **Networking > Customer connectivity > Site-to-Site VPN**.
+        2. Open each IPSec connection and select a tunnel whose status is **Up**.
+        3. Review **Perfect forward secrecy** under **Phase 2**.
+
+        A passing tunnel shows perfect forward secrecy enabled. A failing tunnel shows it disabled.
+
+        ### Audit via CLI
+
+        1. List the tunnels of an IPSec connection and review phase 2:
+
+        ```bash
+        oci network ip-sec-tunnel list --ipsc-id <ipsec-connection-ocid>
+        ```
+
+        A passing tunnel returns `isPfsEnabled` of `true` in `phaseTwoDetails`. A failing tunnel returns `false` while `isEspEstablished` is `true`.
+      remediation:
+        - id: console
+          desc: |
+            To enable perfect forward secrecy using the OCI Console:
+
+            1. Navigate to **Networking > Customer connectivity > Site-to-Site VPN** and open the IPSec connection.
+            2. Select the tunnel, then select **Edit**.
+            3. Under **Phase 2**, enable perfect forward secrecy and choose a Diffie-Hellman group of 14 or higher.
+            4. Select **Save changes** and apply the matching setting on the customer-premises equipment.
+        - id: cli
+          desc: |
+            To enable perfect forward secrecy using the OCI CLI:
+
+            ```bash
+            oci network ip-sec-tunnel update --ipsc-id <ipsec-connection-ocid> --tunnel-id <tunnel-ocid> \
+              --phase-two-config '{"isCustomPhaseTwoConfig":true,"isPfsEnabled":true,"dhGroup":"GROUP14"}'
+            ```
+        - id: terraform
+          desc: |
+            To enable perfect forward secrecy in Terraform, set `is_pfs_enabled` in the phase two block:
+
+            ```hcl
+            resource "oci_core_ipsec_connection_tunnel_management" "example" {
+              ipsec_id    = oci_core_ipsec.example.id
+              tunnel_id   = data.oci_core_ipsec_connection_tunnels.example.ip_sec_connection_tunnels[0].id
+              ike_version = "V2"
+
+              phase_two_details {
+                is_custom_phase_two_config = true
+                is_pfs_enabled             = true
+                dh_group                   = "GROUP14"
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Network/Reference/supportedIPsecparams.htm
+        title: OCI supported IPSec parameters
+  - uid: mondoo-oci-security-ipsec-tunnel-pfs-enabled-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      # phase2PfsEnabled also reads false when the tunnel is down and its negotiated crypto is
+      # unavailable, so a tunnel that never came up would otherwise be reported as
+      # misconfigured. isEspEstablished separates the two.
+      oci.network.ipsecConnections.all(
+        tunnels.where(isEspEstablished == true).all(phase2PfsEnabled == true)
+      )
+  - uid: mondoo-oci-security-ipsec-tunnel-pfs-enabled-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_core_ipsec_connection_tunnel_management')
+    mql: |
+      terraform.resources('oci_core_ipsec_connection_tunnel_management').all(
+        blocks.where(type == "phase_two_details") != empty &&
+        blocks.where(type == "phase_two_details").all(arguments['is_pfs_enabled'] == true)
+      )
+  - uid: mondoo-oci-security-ipsec-tunnel-pfs-enabled-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_core_ipsec_connection_tunnel_management')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_core_ipsec_connection_tunnel_management').map(change.after).all(
+        _['phase_two_details'] != empty &&
+        _['phase_two_details'].all(_['is_pfs_enabled'] == true)
+      )
+  - uid: mondoo-oci-security-ipsec-tunnel-pfs-enabled-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_core_ipsec_connection_tunnel_management')
+    mql: |
+      terraform.state.resources.where(type == 'oci_core_ipsec_connection_tunnel_management').map(values).all(
+        _['phase_two_details'] != empty &&
+        _['phase_two_details'].all(_['is_pfs_enabled'] == true)
+      )
+
+  # ---------------------------------------------------------------------------
+  # Cross-tenancy network peering
+  # ---------------------------------------------------------------------------
+  - uid: mondoo-oci-security-network-no-cross-tenancy-peering
+    title: Ensure VCN peering does not cross a tenancy boundary
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-06
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: vda-isa-5-5-2-6
+    variants:
+      - uid: mondoo-oci-security-network-no-cross-tenancy-peering-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-network-no-cross-tenancy-peering-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-network-no-cross-tenancy-peering-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-network-no-cross-tenancy-peering-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that no local peering gateway, remote peering connection, or dynamic routing gateway attachment peers with a network in another tenancy. Cross-tenancy peering joins two address spaces under different owners, so traffic can reach the VCN from a network the tenancy's own administrators do not control and cannot inspect.
+
+        Cross-tenancy peering is sometimes deliberate, for a partner integration or a split-billing arrangement. This check surfaces every instance so each can be confirmed as intended rather than discovered later.
+
+        **Why this matters**
+
+        - **It extends the trust boundary silently:** Once the peering is established and routes are published, hosts in the other tenancy are simply on the network, with no gateway, no logging point, and no authentication in between.
+        - **The other side is not yours to audit:** Its security lists, its compromised hosts, and its own peerings are outside your control while its traffic is inside your VCN.
+        - **It survives the reason for it:** A peering set up for a migration or a proof of concept stays routable long after the project ends, because nothing expires it.
+
+        **Risk mitigation**
+
+        - **Confirm each peering against a documented agreement:** Every cross-tenancy link should trace to a named counterparty and a business reason.
+        - **Constrain what the peering can reach:** Advertise only the CIDRs the integration needs, and back the peering with security lists that scope it to specific hosts and ports.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console and navigate to **Networking > Virtual cloud networks**.
+        2. For each VCN, review **Local peering gateways**; for each DRG, review **Remote peering connections** and **VCN attachments**.
+        3. Check whether each is marked as cross-tenancy.
+
+        A passing tenancy has no cross-tenancy peering. A failing tenancy has at least one.
+
+        ### Audit via CLI
+
+        1. List the local peering gateways and remote peering connections in a compartment:
+
+        ```bash
+        oci network local-peering-gateway list --compartment-id <compartment-ocid> --query 'data[].{name:"display-name",cross:"is-cross-tenancy-peering"}'
+        oci network remote-peering-connection list --compartment-id <compartment-ocid> --query 'data[].{name:"display-name",cross:"is-cross-tenancy-peering"}'
+        ```
+
+        A passing tenancy returns `false` for every entry. A failing tenancy returns `true` for at least one.
+      remediation:
+        - id: console
+          desc: |
+            To remove an unintended cross-tenancy peering using the OCI Console:
+
+            1. Confirm with the network owner that the peering is no longer required.
+            2. Navigate to **Networking > Virtual cloud networks**, open the VCN, and select **Local peering gateways**, or open the DRG and select **Remote peering connections**.
+            3. Terminate the peering, then remove the route rules that pointed at it.
+        - id: cli
+          desc: |
+            To remove an unintended cross-tenancy peering using the OCI CLI:
+
+            ```bash
+            oci network local-peering-gateway delete --local-peering-gateway-id <lpg-ocid>
+            oci network remote-peering-connection delete --remote-peering-connection-id <rpc-ocid>
+            ```
+        - id: terraform
+          desc: |
+            To keep peering inside the tenancy in Terraform, leave `is_cross_tenancy_peering` at `false`:
+
+            ```hcl
+            resource "oci_core_local_peering_gateway" "example" {
+              compartment_id           = var.compartment_ocid
+              vcn_id                   = oci_core_vcn.example.id
+              display_name             = "app-to-shared"
+              is_cross_tenancy_peering = false
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Network/Tasks/localVCNpeering.htm
+        title: OCI local VCN peering
+  - uid: mondoo-oci-security-network-no-cross-tenancy-peering-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      # Remote peering connections are reached through the DRG that holds them; oci.network
+      # exposes no top-level collection for them.
+      oci.network.localPeeringGateways.all(isCrossTenancyPeering == false)
+      oci.network.drgs.all(remotePeeringConnections.all(isCrossTenancyPeering == false))
+      oci.network.drgs.all(attachments.all(isCrossTenancy == false))
+  - uid: mondoo-oci-security-network-no-cross-tenancy-peering-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_core_local_peering_gateway' || nameLabel == 'oci_core_remote_peering_connection' || nameLabel == 'oci_core_drg_attachment')
+    mql: |
+      terraform.resources('oci_core_local_peering_gateway').all(
+        arguments['is_cross_tenancy_peering'] != true
+      )
+      terraform.resources('oci_core_remote_peering_connection').all(
+        arguments['is_cross_tenancy_peering'] != true
+      )
+      terraform.resources('oci_core_drg_attachment').all(
+        arguments['is_cross_tenancy'] != true
+      )
+  - uid: mondoo-oci-security-network-no-cross-tenancy-peering-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_core_local_peering_gateway' || type == 'oci_core_remote_peering_connection' || type == 'oci_core_drg_attachment')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_core_local_peering_gateway' || type == 'oci_core_remote_peering_connection').all(
+        change.after['is_cross_tenancy_peering'] != true
+      )
+      terraform.plan.resourceChanges.where(type == 'oci_core_drg_attachment').all(
+        change.after['is_cross_tenancy'] != true
+      )
+  - uid: mondoo-oci-security-network-no-cross-tenancy-peering-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_core_local_peering_gateway' || type == 'oci_core_remote_peering_connection' || type == 'oci_core_drg_attachment')
+    mql: |
+      terraform.state.resources.where(type == 'oci_core_local_peering_gateway' || type == 'oci_core_remote_peering_connection').all(
+        values['is_cross_tenancy_peering'] != true
+      )
+      terraform.state.resources.where(type == 'oci_core_drg_attachment').all(
+        values['is_cross_tenancy'] != true
+      )
+
+  # ---------------------------------------------------------------------------
+  # Network Load Balancer
+  # ---------------------------------------------------------------------------
+  - uid: mondoo-oci-security-network-loadbalancer-public-restricted-by-nsg
+    title: Ensure public network load balancers are restricted by an NSG
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: vda-isa-5-5-2-6
+    variants:
+      - uid: mondoo-oci-security-network-loadbalancer-public-restricted-by-nsg-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-network-loadbalancer-public-restricted-by-nsg-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-network-loadbalancer-public-restricted-by-nsg-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-network-loadbalancer-public-restricted-by-nsg-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check ensures that every network load balancer with a public IP address has at least one network security group attached. A public network load balancer answers on the internet, and with no NSG the only ingress filter in front of it is the subnet's security list, which is usually shared across every resource in that subnet and written for the broadest of them.
+
+        **Why this matters**
+
+        - **A load balancer forwards what reaches it:** Traffic the NLB accepts is delivered to the backend set, so the filter in front of the NLB is the filter in front of the backends.
+        - **Shared security lists are the wrong granularity:** A rule written for one workload in the subnet applies to the load balancer too, so the NLB inherits access nobody chose for it.
+        - **Layer 4 offers nothing else:** A network load balancer has no listener-level authentication or TLS policy to fall back on, unlike an application load balancer.
+
+        **Risk mitigation**
+
+        - **Attach an NSG scoped to the listener ports:** Allow only the ports the service publishes, from the ranges expected to reach it.
+        - **Make the load balancer private where it does not need to be public:** A private NLB removes the internet path entirely.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console and navigate to **Networking > Load balancers > Network load balancer**.
+        2. Open each network load balancer and check whether it is public or private.
+        3. For each public one, review **Network security groups**.
+
+        A passing load balancer is private, or is public with at least one NSG attached. A failing load balancer is public with none.
+
+        ### Audit via CLI
+
+        1. List the network load balancers in a compartment:
+
+        ```bash
+        oci nlb network-load-balancer list --compartment-id <compartment-ocid> --query 'data.items[].{name:"display-name",private:"is-private",nsgs:"network-security-group-ids"}'
+        ```
+
+        A passing load balancer returns `"private": true`, or a non-empty `nsgs`. A failing one returns `"private": false` with no NSGs.
+      remediation:
+        - id: console
+          desc: |
+            To attach a network security group using the OCI Console:
+
+            1. Navigate to **Networking > Load balancers > Network load balancer** and open the load balancer.
+            2. Select **Edit** and add one or more network security groups scoped to the listener ports.
+            3. Select **Save changes**.
+        - id: cli
+          desc: |
+            To attach a network security group using the OCI CLI:
+
+            ```bash
+            oci nlb network-load-balancer update-network-security-groups \
+              --network-load-balancer-id <nlb-ocid> \
+              --network-security-group-ids '["<nsg-ocid>"]'
+            ```
+        - id: terraform
+          desc: |
+            To gate a public network load balancer in Terraform, set `network_security_group_ids`:
+
+            ```hcl
+            resource "oci_network_load_balancer_network_load_balancer" "example" {
+              compartment_id             = var.compartment_ocid
+              display_name               = "public-nlb"
+              subnet_id                  = oci_core_subnet.public.id
+              is_private                 = false
+              network_security_group_ids = [oci_core_network_security_group.nlb.id]
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/NetworkLoadBalancer/introduction.htm
+        title: OCI Network Load Balancer
+  - uid: mondoo-oci-security-network-loadbalancer-public-restricted-by-nsg-oci
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.networkLoadBalancer.loadBalancers.all(
+        isPrivate == true || securityGroups.length > 0
+      )
+  - uid: mondoo-oci-security-network-loadbalancer-public-restricted-by-nsg-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_network_load_balancer_network_load_balancer')
+    mql: |
+      terraform.resources('oci_network_load_balancer_network_load_balancer').all(
+        arguments['is_private'] == true ||
+        arguments['network_security_group_ids'] != empty
+      )
+  - uid: mondoo-oci-security-network-loadbalancer-public-restricted-by-nsg-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_network_load_balancer_network_load_balancer')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_network_load_balancer_network_load_balancer').map(change.after).all(
+        _['is_private'] == true || _['network_security_group_ids'] != empty
+      )
+  - uid: mondoo-oci-security-network-loadbalancer-public-restricted-by-nsg-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_network_load_balancer_network_load_balancer')
+    mql: |
+      terraform.state.resources.where(type == 'oci_network_load_balancer_network_load_balancer').map(values).all(
+        _['is_private'] == true || _['network_security_group_ids'] != empty
+      )
+
+  # No Terraform variants: internetReachable is computed by the provider from the load
+  # balancer's public IP, the subnet's route to an enabled internet gateway, and the ingress
+  # its network security groups and security lists admit. No Terraform resource carries that
+  # verdict, and asserting is_private alone would be a different, narrower control that
+  # mondoo-oci-security-network-loadbalancer-public-restricted-by-nsg already covers.
+  - uid: mondoo-oci-security-network-loadbalancer-not-internet-reachable
+    title: Ensure network load balancers are not reachable from the internet
+    impact: 75
+    filters: asset.platform == 'oci'
+    mql: |
+      oci.networkLoadBalancer.loadBalancers.all(
+        exposure.internetReachable == false
+      )
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: vda-isa-5-5-2-6
+    docs:
+      desc: |
+        This check ensures that no network load balancer is actually reachable from the internet. Reachability is not the same as having a public IP: the load balancer is reachable only when it has a public address, sits on a subnet whose route table forwards a default route to an enabled internet gateway, and has an attached network security group or subnet security list that admits traffic from any address. A load balancer that fails any one of those is not on the internet, whatever its address suggests.
+
+        A load balancer that is meant to serve the public will fail this check. It is intended for internal load balancers, where a public path is a mistake rather than a design.
+
+        **Why this matters**
+
+        - **Address is a poor proxy for exposure:** Reviewing public IPs alone flags load balancers that nothing can reach and misses ones whose exposure comes from a permissive security list.
+        - **Exposure is assembled from three places:** The address, the route table, and the ingress rules are usually owned by different people, so no single review catches the combination.
+        - **An internal load balancer fronts internal services:** Backends behind it are typically built assuming only trusted callers arrive, so an unnoticed internet path reaches software that was never hardened for it.
+
+        **Risk mitigation**
+
+        - **Make internal load balancers private:** A private network load balancer has no public address and no internet path at all.
+        - **Break the path where the public address is required:** Remove the default route to the internet gateway, or narrow the ingress rules so no rule admits any address.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console and navigate to **Networking > Load balancers > Network load balancer**.
+        2. Open each load balancer and note whether it has a public IP address.
+        3. For each with one, open its subnet's route table and confirm whether a `0.0.0.0/0` rule targets an enabled internet gateway, then review the ingress rules of its NSGs and the subnet's security lists.
+
+        A passing load balancer is private, has no default route to an internet gateway, or has no ingress rule admitting `0.0.0.0/0`. A failing load balancer has all three.
+
+        ### Audit via CLI
+
+        1. List the network load balancers and check which carry a public address:
+
+        ```bash
+        oci nlb network-load-balancer list --compartment-id <compartment-ocid> --query 'data.items[].{name:"display-name",private:"is-private",ips:"ip-addresses"}'
+        ```
+
+        2. For each public one, review the subnet's route table and security lists:
+
+        ```bash
+        oci network route-table get --rt-id <route-table-ocid>
+        oci network security-list get --security-list-id <security-list-ocid>
+        ```
+
+        A passing load balancer breaks the chain at one of those steps. A failing load balancer completes all three.
+      remediation:
+        - id: console
+          desc: |
+            To remove the internet path using the OCI Console:
+
+            1. Navigate to **Networking > Load balancers > Network load balancer** and open the load balancer.
+            2. If it does not need a public address, recreate it as a private load balancer in a private subnet.
+            3. Otherwise, open the subnet's route table and remove the `0.0.0.0/0` rule targeting the internet gateway, or narrow the NSG and security-list ingress rules so none admits `0.0.0.0/0`.
+        - id: cli
+          desc: |
+            To narrow the ingress rules that make the load balancer reachable using the OCI CLI:
+
+            ```bash
+            oci network nsg rules update --nsg-id <nsg-ocid> \
+              --security-rules '[{"direction":"INGRESS","protocol":"6","source":"203.0.113.0/24","sourceType":"CIDR_BLOCK"}]'
+            ```
+        # No Terraform remediation: the fix is to change whichever of the three inputs makes
+        # the load balancer reachable, and which one applies depends on the deployment. The
+        # Terraform remediation for each is documented on the check that covers it.
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/NetworkLoadBalancer/NetworkLoadBalancers/create-network-load-balancer.htm
+        title: Creating an OCI network load balancer
