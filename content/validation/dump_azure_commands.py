@@ -34,6 +34,37 @@ from validators.common import extract_bash_blocks  # noqa: E402
 # Keep in sync with what validators/azure.py reads.
 AZURE_REMEDIATION_IDS = ("cli",)
 
+# Azure CLI extensions that the policies' commands come from.
+#
+# The command table holds an extension's commands only while that extension is
+# installed, and `az` installs none of them by default. Without this list the
+# dump silently produces a core-only grammar: ~1,000 commands disappear (every
+# `az ml`, `az kusto`, `az datafactory`, `az afd`, `az network firewall`, …),
+# and the validator then rejects the remediation steps that use them as if the
+# CLI had dropped them. That is not a hypothetical -- it is what a regeneration
+# on a clean runner did, against a byte-identical CLI version.
+#
+# Extensions are installed at their latest version rather than pinned. The
+# resolved versions are recorded in `_meta`, so a change in what an extension
+# provides shows up as a reviewable diff on the next regeneration.
+AZURE_EXTENSIONS = (
+    "account",
+    "automation",
+    "azure-firewall",
+    "bastion",
+    "cdn",  # also provides the `az afd` (Front Door Standard/Premium) commands
+    "cosmosdb-preview",
+    "databricks",
+    "datafactory",
+    "keyvault-preview",
+    "kusto",
+    "ml",
+    "nsp",  # `az network perimeter`
+    "purview",
+    "redisenterprise",
+    "virtual-network-manager",  # `az network manager`
+)
+
 # Global flags available on every az CLI command
 GLOBAL_FLAGS = [
     "--debug",
@@ -73,13 +104,28 @@ loader = MainCommandsLoader(cli)
 cmd_table = loader.load_command_table(None)
 print(f"Loaded {len(cmd_table)} commands", file=sys.stderr)
 
+# Extensions this dump declares. A command from any other extension is dropped:
+# whatever else happens to be installed (GitHub runners ship `azure-devops`
+# preinstalled) must not decide what the grammar contains, or the same CLI
+# produces a different file on every machine.
+declared = set(json.loads(sys.argv[2]))
+
 result = {}
+sources = {}
 errors = 0
+skipped = 0
 for cmd_name in sorted(cmd_table.keys()):
+    cmd = cmd_table[cmd_name]
+    source = getattr(cmd, "command_source", None)
+    extension = getattr(source, "extension_name", None) if source else None
+    if extension is not None and extension not in declared:
+        skipped += 1
+        continue
+    if extension is not None:
+        sources[cmd_name] = extension
     try:
         cli.invocation.data["command_string"] = cmd_name
         loader.load_arguments(cmd_name)
-        cmd = cmd_table[cmd_name]
         cmd.load_arguments()
         flags = []
         for name, arg in cmd.arguments.items():
@@ -92,8 +138,12 @@ for cmd_name in sorted(cmd_table.keys()):
         errors += 1
         result[cmd_name] = []
 
-print(f"Loaded args for {len(result)} commands ({errors} errors)", file=sys.stderr)
-print(json.dumps(result))
+print(
+    f"Loaded args for {len(result)} commands ({errors} errors, "
+    f"{skipped} from undeclared extensions)",
+    file=sys.stderr,
+)
+print(json.dumps({"commands": result, "sources": sources}))
 """
 
 
@@ -121,6 +171,75 @@ def az_cli_version() -> str:
         print(f"Error: unexpected `az version` output: {e}", file=sys.stderr)
         sys.exit(1)
     return str(version)
+
+
+def installed_extensions() -> dict[str, str]:
+    """Map of installed Azure CLI extension name -> version."""
+    result = subprocess.run(
+        ["az", "extension", "list", "--output", "json"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if result.returncode != 0:
+        print(
+            f"Error: could not list Azure CLI extensions:\n{result.stderr}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    try:
+        listed = json.loads(result.stdout or "[]")
+    except json.JSONDecodeError as e:
+        print(f"Error: unexpected `az extension list` output: {e}", file=sys.stderr)
+        sys.exit(1)
+    return {e["name"]: str(e.get("version", "")) for e in listed}
+
+
+def ensure_extensions() -> dict[str, str]:
+    """Install every declared extension that is missing, and report versions.
+
+    An already-installed extension is left at the version it is at: forcing an
+    upgrade would silently rewrite a maintainer's local CLI as a side effect of
+    a dump. A clean runner therefore gets the latest of each, which is the
+    intended behaviour for the weekly regeneration.
+    """
+    present = installed_extensions()
+    missing = [name for name in AZURE_EXTENSIONS if name not in present]
+
+    for name in missing:
+        print(f"Installing Azure CLI extension: {name}", file=sys.stderr)
+        result = subprocess.run(
+            [
+                "az", "extension", "add",
+                "--name", name,
+                "--allow-preview", "true",
+                "--only-show-errors",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+        if result.returncode != 0:
+            print(
+                f"Error: could not install the `{name}` extension:\n"
+                f"{result.stderr.strip()}\n"
+                "The grammar would be missing every command it provides, so "
+                "nothing is written.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+    present = installed_extensions()
+    still_missing = [name for name in AZURE_EXTENSIONS if name not in present]
+    if still_missing:
+        print(
+            "Error: these declared extensions are still not installed after "
+            f"`az extension add`: {', '.join(still_missing)}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    return {name: present[name] for name in AZURE_EXTENSIONS}
 
 
 def find_az_site_packages() -> str:
@@ -281,10 +400,22 @@ def main():
     site_packages = find_az_site_packages()
     print(f"Using Azure CLI from: {site_packages}", file=sys.stderr)
 
+    extensions = ensure_extensions()
+    print(
+        f"Extensions: {', '.join(f'{n}=={v}' for n, v in extensions.items())}",
+        file=sys.stderr,
+    )
+
     # Phase 1: Bulk extract command names and initial flags from Python API
     print("Phase 1: Loading command table...", file=sys.stderr)
     result = subprocess.run(
-        [sys.executable, "-c", _EXTRACT_SCRIPT, site_packages],
+        [
+            sys.executable,
+            "-c",
+            _EXTRACT_SCRIPT,
+            site_packages,
+            json.dumps(list(AZURE_EXTENSIONS)),
+        ],
         capture_output=True,
         text=True,
         timeout=300,
@@ -299,7 +430,24 @@ def main():
             if "SyntaxWarning" not in line and line.strip():
                 print(line, file=sys.stderr)
 
-    commands = json.loads(result.stdout)
+    extracted = json.loads(result.stdout)
+    commands = extracted["commands"]
+    command_sources = extracted["sources"]
+
+    # Every declared extension has to have contributed something. An extension
+    # that installs but loads no commands (a rename upstream, a version that
+    # dropped its command group) would otherwise pass silently and take its
+    # commands out of the grammar.
+    contributed = set(command_sources.values())
+    barren = [name for name in AZURE_EXTENSIONS if name not in contributed]
+    if barren:
+        print(
+            f"Error: these extensions are installed but contributed no "
+            f"commands: {', '.join(barren)}\n"
+            "Has the extension been renamed or its command group removed?",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     # Phase 2: Resolve real flags via `az --help` for each command.
     #
@@ -376,8 +524,13 @@ def main():
     # `sort_keys` puts `_meta` first (`_` sorts before every lowercase letter,
     # and every command name is lowercase); lookups are by exact command path,
     # so no consumer can collide with it.
+    #
+    # The extension versions ride along for the same reason: an extension
+    # supplies about a seventh of these commands, so the CLI version alone does
+    # not identify the grammar.
     commands["_meta"] = {
         "azure_cli_version": az_cli_version(),
+        "extensions": extensions,
         "generated_by": "dump_azure_commands.py",
     }
 
