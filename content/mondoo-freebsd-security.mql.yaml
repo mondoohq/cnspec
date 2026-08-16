@@ -306,14 +306,15 @@ queries:
 
         If unrestricted, core dumps can be exploited to extract secrets from crashed privileged processes. Disabling the `savecore` service prevents the system from automatically saving crash dumps, reducing the risk of sensitive data exposure.
       audit: |
-        To verify that the `savecore` service is not active, run the following commands:
+        To verify that the `savecore` service is not active, run the following command:
 
         ```bash
-        service savecore status
         sysrc -n savecore_enable
         ```
 
-        If `service savecore status` reports the service is not running and `savecore_enable` is `NO`, the check passes. If the service is running or `savecore_enable` is `YES`, the check fails.
+        If `savecore_enable` is `NO`, the check passes. If it is `YES`, the check fails.
+
+        The `savecore` rc script runs once at boot to extract a kernel crash dump and then exits. It defines no `status` directive and leaves no process behind, so the rc variable is the authoritative source for whether it runs on the next boot.
       remediation:
         - id: cli
           desc: |
@@ -323,8 +324,9 @@ queries:
 
             ```bash
             sysrc savecore_enable="NO"
-            service savecore stop
             ```
+
+            The rc script runs once at boot and exits, so there is no running daemon to stop and the change takes effect on the next boot.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -335,7 +337,6 @@ queries:
 
             echo "Disabling savecore service..."
             sysrc savecore_enable="NO"
-            service savecore onestop 2>/dev/null || true
 
             echo "savecore service disabled."
             ```
@@ -343,7 +344,7 @@ queries:
           desc: |
             To disable the `savecore` service using Ansible:
 
-            1. Add the following tasks to a playbook targeting the FreeBSD host.
+            1. Add the following task to a playbook targeting the FreeBSD host.
             2. Run the playbook.
 
             ```yaml
@@ -357,11 +358,6 @@ queries:
                   community.general.sysrc:
                     name: savecore_enable
                     value: 'NO'
-
-                - name: Stop the savecore service
-                  ansible.builtin.service:
-                    name: savecore
-                    state: stopped
             ```
         - id: chef
           desc: |
@@ -1478,12 +1474,14 @@ queries:
             service inetd reload
             ```
 
-            If `inetd` is not needed at all, disable it:
+            If `inetd` is not needed at all, stop it and then disable it:
 
             ```bash
-            sysrc inetd_enable="NO"
             service inetd stop
+            sysrc inetd_enable="NO"
             ```
+
+            Stop before you disable. Once `inetd_enable` is `NO`, `service inetd stop` is refused with a message pointing at `onestop`, and the daemon keeps running until the next reboot.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -1719,12 +1717,14 @@ queries:
           desc: |
             **Using the CLI**
 
-            Disable and stop the NIS server:
+            Stop the NIS server, then disable it so it does not come back at boot:
 
             ```bash
-            sysrc nis_server_enable="NO"
             service ypserv stop
+            sysrc nis_server_enable="NO"
             ```
+
+            Stop before you disable. Once `nis_server_enable` is `NO`, `service ypserv stop` is refused with a message pointing at `onestop`, and the daemon keeps running until the next reboot.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -1819,12 +1819,14 @@ queries:
           desc: |
             **Using the CLI**
 
-            Disable and stop `rpcbind`:
+            Stop `rpcbind`, then disable it so it does not come back at boot:
 
             ```bash
-            sysrc rpcbind_enable="NO"
             service rpcbind stop
+            sysrc rpcbind_enable="NO"
             ```
+
+            Stop before you disable. Once `rpcbind_enable` is `NO`, `service rpcbind stop` is refused with a message pointing at `onestop`, and the daemon keeps running until the next reboot.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -1923,14 +1925,16 @@ queries:
 
             The NFS server is not a single process. It is several cooperating daemons: `nfsd` serves file data, `mountd` handles mount requests and reads `/etc/exports`, and `rpcbind` advertises which ports those services listen on. Disabling only `nfsd` can leave `mountd` and `rpcbind` running, so the network surface stays partly open.
 
-            Disable and stop both the NFS daemon and `mountd`:
+            Stop both the NFS daemon and `mountd`, then disable them so they do not come back at boot:
 
             ```bash
-            sysrc nfs_server_enable="NO"
-            sysrc mountd_enable="NO"
             service nfsd stop
             service mountd stop
+            sysrc nfs_server_enable="NO"
+            sysrc mountd_enable="NO"
             ```
+
+            Stop before you disable. Once `nfs_server_enable` is `NO`, `service nfsd stop` is refused with a message pointing at `onestop`, and the daemon keeps running until the next reboot. The same applies to `mountd` and `mountd_enable`.
 
             If no other RPC services are needed on this host, also disable `rpcbind` using the dedicated rpcbind check in this policy. Leave `rpcbind` running only if another service requires it.
         - id: sh
@@ -2030,12 +2034,14 @@ queries:
           desc: |
             **Using the CLI**
 
-            Disable and stop the SNMP daemon:
+            Stop the SNMP daemon, then disable it so it does not come back at boot:
 
             ```bash
-            sysrc snmpd_enable="NO"
             service snmpd stop
+            sysrc snmpd_enable="NO"
             ```
+
+            Stop before you disable. Once `snmpd_enable` is `NO`, `service snmpd stop` is refused with a message pointing at `onestop`, and the daemon keeps running until the next reboot.
 
             Or remove the package entirely:
 
@@ -2242,7 +2248,7 @@ queries:
         - url: https://man.freebsd.org/cgi/man.cgi?query=rc.conf&sektion=5
           title: FreeBSD rc.conf(5)
       desc: |
-        This check verifies that IMAP/POP3 mail access services (`dovecot` and `cyrus_imapd`) are not running or enabled.
+        This check verifies that the IMAP and POP3 mail access services Dovecot and Cyrus IMAP are not running or enabled.
 
         **Why this matters**
 
@@ -2252,26 +2258,30 @@ queries:
 
         ```bash
         service dovecot status
-        service cyrus_imapd status
+        service imapd status
         sysrc -n dovecot_enable cyrus_imapd_enable
         ```
 
-        If neither `dovecot` nor `cyrus_imapd` is running or enabled, the check passes. If either service is running or enabled, the check fails.
+        The cyrus-imapd port installs its rc script as `imapd` while keeping `cyrus_imapd_enable` as the rc.conf variable, so the service name and the rc variable differ.
+
+        If neither service is running or enabled, the check passes. If either one is running or enabled, the check fails.
       remediation:
         - id: cli
           desc: |
             **Using the CLI**
 
-            Disable and stop mail access services:
+            Stop the mail access services, then disable them so they do not come back at boot:
 
             ```bash
-            sysrc dovecot_enable="NO"
             service dovecot stop
-            sysrc cyrus_imapd_enable="NO"
             service imapd stop
+            sysrc dovecot_enable="NO"
+            sysrc cyrus_imapd_enable="NO"
             ```
 
             The cyrus-imapd port installs its rc script as `imapd` while keeping `cyrus_imapd_enable` as the rc.conf variable, so the two names differ by design.
+
+            Stop before you disable. Once the rc variable is `NO`, `service ... stop` is refused with a message pointing at `onestop`, and the daemon keeps running until the next reboot.
         - id: sh
           desc: |
             **Using a Shell Script**
@@ -2378,12 +2388,14 @@ queries:
           desc: |
             **Using the CLI**
 
-            Disable and stop the proxy server:
+            Stop the proxy server, then disable it so it does not come back at boot:
 
             ```bash
-            sysrc squid_enable="NO"
             service squid stop
+            sysrc squid_enable="NO"
             ```
+
+            Stop before you disable. Once `squid_enable` is `NO`, `service squid stop` is refused with a message pointing at `onestop`, and the daemon keeps running until the next reboot.
 
             Or remove the package entirely:
 
@@ -2737,11 +2749,11 @@ queries:
           desc: |
             **Using the CLI**
 
-            Set the correct ownership and permissions on all SSH private host key files. The `! -name '*.pub'` guard excludes the public key files so they are not tightened to 0600, which would prevent clients from reading them:
+            Set the correct ownership and permissions on all SSH private host key files. The glob `ssh_host_*key` matches only the private keys. A public key filename such as `ssh_host_ed25519_key.pub` ends with `.pub`, not `key`, so it falls outside the pattern and stays readable:
 
             ```bash
-            find /etc/ssh -name 'ssh_host_*key' ! -name '*.pub' -exec chown root:wheel {} \;
-            find /etc/ssh -name 'ssh_host_*key' ! -name '*.pub' -exec chmod 0600 {} \;
+            find /etc/ssh -name 'ssh_host_*key' -exec chown root:wheel {} \;
+            find /etc/ssh -name 'ssh_host_*key' -exec chmod 0600 {} \;
             ```
         - id: sh
           desc: |
@@ -2752,8 +2764,8 @@ queries:
             set -e
 
             echo "Setting permissions on SSH private host key files..."
-            find /etc/ssh -name 'ssh_host_*key' ! -name '*.pub' -exec chown root:wheel {} \;
-            find /etc/ssh -name 'ssh_host_*key' ! -name '*.pub' -exec chmod 0600 {} \;
+            find /etc/ssh -name 'ssh_host_*key' -exec chown root:wheel {} \;
+            find /etc/ssh -name 'ssh_host_*key' -exec chmod 0600 {} \;
 
             echo "SSH private host key file permissions configured."
             ```
@@ -4462,17 +4474,20 @@ queries:
     mql: |
       sshd.config.params["ClientAliveInterval"] >= 1
       sshd.config.params["ClientAliveInterval"] <= 300
+      sshd.config.params["ClientAliveCountMax"] >= 1
       sshd.config.params["ClientAliveCountMax"] <= 3
     docs:
       refs:
         - url: https://www.openssh.com/cgi-bin/man.cgi?query=sshd_config
           title: OpenSSH sshd_config(5)
       desc: |
-        This check verifies that `ClientAliveInterval` is between 1 and 300 seconds and `ClientAliveCountMax` is 3 or less, ensuring idle SSH sessions are terminated.
+        This check verifies that `ClientAliveInterval` is between 1 and 300 seconds and `ClientAliveCountMax` is between 1 and 3, ensuring idle SSH sessions are terminated.
 
         **Why this matters**
 
         Idle SSH sessions left unattended can be hijacked by an attacker with local access to the terminal. Configuring an idle timeout ensures that inactive sessions are automatically disconnected, reducing the window of opportunity for session hijacking.
+
+        A `ClientAliveCountMax` of `0` is rejected. OpenSSH treats zero as disabling connection termination, so the daemon never drops an unresponsive session no matter how short the interval is.
       audit: |
         To verify the SSH idle timeout settings in effect, run the following command:
 
@@ -4480,7 +4495,7 @@ queries:
         sshd -T | grep -iE '^clientalive'
         ```
 
-        If `ClientAliveInterval` is between `1` and `300` seconds and `ClientAliveCountMax` is `3` or less, the check passes. Otherwise the check fails.
+        If `ClientAliveInterval` is between `1` and `300` seconds and `ClientAliveCountMax` is between `1` and `3`, the check passes. Otherwise the check fails.
       remediation:
         - id: cli
           desc: |
@@ -6223,15 +6238,15 @@ queries:
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to put syslogd in secure mode so it stops listening for remote log messages:
+            Use this Chef Infra recipe code to put syslogd in secure mode so it stops listening for remote log messages. `sysrc` appends with `+=` so any other flags the host already sets, such as a bind address, survive the change:
 
             ```ruby
             service 'syslogd' do
               action :nothing
             end
 
-            execute 'set syslogd_flags in rc.conf' do
-              command 'sysrc syslogd_flags="-s"'
+            execute 'add -s to syslogd_flags in rc.conf' do
+              command 'sysrc syslogd_flags+=" -s"'
               not_if 'sysrc -n syslogd_flags | grep -q -- -s'
               notifies :restart, 'service[syslogd]', :delayed
             end
