@@ -52,7 +52,7 @@ from .common import (
 
 # None of these upstream repos ship releases — `main`/`master` is the only
 # branch and it moves — so each raw URL pins a known-good commit SHA.
-CLOUDFLARE_OPENAPI_SHA = "a0e7cfa11b0d08b05a0b373f47ea722bd48ca7c4"
+CLOUDFLARE_OPENAPI_SHA = "2ac8369e9b63dccacee1a2284e95bb819f05b307"
 SLACK_OPENAPI_SHA = "bc08db49625630e3585bf2f1322128ea04f2a7f3"
 GRAFANA_OPENAPI_SHA = "8c7e01c44c7afd14f7143589840bbd820a4195f9"
 MONGODBATLAS_OPENAPI_SHA = "666c7156b8287182f5300bbde93b91575e79e900"
