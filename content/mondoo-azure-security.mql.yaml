@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-azure-security
     name: Mondoo Microsoft Azure Security
-    version: 10.0.0
+    version: 10.1.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -572,24 +572,25 @@ queries:
           desc: |
             To ensure Azure VM OS disks are encrypted with CMK in Terraform:
 
-            __Encrypt disks Linux VM__
+            Point the VM's `os_disk` block at a disk encryption set. That is what sets the disk's encryption type to `EncryptionAtRestWithCustomerKey`.
+
+            __Encrypt the OS disk of a Linux VM__
 
             ```hcl
-            # Encrypt Linux OS disk with Terraform
             resource "azurerm_linux_virtual_machine" "example" {
               name                = "example-linux-machine"
               resource_group_name = azurerm_resource_group.example.name
               location            = azurerm_resource_group.example.location
 
-              ...
-
-              encryption_at_host_enabled = true
-
-              ...
+              os_disk {
+                caching                = "ReadWrite"
+                storage_account_type   = "Premium_LRS"
+                disk_encryption_set_id = azurerm_disk_encryption_set.example.id
+              }
             }
             ```
 
-            __Encrypt disks Windows VM__
+            __Encrypt the OS disk of a Windows VM__
 
             ```hcl
             resource "azurerm_windows_virtual_machine" "example" {
@@ -597,90 +598,43 @@ queries:
               resource_group_name = azurerm_resource_group.example.name
               location            = azurerm_resource_group.example.location
 
-              ...
-
-              encryption_at_host_enabled = true
-
-              ...
-            }
-            ```
-
-            __Encrypt managed disks__
-
-            ```hcl
-            resource "azurerm_managed_disk" "example" {
-              name                 = var.disk_name
-              location             = var.location
-              resource_group_name  = var.resource_group_name
-              storage_account_type = "Standard_LRS"
-              create_option        = "Empty"
-              disk_size_gb         = 64
-
-              encryption_settings {
-                disk_encryption_key {
-                  secret_url      = azurerm_key_vault_secret.example.id
-                  source_vault_id = azurerm_key_vault.example.id
-                }
+              os_disk {
+                caching                = "ReadWrite"
+                storage_account_type   = "Premium_LRS"
+                disk_encryption_set_id = azurerm_disk_encryption_set.example.id
               }
             }
             ```
+
+            `encryption_at_host_enabled` is a separate control. It encrypts the temp disk and the host caches and leaves the OS disk on the platform-managed key, so it does not satisfy this check on its own.
         - id: bicep
           desc: |
             To ensure Azure VM OS disks are encrypted with CMK in Bicep:
 
-            __Encrypt disks Linux VM__
+            Reference a disk encryption set from the OS disk's `managedDisk` block:
 
             ```bicep
             resource linuxVM 'Microsoft.Compute/virtualMachines@2024-07-01' = {
               name: 'example-linux-machine'
               location: resourceGroup().location
               properties: {
-                securityProfile: {
-                  encryptionAtHost: true
-                }
-                // ...
-              }
-            }
-            ```
-
-            __Encrypt disks Windows VM__
-
-            ```bicep
-            resource windowsVM 'Microsoft.Compute/virtualMachines@2024-07-01' = {
-              name: 'example-win-vm'
-              location: resourceGroup().location
-              properties: {
-                securityProfile: {
-                  encryptionAtHost: true
-                }
-                // ...
-              }
-            }
-            ```
-
-            __Encrypt managed disks__
-
-            ```bicep
-            resource managedDisk 'Microsoft.Compute/disks@2024-03-02' = {
-              name: 'example-disk'
-              location: resourceGroup().location
-              properties: {
-                encryptionSettingsCollection: {
-                  enabled: true
-                  encryptionSettings: [
-                    {
-                      diskEncryptionKey: {
-                        secretUrl: keyVaultSecret.properties.secretUri
-                        sourceVault: {
-                          id: keyVault.id
-                        }
+                storageProfile: {
+                  osDisk: {
+                    createOption: 'FromImage'
+                    managedDisk: {
+                      storageAccountType: 'Premium_LRS'
+                      diskEncryptionSet: {
+                        id: diskEncryptionSet.id
                       }
                     }
-                  ]
+                  }
                 }
+                // ...
               }
             }
             ```
+
+            `encryptionAtHost` covers the temp disk and host caches, and `encryptionSettingsCollection` is Azure Disk Encryption. Neither sets the OS disk's encryption type to `EncryptionAtRestWithCustomerKey`, so neither satisfies this check on its own.
     refs:
       - url: https://learn.microsoft.com/en-us/azure/virtual-machines/disk-encryption-overview
         title: Overview of managed disk encryption options
@@ -692,50 +646,46 @@ queries:
   - uid: mondoo-azure-security-ensure-os-disk-are-encrypted-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == /azurerm_(linux|windows)_virtual_machine/)
     mql: |
-      if (terraform.resources("azurerm_linux_virtual_machine").length > 0) {
-        terraform.resources("azurerm_linux_virtual_machine").all(
-          arguments['encryption_at_host_enabled'] == true
+      # The OS disk is encrypted with a customer-managed key when its os_disk block
+      # names a disk encryption set. encryption_at_host_enabled is a different
+      # feature: it encrypts the temp disk and host caches, and leaves the OS disk
+      # on the platform-managed key.
+      terraform.resources(/azurerm_(linux|windows)_virtual_machine/).all(
+        blocks.where(type == "os_disk") != empty &&
+        blocks.where(type == "os_disk").all(
+          arguments['disk_encryption_set_id'] != null &&
+          arguments['disk_encryption_set_id'] != ""
         )
-      }
-      if (terraform.resources("azurerm_windows_virtual_machine").length > 0) {
-        terraform.resources("azurerm_windows_virtual_machine").all(
-          arguments['encryption_at_host_enabled'] == true
-        )
-      }
+      )
   - uid: mondoo-azure-security-ensure-os-disk-are-encrypted-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == /azurerm_(linux|windows)_virtual_machine/)
     mql: |
-      if (terraform.plan.resourceChanges.where(type == "azurerm_linux_virtual_machine").length > 0) {
-        terraform.plan.resourceChanges.where(type == "azurerm_linux_virtual_machine").all(
-          change.after['encryption_at_host_enabled'] == true
+      terraform.plan.resourceChanges.where(type == /azurerm_(linux|windows)_virtual_machine/).all(
+        change.after['os_disk'] != empty &&
+        change.after['os_disk'].all(
+          _['disk_encryption_set_id'] != null &&
+          _['disk_encryption_set_id'] != ""
         )
-      }
-      if (terraform.plan.resourceChanges.where(type == "azurerm_windows_virtual_machine").length > 0) {
-        terraform.plan.resourceChanges.where(type == "azurerm_windows_virtual_machine").all(
-          change.after['encryption_at_host_enabled'] == true
-        )
-      }
+      )
   - uid: mondoo-azure-security-ensure-os-disk-are-encrypted-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == /azurerm_(linux|windows)_virtual_machine/)
     mql: |
-      if (terraform.state.resources.where(type == "azurerm_linux_virtual_machine").length > 0) {
-        terraform.state.resources.where(type == "azurerm_linux_virtual_machine").all(
-          values['encryption_at_host_enabled'] == true
+      terraform.state.resources.where(type == /azurerm_(linux|windows)_virtual_machine/).all(
+        values['os_disk'] != empty &&
+        values['os_disk'].all(
+          _['disk_encryption_set_id'] != null &&
+          _['disk_encryption_set_id'] != ""
         )
-      }
-      if (terraform.state.resources.where(type == "azurerm_windows_virtual_machine").length > 0) {
-        terraform.state.resources.where(type == "azurerm_windows_virtual_machine").all(
-          values['encryption_at_host_enabled'] == true
-        )
-      }
-  - uid: mondoo-azure-security-ensure-os-disk-are-encrypted-bicep
-    filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.Compute/virtualMachines" || type == "Microsoft.Compute/disks")
-    mql: |
-      bicep.resources.where(type == "Microsoft.Compute/virtualMachines").all(
-        properties["securityProfile"]["encryptionAtHost"] == true
       )
-      bicep.resources.where(type == "Microsoft.Compute/disks").all(
-        properties["encryptionSettingsCollection"]["enabled"] == true
+  - uid: mondoo-azure-security-ensure-os-disk-are-encrypted-bicep
+    filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.Compute/virtualMachines")
+    mql: |
+      # diskEncryptionSet on the OS disk's managedDisk is the customer-managed key.
+      # encryptionAtHost covers the temp disk and host caches, and
+      # encryptionSettingsCollection is Azure Disk Encryption; neither sets the OS
+      # disk's encryption type to EncryptionAtRestWithCustomerKey.
+      bicep.resources.where(type == "Microsoft.Compute/virtualMachines").all(
+        properties["storageProfile"]["osDisk"]["managedDisk"]["diskEncryptionSet"]["id"] != empty
       )
   - uid: mondoo-azure-security-ssh-access-restricted-from-internet
     title: Ensure that SSH access is restricted from the internet
@@ -834,11 +784,17 @@ queries:
               - Ensure that the `destination_port_range` does not include TCP port 22 unless absolutely necessary and from a secure source.
         - id: cli
           desc: |
-            To restrict SSH access using the Azure CLI, change the source of the offending allow rule to a trusted address range, or delete the rule entirely:
+            To restrict SSH access using the Azure CLI, run one of the following commands. They are alternatives, so choose the one that matches the rule's purpose rather than running both.
+
+            Narrow the offending allow rule to a trusted address range:
 
             ```bash
             az network nsg rule update --resource-group <ResourceGroupName> --nsg-name <NSGName> --name <ExistingSSHRuleName> --source-address-prefixes 203.0.113.0/24
+            ```
 
+            Or, if the rule is not needed at all, delete it:
+
+            ```bash
             az network nsg rule delete --resource-group <ResourceGroupName> --nsg-name <NSGName> --name <ExistingSSHRuleName>
             ```
         - id: powershell
@@ -870,7 +826,7 @@ queries:
                 protocol                   = "Tcp"
                 source_port_range          = "*"
                 destination_port_range     = "22"
-                source_address_prefix      = "192.168.22.5/24"
+                source_address_prefix      = "192.168.22.0/24"
                 destination_address_prefix = "*"
               }
             }
@@ -894,7 +850,7 @@ queries:
                       protocol: 'Tcp'
                       sourcePortRange: '*'
                       destinationPortRange: '22'
-                      sourceAddressPrefix: '192.168.22.5/24'
+                      sourceAddressPrefix: '192.168.22.0/24'
                       destinationAddressPrefix: '*'
                     }
                   }
@@ -1068,11 +1024,17 @@ queries:
             4. Preferably, change the `source_address_prefix` to more restrictive settings, such as a specific IP range or a secure VPN gateway.
         - id: cli
           desc: |
-            To restrict RDP access using the Azure CLI, change the source of the offending allow rule to a trusted address range, or delete the rule entirely:
+            To restrict RDP access using the Azure CLI, run one of the following commands. They are alternatives, so choose the one that matches the rule's purpose rather than running both.
+
+            Narrow the offending allow rule to a trusted address range:
 
             ```bash
             az network nsg rule update --resource-group <ResourceGroupName> --nsg-name <NSGName> --name <ExistingRDPRuleName> --source-address-prefixes 203.0.113.0/24
+            ```
 
+            Or, if the rule is not needed at all, delete it:
+
+            ```bash
             az network nsg rule delete --resource-group <ResourceGroupName> --nsg-name <NSGName> --name <ExistingRDPRuleName>
             ```
         - id: powershell
@@ -1104,7 +1066,7 @@ queries:
                 protocol                   = "Tcp"
                 source_port_range          = "*"
                 destination_port_range     = "3389"
-                source_address_prefix      = "192.168.22.5/24"
+                source_address_prefix      = "192.168.22.0/24"
                 destination_address_prefix = "*"
               }
             }
@@ -1128,7 +1090,7 @@ queries:
                       protocol: 'Tcp'
                       sourcePortRange: '*'
                       destinationPortRange: '3389'
-                      sourceAddressPrefix: '192.168.22.5/24'
+                      sourceAddressPrefix: '192.168.22.0/24'
                       destinationAddressPrefix: '*'
                     }
                   }
@@ -1302,11 +1264,17 @@ queries:
             4. Preferably, change the `source_address_prefix` to more restrictive settings, such as a specific IP range or a secure VPN gateway.
         - id: cli
           desc: |
-            To restrict VNC access using the Azure CLI, change the source of the offending allow rule to a trusted address range, or delete the rule entirely:
+            To restrict VNC access using the Azure CLI, run one of the following commands. They are alternatives, so choose the one that matches the rule's purpose rather than running both.
+
+            Narrow the offending allow rule to a trusted address range:
 
             ```bash
             az network nsg rule update --resource-group <ResourceGroupName> --nsg-name <NSGName> --name <ExistingVNCRuleName> --source-address-prefixes 203.0.113.0/24
+            ```
 
+            Or, if the rule is not needed at all, delete it:
+
+            ```bash
             az network nsg rule delete --resource-group <ResourceGroupName> --nsg-name <NSGName> --name <ExistingVNCRuleName>
             ```
         - id: powershell
@@ -1338,7 +1306,7 @@ queries:
                 protocol                   = "Tcp"
                 source_port_range          = "*"
                 destination_port_range     = "5900"
-                source_address_prefix      = "192.168.22.5/24"
+                source_address_prefix      = "192.168.22.0/24"
                 destination_address_prefix = "*"
               }
             }
@@ -1362,7 +1330,7 @@ queries:
                       protocol: 'Tcp'
                       sourcePortRange: '*'
                       destinationPortRange: '5900-5901'
-                      sourceAddressPrefix: '192.168.22.5/24'
+                      sourceAddressPrefix: '192.168.22.0/24'
                       destinationAddressPrefix: '*'
                     }
                   }
@@ -2209,13 +2177,13 @@ queries:
 
         **Automated Audit with Azure CLI:**
 
-        Retrieve the audit retention settings for all SQL servers:
+        The auditing policy is a sub-resource of the server, so `az sql server list` does not return it. Retrieve it per server:
 
         ```bash
-        az sql server list --query "[].{ServerName:name, RetentionDays:auditingSettings.retentionDays}" -o table
+        az sql server audit-policy show --name <ServerName> --resource-group <ResourceGroupName> --query "{State:state, RetentionDays:retentionDays}" -o table
         ```
 
-        Ensure that each server listed has a retention period of 30 days or more.
+        Ensure that `State` is `Enabled` and that `RetentionDays` is 30 or more, or `0` for unlimited retention.
       remediation:
         - id: portal
           desc: |
@@ -2224,15 +2192,18 @@ queries:
             1. Navigate to **SQL servers** in the Azure Portal.
             2. Select the SQL server you want to configure.
             3. Go to **Auditing** under the **Security** section.
-            4. Set the **Retention (days)** to at least 30 days, or use '0' for unlimited retention.
-            5. Select **Save** to apply the changes.
+            4. Set **Enable Azure SQL Auditing** to **On** and select a storage account as the audit log destination.
+            5. Set the **Retention (days)** to at least 30 days, or use `0` for unlimited retention.
+            6. Select **Save** to apply the changes.
         - id: cli
           desc: |
-            To ensure minimum 30-Day retention for SQL server Audit Logs using the Azure CLI, update the audit retention policy for a specific SQL server:
+            To ensure minimum 30-Day retention for SQL server Audit Logs using the Azure CLI, update the audit policy for a specific SQL server:
 
             ```bash
-            az sql server audit-policy update --name <ServerName> --resource-group <ResourceGroupName> --retention-days 30
+            az sql server audit-policy update --name <ServerName> --resource-group <ResourceGroupName> --state Enabled --blob-storage-target-state Enabled --storage-endpoint <StorageAccountBlobEndpoint> --storage-key <StorageAccountKey> --retention-days 30
             ```
+
+            The check fails both when auditing is disabled and when retention is under 30 days, so the call sets `--state Enabled` alongside `--retention-days`. Azure requires a destination whenever the policy is enabled, so supply the storage account that already receives the server's audit logs. Use `--retention-days 0` for unlimited retention.
         - id: powershell
           desc: |
             To ensure minimum 30-Day retention for SQL server Audit Logs using PowerShell:
@@ -3613,10 +3584,10 @@ queries:
             ```
         - id: bicep
           desc: |
-            To ensure activity log alerts exist for NSG create, update, and delete in Bicep:
+            To ensure activity log alerts exist for NSG create, update, and delete in Bicep, declare one alert for network security group writes and a second one for deletes. A single alert cannot cover both operations, because every entry in `condition.allOf` must match for the alert to fire.
 
             ```bicep
-            resource activityLogAlert 'Microsoft.Insights/activityLogAlerts@2020-10-01' = {
+            resource nsgWriteAlert 'Microsoft.Insights/activityLogAlerts@2020-10-01' = {
               name: 'NSGChangeAlert'
               location: 'global'
               properties: {
@@ -3633,6 +3604,36 @@ queries:
                     {
                       field: 'operationName'
                       equals: 'Microsoft.Network/networkSecurityGroups/write'
+                    }
+                  ]
+                }
+                actions: {
+                  actionGroups: [
+                    {
+                      actionGroupId: actionGroup.id
+                    }
+                  ]
+                }
+              }
+            }
+
+            resource nsgDeleteAlert 'Microsoft.Insights/activityLogAlerts@2020-10-01' = {
+              name: 'NSGDeleteAlert'
+              location: 'global'
+              properties: {
+                enabled: true
+                scopes: [
+                  subscription().id
+                ]
+                condition: {
+                  allOf: [
+                    {
+                      field: 'category'
+                      equals: 'Administrative'
+                    }
+                    {
+                      field: 'operationName'
+                      equals: 'Microsoft.Network/networkSecurityGroups/delete'
                     }
                   ]
                 }
@@ -3888,7 +3889,8 @@ queries:
     filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.Security/securityContacts")
     mql: |
       bicep.resources.where(type == "Microsoft.Security/securityContacts").all(
-        properties["alertNotifications"]["state"] == "On"
+        properties["alertNotifications"]["state"] == "On" && properties["alertNotifications"]["minimalSeverity"] == "High" ||
+        properties["notificationsSources"] != empty && properties["notificationsSources"].any(_["sourceType"] == "Alert" && _["minimalSeverity"] == "High")
       )
   - uid: mondoo-azure-security-ensure-that-ssl-enabled-postgresql
     title: Ensure SSL connection enabled for PostgreSQL database servers
@@ -4888,25 +4890,25 @@ queries:
             To ensure that diagnostic settings exist for the subscription using the Azure CLI, create or update diagnostic settings for a subscription, use the following command:
 
             ```bash
-            az monitor diagnostic-settings create --name <NameOfSetting> --resource /subscriptions/{subscriptionId} --logs '[{"category": "Administrative", "enabled": true}, {"category": "Security", "enabled": true}, {"category": "Alert", "enabled": true}, {"category": "Policy", "enabled": true}]' --workspace <LogAnalyticsWorkspaceId>
+            az monitor diagnostic-settings subscription create --name <NameOfSetting> --location <Region> --workspace <LogAnalyticsWorkspaceResourceId> --logs '[{"category": "Administrative", "enabled": true}, {"category": "Security", "enabled": true}, {"category": "Alert", "enabled": true}, {"category": "Policy", "enabled": true}]'
             ```
 
-            Replace the placeholders with your specific resource IDs and desired diagnostic setting name.
+            Replace the placeholders with your specific resource IDs and desired diagnostic setting name. The activity log is a subscription-scope log, so it needs the `subscription` command group. `az monitor diagnostic-settings create` configures a single resource and does not export the activity log.
         - id: powershell
           desc: |
             To ensure that diagnostic settings exist for the subscription using PowerShell, configure diagnostic settings with PowerShell, use the following command:
 
             ```powershell
             $logs = @(
-                New-AzDiagnosticSettingLogSettingsObject -Category "Administrative" -Enabled $true
-                New-AzDiagnosticSettingLogSettingsObject -Category "Security" -Enabled $true
-                New-AzDiagnosticSettingLogSettingsObject -Category "Alert" -Enabled $true
-                New-AzDiagnosticSettingLogSettingsObject -Category "Policy" -Enabled $true
+                New-AzDiagnosticSettingSubscriptionLogSettingsObject -Category "Administrative" -Enabled $true
+                New-AzDiagnosticSettingSubscriptionLogSettingsObject -Category "Security" -Enabled $true
+                New-AzDiagnosticSettingSubscriptionLogSettingsObject -Category "Alert" -Enabled $true
+                New-AzDiagnosticSettingSubscriptionLogSettingsObject -Category "Policy" -Enabled $true
             )
-            New-AzDiagnosticSetting -Name <DiagnosticSettingName> -ResourceId "/subscriptions/<SubscriptionId>" -Log $logs -WorkspaceId <LogAnalyticsWorkspaceId>
+            New-AzSubscriptionDiagnosticSetting -Name <DiagnosticSettingName> -WorkspaceId <LogAnalyticsWorkspaceResourceId> -Log $logs
             ```
 
-            Modify the script to match your specific resource IDs and configuration preferences. It's crucial to routinely review and update these settings to adapt to any changes in your Azure environment or organizational requirements.
+            Modify the script to match your specific resource IDs and configuration preferences. `New-AzDiagnosticSetting` configures a single resource and cannot configure the activity log, so the subscription-scope cmdlet and its matching log settings object are required here. It's crucial to routinely review and update these settings to adapt to any changes in your Azure environment or organizational requirements.
         - id: terraform
           desc: |
             To ensure that diagnostic settings exist for the subscription in Terraform, configure diagnostic settings for a subscription, you can use the following Terraform configuration:
@@ -4940,9 +4942,11 @@ queries:
             This configuration ensures that the specified log categories are collected for the subscription activity log. Regularly review and update your Terraform configurations to ensure compliance with security best practices.
         - id: bicep
           desc: |
-            To ensure that diagnostic settings exist for the subscription in Bicep:
+            To ensure that diagnostic settings exist for the subscription in Bicep, declaring the file at subscription scope and deploying it with `az deployment sub create`:
 
             ```bicep
+            targetScope = 'subscription'
+
             resource diagnosticSetting 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
               name: 'example-sub-diag'
               properties: {
@@ -5084,25 +5088,25 @@ queries:
             To ensure that diagnostic settings collect essential security categories using the Azure CLI, create or update diagnostic settings for capturing essential log categories, use:
 
             ```bash
-            az monitor diagnostic-settings create --name <NameOfSetting> --resource /subscriptions/{subscriptionId} --logs '[{"category": "Administrative", "enabled": true}, {"category": "Security", "enabled": true}, {"category": "Alert", "enabled": true}, {"category": "Policy", "enabled": true}]' --workspace <LogAnalyticsWorkspaceId>
+            az monitor diagnostic-settings subscription create --name <NameOfSetting> --location <Region> --workspace <LogAnalyticsWorkspaceResourceId> --logs '[{"category": "Administrative", "enabled": true}, {"category": "Security", "enabled": true}, {"category": "Alert", "enabled": true}, {"category": "Policy", "enabled": true}]'
             ```
 
-            Replace the placeholders with your specific resource IDs and desired diagnostic setting name.
+            Replace the placeholders with your specific resource IDs and desired diagnostic setting name. The activity log is a subscription-scope log, so it needs the `subscription` command group. `az monitor diagnostic-settings create` configures a single resource and does not export the activity log.
         - id: powershell
           desc: |
             To ensure that diagnostic settings collect essential security categories using PowerShell, configure diagnostic settings with PowerShell, use the following command:
 
             ```powershell
             $logs = @(
-                New-AzDiagnosticSettingLogSettingsObject -Category "Administrative" -Enabled $true
-                New-AzDiagnosticSettingLogSettingsObject -Category "Security" -Enabled $true
-                New-AzDiagnosticSettingLogSettingsObject -Category "Alert" -Enabled $true
-                New-AzDiagnosticSettingLogSettingsObject -Category "Policy" -Enabled $true
+                New-AzDiagnosticSettingSubscriptionLogSettingsObject -Category "Administrative" -Enabled $true
+                New-AzDiagnosticSettingSubscriptionLogSettingsObject -Category "Security" -Enabled $true
+                New-AzDiagnosticSettingSubscriptionLogSettingsObject -Category "Alert" -Enabled $true
+                New-AzDiagnosticSettingSubscriptionLogSettingsObject -Category "Policy" -Enabled $true
             )
-            New-AzDiagnosticSetting -Name <DiagnosticSettingName> -ResourceId "/subscriptions/<SubscriptionId>" -Log $logs -WorkspaceId <LogAnalyticsWorkspaceId>
+            New-AzSubscriptionDiagnosticSetting -Name <DiagnosticSettingName> -WorkspaceId <LogAnalyticsWorkspaceResourceId> -Log $logs
             ```
 
-            Modify the script to match your specific resource IDs and configuration preferences. It's crucial to routinely review and update these settings to adapt to any changes in your Azure environment or organizational requirements.
+            Modify the script to match your specific resource IDs and configuration preferences. `New-AzDiagnosticSetting` configures a single resource and cannot configure the activity log, so the subscription-scope cmdlet and its matching log settings object are required here. It's crucial to routinely review and update these settings to adapt to any changes in your Azure environment or organizational requirements.
         - id: terraform
           desc: |
             To ensure that diagnostic settings collect essential security categories in Terraform, configure diagnostic settings for essential categories, you can use the following Terraform configuration:
@@ -5136,9 +5140,11 @@ queries:
             This configuration ensures that the specified log categories are collected for the subscription activity log. Regularly review and update your Terraform configurations to ensure compliance with security best practices.
         - id: bicep
           desc: |
-            To ensure that diagnostic settings collect essential security categories in Bicep:
+            To ensure that diagnostic settings collect essential security categories in Bicep, declaring the file at subscription scope and deploying it with `az deployment sub create`:
 
             ```bicep
+            targetScope = 'subscription'
+
             resource diagnosticSetting 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
               name: 'example-sub-diag'
               properties: {
@@ -5345,11 +5351,17 @@ queries:
             az network nsg rule list --resource-group <ResourceGroupName> --nsg-name <NSGName> --query "[].{Name:name, Protocol:protocol, Access:access, Direction:direction, SourceAddressPrefix:sourceAddressPrefix, DestinationPortRange:destinationPortRange}" -o table
             ```
 
-            Review the output and identify any rules allowing disallowed UDP ports. Then, either delete those rules or restrict their source to a trusted range:
+            Review the output and identify any rules allowing disallowed UDP ports. Then apply one of the following to each offending rule. They are alternatives, so choose the one that matches the rule's purpose rather than running both.
+
+            Delete a rule that is not needed:
 
             ```bash
             az network nsg rule delete --resource-group <ResourceGroupName> --nsg-name <NSGName> --name <OffendingRuleName>
+            ```
 
+            Or restrict its source to a trusted range:
+
+            ```bash
             az network nsg rule update --resource-group <ResourceGroupName> --nsg-name <NSGName> --name <OffendingRuleName> --source-address-prefixes 10.0.0.0/16
             ```
         - id: powershell
@@ -5390,7 +5402,7 @@ queries:
             Regularly review and update your Terraform configurations to ensure compliance with security best practices.
         - id: bicep
           desc: |
-            To restrict access on disallowed UDP ports in Bicep:
+            To restrict access on disallowed UDP ports in Bicep, narrow the source of each inbound UDP allow rule to a trusted range. Adding a deny rule alongside the offending allow rule is not enough: Azure evaluates security rules in ascending priority order and stops at the first match, so an allow rule with a lower priority number still wins.
 
             ```bicep
             resource nsg 'Microsoft.Network/networkSecurityGroups@2024-05-01' = {
@@ -5399,15 +5411,15 @@ queries:
               properties: {
                 securityRules: [
                   {
-                    name: 'DenyAllUDP'
+                    name: 'AllowDNSFromTrusted'
                     properties: {
-                      priority: 1000
+                      priority: 100
                       direction: 'Inbound'
-                      access: 'Deny'
+                      access: 'Allow'
                       protocol: 'Udp'
                       sourcePortRange: '*'
-                      destinationPortRange: '*'
-                      sourceAddressPrefix: 'Internet'
+                      destinationPortRange: '53'
+                      sourceAddressPrefix: '10.0.0.0/16'
                       destinationAddressPrefix: '*'
                     }
                   }
@@ -7150,6 +7162,7 @@ queries:
               properties: {
                 diskSizeGB: 128
                 encryption: {
+                  type: 'EncryptionAtRestWithCustomerKey'
                   diskEncryptionSetId: diskEncryptionSet.id
                 }
                 creationData: {
@@ -9327,7 +9340,7 @@ queries:
             ```
         - id: terraform
           desc: |
-            To ensure App Service SCM basic auth publishing credentials are disabled in Terraform:
+            To ensure App Service SCM basic auth publishing credentials are disabled in Terraform, set `webdeploy_publish_basic_authentication_enabled` to `false`. The azurerm provider applies that argument to the app's `scm` basic publishing credentials policy, so no `azapi` resource is needed.
 
             ```hcl
             resource "azurerm_linux_web_app" "example" {
@@ -9336,24 +9349,13 @@ queries:
               location            = azurerm_resource_group.example.location
               service_plan_id     = azurerm_service_plan.example.id
 
+              webdeploy_publish_basic_authentication_enabled = false
+
               site_config {}
-
-              # Disable SCM basic auth via azapi_resource
-            }
-
-            resource "azapi_update_resource" "disable_scm_basic_auth" {
-              type        = "Microsoft.Web/sites/basicPublishingCredentialsPolicies@2023-12-01"
-              resource_id = "${azurerm_linux_web_app.example.id}/basicPublishingCredentialsPolicies/scm"
-
-              body = {
-                properties = {
-                  allow = false
-                }
-              }
             }
             ```
 
-            For Windows web apps, use `azurerm_windows_web_app` with the same approach.
+            For Windows web apps, use `azurerm_windows_web_app` with the same argument. Setting this to `false` also disables `zip_deploy_file`, which relies on the default publishing profile.
         - id: bicep
           desc: |
             To ensure App Service SCM basic auth publishing credentials are disabled in Bicep:
@@ -9376,23 +9378,39 @@ queries:
     mql: |
       azure.subscription.webService.appsite.scm.allow == false
   - uid: mondoo-azure-security-app-service-scm-disabled-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azapi_update_resource")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == /azurerm_(linux|windows)_web_app/ || nameLabel == "azapi_update_resource")
     mql: |
+      # azurerm maps webdeploy_publish_basic_authentication_enabled onto the scm
+      # basicPublishingCredentialsPolicy, so either that argument or an azapi
+      # update of the policy itself satisfies this check. The first disjunct is
+      # guarded because .all() passes vacuously on an empty list.
+      terraform.resources(/azurerm_(linux|windows)_web_app/) != empty &&
+      terraform.resources(/azurerm_(linux|windows)_web_app/).all(
+        arguments['webdeploy_publish_basic_authentication_enabled'] == false
+      ) ||
       terraform.resources("azapi_update_resource").
         where(arguments['type'] == /Microsoft.Web\/sites\/basicPublishingCredentialsPolicies/).any(
           arguments['body'].first['properties']['allow'] == false ||
           arguments['body'].properties.allow == false
         )
   - uid: mondoo-azure-security-app-service-scm-disabled-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azapi_update_resource")
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == /azurerm_(linux|windows)_web_app/ || type == "azapi_update_resource")
     mql: |
+      terraform.plan.resourceChanges.where(type == /azurerm_(linux|windows)_web_app/) != empty &&
+      terraform.plan.resourceChanges.where(type == /azurerm_(linux|windows)_web_app/).all(
+        change.after['webdeploy_publish_basic_authentication_enabled'] == false
+      ) ||
       terraform.plan.resourceChanges.where(type == "azapi_update_resource").any(
         change.after['type'] == /basicPublishingCredentialsPolicies/ &&
         change.after['body'].properties.allow == false
       )
   - uid: mondoo-azure-security-app-service-scm-disabled-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azapi_update_resource")
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == /azurerm_(linux|windows)_web_app/ || type == "azapi_update_resource")
     mql: |
+      terraform.state.resources.where(type == /azurerm_(linux|windows)_web_app/) != empty &&
+      terraform.state.resources.where(type == /azurerm_(linux|windows)_web_app/).all(
+        values['webdeploy_publish_basic_authentication_enabled'] == false
+      ) ||
       terraform.state.resources.where(type == "azapi_update_resource").any(
         values['type'] == /basicPublishingCredentialsPolicies/ &&
         values['output'].properties.allow == false
@@ -11476,10 +11494,10 @@ queries:
             5. Select **Save**.
         - id: cli
           desc: |
-            To ensure client certificate auth is enabled for App Service web apps using the Azure CLI:
+            To ensure client certificate auth is enabled for App Service web apps using the Azure CLI, turn client certificates on and set the mode to `Required`. With the mode left at `Optional` the app accepts requests that present no certificate at all:
 
             ```bash
-            az webapp update --resource-group <ResourceGroupName> --name <WebAppName> --set clientCertEnabled=true
+            az webapp update --resource-group <ResourceGroupName> --name <WebAppName> --set clientCertEnabled=true --set clientCertMode=Required
             ```
         - id: powershell
           desc: |
@@ -12974,9 +12992,12 @@ queries:
               minimum_tls_version = "1.2"
 
               redis_configuration {
+                authentication_enabled = true
               }
             }
             ```
+
+            Older azurerm versions spell this argument `enable_authentication`.
         - id: bicep
           desc: |
             To ensure Azure Cache for Redis requires authentication in Bicep, azure Cache for Redis requires authentication by default. Ensure `authnotrequired` is not set to `yes` in the Redis configuration:
@@ -14002,6 +14023,7 @@ queries:
               properties: {
                 diskSizeGB: 128
                 encryption: {
+                  type: 'EncryptionAtRestWithCustomerKey'
                   diskEncryptionSetId: diskEncryptionSet.id
                 }
                 creationData: {
@@ -14653,11 +14675,9 @@ queries:
             ```
         - id: terraform
           desc: |
-            To restrict access on disallowed TCP database ports in Terraform:
+            To restrict access on disallowed TCP database ports in Terraform, deny the database ports from the internet at a priority number lower than any allow rule. Azure evaluates security rules in ascending priority order and stops at the first match, so a deny rule placed after an existing allow rule never takes effect. Scoping the source to `Internet` leaves virtual network and trusted allow rules intact.
 
             ```hcl
-            # Ensure database ports are not exposed to the internet
-
             resource "azurerm_network_security_group" "example" {
               name                = "example-db-security"
               location            = azurerm_resource_group.rg.location
@@ -14665,20 +14685,22 @@ queries:
 
               security_rule {
                 name                       = "DenyDBFromInternet"
-                priority                   = 1001
+                priority                   = 100
                 direction                  = "Inbound"
                 access                     = "Deny"
                 protocol                   = "Tcp"
                 source_port_range          = "*"
                 destination_port_ranges    = ["1433", "3306", "5432", "27017"]
-                source_address_prefix      = "*"
+                source_address_prefix      = "Internet"
                 destination_address_prefix = "*"
               }
             }
             ```
+
+            Also remove or narrow the existing allow rule that exposed the port, so the configuration no longer records the intent to publish it.
         - id: bicep
           desc: |
-            To restrict access on disallowed TCP database ports in Bicep:
+            To restrict access on disallowed TCP database ports in Bicep, deny them from the internet at a priority number lower than any allow rule. Azure stops at the first matching rule in ascending priority order, so a deny rule placed after an existing allow rule never takes effect:
 
             ```bicep
             resource nsg 'Microsoft.Network/networkSecurityGroups@2024-05-01' = {
@@ -14689,7 +14711,7 @@ queries:
                   {
                     name: 'DenyDatabasePorts'
                     properties: {
-                      priority: 1000
+                      priority: 100
                       direction: 'Inbound'
                       access: 'Deny'
                       protocol: 'Tcp'
@@ -14698,7 +14720,6 @@ queries:
                         '1433'
                         '3306'
                         '5432'
-                        '1521'
                         '27017'
                       ]
                       sourceAddressPrefix: 'Internet'
@@ -22818,14 +22839,20 @@ queries:
     filters: |
       asset.platform == "azure-cache-redis-instance"
     mql: |
-      azure.subscription.cacheService.redisInstance.properties["redisConfiguration"]["authnotrequired"] != "yes"
+      # authnotrequired is a free-form string in redisConfiguration. Azure writes
+      # "true" for it; "yes" also appears in older tooling. Match either, so a
+      # cache with authentication turned off cannot slip past on spelling.
+      azure.subscription.cacheService.redisInstance.properties["redisConfiguration"]["authnotrequired"] != /^(true|yes)$/i
   - uid: mondoo-azure-security-redis-auth-required-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_redis_cache")
     mql: |
+      # azurerm renamed enable_authentication to authentication_enabled in v4.
+      # Both spellings appear in the wild, so reject either one set to false.
       terraform.resources("azurerm_redis_cache").all(
         blocks.where(type == "redis_configuration") != empty &&
         blocks.where(type == "redis_configuration").all(
-          arguments['enable_authentication'] != false
+          arguments['enable_authentication'] != false &&
+          arguments['authentication_enabled'] != false
         )
       )
   - uid: mondoo-azure-security-redis-auth-required-terraform-plan
@@ -22834,7 +22861,8 @@ queries:
       terraform.plan.resourceChanges.where(type == "azurerm_redis_cache").all(
         change.after['redis_configuration'] != empty &&
         change.after['redis_configuration'].all(
-          _['enable_authentication'] != false
+          _['enable_authentication'] != false &&
+          _['authentication_enabled'] != false
         )
       )
   - uid: mondoo-azure-security-redis-auth-required-terraform-state
@@ -22843,14 +22871,15 @@ queries:
       terraform.state.resources.where(type == "azurerm_redis_cache").all(
         values['redis_configuration'] != empty &&
         values['redis_configuration'].all(
-          _['enable_authentication'] != false
+          _['enable_authentication'] != false &&
+          _['authentication_enabled'] != false
         )
       )
   - uid: mondoo-azure-security-redis-auth-required-bicep
     filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.Cache/redis")
     mql: |
       bicep.resources.where(type == "Microsoft.Cache/redis").all(
-        properties["redisConfiguration"]["authnotrequired"] != "true"
+        properties["redisConfiguration"]["authnotrequired"] != /^(true|yes)$/i
       )
   - uid: mondoo-azure-security-sql-server-audit-on-azure
     filters: |
@@ -23109,12 +23138,22 @@ queries:
         arguments['name'] == "require_secure_transport" &&
         arguments['value'] == "OFF"
       )
+      # tls_version accepts a comma-separated list, so match any legacy member
+      # rather than comparing the whole value.
+      terraform.resources("azurerm_mysql_flexible_server_configuration").none(
+        arguments['name'] == "tls_version" &&
+        arguments['value'] == /TLSv1(\.[01])?($|,)/
+      )
   - uid: mondoo-azure-security-ensure-that-ssl-enabled-latest-version-mysql-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_mysql_flexible_server" || type == "azurerm_mysql_flexible_server_configuration")
     mql: |
       terraform.plan.resourceChanges.where(type == "azurerm_mysql_flexible_server_configuration").none(
         change.after['name'] == "require_secure_transport" &&
         change.after['value'] == "OFF"
+      )
+      terraform.plan.resourceChanges.where(type == "azurerm_mysql_flexible_server_configuration").none(
+        change.after['name'] == "tls_version" &&
+        change.after['value'] == /TLSv1(\.[01])?($|,)/
       )
   - uid: mondoo-azure-security-ensure-that-ssl-enabled-latest-version-mysql-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_mysql_flexible_server" || type == "azurerm_mysql_flexible_server_configuration")
@@ -23123,12 +23162,21 @@ queries:
         values['name'] == "require_secure_transport" &&
         values['value'] == "OFF"
       )
+      terraform.state.resources.where(type == "azurerm_mysql_flexible_server_configuration").none(
+        values['name'] == "tls_version" &&
+        values['value'] == /TLSv1(\.[01])?($|,)/
+      )
   - uid: mondoo-azure-security-ensure-that-ssl-enabled-latest-version-mysql-bicep
     filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.DBforMySQL/flexibleServers")
     mql: |
       bicep.resources.where(type == "Microsoft.DBforMySQL/flexibleServers").all(
         resources.where(type == "configurations" && name == "require_secure_transport").all(
           properties["value"] == /^on$/i
+        )
+      )
+      bicep.resources.where(type == "Microsoft.DBforMySQL/flexibleServers").all(
+        resources.where(type == "configurations" && name == "tls_version").none(
+          properties["value"] == /TLSv1(\.[01])?($|,)/
         )
       )
   - uid: mondoo-azure-security-no-sql-databases-allow-ingress-0-0-0-0-0-terraform-hcl
