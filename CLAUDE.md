@@ -12,7 +12,8 @@ cnspec is an open-source, cloud-native security and policy project that assesses
 
 - **`apps/cnspec/cmd/`** — CLI entry point and commands (scan, shell, bundle, etc.).
 - **`policy/`** — policy engine core (resolution, execution, scoring). See `policy/CLAUDE.md` for engine internals, scanning flow, and protobuf/gRPC patterns.
-- **`content/`** — default security policies (`*.mql.yaml`). See `content/CLAUDE.md` for policy authoring rules (variants, compliance tags, MQL, validation).
+- **`content/`** — default security policies (`*.mql.yaml`). See `content/CLAUDE.md` for policy authoring rules (variants, compliance tags, MQL).
+- **`content/validation/`** — every test and validator that runs against those policies, plus its fixtures. `content/validation/README.md` is the definitive reference for content validation.
 - **`cli/`** — reusable CLI components and reporters (SARIF, JUnit, JSON, …).
 - **`internal/bundle/`, `internal/datalakes/`, `internal/lsp/`** — bundle loading, storage, LSP support.
 - **`examples/`, `test/`, `docs/`** — examples, integration tests, docs.
@@ -45,13 +46,24 @@ make test                # Run all tests
 make test/go             # Go tests only
 make test/go/plain       # With coverage
 make test/lint           # Linter
-make test/lint/content   # Lint policy and querypack files
 make benchmark/go        # Benchmarks
 
 # Single test
 go test -v ./policy -run TestSpecificTest
 go test -v ./policy/...
 go test -race ./...
+```
+
+### Content validation
+
+Everything that checks the policies in `content/` lives in `content/validation/`, and
+**[`content/validation/README.md`](content/validation/README.md) is the definitive
+reference** for it: what each check proves, when CI runs it, and how to run it manually.
+
+```bash
+make test/content        # lint + bundle scans + compliance mappings
+make test/content/lint   # cnspec policy lint over content/ and content/querypacks
+make test/content/iac    # the IaC fixture suites (slow; run when you touch a variant)
 ```
 
 ### Scanning & policy linting

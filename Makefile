@@ -109,10 +109,6 @@ cnspec/dist/goreleaser/edge:
 
 test/lint: test/lint/golangci-lint/run
 
-test/lint/content:
-	cnspec policy lint ./content
-	cnspec policy lint ./content/querypacks
-
 test: test/go test/lint
 
 benchmark/go:
@@ -126,49 +122,134 @@ test/go/plain:
 test/go/plain-ci: prep/tools
 	gotestsum --junitfile report.xml --format pkgname -- -cover $(shell go list ./... | grep -v '/vendor/')
 
+#   📋 Content validation   #
+#
+# Every check that runs against the policies in content/. All of it is
+# documented in content/validation/README.md — what each one proves, when CI
+# runs it, and how to scope a run down to a single check.
+
+VALIDATION := content/validation
+
+.PHONY: test/content test/content/lint test/content/spelling test/content/scans test/content/compliance
+.PHONY: test/content/iac test/content/iac/terraform test/content/iac/cloudformation test/content/iac/bicep
+.PHONY: test/content/iac/dockerfile test/content/iac/kubernetes test/content/iac/coverage test/content/iac/remediation
+.PHONY: test/content/remediation test/content/remediation/terraform test/content/remediation/cloudformation
+.PHONY: test/content/remediation/bicep test/content/remediation/ansible test/content/remediation/powershell
+.PHONY: test/content/remediation/bash test/content/remediation/chef
+.PHONY: test/content/commands test/content/upstream
+
+# The checks that run with nothing installed but Go and cnspec. Two groups are
+# deliberately left out, each for its own reason:
+#
+#   test/content/iac         downloads providers and runs thousands of scans
+#   test/content/remediation each validator needs its language's linter, and
+#   test/content/commands    each cloud needs that cloud's CLI on PATH
+#
+# CI runs all of them; locally, run the one that covers what you touched.
+test/content: test/content/lint test/content/scans test/content/compliance
+
+# Structure, MQL compilation, and schema. Catches a check that cannot compile
+# before any suite tries to run it.
+test/content/lint:
+	cnspec policy lint ./content
+	cnspec policy lint ./content/querypacks
+
+# Spelling across the repo, using the allowlist in typos.toml. CI runs this via
+# the crate-ci/typos action; locally it needs `brew install typos-cli`.
+test/content/spelling:
+	typos
+
+# Whole-bundle smoke scans: a sample project per policy that should score 100
+# or 0. Untagged, so it also runs as part of `make test/go`.
+test/content/scans:
+	go test -timeout 20m ./$(VALIDATION)/scans
+
+# Compliance-tag mapping invariants. Reads the bundles only, runs no scans.
+test/content/compliance:
+	go test ./$(VALIDATION)/compliance
+
 # Content IaC-variant suites (Terraform / CloudFormation / Bicep / Dockerfile /
 # Kubernetes) validate every policy check against its per-check pass/fail fixtures
-# in content/iac-variant-testdata. They are isolated behind the `iac_variants` build
-# tag so they never run in the default `go test ./...` (they download extra
-# providers and run many provider-backed scans). Concurrency is kept conservative
-# to avoid provider-subprocess contention; override with IAC_VARIANT_PARALLEL.
+# in content/validation/scans/fixtures/iac-variants. They are isolated behind the
+# `iac_variants` build tag so they never run in the default `go test ./...` (they
+# download extra providers and run many provider-backed scans). Concurrency is kept
+# conservative to avoid provider-subprocess contention; override with
+# IAC_VARIANT_PARALLEL.
 #
 # To fan a suite (in practice the large Terraform one) out across parallel CI
 # runners, set IAC_SHARD_TOTAL to the runner count and IAC_SHARD_INDEX to each
 # runner's 0-based slot; the harness then runs only the scenarios that hash into
 # that shard. Unset means run everything. See .github/workflows/content-iac-tests.yaml.
 IAC_VARIANT_PARALLEL ?= 4
+IAC_TEST := go test -tags iac_variants -parallel $(IAC_VARIANT_PARALLEL) ./$(VALIDATION)/scans
 
-.PHONY: test/go/content-iac test/go/content-iac/terraform test/go/content-iac/cloudformation test/go/content-iac/bicep test/go/content-iac/dockerfile test/go/content-iac/kubernetes test/go/content-iac/coverage test/go/content-iac/remediation
-test/go/content-iac: prep/tools
-	go test -tags iac_variants -timeout 30m -parallel $(IAC_VARIANT_PARALLEL) -run 'TestTerraformVariants|TestCloudFormationVariants|TestBicepVariants|TestDockerfileVariants|TestKubernetesManifestVariants' ./content
+test/content/iac: prep/tools
+	$(IAC_TEST) -timeout 30m -run 'TestTerraformVariants|TestCloudFormationVariants|TestBicepVariants|TestDockerfileVariants|TestKubernetesManifestVariants'
 
-test/go/content-iac/terraform: prep/tools
-	go test -tags iac_variants -timeout 30m -parallel $(IAC_VARIANT_PARALLEL) -run '^TestTerraformVariants$$' ./content
+test/content/iac/terraform: prep/tools
+	$(IAC_TEST) -timeout 30m -run '^TestTerraformVariants$$'
 
-test/go/content-iac/cloudformation: prep/tools
-	go test -tags iac_variants -timeout 30m -parallel $(IAC_VARIANT_PARALLEL) -run '^TestCloudFormationVariants$$' ./content
+test/content/iac/cloudformation: prep/tools
+	$(IAC_TEST) -timeout 30m -run '^TestCloudFormationVariants$$'
 
-test/go/content-iac/bicep: prep/tools
-	go test -tags iac_variants -timeout 30m -parallel $(IAC_VARIANT_PARALLEL) -run '^TestBicepVariants$$' ./content
+test/content/iac/bicep: prep/tools
+	$(IAC_TEST) -timeout 30m -run '^TestBicepVariants$$'
 
-test/go/content-iac/dockerfile: prep/tools
-	go test -tags iac_variants -timeout 30m -parallel $(IAC_VARIANT_PARALLEL) -run '^TestDockerfileVariants$$' ./content
+test/content/iac/dockerfile: prep/tools
+	$(IAC_TEST) -timeout 30m -run '^TestDockerfileVariants$$'
 
-test/go/content-iac/kubernetes: prep/tools
-	go test -tags iac_variants -timeout 30m -parallel $(IAC_VARIANT_PARALLEL) -run '^TestKubernetesManifestVariants$$' ./content
+test/content/iac/kubernetes: prep/tools
+	$(IAC_TEST) -timeout 30m -run '^TestKubernetesManifestVariants$$'
 
 # Closed loop: scans each IaC variant's own remediation snippet and requires the
 # check that recommends it to pass. Sharded like the terraform suite, since it
 # runs one provider-backed scan per variant.
-test/go/content-iac/remediation: prep/tools
-	go test -tags iac_variants -timeout 60m -parallel $(IAC_VARIANT_PARALLEL) -run '^TestRemediationSatisfiesCheck$$' ./content
+test/content/iac/remediation: prep/tools
+	$(IAC_TEST) -timeout 60m -run '^TestRemediationSatisfiesCheck$$'
 
 # Fixture-coverage gate. Runs no scans: it compares the IaC variants declared in
 # each policy against the fixtures on disk and fails if any variant lacks a pass
 # or a fail fixture. Coverage is at 100%, so this holds it there.
-test/go/content-iac/coverage: prep/tools
-	go test -tags iac_variants -timeout 10m -v -run '^TestTerraformVariantCoverage$$' ./content
+test/content/iac/coverage: prep/tools
+	$(IAC_TEST) -timeout 10m -v -run '^TestTerraformVariantCoverage$$'
+
+# Remediation code blocks, linted in their own language. Each target needs that
+# language's linter installed; see content/validation/README.md.
+test/content/remediation: test/content/remediation/terraform test/content/remediation/cloudformation \
+	test/content/remediation/bicep test/content/remediation/ansible test/content/remediation/powershell \
+	test/content/remediation/bash test/content/remediation/chef
+
+test/content/remediation/terraform:
+	python3 $(VALIDATION)/remediation/code/terraform.py
+
+test/content/remediation/cloudformation:
+	python3 $(VALIDATION)/remediation/code/cloudformation.py
+
+test/content/remediation/bicep:
+	python3 $(VALIDATION)/remediation/code/bicep.py
+
+test/content/remediation/ansible:
+	python3 $(VALIDATION)/remediation/code/ansible.py
+
+test/content/remediation/powershell:
+	python3 $(VALIDATION)/remediation/code/powershell.py
+
+test/content/remediation/bash:
+	python3 $(VALIDATION)/remediation/code/bash.py
+
+test/content/remediation/chef:
+	python3 $(VALIDATION)/remediation/code/chef.py
+
+# Remediation CLI and REST API calls, checked against checked-in grammars and
+# OpenAPI specs. Pass CLOUD=aws (or any name the validator lists) to scope it.
+CLOUD ?= all
+test/content/commands:
+	python3 $(VALIDATION)/remediation/commands/validate.py $(CLOUD)
+
+# Reports which upstreams the validators are pinned behind. Hits the network;
+# reports only, never fails the build.
+test/content/upstream:
+	python3 $(VALIDATION)/upstream/check.py --format markdown
 
 .PHONY: test/lint/staticcheck
 test/lint/staticcheck:
