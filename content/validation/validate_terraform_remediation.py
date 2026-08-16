@@ -68,7 +68,7 @@ PROVIDER_MAP = {
     "google": ("hashicorp/google", "~> 7.0"),
     "oci": ("oracle/oci", "~> 6.0"),
     "github": ("integrations/github", "~> 6.0"),
-    "gitlab": ("gitlabhq/gitlab", "~> 17.0"),
+    "gitlab": ("gitlabhq/gitlab", "~> 19.0"),
     "okta": ("okta/okta", "~> 6.0"),
     "null": ("hashicorp/null", "~> 3.0"),
     "time": ("hashicorp/time", "~> 0.14"),
