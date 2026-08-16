@@ -192,7 +192,7 @@ cnspec returns the results from the scan to `STDOUT` and to Mondoo Platform.
 With an account on Mondoo Platform, you can upload policies:
 
 ```bash
-cnspec bundle upload mypolicy.mql.yaml
+cnspec policy upload mypolicy.mql.yaml
 ```
 
 ## Custom policies
