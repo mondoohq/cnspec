@@ -578,6 +578,13 @@ def run_tflint(tmp_dir: Path, plugin_cache: Path) -> TflintResult:
 _TERRAFORM_SLOTS = threading.BoundedSemaphore(4)
 
 
+# Terraform disables color when its output is not a terminal, so captured runs
+# are normally clean. Strip escape sequences anyway: dropping the bare ESC byte
+# on its own would leave the rest of the sequence glued to the text, and a line
+# reading "[31mError: ..." no longer starts with "Error:".
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
+
+
 def first_error_line(stderr: str, stdout: str) -> str:
     """Pull something readable out of terraform's boxed CLI output.
 
@@ -585,15 +592,14 @@ def first_error_line(stderr: str, stdout: str) -> str:
     box-drawing character and taking it reports nothing at all. Prefer the line
     carrying the error text.
     """
-    text = (stderr or stdout or "").replace("\x1b", "")
+    text = _ANSI_RE.sub("", stderr or stdout or "")
     lines = [
         re.sub(r"^[\s│╷╵|]*", "", ln).strip()
         for ln in text.splitlines()
     ]
     lines = [ln for ln in lines if ln and not set(ln) <= set("─-_=")]
-    for ln in lines:
+    for idx, ln in enumerate(lines):
         if ln.startswith("Error:"):
-            idx = lines.index(ln)
             return " ".join(lines[idx : idx + 3])[:300]
     return (lines[-1] if lines else "no diagnostic output")[:300]
 
@@ -603,7 +609,7 @@ def run_terraform_validate(tmp_dir: Path, mirror_dir: Path) -> list[str]:
 
     Returns the diagnostics worth reporting, empty when the snippet is clean.
     """
-    if not mirror_dir.exists() or not any(mirror_dir.iterdir()):
+    if not mirror_dir.is_dir() or not any(mirror_dir.iterdir()):
         return []
 
     env = {**dict(os.environ), "TF_IN_AUTOMATION": "1", "TF_INPUT": "0"}
