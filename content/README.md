@@ -33,6 +33,7 @@ Our comprehensive collection of security policies covers major platforms and ser
 
 ### Cloud Providers
 
+- **Alibaba Cloud** - `mondoo-alibaba-security.mql.yaml` - Secure Alibaba Cloud identity, storage, compute, database, registry, serverless, key management, and network resources
 - **AWS** - `mondoo-aws-security.mql.yaml` - Comprehensive AWS security baseline and best practices
 - **Azure** - `mondoo-azure-security.mql.yaml` - Microsoft Azure security configuration and compliance checks
 - **DigitalOcean** - `mondoo-digitalocean-security.mql.yaml` - DigitalOcean Droplets, Databases, Load Balancers, DOKS, Spaces, and App Platform security
@@ -40,6 +41,7 @@ Our comprehensive collection of security policies covers major platforms and ser
 - **Hetzner Cloud** - `mondoo-hetzner-security.mql.yaml` - Hetzner Cloud servers, firewalls, load balancers, certificates, and IP address security
 - **OCI** - `mondoo-oci-security.mql.yaml` - Oracle Cloud Infrastructure security assessment
 - **OpenStack** - `mondoo-openstack-security.mql.yaml` - OpenStack security across Keystone, Nova, Neutron, Cinder, Glance, Swift, and Octavia
+- **STACKIT** - `mondoo-stackit-security.mql.yaml` - Secure STACKIT compute, storage, databases, networking, and IAM
 
 ### Operating Systems
 
@@ -59,6 +61,8 @@ Our comprehensive collection of security policies covers major platforms and ser
 - **Dockerfile Best Practices** - `mondoo-dockerfile-best-practices.mql.yaml` - Dockerfile authoring best practices
 - **Kubernetes Security** - `mondoo-kubernetes-security.mql.yaml` - Container orchestration security and RBAC validation
 - **Kubernetes Best Practices** - `mondoo-kubernetes-best-practices.mql.yaml` - Kubernetes operational best practices
+- **Nutanix** - `mondoo-nutanix-security.mql.yaml` - Secure Nutanix clusters, hosts, virtual machines, identity, and storage managed through Prism Central
+- **Portainer** - `mondoo-portainer-security.mql.yaml` - Secure Portainer authentication, RBAC, user privileges, Edge trust, and connection settings
 - **Proxmox VE Security** - `mondoo-proxmox-security.mql.yaml` - Proxmox Virtual Environment hypervisor, VM, and container security
 - **VMware vSphere** - `mondoo-vmware-vsphere.mql.yaml` - Security baseline for virtual machines running on VMware vSphere
 - **VMware ESXi** - `mondoo-vmware-vsphere-esxi.mql.yaml` - VMware ESXi host hardening and configuration
@@ -73,11 +77,14 @@ Our comprehensive collection of security policies covers major platforms and ser
 - **F5 BIG-IP** - `mondoo-bigip-security.mql.yaml` - F5 BIG-IP security configuration assessment
 - **Fortinet FortiOS** - `mondoo-fortios-security.mql.yaml` - Fortinet FortiOS firewall and FortiGate appliance security
 - **Juniper JunOS** - `mondoo-junos-security.mql.yaml` - Juniper JunOS network device security hardening
+- **MikroTik RouterOS** - `mondoo-mikrotik-security.mql.yaml` - Secure MikroTik RouterOS routers, switches, and access points
 - **Palo Alto PAN-OS** - `mondoo-panos-security.mql.yaml` - Palo Alto Networks PAN-OS security assessment
 - **Ubiquiti UniFi** - `mondoo-unifi-security.mql.yaml` - Ubiquiti UniFi network security assessment
 
 ### SaaS & Collaboration
 
+- **Atlassian** - `mondoo-atlassian-security.mql.yaml` - Detect high and critical security issues in Atlassian Cloud organizations, Jira projects, and Confluence spaces
+- **Databricks** - `mondoo-databricks-security.mql.yaml` - Secure Databricks accounts, workspaces, clusters, and access controls
 - **GitHub Security** - `mondoo-github-security.mql.yaml` - GitHub repository and organization security
 - **GitHub Best Practices** - `mondoo-github-best-practices.mql.yaml` - GitHub repository best practices
 - **GitLab** - `mondoo-gitlab-security.mql.yaml` - GitLab security configuration assessment
@@ -89,6 +96,14 @@ Our comprehensive collection of security policies covers major platforms and ser
 - **Snowflake** - `mondoo-snowflake-security.mql.yaml` - Snowflake data platform security assessment
 - **Cloudflare** - `mondoo-cloudflare-security.mql.yaml` - Cloudflare security configuration assessment
 - **Tailscale** - `mondoo-tailscale-security.mql.yaml` - Tailscale network security configuration
+- **Vercel** - `mondoo-vercel-security.mql.yaml` - Secure Vercel projects and teams by enforcing deployment protection, firewall, secret hygiene, and credential controls
+
+### Databases
+
+- **MariaDB** - `mondoo-mariadb-security.mql.yaml` - Harden MariaDB server networking, authentication, encryption, and audit logging
+- **MongoDB Atlas** - `mondoo-mongodbatlas-security.mql.yaml` - Secure MongoDB Atlas access control, network exposure, encryption, backup, and audit logging across organizations and projects
+- **MySQL** - `mondoo-mysql-security.mql.yaml` - Harden MySQL server networking, authentication, privileges, and audit logging
+- **PostgreSQL** - `mondoo-postgresql-security.mql.yaml` - Harden PostgreSQL server transport, host-based authentication, and audit logging
 
 ### Network & Infrastructure Services
 
@@ -96,6 +111,7 @@ Our comprehensive collection of security policies covers major platforms and ser
 - **HTTP** - `mondoo-http-security.mql.yaml` - Web service security and header validation
 - **TLS** - `mondoo-tls-security.mql.yaml` - SSL/TLS configuration and certificate validation
 - **Email** - `mondoo-email-security.mql.yaml` - Email security configuration assessment
+- **NextDNS** - `mondoo-nextdns-security.mql.yaml` - Secure NextDNS profiles by enforcing threat protection, filtering integrity, and query logging
 
 ### Specialized Systems
 
@@ -108,7 +124,27 @@ Our comprehensive collection of security policies covers major platforms and ser
 - **EDR** - `mondoo-edr-policy.mql.yaml` - Endpoint Detection and Response validation
 - **Shodan** - `mondoo-shodan.mql.yaml` - Shodan exposure assessment for hosts, networks, and IP addresses
 
-> The latest version of the policies in this repository requires cnspec v8+
+> These policies track the cnspec release in this repository. Run a current cnspec (`cnspec version`); checks are written against the provider resources shipped with it, so an older binary may not be able to compile every check.
+
+## Query packs
+
+Alongside the policies, [`querypacks/`](querypacks) holds query packs: bundles that **collect data without scoring it**. Where a policy answers "is this configured safely", a query pack answers "what is out there" — asset inventory and incident-response data collection, per platform.
+
+```bash
+cnspec scan local -f querypacks/mondoo-linux-inventory.mql.yaml
+```
+
+## Infrastructure as Code
+
+Most cloud checks carry `variants:`, so the same control is enforced against a live cloud account **and** against the code that provisions it. A check with variants runs whichever one matches the asset being scanned: the runtime API, Terraform HCL source, a `terraform plan` JSON file, a `terraform.tfstate`, a CloudFormation template, or a Bicep file.
+
+```bash
+cnspec scan terraform ./infrastructure -f mondoo-aws-security.mql.yaml
+cnspec scan terraform plan  tfplan.json      -f mondoo-aws-security.mql.yaml
+cnspec scan terraform state terraform.tfstate -f mondoo-aws-security.mql.yaml
+```
+
+This means a misconfiguration can be caught in a pull request rather than after it reaches production, with no separate policy to maintain.
 
 ## Run policies
 
@@ -155,7 +191,7 @@ After running a scan, cnspec displays results showing which checks passed or fai
 - **✓ Pass** - The check passed; the system meets the security requirement
 - **✕ Fail** - The check failed; action is needed to remediate the issue
 - **! Error** - The check encountered an error during execution
-- **- Skip** - The check was skipped (not applicable to this system)
+- **. Skipped** - The check was skipped because its `filters:` did not match this asset
 
 Each failed check includes:
 - **Impact score** (0-100) indicating severity
@@ -170,12 +206,17 @@ Export results in different formats for integration with other tools:
 # JSON output
 cnspec scan local -o json > results.json
 
+# SARIF (GitHub code scanning and other security dashboards)
+cnspec scan local -o sarif > results.sarif
+
 # JUnit XML (for CI/CD integration)
 cnspec scan local -o junit > results.xml
 
 # Full detailed output
 cnspec scan local -o full
 ```
+
+The full set is `compact` (the default), `csv`, `full`, `json`, `json-v1`, `json-v2`, `junit`, `report`, `sarif`, `summary`, `yaml`, `yaml-v1`, and `yaml-v2`. Run `cnspec scan --help` for the current list.
 
 ## Policy Structure
 
@@ -188,9 +229,16 @@ policies:
   - uid: example-security-policy
     name: Example Security Policy
     version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: linux
+    require:
+      - provider: os
     authors:
-      - name: Mondoo Security Team
+      - name: Mondoo, Inc.
         email: hello@mondoo.com
+    summary: Secure example Linux accounts and shell configuration
     groups:
       - title: Security Configuration
         filters: asset.platform == "linux"
@@ -206,11 +254,14 @@ policies:
 
 ### Key Components
 
-- **Metadata**: Each policy includes unique identifiers, versioning, and authorship information
-- **Platform Filters**: Automatic targeting based on asset type (e.g., `asset.platform == "linux"`)
+- **Metadata**: Unique identifier, version, license, and authorship
+- **`summary`**: A one-line description, 130 characters or fewer, shown in policy listings
+- **`tags`**: `mondoo.com/category` and `mondoo.com/platform` are required; `cnspec policy lint` warns without them
+- **`require`**: The providers the policy needs, so cnspec can install them on demand
+- **Platform Filters**: Which assets a check applies to (`asset.platform == "linux"`). This is asset selection, not check logic
 - **Security Checks**: MQL queries that validate security configurations and compliance requirements
 - **Impact Scoring**: Risk assessment scoring from 0-100 to prioritize findings
-- **Documentation**: Descriptions, remediation guidance, and references to security standards
+- **Documentation**: Descriptions, audit steps, remediation guidance, and compliance-framework tags
 
 ### MQL Query Language
 
@@ -225,7 +276,9 @@ For detailed MQL syntax and available resources, see the [MQL documentation](htt
 
 ### Example Policy Check
 
-```yaml
+Every check documents all three of `desc`, `audit`, and `remediation`. `desc` explains what and why, `audit` gives an operator a way to verify the finding by hand, and `remediation` lists a fix per management surface:
+
+````yaml
 checks:
   - uid: ssh-root-login-disabled
     title: Ensure SSH root login is disabled
@@ -234,15 +287,49 @@ checks:
       sshd.config.params["PermitRootLogin"] == "no"
     docs:
       desc: |
-        Direct root login via SSH should be disabled to prevent
-        unauthorized access and encourage the use of sudo for
-        administrative tasks.
-      remediation: |
-        Edit /etc/ssh/sshd_config and set:
-        PermitRootLogin no
+        Direct root login over SSH should be disabled to prevent unauthorized
+        access and to require administrators to authenticate as themselves
+        before escalating with sudo, which keeps actions attributable.
+      audit: |
+        Run the following and confirm it returns `no`:
 
-        Then restart the SSH service.
+        ```bash
+        sshd -T | grep -i permitrootlogin
+        ```
+      remediation:
+        - id: cli
+          desc: |
+            Set the option and reload the service:
+
+            ```bash
+            sudo sed -i 's/^#*PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
+            sudo systemctl reload sshd
+            ```
+        - id: ansible
+          desc: |
+            ```yaml
+            - name: Disable SSH root login
+              ansible.builtin.lineinfile:
+                path: /etc/ssh/sshd_config
+                regexp: '^#*PermitRootLogin'
+                line: 'PermitRootLogin no'
+              notify: reload sshd
+            ```
+````
+
+## Contributing a check
+
+Policy changes are validated automatically, so the fastest path is to run the same checks CI does before opening a pull request:
+
+```bash
+cnspec policy lint mondoo-linux-security.mql.yaml   # must pass; run it first
+make test/content                                   # lint + bundle scans + compliance mappings
 ```
+
+Two documents cover the rest:
+
+- **[`CLAUDE.md`](CLAUDE.md)** — the authoring rules: bundle structure, impact bands, UID conventions, the shape of `desc`/`audit`/`remediation`, compliance tagging, IaC variants, and the MQL behaviors that return a wrong verdict without erroring.
+- **[`validation/README.md`](validation/README.md)** — every check that runs against this directory, what each one proves, when CI runs it, and how to run it yourself.
 
 ## Join the community!
 
