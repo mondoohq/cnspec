@@ -196,6 +196,21 @@ TF_VALIDATE_CONDITIONAL_IGNORES = {
 }
 
 
+# Parse errors that terraform reports at init time, where the cause is this
+# harness rather than the snippet. A single `- id: terraform` may offer two
+# alternative configurations of the same resource in separate fences, which
+# extract_hcl_blocks concatenates, and the substitution can leave a value the
+# parser rejects.
+TF_INIT_IGNORED_MESSAGES = (
+    "Duplicate resource",
+    "Duplicate data",
+    "Duplicate variable declaration",
+    "Duplicate provider configuration",
+    "Duplicate module call",
+    "Duplicate output definition",
+)
+
+
 def _diag_code(diag: dict) -> str:
     """The source line a diagnostic points at, as terraform reports it."""
     return (diag.get("snippet") or {}).get("code", "")
@@ -228,7 +243,15 @@ def caused_by_substitution(diag: dict) -> bool:
     """
     if diag.get("summary", "").startswith(TF_VALIDATE_NEVER_SUPPRESSED):
         return False
-    return "placeholder" in _diag_code(diag)
+    # A provider's own ValidateFunc puts the offending value in the summary and
+    # often leaves detail empty, so all three fields have to be considered:
+    # `expected "tenant_id" to be a valid UUID, got placeholder`,
+    # `parsing "placeholder" as an Server ID`, `expected 2 or 3 path segments,
+    # found 1 segment(s) in 'placeholder'`.
+    haystack = " ".join(
+        (diag.get("summary") or "", diag.get("detail") or "", _diag_code(diag))
+    )
+    return "placeholder" in haystack
 
 
 def terraform_available() -> bool:
@@ -494,7 +517,14 @@ def generate_wrapper(hcl_code: str, providers: set[str]) -> str:
                 f'provider "{prov}" {{\n  alias = "{alias}"\n{extra}}}\n\n'
             )
 
-    variables = extract_variables(hcl_code)
+    # A snippet may declare its own variable, commonly to show that a secret
+    # belongs in a `sensitive = true` one. Generating a second block for the
+    # same name fails the parse with "Duplicate variable declaration" before any
+    # schema is consulted.
+    self_declared = set(
+        re.findall(r'^\s*variable\s+"([^"]+)"\s*{', hcl_code, re.M)
+    )
+    variables = extract_variables(hcl_code) - self_declared
     for v in sorted(variables):
         parts.append(f'variable "{v}" {{\n  type    = string\n  default = "placeholder"\n}}\n\n')
 
@@ -678,9 +708,17 @@ def _terraform_validate_locked(
     except subprocess.TimeoutExpired:
         return ["terraform init timed out after 300s"]
     if init.returncode != 0:
+        message = first_error_line(init.stderr, init.stdout)
+        # Terraform refuses to init a configuration it cannot parse, so a
+        # problem this harness introduced stops the run before `validate -json`
+        # ever produces a diagnostic to filter. The same exemptions have to
+        # apply here or the harness reports its own artifacts as defects.
+        combined = (init.stderr or "") + (init.stdout or "")
+        if any(s in combined for s in TF_INIT_IGNORED_MESSAGES):
+            return []
         # A provider missing from the mirror is an environment problem, not a
         # defect in the snippet, so say so rather than blaming the snippet.
-        return ["terraform init failed: " + first_error_line(init.stderr, init.stdout)]
+        return ["terraform init failed: " + message]
 
     # Forking a provider to read its schema fails intermittently when many are
     # started at once, with "failed to instantiate provider ... to obtain
