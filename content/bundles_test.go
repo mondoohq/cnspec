@@ -56,6 +56,30 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 
+	// Aggregate the provider schemas once, serially, against a harder failure in
+	// the same area. The coordinator takes its two locks in opposite orders on two
+	// paths the parallel suites run at the same time:
+	//
+	//	compiling MQL         Schema.Lookup -> unsafeLoadAll -> coordinator.LoadSchema
+	//	                        holds the schema lock, wants the coordinator lock
+	//	starting a provider   GetRunningProvider -> unsafeStartProvider -> Schema.Add
+	//	                        holds the coordinator lock, wants the schema lock
+	//
+	// Interleaved, that is a deadlock, and a mutex cannot be timed out: the scans
+	// do not fail, they stop, and the shard runs to the test binary's timeout an
+	// hour later with four checks still "running".
+	//
+	// Lookup only reaches LoadSchema while the aggregate is older than the last
+	// provider install, so one Lookup here — after the installs above, before any
+	// parallel scan — leaves the compile path on its read-only branch, and the two
+	// orders stop interleaving. It has to be Lookup rather than LoadSchema:
+	// LoadSchema populates the provider, but only the Lookup path refreshes the
+	// aggregate and moves the timestamp that gates it.
+	//
+	// This is a workaround for the lock ordering in providers/coordinator.go and
+	// providers/extensible_schema.go, and can go once that is fixed upstream.
+	providers.Coordinator.Schema().Lookup("asset")
+
 	// Run tests
 	exitVal := m.Run()
 	os.Exit(exitVal)
