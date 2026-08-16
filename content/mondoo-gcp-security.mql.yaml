@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-gcp-security
     name: Mondoo Google Cloud (GCP) Security
-    version: 9.10.0
+    version: 9.11.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -639,7 +639,7 @@ queries:
             2. Update the instance:
 
               ```bash
-              gcloud compute instances set-service-account INSTANCE_NAME --service-account=SERVICE_ACCOUNT --scopes [SCOPE1,SCOPE2...]
+              gcloud compute instances set-service-account INSTANCE_NAME --service-account=SERVICE_ACCOUNT --scopes=SCOPE1,SCOPE2
               ```
 
             3. Restart the instance:
@@ -1035,6 +1035,17 @@ queries:
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_instance' || nameLabel == 'google_compute_project_metadata')
     mql: |
+      # Instance metadata overrides project metadata, so an instance that sets
+      # enable-oslogin to false disables OS Login regardless of the project setting.
+      terraform.resources('google_compute_instance').none(
+        arguments.metadata['enable-oslogin'] == /false/i
+      )
+      # Enabling OS Login project-wide covers every instance in the project, so
+      # either the project metadata or every instance carries the key.
+      terraform.resources('google_compute_project_metadata').any(
+        arguments.metadata['enable-oslogin'] == /true/i
+      ) ||
+      terraform.resources('google_compute_instance') != empty &&
       terraform.resources('google_compute_instance').all(
         arguments.metadata != empty &&
         arguments.metadata['enable-oslogin'] == /true/i
@@ -1043,6 +1054,13 @@ queries:
     filters: |
       asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_compute_instance' || type == 'google_compute_project_metadata')
     mql: |
+      terraform.plan.resourceChanges.where(type == 'google_compute_instance').none(
+        change.after.metadata['enable-oslogin'] == /false/i
+      )
+      terraform.plan.resourceChanges.where(type == 'google_compute_project_metadata').any(
+        change.after.metadata['enable-oslogin'] == /true/i
+      ) ||
+      terraform.plan.resourceChanges.where(type == 'google_compute_instance') != empty &&
       terraform.plan.resourceChanges.where(type == 'google_compute_instance').all(
         change.after.metadata['enable-oslogin'] == /true/i
       )
@@ -1050,6 +1068,13 @@ queries:
     filters: |
       asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_compute_instance' || type == 'google_compute_project_metadata')
     mql: |
+      terraform.state.resources.where(type == 'google_compute_instance').none(
+        values.metadata['enable-oslogin'] == /false/i
+      )
+      terraform.state.resources.where(type == 'google_compute_project_metadata').any(
+        values.metadata['enable-oslogin'] == /true/i
+      ) ||
+      terraform.state.resources.where(type == 'google_compute_instance') != empty &&
       terraform.state.resources.where(type == 'google_compute_instance').all(
         values.metadata['enable-oslogin'] == /true/i
       )
@@ -1938,12 +1963,12 @@ queries:
             1. Retrieve the current dataset access configuration:
 
             ```bash
-            bq show --format=prettyjson PROJECT_ID:DATASET_ID
+            bq show --format=prettyjson PROJECT_ID:DATASET_ID > dataset.json
             ```
 
-            2. Review the `access` array in the output and identify entries with `"specialGroup": "allAuthenticatedUsers"` or `"iamMember": "allUsers"`.
+            2. Open `dataset.json`, find the `access` array, and delete every entry with `"specialGroup": "allAuthenticatedUsers"`, `"specialGroup": "allUsers"`, or an `"iamMember"` of either.
 
-            3. Remove the public access entries and update the dataset:
+            3. Apply the edited file back to the dataset:
 
             ```bash
             bq update --source=dataset.json PROJECT_ID:DATASET_ID
@@ -2280,10 +2305,16 @@ queries:
             bq show --format=prettyjson PROJECT_ID:DATASET_ID.TABLE_ID
             ```
 
-            2. To copy a table with CMEK encryption:
+            2. A table's encryption cannot be changed in place, so copy it into a CMEK-encrypted table:
 
             ```bash
             bq cp --destination_kms_key=projects/PROJECT_ID/locations/LOCATION/keyRings/KEY_RING/cryptoKeys/KEY PROJECT_ID:DATASET_ID.SOURCE_TABLE PROJECT_ID:DATASET_ID.DEST_TABLE
+            ```
+
+            3. The copy leaves the original table in place, still under Google-managed encryption. After verifying the copy, repoint queries and views at it, then remove the original:
+
+            ```bash
+            bq rm --table PROJECT_ID:DATASET_ID.SOURCE_TABLE
             ```
     refs:
       - url: https://cloud.google.com/bigquery/docs/best-practices-security
@@ -2736,12 +2767,12 @@ queries:
             1. Retrieve the current dataset access configuration:
 
             ```bash
-            bq show --format=prettyjson PROJECT_ID:DATASET_ID
+            bq show --format=prettyjson PROJECT_ID:DATASET_ID > dataset.json
             ```
 
-            2. Review the `access` array and identify entries with `"domain"` fields.
+            2. Open `dataset.json` and find the `access` array entries that carry a `"domain"` field.
 
-            3. Remove domain-wide access entries and replace them with specific group or user access. Save the modified configuration and update:
+            3. Replace each of those entries with a specific `"groupByEmail"` or `"userByEmail"` grant, then apply the edited file back to the dataset:
 
             ```bash
             bq update --source=dataset.json PROJECT_ID:DATASET_ID
@@ -5971,7 +6002,6 @@ queries:
             To ensure That Cloud KMS Cryptokeys Are Not Anonymously or Publicly Accessible in Terraform, ensure that IAM policy resources for KMS crypto keys do not include `allUsers` or `allAuthenticatedUsers` as members:
 
             ```hcl
-            # Good example - specific users/service accounts only
             resource "google_kms_crypto_key_iam_binding" "crypto_key" {
               crypto_key_id = google_kms_crypto_key.key.id
               role          = "roles/cloudkms.cryptoKeyEncrypter"
@@ -5981,19 +6011,9 @@ queries:
                 "serviceAccount:my-service@project.iam.gserviceaccount.com",
               ]
             }
-
-            # Avoid - public access
-            resource "google_kms_crypto_key_iam_binding" "crypto_key_bad" {
-              crypto_key_id = google_kms_crypto_key.key.id
-              role          = "roles/cloudkms.cryptoKeyEncrypter"
-
-              members = [
-                "allUsers",                    # Remove this
-                "allAuthenticatedUsers",       # Remove this
-                "user:jane@example.com",
-              ]
-            }
             ```
+
+            Delete `allUsers` and `allAuthenticatedUsers` from the `members` list of every KMS IAM resource in the configuration. Either one grants the bound role to anyone on the internet, so leaving it alongside named principals does not narrow it.
 
             **Prevention:**
 
@@ -6797,9 +6817,11 @@ queries:
   - uid: mondoo-gcp-security-cloud-dns-dnssec-enabled-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' &&
-        terraform.resources('google_dns_managed_zone') != empty
+        terraform.resources('google_dns_managed_zone').where(arguments['visibility'] == 'public' || arguments['visibility'] == empty) != empty
     mql: |
-      terraform.resources('google_dns_managed_zone').where(arguments['visibility'] == 'public' || arguments['visibility'] == empty) != empty
+      # DNSSEC applies to public zones only. Selecting them in the filter keeps a
+      # configuration that declares only private zones out of scope instead of
+      # failing it for a control that does not apply.
       terraform.resources('google_dns_managed_zone').where(arguments['visibility'] == 'public' || arguments['visibility'] == empty).all(
         blocks.where(type == 'dnssec_config').any(arguments['state'] == 'on')
       )
@@ -8266,15 +8288,7 @@ queries:
             }
             ```
 
-            Avoid configurations like this:
-
-            ```hcl
-            # BAD: No ports specified means all ports are open
-            allow {
-              protocol = "tcp"
-              # Missing ports = all TCP ports allowed
-            }
-            ```
+            An `allow` block that names a protocol but no `ports` opens every port for that protocol, so a rule reachable from `0.0.0.0/0` must always list explicit ports.
         - id: console
           desc: |
             To ensure firewall rules do not allow unrestricted internet ingress using the Google Cloud Console:
@@ -8611,7 +8625,7 @@ queries:
         values['master_authorized_networks_config'] != empty
       )
   - uid: mondoo-gcp-security-gke-cluster-stackdriver-logging-enabled
-    title: Ensure Stackdriver Kubernetes Engine Monitoring is enabled on GKE clusters
+    title: Ensure Cloud Logging is enabled on GKE clusters
     impact: 70
     tags:
       compliance/bsi-sys-1-5: false
@@ -9140,7 +9154,6 @@ queries:
       asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_container_cluster')
     mql: |
       terraform.plan.resourceChanges.where(type == 'google_container_cluster').all(
-        change.after.workload_identity_config != empty &&
         change.after.workload_identity_config != empty
       )
   - uid: mondoo-gcp-security-gke-workload-identity-enabled-terraform-state
@@ -9148,7 +9161,6 @@ queries:
       asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_container_cluster')
     mql: |
       terraform.state.resources.where(type == 'google_container_cluster').all(
-        values.workload_identity_config != empty &&
         values.workload_identity_config != empty
       )
   - uid: mondoo-gcp-security-gke-private-cluster-enabled
@@ -10916,8 +10928,15 @@ queries:
   # The check passes when either form enforces iam.automaticIamGrantsForDefaultServiceAccounts.
   - uid: mondoo-gcp-security-iam-default-service-accounts-disabled-terraform-hcl
     filters: |
-      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_project_organization_policy' || nameLabel == 'google_org_policy_policy')
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_project_default_service_accounts' || nameLabel == 'google_project_organization_policy' || nameLabel == 'google_org_policy_policy')
     mql: |
+      # google_project_default_service_accounts is the resource that actually
+      # disables the accounts. The org policy only stops future default accounts
+      # from receiving the Editor role, so it cannot close this check on its own.
+      # DEPRIVILEGE strips roles but leaves the account enabled, so it does not count.
+      terraform.resources('google_project_default_service_accounts').any(
+        arguments['action'] == 'DISABLE' || arguments['action'] == 'DELETE'
+      ) ||
       terraform.resources('google_project_organization_policy').where(arguments['constraint'] == 'iam.automaticIamGrantsForDefaultServiceAccounts'
       ).any(
         blocks.where(type == 'boolean_policy').any(arguments['enforced'] == true)
@@ -10930,8 +10949,11 @@ queries:
       )
   - uid: mondoo-gcp-security-iam-default-service-accounts-disabled-terraform-plan
     filters: |
-      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_project_organization_policy' || type == 'google_org_policy_policy')
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_project_default_service_accounts' || type == 'google_project_organization_policy' || type == 'google_org_policy_policy')
     mql: |
+      terraform.plan.resourceChanges.where(type == 'google_project_default_service_accounts').any(
+        change.after['action'] == 'DISABLE' || change.after['action'] == 'DELETE'
+      ) ||
       terraform.plan.resourceChanges.where(
         type == 'google_project_organization_policy' &&
         change.after.constraint == 'iam.automaticIamGrantsForDefaultServiceAccounts'
@@ -10952,8 +10974,11 @@ queries:
       )
   - uid: mondoo-gcp-security-iam-default-service-accounts-disabled-terraform-state
     filters: |
-      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_project_organization_policy' || type == 'google_org_policy_policy')
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_project_default_service_accounts' || type == 'google_project_organization_policy' || type == 'google_org_policy_policy')
     mql: |
+      terraform.state.resources.where(type == 'google_project_default_service_accounts').any(
+        values['action'] == 'DISABLE' || values['action'] == 'DELETE'
+      ) ||
       terraform.state.resources.where(
         type == 'google_project_organization_policy' &&
         values.constraint == 'iam.automaticIamGrantsForDefaultServiceAccounts'
@@ -19697,7 +19722,7 @@ queries:
             gcloud projects get-iam-policy PROJECT_ID --format=json > policy.json
             ```
 
-            Add the audit config to the policy JSON:
+            Merge the following `auditConfigs` block into `policy.json`, alongside the existing `bindings` and `etag` fields. Do not replace the file with this block: `set-iam-policy` writes whatever the file contains, so a file holding only `auditConfigs` removes every IAM binding in the project.
 
             ```json
             {
@@ -23174,11 +23199,13 @@ queries:
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_firewall')
     mql: |
+      # An EGRESS rule that omits destination_ranges applies to 0.0.0.0/0, the most
+      # permissive case there is, so an absent list must not pass.
       terraform.resources('google_compute_firewall').where(
         arguments.direction == "EGRESS" &&
         blocks.where(type == 'allow').any(arguments.protocol == "all")
       ).all(
-        arguments['destination_ranges'] == empty ||
+        arguments['destination_ranges'] != empty &&
         arguments['destination_ranges'].none(_ == "0.0.0.0/0") &&
         arguments['destination_ranges'].none(_ == "::/0")
       )
@@ -23191,7 +23218,7 @@ queries:
         change.after['direction'] == "EGRESS" &&
         change.after['allow'].any(_['protocol'] == "all")
       ).all(
-        change.after['destination_ranges'] == empty ||
+        change.after['destination_ranges'] != empty &&
         change.after['destination_ranges'].none(_ == "0.0.0.0/0") &&
         change.after['destination_ranges'].none(_ == "::/0")
       )
@@ -23204,7 +23231,7 @@ queries:
         values['direction'] == "EGRESS" &&
         values['allow'].any(_['protocol'] == "all")
       ).all(
-        values['destination_ranges'] == empty ||
+        values['destination_ranges'] != empty &&
         values['destination_ranges'].none(_ == "0.0.0.0/0") &&
         values['destination_ranges'].none(_ == "::/0")
       )
@@ -23342,10 +23369,11 @@ queries:
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_firewall')
     mql: |
+      # An EGRESS rule that omits destination_ranges reaches 0.0.0.0/0, so it belongs
+      # in the same selection as one that names the open range explicitly.
       terraform.resources('google_compute_firewall').where(
-        arguments.direction == "EGRESS" &&
-        arguments['destination_ranges'] != empty &&
-        arguments['destination_ranges'].any(_ == "0.0.0.0/0" || _ == "::/0")
+        arguments.direction == "EGRESS" && arguments['destination_ranges'] == empty ||
+        arguments.direction == "EGRESS" && arguments['destination_ranges'].any(_ == "0.0.0.0/0" || _ == "::/0")
       ).all(
         blocks.where(type == 'allow').none(arguments.protocol == "all") &&
         blocks.where(type == 'allow').all(arguments['ports'] != empty)
@@ -23355,10 +23383,8 @@ queries:
       asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_compute_firewall')
     mql: |
       terraform.plan.resourceChanges.where(
-        type == 'google_compute_firewall' &&
-        change.after['direction'] == "EGRESS" &&
-        change.after['destination_ranges'] != empty &&
-        change.after['destination_ranges'].any(_ == "0.0.0.0/0" || _ == "::/0")
+        type == 'google_compute_firewall' && change.after['direction'] == "EGRESS" && change.after['destination_ranges'] == empty ||
+        type == 'google_compute_firewall' && change.after['direction'] == "EGRESS" && change.after['destination_ranges'].any(_ == "0.0.0.0/0" || _ == "::/0")
       ).all(
         change.after['allow'].none(_['protocol'] == "all") &&
         change.after['allow'].all(_['ports'] != empty && _['ports'].length > 0)
@@ -23368,10 +23394,8 @@ queries:
       asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_compute_firewall')
     mql: |
       terraform.state.resources.where(
-        type == 'google_compute_firewall' &&
-        values['direction'] == "EGRESS" &&
-        values['destination_ranges'] != empty &&
-        values['destination_ranges'].any(_ == "0.0.0.0/0" || _ == "::/0")
+        type == 'google_compute_firewall' && values['direction'] == "EGRESS" && values['destination_ranges'] == empty ||
+        type == 'google_compute_firewall' && values['direction'] == "EGRESS" && values['destination_ranges'].any(_ == "0.0.0.0/0" || _ == "::/0")
       ).all(
         values['allow'].none(_['protocol'] == "all") &&
         values['allow'].all(_['ports'] != empty && _['ports'].length > 0)
