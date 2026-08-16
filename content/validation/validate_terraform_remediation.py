@@ -69,7 +69,7 @@ PROVIDER_MAP = {
     "oci": ("oracle/oci", "~> 6.0"),
     "github": ("integrations/github", "~> 6.0"),
     "gitlab": ("gitlabhq/gitlab", "~> 17.0"),
-    "okta": ("okta/okta", "~> 4.0"),
+    "okta": ("okta/okta", "~> 6.0"),
     "null": ("hashicorp/null", "~> 3.0"),
     "time": ("hashicorp/time", "~> 0.12"),
     # Providers for the policies added to TARGETS above. A prefix missing
